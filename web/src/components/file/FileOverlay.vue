@@ -5,7 +5,7 @@
       class="file-overlay"
     >
       <!-- Main viewer area (no separate topbar — nav buttons are in FileManagerContent toolbar) -->
-      <div class="file-overlay-body" ref="contentRef" @click="handleContentClick">
+      <div class="file-overlay-body" ref="contentRef" @click="handleContentClick" @contextmenu="handleOverlayContextMenu" v-long-press="handleOverlayLongPress">
         <FileViewer
           ref="fileViewerRef"
           :file="currentFile"
@@ -69,6 +69,7 @@ import FileViewer from '@/components/file/FileViewer.vue'
 import TocDrawer from '@/components/TocDrawer.vue'
 import SearchDrawer from '@/components/common/SearchDrawer.vue'
 import GitHistoryDrawer from '@/components/git/GitHistoryDrawer.vue'
+import { useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
 
 const props = defineProps({
   overlayOpen: Boolean,
@@ -134,6 +135,10 @@ function handleContentClick(event) {
     return
   }
 }
+
+// ── Long-press / right-click on file-path annotation → open in file manager ──
+
+const { handleContextMenu: handleOverlayContextMenu, handleLongPress: handleOverlayLongPress } = useFilePathNavHandlers()
 </script>
 
 <style scoped>

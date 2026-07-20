@@ -49,7 +49,7 @@
           <MessageSquare class="card-icon" :size="14" />
           {{ t('task.form.prompt') }}
         </h3>
-        <div class="prompt-body markdown-body" ref="promptBodyRef" @click="handlePromptClick" v-html="renderedPrompt"></div>
+        <div class="prompt-body markdown-body" ref="promptBodyRef" @click="handlePromptClick" @contextmenu="handlePromptContextMenu" v-long-press="handlePromptLongPress" v-html="renderedPrompt"></div>
       </div>
     </div>
 
@@ -104,7 +104,7 @@ import { useI18n } from 'vue-i18n'
 import { useTaskOverview } from '@/composables/useTaskOverview.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer'
 import { useAgents } from '@/composables/useAgents'
-import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { useFilePathAnnotation, useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
@@ -114,6 +114,7 @@ import { humanizeCron, repeatLabel, formatDateTime } from '@/utils/format'
 const { t } = useI18n()
 const { getAgentIcon, getAgentName } = useAgents()
 const { verifyFilePaths, openFilePath } = useFilePathAnnotation()
+const { handleContextMenu: handlePromptContextMenu, handleLongPress: handlePromptLongPress } = useFilePathNavHandlers()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
 const props = defineProps<{
@@ -257,6 +258,8 @@ function handlePromptClick(event: MouseEvent) {
     return
   }
 }
+
+// ── Long-press / right-click on file-path annotation → open in file manager (handled by useFilePathNavHandlers) ──
 </script>
 
 <style scoped>

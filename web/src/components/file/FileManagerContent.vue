@@ -144,7 +144,7 @@
     </div>
 
     <!-- File list -->
-    <div v-if="viewMode === 'list'" class="file-list" id="fileList"
+    <div v-if="viewMode === 'list'" class="file-list" ref="fileListRef"
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
       v-long-press="onContainerLongPress"
@@ -167,6 +167,7 @@
           :class="{
             'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
             'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
+            'dir-highlight': !multiSelect.active && highlightPath === itemPath(entry.name),
             'cut-item': isCutItem(itemPath(entry.name))
           }"
           :data-action="'dir'"
@@ -214,7 +215,7 @@
     </div>
 
     <!-- File grid -->
-    <div v-else class="file-grid" id="fileList"
+    <div v-else class="file-grid" ref="fileGridRef"
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
       v-long-press="onContainerLongPress"
@@ -235,6 +236,7 @@
         :class="{
           'grid-dir': entry.type === 'dir',
           'grid-active': !multiSelect.active && entry.type !== 'dir' && currentFile?.path === itemPath(entry.name),
+          'grid-dir-highlight': !multiSelect.active && entry.type === 'dir' && highlightPath === itemPath(entry.name),
           'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
           'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
           'cut-item': isCutItem(itemPath(entry.name))
@@ -527,15 +529,64 @@ function closeDropdowns(e) {
   }
 }
 
+// ── Highlight file item (from long-press on file-path annotation) ──
+
+let highlightRetryTimer = null
+let highlightAutoClearTimer = null
+const highlightPath = ref('')
+const fileListRef = ref(null)
+const fileGridRef = ref(null)
+
+function handleHighlightFileItem(e) {
+  const { path } = e.detail
+  if (!path) return
+
+  // Cancel any previous retry and auto-clear timers
+  if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
+  if (highlightAutoClearTimer) { clearTimeout(highlightAutoClearTimer); highlightAutoClearTimer = null }
+  if (highlightAutoClearTimer) { clearTimeout(highlightAutoClearTimer); highlightAutoClearTimer = null }
+  highlightPath.value = ''
+
+  // navigateToDir is async (API call + DOM render), so retry until the item appears
+  let attempts = 0
+  const maxAttempts = 20
+  const tryHighlight = () => {
+    const container = fileListRef.value || fileGridRef.value
+    if (!container) { if (attempts++ < maxAttempts) { highlightRetryTimer = setTimeout(tryHighlight, 100) }; return }
+
+    const item = container.querySelector(`.file-item[data-path="${CSS.escape(path)}"], .grid-item[data-path="${CSS.escape(path)}"]`)
+    if (!item) { if (attempts++ < maxAttempts) { highlightRetryTimer = setTimeout(tryHighlight, 100) }; return }
+
+    item.scrollIntoView({ block: 'center', behavior: 'smooth' })
+
+    // Select/highlight the item (file or directory)
+    highlightPath.value = path
+    const entry = props.entries?.find(en => joinPath(props.currentDir, en.name) === path)
+    if (entry && entry.type !== 'dir') {
+      store.selectFile(path)
+    }
+
+    // Auto-clear highlight after 2.5s
+    highlightAutoClearTimer = setTimeout(() => {
+      if (highlightPath.value === path) highlightPath.value = ''
+      highlightAutoClearTimer = null
+    }, 2500)
+  }
+  tryHighlight()
+}
+
 onMounted(() => {
   document.addEventListener('click', closeDropdowns)
   document.addEventListener('keydown', handleKeydown)
   startToolbarResize()
+  window.addEventListener('highlight-file-item', handleHighlightFileItem)
 })
 onUnmounted(() => {
   document.removeEventListener('click', closeDropdowns)
   document.removeEventListener('keydown', handleKeydown)
   stopToolbarResize()
+  window.removeEventListener('highlight-file-item', handleHighlightFileItem)
+  if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
 })
 
 // Helper: build item path from entry name
@@ -582,6 +633,7 @@ watch(() => props.currentDir, () => {
     props.searchDrawer?.close()
     if (multiSelect.active) exitMultiSelect()
     thumbErrors.clear()
+    highlightPath.value = ''
 })
 
 const ctxMenu = reactive({ visible: false, x: 0, y: 0, entry: null })
@@ -1494,6 +1546,9 @@ function currentFileForClipboard() {
     background: var(--accent-color, #4a90d9);
     color: white;
 }
+.file-item.dir-highlight {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, transparent);
+}
 
 .file-item.dir-item {
     color: var(--text-primary, #1a1a1a);
@@ -1637,7 +1692,8 @@ function currentFileForClipboard() {
     background: var(--bg-tertiary, #f0f0f0);
 }
 
-.grid-item.grid-active {
+.grid-item.grid-active,
+.grid-item.grid-dir-highlight {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 

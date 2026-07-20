@@ -667,6 +667,7 @@ export default {
       zoomIn: '放大',
       zoomOut: '缩小',
       fitWidth: '适合宽度',
+      openDirectory: '打开目录',
     },
     overlay: {
       back: '返回',

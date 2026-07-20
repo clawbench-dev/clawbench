@@ -666,6 +666,7 @@ export default {
       zoomIn: 'Zoom in',
       zoomOut: 'Zoom out',
       fitWidth: 'Fit width',
+      openDirectory: 'Open directory',
     },
     overlay: {
       back: 'Back',
