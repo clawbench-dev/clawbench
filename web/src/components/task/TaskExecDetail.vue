@@ -7,6 +7,11 @@
 
     <!-- Scrollable message content -->
     <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @contextmenu="handleExecContextMenu" v-long-press="handleExecLongPress">
+      <!-- Live preview indicator -->
+      <div v-if="execStream.isStreaming.value" class="exec-live-bar">
+        <span class="exec-live-dot"></span>
+        <span class="exec-live-text">{{ t('task.exec.livePreview') }}</span>
+      </div>
       <!-- Summary / Original tab bar (hidden during live streaming) -->
       <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
@@ -39,7 +44,7 @@
 
     <!-- Tool Detail Overlay -->
     <ToolDetailDrawer
-      :show="toolDetailIsOpen.value"
+      :show="toolDetailDrawer.isOpen.value"
       :toolName="toolDetailOverlay.name"
       :toolSubagentType="toolDetailOverlay.subagentType"
       :toolSummary="toolDetailOverlay.summary"
@@ -291,7 +296,7 @@ function findLiveToolBlock({ msgId, blockIdx }) {
 }
 
 const {
-  isOpen: toolDetailIsOpen,
+  drawer: toolDetailDrawer,
   toolDetailOverlay,
   toolDetailData,
   activeToolOverlay,
@@ -319,7 +324,7 @@ watch(
     return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name, summary: block.summary, display_name: block.display_name }
   },
   (data) => {
-    if (data === null || !toolDetailIsOpen.value) return
+    if (data === null || !toolDetailDrawer.isOpen.value) return
     const { formatToolInput } = chatRender
     const hasInput = data.input && Object.keys(data.input).length > 0
     toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name) : toolDetailData.value.outputHtml
@@ -331,7 +336,7 @@ watch(
 )
 
 // Clean up overlay state when drawer closes
-watch(() => toolDetailIsOpen.value, (open) => {
+watch(() => toolDetailDrawer.isOpen.value, (open) => {
   if (!open) {
     activeToolOverlay.value = null
   }
@@ -342,7 +347,7 @@ watch(() => toolDetailIsOpen.value, (open) => {
 // to fail. When refreshExecDetail updates selectedExecData with a valid messageId,
 // retry the fetch if the overlay is still open and content is empty.
 watch(() => props.execDetail?.messageId, (newMsgId) => {
-  if (!newMsgId || !toolDetailIsOpen.value) return
+  if (!newMsgId || !toolDetailDrawer.isOpen.value) return
   const ids = toolDetailData.value._fetchIds
   if (!ids) return
   // Only retry if input is still empty (fetch hasn't succeeded yet)
@@ -588,5 +593,35 @@ onUnmounted(() => {
   color: var(--text-muted, #999);
   font-style: italic;
   font-size: 14px;
+}
+
+/* Live preview indicator */
+.exec-live-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--accent-color, #0066cc);
+}
+
+.exec-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-color, #0066cc);
+  animation: exec-live-pulse 1.5s ease-in-out infinite;
+}
+
+.exec-live-text {
+  font-weight: 500;
+}
+
+@keyframes exec-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 </style>

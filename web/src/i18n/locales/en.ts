@@ -527,6 +527,7 @@ export default {
       title: 'Execution log',
       noExecutions: 'No executions',
       noTextOutput: 'No text output',
+      livePreview: 'Live Preview',
       startingPreview: 'Connecting preview…',
       manual: 'Manual',
       auto: 'Auto',

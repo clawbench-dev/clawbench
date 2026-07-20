@@ -128,7 +128,7 @@
 
   <!-- Tool Detail Overlay -->
   <ToolDetailDrawer
-    :show="toolDetailIsOpen.value"
+    :show="toolDetailDrawer.isOpen.value"
     :toolName="toolDetailOverlay.name"
     :toolSubagentType="toolDetailOverlay.subagentType"
     :toolSummary="toolDetailOverlay.summary"
@@ -137,7 +137,7 @@
     :toolStatus="toolDetailOverlay.status"
     :toolDone="toolDetailOverlay.done"
     :displayNameOverride="toolDetailOverlay.displayNameOverride"
-    @close="closeToolDetailOverlay()"
+    @close="toolDetailDrawer.close()"
     @file-open="handleFileOpenInOverlay"
     @send-message="handleToolSendMessage"
     @click="handleOverlayRetryClick"
@@ -257,7 +257,7 @@ function findToolBlock({ msgId, blockIdx }) {
 }
 
 const {
-  isOpen: toolDetailIsOpen,
+  drawer: toolDetailDrawer,
   toolDetailData,
   toolDetailOverlay,
   activeToolOverlay,
@@ -265,7 +265,6 @@ const {
   handleOverlayRetryClick,
   fetchToolCallDetail,
   handleFileOpenInOverlay,
-  closeOverlay: closeToolDetailOverlay,
 } = useToolDetailDrawer({
   chatRender: render,
   onFileOpen: async (path, lineStart, lineEnd) => {
@@ -519,7 +518,7 @@ watch(
     return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name, summary: block.summary, display_name: block.display_name }
   },
   (data) => {
-    if (data === null || !toolDetailIsOpen.value) return
+    if (data === null || !toolDetailDrawer.isOpen.value) return
     const { formatToolInput } = render
     const hasInput = data.input && Object.keys(data.input).length > 0
     toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name) : toolDetailData.value.outputHtml
@@ -531,7 +530,7 @@ watch(
 )
 
 // Clean up overlay state when overlay closes
-watch(() => toolDetailIsOpen.value, (show) => {
+watch(() => toolDetailDrawer.isOpen.value, (show) => {
   if (!show) {
     activeToolOverlay.value = null
     // Clear tool update debounce timers

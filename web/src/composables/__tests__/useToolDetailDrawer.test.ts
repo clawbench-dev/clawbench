@@ -167,7 +167,7 @@ describe('useToolDetailDrawer', () => {
       d.handleFileOpenInOverlay('/path/to/file.ts')
 
       expect(mockOnFileOpen).toHaveBeenCalledWith('/path/to/file.ts', undefined, undefined)
-      expect(d.isOpen.value).toBe(false)
+      expect(d.drawer.isOpen.value).toBe(false)
     })
 
     it('calls onFileOpen with object payload including line range', () => {
@@ -177,17 +177,17 @@ describe('useToolDetailDrawer', () => {
       d.handleFileOpenInOverlay({ path: '/src/app.ts', lineStart: 10, lineEnd: 25 })
 
       expect(mockOnFileOpen).toHaveBeenCalledWith('/src/app.ts', 10, 25)
-      expect(d.isOpen.value).toBe(false)
+      expect(d.drawer.isOpen.value).toBe(false)
     })
 
     it('closes drawer even when onFileOpen is not provided', () => {
       const d = useToolDetailDrawer({ chatRender: createMockChatRender() })
-      d.handleShowToolDetail({ name: 'Bash', input: { cmd: 'ls' }, output: 'ok', msgId: 1, blockIdx: 0 })
-      expect(d.isOpen.value).toBe(true)
+      d.drawer.open()
+      expect(d.drawer.isOpen.value).toBe(true)
 
       d.handleFileOpenInOverlay('/some/file.ts')
 
-      expect(d.isOpen.value).toBe(false)
+      expect(d.drawer.isOpen.value).toBe(false)
     })
   })
 

@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { shouldRetryToolFetch, resolveEffectiveMsgId, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import { appLog } from '@/utils/appLog'
@@ -46,7 +47,9 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
   const { chatRender, onFileOpen, findLiveBlock, sessionId } = options
   const { t } = useI18n()
 
-  const isOpen = ref(false)
+  const drawer = useTabDrawer('chat')
+  /** Read-only access — use drawer.open()/close() to mutate */
+  const show = drawer.isOpen
   const toolDetailData = ref({
     name: '' as string,
     subagentType: '' as string,
@@ -86,7 +89,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     const hasInput = block.input && Object.keys(block.input).length > 0
     const hasOutput = !!block.output
 
-    isOpen.value = true
+    drawer.open()
     toolDetailData.value = {
       name: block.name || '',
       subagentType: block.display_name || (block.input as Record<string, unknown>)?.subagent_type as string || '',
@@ -138,10 +141,10 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       const resp = await fetch(url)
       if (!resp.ok) {
         // Retry on 404 (tool call may not yet be persisted during streaming)
-        if (shouldRetryToolFetch(resp.status, _retryCount, isOpen.value)) {
+        if (shouldRetryToolFetch(resp.status, _retryCount, show.value)) {
           _fetchInFlight = false
           setTimeout(() => {
-            if (!isOpen.value) return
+            if (!show.value) return
             let liveBlock: ToolBlock | null = null
             if (findLiveBlock && activeToolOverlay.value) {
               liveBlock = findLiveBlock(activeToolOverlay.value)
@@ -182,7 +185,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       // If user clicked retry while fetch was in flight, re-fetch immediately
       if (_retryRequested) {
         _retryRequested = false
-        if (isOpen.value && toolDetailData.value._fetchIds) {
+        if (show.value && toolDetailData.value._fetchIds) {
           const { toolId, msgId } = toolDetailData.value._fetchIds
           let block: ToolBlock | null = null
           if (findLiveBlock && activeToolOverlay.value) {
@@ -196,22 +199,23 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
 
   function handleFileOpenInOverlay(payload: string | { path: string; lineStart?: number; lineEnd?: number }) {
     const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
-    isOpen.value = false
+    drawer.close()
     if (onFileOpen) {
       onFileOpen(path, lineStart, lineEnd)
     }
   }
 
   function closeOverlay() {
-    isOpen.value = false
+    drawer.close()
     _fetchInFlight = false
     _retryRequested = false
   }
 
-  const toolDetailOverlay = computed(() => ({ show: isOpen.value, ...toolDetailData.value }))
+  const toolDetailOverlay = computed(() => ({ show: drawer.isOpen.value, ...toolDetailData.value }))
 
   return {
-    isOpen,
+    show,
+    drawer,
     toolDetailData,
     toolDetailOverlay,
     activeToolOverlay,
