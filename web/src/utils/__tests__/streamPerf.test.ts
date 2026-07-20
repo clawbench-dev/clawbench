@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { isValidAskContent, detectAskQuestion, extractScheduledTaskIds, stripScheduledTaskTags, taskChanged, StaticBlockCache } from '../streamPerf'
+import { isValidAskContent, detectAskQuestion, stripAskQuestionTag, extractScheduledTaskIds, stripScheduledTaskTags, taskChanged, StaticBlockCache } from '../streamPerf'
 
 describe('isValidAskContent', () => {
   it('accepts XML with <item> containing <question> and <option>', () => {
@@ -95,14 +95,15 @@ describe('detectAskQuestion', () => {
     const text = 'Some text before\n<ask-question><item><header>Choice</header><multi-select>false</multi-select><question>Which?</question><option><label>A</label><description>Fast</description></option></item></ask-question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.startIdx).toBeGreaterThanOrEqual(0)
+    expect(result.fullTag).toContain('<ask-question>')
+    expect(result.fullTag).toContain('</ask-question>')
   })
 
   it('detects <ask-question> with multiple <item> elements', () => {
     const text = '工作区是干净的。\n\n<ask-question>\n<item><header>下一步</header><multi-select>false</multi-select><question>你想做什么？</question><option><label>推送到远程</label><description>推送提交</description></option><option><label>取消</label><description>不做任何操作</description></option></item>\n</ask-question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.startIdx).toBeGreaterThanOrEqual(0)
+    expect(result.fullTag).toContain('<ask-question>')
   })
 
   it('returns found=false for text without <ask-question>', () => {
@@ -116,7 +117,7 @@ describe('detectAskQuestion', () => {
     const text = '`gh` 已给出设备认证码。需要在浏览器中完成登录：\n\n<ask-question>\n<item><header>GitHub 认证</header><multi-select>false</multi-select><question>请打开 https://github.com/login/device 并输入代码完成登录。完成后告诉我。</question><option><label>已打开链接</label><description>我已在浏览器中完成认证，继续推送</description></option><option><label>我手动来</label><description>我自己执行 gh auth login -w 完成登录后手动推送</description></option></item>\n</｜｜DSML｜｜question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.startIdx).toBeGreaterThanOrEqual(0)
+    expect(result.fullTag).toBeDefined()
     expect(result.content).toBeDefined()
     expect(isValidAskContent(result.content!)).toBe(true)
   })
@@ -131,8 +132,60 @@ describe('detectAskQuestion', () => {
     const text = 'Some text\n<ask-question>\n{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"A","description":"Fast"},{"label":"B","description":"Safe"}]}]}\n</ask-question>'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(true)
-    expect(result.startIdx).toBeGreaterThanOrEqual(0)
+    expect(result.fullTag).toContain('<ask-question>')
     expect(result.content).toContain('"questions"')
+  })
+
+  it('returns found=false when <ask-question> is mentioned without structured content', () => {
+    const text = 'The ask-question system uses <ask-question> tags. The function detectAskQuestionInText checks for <ask-question in block.text.'
+    const result = detectAskQuestion(text)
+    expect(result.found).toBe(false)
+  })
+
+  it('returns found=false when <ask-question> tag has only description text, no item/question/option', () => {
+    // Model discusses the tag format but doesn't actually emit a structured question
+    const text = 'You can use `<ask-question>` to present choices. Here is how the tag works: <ask-question>Each question needs item, question and option elements</ask-question>. That is all.'
+    const result = detectAskQuestion(text)
+    expect(result.found).toBe(false)
+  })
+
+  it('returns found=false when <ask-question> appears only inside a code block', () => {
+    const text = 'You can use the `<ask-question>` tag to present choices:\n\n```\n<ask-question>\n<item><header>Choice</header><question>Pick one</question><option><label>A</label></option></item>\n</ask-question>\n```\n\nThis creates an interactive card.'
+    const result = detectAskQuestion(text)
+    expect(result.found).toBe(false)
+  })
+})
+
+describe('stripAskQuestionTag', () => {
+  it('removes the ask-question tag from text', () => {
+    const text = 'Before\n<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item></ask-question>\nAfter'
+    const result = detectAskQuestion(text)
+    expect(result.found).toBe(true)
+    const stripped = stripAskQuestionTag(text, result)
+    expect(stripped).toContain('Before')
+    expect(stripped).toContain('After')
+    expect(stripped).not.toContain('<ask-question')
+  })
+
+  it('returns original text when result is not found', () => {
+    const text = 'Hello world'
+    const result = detectAskQuestion(text)
+    expect(stripAskQuestionTag(text, result)).toBe('Hello world')
+  })
+
+  it('handles ask-question tag at the start of text', () => {
+    const text = '<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item></ask-question>\nRemaining text'
+    const result = detectAskQuestion(text)
+    const stripped = stripAskQuestionTag(text, result)
+    expect(stripped).toBe('Remaining text')
+  })
+
+  it('handles ask-question tag at the end of text', () => {
+    const text = 'Some text before\n<ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label></option></item></ask-question>'
+    const result = detectAskQuestion(text)
+    const stripped = stripAskQuestionTag(text, result)
+    expect(stripped).toContain('Some text before')
+    expect(stripped).not.toContain('<ask-question')
   })
 })
 

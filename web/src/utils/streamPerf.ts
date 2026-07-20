@@ -59,10 +59,20 @@ export function stripScheduledTaskTags(text: string): string {
  */
 export function isValidAskContent(raw: string): boolean {
   const probe = raw.trim()
-  // XML format: check for <item> child elements
-  if (probe.includes('<item>') || probe.includes('<item ')) {
-    // Basic validation: must have at least a <question> and <option> inside
-    return probe.includes('<question>') && probe.includes('<option>')
+  // XML format: check for <item> child elements with <question> and <option> inside
+  const itemMatches = probe.match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/g)
+  if (itemMatches) {
+    // At least one <item> must contain both <question> and <option> inside it
+    return itemMatches.some(item =>
+      item.includes('<question>') && item.includes('<option>')
+    )
+  }
+  // Also check for unclosed <item> tags (some models don't close them)
+  const openItemMatches = [...probe.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)(?=<item(?:\s[^>]*)?>|$)/g)]
+  if (openItemMatches.length > 0) {
+    return openItemMatches.some(m =>
+      m[1].includes('<question>') && m[1].includes('<option>')
+    )
   }
   // JSON format: check for "questions" key with array
   if (probe.startsWith('{') && probe.includes('"questions"')) {
@@ -79,14 +89,39 @@ export function isValidAskContent(raw: string): boolean {
 
 export interface AskQuestionResult {
   found: boolean
+  /** Inner content between open/close tags (parsed by parseAskQuestionContent) */
   content?: string
-  startIdx?: number
-  endIdx?: number
+  /** The full matched tag string (e.g. "<ask-question>...</ask-question>") — use with stripAskQuestionTag() */
+  fullTag?: string
+}
+
+// Regex for fenced code blocks and inline code — used to check if a
+// <ask-question> tag appears inside a code context (false positive).
+const RE_CODE_BLOCK = /```[\s\S]*?```/g
+const RE_INLINE_CODE = /`[^`]+`/g
+
+/**
+ * Check if a character index in the original text falls inside a code context
+ * (fenced code block ```...``` or inline backticks `...`).
+ */
+function isInsideCodeContext(text: string, idx: number): boolean {
+  // Check fenced code blocks
+  RE_CODE_BLOCK.lastIndex = 0
+  let m
+  while ((m = RE_CODE_BLOCK.exec(text)) !== null) {
+    if (idx >= m.index && idx < m.index + m[0].length) return true
+  }
+  // Check inline code
+  RE_INLINE_CODE.lastIndex = 0
+  while ((m = RE_INLINE_CODE.exec(text)) !== null) {
+    if (idx >= m.index && idx < m.index + m[0].length) return true
+  }
+  return false
 }
 
 /**
  * Detect <ask-question> tags in text with early exit optimization.
- * Returns result with found=false immediately if '<ask-question' is not in the text.
+ * Skips tags that appear inside fenced code blocks or inline backticks.
  * Only called post-streaming.
  */
 export function detectAskQuestion(text: string): AskQuestionResult {
@@ -95,15 +130,17 @@ export function detectAskQuestion(text: string): AskQuestionResult {
     return { found: false }
   }
 
-  // Full detection: matchAll + up to 3 regex patterns + JSON.parse validation
+  // Find all <ask-question> open tags, skipping those inside code contexts
   const allOpenTags = [...text.matchAll(/<ask-question\b[^>]*>/g)]
   for (let j = allOpenTags.length - 1; j >= 0; j--) {
-    const startIdx = allOpenTags[j].index!
-    const afterTag = text.slice(startIdx)
+    const tagIdx = allOpenTags[j].index!
+    if (isInsideCodeContext(text, tagIdx)) continue
+
+    const afterTag = text.slice(tagIdx)
 
     const closedMatch = afterTag.match(/<ask-question\b[^>]*>([\s\S]*?)<\/ask-question>/)
     if (closedMatch && isValidAskContent(closedMatch[1])) {
-      return { found: true, content: closedMatch[1], startIdx, endIdx: startIdx + closedMatch[0].length }
+      return { found: true, content: closedMatch[1], fullTag: closedMatch[0] }
     }
 
     // Match wrong/obfuscated close tags — some models emit non-standard closing tags
@@ -111,16 +148,36 @@ export function detectAskQuestion(text: string): AskQuestionResult {
     // \w+ to catch any character sequence that looks like a closing tag.
     const wrongCloseMatch = afterTag.match(/<ask-question\b[^>]*>([\s\S]*?)<\/[^>]+>/)
     if (wrongCloseMatch && isValidAskContent(wrongCloseMatch[1])) {
-      return { found: true, content: wrongCloseMatch[1], startIdx, endIdx: startIdx + wrongCloseMatch[0].length }
+      return { found: true, content: wrongCloseMatch[1], fullTag: wrongCloseMatch[0] }
     }
 
     const subMatch = afterTag.match(/<ask-question\b[^>]*>([\s\S]+)$/)
     if (subMatch && isValidAskContent(subMatch[1])) {
-      return { found: true, content: subMatch[1], startIdx }
+      return { found: true, content: subMatch[1], fullTag: subMatch[0] }
     }
   }
 
   return { found: false }
+}
+
+/**
+ * Remove the matched <ask-question> tag from text.
+ * Uses `fullTag` from detectAskQuestion result for direct string replacement.
+ * Fallback for unclosed tags where fullTag spans past code blocks:
+ * strip code blocks, remove the tag, and return the remaining text.
+ */
+export function stripAskQuestionTag(text: string, result: AskQuestionResult): string {
+  if (!result.found || !result.fullTag) return text
+  // Direct replacement — works when fullTag exists verbatim in text
+  // (closed tags, obfuscated close tags, and most unclosed tags)
+  const replaced = text.replace(result.fullTag, '')
+  if (replaced !== text) {
+    return replaced.trim()
+  }
+  // Fallback: fullTag spans past code blocks in original text (rare unclosed-tag case).
+  // Strip code blocks from text, remove fullTag from stripped, return remaining text.
+  const stripped = text.replace(RE_CODE_BLOCK, '')
+  return stripped.replace(result.fullTag, '').trim()
 }
 
 // ────────────────────────────────────────────────────────────

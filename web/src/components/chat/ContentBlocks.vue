@@ -53,15 +53,22 @@
         </div>
       </template>
       <!-- AskUserQuestion via <ask-question> XML in text block (ACP backend) — also check
-           block text so ask-question cards appear when message loads with showingSummary=true -->
+           block text so ask-question cards appear when message loads with showingSummary=true.
+           detectAskQuestionInText triggers renderTextBlock which fills blockAskQuestions;
+           the card UI only renders when blockAskQuestions[key] has data (avoids empty cards
+           when <ask-question> appears in discussion text but isn't a real structured question). -->
       <template v-else-if="block.type === 'text' && (blockAskQuestions[blockTaskKey(bi)] || detectAskQuestionInText(block))">
-        <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', key(bi))">
-          <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
-          <span class="tool-name">{{ t('tool.askUser.name') }}</span>
-          <span class="tool-summary">{{ askQuestionSummary(blockAskQuestions[blockTaskKey(bi)]) }}</span>
-          <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
-        </div>
-        <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
+        <!-- Surrounding text (with ask-question tag stripped) -->
+        <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
+        <template v-if="blockAskQuestions[blockTaskKey(bi)]">
+          <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', key(bi))">
+            <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
+            <span class="tool-name">{{ t('tool.askUser.name') }}</span>
+            <span class="tool-summary">{{ askQuestionSummary(blockAskQuestions[blockTaskKey(bi)]) }}</span>
+            <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
+          </div>
+          <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
+        </template>
       </template>
       <!-- RAG results card — also check block text so RAG cards appear when
            message loads with showingSummary=true (blockRagResults not yet filled) -->
@@ -173,17 +180,21 @@
           </div>
         </div>
       </template>
-      <!-- Ask question card (from <ask-question> XML tag in text) — must come before generic text block -->
+      <!-- Ask question card (from <ask-question> XML tag in text) — must come before generic text block.
+           detectAskQuestionInText triggers renderTextBlock which fills blockAskQuestions;
+           the card UI only renders when blockAskQuestions[key] has data. -->
       <template v-else-if="block.type === 'text' && (blockAskQuestions[blockTaskKey(bi)] || detectAskQuestionInText(block))">
         <!-- Surrounding text (with ask-question tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
-        <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', key(bi))">
-          <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
-          <span class="tool-name">{{ t('tool.askUser.name') }}</span>
-          <span class="tool-summary">{{ askQuestionSummary(blockAskQuestions[blockTaskKey(bi)]) }}</span>
-          <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
-        </div>
-        <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
+        <template v-if="blockAskQuestions[blockTaskKey(bi)]">
+          <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', key(bi))">
+            <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
+            <span class="tool-name">{{ t('tool.askUser.name') }}</span>
+            <span class="tool-summary">{{ askQuestionSummary(blockAskQuestions[blockTaskKey(bi)]) }}</span>
+            <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
+          </div>
+          <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
+        </template>
       </template>
       <!-- RAG results card (from <rag-results> XML tag in text) — must come before generic text block -->
       <template v-else-if="block.type === 'text' && (blockRagResults[blockTaskKey(bi)] || detectRagInText(block))">
@@ -359,8 +370,11 @@ function detectRagInText(block) {
   return block.text && block.text.includes('<rag-results')
 }
 
-// Same for <ask-question> tag — ensures ask-question cards appear when
-// blockAskQuestions hasn't been filled yet.
+// Quick check if block text contains <ask-question> tag — used in v-else-if condition
+// to enter the ask-question branch (which triggers renderTextBlock to fill blockAskQuestions).
+// The actual card UI is gated by blockAskQuestions[key] being truthy, so false positives
+// from this simple check are harmless — they just trigger a renderTextBlock call that
+// won't populate blockAskQuestions if the content isn't a real structured question.
 function detectAskQuestionInText(block) {
   return block.text && block.text.includes('<ask-question')
 }
@@ -477,8 +491,8 @@ function handleToolDetailClick(event) {
   // Try tool-specific action handler first (via data-tool-name on the .tool-detail container)
   const toolName = event.currentTarget.dataset?.toolName
   if (toolName && handleToolAction(toolName, event, emit)) return
-  // Allow file-open buttons, commit-hash elements, and table rows to bubble
-  if (event.target.closest('.chat-file-open-btn') || event.target.closest('.chat-commit-hash, .chat-commit-open-btn') || event.target.closest('.chat-worktree-btn') || event.target.closest('tbody tr[data-row-idx]')) {
+  // Allow file-open buttons, file-path spans, commit-hash elements, and table rows to bubble
+  if (event.target.closest('.chat-file-open-btn') || event.target.closest('.chat-file-path') || event.target.closest('.chat-commit-hash, .chat-commit-open-btn') || event.target.closest('.chat-worktree-btn') || event.target.closest('tbody tr[data-row-idx]')) {
     return
   }
   event.stopPropagation()
