@@ -4,7 +4,7 @@
       <div class="ios-step">
         <span class="ios-step-num">1</span>
         <span>{{ t('pwa.iosStep1Part1') }}</span>
-        <Share :size="16" class="ios-share-icon" />
+        <Share2 :size="16" class="ios-share-icon" />
         <span>{{ t('pwa.iosStep1Part2') }}</span>
       </div>
       <div class="ios-step">
@@ -24,7 +24,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { Share } from 'lucide-vue-next'
+import { Share2 } from 'lucide-vue-next'
 import BottomSheet from './BottomSheet.vue'
 
 defineProps<{ open: boolean }>()

@@ -31,6 +31,10 @@ export default {
     lineNumOn: 'Line numbers on',
     lineNumOff: 'Line numbers off',
   },
+  toolDetailBlock: {
+    wrapOn: 'Word wrap on',
+    wrapOff: 'Word wrap off',
+  },
   tableBlock: {
     label: 'Table',
     wrapOn: 'Word wrap on',
@@ -594,6 +598,7 @@ export default {
       allCopied: '{n} items copied',
       allCut: '{n} items cut',
       archive: 'Pack & download',
+      share: 'Share',
     },
     toast: {
       copied: 'Copied',
@@ -661,9 +666,21 @@ export default {
       zoomIn: 'Zoom in',
       zoomOut: 'Zoom out',
       fitWidth: 'Fit width',
+      openDirectory: 'Open directory',
     },
     overlay: {
       back: 'Back',
+    },
+    search: {
+      title: 'Search Files',
+      placeholder: 'Search filenames...',
+      recursive: 'Recursive',
+      noResults: 'No files found',
+      searching: 'Searching...',
+      resultCount: '{count} files found',
+      truncated: 'Showing first {max} results, try a more specific query',
+      searchFrom: 'From: {path}',
+      reset: 'Reset',
     },
   },
   proxy: {

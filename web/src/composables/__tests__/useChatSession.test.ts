@@ -37,19 +37,21 @@ const { mockState, resetMockState } = vi.hoisted(() => {
     runningSessions: new Set<string>(),
     runningSessionsVersion: 0,
     currentSessionId: '',
-    chatRunning: false,
     chatUnreadCount: 0,
     chatInitialMessages: 20,
     chatPageSize: 20,
+    sessionMaxCount: 10,
+    sessionCount: 0,
   }
   function resetMockState() {
     mockState.runningSessions.clear()
     mockState.runningSessionsVersion = 0
     mockState.currentSessionId = ''
-    mockState.chatRunning = false
     mockState.chatUnreadCount = 0
     mockState.chatInitialMessages = 20
     mockState.chatPageSize = 20
+    mockState.sessionMaxCount = 10
+    mockState.sessionCount = 0
   }
   return { mockState, resetMockState }
 })
@@ -325,7 +327,7 @@ describe('onSessionEvent', () => {
     const session = createSession()
     const versionBefore = mockState.runningSessionsVersion
     session.onSessionEvent(null as any)
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
     expect(mockState.runningSessions.size).toBe(0)
     expect(mockState.runningSessionsVersion).toBe(versionBefore)
   })
@@ -334,28 +336,28 @@ describe('onSessionEvent', () => {
     const session = createSession()
     const versionBefore = mockState.runningSessionsVersion
     session.onSessionEvent(undefined)
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
     expect(mockState.runningSessions.size).toBe(0)
     expect(mockState.runningSessionsVersion).toBe(versionBefore)
   })
 
-  it('sets chatRunning=true and adds session to runningSessions on status=running', () => {
+  it('adds session to runningSessions on status=running', () => {
     const session = createSession()
     session.onSessionEvent({ session_id: 's1', status: 'running' })
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
     expect(mockState.runningSessions.has('s1')).toBe(true)
     expect(mockState.runningSessionsVersion).toBe(1)
   })
 
-  it('sets chatRunning=true but does not add to set when session_id is missing on running', () => {
+  it('does not add to set when session_id is missing on running', () => {
     const session = createSession()
     session.onSessionEvent({ status: 'running' })
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(false)
     expect(mockState.runningSessions.size).toBe(0)
     expect(mockState.runningSessionsVersion).toBe(0)
   })
 
-  it('removes session from runningSessions and derives chatRunning from set on status=completed', () => {
+  it('removes session from runningSessions on status=completed', () => {
     const session = createSession()
     // Start two sessions
     session.onSessionEvent({ session_id: 's1', status: 'running' })
@@ -366,17 +368,17 @@ describe('onSessionEvent', () => {
     session.onSessionEvent({ session_id: 's1', status: 'completed' })
     expect(mockState.runningSessions.has('s1')).toBe(false)
     expect(mockState.runningSessions.has('s2')).toBe(true)
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
   })
 
-  it('sets chatRunning=false when last running session completes', () => {
+  it('runningSessions becomes empty when last running session completes', () => {
     const session = createSession()
     session.onSessionEvent({ session_id: 's1', status: 'running' })
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
 
     session.onSessionEvent({ session_id: 's1', status: 'completed' })
     expect(mockState.runningSessions.size).toBe(0)
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
   })
 
   it('does not directly set chatUnread when a different session completes — delegates to loadSessionsOnce', () => {
@@ -405,7 +407,7 @@ describe('onSessionEvent', () => {
 
     session.onSessionEvent({ session_id: 's1', status: 'cancelled' })
     expect(mockState.runningSessions.has('s1')).toBe(false)
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
   })
 
   it('increments runningSessionsVersion on each add and delete', () => {
@@ -430,23 +432,23 @@ describe('onSessionEvent', () => {
     session.onSessionEvent({ session_id: 's2', status: 'running' })
     session.onSessionEvent({ session_id: 's3', status: 'running' })
 
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
     expect(mockState.runningSessions.size).toBe(3)
 
     // Complete s2 — s1 and s3 still running
     session.onSessionEvent({ session_id: 's2', status: 'completed' })
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
     expect(mockState.runningSessions.has('s2')).toBe(false)
     expect(mockState.runningSessions.has('s1')).toBe(true)
     expect(mockState.runningSessions.has('s3')).toBe(true)
 
     // Complete s3
     session.onSessionEvent({ session_id: 's3', status: 'completed' })
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
 
     // Complete s1
     session.onSessionEvent({ session_id: 's1', status: 'completed' })
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
     expect(mockState.runningSessions.size).toBe(0)
   })
 
@@ -490,8 +492,8 @@ describe('onSessionEvent', () => {
 
     // status is empty string → falls into else branch (treated as not-running)
     session.onSessionEvent({ session_id: 's1', status: '' })
-    // No session_id in the Set (it was never added), but chatRunning derives from set size
-    expect(mockState.chatRunning).toBe(false)
+    // No session_id in the Set (it was never added), so runningSessions stays empty
+    expect(mockState.runningSessions.size > 0).toBe(false)
     // session_id is present → delete from empty set is a no-op, but version still increments
     expect(mockState.runningSessionsVersion).toBe(versionBefore + 1)
   })
@@ -502,7 +504,7 @@ describe('onSessionEvent', () => {
 
     // status is undefined → else branch
     session.onSessionEvent({ session_id: 's1' })
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
     expect(mockState.runningSessionsVersion).toBe(versionBefore + 1)
   })
 
@@ -527,7 +529,7 @@ describe('onSessionEvent', () => {
       session.onSessionEvent({ session_id: 'ghost', status: 'completed' })
     }).not.toThrow()
     expect(mockState.runningSessions.has('ghost')).toBe(false)
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
   })
 
   it('preserves chatUnread=false when completing a non-current session — delegates to loadSessionsOnce', () => {
@@ -990,14 +992,13 @@ describe('loadSessionsOnce', () => {
     expect(mockState.runningSessions.has('s2')).toBe(false)
     expect(mockState.runningSessions.has('s3')).toBe(true)
     expect(mockState.runningSessions.size).toBe(2)
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
     expect(mockState.runningSessionsVersion).toBeGreaterThan(0)
   })
 
-  it('clears runningSessions and sets chatRunning=false when no sessions are running', async () => {
+  it('clears runningSessions when no sessions are running', async () => {
     // Pre-populate with a running session
     mockState.runningSessions.add('old-session')
-    mockState.chatRunning = true
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -1013,7 +1014,7 @@ describe('loadSessionsOnce', () => {
     await loadSessionsOnce()
 
     expect(mockState.runningSessions.size).toBe(0)
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
   })
 
   it('does not throw on fetch failure', async () => {
@@ -1130,7 +1131,7 @@ describe('loadSessionsOnce', () => {
 
   it('handles empty sessions array', async () => {
     mockState.chatUnreadCount = 1
-    mockState.chatRunning = true
+    mockState.runningSessions.add('s1')
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ sessions: [] }),
@@ -1140,31 +1141,31 @@ describe('loadSessionsOnce', () => {
     await loadSessionsOnce()
 
     expect(mockState.chatUnreadCount).toBe(0)
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
   })
 
-  it('does not change chatUnread/chatRunning when fetch is not ok', async () => {
+  it('does not change chatUnread/runningSessions when fetch is not ok', async () => {
     mockState.chatUnreadCount = 1
-    mockState.chatRunning = true
+    mockState.runningSessions.add('s1')
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
 
     const { loadSessionsOnce } = await import('@/composables/useChatSession')
     await loadSessionsOnce()
 
     expect(mockState.chatUnreadCount).toBeGreaterThan(0)
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
   })
 
-  it('does not change chatUnread/chatRunning when fetch throws', async () => {
+  it('does not change chatUnread/runningSessions when fetch throws', async () => {
     mockState.chatUnreadCount = 1
-    mockState.chatRunning = true
+    mockState.runningSessions.add('s1')
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'))
 
     const { loadSessionsOnce } = await import('@/composables/useChatSession')
     await loadSessionsOnce()
 
     expect(mockState.chatUnreadCount).toBeGreaterThan(0)
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
   })
 
   it('clears stale runningSessions before repopulating', async () => {
@@ -1193,7 +1194,7 @@ describe('loadSessionsOnce', () => {
   })
 
   it('handles json() throwing an error', async () => {
-    mockState.chatRunning = true
+    mockState.runningSessions.add('s1')
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.reject(new SyntaxError('Unexpected token')),
@@ -1203,7 +1204,7 @@ describe('loadSessionsOnce', () => {
     // Should not throw
     await expect(loadSessionsOnce()).resolves.toBeUndefined()
     // State should not change (error was caught)
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
   })
 
   it('handles missing sessions field in response', async () => {
@@ -1215,7 +1216,7 @@ describe('loadSessionsOnce', () => {
     const { loadSessionsOnce } = await import('@/composables/useChatSession')
     await loadSessionsOnce()
 
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
     expect(mockState.runningSessions.size).toBe(0)
   })
 
@@ -1228,13 +1229,12 @@ describe('loadSessionsOnce', () => {
     const { loadSessionsOnce } = await import('@/composables/useChatSession')
     await loadSessionsOnce()
 
-    expect(mockState.chatRunning).toBe(false)
+    expect(mockState.runningSessions.size > 0).toBe(false)
     expect(mockState.runningSessions.size).toBe(0)
   })
 
   it('does not clear runningSessions when fetch is not ok', async () => {
     mockState.runningSessions.add('s1')
-    mockState.chatRunning = true
 
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
 
@@ -1243,12 +1243,11 @@ describe('loadSessionsOnce', () => {
 
     // Pre-existing data should not be cleared on failed fetch
     expect(mockState.runningSessions.has('s1')).toBe(true)
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
   })
 
   it('does not clear runningSessions when fetch throws', async () => {
     mockState.runningSessions.add('s1')
-    mockState.chatRunning = true
 
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'))
 
@@ -1256,7 +1255,7 @@ describe('loadSessionsOnce', () => {
     await loadSessionsOnce()
 
     expect(mockState.runningSessions.has('s1')).toBe(true)
-    expect(mockState.chatRunning).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(true)
   })
 })
 
@@ -1560,11 +1559,37 @@ describe('chatUnread integration', () => {
     expect(mockState.chatUnreadCount).toBe(0)
   })
 
-  it('chatUnread is not set when current session completes', () => {
+  it('chatUnread is not set synchronously when current session completes — delegates to debounced loadSessionsOnce', () => {
     const session = createSession()
     mockState.currentSessionId = 'current-s1'
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+    // Not set synchronously — debounced loadSessionsOnce will recalculate
+    expect(mockState.chatUnreadCount).toBe(0)
+  })
+
+  it('current session completion triggers debounced loadSessionsOnce to clear stale chatUnreadCount', async () => {
+    // Bug scenario: stale chatUnreadCount from a prior event is not cleared
+    // because onSessionEvent used to skip loadSessionsOnce for the current session.
+    mockState.currentSessionId = 'current-s1'
+    mockState.chatUnreadCount = 1  // stale value from prior event
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: [
+          { id: 'current-s1', unreadCount: 0, running: false },
+        ],
+      }),
+    })
+
+    const session = createSession()
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+    // Still 0 synchronously
+    expect(mockState.chatUnreadCount).toBe(1)  // stale until debounce fires
+
+    // After debounce fires, loadSessionsOnce recalculates
+    await new Promise(r => setTimeout(r, 600))
     expect(mockState.chatUnreadCount).toBe(0)
   })
 
@@ -2503,6 +2528,186 @@ describe('createSession', () => {
       expect.any(String),
       expect.objectContaining({ type: 'error' })
     )
+  })
+
+  it('pre-check: shows sessionLimitReached toast and returns early when sessionCount >= sessionMaxCount', async () => {
+    mockState.sessionMaxCount = 5
+    mockState.sessionCount = 5
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+
+    const currentSessionId = ref('current-s1')
+    const inputDisabled = ref(false)
+    const options = {
+      currentSessionId,
+      messages: ref([]),
+      loading: ref(false),
+      inputDisabled,
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+    await session.createSession('agent1')
+
+    // No POST request should have been made
+    expect(fetchSpy).not.toHaveBeenCalled()
+    // currentSessionId should remain unchanged
+    expect(currentSessionId.value).toBe('current-s1')
+    // inputDisabled should remain false (no switching overlay)
+    expect(inputDisabled.value).toBe(false)
+    // sessionLimitReached toast should be shown
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error', icon: '⚠️' })
+    )
+  })
+
+  it('pre-check: allows creation when sessionCount < sessionMaxCount', async () => {
+    mockState.sessionMaxCount = 5
+    mockState.sessionCount = 3
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ok: true, sessionId: 's-new', backend: '', agentId: '', sessionCount: 4,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's-new', messages: [], total: 0,
+          backend: '', agentId: '', modelId: '', thinkingEffort: '', running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 4 }),
+      })
+
+    const currentSessionId = ref('old')
+    const options = {
+      currentSessionId,
+      messages: ref([]),
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+    await session.createSession()
+
+    // POST should have been made (pre-check passed)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/ai/sessions',
+      expect.objectContaining({ method: 'POST' })
+    )
+    expect(currentSessionId.value).toBe('s-new')
+  })
+
+  it('pre-check: allows creation when sessionMaxCount is 0 (unlimited)', async () => {
+    mockState.sessionMaxCount = 0
+    mockState.sessionCount = 100
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ok: true, sessionId: 's-new', backend: '', agentId: '', sessionCount: 101,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's-new', messages: [], total: 0,
+          backend: '', agentId: '', modelId: '', thinkingEffort: '', running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 101 }),
+      })
+
+    const currentSessionId = ref('old')
+    const options = {
+      currentSessionId,
+      messages: ref([]),
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+    await session.createSession()
+
+    // POST should have been made (maxCount=0 means unlimited)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/ai/sessions',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+
+  it('on POST failure after pre-check passes: restores currentSessionId to prevent stuck delete button', async () => {
+    mockState.sessionMaxCount = 5
+    mockState.sessionCount = 3 // Pre-check passes
+    // But backend returns 409 (TOCTOU race — another client created a session)
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: () => Promise.resolve({ error: 'max sessions reached', msgKey: 'SessionLimitReached' }),
+    })
+
+    const currentSessionId = ref('current-s1')
+    const inputDisabled = ref(false)
+    const options = {
+      currentSessionId,
+      messages: ref([]),
+      loading: ref(false),
+      inputDisabled,
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+    await session.createSession()
+
+    // currentSessionId should be restored after failure
+    expect(currentSessionId.value).toBe('current-s1')
+    // inputDisabled should be reset
+    expect(inputDisabled.value).toBe(false)
   })
 })
 

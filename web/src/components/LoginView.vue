@@ -39,7 +39,7 @@
 
         <!-- Login form (existing server) -->
         <form v-if="!showAddForm" @submit.prevent="handleLogin">
-          <div class="input-group">
+          <div v-if="!isAppMode || showPasswordField" class="input-group">
             <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
@@ -52,7 +52,7 @@
               :disabled="loading"
             />
           </div>
-          <button type="submit" :disabled="loading" class="login-btn">
+          <button type="submit" :disabled="loading || (!showPasswordField && !password)" class="login-btn">
             <span v-if="loading" class="btn-spinner"></span>
             <span>{{ loading ? t('login.verifying') : t('login.submit') }}</span>
           </button>
@@ -162,15 +162,27 @@ const showAddForm = ref(false)
 const newServerUrl = ref('')
 const newServerPassword = ref('')
 const showIosSheet = ref(false)
+const showPasswordField = ref(true)
 
 const showServerSelector = computed(() => servers.value.length >= 1)
 const showInstallBanner = computed(() => pwaInstall.showPwaInstall.value || pwaInstall.showApkDownload.value)
 
 function selectServer(srv) {
   if (srv.url === selectedServerUrl.value) return
+  selectedServerUrl.value = srv.url
+  error.value = ''
+  // Show password field only if no saved password; hide if password is stored
+  const savedPassword = getPassword(srv.url)
+  if (savedPassword) {
+    password.value = savedPassword
+    showPasswordField.value = false
+  } else {
+    password.value = ''
+    showPasswordField.value = true
+  }
   // Use native connectToServer for pre-auth, SSL handling, and error recovery
   if (window.AndroidNative?.connectToServer) {
-    window.AndroidNative.connectToServer(srv.url, srv.password)
+    window.AndroidNative.connectToServer(srv.url, savedPassword || '')
   } else {
     window.location.href = srv.url + '/login'
   }
@@ -203,12 +215,21 @@ async function handleLogin() {
       emit('loginSuccess')
     } else if (res.status >= 500) {
       error.value = t('login.serverError')
-    } else {
+      // Don't show password field for server errors — not an auth issue
+    } else if (res.status === 429) {
       error.value = t('login.wrongPassword')
+      showPasswordField.value = true
+      password.value = ''
+    } else {
+      // 401 or other 4xx — auth failure
+      error.value = t('login.wrongPassword')
+      showPasswordField.value = true
+      password.value = ''
     }
   } catch {
     error.value = t('login.networkError')
     networkError.value = true
+    // Don't show password field for network errors — not an auth issue
   } finally {
     loading.value = false
   }
@@ -284,6 +305,8 @@ onMounted(() => {
     const savedPassword = getPassword(selectedServerUrl.value)
     if (savedPassword) {
       password.value = savedPassword
+      // Hide password field when saved password exists — only show on auth failure
+      showPasswordField.value = false
     }
   }
 })

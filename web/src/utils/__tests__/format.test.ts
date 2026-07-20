@@ -59,6 +59,14 @@ describe('stripMarkdownPreview', () => {
     expect(stripMarkdownPreview('[click](http://example.com)')).toBe('click')
   })
 
+  it('removes images entirely', () => {
+    expect(stripMarkdownPreview('before ![alt](http://img.png) after')).toBe('before  after')
+  })
+
+  it('removes images before links', () => {
+    expect(stripMarkdownPreview('![img](url) [link](url)')).toBe('link')
+  })
+
   it('strips strikethrough', () => {
     expect(stripMarkdownPreview('~~deleted~~')).toBe('deleted')
   })
@@ -66,8 +74,8 @@ describe('stripMarkdownPreview', () => {
   it('truncates long text', () => {
     const long = 'a'.repeat(200)
     const result = stripMarkdownPreview(long, 100)
-    expect(result.length).toBeLessThanOrEqual(103) // 100 + '...'
-    expect(result).toContain('...')
+    expect(result.length).toBeLessThanOrEqual(101) // 100 + '…'
+    expect(result).toContain('…')
   })
 
   it('returns empty for empty input', () => {

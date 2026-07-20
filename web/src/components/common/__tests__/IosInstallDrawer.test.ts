@@ -32,7 +32,7 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
 }))
 
 vi.mock('lucide-vue-next', () => ({
-  Share: { template: '<span class="share-icon-stub" />' },
+  Share2: { template: '<span class="share-icon-stub" />' },
 }))
 
 function mountSheet(props: Record<string, any> = {}) {

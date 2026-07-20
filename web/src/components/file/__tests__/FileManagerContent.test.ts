@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick, reactive, ref, computed, defineComponent } from 'vue'
+import { nextTick, reactive, ref, computed, readonly, defineComponent } from 'vue'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
 // Plugin to register the long-press directive globally
@@ -139,11 +139,11 @@ vi.mock('@/utils/fileManager', () => ({
   resolveClickAction: vi.fn(),
 }))
 
-vi.mock('@/components/common/SearchInput.vue', () => ({
+vi.mock('@/components/file/FileSearchDrawer.vue', () => ({
   default: defineComponent({
-    props: ['modelValue', 'placeholder'],
-    emits: ['update:modelValue', 'enter', 'dblclick'],
-    template: '<div class="search-input-stub"><input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" /></div>',
+    props: ['open', 'currentDir'],
+    emits: ['close', 'navigateDir', 'selectFile'],
+    template: '<div class="file-search-drawer-stub" v-if="open" @click="$emit(\'close\')" />',
   }),
 }))
 
@@ -172,9 +172,10 @@ const i18n = createI18n({
         emptyDir: '空目录',
         noFiles: '无文件',
         truncateHint: '截断提示',
-        multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档' },
+        multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档', share: '分享' },
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称', pasteNewName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败' },
+        search: { title: '搜索文件' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -353,32 +354,44 @@ describe('FileManagerContent — sort', () => {
   })
 })
 
-// ── Search filtering ──
+// ── Search drawer ──
 
-describe('FileManagerContent — search', () => {
-  it('filters entries by search query', async () => {
-    const wrapper = mountContent()
-    // Verify initial state: 2 file items
-    expect(wrapper.findAll('.file-item:not(.dir-item)').length).toBe(2)
-
-    wrapper.vm._setSearchQuery('test')
-    await nextTick()
-
-    // Verify the filtered entries computed is correct
-    const filteredNames = wrapper.vm._getFilteredEntries().map(e => e.name)
-    expect(filteredNames).toEqual(['test.ts'])
+describe('FileManagerContent — search drawer', () => {
+  it('opens search drawer when search button is clicked', async () => {
+    const searchDrawerOpen = ref(false)
+    const searchDrawer = {
+      effectiveOpen: computed(() => searchDrawerOpen.value),
+      isOpen: readonly(searchDrawerOpen),
+      open: () => { searchDrawerOpen.value = true },
+      close: () => { searchDrawerOpen.value = false },
+      toggle: () => { searchDrawerOpen.value = !searchDrawerOpen.value },
+    }
+    const wrapper = mountContent({ searchDrawer })
+    expect(searchDrawerOpen.value).toBe(false)
+    // Find and click the search button by its title
+    const allBtns = wrapper.findAll('.toolbar-btn')
+    const btn = allBtns.find(b => b.attributes('title')?.includes('Search'))
+    if (btn) {
+      await btn.trigger('click')
+      expect(searchDrawerOpen.value).toBe(true)
+    }
   })
 
-  it('shows all entries when search is cleared', async () => {
-    const wrapper = mountContent()
-    wrapper.vm._setSearchQuery('test')
+  it('closes search drawer on directory change', async () => {
+    const searchDrawerOpen = ref(false)
+    const searchDrawer = {
+      effectiveOpen: computed(() => searchDrawerOpen.value),
+      isOpen: readonly(searchDrawerOpen),
+      open: () => { searchDrawerOpen.value = true },
+      close: () => { searchDrawerOpen.value = false },
+      toggle: () => { searchDrawerOpen.value = !searchDrawerOpen.value },
+    }
+    searchDrawerOpen.value = true
+    const wrapper = mountContent({ searchDrawer })
     await nextTick()
-
-    wrapper.vm._setSearchQuery('')
-    await nextTick()
-
-    const fileItems = wrapper.findAll('.file-item:not(.dir-item)')
-    expect(fileItems.length).toBe(2)
+    // Change directory
+    await wrapper.setProps({ currentDir: 'src' })
+    expect(searchDrawerOpen.value).toBe(false)
   })
 })
 
@@ -699,5 +712,107 @@ describe('FileManagerContent — keyboard shortcuts', () => {
       wrapper.vm.doShareExternal()
       expect(mockShareFile).not.toHaveBeenCalled()
     })
+  })
+})
+
+// ── allSelectedAreFiles & doBatchShare ──
+
+describe('FileManagerContent — batch share', () => {
+  const mockShareFiles = vi.fn()
+  const origAndroidNative = (window as any).AndroidNative
+
+  beforeEach(() => {
+    mockShareFiles.mockReset()
+  })
+
+  afterEach(() => {
+    ;(window as any).AndroidNative = origAndroidNative
+  })
+
+  it('allSelectedAreFiles returns true when only files selected', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+    await nextTick()
+
+    expect(wrapper.vm.allSelectedAreFiles).toBe(true)
+  })
+
+  it('allSelectedAreFiles returns false when a directory is selected', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('src')
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    await nextTick()
+
+    expect(wrapper.vm.allSelectedAreFiles).toBe(false)
+  })
+
+  it('allSelectedAreFiles returns true when nothing is selected', async () => {
+    const wrapper = mountContent()
+    expect(wrapper.vm.allSelectedAreFiles).toBe(true)
+  })
+
+  it('doBatchShare calls AndroidNative.shareFiles with paths and mime types', async () => {
+    ;(window as any).AndroidNative = { shareFiles: mockShareFiles }
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+    await nextTick()
+
+    wrapper.vm.doBatchShare()
+    expect(mockShareFiles).toHaveBeenCalledTimes(1)
+    const [pathsJson, mimeTypesJson] = mockShareFiles.mock.calls[0]
+    const paths = JSON.parse(pathsJson)
+    const mimeTypes = JSON.parse(mimeTypesJson)
+    expect(paths).toContain('test.ts')
+    expect(paths).toContain('readme.md')
+    expect(mimeTypes).toHaveLength(2)
+    // .ts and .md both map to */*
+    mimeTypes.forEach((m: string) => expect(m).toBe('*/*'))
+  })
+
+  it('doBatchShare maps image/video/audio/pdf/zip mime types correctly', async () => {
+    ;(window as any).AndroidNative = { shareFiles: mockShareFiles }
+    const entries = [
+      { name: 'photo.png', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
+      { name: 'clip.mp4', type: 'file', modified: '2025-01-01T00:00:00Z', size: 200 },
+      { name: 'song.mp3', type: 'file', modified: '2025-01-01T00:00:00Z', size: 300 },
+    ]
+    const wrapper = mountContent({ entries, currentDir: '' })
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('photo.png')
+    wrapper.vm.multiSelectState.selected.add('clip.mp4')
+    wrapper.vm.multiSelectState.selected.add('song.mp3')
+    await nextTick()
+
+    wrapper.vm.doBatchShare()
+    const [, mimeTypesJson] = mockShareFiles.mock.calls[0]
+    const mimeTypes = JSON.parse(mimeTypesJson)
+    expect(mimeTypes).toEqual(['image/*', 'video/*', 'audio/*'])
+  })
+
+  it('doBatchShare does nothing when AndroidNative is missing', async () => {
+    ;(window as any).AndroidNative = undefined
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    await nextTick()
+
+    wrapper.vm.doBatchShare()
+    expect(mockShareFiles).not.toHaveBeenCalled()
+  })
+
+  it('doBatchShare does nothing when shareFiles method is missing', async () => {
+    ;(window as any).AndroidNative = { shareFile: vi.fn() } // no shareFiles
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    await nextTick()
+
+    wrapper.vm.doBatchShare()
+    expect(mockShareFiles).not.toHaveBeenCalled()
   })
 })

@@ -107,7 +107,7 @@
               {{ t('file.header.openAsText') }}
             </button>
             <button v-if="isAppMode" class="dropdown-item" @click="handleShareExternal">
-              <Share :size="14" />
+              <Share2 :size="14" />
               {{ t('file.header.shareExternal') }}
             </button>
             <a v-if="!isAppMode" class="dropdown-item" :href="buildLocalFileUrl(file.path, { download: true })" :download="file.name" @click="menuOpen = false">
@@ -121,6 +121,10 @@
             <button v-if="isMarkdown && viewMode === 'rendered'" class="dropdown-item" @click="handleExportHtml">
               <FileOutput :size="14" />
               {{ t('file.header.exportHtml') }}
+            </button>
+            <button class="dropdown-item" @click="handleOpenDirectory">
+              <FolderOpen :size="14" />
+              {{ t('file.header.openDirectory') }}
             </button>
             <button class="dropdown-item danger" @click="handleDelete">
               <Trash2 :size="14" />
@@ -151,13 +155,14 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share, FileOutput, Eye, MoveHorizontal } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
+import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
 import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 
 const props = defineProps({
@@ -337,6 +342,13 @@ function handleDelete() {
 function handleGitHistory() {
     menuOpen.value = false
     emit('openGitHistory')
+}
+
+async function handleOpenDirectory() {
+    menuOpen.value = false
+    const path = props.file?.path
+    if (!path) return
+    await navToFileInManager(path)
 }
 
 function handleRefresh() {

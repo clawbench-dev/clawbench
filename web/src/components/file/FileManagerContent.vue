@@ -4,6 +4,9 @@
     <div id="dirNav" class="dir-nav">
       <div ref="dirToolbarRef" class="dir-toolbar">
         <div class="dir-toolbar-btns">
+          <button class="toolbar-btn" :class="{ 'search-active': props.searchDrawer?.isOpen.value }" @click="props.searchDrawer?.open()" :title="t('file.search.title')">
+            <Search :size="16" />
+          </button>
           <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
@@ -117,7 +120,6 @@
           </div>
           </template>
         </div>
-        <SearchInput v-model="searchQuery" :placeholder="t('search.defaultPlaceholder')" @dblclick="searchQuery = ''" />
       </div>
       <!-- Multi-select info bar -->
       <div v-if="multiSelect.active" class="ms-info-bar">
@@ -142,7 +144,7 @@
     </div>
 
     <!-- File list -->
-    <div v-if="viewMode === 'list'" class="file-list" id="fileList"
+    <div v-if="viewMode === 'list'" class="file-list" ref="fileListRef"
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
       v-long-press="onContainerLongPress"
@@ -165,6 +167,7 @@
           :class="{
             'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
             'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
+            'dir-highlight': !multiSelect.active && highlightPath === itemPath(entry.name),
             'cut-item': isCutItem(itemPath(entry.name))
           }"
           :data-action="'dir'"
@@ -212,7 +215,7 @@
     </div>
 
     <!-- File grid -->
-    <div v-else class="file-grid" id="fileList"
+    <div v-else class="file-grid" ref="fileGridRef"
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
       v-long-press="onContainerLongPress"
@@ -233,6 +236,7 @@
         :class="{
           'grid-dir': entry.type === 'dir',
           'grid-active': !multiSelect.active && entry.type !== 'dir' && currentFile?.path === itemPath(entry.name),
+          'grid-dir-highlight': !multiSelect.active && entry.type === 'dir' && highlightPath === itemPath(entry.name),
           'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
           'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
           'cut-item': isCutItem(itemPath(entry.name))
@@ -268,6 +272,10 @@
       <button class="ms-action-btn" @click="doBatchArchive">
         <Package :size="14" />
         {{ t('file.multiSelect.archive') }}
+      </button>
+      <button v-if="isAppMode && allSelectedAreFiles" class="ms-action-btn" @click="doBatchShare">
+        <Share2 :size="14" />
+        {{ t('file.multiSelect.share') }}
       </button>
       <button class="ms-action-btn ms-danger" @click="doBatchDelete">
         <Trash2 :size="14" />
@@ -317,7 +325,7 @@
             {{ t('common.download') }}
           </div>
           <div class="context-menu-item" v-if="isAppMode && ctxMenu.entry.type !== 'dir'" @click.stop="doShareExternal">
-            <Share :size="14" />
+            <Share2 :size="14" />
             {{ t('file.context.shareExternal') }}
           </div>
           <div class="context-menu-item" v-if="ctxMenu.entry.type === 'dir'" @click.stop="doArchiveDir">
@@ -348,6 +356,13 @@
       </div>
       <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" />
     </Teleport>
+    <FileSearchDrawer
+      :open="props.searchDrawer?.effectiveOpen.value"
+      :currentDir="currentDir"
+      @close="props.searchDrawer?.close()"
+      @navigateDir="onSearchNavigateDir"
+      @selectFile="onSearchSelectFile"
+    />
   </div>
 </template>
 
@@ -357,7 +372,7 @@ import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watc
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
@@ -374,9 +389,9 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
-import SearchInput from '@/components/common/SearchInput.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
+import FileSearchDrawer from './FileSearchDrawer.vue'
 
 const toast = inject('toast', null)
 const { isAppMode } = useAppMode()
@@ -424,12 +439,12 @@ const props = defineProps({
     sortField: String,
     sortDir: String,
     dirLoading: Boolean,
+    searchDrawer: Object, // TabDrawer from useTabDrawer('browse')
 })
 
 const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
 
 
-const searchQuery = ref('')
 const sortMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
 
@@ -474,7 +489,7 @@ const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
   () => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'multiselect', 'hidden'],
-  { inlineCount: 2, gap: 6, hasSearch: true },
+  { inlineCount: 3, gap: 6 },
 )
 
 const moreDropdownItemCount = computed(() => toolbarCollapsedIds.value.length)
@@ -514,15 +529,64 @@ function closeDropdowns(e) {
   }
 }
 
+// ── Highlight file item (from long-press on file-path annotation) ──
+
+let highlightRetryTimer = null
+let highlightAutoClearTimer = null
+const highlightPath = ref('')
+const fileListRef = ref(null)
+const fileGridRef = ref(null)
+
+function handleHighlightFileItem(e) {
+  const { path } = e.detail
+  if (!path) return
+
+  // Cancel any previous retry and auto-clear timers
+  if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
+  if (highlightAutoClearTimer) { clearTimeout(highlightAutoClearTimer); highlightAutoClearTimer = null }
+  if (highlightAutoClearTimer) { clearTimeout(highlightAutoClearTimer); highlightAutoClearTimer = null }
+  highlightPath.value = ''
+
+  // navigateToDir is async (API call + DOM render), so retry until the item appears
+  let attempts = 0
+  const maxAttempts = 20
+  const tryHighlight = () => {
+    const container = fileListRef.value || fileGridRef.value
+    if (!container) { if (attempts++ < maxAttempts) { highlightRetryTimer = setTimeout(tryHighlight, 100) }; return }
+
+    const item = container.querySelector(`.file-item[data-path="${CSS.escape(path)}"], .grid-item[data-path="${CSS.escape(path)}"]`)
+    if (!item) { if (attempts++ < maxAttempts) { highlightRetryTimer = setTimeout(tryHighlight, 100) }; return }
+
+    item.scrollIntoView({ block: 'center', behavior: 'smooth' })
+
+    // Select/highlight the item (file or directory)
+    highlightPath.value = path
+    const entry = props.entries?.find(en => joinPath(props.currentDir, en.name) === path)
+    if (entry && entry.type !== 'dir') {
+      store.selectFile(path)
+    }
+
+    // Auto-clear highlight after 2.5s
+    highlightAutoClearTimer = setTimeout(() => {
+      if (highlightPath.value === path) highlightPath.value = ''
+      highlightAutoClearTimer = null
+    }, 2500)
+  }
+  tryHighlight()
+}
+
 onMounted(() => {
   document.addEventListener('click', closeDropdowns)
   document.addEventListener('keydown', handleKeydown)
   startToolbarResize()
+  window.addEventListener('highlight-file-item', handleHighlightFileItem)
 })
 onUnmounted(() => {
   document.removeEventListener('click', closeDropdowns)
   document.removeEventListener('keydown', handleKeydown)
   stopToolbarResize()
+  window.removeEventListener('highlight-file-item', handleHighlightFileItem)
+  if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
 })
 
 // Helper: build item path from entry name
@@ -535,13 +599,19 @@ const { state: multiSelect, enterMultiSelect, exitMultiSelect, toggleSelect } = 
 
 defineExpose({
     multiSelectState: multiSelect,
-    searchQuery,
+    searchDrawer: props.searchDrawer,
     viewMode,
-    // Test helper: set searchQuery and trigger reactivity
-    _setSearchQuery(val) { searchQuery.value = val },
     _setViewMode(val) { viewMode.value = val },
     _getFilteredEntries() { return filteredEntries.value },
 })
+
+function onSearchNavigateDir(path) {
+    emit('navigateDir', path)
+}
+
+function onSearchSelectFile(path) {
+    emit('selectFile', path)
+}
 
 const isAllSelected = computed(() => {
     if (!multiSelect.active || visibleEntries.value.length === 0) return false
@@ -558,11 +628,12 @@ function toggleSelectAll() {
     }
 }
 
-// Auto-exit multi-select on directory change
+// Auto-exit multi-select and close search on directory change
 watch(() => props.currentDir, () => {
-    searchQuery.value = ''
+    props.searchDrawer?.close()
     if (multiSelect.active) exitMultiSelect()
     thumbErrors.clear()
+    highlightPath.value = ''
 })
 
 const ctxMenu = reactive({ visible: false, x: 0, y: 0, entry: null })
@@ -792,13 +863,40 @@ async function doBatchDelete() {
     exitMultiSelect()
 }
 
+const allSelectedAreFiles = computed(() => {
+    for (const path of multiSelect.selected) {
+        const name = path.split('/').pop()
+        const entry = props.entries.find(e => e.name === name)
+        if (entry && entry.type === 'dir') return false
+    }
+    return true
+})
+
+function doBatchShare() {
+    const native = window.AndroidNative
+    if (!native || !native.shareFiles) return
+    const paths = [...multiSelect.selected]
+    if (!paths.length) return
+    const mimeTypes = paths.map(path => {
+        const ext = path.split('.').pop()?.toLowerCase()
+        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
+        const videoExts = ['mp4', 'webm', 'mkv', 'avi', 'mov']
+        const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a']
+        if (imageExts.includes(ext)) return 'image/*'
+        if (videoExts.includes(ext)) return 'video/*'
+        if (audioExts.includes(ext)) return 'audio/*'
+        if (ext === 'pdf') return 'application/pdf'
+        if (ext === 'zip' || ext === 'tar' || ext === 'gz') return 'application/zip'
+        return '*/*'
+    })
+    native.shareFiles(JSON.stringify(paths), JSON.stringify(mimeTypes))
+}
+
 const MAX_VISIBLE_ENTRIES = 1000
 
 const filteredEntries = computed(() => {
     let entries = [...props.entries]
     if (!props.showHidden) entries = entries.filter(e => !e.name.startsWith('.'))
-    const q = searchQuery.value.toLowerCase()
-    if (q) entries = entries.filter(e => e.name.toLowerCase().includes(q))
     if (props.sortField) {
         entries = entries.sort((a, b) => {
             // When sorting by type, directories participate normally
@@ -1200,7 +1298,6 @@ function currentFileForClipboard() {
 .dir-toolbar {
     display: flex;
     align-items: center;
-    gap: 6px;
     min-width: 0;
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
 }
@@ -1209,15 +1306,8 @@ function currentFileForClipboard() {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-shrink: 0;
-}
-
-.dir-toolbar :deep(.search-pill) {
-    margin-left: auto;
-    flex: 0 1 auto;
-    min-width: 80px;
-    max-width: 200px;
-    transition: opacity 0.15s;
+    flex: 1;
+    min-width: 0;
 }
 
 .dir-nav :deep(.dir-breadcrumb) {
@@ -1310,14 +1400,17 @@ function currentFileForClipboard() {
 .ms-action-bar {
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 6px;
     padding: 8px 12px;
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-secondary, #fff);
     flex-shrink: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
 }
+.ms-action-bar::-webkit-scrollbar { display: none; }
 
 .ms-action-btn {
     display: flex;
@@ -1332,6 +1425,7 @@ function currentFileForClipboard() {
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .ms-action-btn:hover {
@@ -1396,6 +1490,11 @@ function currentFileForClipboard() {
     color: #fff;
 }
 
+.toolbar-btn.search-active {
+    background: var(--accent-color, #4a90d9);
+    color: #fff;
+}
+
 .toolbar-btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
@@ -1446,6 +1545,9 @@ function currentFileForClipboard() {
 .file-item.active {
     background: var(--accent-color, #4a90d9);
     color: white;
+}
+.file-item.dir-highlight {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, transparent);
 }
 
 .file-item.dir-item {
@@ -1590,7 +1692,8 @@ function currentFileForClipboard() {
     background: var(--bg-tertiary, #f0f0f0);
 }
 
-.grid-item.grid-active {
+.grid-item.grid-active,
+.grid-item.grid-dir-highlight {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 

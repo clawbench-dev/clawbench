@@ -909,8 +909,8 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	// Insert assistant message for preview
-	content := model.ContentBlock{Type: "text", Text: "AI完成了任务"}
+	// Insert assistant message with Markdown content for preview
+	content := model.ContentBlock{Type: "text", Text: "**加粗**和`代码`以及[链接](http://example.com)"}
 	blocks := map[string]any{"blocks": []model.ContentBlock{content}}
 	contentJSON, _ := json.Marshal(blocks)
 	insertTestMessage(t, db, "session-emit-1", "user", "问题")
@@ -934,7 +934,7 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 
 	EmitSessionEvent("session-emit-1", "completed", true)
 
-	// Verify the buffered event has response_preview
+	// Verify the buffered event has response_preview and response_preview_plain
 	buffered := sub.GetBufferedEvents()
 	if len(buffered) == 0 {
 		t.Fatal("expected at least one buffered event")
@@ -945,7 +945,8 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	}
 	assert.Equal(t, "completed", data.Status)
 	assert.Equal(t, "session-emit-1", data.SessionID)
-	assert.Equal(t, "AI完成了任务", data.ResponsePreview)
+	assert.Equal(t, "**加粗**和`代码`以及[链接](http://example.com)", data.ResponsePreview)
+	assert.Equal(t, "加粗和代码以及链接", data.ResponsePreviewPlain)
 	assert.Equal(t, "/home/user/test-project", data.ProjectPath)
 }
 

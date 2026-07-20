@@ -76,9 +76,6 @@ interface AppState {
     // Chat unread count (for dock badge — number of unread sessions)
     chatUnreadCount: number
 
-    // Chat running indicator (AI is generating)
-    chatRunning: boolean
-
     // Task unread count (for dock badge)
     taskUnreadCount: number
 
@@ -136,7 +133,6 @@ const state = reactive<AppState>({
     sessionCount: 0,
     recentProjectsMaxCount: 10,
     chatUnreadCount: 0,
-    chatRunning: false,
     taskUnreadCount: 0,
     taskRunning: false,
     taskJustCompleted: false,
@@ -239,7 +235,6 @@ function resetProjectState(): void {
     state.gitWorkingTreeChangeCount = 0
     // Chat/task badges
     state.chatUnreadCount = 0
-    state.chatRunning = false
     state.taskUnreadCount = 0
     state.taskRunning = false
     state.taskJustCompleted = false

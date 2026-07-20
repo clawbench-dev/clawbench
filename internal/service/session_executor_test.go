@@ -1096,6 +1096,82 @@ func TestSessionExecutor_HandleResumeSplit(t *testing.T) {
 	}
 }
 
+func TestSessionExecutor_HandleResumeSplit_AskQuestionConversion(t *testing.T) {
+	// Regression test: handleResumeSplit must apply postProcessBlocks,
+	// converting <ask-question> tags to tool_use blocks before persisting
+	// to DB. Previously it wrote raw unconverted blocks.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"askq-test-agent": {ID: "askq-test-agent", Name: "AskQ Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "askq-test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "askq-test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: 0, // will be set by AddChatMessage below
+	}
+
+	// Create a streaming message so persistAskToolCalls has a valid StreamingMessageID
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	streamingMsgID, err := AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
+	if err != nil {
+		t.Fatalf("failed to create streaming message: %v", err)
+	}
+	cfg.StreamingMessageID = streamingMsgID
+
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Simulate blocks containing <ask-question> XML
+	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "Pick one <ask-question><item><header>Choice</header><multi-select>false</multi-select><question>Which?</question><option><label>A</label><description>First</description></option></item></ask-question>"})
+	executor.handleResumeSplit()
+
+	// Verify the finalized message in DB contains a tool_use block (not raw <ask-question>)
+	var content string
+	err = dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT 1",
+		sid,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("failed to query finalized message: %v", err)
+	}
+
+	var parsed struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("failed to parse content: %v", err)
+	}
+
+	// Should have 2 blocks: text ("Pick one") + tool_use (AskUserQuestion)
+	foundText := false
+	foundToolUse := false
+	for _, b := range parsed.Blocks {
+		if b.Type == "text" && strings.Contains(b.Text, "Pick one") {
+			foundText = true
+			// The text block must NOT contain raw <ask-question> tags
+			if strings.Contains(b.Text, "<ask-question") {
+				t.Fatal("text block should not contain raw <ask-question> tag — conversion should have stripped it")
+			}
+		}
+		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
+			foundToolUse = true
+		}
+	}
+	if !foundText {
+		t.Fatal("expected text block with 'Pick one' in finalized message")
+	}
+	if !foundToolUse {
+		t.Fatalf("expected AskUserQuestion tool_use block in finalized message, got blocks: %+v", parsed.Blocks)
+	}
+}
+
 func TestSessionExecutor_Finalize_WithDB(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
@@ -1701,29 +1777,33 @@ func TestSessionExecutor_BuildResult_AskUserQuestionToolCallPersisted(t *testing
 	executor := NewSessionExecutor(ctx, cfg)
 	result := executor.RunWithChannel(ch)
 
-	// Find the AskUserQuestion block in result
+	// Finalize: this is where persistAskToolCalls runs, assigning the
+	// definitive IDs that get written to chat_tool_calls.
+	finalized := executor.Finalize(result, nil)
+	msgID := finalized.MsgID
+	if msgID == 0 {
+		t.Fatal("expected non-zero message ID after Finalize")
+	}
+
+	// Find the AskUserQuestion block from the finalized result (not buildResult).
+	// buildResult and Finalize each run postProcessBlocks independently,
+	// which calls ConvertAskQuestionBlocks and generates different UUIDs.
+	// Only the Finalize IDs are persisted to chat_tool_calls.
 	var askBlock *model.ContentBlock
-	for i := range result.Blocks {
-		if result.Blocks[i].Name == "AskUserQuestion" {
-			askBlock = &result.Blocks[i]
+	for i := range finalized.Blocks {
+		if finalized.Blocks[i].Name == "AskUserQuestion" {
+			askBlock = &finalized.Blocks[i]
 			break
 		}
 	}
 	if askBlock == nil {
-		t.Fatal("expected AskUserQuestion block in result")
+		t.Fatal("expected AskUserQuestion block in finalized result")
 	}
 	if !strings.HasPrefix(askBlock.ID, "ask-") {
 		t.Fatalf("expected AskUserQuestion block ID to start with 'ask-', got %q", askBlock.ID)
 	}
 	if len(askBlock.Input) == 0 {
 		t.Fatal("expected AskUserQuestion block to have input")
-	}
-
-	// Finalize and verify the tool call is persisted in chat_tool_calls table
-	finalized := executor.Finalize(result, nil)
-	msgID := finalized.MsgID
-	if msgID == 0 {
-		t.Fatal("expected non-zero message ID after Finalize")
 	}
 
 	rec, err := GetToolCall(askBlock.ID, msgID)
@@ -2170,4 +2250,89 @@ func TestSessionExecutor_Finalize_SaveRawResponseError(t *testing.T) {
 	if finalized.MsgID <= 0 {
 		t.Fatal("expected MsgID > 0 even when SaveRawResponse fails")
 	}
+}
+
+func TestSessionExecutor_Finalize_ConvertAskQuestionBlocks(t *testing.T) {
+	// Regression test: Finalize must apply ConvertAskQuestionBlocks on e.blocks
+	// before writing to DB. Previously, buildResult applied the conversion on a
+	// local copy but Finalize used the original e.blocks, so DB stored
+	// unconverted <ask-question> text blocks instead of tool_use blocks.
+	setupExecutorDB(t)
+	agentID := "askq-test-agent"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, agentID)
+
+	// Set StreamingMessageID before creating executor so UpsertToolCall path is exercised
+	streamingMsgID := setupStreamingMessage(t, sid)
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            agentID,
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamingMsgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Simulate accumulated blocks containing <ask-question> text
+	executor.blocks = []model.ContentBlock{
+		{Type: "text", Text: `<ask-question><item><header>Choice</header><multi-select>false</multi-select><question>Which one?</question><option><label>A</label><description>First</description></option></item></ask-question>`},
+	}
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           executor.blocks, // buildResult would have converted this
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	// Verify: finalized blocks should contain a tool_use AskUserQuestion block,
+	// not the original text block with <ask-question> tags.
+	foundAskTool := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
+			foundAskTool = true
+			if len(b.Input) == 0 {
+				t.Fatal("AskUserQuestion tool_use block should have input")
+			}
+			break
+		}
+		if b.Type == "text" && strings.Contains(b.Text, "<ask-question") {
+			t.Fatal("text block should not contain <ask-question> after Finalize — conversion should have run")
+		}
+	}
+	if !foundAskTool {
+		t.Fatal("expected a tool_use AskUserQuestion block in finalized result, but none found")
+	}
+
+	// Verify: DB content should also have the converted block
+	var content string
+	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content)
+	if err != nil {
+		t.Fatalf("failed to read finalized message from DB: %v", err)
+	}
+	if strings.Contains(content, "<ask-question") {
+		t.Fatal("DB content should not contain <ask-question> — ConvertAskQuestionBlocks should have been applied")
+	}
+	if !strings.Contains(content, "AskUserQuestion") {
+		t.Fatal("DB content should contain AskUserQuestion tool_use block")
+	}
+}
+
+// setupStreamingMessage creates a streaming assistant message placeholder for testing.
+func setupStreamingMessage(t *testing.T, sessionID string) int64 {
+	t.Helper()
+	msgID, err := AddChatMessage("/test", "test", sessionID, "assistant", `{"blocks":[]}`, nil, true, "")
+	if err != nil {
+		t.Fatalf("failed to create streaming message: %v", err)
+	}
+	return msgID
 }

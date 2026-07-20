@@ -58,6 +58,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
 import java.util.Map;
@@ -2375,6 +2376,144 @@ public class MainActivity extends AppCompatActivity {
 
                 } catch (Exception e) {
                     AppLog.e(TAG, "shareFile failed", e);
+                    activity.runOnUiThread(() ->
+                            Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show());
+                }
+            }).start();
+        }
+
+        /**
+         * Share multiple files with another app via ACTION_SEND_MULTIPLE.
+         * @param pathsJson JSON array of file paths
+         * @param mimeTypesJson JSON array of MIME types (one per path)
+         */
+        @JavascriptInterface
+        public void shareFiles(String pathsJson, String mimeTypesJson) {
+            if (pathsJson == null || pathsJson.isEmpty() || mimeTypesJson == null || mimeTypesJson.isEmpty()) return;
+
+            final String[] paths;
+            final String[] mimeTypes;
+            try {
+                org.json.JSONArray pathsArr = new org.json.JSONArray(pathsJson);
+                org.json.JSONArray mimeArr = new org.json.JSONArray(mimeTypesJson);
+                if (pathsArr.length() == 0 || pathsArr.length() != mimeArr.length()) return;
+                paths = new String[pathsArr.length()];
+                mimeTypes = new String[pathsArr.length()];
+                for (int i = 0; i < pathsArr.length(); i++) {
+                    paths[i] = pathsArr.getString(i);
+                    mimeTypes[i] = mimeArr.getString(i);
+                    // Path safety: reject traversal attempts
+                    if (paths[i].contains("..")) {
+                        AppLog.w(TAG, "shareFiles: invalid path: " + paths[i]);
+                        return;
+                    }
+                    try {
+                        String decoded = java.net.URLDecoder.decode(paths[i], "UTF-8");
+                        if (decoded.contains("..")) {
+                            AppLog.w(TAG, "shareFiles: invalid decoded path: " + paths[i]);
+                            return;
+                        }
+                    } catch (Exception e) {
+                        AppLog.w(TAG, "shareFiles: invalid path encoding: " + paths[i]);
+                        return;
+                    }
+                }
+            } catch (Exception e) {
+                AppLog.w(TAG, "shareFiles: invalid JSON", e);
+                return;
+            }
+
+            new Thread(() -> {
+                try {
+                    String serverUrl = activity.prefs.getString(KEY_SERVER_URL, "");
+                    if (serverUrl.isEmpty()) {
+                        AppLog.w(TAG, "shareFiles: no server URL");
+                        return;
+                    }
+
+                    CookieManager.getInstance().flush();
+                    String cookie = CookieManager.getInstance().getCookie(serverUrl);
+                    if (cookie == null || cookie.isEmpty()) {
+                        AppLog.w(TAG, "shareFiles: no auth cookie");
+                        activity.runOnUiThread(() ->
+                                Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show());
+                        return;
+                    }
+
+                    OkHttpClient client = activity.buildTrustingOkHttpClient();
+                    String authority = activity.getPackageName() + ".fileprovider";
+                    ArrayList<android.net.Uri> uriList = new ArrayList<>();
+                    ArrayList<File> tempFiles = new ArrayList<>();
+                    String commonMimeType = mimeTypes[0];
+
+                    for (int i = 0; i < paths.length; i++) {
+                        String path = paths[i];
+
+                        // Build download URL
+                        String downloadUrl;
+                        if (path.startsWith("/")) {
+                            downloadUrl = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                        } else {
+                            String encodedPath = Uri.encode(path, "/");
+                            downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+                        }
+
+                        Request request = new Request.Builder()
+                                .url(downloadUrl)
+                                .addHeader("Cookie", cookie)
+                                .build();
+
+                        String fileName = path.contains("/") ? path.substring(path.lastIndexOf("/") + 1) : path;
+                        fileName = fileName.replaceAll("[\\\\/:*?\"<>|]", "_");
+                        if (fileName.length() > 200) fileName = fileName.substring(0, 200);
+                        File tempFile = new File(activity.getSharedCacheDir(), UUID.randomUUID().toString() + "_" + fileName);
+
+                        try (Response response = client.newCall(request).execute()) {
+                            if (!response.isSuccessful() || response.body() == null) {
+                                AppLog.w(TAG, "shareFiles: download failed for " + path + ", code=" + response.code());
+                                for (File f : tempFiles) f.delete();
+                                return;
+                            }
+                            try (InputStream is = response.body().byteStream();
+                                 FileOutputStream fos = new FileOutputStream(tempFile)) {
+                                byte[] buffer = new byte[8192];
+                                int len;
+                                while ((len = is.read(buffer)) != -1) {
+                                    fos.write(buffer, 0, len);
+                                }
+                            }
+                        }
+
+                        tempFile.deleteOnExit();
+                        tempFiles.add(tempFile);
+                        android.net.Uri contentUri = androidx.core.content.FileProvider.getUriForFile(activity, authority, tempFile);
+                        uriList.add(contentUri);
+
+                        // Determine common MIME type: if types differ, fall back to */*
+                        if (!mimeTypes[i].equals(commonMimeType)) {
+                            commonMimeType = "*/*";
+                        }
+                    }
+
+                    if (uriList.isEmpty()) return;
+
+                    // Build share intent
+                    Intent shareIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+                    shareIntent.setType(commonMimeType);
+                    shareIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uriList);
+                    shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+                    activity.runOnUiThread(() -> {
+                        try {
+                            activity.startActivity(Intent.createChooser(shareIntent, activity.getString(R.string.share_multiple_files)));
+                        } catch (Exception e) {
+                            AppLog.w(TAG, "shareFiles: chooser failed", e);
+                            Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show();
+                        }
+                    });
+
+                } catch (Exception e) {
+                    AppLog.e(TAG, "shareFiles failed", e);
                     activity.runOnUiThread(() ->
                             Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show());
                 }

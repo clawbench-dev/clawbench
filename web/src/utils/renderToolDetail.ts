@@ -15,6 +15,18 @@ import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { getSessionId } from '@/composables/useSessionIdentity.ts'
+import { copyText } from '@/utils/clipboard.ts'
+
+// ────────────────────────────────────────────────────────────
+// Shared SVG icons for tool content headers
+// ────────────────────────────────────────────────────────────
+
+const COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+
+const WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
+
+// Exported for reuse by ToolDetailDrawer.vue (avoid duplicating SVG constants)
+export { COPY_ICON_SVG, WRAP_ICON_SVG }
 
 // ────────────────────────────────────────────────────────────
 // Type helpers for tool input
@@ -38,10 +50,26 @@ function num(val: unknown): number | undefined {
 // ────────────────────────────────────────────────────────────
 
 /**
+ * Build a content header bar with copy + wrap toggle buttons.
+ * Follows the same pattern as code-block/table-block headers in useCodeBlockHeader.
+ * @param contentSelector CSS selector for the scrollable content element (to find text for copy)
+ */
+function toolContentHeaderHtml(contentSelector: string): string {
+  let html = '<div class="tool-content-header">'
+  html += '<span class="tool-content-header-actions">'
+  html += `<button class="tool-content-copy-btn" data-action="copy" data-content-selector="${contentSelector}" type="button" title="${escapeHtml(gt('common.copy'))}" aria-label="${escapeHtml(gt('common.copy'))}">${COPY_ICON_SVG}</button>`
+  html += `<button class="tool-content-wrap-btn is-wrapped" data-action="wrap" data-content-selector="${contentSelector}" type="button" title="${escapeHtml(gt('toolDetailBlock.wrapOn'))}" aria-label="${escapeHtml(gt('toolDetailBlock.wrapOn'))}">${WRAP_ICON_SVG}</button>`
+  html += '</span>'
+  html += '</div>'
+  return html
+}
+
+/**
  * Render Edit tool input as a diff view.
  * Shows old_string lines in red, new_string lines in green.
  * No line numbers, no +/- prefix — color-only distinction.
  * File path is clickable to open the file.
+ * Includes content header with copy + wrap toggle.
  */
 function renderEditDiff(input: ToolInput): string {
   const filePath = str(input.file_path)
@@ -90,7 +118,7 @@ function renderEditDiff(input: ToolInput): string {
 
   body += '</div></div>'
 
-  return `<div class="edit-diff-view">${header}${body}</div>`
+  return `<div class="edit-diff-view tool-content-wrap word-wrap">${header}${toolContentHeaderHtml('.edit-diff-scroll')}${body}</div>`
 }
 
 /**
@@ -165,17 +193,26 @@ function filePathHeader(input: ToolInput, extraBadge = ''): string {
 /**
  * Render Read tool input as a file preview view.
  * Shows clickable file path + syntax-highlighted content preview.
+ * Includes content header with copy + wrap toggle when content is present.
  */
 function renderReadPreview(input: ToolInput): string {
   const filePath = str(input.file_path)
   const lang = detectLang(filePath)
+  const content = str(input.content)
+  const hasContent = !!content
 
-  let html = '<div class="file-preview-view">'
+  let html = '<div class="file-preview-view'
+  if (hasContent) html += ' tool-content-wrap word-wrap'
+  html += '">'
   html += filePathHeader(input)
+
+  // Content header (copy + wrap toggle) — only when there is content to copy
+  if (hasContent) {
+    html += toolContentHeaderHtml('.file-preview-body')
+  }
 
   // Content preview body
   html += '<div class="file-preview-body">'
-  const content = str(input.content)
   if (content) {
     const lines = content.split('\n')
     for (const line of lines) {
@@ -198,13 +235,15 @@ function renderReadPreview(input: ToolInput): string {
 /**
  * Render Write tool input as a file write view.
  * Shows clickable file path + syntax-highlighted content to write.
+ * Includes content header with copy + wrap toggle.
  */
 function renderWritePreview(input: ToolInput): string {
   const filePath = str(input.file_path)
   const lang = detectLang(filePath)
 
-  let html = '<div class="file-write-view">'
+  let html = '<div class="file-write-view tool-content-wrap word-wrap">'
   html += filePathHeader(input, `<span class="file-write-badge">${gt('tool.write.badge')}</span>`)
+  html += toolContentHeaderHtml('.file-write-body')
 
   html += '<div class="file-write-body">'
   const content = str(input.content)
@@ -881,19 +920,51 @@ function renderSaveMemory(input: ToolInput): string {
 }
 
 /**
- * Render DeepThink tool input as a thinking indicator.
+ * Render DeepThink tool input with agent-call layout.
+ * Shows subagent_type badge + description + markdown-rendered prompt.
+ * Falls back to topic/query for backward compatibility with older messages.
  */
 function renderDeepThink(input: ToolInput): string {
-  const topic = str(input.topic) || str(input.query) || str(input.prompt)
+  const description = str(input.description) || str(input.topic)
+  const prompt = str(input.prompt) || str(input.query)
+  const subagentType = str(input.subagent_type) || str(input.mode)
 
   let html = '<div class="deep-think-view">'
-  html += '<span class="deep-think-icon">🧠</span>'
-  if (topic) {
-    const truncated = topic.length > 200 ? topic.substring(0, 200) + '…' : topic
-    html += `<span class="deep-think-topic">${escapeHtml(truncated)}</span>`
+
+  if (!description && !prompt) {
+    html += '<div class="deep-think-thinking">🧠 Thinking...</div>'
+  } else {
+    html += '<div class="agent-call-header">'
+    if (subagentType) {
+      html += `<span class="agent-type-badge">${escapeHtml(subagentType)}</span>`
+    }
+    if (description) {
+      html += `<span class="agent-call-desc">${escapeHtml(description)}</span>`
+    }
+    html += '</div>'
+
+    if (prompt) {
+      const rendered = renderMarkdownHtml(prompt, { sanitize: true, skipEnhancements: true, wrapTables: false })
+      html += `<div class="agent-call-prompt">${rendered}</div>`
+    }
   }
+
   html += '</div>'
   return html
+}
+
+/**
+ * Render DeepThink tool output — strips <task>/<task_result> XML wrappers
+ * and renders the markdown content from the sub-agent.
+ */
+function renderDeepThinkOutput(output: string): string {
+  const result = output
+    .replace(/^<task_result[^>]*>\n?/, '')
+    .replace(/\n?<\/task_result>$/, '')
+    .replace(/^<task[^>]*>\n?/, '')
+    .replace(/\n?<\/task>$/, '')
+    .trim()
+  return renderMarkdownHtml(result, { sanitize: true, skipEnhancements: true, wrapTables: false })
 }
 
 /**
@@ -1026,6 +1097,7 @@ function renderGit(input: ToolInput): string {
 
 /**
  * Render NotebookEdit tool input — same as Edit with cell context.
+ * Includes content header with copy + wrap toggle.
  */
 function renderNotebookEdit(input: ToolInput): string {
   // NotebookEdit has same diff structure as Edit plus cell info
@@ -1039,7 +1111,7 @@ function renderNotebookEdit(input: ToolInput): string {
   const displayPath = resolvedPath || filePath.replace(/^\.\//, '')
   const lang = detectLang(filePath)
 
-  let html = '<div class="edit-diff-view">'
+  let html = '<div class="edit-diff-view tool-content-wrap word-wrap">'
   html += '<div class="tool-file-header">'
   html += `<span class="tool-file-path">${escapeHtml(displayPath)}</span>`
   if (resolvedPath) {
@@ -1051,6 +1123,7 @@ function renderNotebookEdit(input: ToolInput): string {
   html += '</div>'
 
   if (newStr) {
+    html += toolContentHeaderHtml('.edit-diff-scroll')
     html += '<div class="edit-diff-scroll"><div class="edit-diff-body">'
     const lines = newStr.split('\n')
     for (const line of lines) {
@@ -1065,22 +1138,23 @@ function renderNotebookEdit(input: ToolInput): string {
 
 /**
  * Render input as JSON (the fallback for unregistered tools).
+ * Includes content header with copy + wrap toggle.
  */
 function renderJsonFallback(input: unknown): string {
   if (!input || (typeof input === 'object' && !Array.isArray(input) && Object.keys(input as Record<string, unknown>).length === 0)) {
     try {
       const highlighted = hljs.highlight('{}', { language: 'json' }).value
-      return `<div class="tool-json-body"><code>${highlighted}</code></div>`
+      return `<div class="tool-json-body tool-content-wrap word-wrap">${toolContentHeaderHtml('.tool-json-body code')}<code>${highlighted}</code></div>`
     } catch {
-      return '<div class="tool-json-body"><code>{}</code></div>'
+      return '<div class="tool-json-body tool-content-wrap word-wrap"><code>{}</code></div>'
     }
   }
   try {
     const json = JSON.stringify(input, null, 2)
     const highlighted = hljs.highlight(json, { language: 'json' }).value
-    return `<div class="tool-json-body"><code>${highlighted}</code></div>`
+    return `<div class="tool-json-body tool-content-wrap word-wrap">${toolContentHeaderHtml('.tool-json-body code')}<code>${highlighted}</code></div>`
   } catch {
-    return `<div class="tool-json-body"><code>${escapeHtml(JSON.stringify(input, null, 2))}</code></div>`
+    return `<div class="tool-json-body tool-content-wrap word-wrap">${toolContentHeaderHtml('.tool-json-body code')}<code>${escapeHtml(JSON.stringify(input, null, 2))}</code></div>`
   }
 }
 
@@ -1137,6 +1211,58 @@ export function handleToolAction(toolName: string, event: Event, emit: (type: st
   const handler = TOOL_ACTION_HANDLERS[toolName.toLowerCase()]
   if (!handler) return false
   return handler(event, emit)
+}
+
+/**
+ * Handle tool content header button clicks (copy + wrap toggle).
+ * Works on the tool-content-wrap elements added by renderEditDiff,
+ * renderWritePreview, renderReadPreview, and renderNotebookEdit.
+ *
+ * Call from ToolDetailDrawer's handleBodyClick before other handlers.
+ * @returns true if the click was handled (caller should return early)
+ */
+export function handleToolContentHeaderClick(event: MouseEvent): boolean {
+  const target = event.target as HTMLElement
+  const btn = target.closest('.tool-content-copy-btn, .tool-content-wrap-btn') as HTMLElement | null
+  if (!btn) return false
+
+  event.preventDefault()
+  event.stopPropagation()
+
+  const wrapper = btn.closest('.tool-content-wrap') as HTMLElement | null
+  if (!wrapper) return true
+
+  const action = btn.getAttribute('data-action')
+
+  if (action === 'copy') {
+    if (btn.classList.contains('is-copied')) return true // already showing feedback
+    // Find the content element to extract text from
+    const contentSelector = btn.getAttribute('data-content-selector') || ''
+    const contentEl = contentSelector ? wrapper.querySelector(contentSelector) : wrapper
+    const text = contentEl?.textContent || ''
+    copyText(text)
+    // Show "Copied!" on the button briefly
+    const originalTitle = btn.getAttribute('title') || ''
+    const originalAriaLabel = btn.getAttribute('aria-label') || ''
+    btn.innerHTML = `<span class="tool-content-copied-text">${gt('common.copied')}</span>`
+    btn.classList.add('is-copied')
+    btn.setAttribute('title', gt('common.copied'))
+    btn.setAttribute('aria-label', gt('common.copied'))
+    setTimeout(() => {
+      btn.innerHTML = COPY_ICON_SVG
+      btn.classList.remove('is-copied')
+      btn.setAttribute('title', originalTitle)
+      btn.setAttribute('aria-label', originalAriaLabel)
+    }, 1500)
+  } else if (action === 'wrap') {
+    wrapper.classList.toggle('word-wrap')
+    btn.classList.toggle('is-wrapped')
+    const isWrapped = wrapper.classList.contains('word-wrap')
+    btn.setAttribute('title', isWrapped ? gt('toolDetailBlock.wrapOn') : gt('toolDetailBlock.wrapOff'))
+    btn.setAttribute('aria-label', isWrapped ? gt('toolDetailBlock.wrapOn') : gt('toolDetailBlock.wrapOff'))
+  }
+
+  return true
 }
 
 /**
@@ -1213,7 +1339,7 @@ function registerToolOutputRenderer(toolName: string, renderer: ToolOutputRender
 function renderTerminalOutput(output: string): string {
   const escaped = escapeHtml(output)
   const annotated = annotateLocalhostInEscapedText(escaped)
-  return `<div class="bash-output-body"><pre>${annotated}</pre></div>`
+  return `<div class="tool-output-content"><pre>${annotated}</pre></div>`
 }
 
 /**
@@ -1223,7 +1349,7 @@ function renderTerminalOutput(output: string): string {
 function renderCodeOutput(output: string): string {
   const escaped = escapeHtml(output)
   const annotated = annotateLocalhostInEscapedText(escaped)
-  return `<div class="tool-output-default"><pre>${annotated}</pre></div>`
+  return `<div class="tool-output-content"><pre>${annotated}</pre></div>`
 }
 
 /**
@@ -1253,7 +1379,7 @@ function renderSmartOutput(output: string): string {
       const parsed = JSON.parse(trimmed)
       const pretty = JSON.stringify(parsed, null, 2)
       const escaped = escapeHtml(pretty)
-      return `<div class="tool-output-default"><pre>${escaped}</pre></div>`
+      return `<div class="tool-output-content"><pre>${escaped}</pre></div>`
     } catch {
       // Not valid JSON, treat as plain text
     }
@@ -1318,6 +1444,7 @@ registerToolOutputRenderer('skill', renderCodeOutput)
 registerToolOutputRenderer('skillmanage', renderCodeOutput)
 registerToolOutputRenderer('todowrite', renderStatusOutput)
 registerToolOutputRenderer('todoread', renderCodeOutput)
+registerToolOutputRenderer('deepthink', renderDeepThinkOutput)
 
 // ── Tool registrations ──
 

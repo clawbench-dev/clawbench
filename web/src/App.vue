@@ -48,6 +48,7 @@
                 :sort-field="sortField"
                 :sort-dir="sortDir"
                 :dir-loading="store.state.dirLoading"
+                :search-drawer="fileSearchDrawer"
                 @navigate-dir="handleNavigateDir"
                 @navigate-back="handleNavigateBack"
                 @select-file="handleBrowseSelectFile"
@@ -174,7 +175,7 @@
           <div class="dock-center">
             <div class="dock-active-indicator" :style="dockIndicatorStyle"></div>
             <div class="dock-btn-wrap">
-              <button class="dock-btn" :class="{ active: activeTab === 'chat', 'has-unread': store.state.chatUnreadCount > 0 && activeTab !== 'chat', 'has-running': store.state.chatRunning && activeTab !== 'chat' }" @click.stop="switchTab('chat')" :title="t('nav.chat')">
+              <button class="dock-btn" :class="{ active: activeTab === 'chat', 'has-unread': store.state.chatUnreadCount > 0 && activeTab !== 'chat', 'has-running': sessionIdentity.runningSessions.value.size > 0 && activeTab !== 'chat' }" @click.stop="switchTab('chat')" :title="t('nav.chat')">
                 <MessageSquare />
               </button>
               <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': chatBadgeAnim }" @animationend="chatBadgeAnim = false">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
@@ -362,6 +363,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   resetTaskTabState()
   resetTabDrawerState()
   fileNav.closeOverlay()
+  activeTab.value = 'chat'
 
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
   projectKey.value = newProjectPath
@@ -370,7 +372,9 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   //  store.setProject() already filled projectRoot, rootPaths, homeDir, config from the
   //  expanded POST response, so no need for loadProject(). ChatPanel's
   //  watch({ immediate: true }) will call loadHistory which recovers session identity
-  //  AND messages in one request, so initSessionFromAPI() is redundant here.
+  //  AND messages in one request. However, initSessionFromAPI() is still required
+  //  because loadSessionsOnce() depends on currentSessionId being set — without it,
+  //  chatUnreadCount would be computed incorrectly (no session excluded from count).
   switchingProject.value = false
 
   // ── Phase 6: Background data loading — all independent, fully parallel, non-blocking ──
@@ -385,9 +389,9 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
       await store.loadFiles('')
     }
   }
+  await sessionIdentity.initSessionFromAPI()
   Promise.allSettled([
     restoreBrowseDir(),
-    sessionIdentity.initSessionFromAPI(),
     loadSessionsOnce(),
     store.loadGitBranch(),
     loadTasks(),
@@ -533,6 +537,7 @@ const detailsDrawer = useTabDrawer('browse')
 const tocDrawer = useTabDrawer('browse')
 const searchDrawer = useTabDrawer('browse')
 const fileHistoryDrawer = useTabDrawer('browse')
+const fileSearchDrawer = useTabDrawer('browse', { autoRestore: false })
 
 function openFileHistory() {
   fileHistoryDrawer.open()

@@ -9,6 +9,9 @@ import {
   verifyFilePaths,
   clearVerifiedCache,
   openFilePath,
+  navToFileInManager,
+  getFileAnnotationPath,
+  _resetNavDebounce,
 } from '@/composables/useFilePathAnnotation'
 
 // Mock escapeHtml from html utils
@@ -16,17 +19,27 @@ vi.mock('@/utils/html', () => ({
   escapeHtml: (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
 }))
 
-// Mock splitPath
+// Mock splitPath, dirName, baseName
 vi.mock('@/utils/path', () => ({
   splitPath: (p: string) => p.split('/').filter(Boolean),
+  dirName: (p: string) => {
+    const parts = p.split('/')
+    parts.pop()
+    return parts.join('/')
+  },
+  baseName: (p: string) => {
+    const parts = p.split('/')
+    return parts[parts.length - 1] || ''
+  },
 }))
 
 // Mock store
 vi.mock('@/stores/app', () => ({
   store: {
-    state: { projectRoot: '/home/user/project' },
+    state: { projectRoot: '/home/user/project', dirLoading: false },
     selectFile: vi.fn(),
     navigateToDir: vi.fn(),
+    loadFiles: vi.fn(),
   },
 }))
 
@@ -1532,14 +1545,18 @@ describe('verifyFilePaths', () => {
 describe('openFilePath', () => {
   let mockSelectFile: ReturnType<typeof vi.fn>
   let mockNavigateToDir: ReturnType<typeof vi.fn>
+  let mockLoadFiles: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
     clearVerifiedCache()
     const { store } = await import('@/stores/app')
     mockSelectFile = store.selectFile as ReturnType<typeof vi.fn>
     mockNavigateToDir = store.navigateToDir as ReturnType<typeof vi.fn>
+    mockLoadFiles = store.loadFiles as ReturnType<typeof vi.fn>
     mockSelectFile.mockClear()
     mockNavigateToDir.mockClear()
+    mockLoadFiles.mockClear()
+    _resetNavDebounce()
   })
 
   afterEach(() => {
@@ -1738,5 +1755,199 @@ describe('openFilePath', () => {
 
     vi.unstubAllGlobals()
     vi.doUnmock('@/composables/useToast')
+  })
+
+  // --- navToFileInManager ---
+
+  it('navToFileInManager: shows file-not-found toast when path does not exist', async () => {
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/missing.go': 'none' } }) })
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockShow = vi.fn()
+    vi.doMock('@/composables/useToast', () => ({
+      useToast: () => ({ show: mockShow }),
+    }))
+
+    const result = await navToFileInManager('src/missing.go')
+
+    expect(result).toBe(false)
+    expect(mockShow).toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+    vi.doUnmock('@/composables/useToast')
+  })
+
+  it('navToFileInManager: shows external-dir toast for external directory', async () => {
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { '/external/dir': 'dir' } }) })
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockShow = vi.fn()
+    vi.doMock('@/composables/useToast', () => ({
+      useToast: () => ({ show: mockShow }),
+    }))
+
+    const result = await navToFileInManager('/external/dir')
+
+    expect(result).toBe(false)
+    expect(mockShow).toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+    vi.doUnmock('@/composables/useToast')
+  })
+
+  it('navToFileInManager: navigates to parent dir and dispatches events for file', async () => {
+    vi.useFakeTimers()
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) })
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    const result = await navToFileInManager('src/main.go')
+    await vi.advanceTimersByTimeAsync(400)
+
+    expect(result).toBe(true)
+    expect(mockLoadFiles).toHaveBeenCalledWith('src')
+    const eventTypes = mockDispatchEvent.mock.calls.map((call: any[]) => call[0].type)
+    expect(eventTypes).toContain('close-file-overlay')
+    expect(eventTypes).toContain('open-file-manager')
+    expect(eventTypes).toContain('highlight-file-item')
+
+    window.dispatchEvent = origDispatch
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('navToFileInManager: navigates to parent dir for directory path', async () => {
+    vi.useFakeTimers()
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'internal/rag': 'dir' } }) })
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    const result = await navToFileInManager('internal/rag')
+    await vi.advanceTimersByTimeAsync(400)
+
+    expect(result).toBe(true)
+    expect(mockLoadFiles).toHaveBeenCalledWith('internal')
+    const eventTypes = mockDispatchEvent.mock.calls.map((call: any[]) => call[0].type)
+    expect(eventTypes).toContain('highlight-file-item')
+
+    window.dispatchEvent = origDispatch
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('navToFileInManager: dispatches highlight-file-item with correct path', async () => {
+    vi.useFakeTimers()
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/composables/useFoo.ts': 'file' } }) })
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    await navToFileInManager('src/composables/useFoo.ts')
+    await vi.advanceTimersByTimeAsync(400)
+
+    const highlightCall = mockDispatchEvent.mock.calls.find((call: any[]) => call[0].type === 'highlight-file-item')
+    expect(highlightCall).toBeDefined()
+    expect(highlightCall![0].detail.path).toBe('src/composables/useFoo.ts')
+
+    window.dispatchEvent = origDispatch
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('navToFileInManager: debounces rapid calls within 500ms', async () => {
+    const mockFetch = vi.fn()
+      .mockResolvedValue({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) })
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    // First call succeeds
+    const result1 = await navToFileInManager('src/main.go')
+    expect(result1).toBe(true)
+
+    // Immediate second call is debounced
+    const result2 = await navToFileInManager('src/main.go')
+    expect(result2).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('getFileAnnotationPath', () => {
+  it('returns path from .chat-file-path element', () => {
+    const span = document.createElement('span')
+    span.className = 'chat-file-path'
+    span.setAttribute('data-file-path', 'src/main.go')
+    document.body.appendChild(span)
+
+    const result = getFileAnnotationPath(span)
+    expect(result).toBe('src/main.go')
+
+    document.body.removeChild(span)
+  })
+
+  it('returns path from .chat-file-open-btn element', () => {
+    const btn = document.createElement('button')
+    btn.className = 'chat-file-open-btn'
+    btn.setAttribute('data-file-path', 'internal/rag/index.ts')
+    document.body.appendChild(btn)
+
+    const result = getFileAnnotationPath(btn)
+    expect(result).toBe('internal/rag/index.ts')
+
+    document.body.removeChild(btn)
+  })
+
+  it('returns path from .code-file-path element', () => {
+    const span = document.createElement('span')
+    span.className = 'code-file-path'
+    span.setAttribute('data-file-path', 'web/src/App.vue')
+    document.body.appendChild(span)
+
+    const result = getFileAnnotationPath(span)
+    expect(result).toBe('web/src/App.vue')
+
+    document.body.removeChild(span)
+  })
+
+  it('returns null for non-annotation elements', () => {
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+
+    const result = getFileAnnotationPath(div)
+    expect(result).toBeNull()
+
+    document.body.removeChild(div)
+  })
+
+  it('returns path from closest ancestor', () => {
+    const span = document.createElement('span')
+    span.className = 'chat-file-path'
+    span.setAttribute('data-file-path', 'pkg/util.go')
+    const child = document.createElement('strong')
+    span.appendChild(child)
+    document.body.appendChild(span)
+
+    const result = getFileAnnotationPath(child)
+    expect(result).toBe('pkg/util.go')
+
+    document.body.removeChild(span)
   })
 })

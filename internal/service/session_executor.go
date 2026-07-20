@@ -244,13 +244,12 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 	}
 }
 
-// buildResult constructs the final RunResult from the executor's accumulated state.
-func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time) RunResult {
-	wallMs := int(time.Since(wallStart).Milliseconds())
-
-	// Apply finalize post-processing on blocks
-	blocks := e.blocks
-
+// postProcessBlocks applies finalize post-processing on blocks:
+// ask-question conversion, rejected-tool removal, thinking-block merging.
+// Shared by buildResult and Finalize to prevent divergence.
+// NOTE: persistAskToolCalls must be called separately after Finalize
+// uses postProcessBlocks, to avoid double-persisting from buildResult.
+func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Ask-question detection (interactive mode only)
 	if e.cfg.Mode == ModeInteractive {
 		if ai.StringsContainsAnyBlock(blocks, "<ask-question") {
@@ -262,26 +261,41 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 	blocks = ai.RemoveRejectedToolBlocks(blocks)
 	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
 
-	// Persist interactive tool blocks created by ConvertAskQuestionBlocks
-	// to chat_tool_calls table (they were created post-forwarding and missed
-	// the normal upsertToolCallToDB path during the event loop).
-	if e.cfg.StreamingMessageID > 0 && e.cfg.SessionID != "" {
-		for i := range blocks {
-			b := &blocks[i]
-			if b.Type == "tool_use" && strings.HasPrefix(b.ID, "ask-") && b.Name == "AskUserQuestion" {
-				inputJSON, _ := json.Marshal(b.Input)
-				if err := UpsertToolCall(
-					e.cfg.StreamingMessageID, e.cfg.SessionID,
-					b.ID, b.Name, inputJSON,
-					b.Output, b.Status, b.Summary, b.Done,
-				); err != nil {
-					slog.Warn("upsert converted AskUserQuestion tool call failed",
-						slog.String("toolID", b.ID),
-						slog.String("err", err.Error()))
-				}
+	return blocks
+}
+
+// persistAskToolCalls writes converted AskUserQuestion tool blocks to
+// the chat_tool_calls table. These blocks were created by
+// ConvertAskQuestionBlocks and missed the normal upsertToolCallToDB
+// path during the event loop. Must be called after every postProcessBlocks
+// call that writes blocks to the DB (currently Finalize and handleResumeSplit).
+func (e *SessionExecutor) persistAskToolCalls(blocks []model.ContentBlock) {
+	if e.cfg.StreamingMessageID <= 0 || e.cfg.SessionID == "" {
+		return
+	}
+	for i := range blocks {
+		b := &blocks[i]
+		if b.Type == "tool_use" && strings.HasPrefix(b.ID, "ask-") && b.Name == "AskUserQuestion" {
+			inputJSON, _ := json.Marshal(b.Input)
+			if err := UpsertToolCall(
+				e.cfg.StreamingMessageID, e.cfg.SessionID,
+				b.ID, b.Name, inputJSON,
+				b.Output, b.Status, b.Summary, b.Done,
+			); err != nil {
+				slog.Warn("upsert converted AskUserQuestion tool call failed",
+					slog.String("toolID", b.ID),
+					slog.String("err", err.Error()))
 			}
 		}
 	}
+}
+
+// buildResult constructs the final RunResult from the executor's accumulated state.
+func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time) RunResult {
+	wallMs := int(time.Since(wallStart).Milliseconds())
+
+	// Apply finalize post-processing on blocks
+	blocks := e.postProcessBlocks(e.blocks)
 
 	// Inject WallMs into metadata
 	if e.responseMetadata == nil {
@@ -373,11 +387,16 @@ func (e *SessionExecutor) handleResumeSplit() {
 	slog.Info("resume_split received, finalizing current message and starting new one",
 		slog.String("session", e.cfg.SessionID))
 
-	// Finalize current streaming message
+	// Finalize current streaming message with post-processing
+	// (ask-question conversion, rejected-tool removal, thinking merge).
+	// Without this, <ask-question> tags in the pre-resume portion are
+	// persisted as raw text instead of tool_use blocks.
 	serializedBlocks := e.blocks
 	if serializedBlocks == nil {
 		serializedBlocks = []model.ContentBlock{}
 	}
+	serializedBlocks = e.postProcessBlocks(serializedBlocks)
+	e.persistAskToolCalls(serializedBlocks)
 	contentMap := map[string]any{contentKeyBlocks: serializedBlocks}
 	if e.responseMetadata != nil {
 		contentMap[contentKeyMetadata] = e.responseMetadata
@@ -495,8 +514,11 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 	return string(blocksJSON), blocks
 }
 
-// drainRawOutput reads remaining raw_output events from the channel without blocking.
-func drainRawOutput(eventCh <-chan ai.StreamEvent, rawOutput string) string {
+// drainRemainingEvents reads remaining events from the channel without blocking.
+// In addition to raw_output (for debugging), it also processes tool_use/tool_result
+// events that arrived after the main event loop exited (e.g., debouncer flushAll
+// on cancel), persisting them via AccumulateBlock + upsertToolCallToDB.
+func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, rawOutput string) string {
 	if eventCh == nil {
 		return rawOutput
 	}
@@ -506,11 +528,15 @@ func drainRawOutput(eventCh <-chan ai.StreamEvent, rawOutput string) string {
 			if !ok {
 				return rawOutput
 			}
-			if event.Type == "raw_output" {
+			switch event.Type {
+			case "raw_output":
 				if rawOutput != "" {
 					rawOutput += "\n"
 				}
 				rawOutput += event.RawOutput
+			case "tool_use", "tool_result":
+				ai.AccumulateBlock(&e.blocks, event)
+				e.upsertToolCallToDB(event)
 			}
 		default:
 			return rawOutput
@@ -525,8 +551,27 @@ func drainRawOutput(eventCh <-chan ai.StreamEvent, rawOutput string) string {
 // This replaces the old finalizeStreamRun function from handler/chat.go.
 // The caller is still responsible for WS terminal events and drain loop logic.
 func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEvent) RunResult {
-	blocks := result.Blocks
+	// Drain remaining events first (raw_output + tool calls flushed by debouncer
+	// after the main event loop exited on cancel). This updates e.blocks so that
+	// buildContentJSON includes the latest tool call data.
+	rawOutput := e.drainRemainingEvents(eventCh, result.RawOutput)
+
+	// Use e.blocks (may have been updated by drain) instead of result.Blocks snapshot
+	blocks := e.blocks
 	responseMetadata := result.Metadata
+
+	// Apply the same post-processing as buildResult.
+	// buildResult runs postProcessBlocks on a local copy of e.blocks,
+	// but Finalize uses e.blocks directly (for drained events) — so the
+	// conversion must be applied here too, otherwise DB stores the original
+	// unconverted blocks and the frontend renders ask-question as plain text
+	// instead of an interactive card.
+	blocks = e.postProcessBlocks(blocks)
+
+	// Persist converted AskUserQuestion tool calls to DB.
+	// Only done here (in Finalize), not in buildResult, to avoid
+	// duplicate records from the two postProcessBlocks calls.
+	e.persistAskToolCalls(blocks)
 
 	e.injectSessionMetadata(responseMetadata)
 
@@ -545,9 +590,6 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 			slog.Warn("failed to save message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
 		}
 	}
-
-	// Drain any remaining events from channel (collect raw_output)
-	rawOutput := drainRawOutput(eventCh, result.RawOutput)
 
 	// Save raw AI backend output for debugging/analysis
 	if rawOutput != "" {

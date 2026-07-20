@@ -1,6 +1,6 @@
 <template>
   <div class="code-preview-wrapper">
-    <pre class="raw-content-pre" :class="{ 'word-wrap': wordWrap, 'no-line-num': !showLineNumbers }" ref="codeRef" :data-file-path="filePath" :data-language="language" @click="handleClick">
+    <pre class="raw-content-pre" :class="{ 'word-wrap': wordWrap, 'no-line-num': !showLineNumbers }" ref="codeRef" :data-file-path="filePath" :data-language="language" @click="handleClick" @contextmenu="handleCodeContextMenu" v-long-press="handleCodeLongPress">
       <div v-if="stickyLines.length > 0" class="sticky-scroll-overlay">
         <div v-for="s in stickyLines" :key="s.lineNum" class="sticky-line"
           :data-line="s.lineNum" :style="{ top: s.top + 'px', height: s.height + 'px' }"
@@ -20,7 +20,7 @@ import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useStickyScroll } from '@/composables/useStickyScroll.ts'
 import { renderCodeLines } from '@/utils/codeRender.ts'
-import { tryResolveCodeString, stripCodeString, verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
+import { tryResolveCodeString, stripCodeString, verifyFilePaths, useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { store } from '@/stores/app.ts'
 import {
@@ -55,6 +55,7 @@ const codeHtml = ref('')
 const codeRef = ref(null)
 
 const quoteQuestion = useQuoteQuestion()
+const { handleContextMenu: handleCodeContextMenu, handleLongPress: handleCodeLongPress } = useFilePathNavHandlers()
 
 // Sticky scroll
 const { stickyLines, initSticky, teardownSticky, invalidateCache } = useStickyScroll()
@@ -330,7 +331,7 @@ onBeforeUnmount(() => {
     color: var(--text-muted);
     opacity: 0.5;
     font-size: 13px;
-    line-height: 20.8px;
+    line-height: inherit;
     border-right: 1px solid var(--border-color);
     background: var(--code-bg);
     flex-shrink: 0;
@@ -340,7 +341,7 @@ onBeforeUnmount(() => {
     white-space: pre;
     padding-left: 8px;
     font-size: 13px;
-    line-height: 20.8px;
+    line-height: inherit;
     position: relative;
     z-index: 1;
 }
@@ -354,15 +355,10 @@ onBeforeUnmount(() => {
     min-width: 0;
 }
 
-.raw-content-pre.word-wrap .sticky-line-num {
-    line-height: normal;
-}
-
 .raw-content-pre.word-wrap .sticky-code-text {
     white-space: pre-wrap;
     word-break: break-all;
     overflow-wrap: break-word;
-    line-height: normal;
 }
 </style>
 
@@ -429,6 +425,13 @@ onBeforeUnmount(() => {
     right: 0;
     width: 20px;
     height: 100%;
+    z-index: 2;
+}
+
+/* When a code-line has a diff marker, add right padding so text
+   doesn't overlap the clickable marker area */
+.code-line:has(> .diff-marker-inline) > .code-text {
+    padding-right: 24px;
 }
 
 /* Clickable file path in code strings */

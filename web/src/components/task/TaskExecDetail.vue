@@ -6,7 +6,7 @@
     </div>
 
     <!-- Scrollable message content -->
-    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @contextmenu="handleExecContextMenu" v-long-press="handleExecLongPress">
       <!-- Live preview indicator -->
       <div v-if="execStream.isStreaming.value" class="exec-live-bar">
         <span class="exec-live-dot"></span>
@@ -93,7 +93,7 @@ import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 import { useChatRender } from '@/composables/useChatRender.ts'
 import { useAgents } from '@/composables/useAgents'
-import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { useFilePathAnnotation, useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store as appStore } from '@/stores/app.ts'
@@ -118,6 +118,7 @@ const { refreshExecDetail } = useTaskTab()
 const identity = useSessionIdentity()
 const theme = inject('theme', ref('light'))
 const { openFilePath, verifyFilePaths } = useFilePathAnnotation()
+const { handleContextMenu: handleExecContextMenu, handleLongPress: handleExecLongPress } = useFilePathNavHandlers()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const switchTab = inject('switchTab', () => {})
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
@@ -363,6 +364,8 @@ function handleContentClick(event) {
     emit('open-file', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
   }
 }
+
+// ── Long-press / right-click on file-path annotation → open in file manager (handled by useFilePathNavHandlers) ──
 
 // ── Reset state when exec detail changes ──
 watch(() => props.execDetail, (newVal, oldVal) => {

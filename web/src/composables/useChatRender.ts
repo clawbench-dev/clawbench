@@ -10,6 +10,7 @@ import {
   extractScheduledTaskIds,
   stripScheduledTaskTags,
   detectAskQuestion,
+  stripAskQuestionTag,
   detectRagResults,
   stripRagResultsTags,
   taskChanged,
@@ -255,14 +256,9 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
             blockAskQuestions[askKey] = parsed
           }
         }
-        let afterAsk
-        if (askInClean.endIdx !== undefined) {
-          afterAsk = (cleanText.slice(0, askInClean.startIdx) + cleanText.slice(askInClean.endIdx)).trim()
-        } else {
-          afterAsk = cleanText.slice(0, askInClean.startIdx).trim()
-        }
-        afterAsk = stripScheduledTaskTags(afterAsk)
-        return afterAsk ? renderMarkdown(afterAsk, { skipEnhancements: deferEnhancements }) : ''
+        const afterAsk = stripAskQuestionTag(cleanText, askInClean)
+        cleanText = stripScheduledTaskTags(afterAsk)
+        return cleanText ? renderMarkdown(cleanText, { skipEnhancements: deferEnhancements }) : ''
       }
       cleanText = stripScheduledTaskTags(cleanText)
       // When rag-results is the only content, cleanText is empty.
@@ -286,14 +282,8 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
           blockAskQuestions[askKey] = parsed
         }
       }
-      // Remove the matched tag from the rendered text
-      let cleanText
-      if (askResult.endIdx !== undefined) {
-        cleanText = (text.slice(0, askResult.startIdx) + text.slice(askResult.endIdx)).trim()
-      } else {
-        cleanText = text.slice(0, askResult.startIdx).trim()
-      }
-      cleanText = stripScheduledTaskTags(cleanText)
+      // Remove the matched ask-question tag from the rendered text
+      const cleanText = stripScheduledTaskTags(stripAskQuestionTag(text, askResult))
       return cleanText ? renderMarkdown(cleanText, { skipEnhancements: deferEnhancements }) : ''
     }
 

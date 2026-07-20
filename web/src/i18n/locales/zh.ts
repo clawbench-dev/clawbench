@@ -31,6 +31,10 @@ export default {
     lineNumOn: '行号已显示',
     lineNumOff: '行号已隐藏',
   },
+  toolDetailBlock: {
+    wrapOn: '自动换行已开启',
+    wrapOff: '自动换行已关闭',
+  },
   tableBlock: {
     label: '表格',
     wrapOn: '自动换行已开启',
@@ -595,6 +599,7 @@ export default {
       allCopied: '已复制 {n} 项',
       allCut: '已剪切 {n} 项',
       archive: '打包下载',
+      share: '分享',
     },
     toast: {
       copied: '已复制',
@@ -662,9 +667,21 @@ export default {
       zoomIn: '放大',
       zoomOut: '缩小',
       fitWidth: '适合宽度',
+      openDirectory: '打开目录',
     },
     overlay: {
       back: '返回',
+    },
+    search: {
+      title: '搜索文件',
+      placeholder: '搜索文件名...',
+      recursive: '递归搜索',
+      noResults: '未找到文件',
+      searching: '搜索中...',
+      resultCount: '找到 {count} 个文件',
+      truncated: '仅显示前 {max} 个结果，请输入更精确的关键词',
+      searchFrom: '搜索范围: {path}',
+      reset: '重置',
     },
   },
   proxy: {

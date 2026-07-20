@@ -2361,14 +2361,14 @@ public class BackgroundService extends Service {
      * Post a system notification for an AI event.
      * Title/alert formatting aligned with DingTalk templates:
      *   session_update:
-     *     completed:          title=会话已完成, alert=responsePreview || 会话已完成
-     *     cancelled:          title=会话已取消, alert=responsePreview || 会话已取消
+     *     completed:          title=会话已完成, alert=plainPreview || 会话已完成
+     *     cancelled:          title=会话已取消, alert=plainPreview || 会话已取消
      *     permission_pending: title=操作需批准, alert=toolName || 操作需批准
      *   task_update:
      *     running:            title=定时任务已启动, alert=sessionTitle || 定时任务已启动
-     *     completed:          title=定时任务已完成, alert=responsePreview || 定时任务已完成
-     *     failed:             title=定时任务失败, alert=responsePreview || 定时任务失败
-     *     cancelled:          title=定时任务已取消, alert=responsePreview || 定时任务已取消
+     *     completed:          title=定时任务已完成, alert=plainPreview || 定时任务已完成
+     *     failed:             title=定时任务失败, alert=plainPreview || 定时任务失败
+     *     cancelled:          title=定时任务已取消, alert=plainPreview || 定时任务已取消
      */
     private void postEventNotification(String eventType, JSONObject data) {
         // Suppress notifications when app is in the foreground
@@ -2383,7 +2383,6 @@ public class BackgroundService extends Service {
             String executionId = data.optString("execution_id", "");
             String projectPath = data.optString("project_path", "");
             String sessionTitle = data.optString("session_title", "");
-            String responsePreview = data.optString("response_preview", "");
             String toolName = data.optString("tool_name", "");
 
             AppLog.i(TAG, "NativeWS: postEventNotification called, eventType=" + eventType + ", data=" + data.toString());
@@ -2392,15 +2391,16 @@ public class BackgroundService extends Service {
 
             String title;
             String alert;
+            String plain = plainPreview(data);
 
             if ("session_update".equals(eventType)) {
                 // Status-specific title/alert
                 if ("completed".equals(status)) {
                     title = getString(R.string.push_session_completed);
-                    alert = responsePreview.isEmpty() ? getString(R.string.push_session_completed) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? getString(R.string.push_session_completed) : plain;
                 } else if ("cancelled".equals(status)) {
                     title = getString(R.string.push_session_cancelled);
-                    alert = responsePreview.isEmpty() ? getString(R.string.push_session_cancelled) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? getString(R.string.push_session_cancelled) : plain;
                 } else if ("permission_pending".equals(status)) {
                     title = getString(R.string.push_action_required);
                     alert = toolName.isEmpty() ? getString(R.string.push_action_required) : toolName;
@@ -2416,13 +2416,13 @@ public class BackgroundService extends Service {
                     alert = sessionTitle.isEmpty() ? getString(R.string.push_task_started) : sessionTitle;
                 } else if ("completed".equals(status)) {
                     title = getString(R.string.push_task_completed);
-                    alert = responsePreview.isEmpty() ? getString(R.string.push_task_completed) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? getString(R.string.push_task_completed) : plain;
                 } else if ("failed".equals(status)) {
                     title = getString(R.string.push_task_failed);
-                    alert = responsePreview.isEmpty() ? getString(R.string.push_task_failed) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? getString(R.string.push_task_failed) : plain;
                 } else if ("cancelled".equals(status)) {
                     title = getString(R.string.push_task_cancelled);
-                    alert = responsePreview.isEmpty() ? getString(R.string.push_task_cancelled) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? getString(R.string.push_task_cancelled) : plain;
                 } else {
                     AppLog.i(TAG, "NativeWS: postEventNotification - unhandled task status=" + status + ", skipping");
                     return;
@@ -2618,6 +2618,48 @@ public class BackgroundService extends Service {
      */
     private static final int PUSH_ALERT_MAX_CODE_POINTS = 200;
 
+    /**
+     * Strip Markdown formatting from text for notification display.
+     * Android and browser notifications don't render Markdown, so
+     * raw syntax (asterisks, backticks, hashes, etc.) must be removed.
+     * If the server provides response_preview_plain, this is unnecessary,
+     * but serves as a safety net for older server versions.
+     */
+    private static String stripMarkdown(String s) {
+        if (s == null || s.isEmpty()) return s;
+        String clean = s
+                .replaceAll("(?s)```.*?```", "")       // code blocks
+                .replaceAll("`([^`]+)`", "$1")          // inline code
+                .replaceAll("(?m)^#{1,6}\\s+", "")      // headings
+                .replaceAll("\\*\\*([^*]+)\\*\\*", "$1") // bold
+                .replaceAll("\\*([^*]+)\\*", "$1")      // italic
+                .replaceAll("__([^_]+)__", "$1")        // bold underscore
+                .replaceAll("_([^_]+)_", "$1")          // italic underscore
+                .replaceAll("~~([^~]+)~~", "$1")        // strikethrough
+                .replaceAll("!\\[[^\\]]*\\]\\([^)]+\\)", "")    // images (remove entirely, before links)
+                .replaceAll("\\[([^\\]]+)\\]\\([^)]+\\)", "$1") // links (keep text)
+                .replaceAll("(?m)^>\\s?", "")           // blockquotes
+                .replaceAll("(?m)^\\s*[-*+]\\s+", "")   // unordered lists
+                .replaceAll("(?m)^\\s*\\d+\\.\\s+", "") // ordered lists
+                .replaceAll("[#*`_~\\[\\]()>|]", "")    // remaining syntax chars
+                .replaceAll("\\n+", " ")                // newlines → space
+                .trim();
+        return clean;
+    }
+
+    /**
+     * Get plain-text notification body from response preview data.
+     * Prefers response_preview_plain (server-stripped), falls back to
+     * stripMarkdown on response_preview for older server versions.
+     */
+    private static String plainPreview(JSONObject data) {
+        String plain = data.optString("response_preview_plain", "");
+        if (!plain.isEmpty()) return truncateForPush(plain);
+        String preview = data.optString("response_preview", "");
+        if (!preview.isEmpty()) return truncateForPush(stripMarkdown(preview));
+        return "";
+    }
+
     private static String truncateForPush(String s) {
         if (s.codePointCount(0, s.length()) <= PUSH_ALERT_MAX_CODE_POINTS) {
             return s;
@@ -2643,7 +2685,6 @@ public class BackgroundService extends Service {
             String executionId = data.optString("execution_id", "");
             String projectPath = data.optString("project_path", "");
             String sessionTitle = data.optString("session_title", "");
-            String responsePreview = data.optString("response_preview", "");
             String toolName = data.optString("tool_name", "");
 
             // Ensure notification channel exists
@@ -2666,13 +2707,14 @@ public class BackgroundService extends Service {
             // Title/alert formatting (aligned with DingTalk templates, same logic as postEventNotification)
             String title;
             String alert;
+            String plain = plainPreview(data);
             if ("session_update".equals(eventType)) {
                 if ("completed".equals(status)) {
                     title = context.getString(R.string.push_session_completed);
-                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_session_completed) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? context.getString(R.string.push_session_completed) : plain;
                 } else if ("cancelled".equals(status)) {
                     title = context.getString(R.string.push_session_cancelled);
-                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_session_cancelled) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? context.getString(R.string.push_session_cancelled) : plain;
                 } else if ("permission_pending".equals(status)) {
                     title = context.getString(R.string.push_action_required);
                     alert = toolName.isEmpty() ? context.getString(R.string.push_action_required) : toolName;
@@ -2685,13 +2727,13 @@ public class BackgroundService extends Service {
                     alert = sessionTitle.isEmpty() ? context.getString(R.string.push_task_started) : sessionTitle;
                 } else if ("completed".equals(status)) {
                     title = context.getString(R.string.push_task_completed);
-                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_task_completed) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? context.getString(R.string.push_task_completed) : plain;
                 } else if ("failed".equals(status)) {
                     title = context.getString(R.string.push_task_failed);
-                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_task_failed) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? context.getString(R.string.push_task_failed) : plain;
                 } else if ("cancelled".equals(status)) {
                     title = context.getString(R.string.push_task_cancelled);
-                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_task_cancelled) : truncateForPush(responsePreview);
+                    alert = plain.isEmpty() ? context.getString(R.string.push_task_cancelled) : plain;
                 } else {
                     return;
                 }

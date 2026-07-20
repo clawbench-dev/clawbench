@@ -1,7 +1,7 @@
 <template>
   <div class="markdown-preview">
     <!-- Rendered markdown -->
-    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @contextmenu="handleMarkdownContextMenu" v-long-press="handleMarkdownLongPress">
       <div class="markdown-content" v-html="renderedHtml" />
       <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
       <button
@@ -46,7 +46,7 @@ import CodePreview from './CodePreview.vue'
 import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
-import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { useFilePathAnnotation, useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store } from '@/stores/app.ts'
 import { dirName, splitPath, joinPath } from '@/utils/path.ts'
@@ -126,6 +126,7 @@ const { handleDblClick } = useDoubleClickCopy({
 })
 
 const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath } = useFilePathAnnotation()
+const { handleContextMenu: handleMarkdownContextMenu, handleLongPress: handleMarkdownLongPress } = useFilePathNavHandlers()
 
 function handleClick(event: MouseEvent) {
     // Code block header buttons (copy/wrap)
@@ -189,6 +190,8 @@ function handleClick(event: MouseEvent) {
         openFilePath(resolvedPath)
     })
 }
+
+// ── Long-press / right-click on file-path annotation → open in file manager (handled by useFilePathNavHandlers) ──
 
 function fixLocalImagePaths(html: string): string {
     const currentDir = props.file?.path ? dirName(props.file.path) : ''

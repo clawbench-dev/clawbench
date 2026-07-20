@@ -1,5 +1,5 @@
 import { escapeHtml } from '@/utils/html.ts'
-import { splitPath } from '@/utils/path.ts'
+import { splitPath, dirName } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
@@ -604,6 +604,9 @@ export function useFilePathAnnotation() {
         tryResolveCodeString,
         stripCodeString,
         openFilePath,
+        navToFileInManager,
+        useFilePathNavHandlers,
+        getFileAnnotationPath,
         dispatchScrollToLine,
         clearVerifiedCache,
     }
@@ -718,6 +721,111 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
         }
     }
     return ok
+}
+
+/**
+ * Extract file path from a file annotation element (.chat-file-path, .chat-file-open-btn, .code-file-path).
+ * Used by long-press / right-click handlers to get the resolved path for navToFileInManager.
+ */
+export function getFileAnnotationPath(target: EventTarget): string | null {
+    const el = (target as HTMLElement).closest('.chat-file-path, .chat-file-open-btn, .code-file-path')
+    if (!el) return null
+    return el.getAttribute('data-file-path')
+}
+
+/**
+ * Open the containing directory of a file/dir path in the file manager,
+ * then highlight and scroll to the target item.
+ * If the path is a directory itself, navigate into its parent and highlight it.
+ */
+let _lastNavTime = 0
+
+/** Reset internal debounce state (for testing). */
+export function _resetNavDebounce() { _lastNavTime = 0 }
+
+export async function navToFileInManager(resolvedPath: string): Promise<boolean> {
+    // Debounce: prevent double-fire from long-press + contextmenu on mobile
+    const now = Date.now()
+    if (now - _lastNavTime < 500) return false
+    _lastNavTime = now
+
+    const isExternal = resolvedPath.startsWith('/')
+
+    // Verify the path exists
+    let pathType: 'file' | 'dir' | 'none' = 'none'
+    try {
+        const resp = await fetch('/api/file/batch-exists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: [resolvedPath] }),
+        })
+        if (resp.ok) {
+            const data = await resp.json() as { results: Record<string, string> }
+            pathType = (data.results?.[resolvedPath] as 'file' | 'dir' | 'none') || 'none'
+        }
+    } catch { /* proceed as best-effort */ }
+
+    if (pathType === 'none') {
+        const { useToast } = await import('@/composables/useToast')
+        useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
+        return false
+    }
+
+    if (isExternal && pathType === 'dir') {
+        const { useToast } = await import('@/composables/useToast')
+        useToast().show(gt('file.toast.externalDirNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
+        return false
+    }
+
+    // Close any file overlay, switch to browse tab first
+    window.dispatchEvent(new CustomEvent('close-file-overlay'))
+    window.dispatchEvent(new CustomEvent('open-file-manager'))
+
+    // Wait for any in-flight directory load to finish before navigating
+    const maxWait = 3000
+    const waitStart = Date.now()
+    while (store.state.dirLoading && (Date.now() - waitStart) < maxWait) {
+        await new Promise(r => setTimeout(r, 50))
+    }
+
+    // Navigate to the containing directory using loadFiles directly
+    // (navigateToDir silently no-ops when dirLoading is true, which can race)
+    const parentDir = dirName(resolvedPath)
+    await store.loadFiles(parentDir)
+
+    // Delay highlight to let touch events from the long-press finish bubbling
+    // (otherwise contextmenu/click events may fire in the file manager and interfere)
+    setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: resolvedPath } }))
+    }, 300)
+
+    return true
+}
+
+/**
+ * Reusable contextmenu / long-press handlers for navigating to a file-path
+ * annotation in the file manager. Eliminates duplicate boilerplate across
+ * multiple components.
+ */
+export function useFilePathNavHandlers() {
+    const handleContextMenu = async (e: MouseEvent) => {
+        if (!e.target) return
+        const filePath = getFileAnnotationPath(e.target)
+        if (filePath) {
+            e.preventDefault()
+            await navToFileInManager(filePath)
+        }
+    }
+    const handleLongPress = async (e: TouchEvent) => {
+        const touch = e.touches[0]
+        const el = document.elementFromPoint(touch.clientX, touch.clientY)
+        if (!el) return
+        const filePath = getFileAnnotationPath(el)
+        if (filePath) {
+            await navToFileInManager(filePath)
+        }
+    }
+    return { handleContextMenu, handleLongPress }
 }
 
 /**

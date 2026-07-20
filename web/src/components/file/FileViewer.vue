@@ -111,7 +111,7 @@
               {{ t('file.header.openAsText') }}
             </button>
             <button v-if="isAppMode" class="open-as-text-btn" @click="handleShareExternal">
-              <Share :size="14" />
+              <Share2 :size="14" />
               {{ t('file.header.shareExternal') }}
             </button>
           </div>
@@ -211,7 +211,7 @@
 import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { Download, Code2, AlertTriangle, Share } from 'lucide-vue-next'
+import { Download, Code2, AlertTriangle, Share2 } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'

@@ -212,10 +212,16 @@ describe('useToolDetailDrawer', () => {
       expect(drawer.activeToolOverlay.value).toEqual({ msgId: '42', blockIdx: 3 })
     })
 
-    it('sets DeepThink display name override', () => {
+    it('sets DeepThink display name override when no display_name', () => {
       drawer.handleShowToolDetail({ name: 'DeepThink', input: {}, output: 'result', msgId: 1, blockIdx: 0 })
 
       expect(drawer.toolDetailData.value.displayNameOverride).toBe('chat.message.deepThinking')
+    })
+
+    it('does not override DeepThink display name when display_name is present', () => {
+      drawer.handleShowToolDetail({ name: 'DeepThink', display_name: 'explore', input: {}, output: 'result', msgId: 1, blockIdx: 0 })
+
+      expect(drawer.toolDetailData.value.displayNameOverride).toBe('')
     })
   })
 })

@@ -232,31 +232,141 @@ func TestSessionExecutor_RunWithChannel_FirstContentMs(t *testing.T) {
 	assert.GreaterOrEqual(t, result.FirstContentMs, 0)
 }
 
-// --- drainRawOutput ---
+// --- drainRemainingEvents ---
 
-func TestDrainRawOutput_NilChannel(t *testing.T) {
-	result := drainRawOutput(nil, "existing")
+func TestDrainRemainingEvents_NilChannel(t *testing.T) {
+	ctx := context.Background()
+	cfg := RunConfig{SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test", ChatRequest: ai.ChatRequest{Prompt: "hello"}}
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.drainRemainingEvents(nil, "existing")
 	assert.Equal(t, "existing", result)
 }
 
-func TestDrainRawOutput_EmptyChannel(t *testing.T) {
+func TestDrainRemainingEvents_EmptyChannel(t *testing.T) {
+	ctx := context.Background()
+	cfg := RunConfig{SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test", ChatRequest: ai.ChatRequest{Prompt: "hello"}}
+	executor := NewSessionExecutor(ctx, cfg)
 	ch := make(chan ai.StreamEvent)
 	close(ch)
-	result := drainRawOutput(ch, "existing")
+	result := executor.drainRemainingEvents(ch, "existing")
 	assert.Equal(t, "existing", result)
 }
 
-func TestDrainRawOutput_WithEvents(t *testing.T) {
+func TestDrainRemainingEvents_WithRawOutputEvents(t *testing.T) {
+	ctx := context.Background()
+	cfg := RunConfig{SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test", ChatRequest: ai.ChatRequest{Prompt: "hello"}}
+	executor := NewSessionExecutor(ctx, cfg)
 	ch := make(chan ai.StreamEvent, 3)
 	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained1"}
 	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained2"}
 	ch <- ai.StreamEvent{Type: "content", Content: "not raw"} // should be skipped
 	close(ch)
 
-	result := drainRawOutput(ch, "")
+	result := executor.drainRemainingEvents(ch, "")
 	assert.Contains(t, result, "drained1")
 	assert.Contains(t, result, "drained2")
 	assert.NotContains(t, result, "not raw")
+}
+
+func TestDrainRemainingEvents_ToolUseEvents(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: msgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	ch := make(chan ai.StreamEvent, 2)
+	ch <- ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Read", ID: "tool-drain-1", Input: `{"file_path":"/src/main.go"}`},
+	}
+	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "raw data"}
+	close(ch)
+
+	result := executor.drainRemainingEvents(ch, "")
+	assert.Contains(t, result, "raw data")
+
+	// Verify tool call block was accumulated
+	found := false
+	for _, b := range executor.blocks {
+		if b.Type == "tool_use" && b.ID == "tool-drain-1" {
+			found = true
+			assert.Equal(t, "Read", b.Name)
+		}
+	}
+	assert.True(t, found, "tool_use event should be accumulated into blocks")
+
+	// Verify tool call was persisted to DB
+	record, err := GetToolCall("tool-drain-1", msgID)
+	require.NoError(t, err)
+	require.NotNil(t, record, "tool call should be persisted via drainRemainingEvents")
+	assert.Equal(t, "Read", record.Name)
+}
+
+func TestDrainRemainingEvents_ToolResultEvents(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: msgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Pre-populate a tool_use block so tool_result can find it
+	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Bash", ID: "tool-drain-2", Input: `{"command":"ls"}`},
+	})
+
+	ch := make(chan ai.StreamEvent, 1)
+	ch <- ai.StreamEvent{
+		Type: "tool_result",
+		Tool: &ai.ToolCall{Name: "Bash", ID: "tool-drain-2", Output: "file1.go", Done: true, Status: "success"},
+	}
+	close(ch)
+
+	executor.drainRemainingEvents(ch, "")
+
+	// Verify tool result was accumulated into the existing block
+	found := false
+	for _, b := range executor.blocks {
+		if b.Type == "tool_use" && b.ID == "tool-drain-2" {
+			found = true
+			assert.Equal(t, "file1.go", b.Output)
+			assert.True(t, b.Done)
+		}
+	}
+	assert.True(t, found, "tool_result should update existing block")
 }
 
 // --- buildContentJSON additional coverage ---
@@ -746,14 +856,18 @@ func TestSessionExecutor_BuildResult_AskUserQuestionPersisted(t *testing.T) {
 		{Type: "text", Text: "partial response"},
 	}
 
-	// buildResult processes the blocks and should persist AskUserQuestion
+	// buildResult processes the blocks (pure transformation, no DB side effects).
 	wallStart := time.Now()
 	result := executor.buildResult(true, wallStart)
+
+	// AskUserQuestion tool calls are persisted only in Finalize, not buildResult.
+	// Simulate the full pipeline by calling persistAskToolCalls on the result blocks.
+	executor.persistAskToolCalls(result.Blocks)
 
 	// Verify the AskUserQuestion tool call was persisted
 	record, err := GetToolCall("ask-001", msgID)
 	require.NoError(t, err)
-	require.NotNil(t, record, "AskUserQuestion tool call should be persisted")
+	require.NotNil(t, record, "AskUserQuestion tool call should be persisted after persistAskToolCalls")
 	assert.Equal(t, "AskUserQuestion", record.Name)
 	_ = result
 }
