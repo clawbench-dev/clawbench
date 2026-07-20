@@ -1,6 +1,7 @@
 package dingtalk
 
 import (
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -366,6 +367,50 @@ func TestSendToAllSubscribers_DisabledMode(t *testing.T) {
 
 	if sendToAllSubscribers("Title", "Markdown") {
 		t.Error("expected false in disabled mode")
+	}
+}
+
+func TestTruncateForDingTalk_Empty(t *testing.T) {
+	if got := truncateForDingTalk(""); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestTruncateForDingTalk_Short(t *testing.T) {
+	input := "Hello, world!"
+	if got := truncateForDingTalk(input); got != input {
+		t.Errorf("expected %q, got %q", input, got)
+	}
+}
+
+func TestTruncateForDingTalk_ExactLimit(t *testing.T) {
+	input := strings.Repeat("x", dingtalkPreviewMaxRunes)
+	if got := truncateForDingTalk(input); got != input {
+		t.Errorf("expected no truncation at exact limit")
+	}
+}
+
+func TestTruncateForDingTalk_OverLimit(t *testing.T) {
+	input := strings.Repeat("x", dingtalkPreviewMaxRunes+100)
+	got := truncateForDingTalk(input)
+	if !strings.HasSuffix(got, "…") {
+		t.Error("expected ellipsis suffix")
+	}
+	// Should be exactly dingtalkPreviewMaxRunes + 1 (ellipsis)
+	if len([]rune(got)) != dingtalkPreviewMaxRunes+1 {
+		t.Errorf("expected %d runes, got %d", dingtalkPreviewMaxRunes+1, len([]rune(got)))
+	}
+}
+
+func TestTruncateForDingTalk_CJK(t *testing.T) {
+	// CJK characters are multi-byte in UTF-8 but single runes
+	input := strings.Repeat("中", dingtalkPreviewMaxRunes+50)
+	got := truncateForDingTalk(input)
+	if !strings.HasSuffix(got, "…") {
+		t.Error("expected ellipsis suffix for CJK")
+	}
+	if len([]rune(got)) != dingtalkPreviewMaxRunes+1 {
+		t.Errorf("expected %d runes, got %d", dingtalkPreviewMaxRunes+1, len([]rune(got)))
 	}
 }
 

@@ -74,11 +74,11 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 			return
 		}
 		if result.Err != "" {
-			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: "error", Error: result.Err})
+			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: eventTypeError, Error: result.Err})
 			return
 		}
 		if result.Empty {
-			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: "error", Error: "AI returned no content", Reason: ai.ReasonEmpty})
+			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: eventTypeError, Error: "AI returned no content", Reason: ai.ReasonEmpty})
 			return
 		}
 		if result.CancelReason != "" {

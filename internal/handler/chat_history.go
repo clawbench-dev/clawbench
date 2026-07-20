@@ -208,6 +208,11 @@ func ServeChatMessageUpdate(w http.ResponseWriter, r *http.Request) {
 
 // ServeToolCallDetail handles GET /api/ai/chat/tool-call — returns the full
 // input/output for a single tool call from the chat_tool_calls table.
+// Parameters: tool_id (required), message_id (required), session_id (optional).
+// When the tool_id+message_id lookup fails, falls back to tool_id+session_id
+// lookup if session_id is provided. This handles task executions where
+// AutoResumeBackend resume splits create multiple assistant messages and the
+// tool call may be stored under a different message_id.
 func ServeToolCallDetail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -219,6 +224,7 @@ func ServeToolCallDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	toolID := r.URL.Query().Get("tool_id")
 	messageIDStr := r.URL.Query().Get("message_id")
+	sessionID := r.URL.Query().Get("session_id")
 	if toolID == "" || messageIDStr == "" {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ToolIdAndMessageIdRequired")
 		return
@@ -231,8 +237,16 @@ func ServeToolCallDetail(w http.ResponseWriter, r *http.Request) {
 
 	record, err := service.GetToolCall(toolID, messageID)
 	if err != nil || record == nil {
-		writeLocalizedError(w, r, model.NotFound(fmt.Errorf("tool call not found"), "ToolCallNotFound"))
-		return
+		// Fallback: look up by tool_id + session_id when message_id lookup fails.
+		// This handles task executions with resume splits where the tool call
+		// is stored under a different assistant message than the last one.
+		if sessionID != "" {
+			record, err = service.GetToolCallBySession(toolID, sessionID)
+		}
+		if err != nil || record == nil {
+			writeLocalizedError(w, r, model.NotFound(fmt.Errorf("tool call not found"), "ToolCallNotFound"))
+			return
+		}
 	}
 
 	// Verify session is not soft-deleted, then check project ownership

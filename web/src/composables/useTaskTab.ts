@@ -297,10 +297,9 @@ export function useTaskTab() {
         selectedExecId.value = execId
         selectedExecData.value = (execData as TaskExecData | null) ?? null
         execDetailOpen.value = true
-        // If no execData provided, auto-fetch from API (e.g. from push notification deep link)
-        if (!execData) {
-            refreshExecDetail()
-        }
+        // Always refresh from API — the list data may lack content/sessionId,
+        // and running executions need the latest content for live preview
+        refreshExecDetail()
     }
 
     /** Open the latest execution detail for a task directly (skip history list) */
@@ -344,6 +343,8 @@ export function useTaskTab() {
                 const merged = { ...selectedExecData.value, ...safeFields }
                 // Only overwrite content if API returned a non-null value
                 if (exec.content != null) merged.content = exec.content
+                // Only set messageId if it's a valid DB ID (Go int64 zero-value = 0 is invalid)
+                if (!exec.messageId) delete merged.messageId
                 selectedExecData.value = merged
             }
         } catch {

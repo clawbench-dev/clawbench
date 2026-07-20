@@ -5,7 +5,26 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 )
+
+// dingtalkPreviewMaxRunes is the maximum number of runes for the response
+// preview in DingTalk Markdown messages. DingTalk sampleMarkdown supports
+// ~20000 bytes; 4000 runes (~12000 bytes for CJK) leaves room for the
+// message template and reply hint.
+const dingtalkPreviewMaxRunes = 4000
+
+// truncateForDingTalk truncates text to dingtalkPreviewMaxRunes with
+// ellipsis if needed. Truncates by rune boundary to avoid corrupted characters.
+func truncateForDingTalk(text string) string {
+	if text == "" {
+		return ""
+	}
+	if utf8.RuneCountInString(text) <= dingtalkPreviewMaxRunes {
+		return text
+	}
+	return string([]rune(text)[:dingtalkPreviewMaxRunes]) + "…"
+}
 
 // PushSessionEvent sends a DingTalk push notification for a session event.
 // Only processes completed/cancelled/permission_pending statuses.
@@ -25,7 +44,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 		markdown = fmt.Sprintf("### 会话已完成\n**会话**: %s\n\n**项目**: %s\n\n%s%s",
 			sessionTitle,
 			projectPath,
-			responsePreview,
+			truncateForDingTalk(responsePreview),
 			replyHint)
 	case "cancelled":
 		title = "会话已取消"
@@ -33,7 +52,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 		markdown = fmt.Sprintf("### 会话已取消\n**会话**: %s\n\n**项目**: %s\n\n%s%s",
 			sessionTitle,
 			projectPath,
-			responsePreview,
+			truncateForDingTalk(responsePreview),
 			replyHint)
 	case "permission_pending":
 		title = "操作需批准"
@@ -71,19 +90,19 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 		markdown = fmt.Sprintf("### 定时任务已完成\n**任务**: %s\n\n**项目**: %s\n\n%s",
 			taskName,
 			projectPath,
-			responsePreview)
+			truncateForDingTalk(responsePreview))
 	case "failed":
 		title = "定时任务失败"
 		markdown = fmt.Sprintf("### 定时任务失败\n**任务**: %s\n\n**项目**: %s\n\n%s",
 			taskName,
 			projectPath,
-			responsePreview)
+			truncateForDingTalk(responsePreview))
 	case "cancelled":
 		title = "定时任务已取消"
 		markdown = fmt.Sprintf("### 定时任务已取消\n**任务**: %s\n\n**项目**: %s\n\n%s",
 			taskName,
 			projectPath,
-			responsePreview)
+			truncateForDingTalk(responsePreview))
 	default:
 		return false
 	}

@@ -128,7 +128,7 @@
 
   <!-- Tool Detail Overlay -->
   <ToolDetailDrawer
-    :show="toolDetailDrawer.effectiveOpen.value"
+    :show="toolDetailDrawer.isOpen.value"
     :toolName="toolDetailOverlay.name"
     :toolSubagentType="toolDetailOverlay.subagentType"
     :toolSummary="toolDetailOverlay.summary"
@@ -257,7 +257,6 @@ function findToolBlock({ msgId, blockIdx }) {
 }
 
 const {
-  show: toolDetailShow,
   drawer: toolDetailDrawer,
   toolDetailData,
   toolDetailOverlay,
@@ -519,7 +518,7 @@ watch(
     return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name, summary: block.summary, display_name: block.display_name }
   },
   (data) => {
-    if (data === null || !toolDetailShow.value) return
+    if (data === null || !toolDetailDrawer.isOpen.value) return
     const { formatToolInput } = render
     const hasInput = data.input && Object.keys(data.input).length > 0
     toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name) : toolDetailData.value.outputHtml
@@ -531,7 +530,7 @@ watch(
 )
 
 // Clean up overlay state when overlay closes
-watch(() => toolDetailShow.value, (show) => {
+watch(() => toolDetailDrawer.isOpen.value, (show) => {
   if (!show) {
     activeToolOverlay.value = null
     // Clear tool update debounce timers

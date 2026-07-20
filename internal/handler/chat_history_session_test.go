@@ -474,6 +474,53 @@ func TestServeToolCallDetail_PostRejected(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
+func TestServeToolCallDetail_SessionIDFallback(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Test", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	// Simulate AutoResumeBackend: two assistant messages in the same session
+	msgID1, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", `{"blocks":[{"type":"tool_use","name":"Read","id":"toolu_split01","status":"success","done":true}]}`, nil, false, "")
+	require.NoError(t, err)
+
+	msgID2, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", `{"blocks":[{"type":"tool_use","name":"Write","id":"toolu_split02","status":"success","done":true}]}`, nil, false, "")
+	require.NoError(t, err)
+
+	// Tool call stored under msgID1 (first assistant message)
+	err = service.UpsertToolCall(msgID1, sessionID, "toolu_split01", "Read", json.RawMessage(`{"file_path":"/tmp/a.go"}`), "contents-a", "success", "", true)
+	require.NoError(t, err)
+
+	// Tool call stored under msgID2 (second assistant message)
+	err = service.UpsertToolCall(msgID2, sessionID, "toolu_split02", "Write", json.RawMessage(`{"file_path":"/tmp/b.go"}`), "contents-b", "success", "", true)
+	require.NoError(t, err)
+
+	// Case 1: Wrong message_id but correct session_id → should find via fallback
+	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/ai/chat/tool-call?tool_id=toolu_split01&message_id=%d&session_id=%s", msgID2, sessionID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeToolCallDetail, req)
+	assertOK(t, w)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "Read", result["name"])
+
+	// Case 2: No session_id, wrong message_id → 404
+	req2 := newRequest(t, http.MethodGet, fmt.Sprintf("/api/ai/chat/tool-call?tool_id=toolu_split01&message_id=%d", msgID2), nil)
+	req2 = withProjectCookie(req2, env.ProjectDir)
+	w2 := callHandler(ServeToolCallDetail, req2)
+	assert.Equal(t, http.StatusNotFound, w2.Code)
+
+	// Case 3: Correct message_id, no session_id → should still work (primary lookup)
+	req3 := newRequest(t, http.MethodGet, fmt.Sprintf("/api/ai/chat/tool-call?tool_id=toolu_split01&message_id=%d", msgID1), nil)
+	req3 = withProjectCookie(req3, env.ProjectDir)
+	w3 := callHandler(ServeToolCallDetail, req3)
+	assertOK(t, w3)
+	var result3 map[string]any
+	require.NoError(t, json.Unmarshal(w3.Body.Bytes(), &result3))
+	assert.Equal(t, "Read", result3["name"])
+}
+
 // --- ServeSessions GET with pagination ---
 
 func TestServeSessions_Get_WithLimitParam(t *testing.T) {

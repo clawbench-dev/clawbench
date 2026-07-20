@@ -526,15 +526,16 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 		ProjectPath: projectPath,
 	}
 	// For completed/failed/cancelled tasks, include session title (task name) and response preview
+	var responsePreviewRaw string
 	if status == "completed" || status == "cancelled" || status == "failed" {
 		if taskName != "" {
 			data.SessionTitle = taskName
 		}
 		if sessionID != "" {
-			raw := getSessionResponsePreviewRaw(sessionID)
-			data.ResponsePreview = truncatePreview(raw)
-			if raw != "" {
-				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(raw))
+			responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
+			data.ResponsePreview = truncatePreview(responsePreviewRaw)
+			if responsePreviewRaw != "" {
+				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 			}
 		}
 	}
@@ -556,9 +557,10 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	mgr.BroadcastEvent(msg)
 
 	// DingTalk push notification for task events.
+	// Pass raw (untruncated) preview — DingTalk package applies its own limit.
 	// If push succeeds, remove from pending_events to avoid duplicate
 	// Android notification when the app comes back online.
-	if dingtalk.IsStarted() && dingtalk.PushTaskEvent(taskID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath) {
+	if dingtalk.IsStarted() && dingtalk.PushTaskEvent(taskID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath) {
 		_ = DeletePendingEvent(msg.ID)
 	}
 }
@@ -708,6 +710,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		slog.Error("failed to create backend for task", slog.String("err", err.Error()))
 		cancel() // Release context resources
 		_ = UpdateExecutionStatus(sessionID, "failed")
+		SetSessionRunning(sessionID, false, true)
+		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		return
 	}
@@ -734,6 +738,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	if err != nil {
 		slog.Error("failed to execute stream for task", slog.String("err", err.Error()))
 		_ = UpdateExecutionStatus(sessionID, "failed")
+		SetSessionRunning(sessionID, false, true)
+		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		return
 	}
@@ -741,20 +747,21 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Create streaming placeholder message in DB (so SessionExecutor.Finalize
 	// can update it via FinalizeStreamingMessage, just like interactive sessions).
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	_, _ = AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
+	streamingMsgID, _ := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
 
 	// Delegate event loop to SessionExecutor (scheduled mode — no ask-question
 	// conversion, no cancel-reason tracking)
 	executor := NewSessionExecutor(ctx, RunConfig{
-		Mode:        ModeScheduled,
-		ProjectPath: projectPath,
-		BackendName: backendName,
-		SessionID:   sessionID,
-		AgentID:     task.AgentID,
-		ChatRequest: chatReq,
-		TaskID:      task.ID,
-		ExecutionID: executionID,
-		TriggerType: triggerType,
+		Mode:               ModeScheduled,
+		ProjectPath:        projectPath,
+		BackendName:        backendName,
+		SessionID:          sessionID,
+		AgentID:            task.AgentID,
+		ChatRequest:        chatReq,
+		TaskID:             task.ID,
+		ExecutionID:        executionID,
+		TriggerType:        triggerType,
+		StreamingMessageID: streamingMsgID,
 	})
 	runResult := executor.RunWithChannel(eventCh)
 
@@ -766,6 +773,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			slog.String("session_id", sessionID),
 		)
 		_ = UpdateExecutionStatus(sessionID, "cancelled")
+		SetSessionRunning(sessionID, false, true)
+		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "cancelled"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
 		UpdateTaskStats(task)
@@ -784,6 +793,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			slog.String("session_id", sessionID),
 		)
 		_ = UpdateExecutionStatus(sessionID, "failed")
+		SetSessionRunning(sessionID, false, true)
+		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution ended unexpectedly"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
 		UpdateTaskStats(task)
@@ -797,6 +808,13 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 
 	// Mark execution as completed
 	_ = UpdateExecutionStatus(sessionID, "completed")
+
+	// Send terminal "done" event to WS chat_stream subscribers so that
+	// useTaskExecStream (live preview) stops streaming. Without this,
+	// the frontend stays in streaming state indefinitely.
+	SetSessionRunning(sessionID, false, true) // skip event — we emit directly
+	ws.EmitToSession(sessionID, ai.StreamEvent{Type: "done"})
+
 	emitTaskEvent(fmt.Sprintf("%d", task.ID), "completed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 
 	// Update task execution stats
