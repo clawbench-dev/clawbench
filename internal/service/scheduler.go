@@ -791,6 +791,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			slog.String("session_id", sessionID),
 		)
 		_ = UpdateExecutionStatus(sessionID, "failed")
+		SetSessionRunning(sessionID, false, true)
+		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution ended unexpectedly"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
 		UpdateTaskStats(task)
