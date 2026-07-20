@@ -48,17 +48,16 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 	}
 
 	// On completion, include session title for push notification
-	var responsePreviewRaw string
 	if status == "completed" || status == "cancelled" {
 		if title, err := GetSessionTitle(sessionID); err == nil && title != "" {
 			data.SessionTitle = title
 		}
 		// Include response preview for DingTalk (Markdown) and Android/browser (plain text)
 		if status == "completed" {
-			responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
-			data.ResponsePreview = truncatePreview(responsePreviewRaw)
-			if responsePreviewRaw != "" {
-				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
+			raw := getSessionResponsePreviewRaw(sessionID)
+			data.ResponsePreview = truncatePreview(raw)
+			if raw != "" {
+				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(raw))
 			}
 		}
 	}
@@ -85,10 +84,9 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 	mgr.BroadcastEvent(msg)
 
 	// DingTalk push notification for session events.
-	// Pass raw (untruncated) preview — DingTalk package applies its own limit.
 	// If push succeeds, remove from pending_events to avoid duplicate
 	// Android notification when the app comes back online.
-	if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath, data.ToolName) {
+	if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath, data.ToolName) {
 		_ = DeletePendingEvent(msg.ID)
 	}
 }

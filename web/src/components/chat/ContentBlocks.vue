@@ -274,9 +274,7 @@ onMounted(() => {
 })
 async function fetchToolCallInputForAutoExpand(block, msgId) {
   try {
-    let url = `/api/ai/chat/tool-call?tool_id=${encodeURIComponent(block.id)}&message_id=${encodeURIComponent(msgId)}`
-    if (props.sessionId) url += `&session_id=${encodeURIComponent(props.sessionId)}`
-    const resp = await fetch(url)
+    const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(block.id)}&message_id=${encodeURIComponent(msgId)}`)
     if (!resp.ok) return
     const data = await resp.json()
     if (data.input) {

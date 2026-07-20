@@ -123,42 +123,6 @@ func TestUpsertAndGetToolCall(t *testing.T) {
 			t.Error("expected nil for wrong message_id")
 		}
 	})
-
-	t.Run("GetToolCallBySession finds record by session_id", func(t *testing.T) {
-		record, err := GetToolCallBySession("toolu_01", sessionID)
-		if err != nil {
-			t.Fatalf("GetToolCallBySession: %v", err)
-		}
-		if record == nil {
-			t.Fatal("GetToolCallBySession returned nil")
-		}
-		if record.ToolID != "toolu_01" {
-			t.Errorf("ToolID = %q, want %q", record.ToolID, "toolu_01")
-		}
-		if record.SessionID != sessionID {
-			t.Errorf("SessionID = %q, want %q", record.SessionID, sessionID)
-		}
-	})
-
-	t.Run("GetToolCallBySession returns nil for non-existent session", func(t *testing.T) {
-		record, err := GetToolCallBySession("toolu_01", "nonexistent-session")
-		if err != nil {
-			t.Fatalf("GetToolCallBySession: %v", err)
-		}
-		if record != nil {
-			t.Error("expected nil for non-existent session")
-		}
-	})
-
-	t.Run("GetToolCallBySession returns nil for non-existent tool_id", func(t *testing.T) {
-		record, err := GetToolCallBySession("toolu_99", sessionID)
-		if err != nil {
-			t.Fatalf("GetToolCallBySession: %v", err)
-		}
-		if record != nil {
-			t.Error("expected nil for non-existent tool_id")
-		}
-	})
 }
 
 // initTestDB creates a test database in the given directory

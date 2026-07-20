@@ -66,31 +66,3 @@ func GetToolCall(toolID string, messageID int64) (*ToolCallRecord, error) {
 	r.Done = doneInt != 0
 	return &r, nil
 }
-
-// GetToolCallBySession retrieves a tool call record by tool_id and session_id.
-// This is a fallback for task executions where the session has multiple assistant
-// messages (from AutoResumeBackend resume splits) and the tool call may be stored
-// under a different message_id than the one the frontend knows about.
-// Returns nil if not found.
-func GetToolCallBySession(toolID, sessionID string) (*ToolCallRecord, error) {
-	var r ToolCallRecord
-	var doneInt int
-	var inputStr string
-	err := dbRead.QueryRowContext(context.Background(), `
-		SELECT id, message_id, session_id, tool_id, name, input, output, status, done, summary, created_at
-		FROM chat_tool_calls WHERE tool_id = ? AND session_id = ?
-		ORDER BY created_at DESC LIMIT 1
-	`, toolID, sessionID).Scan(
-		&r.ID, &r.MessageID, &r.SessionID, &r.ToolID, &r.Name,
-		&inputStr, &r.Output, &r.Status, &doneInt, &r.Summary, &r.CreatedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("GetToolCallBySession: %w", err)
-	}
-	r.Input = json.RawMessage(inputStr)
-	r.Done = doneInt != 0
-	return &r, nil
-}

@@ -226,8 +226,8 @@ describe('stripMarkdownPreview', () => {
   it('truncates long text with ellipsis', () => {
     const longText = 'a'.repeat(200)
     const result = stripMarkdownPreview(longText, 100)
-    expect(result.length).toBe(101) // 100 + '…'
-    expect(result.endsWith('…')).toBe(true)
+    expect(result.length).toBe(103) // 100 + '...'
+    expect(result.endsWith('...')).toBe(true)
   })
 
   it('preserves short text without truncation', () => {
@@ -244,8 +244,8 @@ describe('stripMarkdownPreview', () => {
   })
 
   it('respects custom maxLen', () => {
-    // 'Hello world' is 11 chars, maxLen=7 -> 'Hello w' + '…' = 'Hello w…'
-    expect(stripMarkdownPreview('Hello world', 7)).toBe('Hello w…')
+    // 'Hello world' is 11 chars, maxLen=7 -> 'Hello w' + '...' = 'Hello w...'
+    expect(stripMarkdownPreview('Hello world', 7)).toBe('Hello w...')
   })
 })
 

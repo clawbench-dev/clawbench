@@ -10,7 +10,7 @@
       <template v-else>
         <Settings :size="20" class="settings-page__header-icon" />
         <span class="settings-page__title">{{ t('nav.settings') }}</span>
-        <span v-if="serverVersion" class="settings-page__version">{{ serverVersion }}</span>
+        <span v-if="serverVersion" class="settings-page__version">v{{ serverVersion }}</span>
       </template>
     </header>
     <div class="settings-page__body">
