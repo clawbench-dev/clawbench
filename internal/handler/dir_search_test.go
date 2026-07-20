@@ -3,7 +3,9 @@ package handler
 import (
 	"bufio"
 	"encoding/json"
+	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -335,3 +337,160 @@ func TestDirSearch_RecursiveBoolParsing(t *testing.T) {
 		t.Errorf("expected path src/util.go, got %s", r.Path)
 	}
 }
+
+func TestParseSearchParams_EmptyQuery(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=", nil)
+	w := httptest.NewRecorder()
+	_, ok := parseSearchParams(w, req)
+	if ok {
+		t.Error("expected ok=false for empty query")
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestParseSearchParams_QueryTooLong(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q="+strings.Repeat("a", 300), nil)
+	w := httptest.NewRecorder()
+	_, ok := parseSearchParams(w, req)
+	if ok {
+		t.Error("expected ok=false for too-long query")
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestParseSearchParams_Defaults(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=sub&q=test", nil)
+	w := httptest.NewRecorder()
+	params, ok := parseSearchParams(w, req)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if params.query != "test" {
+		t.Errorf("expected query=test, got %s", params.query)
+	}
+	if params.relPath != "sub" {
+		t.Errorf("expected relPath=sub, got %s", params.relPath)
+	}
+	if !params.recursive {
+		t.Error("expected recursive=true by default")
+	}
+	if params.limit != defaultSearchLimit {
+		t.Errorf("expected limit=%d, got %d", defaultSearchLimit, params.limit)
+	}
+}
+
+func TestParseSearchParams_RecursiveFalse(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&recursive=false", nil)
+	w := httptest.NewRecorder()
+	params, ok := parseSearchParams(w, req)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if params.recursive {
+		t.Error("expected recursive=false")
+	}
+}
+
+func TestParseSearchParams_InvalidRecursive(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&recursive=maybe", nil)
+	w := httptest.NewRecorder()
+	params, ok := parseSearchParams(w, req)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	// Invalid recursive value falls back to default true
+	if !params.recursive {
+		t.Error("expected recursive=true for invalid value fallback")
+	}
+}
+
+func TestParseSearchParams_LimitClamp(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&limit=9999", nil)
+	w := httptest.NewRecorder()
+	params, ok := parseSearchParams(w, req)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if params.limit != maxSearchLimit {
+		t.Errorf("expected limit clamped to %d, got %d", maxSearchLimit, params.limit)
+	}
+}
+
+func TestParseSearchParams_InvalidLimit(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&limit=abc", nil)
+	w := httptest.NewRecorder()
+	params, ok := parseSearchParams(w, req)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if params.limit != defaultSearchLimit {
+		t.Errorf("expected default limit=%d for invalid value, got %d", defaultSearchLimit, params.limit)
+	}
+}
+
+func TestParseSearchParams_NegativeLimit(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&limit=-5", nil)
+	w := httptest.NewRecorder()
+	params, ok := parseSearchParams(w, req)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if params.limit != defaultSearchLimit {
+		t.Errorf("expected default limit=%d for negative value, got %d", defaultSearchLimit, params.limit)
+	}
+}
+
+func TestParseSearchParams_PathLeadingSlash(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?q=test&path=/sub/dir", nil)
+	w := httptest.NewRecorder()
+	params, ok := parseSearchParams(w, req)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if params.relPath != "sub/dir" {
+		t.Errorf("expected relPath=sub/dir (leading slash stripped), got %s", params.relPath)
+	}
+}
+
+func TestClassifyEntry(t *testing.T) {
+	tests := []struct {
+		name     string
+		isDir    bool
+		fileName string
+		want     string
+	}{
+		{"directory", true, "src", entryTypeDir},
+		{"regular file", false, "main.go", entryTypeFile},
+		{"image png", false, "photo.png", entryTypeImage},
+		{"image jpg", false, "pic.jpg", entryTypeImage},
+		{"image gif", false, "anim.gif", entryTypeImage},
+		{"image webp", false, "icon.webp", entryTypeImage},
+		{"image svg", false, "logo.svg", entryTypeImage},
+		{"text file", false, "readme.txt", entryTypeFile},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := fakeDirEntry{isDir: tt.isDir, name: tt.fileName}
+			got := classifyEntry(d, tt.fileName)
+			if got != tt.want {
+				t.Errorf("classifyEntry(%v, %q) = %q, want %q", tt.isDir, tt.fileName, got, tt.want)
+			}
+		})
+	}
+}
+
+// fakeDirEntry implements fs.DirEntry for testing classifyEntry.
+type fakeDirEntry struct {
+	isDir bool
+	name  string
+}
+
+func (f fakeDirEntry) Name() string               { return f.name }
+func (f fakeDirEntry) IsDir() bool                { return f.isDir }
+func (f fakeDirEntry) Type() fs.FileMode          { return 0 }
+func (f fakeDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
