@@ -196,7 +196,7 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-page__header').exists()).toBe(true)
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(true)
     expect(wrapper.find('.settings-page__version').exists()).toBe(true)
-    expect(wrapper.find('.settings-page__version').text()).toBe('v1.2.3')
+    expect(wrapper.find('.settings-page__version').text()).toBe('1.2.3')
     expect(wrapper.find('.settings-page__back').exists()).toBe(false)
   })
 
@@ -212,7 +212,7 @@ describe('SettingsPage', () => {
 
   it('hides version badge when serverConfig has no version', () => {
     const wrapper = mountPage()
-    expect(wrapper.find('.settings-page__version').text()).toBe('v1.2.3')
+    expect(wrapper.find('.settings-page__version').text()).toBe('1.2.3')
   })
 
   // ─── Category routing (all via SettingsCategory now) ──
