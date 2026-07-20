@@ -30,13 +30,18 @@ interface ToolDetailDrawerOptions {
   chatRender: ChatRenderRef
   onFileOpen?: (path: string, lineStart?: number, lineEnd?: number) => void
   findLiveBlock?: (ids: { msgId: string | number; blockIdx: number }) => ToolBlock | null
+  /** Optional session ID for tool-call API fallback. When the session has multiple
+   *  assistant messages (e.g. AutoResumeBackend resume splits), the tool call may
+   *  be stored under a different message_id. Passing session_id enables the backend
+   *  to fall back to tool_id+session_id lookup. */
+  sessionId?: () => string | undefined
 }
 
 /**
  * Shared tool detail drawer logic for ChatPanelContent and TaskExecDetail.
  */
 export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
-  const { chatRender, onFileOpen, findLiveBlock } = options
+  const { chatRender, onFileOpen, findLiveBlock, sessionId } = options
   const { t } = useI18n()
 
   const drawer = useTabDrawer('chat')
@@ -127,7 +132,10 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       toolDetailData.value.inputHtml = '<div class="tool-call-loading"></div>'
     }
     try {
-      const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`)
+      let url = `/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`
+      const sid = sessionId?.()
+      if (sid) url += `&session_id=${encodeURIComponent(sid)}`
+      const resp = await fetch(url)
       if (!resp.ok) {
         // Retry on 404 (tool call may not yet be persisted during streaming)
         if (shouldRetryToolFetch(resp.status, _retryCount, show.value)) {
