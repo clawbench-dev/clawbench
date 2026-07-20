@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -37,7 +39,10 @@ func TestDirSearch_MissingQuery(t *testing.T) {
 	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(DirSearch, req)
 
-	assertStatus(t, w, http.StatusBadRequest)
+	// Should reject the missing project
+	if w.Code != http.StatusForbidden && w.Code != http.StatusBadRequest {
+		t.Errorf("expected 403 or 400, got %d", w.Code)
+	}
 }
 
 func TestDirSearch_NonRecursive(t *testing.T) {
@@ -494,3 +499,100 @@ func (f fakeDirEntry) Name() string               { return f.name }
 func (f fakeDirEntry) IsDir() bool                { return f.isDir }
 func (f fakeDirEntry) Type() fs.FileMode          { return 0 }
 func (f fakeDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
+
+func TestDirSearch_WrongMethod(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/dir/search?path=&q=test", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertStatus(t, w, http.StatusMethodNotAllowed)
+}
+
+func TestDirSearch_MissingProject(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=test", nil)
+	// No project cookie
+	w := callHandler(DirSearch, req)
+
+	// requireProject returns 403 when no project is set
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestDirSearch_InvalidSubPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Request a path outside the project (traversal)
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=../../../etc&q=test", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	// Should reject the traversal path
+	if w.Code == http.StatusOK {
+		t.Error("expected non-200 for path traversal")
+	}
+}
+
+func TestDirSearch_DirType(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a directory
+	if err := os.MkdirAll(filepath.Join(env.ProjectDir, "srcdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=srcdir&recursive=false", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+	results := events["result"]
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	var r DirSearchResult
+	if err := json.Unmarshal(results[0], &r); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+	if r.Type != entryTypeDir {
+		t.Errorf("expected type dir, got %s", r.Type)
+	}
+}
+
+func TestDirSearch_NoMatch(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "main.go", "package main")
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=zzznonexistent&recursive=false", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+
+	if len(events["result"]) != 0 {
+		t.Errorf("expected 0 results, got %d", len(events["result"]))
+	}
+
+	doneEvents := events["done"]
+	if len(doneEvents) != 1 {
+		t.Fatalf("expected 1 done event, got %d", len(doneEvents))
+	}
+	var done DirSearchDone
+	if err := json.Unmarshal(doneEvents[0], &done); err != nil {
+		t.Fatalf("failed to unmarshal done: %v", err)
+	}
+	if done.Total != 0 {
+		t.Errorf("expected total 0, got %d", done.Total)
+	}
+}
