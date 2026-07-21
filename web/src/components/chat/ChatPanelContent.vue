@@ -443,8 +443,9 @@ const manager = useSessionManager({
   disconnectStream: stream.disconnectStream,
   updateRenderedContents: (forceFull) => render.updateRenderedContents(forceFull),
   clearInputState: () => {
+    inputBarRef.value?.saveDraft()
     clearAll()
-    inputBarRef.value?.clearInput()
+    inputBarRef.value?.clearInputPreserveDraft()
     clearPendingFiles()
   },
   scrollBottom: (force) => scrollBottom(force),

@@ -539,9 +539,10 @@ watch(() => props.currentSessionId, (newId, oldId) => {
     const text = inputText.value
     if (text) {
       draftCache.set(oldId, text)
-    } else {
-      draftCache.delete(oldId)
     }
+    // Don't delete existing draft when inputText is empty — saveDraft() may have
+    // already saved it before clearInputPreserveDraft() cleared the visible text.
+    // Only clearInput() (called after message send) explicitly deletes the draft.
   }
   // Restore draft for the new session (or clear if none)
   inputText.value = newId ? (draftCache.get(newId) || '') : ''
@@ -683,6 +684,23 @@ function clearInput() {
   if (props.currentSessionId) {
     draftCache.delete(props.currentSessionId)
   }
+}
+
+/** Save current input text to draft cache without clearing it (called before session switch). */
+function saveDraft() {
+  if (props.currentSessionId) {
+    const text = inputText.value
+    if (text) {
+      draftCache.set(props.currentSessionId, text)
+    } else {
+      draftCache.delete(props.currentSessionId)
+    }
+  }
+}
+
+/** Clear visible input text but preserve the draft cache (used during session switch). */
+function clearInputPreserveDraft() {
+  inputText.value = ''
 }
 
 function handleAttachFile(filePath, isDir) {
@@ -847,6 +865,8 @@ watch(() => props.loading, (val) => {
 
 defineExpose({
   clearInput,
+  saveDraft,
+  clearInputPreserveDraft,
   inputText,
   deleteDraft: (sessionId) => { draftCache.delete(sessionId) },
   injectToInput,

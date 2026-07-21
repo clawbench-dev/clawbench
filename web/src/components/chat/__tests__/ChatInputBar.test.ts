@@ -409,6 +409,49 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.inputText).toBe('')
   })
 
+  it('saveDraft saves input text to draft cache', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'my draft'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.saveDraft()
+    expect(wrapper.vm.inputText).toBe('my draft')
+    // Clear only the visible text, preserve draft
+    wrapper.vm.clearInputPreserveDraft()
+    expect(wrapper.vm.inputText).toBe('')
+    // Switch to another session
+    await wrapper.setProps({ currentSessionId: 'sess-2' })
+    expect(wrapper.vm.inputText).toBe('')
+    // Switch back — draft should be restored
+    await wrapper.setProps({ currentSessionId: 'sess-1' })
+    expect(wrapper.vm.inputText).toBe('my draft')
+  })
+
+  it('clearInputPreserveDraft clears text but keeps draft for session switch', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'typing something'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.saveDraft()
+    wrapper.vm.clearInputPreserveDraft()
+    expect(wrapper.vm.inputText).toBe('')
+    // Switch to another session and back — draft is preserved
+    await wrapper.setProps({ currentSessionId: 'sess-2' })
+    expect(wrapper.vm.inputText).toBe('')
+    await wrapper.setProps({ currentSessionId: 'sess-1' })
+    expect(wrapper.vm.inputText).toBe('typing something')
+  })
+
+  it('draft is preserved across session switches via watcher', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'hello from session 1'
+    await wrapper.vm.$nextTick()
+    // Switch session via prop change (bypasses clearInputState, triggers watcher)
+    await wrapper.setProps({ currentSessionId: 'sess-2' })
+    expect(wrapper.vm.inputText).toBe('')
+    // Switch back
+    await wrapper.setProps({ currentSessionId: 'sess-1' })
+    expect(wrapper.vm.inputText).toBe('hello from session 1')
+  })
+
   it('injectToInput appends text on newline when existing content', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = 'existing'
