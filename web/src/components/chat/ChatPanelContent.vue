@@ -230,7 +230,11 @@ const { openFilePath } = useFilePathAnnotation()
 
 async function handleFileTagClick(filePath) {
     if (filePath) {
-        const ok = await openFilePath(filePath)
+        // Attachment paths from backend are absolute; strip projectRoot prefix
+        // so openFilePath doesn't treat in-project files as external.
+        const root = store.state.projectRoot
+        const relPath = root && filePath.startsWith(root + '/') ? filePath.slice(root.length + 1) : filePath
+        const ok = await openFilePath(relPath)
         if (ok) switchTab('browse')
     }
 }
