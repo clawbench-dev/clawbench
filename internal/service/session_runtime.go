@@ -121,7 +121,7 @@ func getSessionResponsePreviewRaw(sessionID string) string {
 		if err := json.Unmarshal([]byte(messages[i].Content), &content); err != nil {
 			continue
 		}
-		if preview := extractPreviewFromBlocks(content.Blocks); preview != "" {
+		if preview := extractPreviewFromBlocksRaw(content.Blocks); preview != "" {
 			return preview
 		}
 	}
