@@ -121,7 +121,7 @@ public class MainActivity extends AppCompatActivity {
     // TIMEOUT_MS, navigate back to the login page. Prevents the user from
     // being stuck on a black screen when the server is unreachable or slow.
     private Runnable connectionTimeoutRunnable;
-    private static final int CONNECTION_TIMEOUT_MS = 15_000;
+    private static final int CONNECTION_TIMEOUT_MS = 30_000;
 
     // Pending error message to deliver to the login page once it finishes loading.
     // Replaces the old fixed 300ms delay — see showLoginPage() and onPageFinished().
