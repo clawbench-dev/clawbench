@@ -605,7 +605,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// is created (line AddChatMessage streaming=true), the message stays streaming=1
 	// in DB forever. This handler finalizes it with an error, matching the pattern
 	// in handler/chat.go:443-461 for interactive sessions.
-	defer func() {
+		defer func() {
 		if r := recover(); r != nil {
 			slog.Error(
 				"scheduled task execution panicked",
@@ -622,6 +622,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			}
 			// Mark execution as failed
 			_ = UpdateExecutionStatus(sessionID, "failed")
+			s.runningExecutions.Delete(sessionID)
 			emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", "", sessionID, projectPath, task.Name)
 		}
 	}()
@@ -710,6 +711,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		slog.Error("failed to create backend for task", slog.String("err", err.Error()))
 		cancel() // Release context resources
 		_ = UpdateExecutionStatus(sessionID, "failed")
+		// No runningExecutions.Delete needed here — the entry hasn't been
+		// stored yet (Store happens after this check, at line ~728).
 		SetSessionRunning(sessionID, false, true)
 		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
@@ -738,6 +741,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	if err != nil {
 		slog.Error("failed to execute stream for task", slog.String("err", err.Error()))
 		_ = UpdateExecutionStatus(sessionID, "failed")
+		s.runningExecutions.Delete(sessionID)
 		SetSessionRunning(sessionID, false, true)
 		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
@@ -773,6 +777,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			slog.String("session_id", sessionID),
 		)
 		_ = UpdateExecutionStatus(sessionID, "cancelled")
+		s.runningExecutions.Delete(sessionID)
 		SetSessionRunning(sessionID, false, true)
 		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "cancelled"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
@@ -793,6 +798,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			slog.String("session_id", sessionID),
 		)
 		_ = UpdateExecutionStatus(sessionID, "failed")
+		s.runningExecutions.Delete(sessionID)
 		SetSessionRunning(sessionID, false, true)
 		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution ended unexpectedly"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
@@ -808,6 +814,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 
 	// Mark execution as completed
 	_ = UpdateExecutionStatus(sessionID, "completed")
+
+	// Remove from runningExecutions BEFORE emitting task_update event.
+	// Without this, the frontend's loadTasks() (triggered by the WS event)
+	// sees runningCount > 0 via GetRunningCounts(), causing the task list
+	// to show "running" even though the execution is already completed.
+	s.runningExecutions.Delete(sessionID)
+	// defer also calls Delete — that's harmless (double-delete is a no-op)
+	// and serves as a safety net for error/cancel paths.
 
 	// Send terminal "done" event to WS chat_stream subscribers so that
 	// useTaskExecStream (live preview) stops streaming. Without this,

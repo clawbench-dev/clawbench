@@ -128,7 +128,7 @@
 
   <!-- Tool Detail Overlay -->
   <ToolDetailDrawer
-    :show="toolDetailIsOpen.value"
+    :show="toolDetailDrawer.effectiveOpen.value"
     :toolName="toolDetailOverlay.name"
     :toolSubagentType="toolDetailOverlay.subagentType"
     :toolSummary="toolDetailOverlay.summary"
@@ -257,6 +257,7 @@ function findToolBlock({ msgId, blockIdx }) {
 }
 
 const {
+  drawer: toolDetailDrawer,
   isOpen: toolDetailIsOpen,
   toolDetailData,
   toolDetailOverlay,
@@ -268,6 +269,7 @@ const {
   closeOverlay: closeToolDetailOverlay,
 } = useToolDetailDrawer({
   chatRender: render,
+  tabId: 'chat',
   onFileOpen: async (path, lineStart, lineEnd) => {
     const ok = await openFilePath(path, lineStart, lineEnd)
     if (ok) switchTab('browse')

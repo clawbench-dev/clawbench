@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { shouldRetryToolFetch, resolveEffectiveMsgId, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import { appLog } from '@/utils/appLog'
@@ -27,6 +28,9 @@ interface ChatRenderRef {
 
 interface ToolDetailDrawerOptions {
   chatRender: ChatRenderRef
+  /** Tab ID this drawer belongs to (e.g. 'chat', 'tasks'). The drawer auto-hides
+   *  when the user switches away and auto-restores when switching back. */
+  tabId: string
   onFileOpen?: (path: string, lineStart?: number, lineEnd?: number) => void
   findLiveBlock?: (ids: { msgId: string | number; blockIdx: number }) => ToolBlock | null
   /** Optional session ID for tool-call API fallback. When the session has multiple
@@ -38,15 +42,14 @@ interface ToolDetailDrawerOptions {
 
 /**
  * Shared tool detail drawer logic for ChatPanelContent and TaskExecDetail.
- * Uses a simple ref instead of useTabDrawer because ToolDetailDrawer is a
- * BottomSheet (teleported to <body>) — it's a user-initiated overlay that
- * should persist across tab switches, not auto-hide when switching away.
+ * Uses useTabDrawer so the BottomSheet (teleported to <body>) is visually
+ * hidden when the owning tab is deactivated, and auto-restores on return.
  */
 export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
-  const { chatRender, onFileOpen, findLiveBlock, sessionId } = options
+  const { chatRender, onFileOpen, findLiveBlock, sessionId, tabId } = options
   const { t } = useI18n()
 
-  const isOpen = ref(false)
+  const drawer = useTabDrawer(tabId)
   const toolDetailData = ref({
     name: '' as string,
     subagentType: '' as string,
@@ -59,7 +62,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     _fetchIds: null as { toolId: string | number; msgId: string | number } | null,
   })
 
-  // Tracks which tool block is being shown for reactive updates (ChatPanelContent only)
+  // Tracks which tool block is being shown for reactive updates
   const activeToolOverlay = ref<{ msgId: string; blockIdx: number } | null>(null)
 
   // Fetch-in-flight guard: prevents concurrent fetchToolCallDetail calls from polling timer
@@ -86,7 +89,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     const hasInput = block.input && Object.keys(block.input).length > 0
     const hasOutput = !!block.output
 
-    isOpen.value = true
+    drawer.open()
     toolDetailData.value = {
       name: block.name || '',
       subagentType: block.display_name || (block.input as Record<string, unknown>)?.subagent_type as string || '',
@@ -138,10 +141,10 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       const resp = await fetch(url)
       if (!resp.ok) {
         // Retry on 404 (tool call may not yet be persisted during streaming)
-        if (shouldRetryToolFetch(resp.status, _retryCount, isOpen.value)) {
+        if (shouldRetryToolFetch(resp.status, _retryCount, drawer.isOpen.value)) {
           _fetchInFlight = false
           setTimeout(() => {
-            if (!isOpen.value) return
+            if (!drawer.isOpen.value) return
             let liveBlock: ToolBlock | null = null
             if (findLiveBlock && activeToolOverlay.value) {
               liveBlock = findLiveBlock(activeToolOverlay.value)
@@ -179,10 +182,10 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsLoadFailed'))
     } finally {
       _fetchInFlight = false
-      // If user clicked retry while fetch was in flight, re-fetch immediately
+      // If user clicked retry while a fetch was in flight, re-fetch immediately
       if (_retryRequested) {
         _retryRequested = false
-        if (isOpen.value && toolDetailData.value._fetchIds) {
+        if (drawer.isOpen.value && toolDetailData.value._fetchIds) {
           const { toolId, msgId } = toolDetailData.value._fetchIds
           let block: ToolBlock | null = null
           if (findLiveBlock && activeToolOverlay.value) {
@@ -196,22 +199,24 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
 
   function handleFileOpenInOverlay(payload: string | { path: string; lineStart?: number; lineEnd?: number }) {
     const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
-    isOpen.value = false
+    drawer.close()
     if (onFileOpen) {
       onFileOpen(path, lineStart, lineEnd)
     }
   }
 
   function closeOverlay() {
-    isOpen.value = false
+    drawer.close()
     _fetchInFlight = false
     _retryRequested = false
   }
 
-  const toolDetailOverlay = computed(() => ({ show: isOpen.value, ...toolDetailData.value }))
+  const toolDetailOverlay = computed(() => ({ show: drawer.effectiveOpen.value, ...toolDetailData.value }))
 
   return {
-    isOpen,
+    drawer,
+    isOpen: drawer.isOpen,
+    effectiveOpen: drawer.effectiveOpen,
     toolDetailData,
     toolDetailOverlay,
     activeToolOverlay,

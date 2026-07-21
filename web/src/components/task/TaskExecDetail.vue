@@ -39,7 +39,7 @@
 
     <!-- Tool Detail Overlay -->
     <ToolDetailDrawer
-      :show="toolDetailIsOpen.value"
+      :show="toolDetailDrawer.effectiveOpen.value"
       :toolName="toolDetailOverlay.name"
       :toolSubagentType="toolDetailOverlay.subagentType"
       :toolSummary="toolDetailOverlay.summary"
@@ -291,6 +291,7 @@ function findLiveToolBlock({ msgId, blockIdx }) {
 }
 
 const {
+  drawer: toolDetailDrawer,
   isOpen: toolDetailIsOpen,
   toolDetailOverlay,
   toolDetailData,
@@ -302,6 +303,7 @@ const {
   closeOverlay,
 } = useToolDetailDrawer({
   chatRender,
+  tabId: 'tasks',
   onFileOpen: (path, lineStart, lineEnd) => {
     openFilePath(path, lineStart, lineEnd)
     emit('open-file', { path, lineStart, lineEnd })
