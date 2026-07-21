@@ -1,6 +1,6 @@
 <template>
   <div class="chat-messages-wrapper">
-  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @scroll="handleScroll" @contextmenu="handleChatContextMenu" v-long-press="handleChatLongPress">
+  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onTableMouseDown" @touchstart="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @scroll="handleScroll" @contextmenu="handleChatContextMenu" v-long-press="handleChatLongPress">
     <!-- Lazy load feedback -->
     <div class="chat-load-area">
       <Transition name="load-hint-fade">
@@ -313,6 +313,10 @@ const SCROLL_DELTA_THRESHOLD = 10
 // Flag to suppress handleScroll button logic during programmatic smooth scroll
 let programmaticScrolling = false
 
+// Track active touch drag on the scroll container to prevent auto-scroll
+// from fighting the user's manual scroll gesture ("sticky抖动" fix).
+let userTouching = false
+
 // Throttle scrollTick for nearestUserMsgId recomputation
 let scrollTickTimer = null
 
@@ -386,6 +390,21 @@ function handleScroll() {
   }
 }
 
+// Touch tracking: during an active touch drag, pause auto-scroll so it
+// doesn't fight the user's scroll gesture (causing "sticky抖动").
+function onScrollAndTableTouchStart(e) {
+  userTouching = true
+  onTableTouchStart(e)  // preserve table-row-expand handling
+}
+
+function onScrollTouchEnd() {
+  // Use a short delay before re-enabling auto-scroll so the browser
+  // has time to fire the final scroll event with the user's target position.
+  // Without this delay, scrollToBottom fires immediately after touchend and
+  // snaps back to the bottom before handleScroll can set isAtBottom=false.
+  setTimeout(() => { userTouching = false }, 150)
+}
+
 // Hide scroll FAB on outside click
 function hideScrollFab() {
   scrolledUp.value = false
@@ -411,6 +430,9 @@ function scrollToBottom(force = false) {
   nextTick(() => {
     if (!messagesRef.value) return
     const el = messagesRef.value
+    // Don't auto-scroll while the user is actively touching/dragging the
+    // scroll container — otherwise auto-scroll fights the gesture (sticky抖动).
+    if (userTouching && !force) return
     if (force || isAtBottom.value) {
       el.scrollTop = el.scrollHeight
       // Verify the scroll actually reached the bottom — content may have grown
@@ -418,26 +440,26 @@ function scrollToBottom(force = false) {
       // after this callback completes (streaming text, throttled render flush).
       // Use requestAnimationFrame to re-check after the browser has laid out
       // the DOM changes, and do a second scroll if still not at the bottom.
+      // CRITICAL: only correct if the user hasn't scrolled up since we started.
+      // Without this check, a rAF from a prior scrollToBottom call will override
+      // the user's manual scroll-up, causing "sticky抖动" (snap-back jitter).
       requestAnimationFrame(() => {
-        if (!messagesRef.value) return
+        if (!messagesRef.value || !isAtBottom.value) return
         const el = messagesRef.value
         const gap = el.scrollHeight - el.scrollTop - el.clientHeight
         if (gap > 0) {
           el.scrollTop = el.scrollHeight
         }
-        // Final isAtBottom state based on actual scroll position after correction
-        isAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_EDGE_THRESHOLD
-        // For force scrolls, also do a delayed re-scroll to catch async content
-        // rendering (Mermaid, KaTeX, collapse transitions) that settles later.
-        if (force) {
-          setTimeout(() => {
-            if (!messagesRef.value) return
-            const el = messagesRef.value
-            el.scrollTop = el.scrollHeight
-            isAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_EDGE_THRESHOLD
-          }, 300)
-        }
       })
+      // For force scrolls, also do a delayed re-scroll to catch async content
+      // rendering (Mermaid, KaTeX, collapse transitions) that settles later.
+      if (force) {
+        setTimeout(() => {
+          if (!messagesRef.value || !isAtBottom.value) return
+          const el = messagesRef.value
+          el.scrollTop = el.scrollHeight
+        }, 300)
+      }
     }
   })
 }
@@ -572,6 +594,7 @@ watch(() => props.currentSessionId, () => {
   scrolledDown.value = false
   lastScrollTop = 0
   programmaticScrolling = false
+  userTouching = false
   clearTimeout(scrollUpTimer)
   clearTimeout(scrollDownTimer)
   clearTimeout(scrollTickTimer)
