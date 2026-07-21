@@ -206,3 +206,18 @@ gh release view $NEW_TAG
 - 使用 gh CLI 操作 GitHub，确保 gh 已认证
 - Release Notes 必须在流水线成功后更新，替换 GitHub 自动生成的简略说明
 - Release Notes 要对用户有价值：说明"做了什么"而不是"改了哪些文件"
+
+## PR 提交安全规则（2026-07-21 事故教训）
+
+### 背景
+
+PR #311 因 rebase 到远程旧分支 `fix/ci-compliance-and-tests`，导致该旧分支的全部 42 个历史提交被混入 PR。squash merge 后，这些不相关的变更（TTS 流式、FileEntry 迁移、DingTalk 预览优化等）被错误归入一个 commit，release note 也全部指向同一个 hash，与之前版本的内容严重重复。最终需要 force reset origin/main 才能清除脏历史。
+
+### 规则
+
+1. **创建分支前必须检查远程是否有同名分支**：如果 `git ls-remote --heads origin <branch-name>` 返回结果，必须用不同的分支名，避免 rebase/merge 时污染 PR diff
+2. **Rebase 前确认分支历史是干净的**：执行 `git log --oneline origin/main..HEAD` 检查待推送的提交数量，如果远超预期（本例中预期 6 个实际 42 个），说明分支历史有问题
+3. **推送前用 `gh pr diff --name-only` 预览变更文件列表**：确认只包含预期的文件，如果出现不相关的文件，必须先清理
+4. **Squash merge 不是万能的**：虽然 squash merge 把所有提交压成一个，但如果 PR 包含了不相关的旧提交，diff 内容仍然会全部合入 main，release note 也会把所有变更归到一个 commit
+5. **如果发现 PR 内容不干净，宁可关闭重开**：不要试图在脏分支上修修补补（rebase 旧分支 → 合并冲突 → 修冲突 → 又引入更多问题），直接关掉 PR，从干净的 base 创建新分支
+6. **删除已合并的远程特性分支**：合入后立即删除远程分支，防止后续误 rebase 到残留的旧分支上
