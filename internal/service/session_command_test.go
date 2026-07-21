@@ -2108,6 +2108,25 @@ func TestBuildChatRequest_ResumeWithForkContext(t *testing.T) {
 	assert.Contains(t, req.ForkContext, "previous answer")
 }
 
+// TestBuildChatRequest_EmptyFileDir_WorkDirEmpty reproduces the bug where
+// passing fileDir="" causes WorkDir to be empty, which makes ACP
+// ResumeSession/NewSession fail with "cwd must be an absolute path".
+func TestBuildChatRequest_EmptyFileDir_WorkDirEmpty(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	req := BuildChatRequest("hello", "sess-1", "/home/user/project", "claude", "", "", "", "", "", "", false)
+	assert.Empty(t, req.WorkDir, "fileDir='' should produce empty WorkDir (this is the bug)")
+}
+
+func TestBuildChatRequest_FileDirPassedThrough_WorkDir(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	req := BuildChatRequest("hello", "sess-1", "/home/user/project", "claude", "", "", "", "", "", "/home/user/project", false)
+	assert.Equal(t, "/home/user/project", req.WorkDir, "fileDir should be passed through to WorkDir")
+}
+
 // ============================================================================
 // appendMediaPrompt - empty system prompt with non-empty media prompt
 // ============================================================================

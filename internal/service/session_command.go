@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -252,7 +253,7 @@ func handleSessionPanic(cfg LaunchConfig, sessionID string, cancel context.Cance
 		cancel()
 		emitDrainEvent(sessionID, ai.StreamEvent{Type: eventTypeError, Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
 		errMsg := "AI internal error, please retry"
-		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: eventTypeError, contentKeyText: errMsg, "reason": ai.ReasonPanic}}})
+		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: "warning", contentKeyText: errMsg, "reason": ai.ReasonPanic}}})
 		_, _ = FinalizeStreamingMessage(cfg.ProjectPath, cfg.BackendName, sessionID, string(errContent))
 	}
 }
@@ -441,7 +442,8 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		slog.Error("failed to create backend", slog.String("backend", cfg.BackendName), slog.String("err", err.Error()))
 		errMsg := fmt.Sprintf("create backend: %v", err)
 		emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
-		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, errMsg, nil, false, ""); saveErr != nil {
+		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: "warning", contentKeyText: errMsg, "reason": ai.ReasonBackendExit}}})
+		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(errContent), nil, false, ""); saveErr != nil {
 			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
 		}
 		return streamRunResultShared{err: errMsg}
@@ -453,14 +455,22 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		}
 	}
 
-	chatReq := BuildChatRequest(cfg.Message, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", "", false)
+	// Resolve fileDir to absolute path, matching handler/chat.go logic.
+	// Without this, ACP ResumeSession/NewSession receives cwd="" and fails.
+	fileDir := cfg.ProjectPath
+	if absDir, err := filepath.Abs(cfg.ProjectPath); err == nil {
+		fileDir = absDir
+	}
+
+	chatReq := BuildChatRequest(cfg.Message, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, false)
 
 	eventCh, err := backend.ExecuteStream(ctx, chatReq)
 	if err != nil {
 		slog.Error("failed to start stream", slog.String("err", err.Error()))
 		errMsg := fmt.Sprintf("start stream: %v", err)
 		emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
-		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, errMsg, nil, false, ""); saveErr != nil {
+		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: "warning", contentKeyText: errMsg, "reason": ai.ReasonBackendExit}}})
+		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(errContent), nil, false, ""); saveErr != nil {
 			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
 		}
 		return streamRunResultShared{err: errMsg}
