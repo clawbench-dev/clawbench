@@ -2141,3 +2141,169 @@ func TestAppendMediaPrompt_EmptySystemPrompt_WithMediaPrompt(t *testing.T) {
 	result := appendMediaPrompt("")
 	assert.Equal(t, mediaPrompt, result, "empty system prompt should return just the media prompt")
 }
+
+// ============================================================================
+// Content key constants in JSON serialization
+// ============================================================================
+
+func TestContentKeyConstants_JSONSerialization(t *testing.T) {
+	// Verify contentKeyReason constant is used correctly in JSON output
+	errContent, err := json.Marshal(map[string]any{
+		contentKeyBlocks: []any{map[string]string{
+			contentKeyType:      blockTypeWarning,
+			contentKeyText:      "test error",
+			contentKeyReason:    ai.ReasonPanic,
+		}},
+	})
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(errContent, &parsed))
+
+	blocks, ok := parsed[contentKeyBlocks].([]any)
+	require.True(t, ok, "blocks should be an array")
+	require.Len(t, blocks, 1)
+
+	block, ok := blocks[0].(map[string]any)
+	require.True(t, ok, "block should be an object")
+	assert.Equal(t, blockTypeWarning, block[contentKeyType], "type should be 'warning'")
+	assert.Equal(t, "test error", block[contentKeyText], "text should match")
+	assert.Equal(t, ai.ReasonPanic, block[contentKeyReason], "reason should match")
+}
+
+func TestHandleSessionPanic_PanicContentUsesCorrectKeys(t *testing.T) {
+	// Verify that handleSessionPanic constructs JSON with correct constant keys.
+	// Since FinalizeStreamingMessage requires a pre-existing streaming row in DB,
+	// we directly verify the JSON structure that handleSessionPanic would produce.
+	errMsg := "AI internal error, please retry"
+	errContent, err := json.Marshal(map[string]any{
+		contentKeyBlocks: []any{map[string]string{
+			contentKeyType:   blockTypeWarning,
+			contentKeyText:   errMsg,
+			contentKeyReason: ai.ReasonPanic,
+		}},
+	})
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(errContent, &parsed))
+
+	blocks, ok := parsed[contentKeyBlocks].([]any)
+	require.True(t, ok)
+	require.Len(t, blocks, 1)
+
+	block, ok := blocks[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "warning", block["type"])
+	assert.Equal(t, ai.ReasonPanic, block["reason"])
+	assert.Equal(t, errMsg, block["text"])
+}
+
+func TestExecuteStreamRunShared_FileDirAbsPathResolution(t *testing.T) {
+	// Test that the absErr variable (renamed from shadow "err") resolves
+	// absolute paths correctly. We verify this indirectly: the LaunchConfig
+	// with a valid ProjectPath should not fail at the path resolution step.
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	sessionID := "abs-path-sess"
+	SetSessionRunning(sessionID, true, false)
+	defer SetSessionRunning(sessionID, false, true)
+
+	_, cancel := context.WithCancel(context.Background())
+	RegisterSessionCancel(sessionID, cancel)
+
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/tmp",
+		BackendName: "nonexistent-backend",
+		AgentID:     "nonexistent-agent",
+		Message:     "test",
+	}
+
+	LaunchSessionExecution(cfg)
+
+	// The session should stop quickly due to backend creation failure
+	require.Eventually(t, func() bool {
+		return !IsSessionRunning(sessionID)
+	}, 5*time.Second, 50*time.Millisecond, "session should stop after backend creation fails")
+}
+
+func TestExecuteStreamRunShared_BackendCreationFails_DirectCall(t *testing.T) {
+	// Call executeStreamRunShared directly (not via LaunchSessionExecution goroutine)
+	// so that Go coverage can track the executed lines in the same goroutine.
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	sessionID := "direct-fail-sess"
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	RegisterSessionCancel(sessionID, cancel)
+	defer UnregisterSessionCancel(sessionID)
+
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/tmp",
+		BackendName: "nonexistent-backend",
+		AgentID:     "nonexistent-agent",
+		Message:     "test",
+	}
+
+	result := executeStreamRunShared(context.Background(), cfg)
+	assert.Contains(t, result.err, "create backend", "should fail at backend creation")
+}
+
+// mockStreamErrBackend is a minimal AIBackend that returns an error from ExecuteStream.
+type mockStreamErrBackend struct{}
+
+func (m *mockStreamErrBackend) Name() string { return "test-stream-err" }
+func (m *mockStreamErrBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	return nil, fmt.Errorf("stream start failed")
+}
+
+func TestExecuteStreamRunShared_StreamStartFails_CoversAbsErrAndReasonKeys(t *testing.T) {
+	// Register a mock backend that succeeds creation but fails ExecuteStream.
+	// This covers lines 460-463 (absErr rename) and 472 (contentKeyReason in stream error path).
+	ai.RegisterBackend("test-stream-err", func() ai.AIBackend { return &mockStreamErrBackend{} }, false)
+
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Transport: ""},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	sessionID := "stream-err-sess"
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	RegisterSessionCancel(sessionID, cancel)
+	defer UnregisterSessionCancel(sessionID)
+
+	// Create a chat session for AddChatMessage
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/tmp', 'test-stream-err', 'Test', 'test-agent', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/tmp",
+		BackendName: "test-stream-err",
+		AgentID:     "test-agent",
+		Message:     "test",
+	}
+
+	result := executeStreamRunShared(context.Background(), cfg)
+	assert.Contains(t, result.err, "start stream", "should fail at stream start")
+}

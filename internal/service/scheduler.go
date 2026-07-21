@@ -605,7 +605,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// is created (line AddChatMessage streaming=true), the message stays streaming=1
 	// in DB forever. This handler finalizes it with an error, matching the pattern
 	// in handler/chat.go:443-461 for interactive sessions.
-		defer func() {
+	defer func() {
 		if r := recover(); r != nil {
 			slog.Error(
 				"scheduled task execution panicked",

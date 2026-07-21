@@ -50,6 +50,8 @@ const (
 	contentKeyText = "text"
 	// contentKeyType is the JSON key for type in content blocks.
 	contentKeyType = "type"
+	// contentKeyReason is the JSON key for reason in content blocks.
+	contentKeyReason = "reason"
 )
 
 // RunConfig configures a single SessionExecutor execution.
@@ -494,7 +496,7 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 		default:
 			errMsg, reason = "AI returned no content", ai.ReasonEmpty
 		}
-		blocks = append(blocks, model.ContentBlock{Type: "warning", Text: errMsg, Reason: reason})
+		blocks = append(blocks, model.ContentBlock{Type: blockTypeWarning, Text: errMsg, Reason: reason})
 		contentMap := map[string]any{contentKeyBlocks: blocks, contentKeyMetadata: meta}
 		if e.ctx.Err() == context.Canceled {
 			contentMap[statusCancelled] = true
