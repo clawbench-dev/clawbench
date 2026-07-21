@@ -2408,6 +2408,38 @@ func TestServeConfig_Patch_FRPFields(t *testing.T) {
 	assert.True(t, model.ConfigInstance.FRP.AutoPort)
 }
 
+func TestServeConfig_Patch_FileSearchDisplayLimit(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"file_search":{"display_limit":50}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 50, model.ConfigInstance.FileSearch.DisplayLimit)
+}
+
+func TestServeConfig_Patch_FileSearchDisplayLimitOutOfRange(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"file_search":{"display_limit":5}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "file_search.display_limit must be between 10 and 500")
+}
+
 // --- ServeConfigPassword: validation tests ---
 
 func TestServeConfigPassword_Validation_EmptyPassword(t *testing.T) {

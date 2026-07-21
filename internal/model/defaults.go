@@ -254,6 +254,11 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// --- DingTalk ---
 	// Bool zero-value: enabled defaults to false (intentional — requires config), no presence check needed.
 
+	// --- File Search ---
+	if cfg.FileSearch.DisplayLimit <= 0 {
+		cfg.FileSearch.DisplayLimit = 100
+	}
+
 	// --- PushMode ---
 	if cfg.PushMode == "" {
 		if cfg.DingTalk.Enabled {

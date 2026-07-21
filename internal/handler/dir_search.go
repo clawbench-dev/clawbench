@@ -119,7 +119,7 @@ func classifyEntry(d fs.DirEntry, name string) string {
 
 // DirSearch handles GET /api/dir/search — SSE stream for file search with fuzzy matching.
 // Query params: path (relative dir to search from), q (query string),
-// recursive (optional, default "true"), limit (optional, default 100, max 500).
+// recursive (optional, default "true"), limit (optional, default file_search.display_limit+1, max 500).
 func DirSearch(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return

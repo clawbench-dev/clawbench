@@ -81,6 +81,12 @@ type Config struct {
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
 	DingTalk    DingTalkConfig    `yaml:"dingtalk"`     // DingTalk enterprise bot push notifications
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "disabled"
+	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
+}
+
+// FileSearchConfig holds configuration for the file search feature.
+type FileSearchConfig struct {
+	DisplayLimit int `yaml:"display_limit"` // Max search results to display (default: 100); request limit is display_limit+1 to detect truncation
 }
 
 // TerminalConfig holds configuration for the interactive web terminal.

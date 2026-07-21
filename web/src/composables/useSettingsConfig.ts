@@ -338,6 +338,7 @@ const serverDefaults: Record<string, unknown> = {
   'frp.remote_port': 0,
   'frp.ssh_remote_port': 0,
   'push_mode': 'native',
+  'file_search.display_limit': 100,
 }
 
 // ── Agent preference helpers ──────────────────────────────

@@ -1567,6 +1567,37 @@ function currentFileForClipboard() {
     margin-left: auto;
 }
 
+.file-item.active .file-icon-wrap,
+.file-item.ms-selected .file-icon-wrap,
+.file-item.ctx-highlight .file-icon-wrap,
+.file-item.dir-highlight .file-icon-wrap {
+    border-radius: 6px;
+    padding: 2px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.file-item.active .file-icon-wrap {
+    background: color-mix(in srgb, white 50%, var(--accent-color, #4a90d9));
+}
+
+.file-item.ms-selected .file-icon-wrap,
+.file-item.ctx-highlight .file-icon-wrap,
+.file-item.dir-highlight .file-icon-wrap {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
+}
+
+.file-item.active .file-icon-wrap .file-icon,
+.file-item.ms-selected .file-icon-wrap .file-icon,
+.file-item.ctx-highlight .file-icon-wrap .file-icon,
+.file-item.dir-highlight .file-icon-wrap .file-icon {
+    width: 28px;
+    height: 28px;
+}
+
 .file-icon {
     flex-shrink: 0;
     width: 28px;
@@ -1705,6 +1736,22 @@ function currentFileForClipboard() {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 
+.grid-item.grid-active .grid-thumb,
+.grid-item.grid-dir-highlight .grid-thumb {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--bg-tertiary, #f5f5f5));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 40%, transparent);
+}
+
+.grid-item.ms-selected .grid-thumb {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, var(--bg-tertiary, #f5f5f5));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 30%, transparent);
+}
+
+.grid-item.ctx-highlight .grid-thumb {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--bg-tertiary, #f5f5f5));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 40%, transparent);
+}
+
 .grid-thumb {
     width: 100%;
     aspect-ratio: 1;
@@ -1715,6 +1762,7 @@ function currentFileForClipboard() {
     justify-content: center;
     background: var(--bg-tertiary, #f5f5f5);
     position: relative;
+    transition: background 0.15s, box-shadow 0.15s;
 }
 
 .grid-thumb .attach-badge {
@@ -1798,6 +1846,28 @@ function currentFileForClipboard() {
 
 [data-theme="dark"] .grid-item.grid-dir .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, var(--bg-secondary, #2a2a2a));
+}
+
+[data-theme="dark"] .grid-item.grid-active .grid-thumb,
+[data-theme="dark"] .grid-item.grid-dir-highlight .grid-thumb,
+[data-theme="dark"] .grid-item.ctx-highlight .grid-thumb {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, var(--bg-secondary, #2a2a2a));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 50%, transparent);
+}
+
+[data-theme="dark"] .grid-item.ms-selected .grid-thumb {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 14%, var(--bg-secondary, #2a2a2a));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 35%, transparent);
+}
+
+[data-theme="dark"] .file-item.active .file-icon-wrap {
+    background: color-mix(in srgb, white 30%, var(--accent-color, #4a90d9));
+}
+
+[data-theme="dark"] .file-item.ms-selected .file-icon-wrap,
+[data-theme="dark"] .file-item.ctx-highlight .file-icon-wrap,
+[data-theme="dark"] .file-item.dir-highlight .file-icon-wrap {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
 }
 
 /* Upload progress bar */
