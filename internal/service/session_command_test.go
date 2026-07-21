@@ -2150,9 +2150,9 @@ func TestContentKeyConstants_JSONSerialization(t *testing.T) {
 	// Verify contentKeyReason constant is used correctly in JSON output
 	errContent, err := json.Marshal(map[string]any{
 		contentKeyBlocks: []any{map[string]string{
-			contentKeyType:      blockTypeWarning,
-			contentKeyText:      "test error",
-			contentKeyReason:    ai.ReasonPanic,
+			contentKeyType:   blockTypeWarning,
+			contentKeyText:   "test error",
+			contentKeyReason: ai.ReasonPanic,
 		}},
 	})
 	require.NoError(t, err)
