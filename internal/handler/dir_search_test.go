@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"clawbench/internal/model"
 )
 
 // parseSearchSSEEvents reads SSE events from a dir search response body.
@@ -217,8 +219,8 @@ func TestDirSearch_Limit(t *testing.T) {
 	if err := json.Unmarshal(events["done"][0], &done); err != nil {
 		t.Fatalf("failed to unmarshal done: %v", err)
 	}
-	if done.Total != 3 {
-		t.Errorf("expected total 3 (sent count), got %d", done.Total)
+	if done.Total != 5 {
+		t.Errorf("expected total 5 (total match count), got %d", done.Total)
 	}
 	if !done.Truncated {
 		t.Error("expected truncated=true")
@@ -260,7 +262,7 @@ func TestDirSearch_SubdirectorySearch(t *testing.T) {
 	createTestFile(t, env.ProjectDir, "internal/handler/file.go", "package handler")
 	createTestFile(t, env.ProjectDir, "internal/service/svc.go", "package service")
 
-	// Search only within internal/handler
+	// Search only within internal/handler — paths should be project-root-relative
 	req := newRequest(t, http.MethodGet, "/api/dir/search?path=internal/handler&q=file&recursive=false", nil)
 	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(DirSearch, req)
@@ -279,6 +281,10 @@ func TestDirSearch_SubdirectorySearch(t *testing.T) {
 	}
 	if r.Name != "file.go" {
 		t.Errorf("expected name file.go, got %s", r.Name)
+	}
+	// Path should be project-root-relative, not relative to the search directory
+	if r.Path != "internal/handler/file.go" {
+		t.Errorf("expected path internal/handler/file.go, got %s", r.Path)
 	}
 }
 
@@ -383,8 +389,9 @@ func TestParseSearchParams_Defaults(t *testing.T) {
 	if !params.recursive {
 		t.Error("expected recursive=true by default")
 	}
-	if params.limit != defaultSearchLimit {
-		t.Errorf("expected limit=%d, got %d", defaultSearchLimit, params.limit)
+	expectedDefaultLimit := model.ConfigInstance.FileSearch.DisplayLimit + 1
+	if params.limit != expectedDefaultLimit {
+		t.Errorf("expected limit=%d, got %d", expectedDefaultLimit, params.limit)
 	}
 }
 
@@ -432,8 +439,8 @@ func TestParseSearchParams_InvalidLimit(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
-	if params.limit != defaultSearchLimit {
-		t.Errorf("expected default limit=%d for invalid value, got %d", defaultSearchLimit, params.limit)
+	if params.limit != model.ConfigInstance.FileSearch.DisplayLimit+1 {
+		t.Errorf("expected default limit=%d for invalid value, got %d", model.ConfigInstance.FileSearch.DisplayLimit+1, params.limit)
 	}
 }
 
@@ -444,8 +451,8 @@ func TestParseSearchParams_NegativeLimit(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
-	if params.limit != defaultSearchLimit {
-		t.Errorf("expected default limit=%d for negative value, got %d", defaultSearchLimit, params.limit)
+	if params.limit != model.ConfigInstance.FileSearch.DisplayLimit+1 {
+		t.Errorf("expected default limit=%d for negative value, got %d", model.ConfigInstance.FileSearch.DisplayLimit+1, params.limit)
 	}
 }
 

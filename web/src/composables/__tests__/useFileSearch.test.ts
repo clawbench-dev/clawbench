@@ -53,6 +53,7 @@ describe('useFileSearch', () => {
     const { state } = useFileSearch()
     expect(state.query).toBe('')
     expect(state.recursive).toBe(true)
+    expect(state.scope).toBe('current')
     expect(state.results).toEqual([])
     expect(state.searching).toBe(false)
     expect(state.total).toBe(0)
@@ -197,5 +198,45 @@ describe('useFileSearch', () => {
     es.onerror?.()
 
     expect(state.searching).toBe(false)
+  })
+
+  it('scope=current uses currentDir as search path', () => {
+    const { state, startSearch } = useFileSearch()
+    state.query = 'test'
+    state.scope = 'current'
+    startSearch('internal/handler')
+    vi.advanceTimersByTime(300)
+
+    expect(state.searchBasePath).toBe('internal/handler')
+    expect(MockEventSource.instances[0].url).toContain('path=internal%2Fhandler')
+  })
+
+  it('scope=global uses empty string as search path', () => {
+    const { state, startSearch } = useFileSearch()
+    state.query = 'test'
+    state.scope = 'global'
+    startSearch('internal/handler')
+    vi.advanceTimersByTime(300)
+
+    expect(state.searchBasePath).toBe('internal/handler')
+    // When scope is global, search from project root (empty path)
+    expect(MockEventSource.instances[0].url).toContain('path=')
+    expect(MockEventSource.instances[0].url).not.toContain('path=internal')
+  })
+
+  it('effectiveDir returns empty string when scope is global', () => {
+    const { state, effectiveDir, startSearch } = useFileSearch()
+    state.query = 'test'
+    state.scope = 'global'
+    startSearch('internal/handler')
+    expect(effectiveDir.value).toBe('')
+  })
+
+  it('effectiveDir returns searchBasePath when scope is current', () => {
+    const { state, effectiveDir, startSearch } = useFileSearch()
+    state.query = 'test'
+    state.scope = 'current'
+    startSearch('internal/handler')
+    expect(effectiveDir.value).toBe('internal/handler')
   })
 })

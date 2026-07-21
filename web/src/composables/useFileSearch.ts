@@ -1,5 +1,6 @@
-import { reactive } from 'vue'
+import { reactive, computed } from 'vue'
 import { appLog } from '@/utils/appLog'
+import { useSettingsConfig } from '@/composables/useSettingsConfig'
 
 export interface FileSearchResult {
   name: string
@@ -8,9 +9,12 @@ export interface FileSearchResult {
   matchedIndices: number[]
 }
 
+export type SearchScope = 'current' | 'global'
+
 export interface FileSearchState {
   query: string
   recursive: boolean
+  scope: SearchScope
   results: FileSearchResult[]
   searching: boolean
   total: number
@@ -19,18 +23,27 @@ export interface FileSearchState {
 }
 
 const DEBOUNCE_MS = 300
-const DEFAULT_LIMIT = 100
 
 export function useFileSearch() {
+  const { getServerValueWithDefault } = useSettingsConfig()
+
+  function getDisplayLimit(): number {
+    const val = getServerValueWithDefault('file_search.display_limit')
+    return typeof val === 'number' && val >= 10 && val <= 500 ? val : 100
+  }
+
   const state = reactive<FileSearchState>({
     query: '',
     recursive: true,
+    scope: 'current',
     results: [],
     searching: false,
     total: 0,
     truncated: false,
     searchBasePath: '',
   })
+
+  const effectiveDir = computed(() => state.scope === 'global' ? '' : state.searchBasePath)
 
   let eventSource: EventSource | null = null
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -73,21 +86,25 @@ export function useFileSearch() {
     state.total = 0
     state.truncated = false
 
+    // When scope is 'global', always search from project root (empty string)
+    const searchDir = state.scope === 'global' ? '' : dir
+
     if (immediate) {
-      openSSE(dir)
+      openSSE(searchDir)
     } else {
       debounceTimer = setTimeout(() => {
-        openSSE(dir)
+        openSSE(searchDir)
       }, DEBOUNCE_MS)
     }
   }
 
   function openSSE(dir: string) {
+    const displayLimit = getDisplayLimit()
     const params = new URLSearchParams()
     params.set('path', dir || '')
     params.set('q', state.query.trim())
     params.set('recursive', state.recursive ? 'true' : 'false')
-    params.set('limit', String(DEFAULT_LIMIT))
+    params.set('limit', String(displayLimit + 1))
 
     const url = `/api/dir/search?${params.toString()}`
     appLog.d('FileSearch', 'opening SSE', url)
@@ -144,5 +161,5 @@ export function useFileSearch() {
     }
   }
 
-  return { state, startSearch, cancelSearch, reset }
+  return { state, effectiveDir, startSearch, cancelSearch, reset, getDisplayLimit }
 }

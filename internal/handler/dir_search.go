@@ -35,9 +35,8 @@ var ignoredSearchDirs = map[string]bool{
 }
 
 const (
-	maxSearchQueryLen  = 256 // Maximum query string length
-	maxSearchLimit     = 500 // Maximum number of results a client can request
-	defaultSearchLimit = 100 // Default number of results
+	maxSearchQueryLen = 256 // Maximum query string length
+	maxSearchLimit    = 500 // Maximum number of results a client can request
 
 	entryTypeFile  = "file"
 	entryTypeDir   = "dir"
@@ -94,7 +93,7 @@ func parseSearchParams(w http.ResponseWriter, r *http.Request) (dirSearchParams,
 		}
 	}
 
-	limit := defaultSearchLimit
+	limit := model.ConfigInstance.FileSearch.DisplayLimit + 1
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
@@ -158,9 +157,11 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 
 	// Streaming search: walk + fuzzy match + push results on the fly
 	var sentCount int
+	var totalMatchCount int
 	var truncated bool
 
 	onMatch := func(name, relPathStr, entryType string, matchedIndexes []int) {
+		totalMatchCount++
 		if sentCount >= params.limit {
 			truncated = true
 			return
@@ -187,9 +188,9 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if params.recursive {
-		walkAndMatchRecursive(ctx, absPath, absPath, params.query, onMatch)
+		walkAndMatchRecursive(ctx, absPath, basePath, params.query, onMatch)
 	} else {
-		walkAndMatchFlat(ctx, absPath, absPath, params.query, onMatch)
+		walkAndMatchFlat(ctx, absPath, basePath, params.query, onMatch)
 	}
 
 	// Check if context was cancelled
@@ -200,8 +201,8 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	default:
 	}
 
-	// Send done event — total is the number of results sent; truncated indicates more exist
-	done := DirSearchDone{Total: sentCount, Truncated: truncated}
+	// Send done event — total is the total number of matches found; truncated indicates more exist
+	done := DirSearchDone{Total: totalMatchCount, Truncated: truncated}
 	data, _ := json.Marshal(done)
 	_, _ = fmt.Fprintf(w, "event: done\ndata: %s\n\n", data)
 	if canFlush {
