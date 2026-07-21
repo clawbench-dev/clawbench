@@ -8,6 +8,12 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+// Mock navToFileInManager
+const mockNavToFileInManager = vi.fn().mockResolvedValue(true)
+vi.mock('@/composables/useFilePathAnnotation', () => ({
+  navToFileInManager: (...args: any[]) => mockNavToFileInManager(...args),
+}))
+
 // Mock useFileSearch to control state
 const mockState = {
   query: '',
@@ -55,6 +61,11 @@ const i18n = createI18n({
           searchFrom: 'From: {path}',
           reset: 'Reset',
           scopeGlobal: 'Global search',
+        },
+      },
+      chat: {
+        attach: {
+          openDirectory: 'Open directory',
         },
       },
     },
@@ -311,5 +322,40 @@ describe('FileSearchDrawer', () => {
     await wrapper.find('.fs-result-item').trigger('click')
     expect(wrapper.emitted('navigateDir')![0][0]).toBe('')
     expect(wrapper.emitted('selectFile')![0][0]).toBe('main.go')
+  })
+
+  it('renders open directory button on each result', () => {
+    mockState.query = 'main'
+    mockState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [0, 1, 2, 3] },
+    ]
+    mockState.total = 1
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.fs-result-dir-btn').exists()).toBe(true)
+  })
+
+  it('clicking open directory button calls navToFileInManager and closes drawer', async () => {
+    mockState.query = 'main'
+    mockState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [0, 1, 2, 3] },
+    ]
+    mockState.total = 1
+    const wrapper = mountDrawer()
+    await wrapper.find('.fs-result-dir-btn').trigger('click')
+    expect(mockNavToFileInManager).toHaveBeenCalledWith('cmd/main.go')
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('clicking open directory button does not trigger result click', async () => {
+    mockState.query = 'main'
+    mockState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [0, 1, 2, 3] },
+    ]
+    mockState.total = 1
+    const wrapper = mountDrawer()
+    await wrapper.find('.fs-result-dir-btn').trigger('click')
+    // Should NOT emit selectFile or navigateDir (those are from onResultClick)
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
   })
 })

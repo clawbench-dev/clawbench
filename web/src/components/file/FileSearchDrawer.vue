@@ -66,6 +66,13 @@
                 <span class="fs-result-name" v-html="highlightName(r.name, r.matchedIndices)" />
                 <span class="fs-result-path">{{ formatPath(r.path) }}</span>
               </div>
+              <button
+                class="fs-result-dir-btn"
+                :title="t('chat.attach.openDirectory')"
+                @click.stop="onOpenDir(r)"
+              >
+                <FolderOpen :size="16" />
+              </button>
             </div>
             <div v-if="search.state.truncated" class="fs-truncated">
               {{ t('file.search.truncated') }}
@@ -80,12 +87,13 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, FolderTree, Globe, RotateCcw } from 'lucide-vue-next'
+import { Search, FolderTree, Globe, RotateCcw, FolderOpen } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import { useFileSearch, type FileSearchResult } from '@/composables/useFileSearch'
+import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import { appLog } from '@/utils/appLog'
 import { isThumbableExt } from '@/utils/fileManager'
 
@@ -189,6 +197,12 @@ function onResultClick(r: FileSearchResult) {
     emit('navigateDir', dir)
     emit('selectFile', r.path)
   }
+}
+
+function onOpenDir(r: FileSearchResult) {
+  appLog.d('FileSearch', 'open directory', r.path)
+  handleClose()
+  navToFileInManager(r.path)
 }
 
 const thumbErrors = ref(new Set<string>())
@@ -363,6 +377,26 @@ function formatPath(path: string): string {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.fs-result-dir-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.fs-result-dir-btn:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.06));
+  color: var(--accent-color, #4a90d9);
 }
 
 .fs-truncated {
