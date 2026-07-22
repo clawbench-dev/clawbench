@@ -518,6 +518,13 @@ onBeforeUnmount(() => {
     color: var(--accent-color);
 }
 .overlay-close-btn {
+    background: #b91c1c;
+    border-radius: 0;
+    color: #fff;
+}
+.overlay-close-btn:hover {
+    background: #991b1b;
+    color: #fff;
 }
 
 .wrap-check {
