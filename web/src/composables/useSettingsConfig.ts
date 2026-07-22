@@ -252,6 +252,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   sortField: null,
   sortDir: 'asc',
   uiScale: 1,
+  recentFilesCount: 10,
 }
 
 // Build reactive local config from legacy localStorage + defaults

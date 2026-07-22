@@ -1,10 +1,15 @@
 import { ref, computed, watch, type ComputedRef } from 'vue'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
+import { localConfig } from '@/composables/useSettingsConfig'
 
 const STORAGE_KEY_PREFIX = 'clawbench-recent-files:'
-const MAX_RECENT = 10
+const DEFAULT_MAX_RECENT = 10
 const TAG = 'RecentFiles'
+
+function getMaxRecent(): number {
+  return (localConfig.recentFilesCount as number) || DEFAULT_MAX_RECENT
+}
 
 export interface RecentFileEntry {
   path: string
@@ -59,7 +64,7 @@ export function recordRecentFile(path: string) {
   if (!path) return
   const now = Date.now()
   const filtered = _entries.value.filter(e => e.path !== path)
-  _entries.value = [{ path, accessedAt: now }, ...filtered].slice(0, MAX_RECENT)
+  _entries.value = [{ path, accessedAt: now }, ...filtered].slice(0, getMaxRecent())
   saveToStorage()
 }
 
@@ -79,12 +84,15 @@ export function useRecentFiles() {
 
   /**
    * Recent files excluding the given current file path.
-   * Returns at most MAX_RECENT entries.
+   * Respects the dynamic recentFilesCount setting.
    */
   function recentFilesExcluding(currentPath: ComputedRef<string | null>): ComputedRef<RecentFileEntry[]> {
     return computed(() => {
-      if (!currentPath.value) return _entries.value
-      return _entries.value.filter(e => e.path !== currentPath.value)
+      const max = getMaxRecent()
+      const all = currentPath.value
+        ? _entries.value.filter(e => e.path !== currentPath.value)
+        : _entries.value
+      return all.slice(0, max)
     })
   }
 

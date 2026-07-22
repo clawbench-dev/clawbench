@@ -1143,6 +1143,8 @@ export default {
       filesSectionHeader: 'Files',
       showHidden: 'Show Hidden Files',
       showHiddenDesc: 'Show dot-prefixed hidden files in the file manager',
+      recentFilesCount: 'Recent Files Count',
+      recentFilesCountDesc: 'Maximum number of recently opened files to remember',
       wordWrap: 'Word Wrap',
       wordWrapDesc: 'Wrap long lines automatically in file preview',
       lineNumbers: 'Line Numbers',
