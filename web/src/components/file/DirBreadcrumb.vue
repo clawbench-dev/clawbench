@@ -1,7 +1,7 @@
 <template>
   <div v-if="parts.length > 0" class="dir-breadcrumb">
     <span class="crumb" @click="$emit('navigate', '')">
-      <CircleDot :size="14" />
+      <Home :size="14" />
     </span>
     <template v-for="(part, i) in parts" :key="i">
       <span class="crumb-sep">›</span>
@@ -16,7 +16,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { CircleDot } from 'lucide-vue-next'
+import { Home } from 'lucide-vue-next'
 import { splitPath } from '@/utils/path.ts'
 
 const props = defineProps({

@@ -21,7 +21,7 @@ describe('DirBreadcrumb', () => {
       const wrapper = mountBreadcrumb({ path: '/home/user/docs' })
       // Click the second crumb ("home") — index 0 in parts
       const crumbs = wrapper.findAll('.crumb')
-      // crumbs[0] = root (CircleDot), crumbs[1] = "home", crumbs[2] = "user", crumbs[3] = "docs"
+      // crumbs[0] = root (Home), crumbs[1] = "home", crumbs[2] = "user", crumbs[3] = "docs"
       // Clicking "home" (not last) should emit navigate with "home" (relative path, no leading slash)
       await crumbs[1].trigger('click')
       const emitted = wrapper.emitted('navigate')
@@ -109,7 +109,7 @@ describe('DirBreadcrumb', () => {
     it('root crumb emits navigate with empty string', async () => {
       const wrapper = mountBreadcrumb({ path: '/home/user' })
       const crumbs = wrapper.findAll('.crumb')
-      // First crumb is the root CircleDot icon — emits navigate('')
+      // First crumb is the root Home icon — emits navigate('')
       await crumbs[0].trigger('click')
       const emitted = wrapper.emitted('navigate')
       expect(emitted).toBeTruthy()
