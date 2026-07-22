@@ -776,25 +776,43 @@ describe('useSessionManager', () => {
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
             await mgr._visibilityHandler()
 
-            expect(fetchSpy).toHaveBeenCalled()
-            // Backend queue empty → pending cleared → reloadHistory called
+            // Same pattern as switchSession: reloadHistory first, then fetchQueue
             expect(opts.reloadHistory).toHaveBeenCalled()
+            expect(fetchSpy).toHaveBeenCalled()
 
             fetchSpy.mockRestore()
         })
 
-        it('does not fetch queue when no pending messages', async () => {
+        it('does nothing when visibility changes to hidden', async () => {
             const opts = createMockOptions()
-            // No pending messages in messages.value
             const mgr = useSessionManager(opts)
-
             const fetchSpy = vi.spyOn(globalThis, 'fetch')
 
-            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             await mgr._visibilityHandler()
 
             expect(fetchSpy).not.toHaveBeenCalled()
             expect(opts.reloadHistory).not.toHaveBeenCalled()
+
+            fetchSpy.mockRestore()
+        })
+
+        it('always calls reloadHistory and fetchQueue on foreground', async () => {
+            const opts = createMockOptions()
+            // No pending messages in messages.value
+            const mgr = useSessionManager(opts)
+
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ queue: [] }),
+            } as Response)
+
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+            await mgr._visibilityHandler()
+
+            // Both always called on foreground (same as switchSession pattern)
+            expect(opts.reloadHistory).toHaveBeenCalled()
+            expect(fetchSpy).toHaveBeenCalled()
 
             fetchSpy.mockRestore()
         })
@@ -820,163 +838,133 @@ describe('useSessionManager', () => {
     })
 
     describe('visibility change — pending messages drained while backgrounded', () => {
-        it('reloads history when pending messages are cleared by fetchQueue', async () => {
+        it('calls reloadHistory before fetchQueue (same pattern as switchSession)', async () => {
             const opts = createMockOptions()
-            opts.messages.value = [
-                { role: 'user', content: 'hello', pending: true, id: 'pending-1' },
-            ]
-            const mgr = useSessionManager(opts)
+            const callOrder: string[] = []
+            opts.reloadHistory = vi.fn().mockImplementation(async () => { callOrder.push('reloadHistory') })
+            vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+                callOrder.push('fetchQueue')
+                return { ok: true, json: () => Promise.resolve({ queue: [] }) } as Response
+            })
 
-            // Mock fetchQueue to return empty backend queue (message was drained)
+            const mgr = useSessionManager(opts)
+            // Wait for initial watch(immediate) fetchQueue to settle
+            await nextTick()
+            callOrder.length = 0  // Reset after init
+
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+            await mgr._visibilityHandler()
+
+            expect(callOrder).toEqual(['reloadHistory', 'fetchQueue'])
+
+            vi.restoreAllMocks()
+        })
+
+        it('still calls fetchQueue even when reloadHistory throws', async () => {
+            const opts = createMockOptions()
+            opts.reloadHistory = vi.fn().mockRejectedValue(new Error('load failed'))
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
                 json: () => Promise.resolve({ queue: [] }),
             } as Response)
 
+            const mgr = useSessionManager(opts)
+            await nextTick()
+            fetchSpy.mockClear()
+
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
             await mgr._visibilityHandler()
 
-            // fetchQueue was called and cleared pending messages
-            expect(fetchSpy).toHaveBeenCalled()
-            // reloadHistory should have been called because pending messages were cleared
+            // reloadHistory failed but fetchQueue still runs
             expect(opts.reloadHistory).toHaveBeenCalled()
-
-            fetchSpy.mockRestore()
-        })
-
-        it('does not reload history when pending messages still exist after fetchQueue', async () => {
-            const opts = createMockOptions()
-            opts.messages.value = [
-                { role: 'user', content: 'hello', pending: true, id: 'pending-1' },
-            ]
-            const mgr = useSessionManager(opts)
-
-            // Mock fetchQueue to return the same pending message (not drained yet)
-            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({ queue: [{ text: 'hello', queueId: 'pending-1', createdAt: new Date().toISOString() }] }),
-            } as Response)
-
-            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-            await mgr._visibilityHandler()
-
             expect(fetchSpy).toHaveBeenCalled()
-            // reloadHistory should NOT be called because pending messages still exist
-            expect(opts.reloadHistory).not.toHaveBeenCalled()
 
             fetchSpy.mockRestore()
         })
 
-        it('reloads history when some pending messages are drained and some remain', async () => {
+        it('restores pending messages from backend queue after reloadHistory', async () => {
             const opts = createMockOptions()
-            opts.messages.value = [
-                { role: 'user', content: 'msg-1', pending: true, id: 'pending-1' },
-                { role: 'user', content: 'msg-2', pending: true, id: 'pending-2' },
-            ]
-            const mgr = useSessionManager(opts)
-
-            // Backend drained pending-1, pending-2 still queued
+            // Simulate: reloadHistory loads DB messages (drained msg now regular),
+            // then fetchQueue adds still-pending messages from backend queue
+            opts.reloadHistory = vi.fn().mockImplementation(async () => {
+                // Simulate loadHistory: drained msg-1 is now a regular DB message
+                opts.messages.value = [
+                    { role: 'user', content: 'msg-1', id: 'msg-1-db' },
+                ]
+            })
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
                 json: () => Promise.resolve({ queue: [{ text: 'msg-2', queueId: 'pending-2', createdAt: new Date().toISOString() }] }),
             } as Response)
 
-            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-            await mgr._visibilityHandler()
-
-            // pending-1 was drained (cleared from messages), pending-2 still exists
-            // No reloadHistory because there is still a pending message
-            expect(opts.reloadHistory).not.toHaveBeenCalled()
-
-            fetchSpy.mockRestore()
-        })
-
-        it('does not reload history when fetchQueue request fails', async () => {
-            const opts = createMockOptions()
-            opts.messages.value = [
-                { role: 'user', content: 'hello', pending: true, id: 'pending-1' },
-            ]
             const mgr = useSessionManager(opts)
-
-            // fetchQueue request fails — pending messages remain in messages.value
-            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network'))
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+            await new Promise(r => setTimeout(r, 20))
+            fetchSpy.mockClear()
 
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
             await mgr._visibilityHandler()
 
-            expect(fetchSpy).toHaveBeenCalled()
-            // Pending message should still exist (fetchQueue failed, no sync)
-            expect(opts.messages.value.some(m => m.pending)).toBe(true)
-            // reloadHistory should NOT be called
-            expect(opts.reloadHistory).not.toHaveBeenCalled()
-
-            fetchSpy.mockRestore()
-            consoleSpy.mockRestore()
-        })
-
-        it('does not reload history when fetchQueue returns non-ok response', async () => {
-            const opts = createMockOptions()
-            opts.messages.value = [
-                { role: 'user', content: 'hello', pending: true, id: 'pending-1' },
-            ]
-            const mgr = useSessionManager(opts)
-
-            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-                ok: false,
-                status: 500,
-            } as Response)
-
-            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-            await mgr._visibilityHandler()
-
-            // Pending message still exists (non-ok response, no sync)
-            expect(opts.messages.value.some(m => m.pending)).toBe(true)
-            expect(opts.reloadHistory).not.toHaveBeenCalled()
+            // After reloadHistory + fetchQueue:
+            // msg-1-db is regular (from reloadHistory), pending-2 is pending (from fetchQueue)
+            const msgIds = opts.messages.value.map(m => m.id)
+            expect(msgIds).toContain('msg-1-db')
+            expect(opts.messages.value.some(m => m.pending && m.content === 'msg-2')).toBe(true)
 
             fetchSpy.mockRestore()
         })
 
-        it('does not call reloadHistory when reloadHistory throws', async () => {
+        it('does not call fetchQueue when no session', async () => {
             const opts = createMockOptions()
-            opts.messages.value = [
-                { role: 'user', content: 'hello', pending: true, id: 'pending-1' },
-            ]
-            opts.reloadHistory = vi.fn().mockRejectedValue(new Error('load failed'))
-            const mgr = useSessionManager(opts)
-
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
                 json: () => Promise.resolve({ queue: [] }),
             } as Response)
 
+            const mgr = useSessionManager(opts)
+            await nextTick()
+            fetchSpy.mockClear()
+
+            mockCurrentSessionId.value = ''
+
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-            // Should not throw even when reloadHistory rejects
+            await mgr._visibilityHandler()
+
+            expect(opts.reloadHistory).not.toHaveBeenCalled()
+            // No new fetchQueue calls (only the init one which we cleared)
+            expect(fetchSpy).not.toHaveBeenCalled()
+
+            fetchSpy.mockRestore()
+            mockCurrentSessionId.value = 'session-1'
+        })
+
+        it('does nothing when visibility changes to hidden', async () => {
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            await mgr._visibilityHandler()
+
+            expect(opts.reloadHistory).not.toHaveBeenCalled()
+        })
+
+        it('fetchQueue failure after reloadHistory does not throw', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ queue: [] }),
+            } as Response)
+
+            const mgr = useSessionManager(opts)
+            await nextTick()
+            fetchSpy.mockRejectedValue(new Error('network'))
+
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+            // Should not throw even when fetchQueue rejects
             await expect(mgr._visibilityHandler()).resolves.toBeUndefined()
 
             expect(opts.reloadHistory).toHaveBeenCalled()
 
             fetchSpy.mockRestore()
-        })
-
-        it('does not trigger when no current session', async () => {
-            const opts = createMockOptions()
-            opts.messages.value = [
-                { role: 'user', content: 'hello', pending: true, id: 'pending-1' },
-            ]
-            const mgr = useSessionManager(opts)
-
-            mockCurrentSessionId.value = ''
-            const fetchSpy = vi.spyOn(globalThis, 'fetch')
-
-            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-            await mgr._visibilityHandler()
-
-            expect(fetchSpy).not.toHaveBeenCalled()
-            expect(opts.reloadHistory).not.toHaveBeenCalled()
-
-            fetchSpy.mockRestore()
-            mockCurrentSessionId.value = 'session-1'
         })
     })
 })

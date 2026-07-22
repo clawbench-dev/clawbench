@@ -388,30 +388,25 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   }, { immediate: true })
 
   // When the page becomes visible after being in the background (e.g. mobile screen
-  // unlock), sync pending messages with the backend. SSE events (queue_drain,
-  // queue_cancel) are dropped while the page is hidden, so local
+  // unlock), sync queue with the backend. While backgrounded, queue_drain /
+  // queue_cancel events are dropped because the WS is disconnected, so local
   // pending messages may be stale — showing ghost "queuing" items that the backend
   // has already consumed. Frontend pending messages are optimistic indicators only;
   // the backend queue is the source of truth.
   //
-  // If the backend queue is empty but we had local pending messages, the messages
-  // were drained while backgrounded — they now exist as regular DB messages.
-  // We must reload history to surface them; otherwise they vanish from the UI.
+  // Same pattern as switchSession: loadHistory first (brings in drained messages
+  // from DB as regular messages), then fetchQueue (restores still-queued pending
+  // messages). This ensures drained messages reappear and pending messages stay.
   async function handleVisibilityChange() {
-    if (document.visibilityState === 'visible' && messages.value.some((m) => m.pending) && identity.currentSessionId.value) {
-      const hadPending = true
-      const sessionId = identity.currentSessionId.value
-      await fetchQueue(sessionId)
-      // After fetchQueue, if pending messages were cleared (backend queue empty),
-      // the drained messages are now regular DB messages — reload history to show them
-      if (hadPending && !messages.value.some((m) => m.pending)) {
-        try {
-          await reloadHistory()
-        } catch {
-          // Non-critical — user can pull-to-refresh
-        }
-      }
+    if (document.visibilityState !== 'visible') return
+    const sessionId = identity.currentSessionId.value
+    if (!sessionId) return
+    try {
+      await reloadHistory()
+    } catch {
+      // Non-critical
     }
+    await fetchQueue(sessionId)
   }
   document.addEventListener('visibilitychange', handleVisibilityChange)
 
