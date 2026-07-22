@@ -929,6 +929,7 @@ async function handleNavigateBack() {
 async function handleSelectFile(path) {
     const ok = await store.selectFile(path)
     if (ok) {
+        recordRecentFile(path)
         switchTab('browse')
         fileNav.openFile(path)
     }

@@ -11,6 +11,14 @@ function getMaxRecent(): number {
   return (localConfig.recentFilesCount as number) || DEFAULT_MAX_RECENT
 }
 
+function trimEntries() {
+  const max = getMaxRecent()
+  if (_entries.value.length > max) {
+    _entries.value = _entries.value.slice(0, max)
+    saveToStorage()
+  }
+}
+
 export interface RecentFileEntry {
   path: string
   accessedAt: number
@@ -28,7 +36,8 @@ function loadFromStorage() {
   try {
     const raw = localStorage.getItem(storageKey())
     if (raw) {
-      _entries.value = JSON.parse(raw)
+      const parsed = JSON.parse(raw)
+      _entries.value = parsed.slice(0, getMaxRecent())
     }
   } catch (e) {
     appLog.w(TAG, 'loadFromStorage failed:', e)
@@ -45,9 +54,13 @@ function saveToStorage() {
   }
 }
 
-// Module-level watcher — runs exactly once
+// Module-level watchers — run exactly once
 watch(() => store.state.projectRoot, () => {
   loadFromStorage()
+})
+
+watch(() => localConfig.recentFilesCount, () => {
+  trimEntries()
 })
 
 /** @internal Reset all state — for tests only */
@@ -58,7 +71,7 @@ export function _resetForTesting() {
 
 /**
  * Record a file as recently opened.
- * Deduplicates (moves to front if already present), caps at MAX_RECENT.
+ * Deduplicates (moves to front if already present), caps at current max.
  */
 export function recordRecentFile(path: string) {
   if (!path) return

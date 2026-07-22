@@ -69,16 +69,18 @@ const files = recentFilesExcluding(computed(() => props.currentFilePath ?? null)
 
 const checking = ref(false)
 const missingPaths = ref(new Set<string>())
+let fetchId = 0
 
 // When drawer opens, batch-check file existence
 watch(() => props.open, async (val) => {
   if (!val) {
-    missingPaths.value.clear()
+    missingPaths.value = new Set()
     return
   }
   const paths = files.value.map(e => e.path)
   if (paths.length === 0) return
 
+  const currentFetch = ++fetchId
   checking.value = true
   try {
     const resp = await fetch('/api/file/batch-exists', {
@@ -86,6 +88,7 @@ watch(() => props.open, async (val) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paths }),
     })
+    if (currentFetch !== fetchId) return // stale fetch
     if (resp.ok) {
       const data = await resp.json()
       const results: Record<string, string> = data.results || {}
@@ -98,9 +101,12 @@ watch(() => props.open, async (val) => {
       missingPaths.value = missing
     }
   } catch (e) {
+    if (currentFetch !== fetchId) return
     appLog.w(TAG, 'batch-exists check failed:', e)
   } finally {
-    checking.value = false
+    if (currentFetch === fetchId) {
+      checking.value = false
+    }
   }
 })
 
@@ -112,7 +118,9 @@ function onSelect(entry: RecentFileEntry) {
   if (missingPaths.value.has(entry.path)) {
     // Click on missing entry → remove it from recent list
     removeRecentFile(entry.path)
-    missingPaths.value.delete(entry.path)
+    const updated = new Set(missingPaths.value)
+    updated.delete(entry.path)
+    missingPaths.value = updated
     return
   }
   handleClose()
@@ -121,7 +129,9 @@ function onSelect(entry: RecentFileEntry) {
 
 function onRemove(path: string) {
   removeRecentFile(path)
-  missingPaths.value.delete(path)
+  const updated = new Set(missingPaths.value)
+  updated.delete(path)
+  missingPaths.value = updated
 }
 
 function fileName(path: string): string {

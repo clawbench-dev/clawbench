@@ -81,6 +81,8 @@ vi.mock('@/composables/useSettingsConfig', () => ({
     localConfig: { wordWrap: true, lineNumbers: true, stickyScroll: true },
     setLocalConfig: vi.fn(),
   }),
+  localConfig: { wordWrap: true, lineNumbers: true, stickyScroll: true, recentFilesCount: 10 },
+  setLocalConfig: vi.fn(),
 }))
 
 vi.mock('@/stores/app.ts', () => ({

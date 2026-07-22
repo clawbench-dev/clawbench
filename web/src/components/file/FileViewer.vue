@@ -11,7 +11,7 @@
       :show-line-numbers="showLineNumbers"
       :sticky-scroll="stickyScroll"
       :overlay-open="fileNav.overlayOpen.value"
-      :recent-files-count="recentFilesCount"
+      :recent-files-available="recentFilesAvailable"
       @delete="emit('delete', file.path)"
       @toggle-view="emit('toggleView')"
       @show-details="emit('showDetails')"
@@ -253,7 +253,7 @@ const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc'
 const fileNav = useFileNavStack()
 const { recentFilesExcluding } = useRecentFiles()
 const filteredRecentFiles = recentFilesExcluding(computed(() => props.file?.path ?? null))
-const recentFilesCount = computed(() => filteredRecentFiles.value.length)
+const recentFilesAvailable = computed(() => filteredRecentFiles.value.length)
 
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')

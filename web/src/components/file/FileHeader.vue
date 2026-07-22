@@ -8,7 +8,7 @@
     <!-- Region 2: Toolbar (ResizeObserver target) -->
     <div ref="headerActionsRef" class="header-actions">
       <!-- Recent files button (always first) -->
-      <button class="file-header-btn" :disabled="recentFilesCount === 0" @click.stop="$emit('openRecentFiles')" :title="t('file.recent.title')">
+      <button class="file-header-btn" :disabled="recentFilesAvailable === 0" @click.stop="$emit('openRecentFiles')" :title="t('file.recent.title')">
         <FileStack :size="14" />
       </button>
 
@@ -66,7 +66,7 @@
         <Teleport to="body">
           <div v-if="menuOpen" ref="menuRef" class="file-header-dropdown-menu" :style="menuStyle">
             <!-- Collapsed toolbar items -->
-            <button v-if="toolbarCollapsedIds.includes('recent')" class="dropdown-item" :disabled="recentFilesCount === 0" @click="$emit('openRecentFiles'); menuOpen = false">
+            <button v-if="toolbarCollapsedIds.includes('recent')" class="dropdown-item" :disabled="recentFilesAvailable === 0" @click="$emit('openRecentFiles'); menuOpen = false">
               <FileStack :size="14" />
               {{ t('file.recent.title') }}
             </button>
@@ -179,7 +179,7 @@ const props = defineProps({
     showLineNumbers: Boolean,
     stickyScroll: Boolean,
     overlayOpen: Boolean,
-    recentFilesCount: { type: Number, default: 0 },
+    recentFilesAvailable: { type: Number, default: 0 },
 })
 const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'openRecentFiles', 'shareExternal', 'exportHtml', 'fitWidth'])
 

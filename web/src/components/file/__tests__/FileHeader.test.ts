@@ -103,7 +103,7 @@ describe('FileHeader', () => {
         showLineNumbers: true,
         stickyScroll: true,
         overlayOpen: false,
-        recentFilesCount: 0,
+        recentFilesAvailable: 0,
         ...props,
       },
       global: {
