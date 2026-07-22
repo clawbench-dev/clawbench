@@ -44,6 +44,9 @@ export interface UseSessionManagerOptions {
 
   // Scroll
   scrollBottom: (force?: boolean) => void
+
+  // History reload (from useChatSession)
+  reloadHistory: () => Promise<void>
 }
 
 export function useSessionManager(options: UseSessionManagerOptions) {
@@ -60,6 +63,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     updateRenderedContents,
     clearInputState: _clearInputState,
     scrollBottom,
+    reloadHistory,
   } = options
 
   const identity = useSessionIdentity()
@@ -389,9 +393,24 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   // pending messages may be stale — showing ghost "queuing" items that the backend
   // has already consumed. Frontend pending messages are optimistic indicators only;
   // the backend queue is the source of truth.
-  function handleVisibilityChange() {
+  //
+  // If the backend queue is empty but we had local pending messages, the messages
+  // were drained while backgrounded — they now exist as regular DB messages.
+  // We must reload history to surface them; otherwise they vanish from the UI.
+  async function handleVisibilityChange() {
     if (document.visibilityState === 'visible' && messages.value.some((m) => m.pending) && identity.currentSessionId.value) {
-      fetchQueue(identity.currentSessionId.value)
+      const hadPending = true
+      const sessionId = identity.currentSessionId.value
+      await fetchQueue(sessionId)
+      // After fetchQueue, if pending messages were cleared (backend queue empty),
+      // the drained messages are now regular DB messages — reload history to show them
+      if (hadPending && !messages.value.some((m) => m.pending)) {
+        try {
+          await reloadHistory()
+        } catch {
+          // Non-critical — user can pull-to-refresh
+        }
+      }
     }
   }
   document.addEventListener('visibilitychange', handleVisibilityChange)

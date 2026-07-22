@@ -453,6 +453,7 @@ const manager = useSessionManager({
     clearPendingFiles()
   },
   scrollBottom: (force) => scrollBottom(force),
+  reloadHistory: () => session.loadHistory(false, false, true),
 })
 
 // Register identity actions — all paths now go through manager
