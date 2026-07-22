@@ -7,6 +7,11 @@
 
     <!-- Region 2: Toolbar (ResizeObserver target) -->
     <div ref="headerActionsRef" class="header-actions">
+      <!-- Recent files button (always first) -->
+      <button class="file-header-btn" :disabled="recentFilesCount === 0" @click.stop="$emit('openRecentFiles')" :title="t('file.recent.title')">
+        <FileStack :size="14" />
+      </button>
+
       <!-- TOC button (only for file types that support TOC) -->
       <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
         <List :size="14" />
@@ -61,6 +66,10 @@
         <Teleport to="body">
           <div v-if="menuOpen" ref="menuRef" class="file-header-dropdown-menu" :style="menuStyle">
             <!-- Collapsed toolbar items -->
+            <button v-if="toolbarCollapsedIds.includes('recent')" class="dropdown-item" :disabled="recentFilesCount === 0" @click="$emit('openRecentFiles'); menuOpen = false">
+              <FileStack :size="14" />
+              {{ t('file.recent.title') }}
+            </button>
             <button v-if="toolbarCollapsedIds.includes('toc')" class="dropdown-item" :class="{ active: tocOpen }" @click="handleToggleToc(); menuOpen = false">
               <List :size="14" />
               {{ t('file.header.toc') }}
@@ -139,13 +148,9 @@
       </div>
     </div>
 
-    <!-- Region 3: Overlay nav (back + close, always present, fixed size) -->
+    <!-- Region 3: Overlay nav (close only, always present, fixed size) -->
     <div class="overlay-nav">
-      <div class="overlay-nav-separator"></div>
-      <button class="file-header-btn overlay-nav-btn" :disabled="!overlayCanGoBack" @click.stop="$emit('overlayGoBack')" :title="t('file.overlay.back')">
-        <ChevronLeft :size="14" />
-      </button>
-      <button class="file-header-btn overlay-nav-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
+      <button class="file-header-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
         <X :size="14" />
       </button>
     </div>
@@ -155,7 +160,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, FileStack, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -174,9 +179,9 @@ const props = defineProps({
     showLineNumbers: Boolean,
     stickyScroll: Boolean,
     overlayOpen: Boolean,
-    overlayCanGoBack: Boolean,
+    recentFilesCount: { type: Number, default: 0 },
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'overlayGoBack', 'shareExternal', 'exportHtml', 'fitWidth'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'openRecentFiles', 'shareExternal', 'exportHtml', 'fitWidth'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -197,6 +202,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
   () => headerActionsRef.value,
   () => {
     const ids = []
+    ids.push('recent')
     if (hasToc.value) ids.push('toc')
     if (hasSearch.value) ids.push('search')
     if (hasFitWidth.value) ids.push('fitWidth')
@@ -500,22 +506,7 @@ onBeforeUnmount(() => {
 .overlay-nav {
     display: flex;
     align-items: center;
-    gap: 4px;
     flex-shrink: 0;
-}
-.overlay-nav-separator {
-    width: 1px;
-    height: 16px;
-    background: var(--border-color);
-    margin: 0 2px;
-}
-.overlay-nav-btn {
-    border: none;
-    border-radius: 4px;
-}
-.overlay-nav-btn:hover {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
-    color: var(--accent-color);
 }
 .overlay-close-btn {
     background: #b91c1c;

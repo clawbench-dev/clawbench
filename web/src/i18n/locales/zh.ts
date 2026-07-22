@@ -671,6 +671,10 @@ export default {
     overlay: {
       back: '返回',
     },
+    recent: {
+      title: '最近文件',
+      empty: '暂无最近打开的文件',
+    },
     search: {
       title: '搜索文件',
       titleCurrent: '在当前目录搜索',

@@ -49,6 +49,7 @@
                 :sort-dir="sortDir"
                 :dir-loading="store.state.dirLoading"
                 :search-drawer="fileSearchDrawer"
+                :recent-drawer="recentFilesDrawer"
                 @navigate-dir="handleNavigateDir"
                 @navigate-back="handleNavigateBack"
                 @select-file="handleBrowseSelectFile"
@@ -83,7 +84,7 @@
                 @close-git-history="fileHistoryDrawer.close()"
                 @open-file="handleOverlayOpenFile"
                 @overlay-close="handleOverlayClose"
-                @overlay-go-back="handleOverlayGoBack"
+                @open-recent-files="recentFilesDrawer.open()"
               />
             </div>
           </TabPanel>
@@ -134,6 +135,13 @@
         :file="currentFile"
         :open="detailsDrawer.effectiveOpen.value && fileNav.overlayOpen.value"
         @close="detailsDrawer.close()"
+      />
+
+      <RecentFilesDrawer
+        :open="recentFilesDrawer.effectiveOpen.value"
+        :current-file-path="currentFile?.path"
+        @close="recentFilesDrawer.close()"
+        @select-file="handleRecentFileSelect"
       />
 
       <!-- Quote question floating bar -->
@@ -280,6 +288,7 @@ import LoginView from './components/LoginView.vue'
 import WelcomeOverlay from './components/WelcomeOverlay.vue'
 import VersionMismatchOverlay from './components/VersionMismatchOverlay.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
+import RecentFilesDrawer from './components/file/RecentFilesDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
@@ -306,6 +315,7 @@ import { usePortForward } from './composables/usePortForward.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
+import { useRecentFiles, removeRecentFile } from './composables/useRecentFiles'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
@@ -538,6 +548,7 @@ const tocDrawer = useTabDrawer('browse')
 const searchDrawer = useTabDrawer('browse')
 const fileHistoryDrawer = useTabDrawer('browse')
 const fileSearchDrawer = useTabDrawer('browse', { autoRestore: false })
+const recentFilesDrawer = useTabDrawer('browse', { autoRestore: false })
 
 function openFileHistory() {
   fileHistoryDrawer.open()
@@ -567,6 +578,7 @@ useFileWatch({
 })
 
 const fileNav = useFileNavStack()
+const { recordRecentFile, recentFilesExcluding } = useRecentFiles()
 
 function closeOverlayAndSync() {
   fileNav.closeOverlay()
@@ -926,6 +938,7 @@ async function handleBrowseSelectFile(path) {
     if (fileManagerRef.value?.multiSelectState?.active) return
     const ok = await store.selectFile(path)
     if (ok) {
+        recordRecentFile(path)
         fileNav.openFile(path)
     }
 }
@@ -933,6 +946,7 @@ async function handleBrowseSelectFile(path) {
 async function handleTaskOpenFile(filePath, lineStart) {
     const ok = await store.selectFile(filePath)
     if (ok) {
+        recordRecentFile(filePath)
         switchTab('browse')
         fileNav.openFile(filePath)
         if (lineStart) scrollToLine(lineStart)
@@ -941,17 +955,6 @@ async function handleTaskOpenFile(filePath, lineStart) {
 
 function handleOverlayClose() {
     closeOverlayAndSync()
-}
-
-async function handleOverlayGoBack() {
-    if (fileNav.canGoBack.value) {
-        const prevPath = fileNav.goBack()
-        if (prevPath) {
-            await store.selectFile(prevPath)
-        }
-    } else {
-        handleOverlayClose()
-    }
 }
 
 async function handleOverlayOpenFile(payload) {
@@ -974,12 +977,22 @@ async function handleOverlayOpenFile(payload) {
     const isExternal = path.startsWith('/')
     const ok = await store.selectFile(path)
     if (ok) {
+        recordRecentFile(path)
         if (lineStart) markdownViewMode.value = 'raw'
         fileNav.openFile(path)
         if (lineStart) scrollToLine(lineStart, lineEnd)
         if (isExternal) {
             toast.show(gt('file.toast.externalFile'), { type: 'info', duration: 2000 })
         }
+    }
+}
+
+async function handleRecentFileSelect(path) {
+    recentFilesDrawer.close()
+    const ok = await store.selectFile(path)
+    if (ok) {
+        recordRecentFile(path)
+        fileNav.openFile(path)
     }
 }
 
@@ -1010,6 +1023,7 @@ async function handleDelete(path) {
     const wasOverlay = fileNav.overlayOpen.value
     try {
         await store.deleteFile(path)
+        removeRecentFile(path)
         appLog.d(TAG, '[handleDelete] store.deleteFile resolved')
     } catch (err) {
         appLog.e(TAG, '[handleDelete] unhandled error:', err)

@@ -103,7 +103,7 @@ describe('FileHeader', () => {
         showLineNumbers: true,
         stickyScroll: true,
         overlayOpen: false,
-        overlayCanGoBack: false,
+        recentFilesCount: 0,
         ...props,
       },
       global: {
@@ -228,10 +228,12 @@ describe('FileHeader', () => {
 
   it('emits toggleToc when toc button is clicked', async () => {
     const wrapper = mountHeader({ file: { name: 'main.ts', path: '/tmp/main.ts', content: 'code' } })
-    const tocBtn = wrapper.find('.file-header-btn')
-    if (tocBtn.exists()) {
+    // Find the TOC button specifically (it has the List icon, after the recent files button)
+    const allBtns = wrapper.findAll('.header-actions .file-header-btn')
+    // First button is recent files, second should be TOC or search
+    const tocBtn = allBtns.length > 1 ? allBtns[1] : null
+    if (tocBtn && tocBtn.exists()) {
       await tocBtn.trigger('click')
-      // Could be either toggleToc or toggleSearch based on button order
       const emitted = wrapper.emitted()
       expect(emitted['toggleToc'] || emitted['toggleSearch']).toBeTruthy()
     }

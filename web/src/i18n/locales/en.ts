@@ -670,6 +670,10 @@ export default {
     overlay: {
       back: 'Back',
     },
+    recent: {
+      title: 'Recent Files',
+      empty: 'No recently opened files',
+    },
     search: {
       title: 'Search Files',
       titleCurrent: 'Search in current directory',

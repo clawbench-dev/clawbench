@@ -7,6 +7,9 @@
           <button class="toolbar-btn" :class="{ 'search-active': props.searchDrawer?.isOpen.value }" @click="props.searchDrawer?.open()" :title="t('file.search.title')">
             <Search :size="16" />
           </button>
+          <button class="toolbar-btn" @click="props.recentDrawer?.open()" :title="t('file.recent.title')">
+            <FileStack :size="16" />
+          </button>
           <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
@@ -160,53 +163,29 @@
       </div>
 
       <template v-for="entry in visibleEntries" :key="entry.name">
-        <!-- Directory -->
-        <div v-if="entry.type === 'dir'"
-          v-long-press="(e) => onLongPress(entry, e)"
-          class="file-item dir-item"
-          :class="{
-            'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
-            'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
-            'dir-highlight': !multiSelect.active && highlightPath === itemPath(entry.name),
-            'cut-item': isCutItem(itemPath(entry.name))
-          }"
-          :data-action="'dir'"
-          :data-path="itemPath(entry.name)"
-        >
-          <div v-if="multiSelect.active" class="ms-check" :class="{ checked: multiSelect.selected.has(itemPath(entry.name)) }">
-            <Check v-if="multiSelect.selected.has(itemPath(entry.name))" :size="12" />
-          </div>
-          <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
-            <FileIcon :path="entry.name" :is-dir="true" :size="28" class="file-icon" />
-            <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
-          </div>
-          <span class="file-name">{{ entry.name }}</span>
-          <span class="file-meta">{{ formatDate(entry.modified) }}</span>
-        </div>
-
-        <!-- File -->
-        <div v-else
+        <div
           v-long-press="(e) => onLongPress(entry, e)"
           class="file-item"
           :class="{
-            active: !multiSelect.active && currentFile?.path === itemPath(entry.name),
+            'dir-item': entry.type === 'dir',
+            active: !multiSelect.active && selectedPath === itemPath(entry.name),
             'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
             'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
             'cut-item': isCutItem(itemPath(entry.name))
           }"
-          :data-action="'file'"
+          :data-action="entry.type === 'dir' ? 'dir' : 'file'"
           :data-path="itemPath(entry.name)"
         >
           <div v-if="multiSelect.active" class="ms-check" :class="{ checked: multiSelect.selected.has(itemPath(entry.name)) }">
             <Check v-if="multiSelect.selected.has(itemPath(entry.name))" :size="12" />
           </div>
           <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
-            <img v-if="isThumbLoaded(entry)" class="file-thumb" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
-            <FileIcon v-else :path="entry.name" :size="28" class="file-icon" />
+            <img v-if="entry.type !== 'dir' && isThumbLoaded(entry)" class="file-thumb" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
+            <FileIcon v-else :path="entry.name" :is-dir="entry.type === 'dir'" :size="28" class="file-icon" />
             <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
           </div>
           <span class="file-name">{{ entry.name }}</span>
-          <span class="file-meta">{{ formatFileSize(entry.size) }} · {{ formatDate(entry.modified) }}</span>
+          <span class="file-meta">{{ entry.type === 'dir' ? formatDate(entry.modified) : `${formatFileSize(entry.size)} · ${formatDate(entry.modified)}` }}</span>
         </div>
       </template>
       <div v-if="hasMoreEntries" class="truncate-hint">
@@ -235,8 +214,7 @@
         class="grid-item"
         :class="{
           'grid-dir': entry.type === 'dir',
-          'grid-active': !multiSelect.active && entry.type !== 'dir' && currentFile?.path === itemPath(entry.name),
-          'grid-dir-highlight': !multiSelect.active && entry.type === 'dir' && highlightPath === itemPath(entry.name),
+          'grid-active': !multiSelect.active && selectedPath === itemPath(entry.name),
           'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
           'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
           'cut-item': isCutItem(itemPath(entry.name))
@@ -372,7 +350,7 @@ import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watc
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search, FileStack } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
@@ -440,6 +418,7 @@ const props = defineProps({
     sortDir: String,
     dirLoading: Boolean,
     searchDrawer: Object, // TabDrawer from useTabDrawer('browse')
+    recentDrawer: Object, // TabDrawer from useTabDrawer('browse')
 })
 
 const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
@@ -499,6 +478,11 @@ const showMoreDropdown = computed(() => moreDropdownItemCount.value > 0)
 const viewMode = ref(localConfig.fileView || 'list')
 watch(viewMode, v => setLocalConfig('fileView', v))
 
+// ── Unified selection for both files and directories ──
+const selectedPath = ref('')
+// Sync from external file selection (e.g. chat annotation, search)
+watch(() => props.currentFile?.path ?? '', p => { selectedPath.value = p })
+
 // ── Thumbnail loading errors ──
 const thumbErrors = reactive(new Set())
 function thumbUrl(entry) {
@@ -532,8 +516,6 @@ function closeDropdowns(e) {
 // ── Highlight file item (from long-press on file-path annotation) ──
 
 let highlightRetryTimer = null
-let highlightAutoClearTimer = null
-const highlightPath = ref('')
 const fileListRef = ref(null)
 const fileGridRef = ref(null)
 
@@ -541,11 +523,7 @@ function handleHighlightFileItem(e) {
   const { path } = e.detail
   if (!path) return
 
-  // Cancel any previous retry and auto-clear timers
   if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
-  if (highlightAutoClearTimer) { clearTimeout(highlightAutoClearTimer); highlightAutoClearTimer = null }
-  if (highlightAutoClearTimer) { clearTimeout(highlightAutoClearTimer); highlightAutoClearTimer = null }
-  highlightPath.value = ''
 
   // navigateToDir is async (API call + DOM render), so retry until the item appears
   let attempts = 0
@@ -559,18 +537,13 @@ function handleHighlightFileItem(e) {
 
     item.scrollIntoView({ block: 'center', behavior: 'smooth' })
 
-    // Select/highlight the item (file or directory)
-    highlightPath.value = path
+    // Select the item visually (directories and files)
+    selectedPath.value = path
+    // For files, also select in the viewer
     const entry = props.entries?.find(en => joinPath(props.currentDir, en.name) === path)
     if (entry && entry.type !== 'dir') {
       store.selectFile(path)
     }
-
-    // Auto-clear highlight after 2.5s
-    highlightAutoClearTimer = setTimeout(() => {
-      if (highlightPath.value === path) highlightPath.value = ''
-      highlightAutoClearTimer = null
-    }, 2500)
   }
   tryHighlight()
 }
@@ -633,7 +606,7 @@ watch(() => props.currentDir, () => {
     props.searchDrawer?.close()
     if (multiSelect.active) exitMultiSelect()
     thumbErrors.clear()
-    highlightPath.value = ''
+    selectedPath.value = ''
 })
 
 const ctxMenu = reactive({ visible: false, x: 0, y: 0, entry: null })
@@ -946,6 +919,7 @@ function handleItemClick(e) {
         return
     }
 
+    selectedPath.value = path
     if (action === 'dir') {
         emit('navigateDir', path)
     } else {
@@ -1546,10 +1520,6 @@ function currentFileForClipboard() {
     background: var(--accent-color, #4a90d9);
     color: white;
 }
-.file-item.dir-highlight {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, transparent);
-}
-
 .file-item.dir-item {
     color: var(--text-primary, #1a1a1a);
     font-weight: 500;
@@ -1563,14 +1533,25 @@ function currentFileForClipboard() {
     background: var(--bg-tertiary, #f0f0f0);
 }
 
+.file-item.dir-item.active {
+    color: white;
+}
+
+.file-item.dir-item.active .file-icon {
+    color: white;
+}
+
+.file-item.dir-item.active:hover {
+    background: var(--accent-color, #4a90d9);
+}
+
 .file-item.dir-item .file-meta {
     margin-left: auto;
 }
 
 .file-item.active .file-icon-wrap,
 .file-item.ms-selected .file-icon-wrap,
-.file-item.ctx-highlight .file-icon-wrap,
-.file-item.dir-highlight .file-icon-wrap {
+.file-item.ctx-highlight .file-icon-wrap {
     border-radius: 6px;
     padding: 2px;
     width: 32px;
@@ -1585,15 +1566,13 @@ function currentFileForClipboard() {
 }
 
 .file-item.ms-selected .file-icon-wrap,
-.file-item.ctx-highlight .file-icon-wrap,
-.file-item.dir-highlight .file-icon-wrap {
+.file-item.ctx-highlight .file-icon-wrap {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 
 .file-item.active .file-icon-wrap .file-icon,
 .file-item.ms-selected .file-icon-wrap .file-icon,
-.file-item.ctx-highlight .file-icon-wrap .file-icon,
-.file-item.dir-highlight .file-icon-wrap .file-icon {
+.file-item.ctx-highlight .file-icon-wrap .file-icon {
     width: 28px;
     height: 28px;
 }
@@ -1723,8 +1702,7 @@ function currentFileForClipboard() {
     background: var(--bg-tertiary, #f0f0f0);
 }
 
-.grid-item.grid-active,
-.grid-item.grid-dir-highlight {
+.grid-item.grid-active {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 
@@ -1736,8 +1714,7 @@ function currentFileForClipboard() {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 
-.grid-item.grid-active .grid-thumb,
-.grid-item.grid-dir-highlight .grid-thumb {
+.grid-item.grid-active .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--bg-tertiary, #f5f5f5));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 40%, transparent);
 }
@@ -1817,6 +1794,11 @@ function currentFileForClipboard() {
     font-weight: 500;
 }
 
+.grid-item.grid-dir.grid-active .grid-name {
+    color: var(--accent-color, #4a90d9);
+    font-weight: 600;
+}
+
 /* Grid multi-select check */
 .grid-ms-check {
     position: absolute;
@@ -1849,7 +1831,6 @@ function currentFileForClipboard() {
 }
 
 [data-theme="dark"] .grid-item.grid-active .grid-thumb,
-[data-theme="dark"] .grid-item.grid-dir-highlight .grid-thumb,
 [data-theme="dark"] .grid-item.ctx-highlight .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, var(--bg-secondary, #2a2a2a));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 50%, transparent);
@@ -1865,8 +1846,7 @@ function currentFileForClipboard() {
 }
 
 [data-theme="dark"] .file-item.ms-selected .file-icon-wrap,
-[data-theme="dark"] .file-item.ctx-highlight .file-icon-wrap,
-[data-theme="dark"] .file-item.dir-highlight .file-icon-wrap {
+[data-theme="dark"] .file-item.ctx-highlight .file-icon-wrap {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
 }
 

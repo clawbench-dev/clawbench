@@ -11,7 +11,7 @@
       :show-line-numbers="showLineNumbers"
       :sticky-scroll="stickyScroll"
       :overlay-open="fileNav.overlayOpen.value"
-      :overlay-can-go-back="fileNav.canGoBack.value"
+      :recent-files-count="recentFilesCount"
       @delete="emit('delete', file.path)"
       @toggle-view="emit('toggleView')"
       @show-details="emit('showDetails')"
@@ -24,7 +24,7 @@
       @toggle-sticky-scroll="toggleStickyScroll"
       @refresh="emit('refresh')"
       @overlay-close="emit('overlayClose')"
-      @overlay-go-back="emit('overlayGoBack')"
+      @open-recent-files="emit('openRecentFiles')"
       @share-external="emit('shareExternal')"
       @export-html="handleExportHtml"
       @fit-width="handleFitWidth"
@@ -230,6 +230,7 @@ import { getFileType, formatFileSize } from '@/utils/fileType.ts'
 import { store } from '@/stores/app.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack.ts'
+import { useRecentFiles } from '@/composables/useRecentFiles'
 import { exportRenderedHtml } from '@/utils/exportHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToast } from '@/composables/useToast.ts'
@@ -247,9 +248,12 @@ const props = defineProps({
     markdownViewMode: String,
     externalLoading: Boolean,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'overlayGoBack', 'shareExternal'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'openRecentFiles', 'shareExternal'])
 
 const fileNav = useFileNavStack()
+const { recentFilesExcluding } = useRecentFiles()
+const filteredRecentFiles = recentFilesExcluding(computed(() => props.file?.path ?? null))
+const recentFilesCount = computed(() => filteredRecentFiles.value.length)
 
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')
