@@ -74,7 +74,7 @@ export function _resetForTesting() {
  * Deduplicates (moves to front if already present), caps at current max.
  */
 export function recordRecentFile(path: string) {
-  if (!path) return
+  if (!path || !store.state.projectRoot) return
   const now = Date.now()
   const filtered = _entries.value.filter(e => e.path !== path)
   _entries.value = [{ path, accessedAt: now }, ...filtered].slice(0, getMaxRecent())

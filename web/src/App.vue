@@ -1038,6 +1038,7 @@ async function handleDelete(path) {
 async function handleBatchDelete(paths) {
     try {
         await store.deleteFiles(paths)
+        for (const p of paths) removeRecentFile(p)
     } catch (err) {
         appLog.e(TAG, '[handleBatchDelete] unhandled error:', err)
     }
