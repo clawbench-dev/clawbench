@@ -315,7 +315,7 @@ import { usePortForward } from './composables/usePortForward.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
-import { useRecentFiles, removeRecentFile } from './composables/useRecentFiles'
+import { removeRecentFile } from './composables/useRecentFiles'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
@@ -578,7 +578,6 @@ useFileWatch({
 })
 
 const fileNav = useFileNavStack()
-const { recordRecentFile, recentFilesExcluding } = useRecentFiles()
 
 function closeOverlayAndSync() {
   fileNav.closeOverlay()
@@ -929,7 +928,6 @@ async function handleNavigateBack() {
 async function handleSelectFile(path) {
     const ok = await store.selectFile(path)
     if (ok) {
-        recordRecentFile(path)
         switchTab('browse')
         fileNav.openFile(path)
     }
@@ -939,7 +937,6 @@ async function handleBrowseSelectFile(path) {
     if (fileManagerRef.value?.multiSelectState?.active) return
     const ok = await store.selectFile(path)
     if (ok) {
-        recordRecentFile(path)
         fileNav.openFile(path)
     }
 }
@@ -947,7 +944,6 @@ async function handleBrowseSelectFile(path) {
 async function handleTaskOpenFile(filePath, lineStart) {
     const ok = await store.selectFile(filePath)
     if (ok) {
-        recordRecentFile(filePath)
         switchTab('browse')
         fileNav.openFile(filePath)
         if (lineStart) scrollToLine(lineStart)
@@ -978,7 +974,6 @@ async function handleOverlayOpenFile(payload) {
     const isExternal = path.startsWith('/')
     const ok = await store.selectFile(path)
     if (ok) {
-        recordRecentFile(path)
         if (lineStart) markdownViewMode.value = 'raw'
         fileNav.openFile(path)
         if (lineStart) scrollToLine(lineStart, lineEnd)
@@ -992,7 +987,6 @@ async function handleRecentFileSelect(path) {
     recentFilesDrawer.close()
     const ok = await store.selectFile(path)
     if (ok) {
-        recordRecentFile(path)
         fileNav.openFile(path)
     }
 }
@@ -1000,7 +994,6 @@ async function handleRecentFileSelect(path) {
 function handleOpenFileOverlay(e) {
     const { path, lineStart, lineEnd } = e.detail || {}
     if (!path) return
-    recordRecentFile(path)
     switchTab('browse')
     if (lineStart) markdownViewMode.value = 'raw'
     fileNav.openFile(path)
