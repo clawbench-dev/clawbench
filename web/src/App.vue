@@ -1000,6 +1000,7 @@ async function handleRecentFileSelect(path) {
 function handleOpenFileOverlay(e) {
     const { path, lineStart, lineEnd } = e.detail || {}
     if (!path) return
+    recordRecentFile(path)
     switchTab('browse')
     if (lineStart) markdownViewMode.value = 'raw'
     fileNav.openFile(path)
