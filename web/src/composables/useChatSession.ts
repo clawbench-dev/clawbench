@@ -12,6 +12,7 @@ import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { forceCleanupStreamingState, type ChatMessage } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
+import type { FileEntry } from '@/utils/fileAttachmentUtils'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
@@ -448,6 +449,26 @@ export function useChatSession(options: UseChatSessionOptions) {
 
       // Replace messages with server data.
       messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, forceNotRunning ? false : data.running)
+
+      // Append pending messages from the queue field in the backend response.
+      // The queue lives in-memory (not in DB), so parseMessages won't include them.
+      // Since parseMessages just replaced messages.value, there are no stale
+      // pending messages to clear — just append from the authoritative backend queue.
+      const queueItems = data.queue as Array<Record<string, unknown>> | undefined
+      if (queueItems) {
+        for (const item of queueItems) {
+          const itemFiles = [...(item.files as FileEntry[] || []).map((f: FileEntry) => typeof f === 'string' ? { path: f, isDir: false } : f), ...(item.filePaths as string[] || []).map((p: string) => ({ path: p, isDir: false }))]
+          messages.value.push({
+            role: 'user',
+            id: item.queueId || `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            content: item.text || '',
+            blocks: item.text ? [{ type: 'text', text: item.text as string }] : [],
+            files: itemFiles,
+            createdAt: item.createdAt || new Date().toISOString(),
+            pending: true,
+          })
+        }
+      }
 
       totalMessages.value = data.total || messages.value.length
       // Sanity check: if the backend returned a different sessionId than what we

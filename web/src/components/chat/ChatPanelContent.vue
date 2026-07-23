@@ -453,7 +453,6 @@ const manager = useSessionManager({
     clearPendingFiles()
   },
   scrollBottom: (force) => scrollBottom(force),
-  reloadHistory: () => session.loadHistory(false, false, true),
 })
 
 // Register identity actions — all paths now go through manager
@@ -959,7 +958,6 @@ onUnmounted(() => {
     for (const timer of toolUpdateFetchDebounce.values()) clearTimeout(timer)
     toolUpdateFetchDebounce.clear()
     document.removeEventListener('visibilitychange', session.handleVisibilityChange)
-    document.removeEventListener('visibilitychange', manager._visibilityHandler)
     window.removeEventListener('clawbench-summary-update', handleSummaryUpdate)
     document.removeEventListener('keydown', handleCtrlArrowSessionSwitch)
     notification.closeAll()

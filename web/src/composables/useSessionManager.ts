@@ -1,4 +1,4 @@
-import { ref, watch, type Ref } from 'vue'
+import { type Ref } from 'vue'
 import { useSessionIdentity, runningSessions } from '@/composables/useSessionIdentity.ts'
 import { cancelChat } from '@/utils/api'
 import { useToast } from '@/composables/useToast.ts'
@@ -9,15 +9,12 @@ import type { FileEntry } from '@/utils/fileAttachmentUtils'
 const TAG = 'SessionManager'
 
 /**
- * Unified session manager — a thin coordination layer that ensures
- * consistent cleanup + queue sync around every session operation.
+ * Unified session manager — ensures consistent cleanup around session operations.
  *
- * All session switching paths (SessionDrawer @select, useSwipeSession,
- * identity proxy from App.vue/QuoteQuestionBar, ChatPanel handlers)
- * MUST go through this manager so that:
- *   1. cleanupActiveStream() is always called before switching
- *   2. pending messages in messages.value are cleaned up on session change
- *   3. backend queue is cleared on session deletion
+ * Queue sync is now handled by loadHistory: the backend includes the in-memory
+ * queue in the /api/ai/chat GET response, and loadHistory appends queue items
+ * as pending messages after replacing messages.value. This eliminates the race
+ * where loadHistory replaces messages and erases pending messages.
  */
 
 export interface UseSessionManagerOptions {
@@ -44,9 +41,6 @@ export interface UseSessionManagerOptions {
 
   // Scroll
   scrollBottom: (force?: boolean) => void
-
-  // History reload (from useChatSession)
-  reloadHistory: () => Promise<void>
 }
 
 export function useSessionManager(options: UseSessionManagerOptions) {
@@ -63,60 +57,17 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     updateRenderedContents,
     clearInputState: _clearInputState,
     scrollBottom,
-    reloadHistory,
   } = options
 
   const identity = useSessionIdentity()
   const toast = useToast()
 
-  // ── Queue sync guard ──
-  // When switchSession/createSession is driving the session change,
-  // it calls fetchQueue AFTER messages.value is populated. The watch on
-  // currentSessionId should only fire for external changes (e.g. initial
-  // mount) where no explicit fetchQueue call is made.
-  const switchingSession = ref(false)
-
   // ── Pending message helpers ──
-  // Pending messages are in messages.value with pending: true.
 
   /** Remove all pending messages from messages.value */
   function clearPendingMessages() {
     for (let i = messages.value.length - 1; i >= 0; i--) {
       if (messages.value[i].pending) messages.value.splice(i, 1)
-    }
-  }
-
-  /** Sync pending messages from backend queue into messages.value.
-   *  Used only on session switch to show queued messages for the new session. */
-  function syncPendingFromBackendQueue(backendQueue: Array<Record<string, unknown>>) {
-    // Remove all existing pending messages
-    clearPendingMessages()
-    // Push backend queue items as pending messages
-    for (const item of backendQueue) {
-      const itemFiles = [...(item.files as FileEntry[] || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f), ...(item.filePaths as string[] || []).map((p: string) => ({ path: p, isDir: false }))]
-      messages.value.push({
-        role: 'user',
-        id: item.queueId || `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        content: item.text || '',
-        blocks: item.text ? [{ type: 'text', text: item.text }] : [],
-        files: itemFiles,
-        createdAt: item.createdAt || new Date().toISOString(),
-        pending: true,
-      })
-    }
-  }
-
-  /** Fetch the current queue for a session from the backend and sync pending messages. */
-  async function fetchQueue(sessionId: string) {
-    if (!sessionId) return
-    try {
-      const resp = await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`)
-      if (resp.ok) {
-        const data = await resp.json()
-        syncPendingFromBackendQueue(data.queue || [])
-      }
-    } catch {
-      // Non-critical — queue will be empty until next SSE event
     }
   }
 
@@ -233,56 +184,23 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     loading.value = false
   }
 
-  // ── Unified session operations (cleanup + core + queue sync) ──
+  // ── Unified session operations (cleanup + core) ──
 
   async function switchSession(sessionId: string) {
     cleanupActiveStream()
     _clearInputState()
-    // Clear pending messages BEFORE switching session. These belong to the
-    // current (old) session — they're in the backend queue for that session
-    // and will be drained by its AI goroutine. If we don't clear them here,
-    // they remain in messages.value during the session switch, which causes:
-    //   1. The watch(loading) handler fires after currentSessionId changes,
-    //      sees pending messages, and fetches the NEW session's queue (wrong!)
-    //   2. The watch(currentSessionId) handler fetches the new session's
-    //      queue, but syncPendingFromBackendQueue clears all pending and
-    //      re-pushes from the new session's queue (which may be empty),
-    //      making old session's pending messages vanish from UI.
-    //   3. Stuck-queue recovery in watch(loading) may call sendMessageNow
-    //      against the wrong session.
-    // The old session's pending messages are safely in its backend queue;
-    // they'll be drained when its AI finishes or shown if user switches back.
+    // Clear pending messages BEFORE switching session — they belong to the
+    // old session. loadHistory will restore pending messages for the new
+    // session from the queue field in the /api/ai/chat response.
     clearPendingMessages()
-    // Suppress the watch on currentSessionId — it would fire when
-    // clearSessionIdentity() sets the ID (before messages.value is
-    // populated from REST), causing syncPendingFromBackendQueue to push
-    // pending messages into the stale array which then gets replaced
-    // wholesale by parseMessages(). We fetch the queue ourselves after
-    // switchSessionCore completes so it runs against the final messages.
-    switchingSession.value = true
-    try {
-      await switchSessionCore(sessionId)
-      // Now messages.value is populated from the REST response.
-      // Fetch the queue to restore any pending messages for this session.
-      await fetchQueue(sessionId)
-    } finally {
-      switchingSession.value = false
-    }
+    await switchSessionCore(sessionId)
   }
 
   async function createSession(agentId?: string) {
     cleanupActiveStream()
     _clearInputState()
     clearPendingMessages()
-    switchingSession.value = true
-    try {
-      await createSessionCore(agentId)
-      // New sessions have no queued messages, but fetch for consistency
-      const sid = identity.currentSessionId.value
-      if (sid) await fetchQueue(sid)
-    } finally {
-      switchingSession.value = false
-    }
+    await createSessionCore(agentId)
   }
 
   async function deleteSession(sessionId: string, backend?: string) {
@@ -296,17 +214,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
     } catch {}
     clearPendingMessages()
-    // deleteSessionCore may internally call switchSession (if deleting the
-    // current session), which changes currentSessionId. Suppress the watch
-    // to avoid premature fetchQueue, then fetch queue after completion.
-    switchingSession.value = true
-    try {
-      await deleteSessionCore(sessionId, backend)
-      const sid = identity.currentSessionId.value
-      if (sid) await fetchQueue(sid)
-    } finally {
-      switchingSession.value = false
-    }
+    await deleteSessionCore(sessionId, backend)
   }
 
   /** Delete the current session (convenience for ChatInputBar button). */
@@ -322,33 +230,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(deletedId)}`, { method: 'DELETE' })
     } catch {}
     clearPendingMessages()
-    // deleteSessionCore may internally call switchSession, which changes
-    // currentSessionId. Suppress the watch.
-    switchingSession.value = true
-    try {
-      await deleteSessionCore(deletedId, identity.currentBackend.value)
-      const sid = identity.currentSessionId.value
-      if (sid) await fetchQueue(sid)
-    } finally {
-      switchingSession.value = false
-    }
+    await deleteSessionCore(deletedId, identity.currentBackend.value)
     deleteDraft(deletedId)
   }
 
   /** Continue a task execution as a new chat session. */
   async function continueFromExecution(taskId: number, execId: number, switchTabFn: (tab: string) => void): Promise<boolean> {
     cleanupActiveStream()
-    // continueFromExecutionCore may internally call switchSession, which
-    // changes currentSessionId. Suppress the watch.
-    switchingSession.value = true
-    try {
-      const result = await continueFromExecutionCore(taskId, execId, switchTabFn)
-      const sid = identity.currentSessionId.value
-      if (sid) await fetchQueue(sid)
-      return result
-    } finally {
-      switchingSession.value = false
-    }
+    return await continueFromExecutionCore(taskId, execId, switchTabFn)
   }
 
   /** Fork the current session — create a new session with copied messages. */
@@ -356,59 +245,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     cleanupActiveStream()
     _clearInputState()
     clearPendingMessages()
-    // forkSessionCore may internally call switchSession, which changes
-    // currentSessionId. Suppress the watch.
-    switchingSession.value = true
-    try {
-      const result = await forkSessionCore(sessionId, beforeMessageId)
-      const sid = identity.currentSessionId.value
-      if (sid) await fetchQueue(sid)
-      return result
-    } finally {
-      switchingSession.value = false
-    }
+    return await forkSessionCore(sessionId, beforeMessageId)
   }
 
   /** Check whether a continued session already exists for a task execution. */
   async function checkContinueSession(taskId: number, execId: number): Promise<{ exists: boolean; sessionId: string }> {
     return await checkContinueSessionCore(taskId, execId)
   }
-
-  // ── Queue sync on session change ──
-
-  // When currentSessionId changes from an EXTERNAL path (not from our own
-  // switchSession/createSession), fetch the queue.
-  // immediate: true ensures fetchQueue runs on initial mount too —
-  // critical because App.vue's initSessionFromAPI() may set currentSessionId
-  // before useSessionManager is created, so the watch wouldn't fire without immediate.
-  watch(() => identity.currentSessionId.value, async (newSessionId) => {
-    if (newSessionId && !switchingSession.value) {
-      await fetchQueue(newSessionId)
-    }
-  }, { immediate: true })
-
-  // When the page becomes visible after being in the background (e.g. mobile screen
-  // unlock), sync queue with the backend. While backgrounded, queue_drain /
-  // queue_cancel events are dropped because the WS is disconnected, so local
-  // pending messages may be stale — showing ghost "queuing" items that the backend
-  // has already consumed. Frontend pending messages are optimistic indicators only;
-  // the backend queue is the source of truth.
-  //
-  // Same pattern as switchSession: loadHistory first (brings in drained messages
-  // from DB as regular messages), then fetchQueue (restores still-queued pending
-  // messages). This ensures drained messages reappear and pending messages stay.
-  async function handleVisibilityChange() {
-    if (document.visibilityState !== 'visible') return
-    const sessionId = identity.currentSessionId.value
-    if (!sessionId) return
-    try {
-      await reloadHistory()
-    } catch {
-      // Non-critical
-    }
-    await fetchQueue(sessionId)
-  }
-  document.addEventListener('visibilitychange', handleVisibilityChange)
 
   // ── Register identity actions ──
 
@@ -432,7 +275,6 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   return {
     // Queue operations
-    fetchQueue,
     enqueueMessage,
     handleRemovePending,
     // Unified session operations
@@ -443,10 +285,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     continueFromExecution,
     forkSession,
     checkContinueSession,
-    // Cleanup (exposed for onStreamEnd and other edge cases)
+    // Cleanup
     cleanupActiveStream,
-    // Visibility change cleanup — call removeEventListener on unmount
-    _visibilityHandler: handleVisibilityChange,
     // Identity registration
     registerIdentityActions,
   }
