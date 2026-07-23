@@ -833,7 +833,7 @@ async function handleLoginSuccess() {
     // Clean up legacy localStorage keys (no longer used)
     Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
     isAuthenticated.value = true
-    dismissWebSplash()
+    dismissSplash()
     await nextTick()
     applyUIScale(localConfig.uiScale ?? 1)
     startDockResize()
@@ -1293,26 +1293,9 @@ function applyTheme(t) {
     reRenderMermaid()
 }
 
-/** Dismiss the splash screen. In APP mode, dismisses the native overlay.
- *  In browser/PWA mode, fades out the inline HTML splash. */
-function dismissWebSplash() {
-    // APP mode: native splash overlay covers the loading gap
-    if (window.AndroidNative?.dismissSplash) {
-        window.AndroidNative.dismissSplash()
-        // Also remove the inline HTML splash (invisible behind native overlay)
-        const splash = document.getElementById('splash')
-        if (splash) splash.remove()
-        return
-    }
-    // Browser/PWA: fade out inline splash
-    const splash = document.getElementById('splash')
-    if (!splash) return
-    splash.classList.add('fade-out')
-    splash.addEventListener('transitionend', () => splash.remove(), { once: true })
-    setTimeout(() => splash.remove(), 300)
-    document.documentElement.setAttribute('data-hljs-theme', t)
-    initMermaid()
-    reRenderMermaid()
+/** Dismiss the native splash overlay in APP mode. */
+function dismissSplash() {
+    window.AndroidNative?.dismissSplash?.()
 }
 
 provide('theme', theme)
@@ -1423,7 +1406,7 @@ onMounted(async () => {
     // from firing with missing cookies (Android first-login bug).
     if (!(await initializeApp())) return
     isAuthenticated.value = true
-    dismissWebSplash()
+    dismissSplash()
     await nextTick()
     applyUIScale(localConfig.uiScale ?? 1)
     startDockResize()

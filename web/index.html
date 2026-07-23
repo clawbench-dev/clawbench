@@ -45,81 +45,9 @@
     <link rel="stylesheet" href="/css/code-block-header.css">
     <link rel="stylesheet" href="/css/content.css">
     <link rel="stylesheet" href="/css/components.css">
-    <!-- Splash screen styles — inline so they render before JS bundle loads -->
-    <style>
-      #splash {
-        position: fixed;
-        inset: 0;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        background: var(--bg-primary);
-        z-index: 9999;
-        gap: 24px;
-        transition: opacity 0.2s ease-out;
-      }
-      #splash.fade-out {
-        opacity: 0;
-      }
-      .splash-logo-ring {
-        position: relative;
-        width: 132px;
-        height: 132px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .splash-sweep {
-        position: absolute;
-        inset: 0;
-        border-radius: 50%;
-        background: conic-gradient(
-          from 0deg,
-          transparent 0%,
-          transparent 65%,
-          color-mix(in srgb, var(--accent-color) 50%, transparent) 82%,
-          transparent 100%
-        );
-        animation: splash-rotate 1.6s linear infinite;
-        -webkit-mask: radial-gradient(circle, transparent 42px, black 44px, black 64px, transparent 66px);
-        mask: radial-gradient(circle, transparent 42px, black 44px, black 64px, transparent 66px);
-      }
-      .splash-logo {
-        position: relative;
-        z-index: 1;
-        width: 108px;
-        height: 108px;
-        border-radius: 50%;
-        box-shadow: 0 0 20px color-mix(in srgb, var(--accent-color) 25%, transparent);
-        animation: splash-breathe 2.4s ease-in-out infinite;
-      }
-      .splash-title {
-        font-size: 20px;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        color: var(--text-primary);
-        opacity: 0.85;
-      }
-      @keyframes splash-rotate {
-        to { transform: rotate(360deg); }
-      }
-      @keyframes splash-breathe {
-        0%, 100% { box-shadow: 0 0 20px color-mix(in srgb, var(--accent-color) 20%, transparent); }
-        50% { box-shadow: 0 0 32px color-mix(in srgb, var(--accent-color) 40%, transparent); }
-      }
-    </style>
 </head>
 <body>
     <div id="app"></div>
-    <!-- Splash screen — outside #app so Vue doesn't destroy it; faded out by App.vue -->
-    <div id="splash">
-      <div class="splash-logo-ring">
-        <div class="splash-sweep"></div>
-        <img class="splash-logo" src="/logo.png" alt="ClawBench">
-      </div>
-      <div class="splash-title">ClawBench</div>
-    </div>
     <script type="module" src="/src/main.ts"></script>
 
     <!-- Register Service Worker (production only — dev server returns HTML for /sw.js) -->
