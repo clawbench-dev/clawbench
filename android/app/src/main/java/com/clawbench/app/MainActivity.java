@@ -301,8 +301,26 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Show the native splash screen overlay and start the sweep animation.
+     * Used when connecting to a new server from the login page.
+     */
+    private void showSplash() {
+        if (splashScreen == null) return;
+        splashScreen.setAlpha(1f);
+        splashScreen.setVisibility(View.VISIBLE);
+        if (splashSweep != null && sweepAnimator == null) {
+            sweepAnimator = ObjectAnimator.ofFloat(splashSweep, View.ROTATION, 0f, 360f);
+            sweepAnimator.setDuration(1600);
+            sweepAnimator.setInterpolator(new LinearInterpolator());
+            sweepAnimator.setRepeatCount(ValueAnimator.INFINITE);
+            sweepAnimator.start();
+        }
+    }
+
+    /**
      * Dismiss the native splash screen with a fade-out animation.
-     * Called when the remote WebView page finishes loading successfully.
+     * Called when the remote WebView page finishes loading successfully,
+     * or from JS via AndroidNative.dismissSplash() when Vue finishes mounting.
      */
     private void dismissSplash() {
         if (splashScreen == null || splashScreen.getVisibility() != View.VISIBLE) return;
@@ -714,6 +732,7 @@ public class MainActivity extends AppCompatActivity {
         loadErrorPending = false;
         sslCertTrustedByUser = false;
         webView.setVisibility(View.GONE);
+        showSplash();
 
         // Save URL and password
         prefs.edit().putString(KEY_SERVER_URL, url).apply();
