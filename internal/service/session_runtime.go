@@ -47,19 +47,18 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolNameAnd
 		HasNewMessages: hasNewMessages,
 	}
 
-	// On completion, include session title for push notification
+	// Include session title and project path for push notifications
+	if title, err := GetSessionTitle(sessionID); err == nil && title != "" {
+		data.SessionTitle = title
+	}
+
 	var responsePreviewRaw string
-	if status == "completed" || status == "cancelled" {
-		if title, err := GetSessionTitle(sessionID); err == nil && title != "" {
-			data.SessionTitle = title
-		}
+	if status == "completed" {
 		// Include response preview for DingTalk (Markdown) and Android/browser (plain text)
-		if status == "completed" {
-			responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
-			data.ResponsePreview = truncatePreview(responsePreviewRaw)
-			if responsePreviewRaw != "" {
-				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
-			}
+		responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
+		data.ResponsePreview = truncatePreview(responsePreviewRaw)
+		if responsePreviewRaw != "" {
+			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 		}
 	}
 
