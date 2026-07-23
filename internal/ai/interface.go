@@ -73,6 +73,103 @@ const (
 	ReasonPanic         = "panic"          // AI goroutine panicked
 )
 
+// SelectOptionDef describes a single selectable option (e.g., mode, thinking effort level).
+// It is structurally identical to ModeDef, ThinkingEffortDef, and ConfigOptionValue —
+// all share {ID, Name} with the same JSON tags. SelectOptionDef serves as the unified
+// internal type; the domain-specific aliases are kept for JSON serialization compatibility.
+type SelectOptionDef struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// SelectState carries a unified select-one-from-many state, used internally
+// to generalize mode and thinking effort handling. Domain-specific types
+// (ModeState, ThinkingEffortState) are kept for JSON API compatibility.
+type SelectState struct {
+	CurrentID string
+	Available []SelectOptionDef
+	Category  string // "mode", "thought_level", etc.
+}
+
+// IsEmpty returns true if the SelectState has no data at all.
+func (s SelectState) IsEmpty() bool {
+	return s.CurrentID == "" && len(s.Available) == 0 && s.Category == ""
+}
+
+// IsValidOption returns true if the given ID exists in Available.
+func (s SelectState) IsValidOption(id string) bool {
+	for _, opt := range s.Available {
+		if opt.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// ToModeState converts SelectState to a ModeState for JSON serialization.
+// Returns nil if the state is empty.
+func (s SelectState) ToModeState() *ModeState {
+	if s.IsEmpty() {
+		return nil
+	}
+	ms := &ModeState{
+		CurrentModeID:  s.CurrentID,
+		AvailableModes: make([]ModeDef, len(s.Available)),
+	}
+	for i, opt := range s.Available {
+		ms.AvailableModes[i] = ModeDef(opt)
+	}
+	return ms
+}
+
+// ToThinkingEffortState converts SelectState to a ThinkingEffortState for JSON serialization.
+// Returns nil if the state is empty.
+func (s SelectState) ToThinkingEffortState() *ThinkingEffortState {
+	if s.IsEmpty() {
+		return nil
+	}
+	tes := &ThinkingEffortState{
+		CurrentID:       s.CurrentID,
+		AvailableLevels: make([]ThinkingEffortDef, len(s.Available)),
+	}
+	for i, opt := range s.Available {
+		tes.AvailableLevels[i] = ThinkingEffortDef(opt)
+	}
+	return tes
+}
+
+// NewSelectStateFromMode creates a SelectState from a ModeState.
+// Returns an empty SelectState if ms is nil.
+func NewSelectStateFromMode(ms *ModeState) SelectState {
+	if ms == nil {
+		return SelectState{}
+	}
+	sel := SelectState{
+		CurrentID: ms.CurrentModeID,
+		Category:  "mode",
+	}
+	for _, m := range ms.AvailableModes {
+		sel.Available = append(sel.Available, SelectOptionDef(m))
+	}
+	return sel
+}
+
+// NewSelectStateFromThinkingEffort creates a SelectState from a ThinkingEffortState.
+// Returns an empty SelectState if tes is nil.
+func NewSelectStateFromThinkingEffort(tes *ThinkingEffortState) SelectState {
+	if tes == nil {
+		return SelectState{}
+	}
+	sel := SelectState{
+		CurrentID: tes.CurrentID,
+		Category:  "thought_level",
+	}
+	for _, l := range tes.AvailableLevels {
+		sel.Available = append(sel.Available, SelectOptionDef(l))
+	}
+	return sel
+}
+
 // ModeDef describes a single available session mode (e.g., "ask", "architect", "code").
 type ModeDef struct {
 	ID   string `json:"id"`

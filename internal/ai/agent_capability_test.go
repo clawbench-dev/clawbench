@@ -303,6 +303,31 @@ func TestRegistry_GetThinkingEffortState(t *testing.T) {
 		assert.Equal(t, "high", es.CurrentID)
 		assert.Len(t, es.AvailableLevels, 2)
 	})
+	t.Run("FallbackToConfigOptionState", func(t *testing.T) {
+		reg.Update("a3", &AgentCapability{
+			ConfigOptionState: &ConfigOptionState{
+				ConfigID:  "thinking_effort",
+				CurrentID: "high",
+				Options: []ConfigOptionDef{
+					{ID: "thinking_effort", Category: "thought_level", Values: []ConfigOptionValue{
+						{ID: "low", Name: "Low"},
+						{ID: "medium", Name: "Medium"},
+						{ID: "high", Name: "High"},
+					}},
+				},
+			},
+		})
+		// With empty currentID — should use ConfigOptionState's CurrentID
+		es := reg.GetThinkingEffortState("a3", "")
+		require.NotNil(t, es)
+		assert.Equal(t, "high", es.CurrentID)
+		assert.Len(t, es.AvailableLevels, 3)
+
+		// With explicit currentID — should override ConfigOptionState's CurrentID
+		es2 := reg.GetThinkingEffortState("a3", "low")
+		require.NotNil(t, es2)
+		assert.Equal(t, "low", es2.CurrentID)
+	})
 }
 
 func TestRegistry_GetModelListState(t *testing.T) {

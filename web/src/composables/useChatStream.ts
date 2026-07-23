@@ -2,7 +2,7 @@ import { onUnmounted, watch, type Ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateCommandState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
+import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, cancelPendingMessages, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
@@ -507,6 +507,13 @@ export function useChatStream(options: UseChatStreamOptions) {
               updateModeState(currentModeId, modes)
             }
           }
+          if ((opt.category as string) === 'thought_level' || (opt.id as string) === 'thought_level') {
+            const levels = ((opt.values as Record<string, string>[]) || []).map((v) => ({ id: v.id, name: v.name || v.id }))
+            const currentId = (configData.currentValueId as string) || ''
+            if (currentId || levels.length > 0) {
+              updateThinkingEffortState(currentId, levels)
+            }
+          }
         }
         break
       }
@@ -514,9 +521,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'thinking_effort_update': {
         if (sessionChanged()) return
         const effortData = payload as Record<string, unknown>
-        if ((effortData.availableLevels as unknown[])?.length > 0) {
+        if (effortData.currentId || (effortData.availableLevels as unknown[])?.length > 0) {
           const levels = ((effortData.availableLevels as Record<string, string>[]) || []).map((l) => ({ id: l.id, name: l.name || l.id }))
-          updateAvailableThinkingEfforts(levels)
+          const currentId = (effortData.currentId as string) || ''
+          updateThinkingEffortState(currentId, levels)
         }
         break
       }

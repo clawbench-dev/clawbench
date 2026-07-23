@@ -315,7 +315,7 @@ func TestApplyExtractedState_NoCachedUsage(t *testing.T) {
 		modes:         []ModeDef{{ID: "code", Name: "Code"}},
 		modeCurrentID: "code",
 	}
-	conn.applyExtractedState(ext, false)
+	conn.applyExtractedState(ext)
 
 	assert.Equal(t, "code", conn.GetCurrentModeID())
 }

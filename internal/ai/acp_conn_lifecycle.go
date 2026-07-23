@@ -590,13 +590,13 @@ func (c *ACPConn) SetSessionConfigOption(ctx context.Context, configID, value st
 
 	switch configID {
 	case "mode":
-		c.UpdateCachedCurrentMode(value)
+		c.UpdateCachedCurrent("mode", value)
 		c.markConfigSet("mode", value)
 	case "thinking_effort", "thought_level", "thinkingEffort":
-		c.UpdateCachedCurrentThinkingEffort(value)
+		c.UpdateCachedCurrent("thought_level", value)
 		c.markConfigSet("thinkingEffort", value)
 	case "model":
-		c.UpdateCachedCurrentModel(value)
+		c.UpdateCachedCurrent("model", value)
 		c.markConfigSet("model", value)
 	}
 }

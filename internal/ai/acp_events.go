@@ -151,21 +151,21 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		mu := update.CurrentModeUpdate
 		modeID := string(mu.CurrentModeId)
 		if conn != nil {
-			if modeID != "" && !GetAgentCapabilityRegistry().IsModeAvailable(conn.AgentID(), modeID) {
+			if modeID != "" && !GetAgentCapabilityRegistry().IsOptionAvailable(conn.AgentID(), "mode", modeID) {
 				// Agent reported a mode not in availableModes — likely a bridge adapter
 				// artifact. Skip updating currentModeId but still update cache for
 				// availableModes if needed.
 				slog.Debug("acp: ignoring CurrentModeUpdate with unrecognized mode",
 					"mode_id", modeID, "clawbench_sid", conn.clawbenchSID)
 			} else {
-				if conn.HasCurrentModeChanged(modeID) {
-					conn.UpdateCachedCurrentMode(modeID)
+				if conn.HasCurrentChanged("mode", modeID) {
+					conn.UpdateCachedCurrent("mode", modeID)
 					// Build mode state from registry + session current value
 					if ms := GetAgentCapabilityRegistry().GetModeState(conn.AgentID(), modeID); ms != nil {
 						forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: ms})
 					}
 				} else {
-					conn.UpdateCachedCurrentMode(modeID)
+					conn.UpdateCachedCurrent("mode", modeID)
 				}
 			}
 		} else {
@@ -176,7 +176,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		}
 
 	case update.ConfigOptionUpdate != nil:
-		// v2 config option update: extract mode and thought_level options
+		// v2 config option update: extract mode, thought_level, and model options
 		cu := update.ConfigOptionUpdate
 		for _, opt := range cu.ConfigOptions {
 			if opt.Select == nil {
@@ -189,58 +189,20 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 
 			switch *sel.Category {
 			case acp.SessionConfigOptionCategoryMode:
+				// Build SelectState and delegate to unified handler
+				selState := buildSelectStateFromACPSelect(sel, "mode")
+				// Also maintain ConfigOptionState for agent capability tracking
 				configState := buildConfigOptionStateFromSelect(sel, "mode")
-				if conn != nil {
-					derived := modeStateFromConfigState(configState)
-					agentID := conn.AgentID()
-					reg := GetAgentCapabilityRegistry()
-					newModes := derived != nil && reg.HasNewAvailableModes(agentID, derived.AvailableModes)
-					modeChanged := derived != nil && conn.HasCurrentModeChanged(derived.CurrentModeID)
-					// Forward config_update WS if available modes or currentModeId changed.
-					if newModes || modeChanged {
-						forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
-					}
-					// Update agent-level config state in registry
-					reg.UpdateConfigState(agentID, configState)
-					if derived != nil {
-						if newModes {
-							// Available modes changed — update registry
-							reg.UpdateModes(agentID, derived.AvailableModes)
-							// Also update session current mode
-							conn.UpdateCachedCurrentMode(derived.CurrentModeID)
-						} else if modeChanged {
-							// Only currentModeId changed — validate before updating cache.
-							// Only accept the mode if it's in availableModes to filter out
-							// invalid mode reports from bridge adapters.
-							if derived.CurrentModeID != "" && !reg.IsModeAvailable(agentID, derived.CurrentModeID) {
-								slog.Debug("acp: ignoring ConfigOptionUpdate with unrecognized mode",
-									"mode_id", derived.CurrentModeID, "clawbench_sid", conn.clawbenchSID)
-							} else {
-								conn.UpdateCachedCurrentMode(derived.CurrentModeID)
-							}
-						}
-					}
-				} else {
-					forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
+				handleConfigOptionSelect(selState, conn, ch)
+				// Update agent-level config state in registry (used by REST API / agent list)
+				if conn != nil && configState != nil {
+					GetAgentCapabilityRegistry().UpdateConfigState(conn.AgentID(), configState)
 				}
 
 			case acp.SessionConfigOptionCategoryThoughtLevel:
-				effortState := buildThinkingEffortStateFromSelect(sel)
-				if effortState != nil {
-					if conn != nil {
-						agentID := conn.AgentID()
-						reg := GetAgentCapabilityRegistry()
-						// Diff-check: only forward WS if available levels actually changed.
-						if reg.HasNewAvailableThinkingEfforts(agentID, effortState.AvailableLevels) {
-							// Update agent-level thinking efforts in registry
-							reg.UpdateThinkingEfforts(agentID, effortState.AvailableLevels)
-							forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effortState})
-						}
-						conn.UpdateCachedCurrentThinkingEffort(string(sel.CurrentValue))
-					} else {
-						forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effortState})
-					}
-				}
+				// Build SelectState and delegate to unified handler
+				selState := buildSelectStateFromACPSelect(sel, "thought_level")
+				handleConfigOptionSelect(selState, conn, ch)
 
 			case acp.SessionConfigOptionCategoryModel:
 				modelList := buildModelListStateFromSelect(sel)
@@ -278,6 +240,118 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if conn != nil {
 			conn.SetCachedUsageState(usageState)
 		}
+	}
+}
+
+// handleConfigOptionSelect processes a ConfigOptionSelect update for a given
+// category in a unified way. It handles diff-checking, registry updates,
+// WS event forwarding, and session cache updates for both mode and
+// thought_level categories.
+//
+// Returns the list of StreamEvent types that were forwarded (for testing).
+// Category-specific behaviors:
+//   - "mode": validates currentID against available modes (bridge adapter filter)
+//   - "thought_level": conditionally updates cache only on change
+func handleConfigOptionSelect(sel SelectState, conn *ACPConn, ch chan<- StreamEvent) []string {
+	if sel.IsEmpty() {
+		return nil
+	}
+
+	var forwarded []string
+
+	if conn == nil {
+		// No connection → always forward
+		forwardACPEvent(ch, buildStreamEventFromSelectState(sel))
+		return []string{streamEventTypeFromCategory(sel.Category)}
+	}
+
+	agentID := conn.AgentID()
+	reg := GetAgentCapabilityRegistry()
+
+	newOpts := reg.HasNewAvailableOptions(agentID, sel.Category, sel.Available)
+	currentChanged := conn.HasCurrentChanged(sel.Category, sel.CurrentID)
+
+	if !newOpts && !currentChanged {
+		return nil
+	}
+
+	// Update available options in registry only when options actually changed.
+	if newOpts {
+		reg.UpdateAvailableOptions(agentID, sel.Category, sel.Available)
+	}
+
+	// Forward WS event
+	evt := buildStreamEventFromSelectState(sel)
+	forwardACPEvent(ch, evt)
+	forwarded = append(forwarded, streamEventTypeFromCategory(sel.Category))
+
+	// Category-specific cache update logic
+	switch sel.Category {
+	case "mode":
+		if newOpts {
+			conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
+		} else if currentChanged {
+			// Validate mode change (bridge adapter filter)
+			if sel.CurrentID != "" && !reg.IsOptionAvailable(agentID, "mode", sel.CurrentID) {
+				slog.Debug("acp: ignoring ConfigOptionSelect with unrecognized mode",
+					"mode_id", sel.CurrentID, "clawbench_sid", conn.clawbenchSID)
+				return forwarded
+			}
+			conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
+		}
+	case "thought_level":
+		// Only update session cache when the value actually changed,
+		// to avoid overwriting the user's selection with the agent's default
+		if currentChanged {
+			conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
+		}
+	default:
+		if newOpts || currentChanged {
+			conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
+		}
+	}
+
+	return forwarded
+}
+
+// buildStreamEventFromSelectState creates the appropriate StreamEvent for a
+// SelectState based on its category. This preserves JSON API compatibility
+// by using the domain-specific serialization types.
+func buildStreamEventFromSelectState(sel SelectState) StreamEvent {
+	switch sel.Category {
+	case "mode":
+		return StreamEvent{Type: "mode_update", Mode: sel.ToModeState()}
+	case "thought_level":
+		return StreamEvent{Type: "thinking_effort_update", ThinkingEffort: sel.ToThinkingEffortState()}
+	default:
+		// For unknown categories, use config_update as a generic carrier.
+		// Populate Values from SelectState.Available so the client receives
+		// the full option list, not just an empty ConfigOptionDef.
+		values := make([]ConfigOptionValue, len(sel.Available))
+		for i, opt := range sel.Available {
+			values[i] = ConfigOptionValue(opt)
+		}
+		return StreamEvent{Type: "config_update", Config: &ConfigOptionState{
+			ConfigID:  sel.Category,
+			CurrentID: sel.CurrentID,
+			Options: []ConfigOptionDef{{
+				ID:       sel.Category,
+				Category: sel.Category,
+				Values:   values,
+			}},
+		}}
+	}
+}
+
+// streamEventTypeFromCategory returns the WS event type string for a category.
+func streamEventTypeFromCategory(category string) string {
+	switch category {
+	case "mode":
+		return "mode_update"
+	case "thought_level":
+		return "thinking_effort_update"
+	default:
+		return "config_update"
 	}
 }
 

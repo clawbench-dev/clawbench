@@ -196,7 +196,7 @@ func (c *ACPConn) setConfigOptionWithCrashCheck(ctx context.Context, acpSID stri
 
 	// For mode: also update cache so GET /api/ai/chat returns the correct mode.
 	if cfg.configID == "mode" && !c.IsConfigUnsupported("mode") {
-		c.UpdateCachedCurrentMode(cfg.value)
+		c.UpdateCachedCurrent("mode", cfg.value)
 	}
 
 	return nil

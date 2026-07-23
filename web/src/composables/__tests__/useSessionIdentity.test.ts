@@ -102,11 +102,11 @@ describe('useSessionIdentity', () => {
             const id1 = useSessionIdentity()
             const id2 = useSessionIdentity()
 
-            id1.currentThinkingEffort.value = 'high'
+            id1.thinkingEffortState.currentId.value = 'high'
             expect(id2.currentThinkingEffort.value).toBe('high')
 
             // Reset
-            id1.currentThinkingEffort.value = ''
+            id1.thinkingEffortState.currentId.value = ''
         })
     })
 
@@ -119,23 +119,23 @@ describe('useSessionIdentity', () => {
         })
 
         it('can be set to various effort levels', async () => {
-            const { currentThinkingEffort } = useSessionIdentity()
+            const { thinkingEffortState, currentThinkingEffort } = useSessionIdentity()
 
             for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
-                currentThinkingEffort.value = level
+                thinkingEffortState.currentId.value = level
                 await nextTick()
                 expect(currentThinkingEffort.value).toBe(level)
             }
 
             // Reset
-            currentThinkingEffort.value = ''
+            thinkingEffortState.currentId.value = ''
         })
 
         it('can be reset to empty (auto)', async () => {
-            const { currentThinkingEffort } = useSessionIdentity()
-            currentThinkingEffort.value = 'high'
+            const { thinkingEffortState, currentThinkingEffort } = useSessionIdentity()
+            thinkingEffortState.currentId.value = 'high'
             await nextTick()
-            currentThinkingEffort.value = ''
+            thinkingEffortState.currentId.value = ''
             await nextTick()
             expect(currentThinkingEffort.value).toBe('')
         })
@@ -531,7 +531,7 @@ describe('useSessionIdentity', () => {
             identity.currentAgentId.value = 'agent-1'
             identity.currentModelId.value = 'model-1'
             identity.currentModelName.value = 'Model One'
-            identity.currentThinkingEffort.value = 'high'
+            identity.thinkingEffortState.currentId.value = 'high'
             identity.runningSessions.value = new Set(['s1', 's2'])
             identity.sessionDrawer.open()
 
@@ -633,7 +633,7 @@ describe('useSessionIdentity', () => {
 
         it('does not update availableModes when modes array is empty', () => {
             const identity = useSessionIdentity()
-            identity.availableModes.value = [{ id: 'existing', name: 'Existing' }]
+            identity.modeState.available.value = [{ id: 'existing', name: 'Existing' }]
 
             updateModeState('ask', [])
 
@@ -684,8 +684,8 @@ describe('useSessionIdentity', () => {
         it('resolves currentModeName when currentModeId was set before modes arrived', () => {
             const identity = useSessionIdentity()
             // Set modeId directly (e.g. from loadModePref in createSession)
-            identity.currentModeId.value = 'architect'
-            identity.currentModeName.value = ''
+            identity.modeState.currentId.value = 'architect'
+            identity.modeState.currentName.value = ''
             // Then modes arrive from populateACPStateFromCache
             updateAvailableModes([
                 { id: 'ask', name: 'Ask' },
@@ -770,7 +770,7 @@ describe('useSessionIdentity', () => {
 
         it('does not update currentThinkingEffort when currentId is empty', () => {
             const identity = useSessionIdentity()
-            identity.currentThinkingEffort.value = 'existing'
+            identity.thinkingEffortState.currentId.value = 'existing'
 
             updateThinkingEffortState('', [
                 { id: 'low', name: 'Low' },
@@ -782,14 +782,14 @@ describe('useSessionIdentity', () => {
 
         it('does not update availableThinkingEfforts when levels is empty', () => {
             const identity = useSessionIdentity()
-            identity.availableThinkingEfforts.value = [{ id: 'existing', name: 'Existing' }]
+            identity.thinkingEffortState.available.value = [{ id: 'existing', name: 'Existing' }]
 
             updateThinkingEffortState('high', [])
 
             expect(identity.availableThinkingEfforts.value).toEqual([{ id: 'existing', name: 'Existing' }])
         })
 
-        it('clearThinkingEffortState resets availableThinkingEfforts only', () => {
+        it('clearThinkingEffortState resets all thinking effort state', () => {
             const identity = useSessionIdentity()
             updateThinkingEffortState('high', [
                 { id: 'high', name: 'High' },
@@ -797,9 +797,11 @@ describe('useSessionIdentity', () => {
 
             clearThinkingEffortState()
 
-            // Note: clearThinkingEffortState only clears availableThinkingEfforts,
-            // not currentThinkingEffort (which is also used for CLI backends)
+            // clearThinkingEffortState now properly clears all state,
+            // including currentId (fixes the original bug)
             expect(identity.availableThinkingEfforts.value).toEqual([])
+            expect(identity.currentThinkingEffort.value).toBe('')
+            expect(identity.currentThinkingEffortName.value).toBe('')
         })
     })
 

@@ -35,6 +35,12 @@ type AgentCapability struct {
 	ListSessions             *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
 	UpdatedAt                time.Time
 
+	// AvailableOptions stores selectable options by category for categories
+	// beyond the well-known ones (mode, thought_level, model). For well-known
+	// categories, the legacy fields (AvailableModes, AvailableThinkingEfforts,
+	// AvailableModels) remain the canonical source of truth.
+	AvailableOptions map[string][]SelectOptionDef
+
 	// refreshedInProcess marks whether this capability has already been
 	// refreshed from the current agent process instance. Each agent process
 	// should trigger exactly one full refresh (via ForceUpdate) when it first
@@ -52,7 +58,8 @@ func (c *AgentCapability) HasData() bool {
 		len(c.AvailableCommands) > 0 ||
 		c.ConfigOptionState != nil ||
 		c.LoadSession != nil ||
-		c.ListSessions != nil
+		c.ListSessions != nil ||
+		len(c.AvailableOptions) > 0
 }
 
 // AgentCapabilityRegistry stores agent-level capabilities, keyed by agent ID.
@@ -133,6 +140,14 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 	}
 	if src.ListSessions != nil {
 		existing.ListSessions = src.ListSessions
+	}
+	if len(src.AvailableOptions) > 0 {
+		if existing.AvailableOptions == nil {
+			existing.AvailableOptions = make(map[string][]SelectOptionDef, len(src.AvailableOptions))
+		}
+		for k, v := range src.AvailableOptions {
+			existing.AvailableOptions[k] = v
+		}
 	}
 	existing.UpdatedAt = time.Now()
 }
@@ -260,13 +275,27 @@ func (r *AgentCapabilityRegistry) GetThinkingEffortState(agentID, currentID stri
 	r.mu.RLock()
 	agentCap, ok := r.caps[agentID]
 	r.mu.RUnlock()
-	if !ok || agentCap == nil || len(agentCap.AvailableThinkingEfforts) == 0 {
+	if !ok || agentCap == nil {
 		return nil
 	}
-	return &ThinkingEffortState{
-		CurrentID:       currentID,
-		AvailableLevels: agentCap.AvailableThinkingEfforts,
+	if len(agentCap.AvailableThinkingEfforts) > 0 {
+		return &ThinkingEffortState{
+			CurrentID:       currentID,
+			AvailableLevels: agentCap.AvailableThinkingEfforts,
+		}
 	}
+	// Fallback: ACP v2 agents may expose thinking effort via ConfigOptionState
+	// with Category "thought_level" instead of the legacy ThinkingEfforts field.
+	// Priority: session-level currentID (from user selection / PreApply) overrides
+	// the ConfigOptionState's CurrentID (agent default). If currentID is empty,
+	// the agent's reported default is used as-is.
+	if es := thinkingEffortStateFromConfigState(agentCap.ConfigOptionState); es != nil {
+		if currentID != "" {
+			es.CurrentID = currentID
+		}
+		return es
+	}
+	return nil
 }
 
 // GetModelListState returns a ModelListState combining agent-level available
@@ -408,6 +437,230 @@ func (r *AgentCapabilityRegistry) HasNewAvailableModels(agentID string, newModel
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// Generalized SelectState methods
+// ---------------------------------------------------------------------------
+
+// GetSelectState returns a SelectState for the given category, combining
+// agent-level available options with the session-level current ID.
+// Returns nil if no options are available for the category.
+func (r *AgentCapabilityRegistry) GetSelectState(agentID, category, currentID string) *SelectState {
+	r.mu.RLock()
+	agentCap, ok := r.caps[agentID]
+	r.mu.RUnlock()
+	if !ok || agentCap == nil {
+		return nil
+	}
+
+	switch category {
+	case "mode":
+		ms := r.GetModeState(agentID, currentID)
+		if ms == nil {
+			return nil
+		}
+		sel := NewSelectStateFromMode(ms)
+		return &sel
+	case "thought_level":
+		tes := r.GetThinkingEffortState(agentID, currentID)
+		if tes == nil {
+			return nil
+		}
+		sel := NewSelectStateFromThinkingEffort(tes)
+		return &sel
+	case "model":
+		mls := r.GetModelListState(agentID, currentID)
+		if mls == nil {
+			return nil
+		}
+		sel := SelectState{
+			CurrentID: mls.CurrentModelID,
+			Category:  "model",
+		}
+		for _, m := range mls.Models {
+			sel.Available = append(sel.Available, SelectOptionDef{ID: m.ID, Name: m.Name})
+		}
+		return &sel
+	default:
+		// Custom categories use AvailableOptions map
+		opts, exists := agentCap.AvailableOptions[category]
+		if !exists || len(opts) == 0 {
+			return nil
+		}
+		sel := SelectState{
+			CurrentID: currentID,
+			Available: opts,
+			Category:  category,
+		}
+		return &sel
+	}
+}
+
+// GetAvailableOptions returns the available options for the given category.
+// For well-known categories, it converts the legacy fields to SelectOptionDef.
+// Returns nil if no options are available.
+func (r *AgentCapabilityRegistry) GetAvailableOptions(agentID, category string) []SelectOptionDef {
+	r.mu.RLock()
+	agentCap, ok := r.caps[agentID]
+	r.mu.RUnlock()
+	if !ok || agentCap == nil {
+		return nil
+	}
+
+	switch category {
+	case "mode":
+		if len(agentCap.AvailableModes) == 0 {
+			return nil
+		}
+		opts := make([]SelectOptionDef, len(agentCap.AvailableModes))
+		for i, m := range agentCap.AvailableModes {
+			opts[i] = SelectOptionDef(m)
+		}
+		return opts
+	case "thought_level":
+		if len(agentCap.AvailableThinkingEfforts) == 0 {
+			return nil
+		}
+		opts := make([]SelectOptionDef, len(agentCap.AvailableThinkingEfforts))
+		for i, l := range agentCap.AvailableThinkingEfforts {
+			opts[i] = SelectOptionDef(l)
+		}
+		return opts
+	case "model":
+		if len(agentCap.AvailableModels) == 0 {
+			return nil
+		}
+		opts := make([]SelectOptionDef, len(agentCap.AvailableModels))
+		for i, m := range agentCap.AvailableModels {
+			opts[i] = SelectOptionDef{ID: m.ID, Name: m.Name}
+		}
+		return opts
+	default:
+		return agentCap.AvailableOptions[category]
+	}
+}
+
+// UpdateAvailableOptions updates the available options for the given category.
+// For well-known categories, this delegates to the existing legacy methods.
+// For other categories, it uses the AvailableOptions map.
+func (r *AgentCapabilityRegistry) UpdateAvailableOptions(agentID, category string, opts []SelectOptionDef) {
+	switch category {
+	case "mode":
+		modes := make([]ModeDef, len(opts))
+		for i, o := range opts {
+			modes[i] = ModeDef(o)
+		}
+		r.UpdateModes(agentID, modes)
+	case "thought_level":
+		levels := make([]ThinkingEffortDef, len(opts))
+		for i, o := range opts {
+			levels[i] = ThinkingEffortDef(o)
+		}
+		r.UpdateThinkingEfforts(agentID, levels)
+	case "model":
+		models := make([]model.AgentModel, len(opts))
+		for i, o := range opts {
+			models[i] = model.AgentModel{ID: o.ID, Name: o.Name}
+		}
+		r.UpdateModels(agentID, models)
+	default:
+		r.Update(agentID, &AgentCapability{
+			AvailableOptions: map[string][]SelectOptionDef{category: opts},
+		})
+	}
+}
+
+// HasNewAvailableOptions returns true if the given options contain IDs
+// not present in the registry for the given category.
+func (r *AgentCapabilityRegistry) HasNewAvailableOptions(agentID, category string, newOpts []SelectOptionDef) bool {
+	switch category {
+	case "mode":
+		modes := make([]ModeDef, len(newOpts))
+		for i, o := range newOpts {
+			modes[i] = ModeDef(o)
+		}
+		return r.HasNewAvailableModes(agentID, modes)
+	case "thought_level":
+		levels := make([]ThinkingEffortDef, len(newOpts))
+		for i, o := range newOpts {
+			levels[i] = ThinkingEffortDef(o)
+		}
+		return r.HasNewAvailableThinkingEfforts(agentID, levels)
+	case "model":
+		models := make([]model.AgentModel, len(newOpts))
+		for i, o := range newOpts {
+			models[i] = model.AgentModel{ID: o.ID, Name: o.Name}
+		}
+		return r.HasNewAvailableModels(agentID, models)
+	default:
+		// Custom categories
+		r.mu.RLock()
+		agentCap, ok := r.caps[agentID]
+		r.mu.RUnlock()
+		if !ok || agentCap == nil || len(agentCap.AvailableOptions[category]) == 0 {
+			return len(newOpts) > 0
+		}
+		existing := agentCap.AvailableOptions[category]
+		seen := make(map[string]struct{}, len(existing))
+		for _, o := range existing {
+			seen[o.ID] = struct{}{}
+		}
+		for _, o := range newOpts {
+			if _, found := seen[o.ID]; !found {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// IsOptionAvailable checks whether a specific option ID exists in the
+// available options for the given category.
+func (r *AgentCapabilityRegistry) IsOptionAvailable(agentID, category, optionID string) bool {
+	switch category {
+	case "mode":
+		return r.IsModeAvailable(agentID, optionID)
+	case "thought_level":
+		r.mu.RLock()
+		agentCap, ok := r.caps[agentID]
+		r.mu.RUnlock()
+		if !ok || agentCap == nil {
+			return false
+		}
+		for _, l := range agentCap.AvailableThinkingEfforts {
+			if l.ID == optionID {
+				return true
+			}
+		}
+		return false
+	case "model":
+		r.mu.RLock()
+		agentCap, ok := r.caps[agentID]
+		r.mu.RUnlock()
+		if !ok || agentCap == nil {
+			return false
+		}
+		for _, m := range agentCap.AvailableModels {
+			if m.ID == optionID {
+				return true
+			}
+		}
+		return false
+	default:
+		r.mu.RLock()
+		agentCap, ok := r.caps[agentID]
+		r.mu.RUnlock()
+		if !ok || agentCap == nil {
+			return false
+		}
+		for _, o := range agentCap.AvailableOptions[category] {
+			if o.ID == optionID {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // ---------------------------------------------------------------------------

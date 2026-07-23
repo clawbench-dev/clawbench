@@ -2200,7 +2200,7 @@ func TestRefactor_ApplyExtractedState(t *testing.T) {
 			effortCurrentID: "high",
 			modelCurrentID:  "gpt-4",
 		}
-		conn.applyExtractedState(ext, false)
+		conn.applyExtractedState(ext)
 		assert.Equal(t, "code", conn.GetCurrentModeID())
 		assert.Equal(t, "high", conn.GetCurrentThinkingEffortID())
 		assert.Equal(t, "gpt-4", conn.GetCurrentModelID())
@@ -2219,7 +2219,7 @@ func TestRefactor_ApplyExtractedState(t *testing.T) {
 			effortCurrentID: "high",
 			modelCurrentID:  "gpt-4",
 		}
-		conn.applyExtractedState(ext, true)
+		conn.applyExtractedState(ext)
 		// User selections should be preserved
 		assert.Equal(t, "architect", conn.GetCurrentModeID())
 		assert.Equal(t, "low", conn.GetCurrentThinkingEffortID())
@@ -2234,7 +2234,7 @@ func TestRefactor_ApplyExtractedState(t *testing.T) {
 			effortCurrentID: "medium",
 			modelCurrentID:  "gpt-4",
 		}
-		conn.applyExtractedState(ext, true)
+		conn.applyExtractedState(ext)
 		// Since existing is empty, response values should be used
 		assert.Equal(t, "ask", conn.GetCurrentModeID())
 		assert.Equal(t, "medium", conn.GetCurrentThinkingEffortID())
@@ -2256,9 +2256,34 @@ func TestRefactor_ApplyExtractedState(t *testing.T) {
 			modeCurrentID: "ask",
 			configState:   configState,
 		}
-		conn.applyExtractedState(ext, true)
+		conn.applyExtractedState(ext)
 		// configState.CurrentID should be updated to existing user selection
 		assert.Equal(t, "code", configState.CurrentID)
+	})
+
+	// Regression: CacheNewSessionState must preserve user's PreApply selections
+	// over the agent's reported defaults. This is the root cause of the bug
+	// where thinking effort resets to default on first message.
+	t.Run("PreApply_values_preserved_over_agent_defaults", func(t *testing.T) {
+		conn := newACPConn(agent, "test-preapply-preserve")
+		// Simulate PreApply step in ExecuteStream: user selected "low" thinking effort
+		conn.UpdateCachedCurrent("thought_level", "low")
+		conn.UpdateCachedCurrent("mode", "architect")
+		conn.UpdateCachedCurrent("model", "my-model")
+
+		// Agent reports its defaults (different from user selection)
+		ext := sessionStateExtracted{
+			modes:           []ModeDef{{ID: "ask"}, {ID: "code"}},
+			modeCurrentID:   "code",
+			effortCurrentID: "high", // agent default, NOT user's choice
+			modelCurrentID:  "default-model",
+		}
+		conn.applyExtractedState(ext)
+
+		// User's PreApply values must be preserved, not overwritten by agent defaults
+		assert.Equal(t, "low", conn.GetCurrentSelection("thought_level"), "PreApply thinking effort should be preserved over agent default")
+		assert.Equal(t, "architect", conn.GetCurrentSelection("mode"), "PreApply mode should be preserved over agent default")
+		assert.Equal(t, "my-model", conn.GetCurrentSelection("model"), "PreApply model should be preserved over agent default")
 	})
 }
 

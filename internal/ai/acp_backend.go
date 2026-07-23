@@ -77,11 +77,11 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		// instead of the agent's default (e.g. "bypassPermissions") during streaming.
 		// The actual RPC to set the config is still done inside Prompt().
 		if req.Mode != "" {
-			conn.UpdateCachedCurrentMode(req.Mode)
+			conn.UpdateCachedCurrent("mode", req.Mode)
 			conn.PreApplyConfigCurrentID("mode", req.Mode)
 		}
 		if req.ThinkingEffort != "" {
-			conn.UpdateCachedCurrentThinkingEffort(req.ThinkingEffort)
+			conn.UpdateCachedCurrent("thought_level", req.ThinkingEffort)
 			conn.PreApplyConfigCurrentID("thinkingEffort", req.ThinkingEffort)
 		}
 

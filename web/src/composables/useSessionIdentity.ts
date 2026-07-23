@@ -2,6 +2,7 @@ import { ref, computed } from 'vue'
 import { useAgents, registerIdentityUpdaters } from '@/composables/useAgents'
 import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
+import { createSelectState } from '@/composables/useSelectState'
 
 const TAG = 'SessionIdentity'
 
@@ -19,15 +20,27 @@ const currentBackend = ref('')
 export const currentAgentId = ref('')
 const currentModelId = ref('')
 const currentModelName = ref('')
-const currentThinkingEffort = ref('')
-const currentThinkingEffortName = ref('')
-const currentModeId = ref('')
-const currentModeName = ref('')
 const currentTransport = ref('') // 'acp-stdio' or 'cli'
 const autoApprove = ref(false)
-const availableModes = ref<Array<{ id: string; name: string }>>([])
 const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
-const availableThinkingEfforts = ref<Array<{ id: string; name: string }>>([])
+
+// ── Unified SelectState instances for mode and thinking effort ──
+// These replace the individual refs (currentModeId, currentModeName,
+// availableModes, currentThinkingEffort, currentThinkingEffortName,
+// availableThinkingEfforts) with a unified pattern.
+
+const modeState = createSelectState('mode', loadModePref)
+const thinkingEffortState = createSelectState('thought_level', loadThinkingPref)
+
+// Direct ref aliases for backward compatibility — all existing consumers
+// read from AND write to these refs, so they must be the actual refs
+// (not computed, which is read-only).
+const currentModeId = modeState.currentId
+const currentModeName = modeState.currentName
+const availableModes = modeState.available
+const currentThinkingEffort = thinkingEffortState.currentId
+const currentThinkingEffortName = thinkingEffortState.currentName
+const availableThinkingEfforts = thinkingEffortState.available
 // ───────────────────────────────────────────────────────────
 // Per-session usage state cache.
 // Each session's usage (contextUsed/contextSize/cost/currency) is
@@ -92,15 +105,11 @@ export function clearSessionIdentity(upcomingSessionId?: string): void {
   currentAgentId.value = ''
   currentModelId.value = ''
   currentModelName.value = ''
-  currentThinkingEffort.value = ''
-  currentThinkingEffortName.value = ''
-  currentModeId.value = ''
-  currentModeName.value = ''
   currentTransport.value = ''
   autoApprove.value = false
-  availableModes.value = []
+  modeState.clear()
+  thinkingEffortState.clear()
   availableCommands.value = []
-  availableThinkingEfforts.value = []
   currentSessionId.value = upcomingSessionId ?? ''
 }
 
@@ -111,15 +120,11 @@ export function resetIdentity(): void {
   currentAgentId.value = ''
   currentModelId.value = ''
   currentModelName.value = ''
-  currentThinkingEffort.value = ''
-  currentThinkingEffortName.value = ''
-  currentModeId.value = ''
-  currentModeName.value = ''
   currentTransport.value = ''
   autoApprove.value = false
-  availableModes.value = []
+  modeState.clear()
+  thinkingEffortState.clear()
   availableCommands.value = []
-  availableThinkingEfforts.value = []
   clearAllUsageState()
   runningSessions.value = new Set()
   runningSessionsVersion.value = 0
@@ -195,14 +200,7 @@ function loadModePref(agentId: string): string | null {
 
 /** Update mode state from REST API or user action (full state). */
 export function updateModeState(modeId: string, modes: Array<{ id: string; name: string }>) {
-  if (modeId) {
-    currentModeId.value = modeId
-    const mode = modes.find(m => m.id === modeId)
-    currentModeName.value = mode?.name || modeId
-  }
-  if (modes.length > 0) {
-    availableModes.value = modes
-  }
+  modeState.update(modeId, modes)
 }
 
 /** Update available modes list without changing currentModeId.
@@ -210,21 +208,12 @@ export function updateModeState(modeId: string, modes: Array<{ id: string; name:
  * is managed by agent SSE events or user action, not by cache restore.
  * Resolves currentModeName if currentModeId was already set. */
 export function updateAvailableModes(modes: Array<{ id: string; name: string }>) {
-  if (modes.length > 0) {
-    availableModes.value = modes
-    // Resolve name if id was set before modes arrived
-    if (currentModeId.value) {
-      const mode = modes.find(m => m.id === currentModeId.value)
-      currentModeName.value = mode?.name || currentModeId.value
-    }
-  }
+  modeState.updateAvailable(modes)
 }
 
 /** Clear mode state (called on session switch or when leaving ACP session). */
 export function clearModeState() {
-  currentModeId.value = ''
-  currentModeName.value = ''
-  availableModes.value = []
+  modeState.clear()
 }
 
 /** Update available slash commands from ACP commands_update event. */
@@ -251,39 +240,21 @@ export async function prefetchCommands(_agentId: string) {
 /** Update thinking effort state from SSE thinking_effort_update event. */
 /** Update thinking effort state from REST API or user action (full state). */
 export function updateThinkingEffortState(currentId: string, levels: Array<{ id: string; name: string }>) {
-  if (currentId) {
-    currentThinkingEffort.value = currentId
-    const level = levels.find(l => l.id === currentId)
-    currentThinkingEffortName.value = level?.name || currentId
-  }
-  if (levels.length > 0) {
-    availableThinkingEfforts.value = levels
-    // Resolve name if id was set before levels arrived
-    if (currentThinkingEffort.value && !currentThinkingEffortName.value) {
-      const level = levels.find(l => l.id === currentThinkingEffort.value)
-      currentThinkingEffortName.value = level?.name || currentThinkingEffort.value
-    }
-  }
+  thinkingEffortState.update(currentId, levels)
 }
 
 /** Update available thinking effort levels without changing current selection.
  * Used by SSE thinking_effort_update handler — currentThinkingEffort
  * is managed by user action + DB, not by agent notifications. */
 export function updateAvailableThinkingEfforts(levels: Array<{ id: string; name: string }>) {
-  if (levels.length > 0) {
-    availableThinkingEfforts.value = levels
-    // Resolve name if id was set before levels arrived
-    if (currentThinkingEffort.value) {
-      const level = levels.find(l => l.id === currentThinkingEffort.value)
-      currentThinkingEffortName.value = level?.name || currentThinkingEffort.value
-    }
-  }
+  thinkingEffortState.updateAvailable(levels)
 }
 
-/** Clear thinking effort state (called on session switch). */
+/** Clear thinking effort state (called on session switch).
+ * Now properly clears currentId too (fixes the original bug where
+ * clearThinkingEffortState only cleared available and currentName). */
 export function clearThinkingEffortState() {
-  availableThinkingEfforts.value = []
-  currentThinkingEffortName.value = ''
+  thinkingEffortState.clear()
 }
 
 /** Update context usage state for a session (from SSE or REST).
@@ -450,11 +421,11 @@ export async function initSessionFromAPI() {
         }
         // Initialize thinking effort: from ACP state or localStorage pref
         if (data.thinkingEffortState?.currentId) {
-          currentThinkingEffort.value = data.thinkingEffortState.currentId
+          thinkingEffortState.currentId.value = data.thinkingEffortState.currentId
           const level = data.thinkingEffortState.availableLevels?.find((l: {id: string; name: string}) => l.id === data.thinkingEffortState.currentId)
-          currentThinkingEffortName.value = level?.name || data.thinkingEffortState.currentId
+          thinkingEffortState.currentName.value = level?.name || data.thinkingEffortState.currentId
         } else {
-          currentThinkingEffort.value = loadThinkingPref(data.agentId || '') || ''
+          thinkingEffortState.currentId.value = loadThinkingPref(data.agentId || '') || ''
         }
         // Initialize transport from agent's transport field
         if (data.transport) {
@@ -475,16 +446,16 @@ export async function initSessionFromAPI() {
         // Initialize mode: from ACP state currentModeId
         // Only populate mode state for ACP-capable agents — CLI backends don't support modes
         if (agentsApi.supportsDualTransport(data.agentId || '') && data.modeState?.currentModeId) {
-          currentModeId.value = data.modeState.currentModeId
+          modeState.currentId.value = data.modeState.currentModeId
         }
         // Populate mode state from chat response — update available modes.
         // Only for ACP-capable agents — CLI backends don't support modes
         if (agentsApi.supportsDualTransport(data.agentId || '') && data.modeState && data.modeState.availableModes?.length > 0) {
           updateAvailableModes(data.modeState.availableModes)
           // Set mode name from available modes now that the list is populated
-          if (currentModeId.value) {
-            const mode = data.modeState.availableModes.find((m: { id: string; name: string }) => m.id === currentModeId.value)
-            currentModeName.value = mode?.name || currentModeId.value
+          if (modeState.currentId.value) {
+            const mode = data.modeState.availableModes.find((m: { id: string; name: string }) => m.id === modeState.currentId.value)
+            modeState.currentName.value = mode?.name || modeState.currentId.value
           }
         }
         // Populate thinking effort state — update available levels.
@@ -499,9 +470,9 @@ export async function initSessionFromAPI() {
             const levels = agentLevels.map((id: string) => ({ id, name: id }))
             updateAvailableThinkingEfforts(levels)
             // Resolve name if currentThinkingEffort was set from localStorage pref
-            if (currentThinkingEffort.value && !currentThinkingEffortName.value) {
-              const level = levels.find(l => l.id === currentThinkingEffort.value)
-              currentThinkingEffortName.value = level?.name || currentThinkingEffort.value
+            if (thinkingEffortState.currentId.value && !thinkingEffortState.currentName.value) {
+              const level = levels.find(l => l.id === thinkingEffortState.currentId.value)
+              thinkingEffortState.currentName.value = level?.name || thinkingEffortState.currentId.value
             }
           }
         }
@@ -584,7 +555,7 @@ export function useSessionIdentity() {
           currentModelName.value = modelName
         }
         // Initialize thinking effort from localStorage pref
-        currentThinkingEffort.value = loadThinkingPref(currentAgentId.value) || ''
+        thinkingEffortState.currentId.value = loadThinkingPref(currentAgentId.value) || ''
       }
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to create session:', err)
@@ -738,6 +709,9 @@ export function useSessionIdentity() {
     loadThinkingPref,
     loadModePref,
     toggleAutoApprove,
+    // SelectState instances (for unified access)
+    modeState,
+    thinkingEffortState,
     // Mode state helpers
     updateModeState,
     updateAvailableModes,

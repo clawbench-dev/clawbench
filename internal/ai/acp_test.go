@@ -1369,16 +1369,13 @@ func TestMapACPSessionUpdate_ConfigOptionUpdate_Mode(t *testing.T) {
 	mapACPSessionUpdate(update, ch, ctx, nil, nil)
 
 	events := drainACPEvents(ch, 1)
-	assert.Equal(t, "config_update", events[0].Type)
-	require.NotNil(t, events[0].Config)
-	assert.Equal(t, "mode", events[0].Config.ConfigID)
-	assert.Equal(t, "code", events[0].Config.CurrentID)
-	require.Len(t, events[0].Config.Options, 1)
-	assert.Equal(t, "mode", events[0].Config.Options[0].Category)
-	require.Len(t, events[0].Config.Options[0].Values, 2)
-	assert.Equal(t, "ask", events[0].Config.Options[0].Values[0].ID)
-	assert.Equal(t, "Ask", events[0].Config.Options[0].Values[0].Name)
-	assert.Equal(t, "code", events[0].Config.Options[0].Values[1].ID)
+	assert.Equal(t, "mode_update", events[0].Type)
+	require.NotNil(t, events[0].Mode)
+	assert.Equal(t, "code", events[0].Mode.CurrentModeID)
+	require.Len(t, events[0].Mode.AvailableModes, 2)
+	assert.Equal(t, "ask", events[0].Mode.AvailableModes[0].ID)
+	assert.Equal(t, "Ask", events[0].Mode.AvailableModes[0].Name)
+	assert.Equal(t, "code", events[0].Mode.AvailableModes[1].ID)
 
 	assertNoMoreACPEvents(ch, t)
 }
@@ -1421,11 +1418,11 @@ func TestMapACPSessionUpdate_ConfigOptionUpdate_Mode_SameModesNoForward(t *testi
 
 	mapACPSessionUpdate(update, ch, ctx, entry, nil)
 
-	// Same available modes but currentModeId changed (ask → code) → config_update SSE forwarded
+	// Same available modes but currentModeId changed (ask → code) → mode_update SSE forwarded
 	events := drainACPEvents(ch, 1)
-	assert.Equal(t, "config_update", events[0].Type)
-	require.NotNil(t, events[0].Config)
-	assert.Equal(t, "code", events[0].Config.CurrentID)
+	assert.Equal(t, "mode_update", events[0].Type)
+	require.NotNil(t, events[0].Mode)
+	assert.Equal(t, "code", events[0].Mode.CurrentModeID)
 
 	// Session current mode should be updated — "code" is a valid mode
 	assert.Equal(t, "code", entry.GetCurrentModeID())
@@ -1469,11 +1466,11 @@ func TestMapACPSessionUpdate_ConfigOptionUpdate_Mode_InvalidModeRejected(t *test
 
 	mapACPSessionUpdate(update, ch, ctx, entry, nil)
 
-	// config_update SSE should be forwarded (currentModeId changed)
+	// mode_update SSE should be forwarded (currentModeId changed)
 	events := drainACPEvents(ch, 1)
-	assert.Equal(t, "config_update", events[0].Type)
-	require.NotNil(t, events[0].Config)
-	assert.Equal(t, "bypass_permissions", events[0].Config.CurrentID)
+	assert.Equal(t, "mode_update", events[0].Type)
+	require.NotNil(t, events[0].Mode)
+	assert.Equal(t, "bypass_permissions", events[0].Mode.CurrentModeID)
 
 	// Session current mode should NOT be updated — "bypass_permissions" not in availableModes
 	assert.Equal(t, "ask", entry.GetCurrentModeID())
@@ -1562,10 +1559,10 @@ func TestMapACPSessionUpdate_ConfigOptionUpdate_Mode_NewModeForward(t *testing.T
 
 	mapACPSessionUpdate(update, ch, ctx, entry, nil)
 
-	// New mode "architect" → config_update SSE forwarded
+	// New mode "architect" → mode_update SSE forwarded
 	events := drainACPEvents(ch, 1)
-	assert.Equal(t, "config_update", events[0].Type)
-	require.NotNil(t, events[0].Config)
+	assert.Equal(t, "mode_update", events[0].Type)
+	require.NotNil(t, events[0].Mode)
 
 	// Session current mode should be updated with "architect"
 	// "architect" is in the new available modes, so it's valid
@@ -1705,9 +1702,9 @@ func TestMapACPSessionUpdate_ConfigOptionUpdate_MultipleCategories(t *testing.T)
 
 	mapACPSessionUpdate(update, ch, ctx, nil, nil)
 
-	// Should emit both config_update and thinking_effort_update
+	// Should emit both mode_update and thinking_effort_update
 	events := drainACPEvents(ch, 2)
-	assert.Equal(t, "config_update", events[0].Type)
+	assert.Equal(t, "mode_update", events[0].Type)
 	assert.Equal(t, "thinking_effort_update", events[1].Type)
 
 	assertNoMoreACPEvents(ch, t)
@@ -2080,6 +2077,54 @@ func TestModeStateFromConfigState_EmptyValuesNoCurrentID(t *testing.T) {
 		},
 	}
 	assert.Nil(t, modeStateFromConfigState(cs))
+}
+
+// --- thinkingEffortStateFromConfigState ---
+
+func TestThinkingEffortStateFromConfigState_Nil(t *testing.T) {
+	assert.Nil(t, thinkingEffortStateFromConfigState(nil))
+}
+
+func TestThinkingEffortStateFromConfigState_NoThoughtLevelCategory(t *testing.T) {
+	cs := &ConfigOptionState{
+		ConfigID:  "mode",
+		CurrentID: "code",
+		Options: []ConfigOptionDef{
+			{ID: "mode", Category: "mode", Values: []ConfigOptionValue{{ID: "code", Name: "Code"}}},
+		},
+	}
+	assert.Nil(t, thinkingEffortStateFromConfigState(cs))
+}
+
+func TestThinkingEffortStateFromConfigState_ValidThoughtLevelOptions(t *testing.T) {
+	cs := &ConfigOptionState{
+		ConfigID:  "thinking_effort",
+		CurrentID: "high",
+		Options: []ConfigOptionDef{
+			{ID: "thinking_effort", Category: "thought_level", Values: []ConfigOptionValue{
+				{ID: "low", Name: "Low"},
+				{ID: "medium", Name: "Medium"},
+				{ID: "high", Name: "High"},
+			}},
+		},
+	}
+	es := thinkingEffortStateFromConfigState(cs)
+	require.NotNil(t, es)
+	assert.Equal(t, "high", es.CurrentID)
+	assert.Len(t, es.AvailableLevels, 3)
+	assert.Equal(t, "low", es.AvailableLevels[0].ID)
+	assert.Equal(t, "Medium", es.AvailableLevels[1].Name)
+}
+
+func TestThinkingEffortStateFromConfigState_EmptyValuesNoCurrentID(t *testing.T) {
+	cs := &ConfigOptionState{
+		ConfigID:  "thinking_effort",
+		CurrentID: "",
+		Options: []ConfigOptionDef{
+			{ID: "thinking_effort", Category: "thought_level", Values: []ConfigOptionValue{}},
+		},
+	}
+	assert.Nil(t, thinkingEffortStateFromConfigState(cs))
 }
 
 // --- extractACP*FromResume ---

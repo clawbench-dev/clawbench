@@ -48,7 +48,7 @@ func (c *ACPConn) CacheNewSessionState() {
 		},
 	)
 
-	c.applyExtractedState(ext, false)
+	c.applyExtractedState(ext)
 }
 
 // MergeResumedSessionState merges state from a ResumeSessionResponse, preserving
@@ -72,7 +72,7 @@ func (c *ACPConn) MergeResumedSessionState() {
 		},
 	)
 
-	c.applyExtractedState(ext, true)
+	c.applyExtractedState(ext)
 }
 
 // extractSessionState extracts mode/config/thinking/model state from a session response.
@@ -133,34 +133,34 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 }
 
 // applyExtractedState sets session-level current values and updates the agent-level registry.
-// If preserveExisting is true, existing user selections are kept over the response defaults
-// (used for ResumeSession where the user's config was re-applied after respawn).
-func (c *ACPConn) applyExtractedState(ext sessionStateExtracted, preserveExisting bool) {
-	modeCurrentID := ext.modeCurrentID
-	effortCurrentID := ext.effortCurrentID
-	modelCurrentID := ext.modelCurrentID
-	configState := ext.configState
+// Always preserves user's existing selections (from PreApply) over the agent's response defaults.
+func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
+	currentIDs := map[string]*string{
+		"mode":          &ext.modeCurrentID,
+		"thought_level": &ext.effortCurrentID,
+		"model":         &ext.modelCurrentID,
+	}
 
-	// Preserve user's current selections over the resumed agent's defaults
-	if preserveExisting {
-		if existing := c.GetCurrentModeID(); existing != "" {
-			modeCurrentID = existing
-		}
-		if configState != nil && c.GetCurrentModeID() != "" {
-			configState.CurrentID = c.GetCurrentModeID()
-		}
-		if existing := c.GetCurrentThinkingEffortID(); existing != "" {
-			effortCurrentID = existing
-		}
-		if existing := c.GetCurrentModelID(); existing != "" {
-			modelCurrentID = existing
+	// Always preserve user's existing selections over the agent's defaults.
+	// This is critical for new sessions: the PreApply step in ExecuteStream
+	// sets currentModeID/currentThinkingEffortID from the user's request
+	// BEFORE CacheNewSessionState runs. Without this preservation,
+	// the agent's reported default would overwrite the user's choice.
+	for category, idPtr := range currentIDs {
+		if existing := c.GetCurrentSelection(category); existing != "" {
+			*idPtr = existing
 		}
 	}
 
+	// Special: also update configState.CurrentID to match preserved mode
+	if ext.configState != nil && ext.modeCurrentID != "" {
+		ext.configState.CurrentID = ext.modeCurrentID
+	}
+
 	// Set session-level current values on ACPConn
-	c.SetCurrentModeID(modeCurrentID)
-	c.SetCurrentThinkingEffortID(effortCurrentID)
-	c.SetCurrentModelID(modelCurrentID)
+	c.SetCurrentModeID(ext.modeCurrentID)
+	c.SetCurrentThinkingEffortID(ext.effortCurrentID)
+	c.SetCurrentModelID(ext.modelCurrentID)
 
 	// Force-update agent-level registry (full overwrite, once per process instance)
 	// Preserve loadSession/listSessions from spawnLocked's Initialize response.
@@ -168,7 +168,7 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted, preserveExistin
 	reg := GetAgentCapabilityRegistry()
 	loadSession := reg.GetLoadSession(agentID)
 	listSessions := reg.GetListSessions(agentID)
-	reg.ForceUpdateIfNeeded(agentID, ext.modes, ext.efforts, ext.models, nil, configState, loadSession, listSessions)
+	reg.ForceUpdateIfNeeded(agentID, ext.modes, ext.efforts, ext.models, nil, ext.configState, loadSession, listSessions)
 }
 
 // EmitSessionStateEvents emits mode_update, thinking_effort_update, and model_list_update
@@ -178,14 +178,32 @@ func (c *ACPConn) EmitSessionStateEvents(ch chan<- StreamEvent) {
 	agentID := c.AgentID()
 	reg := GetAgentCapabilityRegistry()
 
-	if modeState := reg.GetModeState(agentID, c.GetCurrentModeID()); modeState != nil {
-		slog.Info("acp: emitting mode_update for new session", "current_mode", modeState.CurrentModeID, "available", len(modeState.AvailableModes))
-		forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: modeState})
+	// Unified: iterate categories and build state via SelectState → domain type
+	categories := []struct {
+		category string
+		emit     func(SelectState)
+	}{
+		{"mode", func(sel SelectState) {
+			if ms := sel.ToModeState(); ms != nil {
+				slog.Info("acp: emitting mode_update for new session", "current_mode", ms.CurrentModeID, "available", len(ms.AvailableModes))
+				forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: ms})
+			}
+		}},
+		{"thought_level", func(sel SelectState) {
+			if tes := sel.ToThinkingEffortState(); tes != nil {
+				slog.Debug("acp: emitting thinking_effort_update for new session", "current", tes.CurrentID, "available", len(tes.AvailableLevels))
+				forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: tes})
+			}
+		}},
 	}
-	if effortState := reg.GetThinkingEffortState(agentID, c.GetCurrentThinkingEffortID()); effortState != nil {
-		slog.Debug("acp: emitting thinking_effort_update for new session", "current", effortState.CurrentID, "available", len(effortState.AvailableLevels))
-		forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effortState})
+	for _, cat := range categories {
+		currentID := c.GetCurrentSelection(cat.category)
+		if sel := reg.GetSelectState(agentID, cat.category, currentID); sel != nil && !sel.IsEmpty() {
+			cat.emit(*sel)
+		}
 	}
+
+	// Model list has a different structure (AgentModel with Default field), kept separate
 	if modelListState := reg.GetModelListState(agentID, c.GetCurrentModelID()); modelListState != nil {
 		slog.Debug("acp: emitting model_list_update for new session", "current", modelListState.CurrentModelID, "available", len(modelListState.Models))
 		forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelListState})

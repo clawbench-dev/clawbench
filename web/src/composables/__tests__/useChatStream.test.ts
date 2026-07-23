@@ -1352,12 +1352,37 @@ describe('useChatStream', () => {
 
         expect(updateModeState).toHaveBeenCalledWith('ask', [{ id: 'ask', name: 'ask' }])
       })
+
+      it('with thought_level category → should call updateThinkingEffortState', async () => {
+        const { updateThinkingEffortState } = await import('@/composables/useSessionIdentity')
+        ;(updateThinkingEffortState as any).mockClear()
+
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        simulateWsEvent('config_update', {
+          currentValueId: 'high',
+          options: [{
+            category: 'thought_level',
+            values: [
+              { id: 'low', name: 'Low' },
+              { id: 'high', name: 'High' },
+            ],
+          }],
+        })
+
+        expect(updateThinkingEffortState).toHaveBeenCalledWith('high', [
+          { id: 'low', name: 'Low' },
+          { id: 'high', name: 'High' },
+        ])
+      })
     })
 
     describe('thinking_effort_update', () => {
-      it('should call updateAvailableThinkingEfforts with levels', async () => {
-        const { updateAvailableThinkingEfforts } = await import('@/composables/useSessionIdentity')
-        ;(updateAvailableThinkingEfforts as any).mockClear()
+      it('should call updateThinkingEffortState with currentId and levels', async () => {
+        const { updateThinkingEffortState } = await import('@/composables/useSessionIdentity')
+        ;(updateThinkingEffortState as any).mockClear()
 
         const options = createOptions()
         const { connectStream } = useChatStream(options)
@@ -1372,16 +1397,16 @@ describe('useChatStream', () => {
           ],
         })
 
-        expect(updateAvailableThinkingEfforts).toHaveBeenCalledWith([
+        expect(updateThinkingEffortState).toHaveBeenCalledWith('medium', [
           { id: 'low', name: 'Low' },
           { id: 'medium', name: 'Medium' },
           { id: 'high', name: 'High' },
         ])
       })
 
-      it('should not call when no availableLevels', async () => {
-        const { updateAvailableThinkingEfforts } = await import('@/composables/useSessionIdentity')
-        ;(updateAvailableThinkingEfforts as any).mockClear()
+      it('should call updateThinkingEffortState when only currentId present (bug fix: symmetric with mode_update)', async () => {
+        const { updateThinkingEffortState } = await import('@/composables/useSessionIdentity')
+        ;(updateThinkingEffortState as any).mockClear()
 
         const options = createOptions()
         const { connectStream } = useChatStream(options)
@@ -1389,12 +1414,12 @@ describe('useChatStream', () => {
 
         simulateWsEvent('thinking_effort_update', { currentId: 'low' })
 
-        expect(updateAvailableThinkingEfforts).not.toHaveBeenCalled()
+        expect(updateThinkingEffortState).toHaveBeenCalledWith('low', [])
       })
 
       it('should use id as name fallback', async () => {
-        const { updateAvailableThinkingEfforts } = await import('@/composables/useSessionIdentity')
-        ;(updateAvailableThinkingEfforts as any).mockClear()
+        const { updateThinkingEffortState } = await import('@/composables/useSessionIdentity')
+        ;(updateThinkingEffortState as any).mockClear()
 
         const options = createOptions()
         const { connectStream } = useChatStream(options)
@@ -1405,7 +1430,34 @@ describe('useChatStream', () => {
           availableLevels: [{ id: 'high' }],
         })
 
-        expect(updateAvailableThinkingEfforts).toHaveBeenCalledWith([{ id: 'high', name: 'high' }])
+        expect(updateThinkingEffortState).toHaveBeenCalledWith('high', [{ id: 'high', name: 'high' }])
+      })
+
+      it('should skip when no currentId and no availableLevels', async () => {
+        const { updateThinkingEffortState } = await import('@/composables/useSessionIdentity')
+        ;(updateThinkingEffortState as any).mockClear()
+
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        simulateWsEvent('thinking_effort_update', { currentId: '', availableLevels: [] })
+
+        expect(updateThinkingEffortState).not.toHaveBeenCalled()
+      })
+
+      it('should skip when guard fails', async () => {
+        const { updateThinkingEffortState } = await import('@/composables/useSessionIdentity')
+        ;(updateThinkingEffortState as any).mockClear()
+
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+        options.currentSessionId.value = 'different-session'
+
+        simulateWsEvent('thinking_effort_update', { currentId: 'high', availableLevels: [{ id: 'high', name: 'High' }] })
+
+        expect(updateThinkingEffortState).not.toHaveBeenCalled()
       })
     })
 

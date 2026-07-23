@@ -481,6 +481,23 @@ func TestACPConn_HasCurrentModeChanged(t *testing.T) {
 	assert.True(t, conn.HasCurrentModeChanged("ask"))
 }
 
+func TestACPConn_HasCurrentThinkingEffortChanged(t *testing.T) {
+	conn := newACPConn(&model.Agent{ID: "test-effort-changed", Backend: "acp-stdio", AcpCommand: "echo"}, "session-effort-changed")
+
+	// Empty current — any non-empty effortID is a change
+	assert.True(t, conn.HasCurrentThinkingEffortChanged("high"))
+	assert.False(t, conn.HasCurrentThinkingEffortChanged(""))
+
+	// Set initial thinking effort
+	conn.UpdateCachedCurrentThinkingEffort("high")
+
+	// Same effort — no change
+	assert.False(t, conn.HasCurrentThinkingEffortChanged("high"))
+
+	// Different effort — change
+	assert.True(t, conn.HasCurrentThinkingEffortChanged("medium"))
+}
+
 // --- ACPConn LoadSession fields ---
 
 func TestACPConn_LoadTargetSID_DefaultEmpty(t *testing.T) {

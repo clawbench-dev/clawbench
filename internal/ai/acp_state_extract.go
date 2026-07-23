@@ -100,30 +100,55 @@ func extractConfigOptionsFromOpts(opts []acp.SessionConfigOption) *ConfigOptionS
 	return nil
 }
 
+// selectStateFromConfigState derives a SelectState from a ConfigOptionState
+// for the given category. This is the generalized version of
+// modeStateFromConfigState and thinkingEffortStateFromConfigState.
+// Returns nil if the config state doesn't contain options for the given category.
+func selectStateFromConfigState(cs *ConfigOptionState, category string) *SelectState {
+	if cs == nil {
+		return nil
+	}
+	for _, opt := range cs.Options {
+		if opt.Category != category {
+			continue
+		}
+		sel := &SelectState{
+			CurrentID: cs.CurrentID,
+			Category:  category,
+		}
+		for _, v := range opt.Values {
+			sel.Available = append(sel.Available, SelectOptionDef(v))
+		}
+		if len(sel.Available) == 0 && sel.CurrentID == "" {
+			return nil
+		}
+		return sel
+	}
+	return nil
+}
+
 // modeStateFromConfigState derives a ModeState from a ConfigOptionState that
 // has Category "mode". This handles ACP v2 agents (like OpenCode) that expose
 // modes via ConfigOptions instead of the legacy Modes field.
 // Returns nil if the config state doesn't contain mode options.
 func modeStateFromConfigState(cs *ConfigOptionState) *ModeState {
-	if cs == nil {
+	sel := selectStateFromConfigState(cs, "mode")
+	if sel == nil {
 		return nil
 	}
-	for _, opt := range cs.Options {
-		if opt.Category != "mode" {
-			continue
-		}
-		ms := &ModeState{
-			CurrentModeID: cs.CurrentID,
-		}
-		for _, v := range opt.Values {
-			ms.AvailableModes = append(ms.AvailableModes, ModeDef(v))
-		}
-		if len(ms.AvailableModes) == 0 && ms.CurrentModeID == "" {
-			return nil
-		}
-		return ms
+	return sel.ToModeState()
+}
+
+// thinkingEffortStateFromConfigState derives a ThinkingEffortState from a
+// ConfigOptionState that has Category "thought_level". This handles ACP v2
+// agents that expose thinking effort via ConfigOptions. Returns nil if the
+// config state doesn't contain thought_level options.
+func thinkingEffortStateFromConfigState(cs *ConfigOptionState) *ThinkingEffortState {
+	sel := selectStateFromConfigState(cs, "thought_level")
+	if sel == nil {
+		return nil
 	}
-	return nil
+	return sel.ToThinkingEffortState()
 }
 
 // extractACPThinkingEffort extracts ThinkingEffortState from an ACP NewSessionResponse.
@@ -279,6 +304,37 @@ func buildModelListStateFromSelect(sel *acp.SessionConfigOptionSelect) *ModelLis
 	}
 
 	return state
+}
+
+// buildSelectStateFromACPSelect builds a SelectState from an ACP SessionConfigOptionSelect
+// for the given category. Returns an empty SelectState if no options or current value
+// are available. Handles both Ungrouped and Grouped option layouts (flattens groups).
+func buildSelectStateFromACPSelect(sel *acp.SessionConfigOptionSelect, category string) SelectState {
+	s := SelectState{
+		CurrentID: string(sel.CurrentValue),
+		Category:  category,
+	}
+
+	if sel.Options.Ungrouped != nil {
+		for _, v := range *sel.Options.Ungrouped {
+			s.Available = append(s.Available, SelectOptionDef{
+				ID:   string(v.Value),
+				Name: v.Name,
+			})
+		}
+	}
+	if sel.Options.Grouped != nil {
+		for _, g := range *sel.Options.Grouped {
+			for _, v := range g.Options {
+				s.Available = append(s.Available, SelectOptionDef{
+					ID:   string(v.Value),
+					Name: v.Name,
+				})
+			}
+		}
+	}
+
+	return s
 }
 
 // mapACPSelectOptions extracts ConfigOptionValue entries from ACP SessionConfigSelectOptions.

@@ -565,18 +565,19 @@ function handleSwitchModel(model) {
 }
 
 function handleSwitchThinkingEffort(level) {
-  identity.currentThinkingEffort.value = level
+  if (!level || level === identity.thinkingEffortState.currentId.value) return
+  identity.thinkingEffortState.currentId.value = level
   // Resolve and set the friendly name for display
-  const levelObj = identity.availableThinkingEfforts.value.find(l => l.id === level)
-  identity.currentThinkingEffortName.value = levelObj?.name || level
+  const levelObj = identity.thinkingEffortState.available.value.find(l => l.id === level)
+  identity.thinkingEffortState.currentName.value = levelObj?.name || level
   // Persist thinking effort selection immediately so it survives page reload
   persistSessionUpdate({ thinkingEffort: level })
 }
 
 function handleSwitchMode(mode) {
-  if (!mode?.id || mode.id === identity.currentModeId.value) return
-  identity.currentModeId.value = mode.id
-  identity.currentModeName.value = mode.name || mode.id
+  if (!mode?.id || mode.id === identity.modeState.currentId.value) return
+  identity.modeState.currentId.value = mode.id
+  identity.modeState.currentName.value = mode.name || mode.id
   // Persist mode selection immediately so it survives page reload
   persistSessionUpdate({ modeId: mode.id })
 }

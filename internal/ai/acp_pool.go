@@ -606,12 +606,25 @@ type ACPConn struct {
 	cachedPlanState         *PlanState
 	cachedUsageState        *UsageState
 
+	// currentSelections is a generalized map for tracking the current
+	// selection of any category (mode, thought_level, model, etc.).
+	// The legacy fields (currentModeID, currentThinkingEffortID, currentModelID)
+	// are kept for backward compatibility and are the canonical source of truth
+	// for those well-known categories. This map is used for any additional
+	// categories and as a unified access pattern.
+	currentSelections map[string]string
+
 	// lastSetConfig tracks the last values successfully sent to the agent via
 	// setSessionConfigOption. Used to avoid re-sending unchanged values.
 	lastSetConfigMu sync.Mutex
 	lastSetModel    string
 	lastSetEffort   string
 	lastSetMode     string
+
+	// lastSetConfigs is the generalized version of lastSetModel/Effort/Mode.
+	// For well-known categories, the legacy fields remain the canonical source.
+	// For other categories, this map is used.
+	lastSetConfigs map[string]string
 
 	// autoApprove enables hands-off mode: all permission requests are
 	// automatically approved with the first allow_* option.
@@ -769,6 +782,77 @@ func (c *ACPConn) SetCurrentModelID(modelID string) {
 	c.currentModelID = modelID
 }
 
+// ---------------------------------------------------------------------------
+// Generalized selection accessors — unified pattern for mode/thought_level/model
+// ---------------------------------------------------------------------------
+
+// categoryToField maps generalized categories to their legacy field accessors.
+// For well-known categories, the legacy fields remain the canonical source.
+
+// UpdateCachedCurrent updates the current selection for the given category.
+// For well-known categories ("mode", "thought_level", "model"), this delegates
+// to the existing legacy field for backward compatibility. For other categories,
+// it uses the currentSelections map.
+func (c *ACPConn) UpdateCachedCurrent(category, value string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch category {
+	case "mode":
+		c.currentModeID = value
+	case "thought_level":
+		c.currentThinkingEffortID = value
+	case "model":
+		c.currentModelID = value
+	default:
+		if c.currentSelections == nil {
+			c.currentSelections = make(map[string]string)
+		}
+		c.currentSelections[category] = value
+	}
+}
+
+// GetCurrentSelection returns the current selection value for the given category.
+// For well-known categories, it reads from the legacy field. For other categories,
+// it reads from the currentSelections map.
+func (c *ACPConn) GetCurrentSelection(category string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch category {
+	case "mode":
+		return c.currentModeID
+	case "thought_level":
+		return c.currentThinkingEffortID
+	case "model":
+		return c.currentModelID
+	default:
+		if c.currentSelections == nil {
+			return ""
+		}
+		return c.currentSelections[category]
+	}
+}
+
+// HasCurrentChanged checks if the given value differs from the session's current
+// selection for the specified category.
+func (c *ACPConn) HasCurrentChanged(category, value string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var current string
+	switch category {
+	case "mode":
+		current = c.currentModeID
+	case "thought_level":
+		current = c.currentThinkingEffortID
+	case "model":
+		current = c.currentModelID
+	default:
+		if c.currentSelections != nil {
+			current = c.currentSelections[category]
+		}
+	}
+	return current != value
+}
+
 // SetCachedPlanState caches the plan state from a plan_update event.
 func (c *ACPConn) SetCachedPlanState(state *PlanState) {
 	c.mu.Lock()
@@ -833,8 +917,12 @@ func (c *ACPConn) shouldSetConfig(configID, value string) bool {
 		return c.lastSetEffort != value
 	case "mode":
 		return c.lastSetMode != value
+	default:
+		if c.lastSetConfigs == nil {
+			return true // No previous value recorded
+		}
+		return c.lastSetConfigs[configID] != value
 	}
-	return true
 }
 
 // markConfigSet records that a config value was successfully sent.
@@ -848,6 +936,11 @@ func (c *ACPConn) markConfigSet(configID, value string) {
 		c.lastSetEffort = value
 	case "mode":
 		c.lastSetMode = value
+	default:
+		if c.lastSetConfigs == nil {
+			c.lastSetConfigs = make(map[string]string)
+		}
+		c.lastSetConfigs[configID] = value
 	}
 }
 
@@ -858,6 +951,7 @@ func (c *ACPConn) resetLastSetConfig() {
 	c.lastSetModel = ""
 	c.lastSetEffort = ""
 	c.lastSetMode = ""
+	c.lastSetConfigs = nil
 	c.unsupportedConfigs = nil
 }
 
@@ -999,6 +1093,13 @@ func (c *ACPConn) HasCurrentModeChanged(modeID string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.currentModeID != modeID
+}
+
+// HasCurrentThinkingEffortChanged checks if the given effortId differs from the session's current thinking effort.
+func (c *ACPConn) HasCurrentThinkingEffortChanged(effortID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.currentThinkingEffortID != effortID
 }
 
 // IsModeAvailable delegates to AgentCapabilityRegistry.
