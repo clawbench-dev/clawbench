@@ -70,8 +70,8 @@ if (!clientId) {
 const { isAppMode } = useAppMode()
 
 const reconnect = useReconnect({
-    maxAttempts: 3,
     baseDelay: 2000,
+    maxDelay: 15000,
     onReconnect: () => connect(),
 })
 

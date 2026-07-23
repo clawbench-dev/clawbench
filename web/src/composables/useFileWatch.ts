@@ -24,8 +24,8 @@ export function useFileWatch(options: UseFileWatchOptions) {
   let updating = false // guard against concurrent updateWatch calls
 
   const reconnect = useReconnect({
-    maxAttempts: 3,
     baseDelay: 2000,
+    maxDelay: 15000,
     onReconnect: connect,
   })
 
@@ -64,7 +64,7 @@ export function useFileWatch(options: UseFileWatchOptions) {
       if (reconnect.shouldReconnect()) {
         reconnect.scheduleReconnect()
       }
-      // After MAX_RECONNECT failures, stop trying — file watch is non-critical
+      // Reconnects indefinitely with exponential backoff (capped at 15s)
     }
   }
 

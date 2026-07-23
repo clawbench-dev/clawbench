@@ -6,8 +6,8 @@
 import { ref } from 'vue'
 
 export interface ReconnectOptions {
-  maxAttempts?: number           // default 3
   baseDelay?: number             // default 2000 (ms)
+  maxDelay?: number              // default 15000 (ms), caps exponential backoff
   onReconnect: () => void        // callback to reconnect
   getFatalError?: () => boolean | null // return non-null = fatal, null = safe to reconnect
 }
@@ -20,13 +20,10 @@ export function useReconnect(options: ReconnectOptions) {
   // Reactive reconnecting state — true when a reconnect is scheduled or in-progress
   const reconnecting = ref(false)
 
-  function hasActiveAttempts(): boolean {
-    return reconnectAttempts < (options.maxAttempts ?? 3)
-  }
-
   function scheduleReconnect() {
     reconnecting.value = true
-    const delay = (options.baseDelay ?? 2000) * (reconnectAttempts + 1)
+    const cappedDelay = options.maxDelay ?? 15000
+    const delay = Math.min((options.baseDelay ?? 2000) * Math.pow(2, reconnectAttempts), cappedDelay)
     reconnectTimer = setTimeout(() => {
       reconnectAttempts++
       options.onReconnect()
@@ -52,7 +49,7 @@ export function useReconnect(options: ReconnectOptions) {
     if (disabled) return false
     const fatalError = options.getFatalError?.()
     if (fatalError !== undefined && fatalError !== null) return false
-    return hasActiveAttempts()
+    return true
   }
 
   return {
