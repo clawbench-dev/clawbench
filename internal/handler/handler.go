@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -63,6 +64,9 @@ func writeLocalizedError(w http.ResponseWriter, r *http.Request, err error) {
 func requireProject(w http.ResponseWriter, r *http.Request) (string, bool) {
 	projectPath := middleware.GetProjectFromCookie(r)
 	if projectPath == "" {
+		slog.Warn("handler: requireProject — project cookie is empty",
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path))
 		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
 		return "", false
 	}

@@ -50,6 +50,11 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		// Step 1: Get or create a dedicated connection for this session
 		mgr := GetACPConnManager()
 		connStart := time.Now()
+		if req.WorkDir == "" {
+			slog.Warn("acp: WorkDir is EMPTY in ChatRequest, ACP process will inherit server CWD",
+				slog.String("session_id", req.SessionID),
+				slog.String("agent_id", b.agent.ID))
+		}
 		conn, isNew, err := mgr.GetOrCreateConn(ctx, b.agent, req.SessionID, req.WorkDir)
 		slog.Info("acp: GetOrCreateConn done", "session_id", req.SessionID, "agent_id", b.agent.ID, "is_new", isNew, "elapsed", time.Since(connStart), "error", err)
 		if err != nil {

@@ -629,6 +629,15 @@ type ACPConn struct {
 	listSessionsFn func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error)
 }
 
+// Cwd returns the project working directory for this connection,
+// set on the first ensureAliveWithSession call. Used by CreateTerminal
+// as a fallback when the ACP agent omits Cwd in terminal/create requests.
+func (c *ACPConn) Cwd() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cwd
+}
+
 // newACPConn creates a new (uninitialized) ACPConn.
 func newACPConn(agent *model.Agent, clawbenchSID string) *ACPConn {
 	return &ACPConn{

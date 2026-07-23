@@ -47,8 +47,26 @@ func (c *ClawBenchACPClient) CreateTerminal(ctx context.Context, req acp.CreateT
 		// when $SHELL is not set — use cmd.exe instead.
 		cmd = exec.CommandContext(cmdCtx, "cmd", "/C", req.Command)
 	}
+	// Resolve working directory for the command:
+	// 1. Use req.Cwd if the ACP agent provided it (some agents pass cwd per-command).
+	// 2. Fallback to connRef.cwd — the project working directory locked on first
+	//    ensureAliveWithSession call. This is necessary because CodeBuddy's ACP
+	//    implementation omits Cwd in terminal/create requests, so without this
+	//    fallback, commands would inherit the ClawBench server's CWD instead of
+	//    the project directory.
 	if req.Cwd != nil && *req.Cwd != "" {
 		cmd.Dir = *req.Cwd
+	} else if c.connRef != nil {
+		if connCwd := c.connRef.Cwd(); connCwd != "" {
+			cmd.Dir = connCwd
+			slog.Info("acp terminal: req.Cwd is nil/empty, using connRef.cwd as fallback",
+				slog.String("command", req.Command),
+				slog.String("fallback_cwd", connCwd))
+		}
+	}
+	if cmd.Dir == "" {
+		slog.Warn("acp terminal: no Cwd available — command will inherit server CWD",
+			slog.String("command", req.Command))
 	}
 	if len(req.Env) > 0 {
 		env := os.Environ()

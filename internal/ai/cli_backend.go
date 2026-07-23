@@ -61,6 +61,13 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	cmd := exec.CommandContext(ctx, cmdName, args...)
 	cmd.Dir = req.WorkDir
 
+	if req.WorkDir == "" {
+		slog.Warn("cli backend: WorkDir is EMPTY, process will inherit server CWD",
+			slog.String("backend", b.BackendName),
+			slog.String("session_id", req.SessionID),
+			slog.String("agent_id", req.AgentID))
+	}
+
 	// Initialize env vars from current process environment
 	cmd.Env = os.Environ()
 

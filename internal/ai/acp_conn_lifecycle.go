@@ -73,6 +73,15 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	// the ClawBench server's cwd.
 	if c.cwd == "" && cwd != "" {
 		c.cwd = cwd
+		slog.Info("acp conn: cwd locked on first call",
+			slog.String("clawbench_sid", c.clawbenchSID),
+			slog.String("cwd", cwd))
+	}
+	if c.cwd != cwd && cwd != "" {
+		slog.Warn("acp conn: cwd mismatch — cwd is already locked, ignoring new value",
+			slog.String("clawbench_sid", c.clawbenchSID),
+			slog.String("locked_cwd", c.cwd),
+			slog.String("requested_cwd", cwd))
 	}
 
 	// If alive and already has a session, reuse
@@ -146,6 +155,10 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	defer newSessCancel()
 
 	newSessStart := time.Now()
+	slog.Info("acp conn: calling NewSession with cwd",
+		slog.String("clawbench_sid", c.clawbenchSID),
+		slog.String("cwd", cwd),
+		slog.String("c.cwd", c.cwd))
 	sessResp, err := c.conn.NewSession(newSessCtx, acp.NewSessionRequest{
 		Cwd:        cwd,
 		McpServers: []acp.McpServer{},
@@ -185,6 +198,11 @@ func (c *ACPConn) recoverViaResumeSession(ctx context.Context, cwd, acpSID strin
 	defer resumeCancel()
 
 	resumeStart := time.Now()
+	slog.Info("acp conn: calling ResumeSession with cwd",
+		slog.String("clawbench_sid", c.clawbenchSID),
+		slog.String("acp_sid", acpSID),
+		slog.String("cwd", cwd),
+		slog.String("c.cwd", c.cwd))
 	resumeResp, err := c.conn.ResumeSession(resumeCtx, acp.ResumeSessionRequest{
 		SessionId:  acp.SessionId(acpSID),
 		Cwd:        cwd,
@@ -339,6 +357,10 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 
 	cmd := exec.CommandContext(context.Background(), cmdName, cmdArgs...)
 	cmd.Dir = c.cwd // project working directory for this ACP session
+	slog.Info("acp conn: spawnLocked setting cmd.Dir",
+		slog.String("clawbench_sid", c.clawbenchSID),
+		slog.String("cmd_dir", c.cwd),
+		slog.String("cmd_dir_empty", func() string { if c.cwd == "" { return "YES - will inherit server CWD!" }; return "no" }()))
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
 	// Put the ACP process in its own process group so we can kill the
@@ -364,7 +386,12 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	cmd.Stderr = &strings.Builder{}
 
 	spawnStart := time.Now()
-	slog.Info("acp conn: spawning agent process", "agent_id", c.agent.ID, "clawbench_sid", c.clawbenchSID, "command", cmdName, "args", cmdArgs)
+	slog.Info("acp conn: spawning agent process",
+		slog.String("agent_id", c.agent.ID),
+		slog.String("clawbench_sid", c.clawbenchSID),
+		slog.String("command", cmdName),
+		slog.String("args", fmt.Sprintf("%v", cmdArgs)),
+		slog.String("cmd.Dir", cmd.Dir))
 
 	if startErr := cmd.Start(); startErr != nil {
 		return fmt.Errorf("acp: start: %w", startErr)
