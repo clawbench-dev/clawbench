@@ -32,11 +32,11 @@ func SetAutoApproveGetter(fn func(clawbenchSID string) bool) {
 
 // onPermissionStateChange is called when a pending permission request is added or resolved.
 // Set by the application startup via SetPermissionStateChangeCallback.
-var onPermissionStateChange = func(clawbenchSID string, pending bool, toolName string) {}
+var onPermissionStateChange = func(clawbenchSID string, pending bool, toolName string, toolInput string) {}
 
 // SetPermissionStateChangeCallback sets the callback invoked when a permission
 // approval state changes for a session. Must be called once during startup by
 // the service layer (avoids circular import between ai and service/ws packages).
-func SetPermissionStateChangeCallback(fn func(clawbenchSID string, pending bool, toolName string)) {
+func SetPermissionStateChangeCallback(fn func(clawbenchSID string, pending bool, toolName string, toolInput string)) {
 	onPermissionStateChange = fn
 }

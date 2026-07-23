@@ -1017,10 +1017,10 @@ func TestRefactor_GlobalSetters(t *testing.T) {
 		defer func() { onPermissionStateChange = orig }()
 
 		called := false
-		SetPermissionStateChangeCallback(func(sid string, pending bool, toolName string) {
+		SetPermissionStateChangeCallback(func(sid string, pending bool, toolName string, toolInput string) {
 			called = true
 		})
-		onPermissionStateChange("test", true, "WriteTextFile")
+		onPermissionStateChange("test", true, "WriteTextFile", "")
 		assert.True(t, called)
 	})
 }

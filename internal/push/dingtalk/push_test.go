@@ -34,7 +34,7 @@ func TestIsStarted_NoManager(t *testing.T) {
 }
 
 func TestPushSessionEvent_NotStarted(t *testing.T) {
-	if PushSessionEvent("test-session", "completed", "Test", "Preview", "/path", "Bash") {
+	if PushSessionEvent("test-session", "completed", "Test", "Preview", "/path", "Bash", "") {
 		t.Error("expected false when not started")
 	}
 }
@@ -70,7 +70,7 @@ func TestPushSuppressed_WhenClientOnline(t *testing.T) {
 	defer SetManager(nil)
 
 	// When a client is connected (user is viewing UI), DingTalk push should be suppressed
-	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash") {
+	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash", "") {
 		t.Error("expected push to be suppressed when client is online")
 	}
 	if PushTaskEvent("t1", "completed", "Test Task", "Preview", "/path") {
@@ -96,7 +96,7 @@ func TestPushNotSuppressed_WhenNoClientOnline(t *testing.T) {
 	defer SetManager(nil)
 
 	// When no client is connected, push should not be suppressed (will attempt send)
-	PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash")
+	PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash", "")
 }
 
 func TestPushNotSuppressed_NilClientChecker(t *testing.T) {
@@ -116,7 +116,7 @@ func TestPushNotSuppressed_NilClientChecker(t *testing.T) {
 	defer SetManager(nil)
 
 	// When clientChecker is nil, push should not be suppressed (will attempt send)
-	PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash")
+	PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash", "")
 }
 
 func TestPushSuppressed_InNativeMode(t *testing.T) {
@@ -132,7 +132,7 @@ func TestPushSuppressed_InNativeMode(t *testing.T) {
 	defer SetManager(nil)
 
 	// In native mode, push should be suppressed (sendToAllSubscribers returns false early)
-	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash") {
+	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash", "") {
 		t.Error("expected false in native mode")
 	}
 	if PushTaskEvent("t1", "completed", "Test", "Preview", "/path") {
@@ -152,7 +152,7 @@ func TestPushSuppressed_InDisabledMode(t *testing.T) {
 	SetManager(mgr)
 	defer SetManager(nil)
 
-	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash") {
+	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash", "") {
 		t.Error("expected false in disabled mode")
 	}
 	if PushTaskEvent("t1", "completed", "Test", "Preview", "/path") {
@@ -189,7 +189,7 @@ func TestPushSessionEvent_UnknownStatus(t *testing.T) {
 	SetManager(mgr)
 	defer SetManager(nil)
 
-	if PushSessionEvent("s1", "unknown_status", "Title", "Preview", "/path", "Bash") {
+	if PushSessionEvent("s1", "unknown_status", "Title", "Preview", "/path", "Bash", "") {
 		t.Error("expected false for unknown status")
 	}
 }
@@ -227,7 +227,7 @@ func TestPushSessionEvent_Cancelled(t *testing.T) {
 	SetManager(mgr)
 	defer SetManager(nil)
 
-	PushSessionEvent("s1", "cancelled", "Title", "Preview", "/path", "")
+	PushSessionEvent("s1", "cancelled", "Title", "Preview", "/path", "", "")
 }
 
 func TestPushSessionEvent_PermissionPending(t *testing.T) {
@@ -246,7 +246,7 @@ func TestPushSessionEvent_PermissionPending(t *testing.T) {
 	SetManager(mgr)
 	defer SetManager(nil)
 
-	PushSessionEvent("s1", "permission_pending", "Title", "Preview", "/path", "Bash")
+	PushSessionEvent("s1", "permission_pending", "Title", "Preview", "/path", "Bash", "")
 }
 
 func TestPushTaskEvent_Failed(t *testing.T) {
@@ -411,6 +411,72 @@ func TestTruncateForDingTalk_CJK(t *testing.T) {
 	}
 	if len([]rune(got)) != dingtalkPreviewMaxRunes+1 {
 		t.Errorf("expected %d runes, got %d", dingtalkPreviewMaxRunes+1, len([]rune(got)))
+	}
+}
+
+func TestFormatPermissionDetail(t *testing.T) {
+	tests := []struct {
+		name      string
+		toolName  string
+		toolInput string
+		want      string
+	}{
+		{
+			name:      "empty toolName and toolInput",
+			toolName:  "",
+			toolInput: "",
+			want:      "",
+		},
+		{
+			name:      "only toolName",
+			toolName:  "Bash",
+			toolInput: "",
+			want:      "**操作**: Bash\n\n",
+		},
+		{
+			name:      "toolName with command",
+			toolName:  "Bash",
+			toolInput: `{"command":"rm -rf /tmp/test"}`,
+			want:      "**操作**: Bash\n\n**命令**: `rm -rf /tmp/test`\n\n",
+		},
+		{
+			name:      "toolName with file_path",
+			toolName:  "Read",
+			toolInput: `{"file_path":"/home/user/main.go"}`,
+			want:      "**操作**: Read\n\n**文件**: `/home/user/main.go`\n\n",
+		},
+		{
+			name:      "toolName with path instead of file_path",
+			toolName:  "Read",
+			toolInput: `{"path":"/home/user/main.go"}`,
+			want:      "**操作**: Read\n\n**文件**: `/home/user/main.go`\n\n",
+		},
+		{
+			name:      "toolName with both command and file_path",
+			toolName:  "Bash",
+			toolInput: `{"command":"cat foo.txt","file_path":"/home/user/foo.txt"}`,
+			want:      "**操作**: Bash\n\n**命令**: `cat foo.txt`\n\n**文件**: `/home/user/foo.txt`\n\n",
+		},
+		{
+			name:      "invalid JSON toolInput",
+			toolName:  "Bash",
+			toolInput: "not-json",
+			want:      "**操作**: Bash\n\n",
+		},
+		{
+			name:      "toolInput with no command or file_path",
+			toolName:  "Bash",
+			toolInput: `{"timeout":30}`,
+			want:      "**操作**: Bash\n\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatPermissionDetail(tt.toolName, tt.toolInput)
+			if got != tt.want {
+				t.Errorf("formatPermissionDetail(%q, %q) = %q, want %q", tt.toolName, tt.toolInput, got, tt.want)
+			}
+		})
 	}
 }
 

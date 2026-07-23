@@ -33,7 +33,8 @@ type SessionUpdateData struct {
 	ResponsePreviewPlain string `json:"response_preview_plain,omitempty"` // Markdown-stripped preview (for Android/browser notifications)
 	SessionTitle         string `json:"session_title,omitempty"`
 	ProjectPath          string `json:"project_path,omitempty"`
-	ToolName             string `json:"tool_name,omitempty"` // tool name requesting approval (permission_pending only)
+	ToolName             string `json:"tool_name,omitempty"`  // tool name requesting approval (permission_pending only)
+	ToolInput            string `json:"tool_input,omitempty"` // tool input JSON for approval details (permission_pending only)
 }
 
 // TaskUpdateData is the data payload for "task_update" events.

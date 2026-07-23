@@ -1571,7 +1571,7 @@ func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 	_ = sub
 
 	// Call with permission_pending and toolName
-	EmitSessionEvent("session-pp-1", "permission_pending", true, "WriteTextFile")
+	EmitSessionEvent("session-pp-1", "permission_pending", true, "WriteTextFile", `{"command":"echo hello"}`)
 
 	buffered := sub.GetBufferedEvents()
 	if len(buffered) == 0 {
@@ -1584,6 +1584,7 @@ func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 	assert.Equal(t, "permission_pending", data.Status)
 	assert.Equal(t, "session-pp-1", data.SessionID)
 	assert.Equal(t, "WriteTextFile", data.ToolName)
+	assert.Equal(t, `{"command":"echo hello"}`, data.ToolInput)
 	assert.Equal(t, "/home/user/project", data.ProjectPath)
 }
 

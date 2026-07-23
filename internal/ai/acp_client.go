@@ -359,7 +359,7 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 		c.connRef.mu.Lock()
 		csid := c.connRef.clawbenchSID
 		c.connRef.mu.Unlock()
-		onPermissionStateChange(csid, true, toolName)
+		onPermissionStateChange(csid, true, toolName, toolInput)
 	}
 
 	// Block until user responds or context is cancelled
@@ -374,7 +374,7 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 			c.connRef.mu.Lock()
 			csid := c.connRef.clawbenchSID
 			c.connRef.mu.Unlock()
-			onPermissionStateChange(csid, false, "")
+			onPermissionStateChange(csid, false, "", "")
 		}
 
 		// Emit tool_result to mark the PermissionApproval as done

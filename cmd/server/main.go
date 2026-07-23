@@ -633,12 +633,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	ai.GetACPConnManager().SetSessionRunningChecker(service.IsSessionRunning)
 
 	// Inject permission state change callback (emits WS event on approval state change)
-	ai.SetPermissionStateChangeCallback(func(clawbenchSID string, pending bool, toolName string) {
+	ai.SetPermissionStateChangeCallback(func(clawbenchSID string, pending bool, toolName string, toolInput string) {
 		status := "permission_resolved"
 		if pending {
 			status = "permission_pending"
 		}
-		service.EmitSessionEvent(clawbenchSID, status, false, toolName)
+		service.EmitSessionEvent(clawbenchSID, status, false, toolName, toolInput)
 	})
 
 	// Initialize TTS summarizer from config (deferred from earlier — needs DB for API key resolution).

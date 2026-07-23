@@ -2,6 +2,7 @@ package dingtalk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -29,7 +30,7 @@ func truncateForDingTalk(text string) string {
 // PushSessionEvent sends a DingTalk push notification for a session event.
 // Only processes completed/cancelled/permission_pending statuses.
 // Returns true if the notification was sent to at least one subscriber.
-func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectPath, toolName string) bool {
+func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectPath, toolName, toolInput string) bool {
 	if !IsStarted() || db == nil {
 		return false
 	}
@@ -57,16 +58,43 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 	case "permission_pending":
 		title = "操作需批准"
 		replyHint := fmt.Sprintf("\n\n---\n发送 `@%s <消息>` 追加消息到队列", shortID)
-		markdown = fmt.Sprintf("### 操作需批准\n**会话**: %s\n\n**项目**: %s\n\n**操作**: %s%s",
+		detail := formatPermissionDetail(toolName, toolInput)
+		markdown = fmt.Sprintf("### 操作需批准\n**会话**: %s\n\n**项目**: %s\n\n%s%s",
 			sessionTitle,
 			projectPath,
-			toolName,
+			detail,
 			replyHint)
 	default:
 		return false
 	}
 
 	return sendToAllSubscribers(title, markdown)
+}
+
+// formatPermissionDetail formats toolName and toolInput into DingTalk Markdown
+// for permission approval notifications. Parses toolInput JSON to extract
+// command and file_path, matching the frontend PermissionApproval card logic.
+func formatPermissionDetail(toolName, toolInput string) string {
+	var detail string
+	if toolName != "" {
+		detail += fmt.Sprintf("**操作**: %s\n\n", toolName)
+	}
+	if toolInput != "" {
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(toolInput), &parsed); err == nil {
+			if command, _ := parsed["command"].(string); command != "" {
+				detail += fmt.Sprintf("**命令**: `%s`\n\n", command)
+			}
+			filePath, _ := parsed["file_path"].(string)
+			if filePath == "" {
+				filePath, _ = parsed["path"].(string)
+			}
+			if filePath != "" {
+				detail += fmt.Sprintf("**文件**: `%s`\n\n", filePath)
+			}
+		}
+	}
+	return detail
 }
 
 // PushTaskEvent sends a DingTalk push notification for a task event.
