@@ -20,6 +20,7 @@ import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.animation.LinearInterpolator;
 import android.webkit.CookieManager;
 import android.widget.FrameLayout;
 import android.webkit.DownloadListener;
@@ -35,6 +36,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -49,6 +51,9 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 
 import org.json.JSONArray;
 
@@ -105,6 +110,9 @@ public class MainActivity extends AppCompatActivity {
 
     WebView webView;
     private ProgressBar progressBar;
+    private View splashScreen;
+    private ImageView splashSweep;
+    private ObjectAnimator sweepAnimator;
     private SharedPreferences prefs;
 
     // Tracks whether the WebView is showing a successfully loaded remote page.
@@ -232,6 +240,17 @@ public class MainActivity extends AppCompatActivity {
 
         webView = findViewById(R.id.webView);
         progressBar = findViewById(R.id.progressBar);
+        splashScreen = findViewById(R.id.splashScreen);
+        splashSweep = findViewById(R.id.splashSweep);
+
+        // Start sweep rotation animation on splash screen
+        if (splashSweep != null) {
+            sweepAnimator = ObjectAnimator.ofFloat(splashSweep, View.ROTATION, 0f, 360f);
+            sweepAnimator.setDuration(1600);
+            sweepAnimator.setInterpolator(new LinearInterpolator());
+            sweepAnimator.setRepeatCount(ValueAnimator.INFINITE);
+            sweepAnimator.start();
+        }
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
@@ -276,6 +295,23 @@ public class MainActivity extends AppCompatActivity {
         } else {
             webView.loadUrl(LOGIN_HTML_URL);
         }
+    }
+
+    /**
+     * Dismiss the native splash screen with a fade-out animation.
+     * Called when the remote WebView page finishes loading successfully.
+     */
+    private void dismissSplash() {
+        if (splashScreen == null || splashScreen.getVisibility() != View.VISIBLE) return;
+        if (sweepAnimator != null) {
+            sweepAnimator.cancel();
+            sweepAnimator = null;
+        }
+        splashScreen.animate()
+                .alpha(0f)
+                .setDuration(200)
+                .withEndAction(() -> splashScreen.setVisibility(View.GONE))
+                .start();
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -1539,6 +1575,7 @@ public class MainActivity extends AppCompatActivity {
                 webViewConnected = false;
                 loadErrorPending = false;
                 view.setVisibility(View.VISIBLE);
+                dismissSplash();
             } else {
                 // Navigating to a remote page — keep WebView hidden until it loads
                 // to prevent flashing ugly browser error pages.
@@ -1573,6 +1610,7 @@ public class MainActivity extends AppCompatActivity {
                 webViewConnected = true;
                 cancelConnectionTimeout();
                 view.setVisibility(View.VISIBLE);
+                dismissSplash();
             }
         }
 

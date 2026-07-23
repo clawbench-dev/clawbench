@@ -15,4 +15,61 @@
         android:layout_gravity="center"
         android:visibility="gone" />
 
+    <!-- Native splash overlay — visible from app launch until WebView finishes loading.
+         Shows a circular logo with a rotating accent ring (sweep light effect). -->
+    <FrameLayout
+        android:id="@+id/splashScreen"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/colorPrimary">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingTop="0dp">
+
+            <!-- Logo with sweep ring -->
+            <FrameLayout
+                android:layout_width="132dp"
+                android:layout_height="132dp">
+
+                <!-- Rotating sweep ring -->
+                <ImageView
+                    android:id="@+id/splashSweep"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="center"
+                    android:src="@drawable/splash_sweep"
+                    android:contentDescription="@null" />
+
+                <!-- Logo centered inside the ring -->
+                <ImageView
+                    android:layout_width="108dp"
+                    android:layout_height="108dp"
+                    android:layout_gravity="center"
+                    android:src="@mipmap/ic_launcher"
+                    android:scaleType="fitCenter"
+                    android:contentDescription="@string/app_name" />
+
+            </FrameLayout>
+
+            <!-- App title -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="@string/app_name"
+                android:textSize="20sp"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="#e6edf3"
+                android:letterSpacing="0.06"
+                android:alpha="0.85" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
 </FrameLayout>

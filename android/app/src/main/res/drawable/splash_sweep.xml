@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sweep light ring for splash screen. A ring with a bright arc that rotates. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="132dp"
+    android:height="132dp"
+    android:viewportWidth="132"
+    android:viewportHeight="132">
+
+    <!-- Subtle ring outline -->
+    <path
+        android:pathData="M66,6 A60,60 0 1,1 65.99,6"
+        android:strokeColor="#30363d"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.4"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- Sweep arc (bright accent section ~90 degrees) -->
+    <path
+        android:pathData="M66,6 A60,60 0 0,1 126,66"
+        android:strokeColor="#58a6ff"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent" />
+
+</vector>
