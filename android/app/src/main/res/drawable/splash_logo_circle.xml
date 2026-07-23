@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Circular shape used as background for clipToOutline on the splash logo ImageView.
+     clipToOutline=true clips the ImageView content to this circle shape. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@android:color/transparent" />
+</shape>

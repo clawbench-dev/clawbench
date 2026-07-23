@@ -45,14 +45,17 @@
                     android:src="@drawable/splash_sweep"
                     android:contentDescription="@null" />
 
-                <!-- Logo centered inside the ring -->
+                <!-- Logo centered inside the ring (circular clip) -->
                 <ImageView
                     android:layout_width="108dp"
                     android:layout_height="108dp"
                     android:layout_gravity="center"
                     android:src="@mipmap/ic_launcher"
                     android:scaleType="fitCenter"
-                    android:contentDescription="@string/app_name" />
+                    android:contentDescription="@string/app_name"
+                    android:outlineProvider="@null"
+                    android:clipToOutline="true"
+                    android:background="@drawable/splash_logo_circle" />
 
             </FrameLayout>
 
