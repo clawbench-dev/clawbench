@@ -6,10 +6,7 @@
     </template>
 
     <div class="rf-body">
-      <div v-if="checking" class="rf-empty">
-        {{ t('common.loading') }}
-      </div>
-      <div v-else-if="files.length === 0" class="rf-empty">
+      <div v-if="files.length === 0" class="rf-empty">
         {{ t('file.recent.empty') }}
       </div>
       <div v-else class="rf-results">
@@ -67,11 +64,11 @@ const emit = defineEmits<{
 const { recentFilesExcluding } = useRecentFiles()
 const files = recentFilesExcluding(computed(() => props.currentFilePath ?? null))
 
-const checking = ref(false)
 const missingPaths = ref(new Set<string>())
 let fetchId = 0
 
-// When drawer opens, batch-check file existence
+// When drawer opens, batch-check file existence asynchronously
+// List renders immediately; missing files are greyed out once results arrive
 watch(() => props.open, async (val) => {
   if (!val) {
     missingPaths.value = new Set()
@@ -81,7 +78,6 @@ watch(() => props.open, async (val) => {
   if (paths.length === 0) return
 
   const currentFetch = ++fetchId
-  checking.value = true
   try {
     const resp = await fetch('/api/file/batch-exists', {
       method: 'POST',
@@ -103,10 +99,6 @@ watch(() => props.open, async (val) => {
   } catch (e) {
     if (currentFetch !== fetchId) return
     appLog.w(TAG, 'batch-exists check failed:', e)
-  } finally {
-    if (currentFetch === fetchId) {
-      checking.value = false
-    }
   }
 })
 
