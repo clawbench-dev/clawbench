@@ -1,10 +1,25 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#0d1117">
     <meta name="description" content="一款专为移动端设计的轻量级代码和文档工作台">
+
+    <!-- Resolve theme BEFORE CSS loads to prevent white flash on dark mode.
+         Reads from localStorage (clawbench-settings-theme or legacy 'theme' key).
+         Must run synchronously before any rendering to avoid a single white frame. -->
+    <script>
+      (function() {
+        var t = null;
+        try { var s = localStorage.getItem('clawbench-settings-theme'); if (s) t = JSON.parse(s); } catch {}
+        if (t === null) { try { t = localStorage.getItem('theme'); } catch {} }
+        if (t === null || t === 'auto') {
+          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
 
     <!-- PWA Configuration -->
     <link rel="manifest" href="/manifest.json">
