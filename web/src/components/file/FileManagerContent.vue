@@ -124,17 +124,21 @@
           </template>
         </div>
       </div>
-      <!-- Multi-select info bar -->
-      <div v-if="multiSelect.active" class="ms-info-bar">
-        <button class="ms-info-btn" @click="exitMultiSelect">
-          <X :size="14" />
-        </button>
-        <span class="ms-info-text">{{ multiSelect.selected.size > 0 ? t('file.multiSelect.selectedCount', { n: multiSelect.selected.size }) : t('file.multiSelect.tapToSelect') }}</span>
-        <button class="ms-info-btn ms-select-all-btn" @click="toggleSelectAll">
-          {{ isAllSelected ? t('file.multiSelect.deselectAll') : t('file.multiSelect.selectAll') }}
-        </button>
+      <!-- Breadcrumb / Multi-select info bar -->
+      <div v-if="multiSelect.active" class="dir-nav-bottom">
+        <div class="ms-info-bar">
+          <button class="ms-info-btn" @click="exitMultiSelect">
+            <X :size="14" />
+          </button>
+          <span class="ms-info-text">{{ multiSelect.selected.size > 0 ? t('file.multiSelect.selectedCount', { n: multiSelect.selected.size }) : t('file.multiSelect.tapToSelect') }}</span>
+          <button class="ms-info-btn ms-select-all-btn" @click="toggleSelectAll">
+            {{ isAllSelected ? t('file.multiSelect.deselectAll') : t('file.multiSelect.selectAll') }}
+          </button>
+        </div>
       </div>
-      <DirBreadcrumb v-else :path="currentDir" @navigate="$emit('navigateDir', $event)" />
+      <div v-else-if="currentDir" class="dir-nav-bottom">
+        <DirBreadcrumb :path="currentDir" @navigate="$emit('navigateDir', $event)" />
+      </div>
     </div>
 
     <!-- Hidden file input for upload -->
@@ -1259,13 +1263,12 @@ function currentFileForClipboard() {
 }
 
 .dir-nav {
-    padding: 3px 8px;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 0;
     min-height: 28px;
     border-bottom: 1px solid var(--border-color, #e5e5e5);
-    background: var(--bg-tertiary, #f5f5f5);
     flex-shrink: 0;
 }
 
@@ -1273,6 +1276,8 @@ function currentFileForClipboard() {
     display: flex;
     align-items: center;
     min-width: 0;
+    background: var(--bg-tertiary, #f5f5f5);
+    padding: 3px 8px;
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
 }
 
@@ -1284,8 +1289,15 @@ function currentFileForClipboard() {
     min-width: 0;
 }
 
-.dir-nav :deep(.dir-breadcrumb) {
-    padding: 0 6px;
+/* ── Breadcrumb / info bar bottom section ── */
+.dir-nav-bottom {
+    border-top: 1px solid var(--border-color, #e5e5e5);
+    background: var(--bg-primary, #fff);
+    padding: 2px 8px;
+}
+
+.dir-nav-bottom :deep(.dir-breadcrumb) {
+    padding: 0;
     min-height: 0;
 }
 
@@ -1294,7 +1306,7 @@ function currentFileForClipboard() {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 6px;
+    padding: 0;
     font-size: 12px;
     color: var(--text-secondary, #666);
 }
