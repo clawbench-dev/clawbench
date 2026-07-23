@@ -360,7 +360,12 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	slog.Info("acp conn: spawnLocked setting cmd.Dir",
 		slog.String("clawbench_sid", c.clawbenchSID),
 		slog.String("cmd_dir", c.cwd),
-		slog.String("cmd_dir_empty", func() string { if c.cwd == "" { return "YES - will inherit server CWD!" }; return "no" }()))
+		slog.String("cmd_dir_empty", func() string {
+			if c.cwd == "" {
+				return "YES - will inherit server CWD!"
+			}
+			return "no"
+		}()))
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
 	// Put the ACP process in its own process group so we can kill the

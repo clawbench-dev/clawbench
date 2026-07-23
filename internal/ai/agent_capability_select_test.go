@@ -90,7 +90,8 @@ func TestRegistry_GetSelectState_NoDataForCategory(t *testing.T) {
 
 func TestRegistry_UpdateAvailableOptions_Mode(t *testing.T) {
 	reg := resetGlobalRegistryForTest(t)
-	opts := []SelectOptionDef{{ID: "ask", Name: "Ask"}, {ID: "code", Name: "Code"}}
+	opts := make([]SelectOptionDef, 0, 3)
+	opts = append(opts, SelectOptionDef{ID: "ask", Name: "Ask"}, SelectOptionDef{ID: "code", Name: "Code"})
 	reg.UpdateAvailableOptions("a1", "mode", opts)
 
 	got := reg.Get("a1")
@@ -201,6 +202,31 @@ func TestRegistry_IsOptionAvailable_CustomCategory(t *testing.T) {
 	assert.False(t, reg.IsOptionAvailable("a1", "custom", "opt2"))
 }
 
+func TestRegistry_IsOptionAvailable_Model(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.Update("a1", &AgentCapability{
+		AvailableModels: []model.AgentModel{{ID: "gpt-4"}, {ID: "claude-3"}},
+	})
+
+	assert.True(t, reg.IsOptionAvailable("a1", "model", "gpt-4"))
+	assert.False(t, reg.IsOptionAvailable("a1", "model", "missing"))
+	assert.False(t, reg.IsOptionAvailable("missing", "model", "gpt-4"))
+}
+
+func TestRegistry_agentCapForRead(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+
+	// Missing agent returns nil
+	assert.Nil(t, reg.agentCapForRead("missing"))
+
+	// Existing agent returns capability
+	agentCap := &AgentCapability{AvailableModes: []ModeDef{{ID: "code"}}}
+	reg.Update("a1", agentCap)
+	got := reg.agentCapForRead("a1")
+	require.NotNil(t, got)
+	assert.Equal(t, "code", got.AvailableModes[0].ID)
+}
+
 // ── GetAvailableOptions ─────────────────────────────────────────────────────
 
 func TestRegistry_GetAvailableOptions_Mode(t *testing.T) {
@@ -237,7 +263,8 @@ func TestRegistry_LegacyMethodsViaGeneralized(t *testing.T) {
 	reg := resetGlobalRegistryForTest(t)
 
 	// UpdateAvailableOptions("mode", ...) should be equivalent to UpdateModes
-	opts := []SelectOptionDef{{ID: "ask", Name: "Ask"}, {ID: "code", Name: "Code"}}
+	opts := make([]SelectOptionDef, 0, 3)
+	opts = append(opts, SelectOptionDef{ID: "ask", Name: "Ask"}, SelectOptionDef{ID: "code", Name: "Code"})
 	reg.UpdateAvailableOptions("a1", "mode", opts)
 
 	got := reg.Get("a1")

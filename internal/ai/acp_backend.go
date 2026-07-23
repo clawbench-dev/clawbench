@@ -39,7 +39,7 @@ func (b *ACPBackend) Name() string {
 //
 // Flow: GetOrCreateConn → (ResumeSession or NewSession) → emit cached state → Prompt
 // On peer disconnect during Prompt, automatically retries once after respawn + ResumeSession.
-func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) { //nolint:gocognit // complex ACP protocol handler, refactoring would reduce readability
+func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) { //nolint:gocognit,gocyclo // complex ACP protocol handler, refactoring would reduce readability
 	ch := make(chan StreamEvent, streamChanSize)
 
 	go func() {

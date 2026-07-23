@@ -615,6 +615,18 @@ func (r *AgentCapabilityRegistry) HasNewAvailableOptions(agentID, category strin
 	}
 }
 
+// agentCapForRead returns the agent capability by ID under a read lock.
+// Returns nil if not found.
+func (r *AgentCapabilityRegistry) agentCapForRead(agentID string) *AgentCapability {
+	r.mu.RLock()
+	agentCap, ok := r.caps[agentID]
+	r.mu.RUnlock()
+	if !ok || agentCap == nil {
+		return nil
+	}
+	return agentCap
+}
+
 // IsOptionAvailable checks whether a specific option ID exists in the
 // available options for the given category.
 func (r *AgentCapabilityRegistry) IsOptionAvailable(agentID, category, optionID string) bool {
@@ -622,10 +634,8 @@ func (r *AgentCapabilityRegistry) IsOptionAvailable(agentID, category, optionID 
 	case "mode":
 		return r.IsModeAvailable(agentID, optionID)
 	case "thought_level":
-		r.mu.RLock()
-		agentCap, ok := r.caps[agentID]
-		r.mu.RUnlock()
-		if !ok || agentCap == nil {
+		agentCap := r.agentCapForRead(agentID)
+		if agentCap == nil {
 			return false
 		}
 		for _, l := range agentCap.AvailableThinkingEfforts {
@@ -635,10 +645,8 @@ func (r *AgentCapabilityRegistry) IsOptionAvailable(agentID, category, optionID 
 		}
 		return false
 	case "model":
-		r.mu.RLock()
-		agentCap, ok := r.caps[agentID]
-		r.mu.RUnlock()
-		if !ok || agentCap == nil {
+		agentCap := r.agentCapForRead(agentID)
+		if agentCap == nil {
 			return false
 		}
 		for _, m := range agentCap.AvailableModels {
@@ -648,10 +656,8 @@ func (r *AgentCapabilityRegistry) IsOptionAvailable(agentID, category, optionID 
 		}
 		return false
 	default:
-		r.mu.RLock()
-		agentCap, ok := r.caps[agentID]
-		r.mu.RUnlock()
-		if !ok || agentCap == nil {
+		agentCap := r.agentCapForRead(agentID)
+		if agentCap == nil {
 			return false
 		}
 		for _, o := range agentCap.AvailableOptions[category] {

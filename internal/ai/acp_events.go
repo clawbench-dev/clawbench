@@ -257,7 +257,7 @@ func handleConfigOptionSelect(sel SelectState, conn *ACPConn, ch chan<- StreamEv
 		return nil
 	}
 
-	var forwarded []string
+	forwarded := make([]string, 0, 1)
 
 	if conn == nil {
 		// No connection → always forward
