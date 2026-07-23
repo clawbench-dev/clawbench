@@ -51,6 +51,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.splashscreen.SplashScreen;
 
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
@@ -223,6 +224,8 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // Install splash screen before super.onCreate to override Android 12+ system splash
+        SplashScreen.installSplashScreen(this);
         super.onCreate(savedInstanceState);
 
         instance = this;

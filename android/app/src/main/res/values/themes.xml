@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.ClawBench" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.ClawBench" parent="Theme.SplashScreen">
+        <item name="android:statusBarColor">@color/colorPrimary</item>
+        <item name="android:navigationBarColor">@color/colorPrimary</item>
+        <item name="windowSplashScreenBackground">@color/colorPrimary</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_sweep_icon</item>
+        <item name="postSplashScreenTheme">@style/Theme.ClawBench.Main</item>
+    </style>
+
+    <!-- Actual app theme applied after splash screen dismisses -->
+    <style name="Theme.ClawBench.Main" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/colorAccent</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>
