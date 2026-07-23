@@ -833,6 +833,7 @@ async function handleLoginSuccess() {
     // Clean up legacy localStorage keys (no longer used)
     Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
     isAuthenticated.value = true
+    dismissWebSplash()
     await nextTick()
     applyUIScale(localConfig.uiScale ?? 1)
     startDockResize()
@@ -1292,6 +1293,18 @@ function applyTheme(t) {
     reRenderMermaid()
 }
 
+/** Fade out and remove the inline splash screen from index.html. */
+function dismissWebSplash() {
+    const splash = document.getElementById('splash')
+    if (!splash) return
+    splash.classList.add('fade-out')
+    splash.addEventListener('transitionend', () => splash.remove(), { once: true })
+    setTimeout(() => splash.remove(), 300)
+    document.documentElement.setAttribute('data-hljs-theme', t)
+    initMermaid()
+    reRenderMermaid()
+}
+
 provide('theme', theme)
 provide('applyTheme', applyTheme)
 provide('activeTab', activeTab)
@@ -1400,6 +1413,7 @@ onMounted(async () => {
     // from firing with missing cookies (Android first-login bug).
     if (!(await initializeApp())) return
     isAuthenticated.value = true
+    dismissWebSplash()
     await nextTick()
     applyUIScale(localConfig.uiScale ?? 1)
     startDockResize()

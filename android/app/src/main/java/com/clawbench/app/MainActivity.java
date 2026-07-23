@@ -1211,6 +1211,12 @@ public class MainActivity extends AppCompatActivity {
         // Do NOT stop BackgroundService here — it should survive Activity lifecycle
         // so the SSH tunnel continues running when the app is in background.
         cancelConnectionTimeout();
+        if (sweepAnimator != null) {
+            sweepAnimator.cancel();
+            sweepAnimator = null;
+        }
+        splashSweep = null;
+        splashScreen = null;
         cleanupSharedCacheDir();
         instance = null; // Clear static reference to prevent memory leak / stale access
         super.onDestroy();

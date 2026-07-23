@@ -57,6 +57,10 @@
         background: var(--bg-primary);
         z-index: 9999;
         gap: 24px;
+        transition: opacity 0.2s ease-out;
+      }
+      #splash.fade-out {
+        opacity: 0;
       }
       .splash-logo-ring {
         position: relative;
@@ -107,14 +111,14 @@
     </style>
 </head>
 <body>
-    <div id="app">
-      <div id="splash">
-        <div class="splash-logo-ring">
-          <div class="splash-sweep"></div>
-          <img class="splash-logo" src="/logo.png" alt="ClawBench">
-        </div>
-        <div class="splash-title">ClawBench</div>
+    <div id="app"></div>
+    <!-- Splash screen — outside #app so Vue doesn't destroy it; faded out by App.vue -->
+    <div id="splash">
+      <div class="splash-logo-ring">
+        <div class="splash-sweep"></div>
+        <img class="splash-logo" src="/logo.png" alt="ClawBench">
       </div>
+      <div class="splash-title">ClawBench</div>
     </div>
     <script type="module" src="/src/main.ts"></script>
 
