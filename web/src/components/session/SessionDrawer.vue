@@ -304,13 +304,9 @@ onUnmounted(() => {
 
 <style scoped>
 .session-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 0;
-  min-height: 0;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
 }
 
 .session-loading {
@@ -430,6 +426,7 @@ onUnmounted(() => {
 /* SwipeToDeleteRow integration */
 :deep(.swipe-to-delete) {
   border-radius: 0;
+  flex-shrink: 0;
 }
 
 :deep(.swipe-delete-content) {
@@ -641,6 +638,7 @@ onUnmounted(() => {
   opacity: 1;
   background: var(--hover-bg, rgba(0,0,0,0.06));
 }
+
 .agent-option:hover .agent-set-default-btn {
   opacity: 0.7;
 }
