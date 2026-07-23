@@ -1616,10 +1616,12 @@ public class MainActivity extends AppCompatActivity {
                 // This prevents the browser's built-in error page from flashing.
             } else {
                 // Remote page finished loading successfully — show the WebView.
+                // Note: do NOT dismiss native splash here; the JS app will call
+                // AndroidNative.dismissSplash() once Vue finishes mounting,
+                // so the splash covers the full gap from cold start to app ready.
                 webViewConnected = true;
                 cancelConnectionTimeout();
                 view.setVisibility(View.VISIBLE);
-                dismissSplash();
             }
         }
 
@@ -1791,6 +1793,15 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public boolean isNativeApp() {
             return true;
+        }
+
+        /**
+         * Dismiss the native splash overlay. Called by the JS app after Vue finishes
+         * mounting, so the native splash covers the entire gap from cold start to app ready.
+         */
+        @JavascriptInterface
+        public void dismissSplash() {
+            activity.runOnUiThread(() -> activity.dismissSplash());
         }
 
         /**

@@ -1293,8 +1293,18 @@ function applyTheme(t) {
     reRenderMermaid()
 }
 
-/** Fade out and remove the inline splash screen from index.html. */
+/** Dismiss the splash screen. In APP mode, dismisses the native overlay.
+ *  In browser/PWA mode, fades out the inline HTML splash. */
 function dismissWebSplash() {
+    // APP mode: native splash overlay covers the loading gap
+    if (window.AndroidNative?.dismissSplash) {
+        window.AndroidNative.dismissSplash()
+        // Also remove the inline HTML splash (invisible behind native overlay)
+        const splash = document.getElementById('splash')
+        if (splash) splash.remove()
+        return
+    }
+    // Browser/PWA: fade out inline splash
     const splash = document.getElementById('splash')
     if (!splash) return
     splash.classList.add('fade-out')
