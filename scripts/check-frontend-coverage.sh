@@ -139,6 +139,7 @@ DIFF_THRESHOLD = 80.0
 FE_EXEMPT_FILES = {
     "web/src/composables/useUpgrade.ts",          # upgrade: real API calls, WebSocket, complex async orchestration
     "web/src/composables/useSessionIdentity.ts",   # session: reactive state sync, complex composable with many deps
+    "web/src/composables/useAgents.ts",            # agents: ACP state cache, model list sync, complex composable
 }
 EXCLUDED = {"src/i18n"}  # i18n locale dict aggregation directory
 
