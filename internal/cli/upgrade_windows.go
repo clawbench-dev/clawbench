@@ -11,7 +11,7 @@ import (
 func processAlive(pid int) bool {
 	// os.FindProcess always returns nil error on Windows, even for non-existent PIDs.
 	// Use OpenProcess to actually check if the process exists.
-	handle, err := syscall.OpenProcess(syscall.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	handle, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, uint32(pid))
 	if err != nil {
 		return false
 	}

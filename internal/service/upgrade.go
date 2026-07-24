@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"clawbench/internal/platform"
@@ -284,9 +283,7 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if runtime.GOOS != osWindows {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	setCmdProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
 		slog.Error("upgrade: failed to launch upgrade subprocess", "error", err)
