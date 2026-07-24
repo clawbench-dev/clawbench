@@ -18,7 +18,7 @@ export function isReleaseVersion(v: string): boolean {
  * Rejects short hashes ("a0f87a96"), plain "dev", and empty strings.
  */
 export function isVersionedBuild(v: string): boolean {
-  return /^v\d+\.\d+\.\d+/.test(v)
+  return /^v\d+\.\d+\.\d+([- ]|$)/.test(v)
 }
 
 /**
@@ -27,7 +27,11 @@ export function isVersionedBuild(v: string): boolean {
  */
 export function extractBaseVersion(v: string): string {
   const match = v.match(/^(v\d+\.\d+\.\d+)/)
-  return match ? match[1] : v
+  if (!match) return v
+  // Ensure the match is followed by end-of-string, '-', or ' ' (reject "v1.0.0garbage")
+  const endIdx = match.index! + match[1].length
+  if (endIdx < v.length && v[endIdx] !== '-' && v[endIdx] !== ' ') return v
+  return match[1]
 }
 
 /**
@@ -37,11 +41,12 @@ export function extractBaseVersion(v: string): string {
  */
 export function shouldShowMismatch(appVersion: string, serverVersion: string): boolean {
   if (!appVersion || !serverVersion) return false
+  const normalizedApp = normalizeVersion(appVersion)
   const normalizedServer = normalizeVersion(serverVersion)
   // Both must have a parseable vX.Y.Z base version
-  if (!isVersionedBuild(appVersion) || !isVersionedBuild(normalizedServer)) return false
+  if (!isVersionedBuild(normalizedApp) || !isVersionedBuild(normalizedServer)) return false
   // Show only when APK is older than server (needs upgrade)
-  return compareVersions(appVersion, normalizedServer) < 0
+  return compareVersions(normalizedApp, normalizedServer) < 0
 }
 
 /**
@@ -68,8 +73,13 @@ export function compareVersions(a: string, b: string): number {
   const [aCore, aPre] = splitPre(aClean)
   const [bCore, bPre] = splitPre(bClean)
 
-  const aParts = aCore.split('.').map(Number)
-  const bParts = bCore.split('.').map(Number)
+  const parsePart = (s: string): number => {
+    const n = parseInt(s, 10)
+    return isNaN(n) ? 0 : n
+  }
+
+  const aParts = aCore.split('.').map(parsePart)
+  const bParts = bCore.split('.').map(parsePart)
   const maxLen = Math.max(aParts.length, bParts.length)
   for (let i = 0; i < maxLen; i++) {
     const aNum = aParts[i] ?? 0

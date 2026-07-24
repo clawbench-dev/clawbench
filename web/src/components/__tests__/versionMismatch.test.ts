@@ -76,6 +76,14 @@ describe('version utils', () => {
     it('rejects versions without v prefix', () => {
       expect(isVersionedBuild('1.0.0')).toBe(false)
     })
+
+    it('rejects garbage after patch number without dash', () => {
+      expect(isVersionedBuild('v1.0.0garbage')).toBe(false)
+    })
+
+    it('accepts version with build-time suffix', () => {
+      expect(isVersionedBuild('v0.66.0 (2026-07-24 10:30:00)')).toBe(true)
+    })
   })
 
   describe('extractBaseVersion', () => {
@@ -89,6 +97,14 @@ describe('version utils', () => {
 
     it('handles version without match', () => {
       expect(extractBaseVersion('dev')).toBe('dev')
+    })
+
+    it('extracts base from build with build-time suffix', () => {
+      expect(extractBaseVersion('v0.66.0-5-g7702c473 (2026-07-24)')).toBe('v0.66.0')
+    })
+
+    it('rejects garbage after patch number', () => {
+      expect(extractBaseVersion('v1.0.0garbage')).toBe('v1.0.0garbage')
     })
   })
 
@@ -153,6 +169,14 @@ describe('version utils', () => {
 
     it('skips check when server version is empty', () => {
       expect(shouldShowMismatch('v1.0.0', '')).toBe(false)
+    })
+
+    it('returns false for same exact dev build', () => {
+      expect(shouldShowMismatch('v0.66.0-5-gabc', 'v0.66.0-5-gabc')).toBe(false)
+    })
+
+    it('handles APK version with build-time suffix', () => {
+      expect(shouldShowMismatch('v0.65.0-10-gabc (2026-07-24)', 'v0.66.0-5-g7702c473')).toBe(true)
     })
   })
 })
