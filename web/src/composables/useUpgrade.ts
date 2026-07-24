@@ -6,6 +6,7 @@ import { appLog } from '@/utils/appLog'
 import { compareVersions } from '@/utils/version'
 
 const TAG = 'Upgrade'
+const MAX_POLL_DURATION = 5 * 60 * 1000 // 5 minutes
 
 export interface UpgradeState {
   phase: string
@@ -35,6 +36,9 @@ const hasUpgrade = ref(false)
 const showProgressDialog = ref(false)
 
 let wsUnsubscribe: (() => void) | null = null
+let reconnectPollTimer: ReturnType<typeof setInterval> | null = null
+let pollStartTime: number | null = null
+let wsWatchRegistered = false
 
 function ensureWsListener() {
   if (wsUnsubscribe) return
@@ -47,35 +51,75 @@ function ensureWsListener() {
   })
 }
 
-/** Called on WS reconnect to check if upgrade completed while disconnected */
-async function onWsReconnect() {
-  if (state.phase !== 'restarting') return
-  appLog.d(TAG, 'WS reconnect while restarting, fetching status...')
+/** Register WS connected/disconnected watch exactly once */
+function ensureWsWatch() {
+  if (wsWatchRegistered) return
+  wsWatchRegistered = true
+  const { connected } = useGlobalEvents()
+  watch(connected, (now) => {
+    if (!now && isInProgressInternal()) {
+      // WS disconnected while upgrade is active — start polling
+      startReconnectPolling()
+    }
+    if (now && reconnectPollTimer) {
+      // WS reconnected — do one immediate check
+      pollUpgradeStatus()
+    }
+  })
+}
+
+function isInProgressInternal(): boolean {
+  const p = state.phase
+  return !!p && p !== 'completed' && p !== 'failed'
+}
+
+/** Shared logic: fetch upgrade status and detect completion */
+async function pollUpgradeStatus() {
   try {
     const data = await apiGet<UpgradeState>('/api/upgrade/status')
-    Object.assign(state, data)
     // New server returns empty phase — upgrade succeeded
-    if (!data.phase) {
-      appLog.d(TAG, 'Upgrade verified: new server running')
-      state.phase = 'completed'
+    const effectivePhase = !data.phase && isInProgressInternal() ? 'completed' : data.phase
+    Object.assign(state, data, { phase: effectivePhase })
+    if (state.phase === 'completed' || state.phase === 'failed') {
+      stopReconnectPolling()
     }
   } catch {
-    // Status fetch failed, keep current state
+    // Server may still be restarting, keep polling
   }
+}
+
+/** Start polling upgrade status after WS disconnect during upgrade.
+ *  Stops automatically when upgrade completes, fails, or times out. */
+function startReconnectPolling() {
+  if (reconnectPollTimer) return
+  appLog.d(TAG, 'Starting reconnect polling...')
+  pollStartTime = Date.now()
+  reconnectPollTimer = setInterval(async () => {
+    // Timeout guard — prevent infinite polling
+    if (pollStartTime && Date.now() - pollStartTime > MAX_POLL_DURATION) {
+      appLog.w(TAG, 'Polling timeout — upgrade may have failed')
+      state.phase = 'failed'
+      state.error = 'Upgrade verification timed out'
+      stopReconnectPolling()
+      return
+    }
+    await pollUpgradeStatus()
+  }, 2000)
+}
+
+function stopReconnectPolling() {
+  if (reconnectPollTimer) {
+    clearInterval(reconnectPollTimer)
+    reconnectPollTimer = null
+  }
+  pollStartTime = null
 }
 
 export function useUpgrade() {
   const { serverConfig } = useSettingsConfig()
-  const { connected } = useGlobalEvents()
 
   ensureWsListener()
-
-  // On WS reconnect after server restart during upgrade, verify upgrade result
-  watch(connected, async (now, was) => {
-    if (was === false && now === true && state.phase === 'restarting') {
-      await onWsReconnect()
-    }
-  })
+  ensureWsWatch()
 
   /** Check for available upgrade */
   async function checkUpgrade(): Promise<void> {

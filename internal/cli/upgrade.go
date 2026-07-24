@@ -64,11 +64,7 @@ func RunUpgradeReplaceCommand(args []string) int {
 		"tmp_dir", tmpDir, "server_args", serverArgs)
 
 	// 1. Kill parent process
-	if runtime.GOOS == "windows" {
-		killProcessForce(parentPID)
-	} else {
-		killProcessForce(parentPID)
-	}
+	killProcessForce(parentPID)
 
 	// 2. Wait for parent to die (up to 30 seconds)
 	slog.Info("upgrade-replace: waiting for parent to exit", "parent_pid", parentPID)

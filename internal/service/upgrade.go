@@ -396,7 +396,7 @@ func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath str
 // The integrity string format is "sha512-<base64-hash>".
 func verifyIntegrity(hasher hash.Hash, integrity string) error {
 	if !strings.HasPrefix(integrity, "sha512-") {
-		slog.Warn("upgrade: unsupported integrity algorithm, skipping verification", "integrity", integrity[:min(20, len(integrity))])
+		slog.Warn("upgrade: unsupported integrity algorithm, skipping verification", "integrity", integrity[:min(len(integrity), 20)])
 		return nil
 	}
 	expectedB64 := strings.TrimPrefix(integrity, "sha512-")
@@ -420,13 +420,6 @@ func equalHashes(a, b []byte) bool {
 		result |= a[i] ^ b[i]
 	}
 	return result == 0
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // throttledProgress wraps an onProgress callback to only call it when the
