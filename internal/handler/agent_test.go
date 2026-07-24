@@ -211,6 +211,98 @@ func TestAgentPatch_InvalidPreferredThinkingEffort(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestAgentPatch_PreferredThinkingEffort_ACPLevels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Set agent to ACP mode so ACP-reported levels are used for validation
+	model.Agents["codebuddy"].Transport = "acp-stdio"
+	model.Agents["codebuddy"].AcpCommand = "codebuddy --acp"
+
+	// Simulate ACP reporting levels that differ from BackendSpec
+	// (e.g., ACP reports "minimal"/"max" which aren't in static ThinkingEffortLevels)
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.Update("codebuddy", &ai.AgentCapability{
+		AvailableThinkingEfforts: []ai.ThinkingEffortDef{
+			{ID: "minimal", Name: "Minimal"},
+			{ID: "low", Name: "Low"},
+			{ID: "medium", Name: "Medium"},
+			{ID: "high", Name: "High"},
+			{ID: "max", Name: "Max"},
+		},
+	})
+
+	// "minimal" is NOT in agent.ThinkingEffortLevels but IS in ACP levels → should pass
+	body := map[string]any{
+		"id":                        "codebuddy",
+		"preferred_thinking_effort": "minimal",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "minimal", model.Agents["codebuddy"].PreferredThinkingEffort)
+
+	// "max" is also ACP-only → should pass
+	body2 := map[string]any{
+		"id":                        "codebuddy",
+		"preferred_thinking_effort": "max",
+	}
+	req2 := newRequest(t, http.MethodPatch, "/api/agents", body2)
+	withAuthCookie(req2, model.SessionToken)
+	w2 := callHandler(ServeAgents, req2)
+
+	assert.Equal(t, http.StatusOK, w2.Code)
+	assert.Equal(t, "max", model.Agents["codebuddy"].PreferredThinkingEffort)
+
+	// "ultra" is not in ACP levels → should fail (ACP mode only checks ACP levels)
+	body3 := map[string]any{
+		"id":                        "codebuddy",
+		"preferred_thinking_effort": "ultra",
+	}
+	req3 := newRequest(t, http.MethodPatch, "/api/agents", body3)
+	withAuthCookie(req3, model.SessionToken)
+	w3 := callHandler(ServeAgents, req3)
+
+	assert.Equal(t, http.StatusBadRequest, w3.Code)
+}
+
+func TestAgentPatch_PreferredThinkingEffort_CLIModeIgnoresACPLevels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Agent stays in CLI mode (default) — ACP levels should be ignored
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.Update("codebuddy", &ai.AgentCapability{
+		AvailableThinkingEfforts: []ai.ThinkingEffortDef{
+			{ID: "minimal", Name: "Minimal"},
+			{ID: "max", Name: "Max"},
+		},
+	})
+
+	// "minimal" is in ACP levels but NOT in static ThinkingEffortLevels
+	// CLI mode → only static levels are checked → should fail
+	body := map[string]any{
+		"id":                        "codebuddy",
+		"preferred_thinking_effort": "minimal",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// "high" is in static ThinkingEffortLevels → CLI mode should accept it
+	body2 := map[string]any{
+		"id":                        "codebuddy",
+		"preferred_thinking_effort": "high",
+	}
+	req2 := newRequest(t, http.MethodPatch, "/api/agents", body2)
+	withAuthCookie(req2, model.SessionToken)
+	w2 := callHandler(ServeAgents, req2)
+
+	assert.Equal(t, http.StatusOK, w2.Code)
+}
+
 func TestAgentPatch_PreferredMode(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 

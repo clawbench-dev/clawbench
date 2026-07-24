@@ -334,6 +334,51 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveAgentsPatch handles PATCH /api/agents — updates an agent's configurable fields.
+// isValidThinkingEffort checks if a thinking effort level is valid for an agent.
+// It checks levels based on the agent's effective transport:
+//   - ACP mode: only ACP-reported levels from AgentCapabilityRegistry
+//   - CLI mode: only static ThinkingEffortLevels from BackendSpec
+//   - Neither has levels: allow any value (backward compatible)
+func isValidThinkingEffort(agent *model.Agent, level string) bool {
+	transport := agent.Transport
+	if transport == "" {
+		if agent.AcpCommand != "" {
+			transport = "acp-stdio"
+		} else {
+			transport = "cli"
+		}
+	}
+
+	reg := ai.GetAgentCapabilityRegistry()
+
+	if transport == "acp-stdio" {
+		// ACP mode: only check ACP-reported levels
+		if es := reg.GetThinkingEffortState(agent.ID, ""); es != nil && len(es.AvailableLevels) > 0 {
+			for _, l := range es.AvailableLevels {
+				if l.ID == level {
+					return true
+				}
+			}
+			return false
+		}
+		// No ACP levels yet (pool not initialized) — allow any value
+		return true
+	}
+
+	// CLI mode: check static levels from BackendSpec
+	if len(agent.ThinkingEffortLevels) > 0 {
+		for _, l := range agent.ThinkingEffortLevels {
+			if l == level {
+				return true
+			}
+		}
+		return false
+	}
+
+	// No static levels and not ACP — allow any value
+	return true
+}
+
 // Expects: {"id": "claude", "preferred_model": "claude-opus-4-5", "preferred_thinking_effort": "high", ...}
 // Patchable fields: preferred_model, preferred_thinking_effort, transport,
 // name, icon, specialty, custom_system_prompt, sort_order.
@@ -396,14 +441,8 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	// Validate and apply preferred_thinking_effort
 	if v, exists := patch["preferred_thinking_effort"]; exists {
 		level, _ := v.(string)
-		if level != "" && len(agent.ThinkingEffortLevels) > 0 {
-			found := false
-			for _, l := range agent.ThinkingEffortLevels {
-				if l == level {
-					found = true
-					break
-				}
-			}
+		if level != "" {
+			found := isValidThinkingEffort(agent, level)
 			if !found {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidThinkingEffort")
 				return

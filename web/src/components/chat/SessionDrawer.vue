@@ -233,11 +233,14 @@ activeTab.value = props.initialTab || 'model'
 
 // Computed data
 const models = computed(() => getAgentModels(props.agentId || ''))
-// Thinking levels: prefer ACP-provided levels (with id+name), fallback to agent config
+// Thinking levels: ACP mode shows ACP-reported levels only; CLI mode shows static levels
 const thinkingLevels = computed(() => {
-  const acpLevels = availableThinkingEfforts.value
-  if (acpLevels.length > 0) return acpLevels
-  // Fallback: agent YAML config (string array)
+  if (isACP.value) {
+    const acpLevels = availableThinkingEfforts.value
+    if (acpLevels.length > 0) return acpLevels
+    return []
+  }
+  // CLI mode: agent BackendSpec static levels
   return getAgentThinkingEffortLevels(props.agentId || '').map(id => ({ id, name: id }))
 })
 const canRefresh = computed(() => canRefreshModels(props.agentId || ''))
@@ -397,6 +400,17 @@ async function setDefaultTransport(transport) {
   try {
     await patchAgentPref(props.agentId, 'transport', transport)
     updateAgentField(props.agentId, 'transport', transport)
+    // Clear preferred thinking effort if it's not valid for the new transport
+    const currentPref = getAgent(props.agentId || '')?.preferredThinkingEffort || ''
+    if (currentPref) {
+      const validLevels = transport === 'acp-stdio'
+        ? availableThinkingEfforts.value.map(l => l.id)
+        : getAgentThinkingEffortLevels(props.agentId || '')
+      if (!validLevels.includes(currentPref)) {
+        await patchAgentPref(props.agentId, 'preferred_thinking_effort', '')
+        updateAgentField(props.agentId, 'preferredThinkingEffort', '')
+      }
+    }
   } catch {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }

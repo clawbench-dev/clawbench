@@ -56,7 +56,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
-const { loadAgents, getAgent, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent } = useAgents()
+const { loadAgents, getAgent, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent } = useAgents()
 
 const activeKey = ref<string | null>(null)
 const commonPrompt = ref('')
@@ -317,6 +317,21 @@ async function handleUpdate(item: AgentItem, value: unknown) {
 
   try {
     await patchAgentField(props.agentId, item.patchField, value as string | number | boolean | null)
+    // When changing transport, clear preferred thinking effort if it's no longer valid
+    if (item.patchField === 'transport') {
+      const newTransport = value as string
+      const a = getAgent(props.agentId)
+      const currentPref = a?.preferredThinkingEffort || ''
+      if (currentPref) {
+        const validLevels = newTransport === 'acp-stdio'
+          ? (a?.thinkingEffortState?.availableLevels?.map(l => l.id) || [])
+          : (a?.thinkingEffortLevels || [])
+        if (!validLevels.includes(currentPref)) {
+          await patchAgentField(props.agentId, 'preferred_thinking_effort', '')
+          updateAgentField(props.agentId, 'preferredThinkingEffort', '')
+        }
+      }
+    }
   } catch {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
