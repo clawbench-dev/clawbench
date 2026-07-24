@@ -389,13 +389,14 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	}
 
 	_, err = db.Exec(`INSERT INTO agents (id, name, icon, specialty, backend, command,
-		thinking_effort, thinking_effort_levels, preferred_model, preferred_thinking_effort,
-		system_prompt, models, models_auto_detected, source, sort_order,
+		thinking_effort, thinking_effort_levels,
+		preferred_mode, preferred_model, preferred_thinking_effort,
+		system_prompt, custom_system_prompt, models, models_auto_detected, source, sort_order,
 		transport, acp_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
-		agent.ThinkingEffort, string(levelsJSON), agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.SystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.Source, agent.SortOrder,
+		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
+		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.Source, agent.SortOrder,
 		transport, agent.AcpCommand)
 	return err
 }
@@ -412,9 +413,11 @@ type yamlAgent struct {
 	Command                 string       `yaml:"command"`
 	ThinkingEffort          string       `yaml:"thinking_effort"`
 	ThinkingEffortLevels    []string     `yaml:"thinking_effort_levels"`
+	PreferredMode           string       `yaml:"preferred_mode"`
 	PreferredModel          string       `yaml:"preferred_model"`
 	PreferredThinkingEffort string       `yaml:"preferred_thinking_effort"`
 	SystemPrompt            string       `yaml:"system_prompt"`
+	CustomSystemPrompt      string       `yaml:"custom_system_prompt"`
 	Transport               string       `yaml:"transport"`
 	AcpCommand              string       `yaml:"acp_command"`
 	Models                  []AgentModel `yaml:"models"`
@@ -477,9 +480,11 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) {
 			Command:                 ya.Command,
 			ThinkingEffort:          ya.ThinkingEffort,
 			ThinkingEffortLevels:    ya.ThinkingEffortLevels,
+			PreferredMode:           ya.PreferredMode,
 			PreferredModel:          ya.PreferredModel,
 			PreferredThinkingEffort: ya.PreferredThinkingEffort,
 			SystemPrompt:            ya.SystemPrompt,
+			CustomSystemPrompt:      ya.CustomSystemPrompt,
 			Transport:               ya.Transport,
 			AcpCommand:              ya.AcpCommand,
 			Models:                  ya.Models,
@@ -624,22 +629,27 @@ func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]Agent
 		}
 	}
 
-	// Build common prompt and prepend to each agent's system prompt
+	// Build common prompt and compose SystemPrompt from commonPrompt + CustomSystemPrompt.
+	// This ensures SystemPrompt is always the full composed prompt at runtime,
+	// while the DB stores only the user-editable CustomSystemPrompt portion.
 	commonPrompt := BuildCommonPrompt()
 	for _, agent := range Agents {
-		if commonPrompt != "" && agent.SystemPrompt != "" {
-			agent.SystemPrompt = commonPrompt + "\n\n" + agent.SystemPrompt
+		if commonPrompt != "" && agent.CustomSystemPrompt != "" {
+			agent.SystemPrompt = commonPrompt + "\n\n" + agent.CustomSystemPrompt
 		} else if commonPrompt != "" {
 			agent.SystemPrompt = commonPrompt
 		}
+		// If CustomSystemPrompt is empty but SystemPrompt has content (legacy data),
+		// keep SystemPrompt as-is so existing agents don't lose their prompts.
 	}
 }
 
 // loadAgentsFromDBRows loads agents from the database into Agent structs.
 func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 	rows, err := db.Query(`SELECT id, name, icon, specialty, backend, command,
-		thinking_effort, thinking_effort_levels, preferred_model, preferred_thinking_effort,
-		system_prompt, models, models_auto_detected, source, sort_order,
+		thinking_effort, thinking_effort_levels,
+		preferred_mode, preferred_model, preferred_thinking_effort,
+		system_prompt, custom_system_prompt, models, models_auto_detected, source, sort_order,
 		transport, acp_command
 		FROM agents ORDER BY id`)
 	if err != nil {
@@ -655,8 +665,8 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 
 		err := rows.Scan(&agent.ID, &agent.Name, &agent.Icon, &agent.Specialty,
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
-			&agent.PreferredModel, &agent.PreferredThinkingEffort,
-			&agent.SystemPrompt, &modelsJSON, &autoDetected,
+			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
+			&agent.SystemPrompt, &agent.CustomSystemPrompt, &modelsJSON, &autoDetected,
 			&agent.Source, &agent.SortOrder,
 			&agent.Transport, &agent.AcpCommand)
 		if err != nil {

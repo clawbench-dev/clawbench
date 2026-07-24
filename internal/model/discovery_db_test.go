@@ -26,15 +26,22 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			command TEXT NOT NULL DEFAULT '',
 			thinking_effort TEXT NOT NULL DEFAULT '',
 			thinking_effort_levels TEXT NOT NULL DEFAULT '[]',
+			preferred_mode TEXT NOT NULL DEFAULT '',
 			preferred_model TEXT NOT NULL DEFAULT '',
 			preferred_thinking_effort TEXT NOT NULL DEFAULT '',
 			system_prompt TEXT NOT NULL DEFAULT '',
+			custom_system_prompt TEXT NOT NULL DEFAULT '',
 			models TEXT NOT NULL DEFAULT '[]',
 			models_auto_detected INTEGER NOT NULL DEFAULT 0,
 			source TEXT NOT NULL DEFAULT 'auto',
 			sort_order INTEGER NOT NULL DEFAULT 0,
 			transport TEXT NOT NULL DEFAULT 'cli',
 			acp_command TEXT NOT NULL DEFAULT '',
+			acp_available_modes TEXT NOT NULL DEFAULT '[]',
+			acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
+			acp_available_commands TEXT NOT NULL DEFAULT '[]',
+			acp_config_options TEXT NOT NULL DEFAULT '',
+			acp_cached_usage_state TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -363,4 +370,30 @@ func TestMergeDiscoveredDataDB_DoesNotOverwriteUserModels(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, modelsJSON, "my-model")
 	assert.NotContains(t, modelsJSON, "cached-model")
+}
+
+func TestLoadAgentsFromDBRows_PreferredModeRoundTrip(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	// Insert an agent with preferred_mode and custom_system_prompt via PatchAgentFields path
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, preferred_mode, preferred_thinking_effort, custom_system_prompt)
+		VALUES ('claude', 'Claude', 'claude', 'code', 'high', 'my custom instructions')`)
+	require.NoError(t, err)
+
+	// Load agents from DB via loadAgentsFromDBRows
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.NotEmpty(t, agents, "expected at least one agent")
+
+	var found *Agent
+	for _, a := range agents {
+		if a.ID == "claude" {
+			found = a
+			break
+		}
+	}
+	require.NotNil(t, found, "claude agent not found")
+	assert.Equal(t, "code", found.PreferredMode, "preferred_mode should survive round-trip")
+	assert.Equal(t, "high", found.PreferredThinkingEffort, "preferred_thinking_effort should survive round-trip")
+	assert.Equal(t, "my custom instructions", found.CustomSystemPrompt, "custom_system_prompt should survive round-trip")
 }

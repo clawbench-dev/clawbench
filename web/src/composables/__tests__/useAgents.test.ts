@@ -48,7 +48,7 @@ describe('useAgents', () => {
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
     agentCanResume, supportsDualTransport, getAgentTransport,
-    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents } = useAgents()
+    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, hasPreferredMode } = useAgents()
 
   // Register mock identity updaters — normally done by useSessionIdentity at
   // module evaluation time, but that module is mocked so we wire manually.
@@ -386,6 +386,23 @@ describe('useAgents', () => {
 
     it('returns false for unknown agent', () => {
       expect(hasThinkingEffortLevels('nonexistent')).toBe(false)
+    })
+  })
+
+  // --- hasPreferredMode ---
+
+  describe('hasPreferredMode', () => {
+    it('returns false when agent has no preferredMode', () => {
+      expect(hasPreferredMode('claude')).toBe(false)
+    })
+
+    it('returns true when agent has preferredMode set', () => {
+      updateAgentField('claude', 'preferredMode', 'code')
+      expect(hasPreferredMode('claude')).toBe(true)
+    })
+
+    it('returns false for unknown agent', () => {
+      expect(hasPreferredMode('nonexistent')).toBe(false)
     })
   })
 

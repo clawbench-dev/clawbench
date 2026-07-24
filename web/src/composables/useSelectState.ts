@@ -77,6 +77,20 @@ export function createSelectState(
         }
     }
 
+    /** Sync from server data, then fall back to persisted preference if currentId is still empty.
+     *  Resolves currentName after fallback. Used for SSE events and loadHistory/switchSession. */
+    function syncAndFallback(valueFromServer: string, availableItems: Array<{ id: string; name: string }>, agentId: string) {
+        syncFromData(valueFromServer, availableItems)
+        if (!currentId.value) {
+            loadPref(agentId)
+            if (currentId.value && !currentName.value) {
+                currentName.value = resolveName(currentId.value)
+            } else if (!currentId.value) {
+                currentName.value = ''
+            }
+        }
+    }
+
     return {
         category,
         currentId,
@@ -86,6 +100,7 @@ export function createSelectState(
         updateAvailable,
         clear,
         syncFromData,
+        syncAndFallback,
         loadPref,
     }
 }

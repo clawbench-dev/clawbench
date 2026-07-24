@@ -253,7 +253,7 @@ import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
-const { supportsDualTransport, hasThinkingEffortLevels } = useAgents()
+const { supportsDualTransport, hasThinkingEffortLevels, hasPreferredMode } = useAgents()
 const toast = useToast()
 
 // isACP: true when the current agent supports ACP (has acpCommand).
@@ -269,7 +269,7 @@ const isACPTransport = computed(() => {
   return props.currentTransport === 'acp-stdio'
 })
 
-const showModeInfo = computed(() => availableModes.value.length > 0 && isACP.value)
+const showModeInfo = computed(() => isACP.value && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
 const showThinkingInfo = computed(() => isACP.value && (availableThinkingEfforts.value.length > 0 || hasThinkingEffortLevels(props.currentAgentId || '')))
 const showTransportInfo = computed(() => supportsDualTransport(props.currentAgentId || '') || !isACP.value)
 

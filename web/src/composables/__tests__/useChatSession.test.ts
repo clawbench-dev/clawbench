@@ -172,6 +172,36 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     availableCommands: { value: [] },
     availableModes: { value: [] },
     availableThinkingEfforts: { value: [] },
+    thinkingEffortState: {
+      currentId: {
+        get value() { return mockIdentity.currentThinkingEffort },
+        set value(v) { mockIdentity.currentThinkingEffort = v },
+      },
+      currentName: {
+        get value() { return mockIdentity.currentThinkingEffortName },
+        set value(v) { mockIdentity.currentThinkingEffortName = v },
+      },
+      available: { value: [] },
+      syncFromData: vi.fn((id: string) => { if (id) mockIdentity.currentThinkingEffort = id }),
+      syncAndFallback: vi.fn((id: string) => { if (id) mockIdentity.currentThinkingEffort = id }),
+      loadPref: vi.fn((_: string, pref?: string) => { if (pref) mockIdentity.currentThinkingEffort = pref }),
+      clear: vi.fn(() => { mockIdentity.currentThinkingEffort = ''; mockIdentity.currentThinkingEffortName = '' }),
+    },
+    modeState: {
+      currentId: {
+        get value() { return mockIdentity.currentModeId || '' },
+        set value(v) { mockIdentity.currentModeId = v },
+      },
+      currentName: {
+        get value() { return mockIdentity.currentModeName || '' },
+        set value(v) { mockIdentity.currentModeName = v },
+      },
+      available: { value: [] },
+      syncFromData: vi.fn((id: string) => { if (id) mockIdentity.currentModeId = id }),
+      syncAndFallback: vi.fn((id: string) => { if (id) mockIdentity.currentModeId = id }),
+      loadPref: vi.fn((_: string, pref?: string) => { if (pref) mockIdentity.currentModeId = pref }),
+      clear: vi.fn(() => { mockIdentity.currentModeId = ''; mockIdentity.currentModeName = '' }),
+    },
     contextSize: { value: 0 },
     runningSessions: {
       get value() { return mockState.runningSessions },

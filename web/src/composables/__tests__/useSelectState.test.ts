@@ -208,4 +208,65 @@ describe('createSelectState', () => {
             expect(effortState.category).toBe('thought_level')
         })
     })
+
+    // ── syncAndFallback ──
+
+    describe('syncAndFallback', () => {
+        it('uses server value when present', () => {
+            const state = createSelectState('mode', mockLoadPref)
+            state.syncAndFallback('code', [{ id: 'code', name: 'Code' }], 'agent-1')
+
+            expect(state.currentId.value).toBe('code')
+            expect(state.currentName.value).toBe('Code')
+        })
+
+        it('falls back to loadPref when server value is empty and currentId is empty', () => {
+            mockLoadPref.mockReturnValue('saved-mode')
+            const state = createSelectState('mode', mockLoadPref)
+
+            state.syncAndFallback('', [], 'agent-1')
+
+            expect(state.currentId.value).toBe('saved-mode')
+            expect(mockLoadPref).toHaveBeenCalledWith('agent-1')
+        })
+
+        it('resolves name from available after fallback', () => {
+            mockLoadPref.mockReturnValue('code')
+            const state = createSelectState('mode', mockLoadPref)
+
+            state.syncAndFallback('', [{ id: 'code', name: 'Code' }], 'agent-1')
+
+            expect(state.currentId.value).toBe('code')
+            expect(state.currentName.value).toBe('Code')
+        })
+
+        it('uses id as name when not in available after fallback', () => {
+            mockLoadPref.mockReturnValue('architect')
+            const state = createSelectState('mode', mockLoadPref)
+
+            state.syncAndFallback('', [], 'agent-1')
+
+            expect(state.currentId.value).toBe('architect')
+            expect(state.currentName.value).toBe('architect')
+        })
+
+        it('clears name when both server and pref are empty', () => {
+            mockLoadPref.mockReturnValue(null)
+            const state = createSelectState('mode', mockLoadPref)
+            state.update('code', [{ id: 'code', name: 'Code' }])
+            state.clear()
+
+            state.syncAndFallback('', [], 'agent-1')
+
+            expect(state.currentId.value).toBe('')
+            expect(state.currentName.value).toBe('')
+        })
+
+        it('does not call loadPref when server value is present', () => {
+            const state = createSelectState('mode', mockLoadPref)
+            state.syncAndFallback('code', [{ id: 'code', name: 'Code' }], 'agent-1')
+
+            expect(mockLoadPref).not.toHaveBeenCalled()
+        })
+    })
 })

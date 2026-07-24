@@ -269,6 +269,11 @@ function getEffectiveModeId(agentId: string): string {
     return agent?.preferredMode || ''
 }
 
+/** Check if an agent has a preferred mode configured. */
+function hasPreferredMode(agentId: string): boolean {
+    return getEffectiveModeId(agentId) !== ''
+}
+
 /** Update a single field on an agent in the reactive store (for immediate UI feedback after PATCH). */
 function updateAgentField(agentId: string, field: string, value: unknown): void {
     const agent = agents.value.find(a => a.id === agentId)
@@ -424,6 +429,7 @@ export function useAgents() {
         hasThinkingEffortLevels,
         getEffectiveThinkingEffort,
         getEffectiveModeId,
+        hasPreferredMode,
         updateAgentField,
         setDefaultAgent,
         canRefreshModels,

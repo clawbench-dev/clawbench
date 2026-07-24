@@ -419,14 +419,9 @@ export async function initSessionFromAPI() {
             currentModelName.value = modelName
           }
         }
-        // Initialize thinking effort: from ACP state or localStorage pref
-        if (data.thinkingEffortState?.currentId) {
-          thinkingEffortState.currentId.value = data.thinkingEffortState.currentId
-          const level = data.thinkingEffortState.availableLevels?.find((l: {id: string; name: string}) => l.id === data.thinkingEffortState.currentId)
-          thinkingEffortState.currentName.value = level?.name || data.thinkingEffortState.currentId
-        } else {
-          thinkingEffortState.currentId.value = loadThinkingPref(data.agentId || '') || ''
-        }
+        // Initialize thinking effort: from ACP state or agent preference
+        thinkingEffortState.clear()
+        thinkingEffortState.syncAndFallback(data.thinkingEffortState?.currentId || '', data.thinkingEffortState?.availableLevels || [], data.agentId || '')
         // Initialize transport from agent's transport field
         if (data.transport) {
           currentTransport.value = data.transport
@@ -443,20 +438,11 @@ export async function initSessionFromAPI() {
         if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
           availableCommands.value = data.commands
         }
-        // Initialize mode: from ACP state currentModeId
+        // Initialize mode: from ACP state or agent preference
         // Only populate mode state for ACP-capable agents — CLI backends don't support modes
-        if (agentsApi.supportsDualTransport(data.agentId || '') && data.modeState?.currentModeId) {
-          modeState.currentId.value = data.modeState.currentModeId
-        }
-        // Populate mode state from chat response — update available modes.
-        // Only for ACP-capable agents — CLI backends don't support modes
-        if (agentsApi.supportsDualTransport(data.agentId || '') && data.modeState && data.modeState.availableModes?.length > 0) {
-          updateAvailableModes(data.modeState.availableModes)
-          // Set mode name from available modes now that the list is populated
-          if (modeState.currentId.value) {
-            const mode = data.modeState.availableModes.find((m: { id: string; name: string }) => m.id === modeState.currentId.value)
-            modeState.currentName.value = mode?.name || modeState.currentId.value
-          }
+        if (agentsApi.supportsDualTransport(data.agentId || '')) {
+          modeState.clear()
+          modeState.syncAndFallback(data.modeState?.currentModeId || '', data.modeState?.availableModes || [], data.agentId || '')
         }
         // Populate thinking effort state — update available levels.
         // currentThinkingEffort was already set above from ACP state.
@@ -469,11 +455,6 @@ export async function initSessionFromAPI() {
           if (agentLevels.length > 0) {
             const levels = agentLevels.map((id: string) => ({ id, name: id }))
             updateAvailableThinkingEfforts(levels)
-            // Resolve name if currentThinkingEffort was set from localStorage pref
-            if (thinkingEffortState.currentId.value && !thinkingEffortState.currentName.value) {
-              const level = levels.find(l => l.id === thinkingEffortState.currentId.value)
-              thinkingEffortState.currentName.value = level?.name || thinkingEffortState.currentId.value
-            }
           }
         }
         // Initialize usage state from server cached data
@@ -554,8 +535,8 @@ export function useSessionIdentity() {
           currentModelId.value = modelId
           currentModelName.value = modelName
         }
-        // Initialize thinking effort from localStorage pref
-        thinkingEffortState.currentId.value = loadThinkingPref(currentAgentId.value) || ''
+        // Initialize thinking effort from agent preference
+        thinkingEffortState.loadPref(currentAgentId.value)
       }
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to create session:', err)

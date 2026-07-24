@@ -142,47 +142,11 @@ export function useChatSession(options: UseChatSessionOptions) {
   // Helper: sync thinking effort from server data
   // Falls back to localStorage for a previously saved preference.
   function syncThinkingEffortFromData(thinkingEffortFromServer: string) {
-    if (thinkingEffortFromServer) {
-      thinkingEffortState.currentId.value = thinkingEffortFromServer
-      // Resolve name from available levels (may be empty if levels haven't loaded yet;
-      // updateAvailableThinkingEfforts will resolve it when levels arrive)
-      const levels = thinkingEffortState.available.value
-      if (levels.length > 0) {
-        const level = levels.find(l => l.id === thinkingEffortFromServer)
-        thinkingEffortState.currentName.value = level?.name || thinkingEffortFromServer
-      }
-    } else if (!thinkingEffortState.currentId.value) {
-      // No server-persisted thinking effort AND no user/ACP-set value — try agent preference.
-      const preferredEffort = identity.loadThinkingPref(currentAgentId.value)
-      if (preferredEffort) {
-        thinkingEffortState.currentId.value = preferredEffort
-        const levels = thinkingEffortState.available.value
-        const level = levels.find(l => l.id === preferredEffort)
-        thinkingEffortState.currentName.value = level?.name || preferredEffort
-      } else {
-        thinkingEffortState.currentId.value = ''
-        thinkingEffortState.currentName.value = ''
-      }
-    }
+    thinkingEffortState.syncAndFallback(thinkingEffortFromServer, [], currentAgentId.value)
   }
 
   function syncModeFromData(modeIdFromServer?: string, availableModes?: Array<{id: string; name: string}>) {
-    if (modeIdFromServer) {
-      modeState.currentId.value = modeIdFromServer
-      const mode = availableModes?.find(m => m.id === modeIdFromServer)
-      modeState.currentName.value = mode?.name || modeIdFromServer
-    } else if (!modeState.currentId.value) {
-      // No server-persisted mode AND no agent-set mode via SSE — try agent preference.
-      const preferredMode = identity.loadModePref(currentAgentId.value)
-      if (preferredMode) {
-        modeState.currentId.value = preferredMode
-        const mode = availableModes?.find(m => m.id === preferredMode)
-        modeState.currentName.value = mode?.name || preferredMode
-      } else {
-        modeState.currentId.value = ''
-        modeState.currentName.value = ''
-      }
-    }
+    modeState.syncAndFallback(modeIdFromServer || '', availableModes || [], currentAgentId.value)
   }
 
   // Helper: sync transport from server data
