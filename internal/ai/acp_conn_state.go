@@ -51,17 +51,30 @@ func (c *ACPConn) CacheNewSessionState() {
 	c.applyExtractedState(ext)
 }
 
-// MergeResumedSessionState merges state from a ResumeSessionResponse, preserving
-// the user's current selections (re-applied by ensureAliveWithSession) while
-// updating available options lists from the resumed agent via the registry.
+// MergeResumedSessionState merges state from a successful session recovery.
+// It accepts either a ResumeSessionResponse or a LoadSessionResponse (the load
+// path is normalized into the resume shape). User selections that were
+// re-applied by ensureAliveWithSession are preserved; available option lists
+// come from the recovered agent response via the registry.
 func (c *ACPConn) MergeResumedSessionState() {
 	resumeResp := c.GetAndClearResumeSessionResp()
 	if resumeResp == nil {
-		slog.Warn("acp: MergeResumedSessionState called with nil resumeResp")
+		// LoadSession recovery stores its response separately; adapt it so the
+		// existing extract/apply path can reuse the ResumeSession shape.
+		if loadResp := c.GetAndClearLoadSessionResp(); loadResp != nil {
+			resumeResp = &acp.ResumeSessionResponse{
+				Meta:          loadResp.Meta,
+				Modes:         loadResp.Modes,
+				ConfigOptions: loadResp.ConfigOptions,
+			}
+		}
+	}
+	if resumeResp == nil {
+		slog.Warn("acp: MergeResumedSessionState called with nil resume/load response")
 		return
 	}
 	slog.Info(
-		"acp: merging resumed session state",
+		"acp: merging recovered session state",
 		"has_modes", resumeResp.Modes != nil,
 		"config_options_count", len(resumeResp.ConfigOptions),
 	)
@@ -285,6 +298,27 @@ func IsACPResourceNotFound(err error) bool {
 		return true
 	}
 	return strings.Contains(reqErr.Error(), "Resource not found")
+}
+
+// isACPMethodNotFound reports whether err is (or wraps) a JSON-RPC
+// method-not-found response (code -32601 / "Method not found").
+// Used to detect agents that do not implement session/resume so recovery can
+// fall back to session/load without treating the peer as dead.
+func isACPMethodNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var reqErr *acp.RequestError
+	if errors.As(err, &reqErr) {
+		if reqErr.Code == -32601 {
+			return true
+		}
+		if strings.Contains(reqErr.Message, "Method not found") {
+			return true
+		}
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Method not found") || strings.Contains(msg, `"code":-32601`)
 }
 
 // buildPromptBlocks constructs ACP ContentBlock list from the chat request.

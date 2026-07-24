@@ -10,6 +10,7 @@ import (
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/copilot"
 	_ "clawbench/internal/ai/backends/deepseek"
+	_ "clawbench/internal/ai/backends/grok"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
 	_ "clawbench/internal/ai/backends/opencode"
@@ -25,7 +26,7 @@ import (
 // --- Test 1: BackendRegistry ---
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
-	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "cline", "kimi", "copilot", "mimo"}
+	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "cline", "kimi", "copilot", "mimo", "grok"}
 	assert.Len(t, model.GetBackendRegistry(), len(expectedIDs))
 
 	seen := make(map[string]bool)
@@ -65,6 +66,9 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Equal(t, "codewhale", specs["deepseek"].DefaultCmd)
 	assert.Equal(t, "deepseek", specs["deepseek"].AltCmd)
 	assert.Equal(t, "pi", specs["pi"].DefaultCmd)
+	assert.Equal(t, "grok", specs["grok"].DefaultCmd)
+	assert.Equal(t, "grok agent stdio", specs["grok"].AcpCommand)
+	assert.Equal(t, "curl -fsSL https://x.ai/cli/install.sh | bash", specs["grok"].InstallCmd)
 
 	// Verify install command on opencode BackendSpec
 	assert.Equal(t, "npm install -g opencode-ai", specs["opencode"].InstallCmd, "opencode should have InstallCmd set")
@@ -100,6 +104,7 @@ func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 	assert.True(t, model.CanDiscoverModels(specs["deepseek"]), "deepseek should support model discovery")
 	assert.True(t, model.CanDiscoverModels(specs["qoder"]), "qoder should support model discovery")
 	assert.True(t, model.CanDiscoverModels(specs["vecli"]), "vecli should support model discovery")
+	assert.True(t, model.CanDiscoverModels(specs["grok"]), "grok should support model discovery")
 
 	// Backend with no registered discovery function does not support model discovery
 	assert.False(t, model.CanDiscoverModels(model.BackendSpec{Backend: "nonexistent_xyz"}), "nonexistent backend should not support model discovery")

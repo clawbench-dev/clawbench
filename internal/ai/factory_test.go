@@ -29,6 +29,7 @@ func setupTestBackends() {
 		"copilot":   true,
 		"codex":     false,
 		"mimo":      true,
+		"grok":      true,
 	}
 	for id, needsAR := range stubs {
 		backendType := id // capture for closure
@@ -185,6 +186,16 @@ func TestNewBackend_Unsupported(t *testing.T) {
 	_, err := NewBackend("unsupported")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported backend type")
+}
+
+func TestNewBackend_Grok(t *testing.T) {
+	setupTestBackends()
+	backend, err := NewBackend("grok")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "grok", backend.Name())
+	_, ok := backend.(*AutoResumeBackend)
+	assert.True(t, ok, "grok should be wrapped in AutoResumeBackend")
 }
 
 func TestNewBackend_Empty(t *testing.T) {

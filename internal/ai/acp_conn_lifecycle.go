@@ -13,6 +13,8 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -62,8 +64,15 @@ func (c *ACPConn) ListSessions(ctx context.Context, cursor *string) ([]acp.Sessi
 }
 
 // ensureAliveWithSession ensures the connection is alive and has a valid ACP session.
-// If the process is dead, it respawns and tries ResumeSession recovery, falling back to NewSession.
-// Returns isNew=true if a new ACP session was created, false if reusing or recovered.
+// If the process is dead, it respawns and recovers the prior session via
+// recoverPriorSession (ResumeSession and/or LoadSession depending on the agent).
+// Recovery failure is surfaced to the caller — we deliberately do NOT fall back
+// to session/new (silent amnesia would look like the old chat still works while
+// agent-side context is gone).
+//
+// Returns isNew=true when a brand-new ACP session is created, or when an explicit
+// LoadSession import runs (GetOrCreateConnForLoad). Reuse and successful recovery
+// of an existing external session return isNew=false.
 func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -104,50 +113,34 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	}
 	slog.Info("acp perf: ensureAliveWithSession.spawnLocked", "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(spawnStart))
 
-	// LoadSession branch
+	// Explicit LoadSession import path (GetOrCreateConnForLoad). Keep the ACP
+	// history replay buffer so the UI can re-render imported session content.
 	if c.loadTargetSID != "" {
 		loadSID := c.loadTargetSID
 		c.loadTargetSID = "" // clear to prevent reuse on next call
 
-		loadCtx, loadCancel := context.WithTimeout(ctx, 60*time.Second)
-		defer loadCancel()
-
-		c.loadSessionActive.Store(true)
-		loadStart := time.Now()
-		loadResp, err := c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
-			SessionId:  acp.SessionId(loadSID),
-			Cwd:        cwd,
-			McpServers: []acp.McpServer{},
-		})
-		slog.Info("acp perf: ensureAliveWithSession.LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID, "elapsed", time.Since(loadStart), "error", err)
-
-		if err != nil {
-			c.alive = false
-			return false, fmt.Errorf("acp: session/load: %w", err)
+		if err := c.loadSessionLocked(ctx, cwd, loadSID, false); err != nil {
+			return false, err
 		}
-
-		c.acpSID = loadSID
-		c.lastLoadSessionResp = &loadResp
-		c.lastUsed = time.Now()
 		slog.Info("acp conn: loaded session via LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID)
 		return true, nil
 	}
 
-	// Try ResumeSession if we had a previous session
+	// Try to recover a prior external session after respawn / server restart.
+	// Prefer ResumeSession when the agent supports it; Grok (and agents that
+	// return method-not-found for resume) use LoadSession instead.
 	if preSpawnAcpSID != "" {
-		acpSID := preSpawnAcpSID
-		err := c.recoverViaResumeSession(ctx, cwd, acpSID, prevConfig)
-		if err == nil {
-			return false, nil // recovered successfully
+		if err := c.recoverPriorSession(ctx, cwd, preSpawnAcpSID, prevConfig); err != nil {
+			// Recovery failed — the session is unrecoverable. Do NOT silently
+			// fall back to NewSession (amnesia): the user would lose all
+			// agent-side conversation context without any indication.
+			// Surface the error so the user knows the session needs a fresh start.
+			slog.Error("acp conn: prior session recovery failed, session is unrecoverable",
+				"clawbench_sid", c.clawbenchSID, "acp_sid", preSpawnAcpSID, "error", err)
+			c.killProcessLocked()
+			return false, fmt.Errorf("acp: session %s recovery failed: %w", preSpawnAcpSID, err)
 		}
-		// ResumeSession failed — the session is unrecoverable.
-		// Do NOT silently fall back to NewSession (amnesia): the user
-		// would lose all conversation context without any indication.
-		// Surface the error so the user knows the session needs a fresh start.
-		slog.Error("acp conn: ResumeSession failed, session is unrecoverable",
-			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
-		c.killProcessLocked()
-		return false, fmt.Errorf("acp: session %s ResumeSession failed: %w", acpSID, err)
+		return false, nil
 	}
 
 	// No prior session — create new session.
@@ -192,7 +185,198 @@ func (c *ACPConn) snapshotCachedConfig() cachedConfigSnapshot {
 	}
 }
 
-// recoverViaResumeSession recovers a session via ResumeSession and re-applies config.
+// acpResumeUnsupported caches agent IDs that returned JSON-RPC method-not-found
+// (-32601) for session/resume. Subsequent recoveries for those agents skip the
+// ResumeSession probe and go straight to LoadSession.
+var acpResumeUnsupported sync.Map // agentID -> struct{}
+
+func markACPResumeUnsupported(agentID string) {
+	if agentID == "" {
+		return
+	}
+	acpResumeUnsupported.Store(agentID, struct{}{})
+}
+
+func isACPResumeUnsupported(agentID string) bool {
+	if agentID == "" {
+		return false
+	}
+	_, ok := acpResumeUnsupported.Load(agentID)
+	return ok
+}
+
+// clearACPResumeUnsupportedForTest resets the process-wide resume-unsupported
+// cache so unit tests do not leak agent IDs across cases.
+func clearACPResumeUnsupportedForTest() {
+	acpResumeUnsupported.Range(func(key, _ any) bool {
+		acpResumeUnsupported.Delete(key)
+		return true
+	})
+}
+
+// recoverPriorSession restores a prior ACP session after the agent process was
+// respawned (idle pool reclaim, crash, server restart, etc.).
+//
+// Strategy:
+//  1. Agents that prefer load (Grok today, or agents previously marked as
+//     resume-unsupported) go straight to session/load.
+//  2. Everyone else tries session/resume first (Claude/CodeBuddy path).
+//  3. If ResumeSession returns JSON-RPC method-not-found, fall back to
+//     session/load and cache the agent as resume-unsupported.
+//
+// Never falls back to session/new: that would create a fresh agent session while
+// ClawBench still shows the old chat history, silently losing agent context.
+func (c *ACPConn) recoverPriorSession(ctx context.Context, cwd, acpSID string, prevConfig cachedConfigSnapshot) error {
+	agentID := ""
+	if c.agent != nil {
+		agentID = c.agent.ID
+	}
+
+	if prefersLoadSessionRecovery(c.agent) {
+		if agentID != "" {
+			markACPResumeUnsupported(agentID)
+		}
+		backend := ""
+		if c.agent != nil {
+			backend = c.agent.Backend
+		}
+		slog.Info("acp conn: using LoadSession recovery (agent prefers load over resume)",
+			"clawbench_sid", c.clawbenchSID,
+			"acp_sid", acpSID,
+			"agent_id", agentID,
+			"backend", backend)
+		if err := c.recoverViaLoadSession(ctx, cwd, acpSID, prevConfig); err != nil {
+			return fmt.Errorf("LoadSession recovery failed: %w", err)
+		}
+		return nil
+	}
+
+	err := c.recoverViaResumeSession(ctx, cwd, acpSID, prevConfig)
+	if err == nil {
+		return nil
+	}
+	if !isACPMethodNotFound(err) {
+		return err
+	}
+
+	markACPResumeUnsupported(agentID)
+	slog.Warn("acp conn: ResumeSession not supported by agent, falling back to LoadSession",
+		"clawbench_sid", c.clawbenchSID,
+		"acp_sid", acpSID,
+		"agent_id", agentID,
+		"resume_error", err)
+
+	if err := c.recoverViaLoadSession(ctx, cwd, acpSID, prevConfig); err != nil {
+		return fmt.Errorf("LoadSession recovery failed after ResumeSession unsupported: %w", err)
+	}
+	return nil
+}
+
+// prefersLoadSessionRecovery reports whether this agent should recover via
+// session/load without first probing session/resume.
+func prefersLoadSessionRecovery(agent *model.Agent) bool {
+	if agent == nil {
+		return false
+	}
+	if isACPResumeUnsupported(agent.ID) {
+		return true
+	}
+	return agentPrefersLoadSessionRecovery(agent.Backend, agent.AcpCommand)
+}
+
+// agentPrefersLoadSessionRecovery is the static policy for backends known to
+// implement session/load but not session/resume. Grok ACP (grok agent stdio)
+// advertises loadSession:true yet returns method-not-found for session/resume.
+func agentPrefersLoadSessionRecovery(backend, acpCommand string) bool {
+	if strings.EqualFold(backend, "grok") {
+		return true
+	}
+	cmd := strings.ToLower(acpCommand)
+	return strings.Contains(cmd, "grok") && strings.Contains(cmd, "stdio")
+}
+
+// loadSessionLocked performs the ACP session/load RPC. Caller must hold c.mu.
+//
+// discardReplay controls what happens to the history-replay buffer that LoadSession
+// fills on some agents:
+//   - true: drop the buffer after a successful load. Used for multi-turn chat
+//     recovery where ClawBench already has the chat history in its own DB and
+//     replaying ACP history would duplicate messages in the UI.
+//   - false: keep the buffer for explicit session import (GetOrCreateConnForLoad),
+//     where the UI intentionally re-renders the loaded ACP history.
+func (c *ACPConn) loadSessionLocked(ctx context.Context, cwd, loadSID string, discardReplay bool) error {
+	loadCtx, loadCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer loadCancel()
+
+	c.loadSessionActive.Store(true)
+	loadStart := time.Now()
+
+	var loadResp acp.LoadSessionResponse
+	var err error
+	if c.loadSessionFn != nil {
+		loadResp, err = c.loadSessionFn(loadCtx, cwd, loadSID)
+	} else {
+		if c.conn == nil {
+			c.loadSessionActive.Store(false)
+			c.alive = false
+			return fmt.Errorf("acp: session/load: connection not initialized")
+		}
+		loadResp, err = c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
+			SessionId:  acp.SessionId(loadSID),
+			Cwd:        cwd,
+			McpServers: []acp.McpServer{},
+		})
+	}
+	slog.Info("acp perf: ensureAliveWithSession.LoadSession",
+		"clawbench_sid", c.clawbenchSID,
+		"acp_sid", loadSID,
+		"discard_replay", discardReplay,
+		"elapsed", time.Since(loadStart),
+		"error", err)
+
+	if err != nil {
+		c.loadSessionActive.Store(false)
+		if c.client != nil {
+			_ = c.client.GetAndClearLoadSessionBuf()
+		}
+		c.alive = false
+		return fmt.Errorf("acp: session/load: %w", err)
+	}
+
+	c.acpSID = loadSID
+	c.lastLoadSessionResp = &loadResp
+	c.lastUsed = time.Now()
+
+	if discardReplay {
+		if c.client != nil {
+			_ = c.client.GetAndClearLoadSessionBuf()
+		}
+		c.loadSessionActive.Store(false)
+	}
+	return nil
+}
+
+// recoverViaLoadSession recovers a prior session via session/load and re-applies
+// the cached mode/model/thinking config that was snapshotted before respawn.
+// History replay is discarded: ClawBench already stores the chat transcript.
+func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, acpSID string, prevConfig cachedConfigSnapshot) error {
+	slog.Info("acp conn: calling LoadSession for recovery",
+		slog.String("clawbench_sid", c.clawbenchSID),
+		slog.String("acp_sid", acpSID),
+		slog.String("cwd", cwd),
+		slog.String("c.cwd", c.cwd))
+
+	if err := c.loadSessionLocked(ctx, cwd, acpSID, true); err != nil {
+		return fmt.Errorf("acp: LoadSession failed for session %s: %w", acpSID, err)
+	}
+
+	slog.Info("acp conn: recovered session via LoadSession",
+		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
+
+	c.reapplyConfigAfterResume(ctx, acpSID, prevConfig)
+	return nil
+}
+
 func (c *ACPConn) recoverViaResumeSession(ctx context.Context, cwd, acpSID string, prevConfig cachedConfigSnapshot) error {
 	resumeCtx, resumeCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer resumeCancel()
@@ -203,18 +387,34 @@ func (c *ACPConn) recoverViaResumeSession(ctx context.Context, cwd, acpSID strin
 		slog.String("acp_sid", acpSID),
 		slog.String("cwd", cwd),
 		slog.String("c.cwd", c.cwd))
-	resumeResp, err := c.conn.ResumeSession(resumeCtx, acp.ResumeSessionRequest{
-		SessionId:  acp.SessionId(acpSID),
-		Cwd:        cwd,
-		McpServers: []acp.McpServer{},
-	})
+
+	var resumeResp acp.ResumeSessionResponse
+	var err error
+	if c.resumeSessionFn != nil {
+		resumeResp, err = c.resumeSessionFn(resumeCtx, cwd, acpSID)
+	} else {
+		if c.conn == nil {
+			c.alive = false
+			return fmt.Errorf("acp: ResumeSession failed for session %s: connection not initialized", acpSID)
+		}
+		resumeResp, err = c.conn.ResumeSession(resumeCtx, acp.ResumeSessionRequest{
+			SessionId:  acp.SessionId(acpSID),
+			Cwd:        cwd,
+			McpServers: []acp.McpServer{},
+		})
+	}
 	slog.Info("acp perf: recoverViaResumeSession.ResumeSession", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "elapsed", time.Since(resumeStart), "error", err)
 	if err != nil {
 		slog.Error("acp conn: ResumeSession failed",
 			"clawbench_sid", c.clawbenchSID,
 			"acp_sid", acpSID,
 			"error", err)
-		c.alive = false
+		// On method-not-found keep the peer marked alive so the LoadSession
+		// fallback in recoverPriorSession can reuse the same process instead of
+		// forcing another respawn. Other resume failures still mark the conn dead.
+		if !isACPMethodNotFound(err) {
+			c.alive = false
+		}
 		return fmt.Errorf("acp: ResumeSession failed for session %s: %w", acpSID, err)
 	}
 	c.acpSID = acpSID

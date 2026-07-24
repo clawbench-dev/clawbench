@@ -258,19 +258,23 @@ func (m *ACPConnManager) GetOrCreateConnNoSession(ctx context.Context, agent *mo
 }
 
 // GetOrCreateConn returns the ACPConn for a ClawBench session, creating one if needed.
-// If the existing connection is dead, it respawns and tries to recover the session
-// via ResumeSession. If recovery fails or there's no prior session, it creates a new one.
-// Returns (conn, isNew, error) where isNew indicates whether a new ACP session was created.
+// If the existing connection is dead, it respawns and tries to recover the prior
+// external session via ResumeSession and/or LoadSession (see recoverPriorSession).
+// If recovery fails, an error is returned — we do not silently create a new ACP
+// session, which would drop agent-side context while ClawBench still shows history.
+//
+// Returns (conn, isNew, error) where isNew indicates whether a brand-new ACP
+// session was created (true) versus reused/recovered (false).
 func (m *ACPConnManager) GetOrCreateConn(ctx context.Context, agent *model.Agent, clawbenchSID, cwd string) (*ACPConn, bool, error) {
 	m.mu.Lock()
 	conn, ok := m.conns[clawbenchSID]
 	if !ok {
 		conn = newACPConn(agent, clawbenchSID)
 		// Pre-populate acpSID from DB so ensureAliveWithSession can attempt
-		// ResumeSession after a server restart.
+		// ResumeSession / LoadSession recovery after a server restart.
 		if extID := getExternalSessionID(clawbenchSID); extID != "" {
 			conn.acpSID = extID
-			slog.Info("acp conn: pre-populated acpSID from DB for ResumeSession",
+			slog.Info("acp conn: pre-populated acpSID from DB for session recovery",
 				"clawbench_sid", clawbenchSID, "acp_sid", extID)
 		}
 		m.conns[clawbenchSID] = conn
@@ -640,6 +644,13 @@ type ACPConn struct {
 	// listSessionsFn overrides ListSessions for testing. If nil, the real
 	// ACP JSON-RPC call is used.
 	listSessionsFn func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error)
+
+	// resumeSessionFn overrides ResumeSession for unit tests of the recovery
+	// path. If nil, the real ACP JSON-RPC call is used.
+	resumeSessionFn func(ctx context.Context, cwd, acpSID string) (acp.ResumeSessionResponse, error)
+	// loadSessionFn overrides LoadSession for unit tests of the recovery and
+	// import paths. If nil, the real ACP JSON-RPC call is used.
+	loadSessionFn func(ctx context.Context, cwd, acpSID string) (acp.LoadSessionResponse, error)
 }
 
 // Cwd returns the project working directory for this connection,
@@ -1232,6 +1243,20 @@ func (c *ACPConn) KillProcessForTest() error {
 func (c *ACPConn) SetListSessionsFnForTest(fn func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error)) {
 	c.mu.Lock()
 	c.listSessionsFn = fn
+	c.mu.Unlock()
+}
+
+// SetResumeSessionFnForTest overrides ResumeSession for testing recovery paths.
+func (c *ACPConn) SetResumeSessionFnForTest(fn func(ctx context.Context, cwd, acpSID string) (acp.ResumeSessionResponse, error)) {
+	c.mu.Lock()
+	c.resumeSessionFn = fn
+	c.mu.Unlock()
+}
+
+// SetLoadSessionFnForTest overrides LoadSession for testing recovery paths.
+func (c *ACPConn) SetLoadSessionFnForTest(fn func(ctx context.Context, cwd, acpSID string) (acp.LoadSessionResponse, error)) {
+	c.mu.Lock()
+	c.loadSessionFn = fn
 	c.mu.Unlock()
 }
 

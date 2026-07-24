@@ -10,13 +10,13 @@ import (
 	"clawbench/internal/model"
 )
 
-// ACPBackend implements the AIBackend interface using the Agent Client Protocol.
-// Each ClawBench session gets its own dedicated agent process (one-to-one model).
+// ACPBackend implements AIBackend over the Agent Client Protocol (one ClawBench
+// chat session maps to one long-lived ACP agent process / connection).
 //
-//   - Each ClawBench session = one agent subprocess (acp-stdio)
-//   - Agent processes are never idle-reaped
-//   - If the process dies, it is respawned and the session is recovered via ResumeSession
-//   - Cancel marks the connection as dead; next prompt triggers respawn + ResumeSession
+// Session recovery after respawn prefers session/resume when the agent supports
+// it (Claude, CodeBuddy, …). Agents that only implement session/load (notably
+// Grok) recover via LoadSession instead. User cancel keeps a healthy peer alive
+// so the next prompt can reuse the same ACP session without respawn/resume/load.
 type ACPBackend struct {
 	agent *model.Agent // resolved agent config
 }
@@ -37,8 +37,10 @@ func (b *ACPBackend) Name() string {
 
 // ExecuteStream runs the ACP agent and returns a channel of streaming events.
 //
-// Flow: GetOrCreateConn → (ResumeSession or NewSession) → emit cached state → Prompt
-// On peer disconnect during Prompt, automatically retries once after respawn + ResumeSession.
+// Flow: GetOrCreateConn → (ResumeSession / LoadSession recovery or NewSession)
+// → emit cached state → Prompt.
+// On peer disconnect during Prompt, automatically retries once after respawn +
+// session recovery (same ResumeSession-or-LoadSession path as GetOrCreateConn).
 func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) { //nolint:gocognit,gocyclo // complex ACP protocol handler, refactoring would reduce readability
 	ch := make(chan StreamEvent, streamChanSize)
 
@@ -100,8 +102,8 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 				return
 			}
 
-			// If the error is a retryable disconnect (peer disconnect or config-killed
-			// connection), retry once after respawn + ResumeSession.
+			// If the error is a retryable disconnect (peer disconnect or
+			// config-killed connection), retry once after respawn + recovery.
 			if isACPPeerDisconnected(err) || isConfigKilledConnection(err) {
 				slog.Warn("acp: connection lost during prompt, retrying after respawn",
 					"session_id", req.SessionID, "acp_sid", acpSessionID, "error", err)

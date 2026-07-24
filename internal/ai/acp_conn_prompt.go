@@ -90,10 +90,7 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	slog.Info("acp conn: conn.Prompt done", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "elapsed", time.Since(promptStart), "error", err)
 	if err != nil {
 		if ctx.Err() != nil {
-			slog.Info("acp conn: prompt cancelled", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
-			c.mu.Lock()
-			c.alive = false
-			c.mu.Unlock()
+			c.applyUserCancelLiveness(acpSID)
 			return ctx.Err()
 		}
 
@@ -124,6 +121,35 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	}
 
 	return nil
+}
+
+// applyUserCancelLiveness updates connection liveness after the user cancels an
+// in-flight prompt.
+//
+// Historically cancel always marked the connection dead, which forced a respawn
+// and ResumeSession/LoadSession on the next message. When the peer is still
+// healthy, keep the connection alive so the next prompt reuses the same ACP
+// session (avoids Grok load-path overhead and resume failures on other agents).
+// If the peer already exited, mark dead so the next call respawns and recovers.
+func (c *ACPConn) applyUserCancelLiveness(acpSID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.alive = aliveAfterUserCancel(c.isAliveLocked())
+	if c.alive {
+		slog.Info("acp conn: prompt cancelled, keeping connection alive for reuse",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
+		return
+	}
+	slog.Info("acp conn: prompt cancelled and peer gone, marking connection dead",
+		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
+}
+
+// aliveAfterUserCancel returns whether the ACP connection should stay marked
+// alive after a user cancel. Today this is simply "peer still up"; kept as a
+// helper so the policy stays unit-testable without spinning up a real process.
+func aliveAfterUserCancel(peerAlive bool) bool {
+	return peerAlive
 }
 
 // emitPromptResponseUsage emits metadata and usage_update events from a

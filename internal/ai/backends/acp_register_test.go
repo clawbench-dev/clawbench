@@ -7,6 +7,7 @@ import (
 	_ "clawbench/internal/ai/backends/claude"
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/deepseek"
+	_ "clawbench/internal/ai/backends/grok"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
@@ -218,4 +219,23 @@ func TestACPLookupAfterInit(t *testing.T) {
 			t.Errorf("expected nil prefixes for nonexistent backend, got %v", prefixes)
 		}
 	})
+}
+
+func TestACPInitRegistration_Grok(t *testing.T) {
+	p := backends.Lookup("grok")
+	if p == nil {
+		t.Fatal("expected grok plugin to be registered after init")
+	}
+	if p.Spec.AcpCommand != "grok agent stdio" {
+		t.Errorf("AcpCommand = %q, want %q", p.Spec.AcpCommand, "grok agent stdio")
+	}
+	if p.ACP == nil {
+		t.Fatal("expected grok ACP mapping to be registered")
+	}
+	if p.ACP.ToolCallIDPrefixes["read_file"] != "Read" {
+		t.Errorf("ToolCallIDPrefixes[read_file] = %q, want Read", p.ACP.ToolCallIDPrefixes["read_file"])
+	}
+	if p.ACP.InputRemaps["filePath"] != "file_path" {
+		t.Errorf("InputRemaps[filePath] = %q, want file_path", p.ACP.InputRemaps["filePath"])
+	}
 }
