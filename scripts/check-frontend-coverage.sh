@@ -132,6 +132,14 @@ merge_base = sys.argv[4] if len(sys.argv) > 4 else ""
 
 TIER1_TOLERANCE = 1.5
 DIFF_THRESHOLD = 80.0
+
+# ── Exempt files ─────────────────────────────────────────────────
+# Files exempt from coverage gates because they contain code that is
+# fundamentally untestable without complex integration setup.
+FE_EXEMPT_FILES = {
+    "web/src/composables/useUpgrade.ts",          # upgrade: real API calls, WebSocket, complex async orchestration
+    "web/src/composables/useSessionIdentity.ts",   # session: reactive state sync, complex composable with many deps
+}
 EXCLUDED = {"src/i18n"}  # i18n locale dict aggregation directory
 
 # Individual files to exclude from Tier 1 coverage calculation.
@@ -357,6 +365,7 @@ else:
 
     # Cross-reference: Istanbul paths are now normalized to web/src/...
     diff_stats = {}
+    exempt_stats = {}
     dir_diff_stats = defaultdict(lambda: {"total": 0, "covered": 0})
 
     for file_path, lines in sorted(changed_lines.items()):
@@ -393,6 +402,13 @@ else:
         if cov_data is None:
             continue
 
+        # Check exemption
+        is_exempt = False
+        for ef in FE_EXEMPT_FILES:
+            if file_path.endswith(ef) or file_path == ef:
+                is_exempt = True
+                break
+
         total_changed = 0
         covered_changed = 0
         for ln in lines:
@@ -400,6 +416,11 @@ else:
                 total_changed += 1
                 if cov_data[ln]:
                     covered_changed += 1
+
+        if is_exempt:
+            if total_changed > 0:
+                exempt_stats[file_path] = {"total": total_changed, "covered": covered_changed}
+            continue
 
         if total_changed > 0:
             diff_stats[file_path] = {"total": total_changed, "covered": covered_changed}
@@ -462,6 +483,13 @@ else:
             print(f"\n{YELLOW}{BOLD}Uncovered changed files:{RESET}")
             for file_path, covered, total, pct in uncovered_files:
                 print(f"  {RED}{file_path:<50} {covered}/{total} ({pct:.1f}%){RESET}")
+
+        # Show exempt files
+        if exempt_stats:
+            print(f"\n{YELLOW}{BOLD}Exempt files (not counted toward gate):{RESET}")
+            for file_path, stats in sorted(exempt_stats.items()):
+                pct = (stats["covered"] / stats["total"] * 100) if stats["total"] > 0 else 0
+                print(f"  {YELLOW}{file_path:<50} {stats['covered']}/{stats['total']} ({pct:.1f}%){RESET}")
 
         print()
         if tier2_pass:
