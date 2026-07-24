@@ -36,8 +36,9 @@ vi.mock('@/composables/useToast.ts', () => ({
 
 // Mock useTaskTab
 const mockLoadTasks = vi.fn()
+const mockNavigateToList = vi.fn()
 vi.mock('@/composables/useTaskTab.ts', () => ({
-  useTaskTab: () => ({ loadTasks: mockLoadTasks }),
+  useTaskTab: () => ({ loadTasks: mockLoadTasks, navigateToList: mockNavigateToList }),
 }))
 
 // Mock useDialog
@@ -55,6 +56,7 @@ beforeEach(() => {
   mockApiDelete.mockReset()
   mockToastShow.mockReset()
   mockLoadTasks.mockReset()
+  mockNavigateToList.mockReset()
   mockDialogConfirm.mockReset()
 })
 
@@ -148,7 +150,7 @@ describe('useTaskOverview', () => {
   })
 
   describe('deleteTask', () => {
-    it('calls apiDelete after confirmation', async () => {
+    it('calls apiDelete after confirmation, navigates to list, and emits deleted', async () => {
       const { actions, deleted } = createOverview()
       mockDialogConfirm.mockResolvedValue(true)
       mockApiDelete.mockResolvedValue({})
@@ -156,6 +158,7 @@ describe('useTaskOverview', () => {
       await actions.deleteTask()
 
       expect(mockApiDelete).toHaveBeenCalledWith('/api/tasks/t1')
+      expect(mockNavigateToList).toHaveBeenCalled()
       expect(deleted).toHaveBeenCalled()
     })
 
@@ -178,7 +181,7 @@ describe('useTaskOverview', () => {
       expect(mockToastShow).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ type: 'error' }))
     })
 
-    it('calls loadTasks on delete success only', async () => {
+    it('calls loadTasks on delete success', async () => {
       const { actions } = createOverview()
       mockDialogConfirm.mockResolvedValue(true)
       mockApiDelete.mockResolvedValue({})
@@ -186,6 +189,18 @@ describe('useTaskOverview', () => {
       await actions.deleteTask()
 
       expect(mockLoadTasks).toHaveBeenCalled()
+    })
+
+    it('navigates to list even if loadTasks fails after successful delete', async () => {
+      const { actions, deleted } = createOverview()
+      mockDialogConfirm.mockResolvedValue(true)
+      mockApiDelete.mockResolvedValue({})
+      mockLoadTasks.mockRejectedValue(new Error('Network error'))
+
+      await actions.deleteTask()
+
+      expect(mockNavigateToList).toHaveBeenCalled()
+      expect(deleted).toHaveBeenCalled()
     })
   })
 })

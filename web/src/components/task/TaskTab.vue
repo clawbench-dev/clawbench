@@ -65,7 +65,6 @@ async function onFormSaved(newTaskId: number) {
 function onTaskDeleted() {
   navigateToList()
   loadTasks()
-  listPageRef.value?.refresh?.()
 }
 
 function onOpenFile(filePath: string, lineStart?: number) {

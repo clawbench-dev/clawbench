@@ -17,7 +17,7 @@ interface UseTaskOverviewOptions {
 export function useTaskOverview(options: UseTaskOverviewOptions) {
   const { task, emit } = options
   const toast = useToast()
-  const { loadTasks } = useTaskTab()
+  const { loadTasks, navigateToList } = useTaskTab()
   const dialog = useDialog()
 
   const actionLoading = ref(false)
@@ -36,8 +36,9 @@ export function useTaskOverview(options: UseTaskOverviewOptions) {
       const taskId = task.value.id
       if (method === 'delete') {
         await apiDelete(`/api/tasks/${taskId}`)
-        await loadTasks()
+        navigateToList()
         emit.deleted()
+        try { await loadTasks() } catch { /* non-critical */ }
       } else {
         await apiPut(`/api/tasks/${taskId}`, { action })
         await loadTasks()
