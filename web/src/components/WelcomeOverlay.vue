@@ -54,6 +54,7 @@
           </button>
           <div class="footer-secondary">
             <button class="btn-rescan" :disabled="rescanning" @click="rescan">
+              <Loader2 v-if="rescanning" :size="12" class="spin" />
               {{ rescanning ? t('welcomeInfo.rescanning') : t('welcomeInfo.rescan') }}
             </button>
             <button class="btn-dont-show" @click="dontShowAgain">
@@ -436,6 +437,9 @@ onUnmounted(() => {
 }
 
 .btn-rescan {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: none;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
