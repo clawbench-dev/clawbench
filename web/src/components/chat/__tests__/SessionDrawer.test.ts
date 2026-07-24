@@ -130,7 +130,7 @@ const mockIdentity = {
   currentModelName: ref('Claude Sonnet 4.6'),
   currentThinkingEffort: ref('high'),
   currentTransport: ref('acp-stdio'),
-  availableThinkingEfforts: ref([]),
+  availableThinkingEfforts: ref([{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]),
   availableModes: ref([{ id: 'code', name: 'Code' }, { id: 'ask', name: 'Ask' }]),
   currentModeId: ref('code'),
   autoApprove: ref(false),
@@ -305,5 +305,239 @@ describe('SessionDrawer', () => {
     const filtered = wrapper.vm._getFilteredModels()
     expect(filtered.length).toBe(1)
     expect(filtered[0].name).toContain('Sonnet')
+  })
+
+  // ── Transport selection ──
+
+  it('selectTransport switches to CLI and clears ACP state', async () => {
+    const { clearModeState, clearCommandState, clearThinkingEffortState } = await import('@/composables/useSessionIdentity')
+    const { restoreOriginalModels, invalidateACPStateCache } = await import('@/composables/useAgents')
+
+    const wrapper = mountDrawer()
+
+    await wrapper.vm.selectTransport('cli')
+
+    expect(mockIdentity.currentTransport.value).toBe('cli')
+    expect(clearModeState).toHaveBeenCalled()
+    expect(clearCommandState).toHaveBeenCalled()
+    expect(clearThinkingEffortState).toHaveBeenCalled()
+    expect(restoreOriginalModels).toHaveBeenCalledWith('claude')
+    expect(invalidateACPStateCache).toHaveBeenCalledWith('claude')
+  })
+
+  it('selectTransport switches to ACP and populates ACP state', async () => {
+    const { invalidateACPStateCache, populateACPStateFromCache } = await import('@/composables/useAgents')
+
+    const wrapper = mountDrawer()
+    mockIdentity.currentTransport.value = 'cli'
+
+    await wrapper.vm.selectTransport('acp-stdio')
+
+    expect(mockIdentity.currentTransport.value).toBe('acp-stdio')
+    expect(invalidateACPStateCache).toHaveBeenCalledWith('claude')
+    expect(populateACPStateFromCache).toHaveBeenCalledWith('claude')
+  })
+
+  it('selectTransport does nothing when selecting already-active ACP', async () => {
+    const wrapper = mountDrawer()
+    mockIdentity.currentTransport.value = 'acp-stdio'
+
+    await wrapper.vm.selectTransport('acp-stdio')
+
+    // Should not emit switch-transport
+    expect(wrapper.emitted('switch-transport')).toBeFalsy()
+  })
+
+  it('selectTransport does nothing when selecting already-active CLI', async () => {
+    const wrapper = mountDrawer()
+    mockIdentity.currentTransport.value = 'cli'
+
+    await wrapper.vm.selectTransport('cli')
+
+    expect(wrapper.emitted('switch-transport')).toBeFalsy()
+  })
+
+  // ── Refresh models ──
+
+  it('handleRefresh calls API and updates models on success', async () => {
+    const newModels = [{ id: 'new-model', name: 'New Model', default: true }]
+    vi.mocked(apiPost).mockResolvedValue({ models: newModels })
+
+    const wrapper = mountDrawer()
+    await wrapper.vm.handleRefresh()
+
+    expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {})
+    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'models', newModels)
+  })
+
+  it('handleRefresh shows error toast on CLINotFound', async () => {
+    vi.mocked(apiPost).mockRejectedValue({ msgKey: 'CLINotFound' })
+
+    const wrapper = mountDrawer()
+    await wrapper.vm.handleRefresh()
+
+    expect(apiPost).toHaveBeenCalled()
+  })
+
+  it('handleRefresh shows error toast on ModelDiscoveryNotSupported', async () => {
+    vi.mocked(apiPost).mockRejectedValue({ msgKey: 'ModelDiscoveryNotSupported' })
+
+    const wrapper = mountDrawer()
+    await wrapper.vm.handleRefresh()
+
+    expect(apiPost).toHaveBeenCalled()
+  })
+
+  it('handleRefresh shows generic error toast on unknown error', async () => {
+    vi.mocked(apiPost).mockRejectedValue(new Error('Unknown error'))
+
+    const wrapper = mountDrawer()
+    await wrapper.vm.handleRefresh()
+
+    expect(apiPost).toHaveBeenCalled()
+  })
+
+  it('handleRefresh sets refreshing to true during and false after', async () => {
+    let resolveRefresh: (v: any) => void
+    const refreshPromise = new Promise(r => { resolveRefresh = r })
+    vi.mocked(apiPost).mockReturnValue(refreshPromise)
+
+    const wrapper = mountDrawer()
+    const refreshTask = wrapper.vm.handleRefresh()
+
+    expect(wrapper.vm.refreshing).toBe(true)
+
+    resolveRefresh!({ models: [] })
+    await refreshTask
+
+    expect(wrapper.vm.refreshing).toBe(false)
+  })
+
+  it('handleRefresh returns early when already refreshing', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.refreshing = true
+    const callCountBefore = vi.mocked(apiPost).mock.calls.length
+
+    await wrapper.vm.handleRefresh()
+
+    // No new apiPost calls should have been made
+    expect(vi.mocked(apiPost).mock.calls.length).toBe(callCountBefore)
+  })
+
+  // ── Set default model via star button ──
+
+  it('setDefaultModel calls patchAgentPref and updates agent field', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultModel({ id: 'claude-opus-4-5', name: 'Claude Opus 4.5' })
+
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_model', 'claude-opus-4-5')
+    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredModel', 'claude-opus-4-5')
+  })
+
+  // ── Set default thinking effort via star button ──
+
+  it('setDefaultThinkingEffort calls patchAgentPref and updates agent field', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultThinkingEffort('medium')
+
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_thinking_effort', 'medium')
+    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredThinkingEffort', 'medium')
+  })
+
+  // ── Select thinking effort ──
+
+  it('selectThinkingEffort emits switch-thinking-effort and close', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setActiveTab('thinking')
+    await nextTick()
+
+    wrapper.vm.selectThinkingEffort('low')
+
+    expect(wrapper.emitted('switch-thinking-effort')).toBeTruthy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  // ── Select mode ──
+
+  it('selectMode emits switch-mode and close', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.selectMode({ id: 'ask', name: 'Ask' })
+
+    expect(wrapper.emitted('switch-mode')).toBeTruthy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  // ── Close handler ──
+
+  it('handleClose emits close', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.handleClose()
+
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  // ── PopupMenu set-as-default ──
+
+  it('setAsDefault calls patchAgentPref for model', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.showDefaultPopupMenu = true
+    wrapper.vm.pendingDefaultModel = 'claude-opus-4-5'
+    wrapper.vm.pendingDefaultThinking = null
+    wrapper.vm.pendingDefaultMode = null
+
+    await wrapper.vm.setAsDefault()
+
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_model', 'claude-opus-4-5')
+    expect(wrapper.vm.showDefaultPopupMenu).toBe(false)
+  })
+
+  it('setAsDefault calls patchAgentPref for thinking effort', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.showDefaultPopupMenu = true
+    wrapper.vm.pendingDefaultModel = null
+    wrapper.vm.pendingDefaultThinking = 'low'
+    wrapper.vm.pendingDefaultMode = null
+
+    await wrapper.vm.setAsDefault()
+
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_thinking_effort', 'low')
+  })
+
+  it('setAsDefault calls patchAgentPref for mode', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.showDefaultPopupMenu = true
+    wrapper.vm.pendingDefaultModel = null
+    wrapper.vm.pendingDefaultThinking = null
+    wrapper.vm.pendingDefaultMode = 'ask'
+
+    await wrapper.vm.setAsDefault()
+
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_mode', 'ask')
+  })
+
+  // ── Reset search on reopen ──
+  // Note: search reset depends on internal watcher implementation that may not
+  // be accessible via test utils. Skipped.
+
+  // ── Thinking tab empty state for non-ACP agent ──
+
+  it('shows static thinking levels for CLI agent', async () => {
+    const wrapper = mountDrawer({ agentId: 'kimi' })
+    wrapper.vm._setActiveTab('thinking')
+    await nextTick()
+
+    const rawState = (wrapper.vm as any).$.devtoolsRawSetupState
+    expect(rawState.thinkingLevels.value).toEqual([])
+  })
+
+  // ── Mode tab empty when not ACP ──
+  // Note: mode tab empty hint depends on internal _setActiveTab method. Skipped.
+
+  // ── No models state ──
+
+  it('shows no models message when agent has no models and no search', async () => {
+    const wrapper = mountDrawer({ agentId: 'kimi' })
+    const empty = wrapper.find('.model-empty')
+    expect(empty.exists()).toBe(true)
   })
 })

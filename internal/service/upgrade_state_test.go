@@ -75,3 +75,114 @@ func TestUpgradeCompletedNotInProgress(t *testing.T) {
 
 	ResetUpgradeState()
 }
+
+// ---------- SetUpgradePhase tests ----------
+
+func TestSetUpgradePhase(t *testing.T) {
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	SetUpgradePhase(UpgradePhaseChecking)
+	s := GetUpgradeState()
+	if s.Phase != UpgradePhaseChecking {
+		t.Errorf("phase = %q, want %q", s.Phase, UpgradePhaseChecking)
+	}
+
+	SetUpgradePhase(UpgradePhaseDownloading)
+	s = GetUpgradeState()
+	if s.Phase != UpgradePhaseDownloading {
+		t.Errorf("phase = %q, want %q", s.Phase, UpgradePhaseDownloading)
+	}
+}
+
+// ---------- SetUpgradeShutdownFunc tests ----------
+
+func TestSetUpgradeShutdownFunc(t *testing.T) {
+	orig := upgradeShutdownFunc
+	defer func() { upgradeShutdownFunc = orig }()
+
+	called := false
+	SetUpgradeShutdownFunc(func() {
+		called = true
+	})
+
+	if upgradeShutdownFunc == nil {
+		t.Error("upgradeShutdownFunc should not be nil after SetUpgradeShutdownFunc")
+	}
+
+	upgradeShutdownFunc()
+	if !called {
+		t.Error("upgradeShutdownFunc should have been called")
+	}
+}
+
+func TestSetUpgradeShutdownFunc_Nil(t *testing.T) {
+	orig := upgradeShutdownFunc
+	defer func() { upgradeShutdownFunc = orig }()
+
+	SetUpgradeShutdownFunc(nil)
+	if upgradeShutdownFunc != nil {
+		t.Error("upgradeShutdownFunc should be nil after setting nil")
+	}
+}
+
+// ---------- SetUpgradeIsSupervised tests ----------
+
+func TestSetUpgradeIsSupervised(t *testing.T) {
+	orig := upgradeIsSupervised
+	defer func() { upgradeIsSupervised = orig }()
+
+	SetUpgradeIsSupervised(func() bool {
+		return true
+	})
+
+	if upgradeIsSupervised == nil {
+		t.Error("upgradeIsSupervised should not be nil after SetUpgradeIsSupervised")
+	}
+
+	result := upgradeIsSupervised()
+	if !result {
+		t.Error("upgradeIsSupervised should return true")
+	}
+}
+
+func TestSetUpgradeIsSupervised_Nil(t *testing.T) {
+	orig := upgradeIsSupervised
+	defer func() { upgradeIsSupervised = orig }()
+
+	SetUpgradeIsSupervised(nil)
+	if upgradeIsSupervised != nil {
+		t.Error("upgradeIsSupervised should be nil after setting nil")
+	}
+}
+
+// ---------- IsUpgradeInProgress edge cases ----------
+
+func TestIsUpgradeInProgress_AllPhases(t *testing.T) {
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	tests := []struct {
+		phase    UpgradePhase
+		expected bool
+	}{
+		{UpgradePhaseIdle, false},
+		{UpgradePhaseChecking, true},
+		{UpgradePhaseDownloading, true},
+		{UpgradePhaseExtracting, true},
+		{UpgradePhaseBackingUp, true},
+		{UpgradePhaseReplacing, true},
+		{UpgradePhaseRestarting, true},
+		{UpgradePhaseCompleted, false},
+		{UpgradePhaseFailed, false},
+	}
+
+	for _, tt := range tests {
+		ResetUpgradeState()
+		SetUpgradePhase(tt.phase)
+		result := IsUpgradeInProgress()
+		if result != tt.expected {
+			t.Errorf("IsUpgradeInProgress() for phase %q = %v, want %v", tt.phase, result, tt.expected)
+		}
+	}
+}

@@ -75,7 +75,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -1511,6 +1511,226 @@ describe('useSessionIdentity', () => {
         it('returns null when agentId is empty', () => {
             const identity = useSessionIdentity()
             expect(identity.loadModePref('')).toBeNull()
+        })
+    })
+
+    // ── clearSessionIdentity ──
+
+    describe('clearSessionIdentity', () => {
+        beforeEach(() => {
+            resetIdentity()
+        })
+
+        it('clears all identity refs but keeps session drawer intact', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-1'
+            identity.currentSessionTitle.value = 'Title'
+            identity.currentBackend.value = 'claude'
+            identity.currentAgentId.value = 'agent-1'
+            identity.currentModelId.value = 'model-1'
+            identity.currentModelName.value = 'Model One'
+            identity.currentTransport.value = 'acp-stdio'
+            identity.autoApprove.value = true
+            identity.thinkingEffortState.currentId.value = 'high'
+            updateModeState('code', [{ id: 'code', name: 'Code' }])
+            updateCommandState([{ name: '/help', description: 'Help' }])
+
+            clearSessionIdentity()
+
+            expect(identity.currentSessionId.value).toBe('')
+            expect(identity.currentSessionTitle.value).toBe('')
+            expect(identity.currentBackend.value).toBe('')
+            expect(identity.currentAgentId.value).toBe('')
+            expect(identity.currentModelId.value).toBe('')
+            expect(identity.currentModelName.value).toBe('')
+            expect(identity.currentTransport.value).toBe('')
+            expect(identity.autoApprove.value).toBe(false)
+            expect(identity.currentModeId.value).toBe('')
+            expect(identity.availableModes.value).toEqual([])
+            expect(identity.availableCommands.value).toEqual([])
+            expect(identity.currentThinkingEffort.value).toBe('')
+        })
+
+        it('sets currentSessionId to upcomingSessionId when provided', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'old-session'
+
+            clearSessionIdentity('new-session')
+
+            expect(identity.currentSessionId.value).toBe('new-session')
+        })
+
+        it('resets currentSessionId to empty when no upcomingSessionId', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'old-session'
+
+            clearSessionIdentity()
+
+            expect(identity.currentSessionId.value).toBe('')
+        })
+    })
+
+    // ── contextInputTokens / contextOutputTokens ──
+
+    describe('contextInputTokens / contextOutputTokens', () => {
+        beforeEach(() => {
+            clearAllUsageState()
+        })
+
+        it('tracks input and output tokens per session', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
+            updateUsageState(5000, 200000, 0.05, 'USD', 'session-A', 1000, 2000)
+
+            expect(identity.contextInputTokens.value).toBe(1000)
+            expect(identity.contextOutputTokens.value).toBe(2000)
+        })
+
+        it('defaults input/output tokens to 0 when not provided', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
+            updateUsageState(5000, 200000, 0.05, 'USD', 'session-A')
+
+            expect(identity.contextInputTokens.value).toBe(0)
+            expect(identity.contextOutputTokens.value).toBe(0)
+        })
+
+        it('switches token display when switching sessions', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
+            updateUsageState(5000, 200000, 0.05, 'USD', 'session-A', 100, 200)
+            updateUsageState(3000, 100000, 0.02, 'EUR', 'session-B', 50, 150)
+
+            identity.currentSessionId.value = 'session-B'
+            expect(identity.contextInputTokens.value).toBe(50)
+            expect(identity.contextOutputTokens.value).toBe(150)
+
+            identity.currentSessionId.value = 'session-A'
+            expect(identity.contextInputTokens.value).toBe(100)
+            expect(identity.contextOutputTokens.value).toBe(200)
+        })
+    })
+
+    // ── currentTransport ──
+
+    describe('currentTransport', () => {
+        beforeEach(() => {
+            resetIdentity()
+        })
+
+        it('can be set to acp-stdio', () => {
+            const identity = useSessionIdentity()
+            identity.currentTransport.value = 'acp-stdio'
+            expect(identity.currentTransport.value).toBe('acp-stdio')
+        })
+
+        it('can be set to cli', () => {
+            const identity = useSessionIdentity()
+            identity.currentTransport.value = 'cli'
+            expect(identity.currentTransport.value).toBe('cli')
+        })
+    })
+
+    // ── autoApprove ──
+
+    describe('autoApprove', () => {
+        beforeEach(() => {
+            resetIdentity()
+        })
+
+        it('starts as false after reset', () => {
+            const identity = useSessionIdentity()
+            expect(identity.autoApprove.value).toBe(false)
+        })
+
+        it('can be toggled on', () => {
+            const identity = useSessionIdentity()
+            identity.autoApprove.value = true
+            expect(identity.autoApprove.value).toBe(true)
+        })
+    })
+
+    // ── loadModelPref / saveModelPref / loadThinkingPref / saveThinkingPref ──
+
+    describe('preference helpers', () => {
+        it('saveModelPref is a no-op (session-scoped)', async () => {
+            const identity = useSessionIdentity()
+            // saveModelPref is documented as no-op for chat sessions
+            await expect(identity.saveModelPref('agent-1', 'model-1')).resolves.toBeUndefined()
+        })
+
+        it('saveThinkingPref is a no-op (session-scoped)', async () => {
+            const identity = useSessionIdentity()
+            // saveThinkingPref is documented as no-op for chat sessions
+            await expect(identity.saveThinkingPref('agent-1', 'high')).resolves.toBeUndefined()
+        })
+
+        it('loadModelPref returns null for empty agentId', () => {
+            const identity = useSessionIdentity()
+            expect(identity.loadModelPref('')).toBeNull()
+        })
+
+        it('loadModelPref returns agent preferredModel when available', () => {
+            const identity = useSessionIdentity()
+            mockGetAgent.mockReturnValue({ preferredModel: 'preferred-1' })
+            expect(identity.loadModelPref('agent-1')).toBe('preferred-1')
+        })
+
+        it('loadModelPref returns null when agent has no preferredModel', () => {
+            const identity = useSessionIdentity()
+            mockGetAgent.mockReturnValue({})
+            expect(identity.loadModelPref('agent-1')).toBeNull()
+        })
+
+        it('loadThinkingPref returns null for empty agentId', () => {
+            const identity = useSessionIdentity()
+            expect(identity.loadThinkingPref('')).toBeNull()
+        })
+
+        it('loadThinkingPref returns effective thinking effort', () => {
+            const identity = useSessionIdentity()
+            mockGetEffectiveThinkingEffort.mockReturnValue('high')
+            expect(identity.loadThinkingPref('agent-1')).toBe('high')
+        })
+
+        it('loadThinkingPref returns null when no effort configured', () => {
+            const identity = useSessionIdentity()
+            mockGetEffectiveThinkingEffort.mockReturnValue(null)
+            expect(identity.loadThinkingPref('agent-1')).toBeNull()
+        })
+    })
+
+    // ── updateUsageState with sessionId parameter ──
+
+    describe('updateUsageState with explicit sessionId', () => {
+        beforeEach(() => {
+            clearAllUsageState()
+        })
+
+        it('writes usage to the specified session, not current', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
+
+            updateUsageState(5000, 200000, 0.05, 'USD', 'session-B')
+
+            // Current session should show 0 (data was written to session-B)
+            expect(identity.contextUsed.value).toBe(0)
+            expect(identity.contextSize.value).toBe(0)
+
+            // Switch to session-B to verify data
+            identity.currentSessionId.value = 'session-B'
+            expect(identity.contextUsed.value).toBe(5000)
+            expect(identity.contextSize.value).toBe(200000)
+        })
+
+        it('does not write when sessionId is empty and no current session', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = ''
+
+            updateUsageState(5000, 200000)
+
+            // No session to write to — should not throw
+            expect(identity.contextUsed.value).toBe(0)
         })
     })
 })

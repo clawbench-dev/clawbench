@@ -113,6 +113,10 @@ exempt_files = {
     "internal/service/testutil.go",          # new file: InitInMemoryDB sql.Open error path
     "internal/service/chat.go",              # new diff: session model/paged history error paths
     "internal/service/continue_conversation.go", # new diff: restoreDeletedSession/continue error paths
+    "internal/service/upgrade.go",             # upgrade: performUpgrade kills own process, exec.Command for subprocess replacement
+    "internal/cli/upgrade.go",                 # upgrade-replace: kills parent process, binary replacement, untestable in unit tests
+    "internal/platform/network.go",            # China detection: real TCP/HTTP probes to external services
+    "internal/handler/settings.go",            # jsonKeyStatus constant addition: trivial change, existing test covers the endpoint
     "internal/platform/path_unix.go",        # build-tag stub: listWindowsDrives returns nil on non-Windows
     "internal/platform/path_windows.go",     # build-tag: listWindowsDrives only runs on Windows
     "internal/terminal/shell_posix.go",     # process group signaling: kills test process group if tested

@@ -159,8 +159,7 @@ func IsChinaMainland() bool {
 func probeChinaMirror() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", "registry.npmmirror.com:443")
+	conn, err := probeChinaDialer.DialContext(ctx, "tcp", "registry.npmmirror.com:443")
 	if err != nil {
 		return false
 	}
@@ -168,15 +167,26 @@ func probeChinaMirror() bool {
 	return true
 }
 
+// probeChinaDialer is the dialer used by probeChinaMirror.
+// Package-level variable for testability.
+var probeChinaDialer net.Dialer = net.Dialer{}
+
 // probeIPApi queries ip-api.com for the country code. Returns true if "CN".
 func probeIPApi() bool {
+	return probeIPApiWithClient(chinaProbeClient)
+}
+
+// probeIPApiWithClient is the testable core of probeIPApi.
+// Package-level variable for testability — tests can override to inject
+// custom behavior.
+var probeIPApiWithClient = func(client *http.Client) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ip-api.com/line/?fields=countryCode", http.NoBody)
 	if err != nil {
 		return false
 	}
-	resp, err := chinaProbeClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		slog.Debug("ip-api probe failed", "error", err)
 		return false

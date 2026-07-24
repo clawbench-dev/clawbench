@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"flag"
 	"strings"
 	"testing"
 

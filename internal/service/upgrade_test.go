@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,6 +23,7 @@ import (
 	"time"
 
 	"clawbench/internal/platform"
+	"clawbench/internal/version"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -934,3 +937,227 @@ func buildTarballNoIntegrity(t *testing.T, binContent []byte) []byte {
 // --- Verify hash.Hash interface is satisfied by sha512 ---
 
 var _ hash.Hash = sha512.New() // compile-time check
+
+// --- CheckForUpgrade ---
+
+func TestCheckForUpgrade_Success(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, pkg)
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
+		resp.Dist.Integrity = "sha512-abcdef"
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2) // non-China
+
+	currentVer, latestVer, err := checkForUpgradeWithBase(ts.URL)
+	require.NoError(t, err)
+	assert.NotEmpty(t, currentVer)
+	assert.Equal(t, "99.0.0", latestVer)
+}
+
+func TestCheckForUpgrade_DirectCall(t *testing.T) {
+	// Test CheckForUpgrade directly by pointing the HTTP client at a test server
+	// via a custom transport that rewrites requests
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, pkg)
+		resp := npmRegistryResponse{}
+		resp.Version = "2.0.0"
+		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-2.0.0.tgz"
+		resp.Dist.Integrity = "sha512-abcdef"
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2) // non-China → npmjs.org
+
+	// Rewrite requests to test server
+	origTransport := upgradeHTTPClient.Transport
+	upgradeHTTPClient.Transport = &rewritingTransport{targetURL: ts.URL, orig: origTransport}
+	defer func() { upgradeHTTPClient.Transport = origTransport }()
+
+	currentVer, latestVer, err := CheckForUpgrade()
+	require.NoError(t, err)
+	assert.NotEmpty(t, currentVer)
+	assert.Equal(t, "2.0.0", latestVer)
+}
+
+func TestCheckForUpgrade_DirectCallError(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	// Client that always fails
+	upgradeHTTPClient = &http.Client{
+		Timeout: 1 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return nil, fmt.Errorf("connection refused")
+			},
+		},
+	}
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2)
+
+	currentVer, latestVer, err := CheckForUpgrade()
+	assert.Error(t, err)
+	assert.NotEmpty(t, currentVer)
+	assert.Empty(t, latestVer)
+}
+
+// rewritingTransport rewrites all requests to a target test server.
+type rewritingTransport struct {
+	targetURL string
+	orig      http.RoundTripper
+}
+
+func (rt *rewritingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	newURL, err := url.Parse(rt.targetURL + req.URL.Path)
+	if err != nil {
+		return nil, err
+	}
+	req.URL = newURL
+	if rt.orig != nil {
+		return rt.orig.RoundTrip(req)
+	}
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestCheckForUpgrade_Error(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	// Server that returns 500
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	currentVer, latestVer, err := checkForUpgradeWithBase(ts.URL)
+	assert.Error(t, err)
+	assert.NotEmpty(t, currentVer) // currentVer is always populated from version.Get()
+	assert.Empty(t, latestVer)
+}
+
+// checkForUpgradeWithBase is a test helper that calls CheckForUpgrade with a
+// custom registry base URL by directly calling fetchUpgradeInfoWithBase.
+func checkForUpgradeWithBase(baseURL string) (string, string, error) {
+	info, err := fetchUpgradeInfoWithBase(baseURL)
+	if err != nil {
+		return version.Get(), "", err
+	}
+	return info.CurrentVersion, info.LatestVersion, nil
+}
+
+// --- broadcastUpgradeUpdate ---
+
+func TestBroadcastUpgradeUpdate_NoManager(t *testing.T) {
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	// ws.GetManager() returns nil before initialization — should not panic
+	assert.NotPanics(t, func() {
+		broadcastUpgradeUpdate()
+	})
+}
+
+// --- SetUpgradeState ---
+
+func TestSetUpgradeState_SetsAllFields(t *testing.T) {
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	SetUpgradeState(UpgradePhaseDownloading, 50, "Halfway there")
+	s := GetUpgradeState()
+	assert.Equal(t, UpgradePhaseDownloading, s.Phase)
+	assert.Equal(t, 50, s.Progress)
+	assert.Equal(t, "Halfway there", s.Message)
+}
+
+// --- ResetUpgradeState clears everything ---
+
+func TestResetUpgradeState_ClearsAll(t *testing.T) {
+	SetUpgradeVersions("1.0.0", "2.0.0")
+	SetUpgradeBackupPath("/path/to/backup")
+	SetUpgradeError("some error")
+
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	s := GetUpgradeState()
+	assert.Equal(t, UpgradePhaseIdle, s.Phase)
+	assert.Empty(t, s.CurrentVer)
+	assert.Empty(t, s.LatestVer)
+	assert.Empty(t, s.BackupPath)
+	assert.Empty(t, s.Error)
+	assert.Zero(t, s.Progress)
+}
+
+// --- performUpgrade error paths ---
+
+func TestPerformUpgrade_UnreachableRegistry(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	// Use a client that will fail to connect
+	upgradeHTTPClient = &http.Client{
+		Timeout: 1 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return nil, fmt.Errorf("connection refused")
+			},
+		},
+	}
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2) // non-China → use npmjs.org
+
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	// Run performUpgrade — it should fail quickly with a registry error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		performUpgrade(context.Background())
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("performUpgrade timed out")
+	}
+
+	s := GetUpgradeState()
+	assert.Equal(t, UpgradePhaseFailed, s.Phase)
+	assert.Contains(t, s.Error, "Failed to check version")
+}
