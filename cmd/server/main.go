@@ -294,6 +294,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		os.Exit(cli.RunRAGCommand(os.Args[2:]))
 	}
 
+	// Upgrade-replace subcommand dispatch (launched by upgrade service)
+	if len(os.Args) > 1 && os.Args[1] == "upgrade-replace" {
+		os.Exit(cli.RunUpgradeReplaceCommand(os.Args[2:]))
+	}
+
 	// Parse CLI flags
 	cliPort := 0
 	cliDataDir := ""
@@ -957,6 +962,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// The sentinel process approach: launch a watcher that starts a new process
 	// after this one exits, then trigger graceful shutdown.
 	handler.SetRestartFunc(makeRestartFunc(selfSignalInterrupt))
+
+	// Wire up the upgrade service functions
+	// upgradeShutdownFunc: just graceful shutdown, no sentinel.
+	// The upgrade-replace subprocess handles restarting after replacing the binary.
+	service.SetUpgradeShutdownFunc(selfSignalInterrupt)
+	service.SetUpgradeIsSupervised(func() bool { return handler.IsRunningUnderSupervisor() })
 
 	// Wire up the hot-reload reconfigure function for config PATCH.
 	// Called by applyHotReloadGlobals() after each successful patch.

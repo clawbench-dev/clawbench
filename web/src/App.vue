@@ -10,6 +10,8 @@
     <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'terminal-keyboard-open': terminalKeyboardNeedsShrink, 'project-switching': switchingProject }" :key="projectKey">
       <WelcomeOverlay ref="welcomeOverlay" />
       <VersionMismatchOverlay ref="versionMismatchOverlay" />
+      <UpgradePromptOverlay ref="upgradePromptOverlay" />
+      <UpgradeDialog ref="upgradeDialogRef" />
       <AppHeader
         :project-root="projectRoot"
         :home-dir="homeDir"
@@ -287,6 +289,8 @@ import ProjectDialog from './components/ProjectDialog.vue'
 import LoginView from './components/LoginView.vue'
 import WelcomeOverlay from './components/WelcomeOverlay.vue'
 import VersionMismatchOverlay from './components/VersionMismatchOverlay.vue'
+import UpgradePromptOverlay from './components/UpgradePromptOverlay.vue'
+import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import RecentFilesDrawer from './components/file/RecentFilesDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
@@ -318,6 +322,7 @@ import { useFileNavStack } from './composables/useFileNavStack'
 import { removeRecentFile } from './composables/useRecentFiles'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
+import { useUpgrade } from './composables/useUpgrade'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, requestExitConfirm } from './composables/useBackHandler'
 import { store, loadBrowseDir } from './stores/app.ts'
@@ -851,11 +856,36 @@ async function handleLoginSuccess() {
     }
     welcomeOverlay.value?.show()
     versionMismatchOverlay.value?.show()
+    checkForUpgrade()
+
+    // Handle pending navigation
 }
 
 const projectDialogOpen = ref(false)
 const welcomeOverlay = ref(null)
 const versionMismatchOverlay = ref(null)
+const upgradePromptOverlay = ref(null)
+const upgradeDialogRef = ref(null)
+
+async function checkForUpgrade() {
+  const { checkForUpgradePrompt, state } = useUpgrade()
+  const latestVer = await checkForUpgradePrompt()
+  if (latestVer) {
+    const currentVer = state.current_version
+    if (upgradePromptOverlay.value && typeof (upgradePromptOverlay.value).show === 'function') {
+      upgradePromptOverlay.value.show(latestVer, currentVer)
+    }
+  }
+}
+
+// Watch for upgrade start — auto-open UpgradeDialog to show progress
+const { showProgressDialog, clearShowProgressDialog } = useUpgrade()
+watch(showProgressDialog, (val) => {
+  if (val && upgradeDialogRef.value && typeof (upgradeDialogRef.value).show === 'function') {
+    upgradeDialogRef.value.show()
+    clearShowProgressDialog()
+  }
+})
 
 function handleOpenProjectDialog() {
     projectDialogOpen.value = true
@@ -1412,6 +1442,7 @@ onMounted(async () => {
     startDockResize()
     welcomeOverlay.value?.show()
     versionMismatchOverlay.value?.show()
+    checkForUpgrade()
 
     // Handle pending navigation from push notification deep link
     // (cross-project reload or cold start via AndroidNative bridge)

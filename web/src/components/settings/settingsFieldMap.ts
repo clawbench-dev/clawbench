@@ -203,6 +203,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.downloadAndroidApp', descriptionKey: 'settings.items.downloadAndroidAppDesc', key: 'downloadAndroidApp', type: 'action', source: 'local' } },
     { type: 'item', spec: { labelKey: 'settings.items.showWelcome', descriptionKey: 'settings.items.showWelcomeDesc', key: 'showWelcome', type: 'action', source: 'local' } },
     { type: 'item', spec: { labelKey: 'settings.items.restartServer', descriptionKey: 'settings.items.restartServerDesc', key: 'restartServer', type: 'action', source: 'local' } },
+    { type: 'item', spec: { labelKey: 'settings.items.checkUpgrade', descriptionKey: 'settings.items.checkUpgradeDesc', key: 'checkUpgrade', type: 'action', source: 'local' } },
   ],
 
   // ── Panel-only categories (formerly drill-down) ────────────

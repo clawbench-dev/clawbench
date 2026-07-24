@@ -354,6 +354,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/chat/quick-send", middleware.Auth(ServeChatQuickSend))
 	register("/api/chat/quick-send/", middleware.Auth(ServeChatQuickSendByID))
 
+	// Self-upgrade
+	register("/api/upgrade/check", middleware.Auth(ServeUpgradeCheck))
+	register("/api/upgrade/start", middleware.Auth(ServeUpgradeStart))
+	register("/api/upgrade/status", middleware.Auth(ServeUpgradeStatus))
+
 	// Serve static assets from frontend filesystem (disk public/ > embed fallback)
 	// http.FileServerFS internally cleans paths before Open(), preventing traversal.
 	// For embed.FS, Open() additionally rejects ".." paths. No explicit ISS-055 guard needed.

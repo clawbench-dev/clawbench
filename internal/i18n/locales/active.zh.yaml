@@ -103,3 +103,5 @@ ForkPrefix: "［派生］"
 InvalidForkPoint: 无效的派生点 — 消息不存在或不是用户消息
 Session: 会话
 SearchQueryRequired: 请输入搜索关键词
+UpgradeInProgress: 升级正在进行中
+AlreadyLatestVersion: 已是最新版本

@@ -62,6 +62,8 @@
     />
     <!-- iOS install instructions sheet -->
     <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
+    <!-- Upgrade dialog -->
+    <UpgradeDialog ref="upgradeDialogRef" />
   </div>
 </template>
 
@@ -71,6 +73,7 @@ import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
+import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
@@ -103,6 +106,7 @@ const pwaInstall = usePwaInstall()
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
 const showIosSheet = ref(false)
+const upgradeDialogRef = ref<InstanceType<typeof UpgradeDialog> | null>(null)
 
 // Load agents when chat or agents category is shown
 watch(() => props.categoryId, (id) => {
@@ -264,6 +268,9 @@ function handleClick(item: ItemSpec) {
   }
   if (item.key === 'showWelcome') {
     window.dispatchEvent(new CustomEvent('clawbench-show-welcome'))
+  }
+  if (item.key === 'checkUpgrade') {
+    upgradeDialogRef.value?.show()
   }
 }
 

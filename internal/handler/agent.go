@@ -3,64 +3,22 @@ package handler
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync/atomic"
-	"time"
 	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/platform"
 	"clawbench/internal/service"
 )
 
-// chinaMirrorChecked caches the result of isChinaMainland() to avoid repeated
-// network probes. 0 = not yet checked; 1 = true (China); 2 = false.
-var chinaMirrorChecked atomic.Int32
-
-var chinaProbeClient = &http.Client{
-	Timeout: 3 * time.Second,
-	Transport: &http.Transport{
-		Proxy: nil,
-	},
-}
-
-// isChinaMainland returns true if the server appears to be running in mainland China.
-// Uses network probe to ip-api.com — country_code == "CN". Result cached.
-func isChinaMainland() bool {
-	if v := chinaMirrorChecked.Load(); v != 0 {
-		return v == 1
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ip-api.com/line/?fields=countryCode", http.NoBody)
-	if err != nil {
-		chinaMirrorChecked.Store(2)
-		return false
-	}
-	resp, err := chinaProbeClient.Do(req)
-	if err != nil {
-		chinaMirrorChecked.Store(2)
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16))
-	if err != nil {
-		chinaMirrorChecked.Store(2)
-		return false
-	}
-	code := strings.TrimSpace(string(body))
-	isCN := code == "CN"
-	if isCN {
-		chinaMirrorChecked.Store(1)
-	} else {
-		chinaMirrorChecked.Store(2)
-	}
-	return isCN
+// IsChinaMainland exports the China detection result for use by other packages.
+func IsChinaMainland() bool {
+	return platform.IsChinaMainland()
 }
 
 const npmMirrorRegistry = "https://registry.npmmirror.com"
@@ -71,7 +29,7 @@ func prepareInstallCmd(installCmd string) string {
 	if !strings.HasPrefix(installCmd, "npm install") {
 		return installCmd
 	}
-	if isChinaMainland() && !strings.Contains(installCmd, "--registry") {
+	if platform.IsChinaMainland() && !strings.Contains(installCmd, "--registry") {
 		return installCmd + " --registry=" + npmMirrorRegistry
 	}
 	return installCmd

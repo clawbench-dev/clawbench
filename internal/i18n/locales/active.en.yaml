@@ -102,3 +102,5 @@ ForkPrefix: "[Fork] "
 InvalidForkPoint: Invalid fork point — message not found or not a user message
 Session: Untitled Session
 SearchQueryRequired: Search query is required
+UpgradeInProgress: Upgrade already in progress
+AlreadyLatestVersion: Already on the latest version

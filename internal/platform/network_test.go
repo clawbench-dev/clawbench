@@ -250,6 +250,23 @@ func TestGetLocalIPs_IPv4BeforeIPv6(t *testing.T) {
 	}
 }
 
+func TestIsChinaMainland_Cached(t *testing.T) {
+	orig := ChinaMirrorChecked.Load()
+	defer ChinaMirrorChecked.Store(orig)
+
+	// Test with cached value = 1 (China)
+	ChinaMirrorChecked.Store(1)
+	if !IsChinaMainland() {
+		t.Error("IsChinaMainland() = false when cached as China, want true")
+	}
+
+	// Test with cached value = 2 (not China)
+	ChinaMirrorChecked.Store(2)
+	if IsChinaMainland() {
+		t.Error("IsChinaMainland() = true when cached as non-China, want false")
+	}
+}
+
 func TestGetLocalIPs_Deduplicates(t *testing.T) {
 	origI, origA := netInterfaces, ifaceAddrs
 	defer func() { netInterfaces = origI; ifaceAddrs = origA }()

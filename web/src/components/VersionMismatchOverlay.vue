@@ -26,7 +26,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppMode } from '@/composables/useAppMode'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { appLog } from '@/utils/appLog'
-import { normalizeVersion, isReleaseVersion } from '@/utils/version'
+import { normalizeVersion, isVersionedBuild, compareVersions, extractBaseVersion } from '@/utils/version'
 
 const STORAGE_KEY = 'clawbench_version_mismatch_skip'
 
@@ -65,15 +65,17 @@ function tryShow() {
     appLog.d('VersionMismatch', 'Skipping: version info not yet available', { appVersion: appVersion.value, serverVersion: serverVersion.value })
     return
   }
-  // Skip check for non-release versions (dev builds, short hashes, pre-releases)
-  if (!isReleaseVersion(normalizedServerVersion.value) || !isReleaseVersion(appVersion.value)) {
-    appLog.d('VersionMismatch', 'Skipping: non-release version', { appVersion: appVersion.value, serverVersion: normalizedServerVersion.value })
+  // Skip check for non-versioned builds (short hashes, "dev", etc.)
+  if (!isVersionedBuild(appVersion.value) || !isVersionedBuild(normalizedServerVersion.value)) {
+    appLog.d('VersionMismatch', 'Skipping: non-versioned build', { appVersion: appVersion.value, serverVersion: normalizedServerVersion.value })
     return
   }
-  if (appVersion.value === normalizedServerVersion.value) return
-  // Check skip preference — only skip if the same normalized server version was previously dismissed
+  // Show only when APK is older than server (needs upgrade)
+  if (compareVersions(appVersion.value, normalizedServerVersion.value) >= 0) return
+  // Check skip preference — only skip if the same base server version was previously dismissed
+  const serverBase = extractBaseVersion(normalizedServerVersion.value)
   const skipped = localStorage.getItem(STORAGE_KEY)
-  if (normalizedServerVersion.value === skipped) return
+  if (serverBase === skipped) return
   visible.value = true
 }
 
@@ -91,7 +93,7 @@ function close() {
 
 /** Close dialog and persist skip preference */
 function skip() {
-  localStorage.setItem(STORAGE_KEY, normalizedServerVersion.value)
+  localStorage.setItem(STORAGE_KEY, extractBaseVersion(normalizedServerVersion.value))
   visible.value = false
 }
 

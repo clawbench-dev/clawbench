@@ -16,6 +16,7 @@ import (
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
 	"clawbench/internal/model"
+	"clawbench/internal/platform"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -143,18 +144,18 @@ func TestAgentPatch_InvalidPreferredModel(t *testing.T) {
 // ── install command preparation tests ──
 
 func TestPrepareInstallCmd_NpmInstallWithChinaMirror(t *testing.T) {
-	orig := chinaMirrorChecked.Load()
-	defer chinaMirrorChecked.Store(orig)
-	chinaMirrorChecked.Store(1)
+	orig := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(orig)
+	platform.ChinaMirrorChecked.Store(1)
 
 	result := prepareInstallCmd("npm install -g @anthropic-ai/claude-code")
 	assert.Contains(t, result, "--registry="+npmMirrorRegistry)
 }
 
 func TestPrepareInstallCmd_NpmInstallWithoutChina(t *testing.T) {
-	orig := chinaMirrorChecked.Load()
-	defer chinaMirrorChecked.Store(orig)
-	chinaMirrorChecked.Store(2)
+	orig := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(orig)
+	platform.ChinaMirrorChecked.Store(2)
 
 	result := prepareInstallCmd("npm install -g @anthropic-ai/claude-code")
 	assert.NotContains(t, result, "--registry=")
@@ -166,9 +167,9 @@ func TestPrepareInstallCmd_NonNpmCommand(t *testing.T) {
 }
 
 func TestPrepareInstallCmd_AlreadyHasRegistry(t *testing.T) {
-	orig := chinaMirrorChecked.Load()
-	defer chinaMirrorChecked.Store(orig)
-	chinaMirrorChecked.Store(1)
+	orig := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(orig)
+	platform.ChinaMirrorChecked.Store(1)
 
 	result := prepareInstallCmd("npm install -g --registry=https://my.local npm-pkg")
 	assert.NotContains(t, result, npmMirrorRegistry)

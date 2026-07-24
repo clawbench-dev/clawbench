@@ -2,8 +2,13 @@ package platform
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net"
+	"net/http"
 	"sort"
+	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -104,3 +109,53 @@ func GetLocalIPs() []string {
 	})
 	return ips
 }
+
+// ChinaMirrorChecked caches the result of IsChinaMainland() to avoid repeated
+// network probes. 0 = not yet checked; 1 = true (China); 2 = false.
+// Exported for test access from handler package.
+var ChinaMirrorChecked atomic.Int32
+
+var chinaProbeClient = &http.Client{
+	Timeout: 3 * time.Second,
+	Transport: &http.Transport{
+		Proxy: nil,
+	},
+}
+
+// IsChinaMainland returns true if the server appears to be running in mainland China.
+// Uses network probe to ip-api.com — country_code == "CN". Result cached.
+func IsChinaMainland() bool {
+	if v := ChinaMirrorChecked.Load(); v != 0 {
+		return v == 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ip-api.com/line/?fields=countryCode", http.NoBody)
+	if err != nil {
+		ChinaMirrorChecked.Store(2)
+		return false
+	}
+	resp, err := chinaProbeClient.Do(req)
+	if err != nil {
+		slog.Debug("china probe failed, assuming non-China", "error", err)
+		ChinaMirrorChecked.Store(2)
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16))
+	if err != nil {
+		ChinaMirrorChecked.Store(2)
+		return false
+	}
+	code := strings.TrimSpace(string(body))
+	isCN := code == "CN"
+	if isCN {
+		ChinaMirrorChecked.Store(1)
+	} else {
+		ChinaMirrorChecked.Store(2)
+	}
+	return isCN
+}
+
+// NpmMirrorRegistry is the China npm mirror URL.
+const NpmMirrorRegistry = "https://registry.npmmirror.com"
