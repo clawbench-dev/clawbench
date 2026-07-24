@@ -252,6 +252,9 @@ func TestCopyFile_SourceNotFound(t *testing.T) {
 }
 
 func TestCopyFile_DestNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only directories behave differently on Windows")
+	}
 	src := t.TempDir()
 	srcPath := filepath.Join(src, "source.txt")
 	require.NoError(t, os.WriteFile(srcPath, []byte("data"), 0o644))
@@ -684,6 +687,9 @@ func TestDownloadAndExtract_CancelledContext(t *testing.T) {
 }
 
 func TestDownloadAndExtract_DestNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only directories behave differently on Windows")
+	}
 	origClient := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = origClient }()
 
@@ -816,6 +822,9 @@ func TestProgressReader_FullRead(t *testing.T) {
 // --- copyFile preserves executable permission ---
 
 func TestCopyFile_PreservesExecutablePermission(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable permission bits not supported on Windows")
+	}
 	src := t.TempDir()
 	dst := t.TempDir()
 
