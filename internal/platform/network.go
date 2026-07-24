@@ -169,7 +169,7 @@ func probeChinaMirror() bool {
 
 // probeChinaDialer is the dialer used by probeChinaMirror.
 // Package-level variable for testability.
-var probeChinaDialer net.Dialer = net.Dialer{}
+var probeChinaDialer = net.Dialer{}
 
 // probeIPApi queries ip-api.com for the country code. Returns true if "CN".
 func probeIPApi() bool {

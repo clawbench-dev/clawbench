@@ -143,7 +143,7 @@ func flagDisplayName(f FlagHelp) string {
 
 // parseOrHelp wraps flag.FlagSet.Parse() to handle --help and usage errors.
 // Returns true if help was printed (caller should os.Exit).
-func parseOrHelp(fs *flag.FlagSet, args []string, info *HelpInfo) bool { //nolint:unparam // return value used by callers via flag state
+func parseOrHelp(fs *flag.FlagSet, args []string, info *HelpInfo) bool {
 	err := fs.Parse(args)
 	if errors.Is(err, flag.ErrHelp) {
 		printHelp(*info)

@@ -102,10 +102,10 @@ func TestRAGMessage_ServerSuccess(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/api/rag/message")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"ok":       true,
-			"message":  "test message content",
-			"id":       42,
-			"role":     "user",
+			"ok":      true,
+			"message": "test message content",
+			"id":      42,
+			"role":    "user",
 		})
 	}))
 	defer server.Close()
@@ -172,10 +172,10 @@ func TestRAGSession_ServerSuccess(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/api/rag/session")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"ok":        true,
+			"ok":         true,
 			"session_id": "test-session-123",
-			"messages":  []any{},
-			"total":     0,
+			"messages":   []any{},
+			"total":      0,
 		})
 	}))
 	defer server.Close()
@@ -190,9 +190,9 @@ func TestRAGSession_PositionalID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"ok":        true,
+			"ok":         true,
 			"session_id": "positional-session",
-			"messages":  []any{},
+			"messages":   []any{},
 		})
 	}))
 	defer server.Close()
@@ -215,7 +215,7 @@ func TestRAGSession_WithProject(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"ok":        true,
+			"ok":         true,
 			"session_id": "session-with-project",
 		})
 	}))
@@ -246,9 +246,9 @@ func TestRAGSearch_ServerSuccess(t *testing.T) {
 		assert.Contains(t, r.URL.Path, "/api/rag/search")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"ok":     true,
+			"ok":      true,
 			"results": []any{},
-			"total":  0,
+			"total":   0,
 		})
 	}))
 	defer server.Close()
@@ -339,8 +339,7 @@ func setupRAGTestConfig(t *testing.T, server *httptest.Server) {
 
 	// Extract port from server URL
 	var port int
-	_, err := parsePortFromURL(server.URL, &port)
-	require.NoError(t, err)
+	parsePortFromURL(server.URL, &port)
 
 	tmpDir := t.TempDir()
 	model.BinDir = tmpDir
@@ -348,7 +347,7 @@ func setupRAGTestConfig(t *testing.T, server *httptest.Server) {
 	model.ConfigInstance = model.Config{Port: port}
 }
 
-func parsePortFromURL(u string, port *int) (bool, error) {
+func parsePortFromURL(u string, port *int) bool {
 	// Simple port extraction from http://127.0.0.1:PORT
 	for i := len(u) - 1; i >= 0; i-- {
 		if u[i] == ':' {
@@ -356,8 +355,8 @@ func parsePortFromURL(u string, port *int) (bool, error) {
 			for j := i + 1; j < len(u); j++ {
 				*port = *port*10 + int(u[j]-'0')
 			}
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
