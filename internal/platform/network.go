@@ -126,6 +126,7 @@ var chinaProbeClient = &http.Client{
 // Uses a multi-strategy approach:
 //  1. Direct connectivity: try TCP connect to npmmirror — if fast, likely in China.
 //  2. Fallback: IP geolocation via ip-api.com — country_code == "CN".
+//
 // Result is cached (ChinaMirrorChecked: 0=unchecked, 1=China, 2=non-China).
 func IsChinaMainland() bool {
 	if v := ChinaMirrorChecked.Load(); v != 0 {
@@ -163,7 +164,7 @@ func probeChinaMirror() bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 

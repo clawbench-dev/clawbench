@@ -240,6 +240,19 @@ export function getAgentThinkingEffortLevels(agentId: string): string[] {
     return agent?.thinkingEffortLevels || []
 }
 
+/** Get thinking effort levels including ACP-reported levels for dual-transport agents. */
+export function getAgentThinkingEffortLevelsIncludingACP(agentId: string): string[] {
+    const agent = agents.value.find(a => a.id === agentId)
+    if (!agent) return []
+    // For ACP-transport agents, prefer ACP-reported levels
+    if (agent.transport === 'acp-stdio') {
+        const state = acpStatesCache[agentId] as AcpState | undefined
+        const acpLevels = state?.thinkingEffortState?.availableLevels?.map(l => l.id)
+        if (acpLevels && acpLevels.length > 0) return acpLevels
+    }
+    return agent.thinkingEffortLevels || []
+}
+
 /** Check if an agent supports @resume (LoadSession + ListSessions capabilities). */
 export function agentCanResume(agentId: string): boolean {
     const state = acpStatesCache[agentId] as AcpState | undefined
@@ -426,6 +439,7 @@ export function useAgents() {
         agentHeaderTitle,
         syncModelFromAgent,
         getAgentThinkingEffortLevels,
+        getAgentThinkingEffortLevelsIncludingACP,
         hasThinkingEffortLevels,
         getEffectiveThinkingEffort,
         getEffectiveModeId,

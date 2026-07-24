@@ -108,3 +108,93 @@ func TestCreateHelpHasExamples(t *testing.T) {
 func TestSearchHelpHasTips(t *testing.T) {
 	assert.True(t, strings.Contains(searchHelp.Footer, "Tips"), "searchHelp footer should contain tips section")
 }
+
+// ---------- parseOrHelp tests ----------
+
+func TestParseOrHelp_ValidFlags(t *testing.T) {
+	fs := flagSet("test")
+	name := fs.String("name", "", "name flag")
+	info := &HelpInfo{Usage: "test [flags]"}
+
+	// Should parse successfully and not exit
+	// parseOrHelp returns true if help was printed, false otherwise.
+	// With valid flags, it returns false.
+	result := parseOrHelp(fs, []string{"--name", "hello"}, info)
+	assert.False(t, result)
+	assert.Equal(t, "hello", *name)
+}
+
+func TestParseOrHelp_HelpFlag(t *testing.T) {
+	// --help/-h triggers flag.ErrHelp which causes os.Exit(0) in parseOrHelp.
+	// We can't easily test os.Exit, so we test the flag.ErrHelp behavior
+	// by calling fs.Parse directly.
+	fs := flagSet("test")
+	err := fs.Parse([]string{"--help"})
+	assert.ErrorIs(t, err, flag.ErrHelp)
+}
+
+func TestParseOrHelp_InvalidFlag(t *testing.T) {
+	// An unrecognized flag causes a parse error.
+	fs := flagSet("test")
+	err := fs.Parse([]string{"--nonexistent"})
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, flag.ErrHelp)
+}
+
+func TestParseOrHelp_EmptyArgs(t *testing.T) {
+	fs := flagSet("test")
+	info := &HelpInfo{Usage: "test [flags]"}
+
+	result := parseOrHelp(fs, []string{}, info)
+	assert.False(t, result)
+}
+
+// ---------- printHelp with subcommands ----------
+
+func TestPrintHelp_WithSubcommands(t *testing.T) {
+	info := HelpInfo{
+		Usage:       "clawbench rag <subcommand> [options]",
+		Description: "RAG operations",
+		Subcommands: []CmdHelp{
+			{Name: "search", Desc: "Search conversations"},
+			{Name: "message", Desc: "Get message detail"},
+		},
+	}
+	assert.NotPanics(t, func() {
+		printHelp(info)
+	})
+}
+
+func TestPrintHelp_MinimalInfo(t *testing.T) {
+	info := HelpInfo{
+		Usage: "clawbench test",
+	}
+	assert.NotPanics(t, func() {
+		printHelp(info)
+	})
+}
+
+func TestPrintHelp_WithExamplesNoFlags(t *testing.T) {
+	info := HelpInfo{
+		Usage:    "clawbench test",
+		Examples: []string{"clawbench test --flag"},
+		Footer:   "Additional info here",
+	}
+	assert.NotPanics(t, func() {
+		printHelp(info)
+	})
+}
+
+// ---------- flagDisplayName edge cases ----------
+
+func TestFlagDisplayName_ShortFlagNoType(t *testing.T) {
+	f := FlagHelp{Name: "verbose", Short: "v", Type: ""}
+	got := flagDisplayName(f)
+	assert.Equal(t, "-v", got)
+}
+
+func TestFlagDisplayName_LongFlagWithType(t *testing.T) {
+	f := FlagHelp{Name: "output", Type: "string"}
+	got := flagDisplayName(f)
+	assert.Equal(t, "--output string", got)
+}

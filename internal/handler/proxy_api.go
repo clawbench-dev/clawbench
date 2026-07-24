@@ -1,4 +1,3 @@
-//nolint:goconst // JSON response field names are domain strings, not config constants
 package handler
 
 import (
@@ -57,7 +56,7 @@ func registerPort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "localPort": localPort})
+	writeJSON(w, http.StatusOK, map[string]any{jsonKeyStatus: "ok", "localPort": localPort})
 }
 
 func updatePort(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +81,7 @@ func updatePort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{jsonKeyStatus: "ok"})
 }
 
 func unregisterPortByQuery(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +97,7 @@ func unregisterPortByQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{jsonKeyStatus: "ok"})
 }
 
 // ServeProxyDetect returns auto-detected listening ports on the server.

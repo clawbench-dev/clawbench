@@ -56,7 +56,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
-const { loadAgents, getAgent, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent } = useAgents()
+const { loadAgents, getAgent, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP } = useAgents()
 
 const activeKey = ref<string | null>(null)
 const commonPrompt = ref('')
@@ -324,7 +324,7 @@ async function handleUpdate(item: AgentItem, value: unknown) {
       const currentPref = a?.preferredThinkingEffort || ''
       if (currentPref) {
         const validLevels = newTransport === 'acp-stdio'
-          ? (a?.thinkingEffortState?.availableLevels?.map(l => l.id) || [])
+          ? getAgentThinkingEffortLevelsIncludingACP(props.agentId)
           : (a?.thinkingEffortLevels || [])
         if (!validLevels.includes(currentPref)) {
           await patchAgentField(props.agentId, 'preferred_thinking_effort', '')

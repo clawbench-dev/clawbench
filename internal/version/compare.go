@@ -29,7 +29,7 @@ func CompareVersions(a, b string) int {
 		maxLen = len(bParts)
 	}
 
-	for i := 0; i < maxLen; i++ {
+	for i := range maxLen {
 		var aNum, bNum int
 		if i < len(aParts) {
 			aNum = parseVersionPart(aParts[i])
@@ -80,14 +80,14 @@ func IsDevBuild(v string) bool {
 // (7+ hex characters, optionally prefixed with 'g').
 func isGitHash(v string) bool {
 	s := v
-	if len(s) > 0 && s[0] == 'g' {
+	if s != "" && s[0] == 'g' {
 		s = s[1:]
 	}
 	if len(s) < 7 {
 		return false
 	}
 	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}

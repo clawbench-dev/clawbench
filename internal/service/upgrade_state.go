@@ -22,14 +22,16 @@ type UpgradeState struct {
 	Phase      UpgradePhase `json:"phase"`
 	CurrentVer string       `json:"current_version"`
 	LatestVer  string       `json:"latest_version"`
-	Progress   int          `json:"progress"`       // 0-100
-	Message    string       `json:"message"`        // human-readable status
-	BackupPath string       `json:"backup_path"`    // populated after backing_up
+	Progress   int          `json:"progress"`    // 0-100
+	Message    string       `json:"message"`     // human-readable status
+	BackupPath string       `json:"backup_path"` // populated after backing_up
 	Error      string       `json:"error,omitempty"`
 }
 
-var upgradeState = &UpgradeState{}
-var upgradeMu sync.RWMutex
+var (
+	upgradeState = &UpgradeState{}
+	upgradeMu    sync.RWMutex
+)
 
 // GetUpgradeState returns a copy of the current upgrade state.
 func GetUpgradeState() UpgradeState {

@@ -25,6 +25,13 @@ import (
 	"clawbench/internal/ws"
 )
 
+// osWindows is used for runtime.GOOS comparison to avoid goconst duplication.
+const osWindows = "windows"
+
+// upgradeHTTPClient is the HTTP client used for upgrade requests.
+// Overridden in tests to point at httptest.NewServer.
+var upgradeHTTPClient = http.DefaultClient
+
 // upgradeShutdownFunc is called to gracefully shut down the server during upgrade.
 var upgradeShutdownFunc func()
 
@@ -119,7 +126,7 @@ func fetchUpgradeInfo() (*UpgradeInfo, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := upgradeHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query registry: %w", err)
 	}
@@ -170,7 +177,7 @@ func CancelUpgrade() {
 	}
 }
 
-func performUpgrade(ctx context.Context) {
+func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is inherently multi-step
 	ResetUpgradeState()
 
 	// 1. Check for upgrade (single registry query)
@@ -204,13 +211,13 @@ func performUpgrade(ctx context.Context) {
 	}
 
 	newBinPath := filepath.Join(tmpDir, "clawbench-new")
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == osWindows {
 		newBinPath += ".exe"
 	}
 
-	if err := downloadAndExtract(ctx, info.TarballURL, info.Integrity, newBinPath); err != nil {
-		os.RemoveAll(tmpDir)
-		SetUpgradeError(fmt.Sprintf("Download/extract failed: %v", err))
+	if downloadErr := downloadAndExtract(ctx, info.TarballURL, info.Integrity, newBinPath); downloadErr != nil {
+		_ = os.RemoveAll(tmpDir)
+		SetUpgradeError(fmt.Sprintf("Download/extract failed: %v", downloadErr))
 		broadcastUpgradeUpdate()
 		return
 	}
@@ -220,7 +227,7 @@ func performUpgrade(ctx context.Context) {
 	slog.Info("upgrade: supervisor check", "isSupervised", isSupervised, "isDocker", isDocker())
 	if isSupervised && isDocker() {
 		SetUpgradeError("Running in Docker — please pull new image: docker pull ghcr.io/xulongzhe/clawbench:latest")
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		broadcastUpgradeUpdate()
 		return
 	}
@@ -231,7 +238,7 @@ func performUpgrade(ctx context.Context) {
 	currentBin, err := os.Executable()
 	if err != nil {
 		SetUpgradeError(fmt.Sprintf("Failed to get current binary path: %v", err))
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		broadcastUpgradeUpdate()
 		return
 	}
@@ -240,11 +247,11 @@ func performUpgrade(ctx context.Context) {
 	backupPath := currentBin + ".bak"
 	if err := copyFile(currentBin, backupPath); err != nil {
 		SetUpgradeError(fmt.Sprintf("Failed to backup binary: %v", err))
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		broadcastUpgradeUpdate()
 		return
 	}
-	os.Chmod(backupPath, 0755)
+	_ = os.Chmod(backupPath, 0o755) //nolint:gosec // G302: backup binary must be executable
 	SetUpgradeBackupPath(backupPath)
 	slog.Info("upgrade: backup created", "path", backupPath)
 
@@ -273,18 +280,18 @@ func performUpgrade(ctx context.Context) {
 
 	slog.Info("upgrade: launching upgrade-replace subprocess", "backup", backupPath, "args", args)
 
-	cmd := exec.Command(backupPath, args...)
+	cmd := exec.CommandContext(context.Background(), backupPath, args...) //nolint:gosec // G702: backupPath is a copy of the current binary created by the upgrade process; noctx: subprocess must outlive the upgrade context
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != osWindows {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 
 	if err := cmd.Start(); err != nil {
 		slog.Error("upgrade: failed to launch upgrade subprocess", "error", err)
 		SetUpgradeError(fmt.Sprintf("Failed to launch upgrade subprocess: %v", err))
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		broadcastUpgradeUpdate()
 		return
 	}
@@ -302,13 +309,13 @@ func performUpgrade(ctx context.Context) {
 
 // downloadAndExtract downloads the npm tarball and extracts the binary.
 // ctx provides timeout and cancellation. integrity is the expected SHA-512 hash.
-func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath string) error {
+func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath string) error { //nolint:gocyclo // download+extract+verify is inherently multi-branch
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tarballURL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := upgradeHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
@@ -341,11 +348,11 @@ func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath str
 	if err != nil {
 		return fmt.Errorf("gzip decompress failed: %w", err)
 	}
-	defer gzr.Close()
+	defer func() { _ = gzr.Close() }()
 
 	tarReader := tar.NewReader(gzr)
 	binName := "clawbench"
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == osWindows {
 		binName = "clawbench.exe"
 	}
 
@@ -362,25 +369,26 @@ func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath str
 
 		// Look for the binary in package/bin/
 		if filepath.Base(header.Name) == binName && strings.Contains(header.Name, "bin/") {
-			outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+			outFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 			if err != nil {
 				return fmt.Errorf("failed to create output file: %w", err)
 			}
-			if _, err := io.Copy(outFile, tarReader); err != nil {
-				outFile.Close()
-				return fmt.Errorf("failed to write binary: %w", err)
+			//nolint:gosec // G110: tarball size verified by integrity hash
+			if _, copyErr := io.Copy(outFile, tarReader); copyErr != nil {
+				_ = outFile.Close()
+				return fmt.Errorf("failed to write binary: %w", copyErr)
 			}
-			outFile.Close()
-			os.Chmod(destPath, 0755)
+			_ = outFile.Close()
+			_ = os.Chmod(destPath, 0o755) //nolint:gosec // G302: binary must be executable
 
 			// Verify integrity if available
 			if hasher != nil && integrity != "" {
 				// Read remaining data to ensure hasher has full tarball content
-				_, _ = io.Copy(io.Discard, gzr)
+				_, _ = io.Copy(io.Discard, gzr) //nolint:gosec // G110: integrity hash validates tarball
 
-				if err := verifyIntegrity(hasher, integrity); err != nil {
-					os.Remove(destPath)
-					return fmt.Errorf("integrity verification failed: %w", err)
+				if verifyErr := verifyIntegrity(hasher, integrity); verifyErr != nil {
+					_ = os.Remove(destPath)
+					return fmt.Errorf("integrity verification failed: %w", verifyErr)
 				}
 				slog.Info("upgrade: integrity verified", "algorithm", "sha512")
 			}
@@ -458,16 +466,16 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
-	if _, err := io.Copy(out, in); err != nil {
-		return err
+	if _, copyErr := io.Copy(out, in); copyErr != nil {
+		return copyErr
 	}
 
 	info, err := os.Stat(src)

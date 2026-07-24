@@ -7,6 +7,19 @@ import (
 	"clawbench/internal/version"
 )
 
+// upgradeStatusStarted is the value of the "status" key in the upgrade start response.
+const upgradeStatusStarted = "started"
+
+// Package-level function variables for testability.
+var (
+	upgradeCheckForUpgrade = service.CheckForUpgrade
+	upgradeIsInProgress    = service.IsUpgradeInProgress
+	upgradePerformUpgrade  = service.PerformUpgrade
+	upgradeGetUpgradeState = service.GetUpgradeState
+	upgradeCompareVersions = version.CompareVersions
+	upgradeIsDevBuild      = version.IsDevBuild
+)
+
 // ServeUpgradeCheck handles GET /api/upgrade/check
 // Returns current version, latest version, and whether an upgrade is available.
 func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
@@ -14,13 +27,13 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	currentVer, latestVer, err := service.CheckForUpgrade()
+	currentVer, latestVer, err := upgradeCheckForUpgrade()
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 
-	hasUpgrade := version.CompareVersions(currentVer, latestVer) < 0 || version.IsDevBuild(currentVer)
+	hasUpgrade := upgradeCompareVersions(currentVer, latestVer) < 0 || upgradeIsDevBuild(currentVer)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"current_version": currentVer,
@@ -38,15 +51,15 @@ func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if service.IsUpgradeInProgress() {
+	if upgradeIsInProgress() {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "UpgradeInProgress")
 		return
 	}
 
-	service.PerformUpgrade()
+	upgradePerformUpgrade()
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "started",
+		jsonKeyStatus: upgradeStatusStarted,
 	})
 }
 
@@ -57,6 +70,6 @@ func ServeUpgradeStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := service.GetUpgradeState()
+	state := upgradeGetUpgradeState()
 	writeJSON(w, http.StatusOK, state)
 }

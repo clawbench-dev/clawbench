@@ -967,7 +967,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// upgradeShutdownFunc: just graceful shutdown, no sentinel.
 	// The upgrade-replace subprocess handles restarting after replacing the binary.
 	service.SetUpgradeShutdownFunc(selfSignalInterrupt)
-	service.SetUpgradeIsSupervised(func() bool { return handler.IsRunningUnderSupervisor() })
+	service.SetUpgradeIsSupervised(handler.IsRunningUnderSupervisor)
 
 	// Clean up stale temp directories from previous upgrade attempts
 	service.CleanStaleUpgradeTempDirs()

@@ -1448,7 +1448,7 @@ func ServeConfigRestart(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "restarting",
+		jsonKeyStatus: "restarting",
 	})
 }
 

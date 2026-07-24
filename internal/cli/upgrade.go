@@ -18,7 +18,7 @@ import (
 // 3. Replaces the target binary with the new one
 // 4. Starts the new binary with the original arguments
 // 5. Cleans up temp directory
-func RunUpgradeReplaceCommand(args []string) int {
+func RunUpgradeReplaceCommand(args []string) int { //nolint:gocyclo,gocognit // upgrade-replace is inherently multi-step
 	var newBinPath, targetPath, tmpDir string
 	var serverArgs []string
 
@@ -85,12 +85,12 @@ func RunUpgradeReplaceCommand(args []string) int {
 	slog.Info("upgrade-replace: parent is dead, proceeding with replacement")
 
 	// 3. Verify new binary exists and is executable
-	if info, err := os.Stat(newBinPath); err != nil {
+	info, err := os.Stat(newBinPath)
+	if err != nil {
 		slog.Error("upgrade-replace: new binary not found", "path", newBinPath, "error", err)
 		return 1
-	} else {
-		slog.Info("upgrade-replace: new binary found", "path", newBinPath, "size", info.Size(), "mode", info.Mode())
 	}
+	slog.Info("upgrade-replace: new binary found", "path", newBinPath, "size", info.Size(), "mode", info.Mode())
 
 	// 4. Replace binary
 	slog.Info("upgrade-replace: replacing binary", "new", newBinPath, "target", targetPath)
@@ -113,7 +113,9 @@ func RunUpgradeReplaceCommand(args []string) int {
 				return 1
 			}
 		}
-		os.Chmod(targetPath, 0755)
+		if err := os.Chmod(targetPath, 0o755); err != nil { //nolint:gosec // G302: binary must be executable
+			slog.Warn("upgrade-replace: failed to chmod target", "path", targetPath, "error", err)
+		}
 	}
 
 	slog.Info("upgrade-replace: binary replaced successfully")
@@ -171,16 +173,16 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
-	if _, err := out.ReadFrom(in); err != nil {
-		return err
+	if _, copyErr := out.ReadFrom(in); copyErr != nil {
+		return copyErr
 	}
 
 	info, err := os.Stat(src)
