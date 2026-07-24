@@ -4,8 +4,11 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,15 +20,12 @@ import (
 	"syscall"
 	"time"
 
-	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/version"
 	"clawbench/internal/ws"
 )
 
 // upgradeShutdownFunc is called to gracefully shut down the server during upgrade.
-// Unlike upgradeRestartFunc, this does NOT launch a sentinel process — the
-// upgrade-replace subprocess handles restarting after replacing the binary.
 var upgradeShutdownFunc func()
 
 // SetUpgradeShutdownFunc sets the function called to gracefully shut down during upgrade.
@@ -34,13 +34,15 @@ func SetUpgradeShutdownFunc(f func()) {
 }
 
 // upgradeIsSupervised reports whether the process is running under a supervisor.
-// Set by main.go via SetUpgradeIsSupervised().
 var upgradeIsSupervised func() bool
 
 // SetUpgradeIsSupervised sets the function that reports supervisor status.
 func SetUpgradeIsSupervised(f func() bool) {
 	upgradeIsSupervised = f
 }
+
+// upgradeCancel is the cancellation function for the current upgrade goroutine.
+var upgradeCancel context.CancelFunc
 
 // npmPlatformPkg maps runtime.GOOS/runtime.GOARCH to the npm platform package name.
 var npmPlatformPkg = map[string]string{
@@ -55,8 +57,19 @@ var npmPlatformPkg = map[string]string{
 type npmRegistryResponse struct {
 	Version string `json:"version"`
 	Dist    struct {
-		Tarball string `json:"tarball"`
+		Tarball   string `json:"tarball"`
+		Integrity string `json:"integrity"`
+		Shasum    string `json:"shasum"`
 	} `json:"dist"`
+}
+
+// UpgradeInfo holds the result of a single registry query.
+type UpgradeInfo struct {
+	CurrentVersion string
+	LatestVersion  string
+	TarballURL     string
+	Integrity      string // e.g. "sha512-abcdef..."
+	HasUpgrade     bool
 }
 
 // getPlatformPkg returns the npm platform package name for the current OS/arch.
@@ -80,10 +93,19 @@ func getRegistryBase() string {
 // CheckForUpgrade queries the npm registry for the latest version.
 // Returns (currentVersion, latestVersion, error).
 func CheckForUpgrade() (string, string, error) {
+	info, err := fetchUpgradeInfo()
+	if err != nil {
+		return version.Get(), "", err
+	}
+	return info.CurrentVersion, info.LatestVersion, nil
+}
+
+// fetchUpgradeInfo queries the npm registry once and returns all upgrade info.
+func fetchUpgradeInfo() (*UpgradeInfo, error) {
 	currentVer := version.Get()
 	pkg, err := getPlatformPkg()
 	if err != nil {
-		return currentVer, "", err
+		return nil, err
 	}
 
 	registryBase := getRegistryBase()
@@ -94,69 +116,85 @@ func CheckForUpgrade() (string, string, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return currentVer, "", fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return currentVer, "", fmt.Errorf("failed to query registry: %w", err)
+		return nil, fmt.Errorf("failed to query registry: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return currentVer, "", fmt.Errorf("registry returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("registry returned status %d", resp.StatusCode)
 	}
 
 	var npmResp npmRegistryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&npmResp); err != nil {
-		return currentVer, "", fmt.Errorf("failed to decode registry response: %w", err)
+		return nil, fmt.Errorf("failed to decode registry response: %w", err)
 	}
 
-	return currentVer, npmResp.Version, nil
+	tarballURL := npmResp.Dist.Tarball
+	if tarballURL == "" {
+		return nil, fmt.Errorf("no tarball URL in registry response")
+	}
+
+	// If using npmmirror, rewrite tarball URL to npmmirror CDN
+	if strings.HasPrefix(registryBase, "https://registry.npmmirror.com") {
+		tarballURL = strings.Replace(tarballURL,
+			"https://registry.npmjs.org", "https://registry.npmmirror.com", 1)
+	}
+
+	hasUpgrade := version.CompareVersions(currentVer, npmResp.Version) < 0 || version.IsDevBuild(currentVer)
+
+	return &UpgradeInfo{
+		CurrentVersion: currentVer,
+		LatestVersion:  npmResp.Version,
+		TarballURL:     tarballURL,
+		Integrity:      npmResp.Dist.Integrity,
+		HasUpgrade:     hasUpgrade,
+	}, nil
 }
 
 // PerformUpgrade executes the full upgrade flow in a background goroutine.
 func PerformUpgrade() {
-	go performUpgrade()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	upgradeCancel = cancel
+	go performUpgrade(ctx)
 }
 
-func performUpgrade() {
+// CancelUpgrade cancels the current upgrade process.
+func CancelUpgrade() {
+	if upgradeCancel != nil {
+		upgradeCancel()
+	}
+}
+
+func performUpgrade(ctx context.Context) {
 	ResetUpgradeState()
 
-	// 1. Check for upgrade
-	SetUpgradeState(UpgradePhaseChecking, 0, "Checking for updates...")
-	broadcastUpgradeUpdate()
+	// 1. Check for upgrade (single registry query)
+	setStateAndBroadcast(UpgradePhaseChecking, 0, "Checking for updates...")
 
-	currentVer, latestVer, err := CheckForUpgrade()
+	info, err := fetchUpgradeInfo()
 	if err != nil {
 		slog.Error("upgrade: version check failed", "error", err)
 		SetUpgradeError(fmt.Sprintf("Failed to check version: %v", err))
 		broadcastUpgradeUpdate()
 		return
 	}
-	SetUpgradeVersions(currentVer, latestVer)
-	slog.Info("upgrade: version check", "current", currentVer, "latest", latestVer,
-		"compare", version.CompareVersions(currentVer, latestVer), "isDev", version.IsDevBuild(currentVer))
+	SetUpgradeVersions(info.CurrentVersion, info.LatestVersion)
+	slog.Info("upgrade: version check", "current", info.CurrentVersion, "latest", info.LatestVersion,
+		"compare", version.CompareVersions(info.CurrentVersion, info.LatestVersion), "isDev", version.IsDevBuild(info.CurrentVersion))
 
-	if version.CompareVersions(currentVer, latestVer) >= 0 && !version.IsDevBuild(currentVer) {
+	if !info.HasUpgrade {
 		SetUpgradeError("Already on the latest version")
 		broadcastUpgradeUpdate()
 		return
 	}
 
-	// 2. Get tarball URL
-	pkg, _ := getPlatformPkg()
-	registryBase := getRegistryBase()
-	tarballURL, err := getTarballURL(registryBase, pkg, latestVer)
-	if err != nil {
-		SetUpgradeError(fmt.Sprintf("Failed to get tarball URL: %v", err))
-		broadcastUpgradeUpdate()
-		return
-	}
-
-	// 3. Download and extract
-	SetUpgradeState(UpgradePhaseDownloading, 0, "Downloading...")
-	broadcastUpgradeUpdate()
+	// 2. Download and extract (with timeout from ctx)
+	setStateAndBroadcast(UpgradePhaseDownloading, 0, "Downloading...")
 
 	tmpDir, err := os.MkdirTemp("", "clawbench-upgrade-*")
 	if err != nil {
@@ -170,14 +208,14 @@ func performUpgrade() {
 		newBinPath += ".exe"
 	}
 
-	if err := downloadAndExtract(tarballURL, newBinPath); err != nil {
+	if err := downloadAndExtract(ctx, info.TarballURL, info.Integrity, newBinPath); err != nil {
 		os.RemoveAll(tmpDir)
 		SetUpgradeError(fmt.Sprintf("Download/extract failed: %v", err))
 		broadcastUpgradeUpdate()
 		return
 	}
 
-	// 4. Supervisor check — Docker refuses self-replace
+	// 3. Supervisor check — Docker refuses self-replace
 	isSupervised := upgradeIsSupervised != nil && upgradeIsSupervised()
 	slog.Info("upgrade: supervisor check", "isSupervised", isSupervised, "isDocker", isDocker())
 	if isSupervised && isDocker() {
@@ -187,12 +225,8 @@ func performUpgrade() {
 		return
 	}
 
-	// 5. Backup and launch upgrade-replace subprocess (works for both supervised and non-supervised)
-	// For systemd: upgrade-replace kills parent, replaces binary, starts new — systemd will
-	// also try to restart but upgrade-replace already started the new process.
-	// For non-supervised (including false positives where ppid==1): same approach.
-	SetUpgradeState(UpgradePhaseBackingUp, 80, "Backing up current binary...")
-	broadcastUpgradeUpdate()
+	// 4. Backup and launch upgrade-replace subprocess
+	setStateAndBroadcast(UpgradePhaseBackingUp, 80, "Backing up current binary...")
 
 	currentBin, err := os.Executable()
 	if err != nil {
@@ -214,20 +248,26 @@ func performUpgrade() {
 	SetUpgradeBackupPath(backupPath)
 	slog.Info("upgrade: backup created", "path", backupPath)
 
-	SetUpgradeState(UpgradePhaseReplacing, 90, "Replacing binary...")
-	broadcastUpgradeUpdate()
+	setStateAndBroadcast(UpgradePhaseReplacing, 90, "Replacing binary...")
 
 	// Launch .bak with upgrade-replace subcommand
 	args := []string{
 		"upgrade-replace",
 		"--new-bin", newBinPath,
 		"--target", currentBin,
-		"--data-dir", model.DataDir,
+		"--tmp-dir", tmpDir,
 	}
-	// Pass through --port if set
-	for i, arg := range os.Args[1:] {
-		if arg == "--port" && i+1 < len(os.Args[1:]) {
-			args = append(args, "--port", os.Args[i+2])
+	// Pass through all original server flags (skip subcommands)
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		if arg == "--data-dir" || arg == "--port" || arg == "--host" {
+			args = append(args, arg)
+			if i+1 < len(os.Args) {
+				i++
+				args = append(args, os.Args[i])
+			}
+		} else if strings.HasPrefix(arg, "--data-dir=") || strings.HasPrefix(arg, "--port=") || strings.HasPrefix(arg, "--host=") {
+			args = append(args, arg)
 		}
 	}
 
@@ -251,8 +291,7 @@ func performUpgrade() {
 
 	slog.Info("upgrade: upgrade-replace subprocess started", "pid", cmd.Process.Pid)
 
-	SetUpgradeState(UpgradePhaseRestarting, 95, "Restarting...")
-	broadcastUpgradeUpdate()
+	setStateAndBroadcast(UpgradePhaseRestarting, 95, "Restarting...")
 
 	// Gracefully shut down current process (no sentinel — upgrade-replace handles restart)
 	slog.Info("upgrade: triggering shutdown (no sentinel)")
@@ -261,48 +300,15 @@ func performUpgrade() {
 	}
 }
 
-// getTarballURL queries the registry for the tarball download URL.
-func getTarballURL(registryBase, pkg, ver string) (string, error) {
-	url := fmt.Sprintf("%s/%s/latest", registryBase, pkg)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+// downloadAndExtract downloads the npm tarball and extracts the binary.
+// ctx provides timeout and cancellation. integrity is the expected SHA-512 hash.
+func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tarballURL, http.NoBody)
 	if err != nil {
-		return "", err
+		return fmt.Errorf("failed to create download request: %w", err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("registry returned status %d", resp.StatusCode)
-	}
-
-	var npmResp npmRegistryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&npmResp); err != nil {
-		return "", err
-	}
-
-	if npmResp.Dist.Tarball == "" {
-		return "", fmt.Errorf("no tarball URL in registry response")
-	}
-
-	// If using npmmirror, rewrite tarball URL to npmmirror CDN
-	if strings.HasPrefix(registryBase, "https://registry.npmmirror.com") {
-		npmResp.Dist.Tarball = strings.Replace(npmResp.Dist.Tarball,
-			"https://registry.npmjs.org", "https://registry.npmmirror.com", 1)
-	}
-
-	return npmResp.Dist.Tarball, nil
-}
-
-// downloadAndExtract downloads the npm tarball and extracts the binary.
-func downloadAndExtract(tarballURL, destPath string) error {
-	resp, err := http.Get(tarballURL) //nolint:gosec // URL from npm registry
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
@@ -312,15 +318,22 @@ func downloadAndExtract(tarballURL, destPath string) error {
 		return fmt.Errorf("download returned status %d", resp.StatusCode)
 	}
 
-	// Wrap body with progress reader
+	// If integrity is provided, wrap with hashing reader for verification
+	var bodyReader io.Reader = resp.Body
+	var hasher hash.Hash
+	if integrity != "" {
+		hasher = sha512.New()
+		bodyReader = io.TeeReader(resp.Body, hasher)
+	}
+
+	// Wrap body with progress reader (throttled)
 	totalSize := resp.ContentLength
 	progressReader := &progressReader{
-		reader: resp.Body,
+		reader: bodyReader,
 		total:  totalSize,
-		onProgress: func(progress int) {
-			SetUpgradeState(UpgradePhaseDownloading, progress*70/100, "Downloading...")
-			broadcastUpgradeUpdate()
-		},
+		onProgress: throttledProgress(func(progress int) {
+			setStateAndBroadcast(UpgradePhaseDownloading, progress*70/100, "Downloading...")
+		}),
 	}
 
 	// Extract binary from .tgz
@@ -336,8 +349,7 @@ func downloadAndExtract(tarballURL, destPath string) error {
 		binName = "clawbench.exe"
 	}
 
-	SetUpgradeState(UpgradePhaseExtracting, 70, "Extracting...")
-	broadcastUpgradeUpdate()
+	setStateAndBroadcast(UpgradePhaseExtracting, 70, "Extracting...")
 
 	for {
 		header, err := tarReader.Next()
@@ -360,11 +372,73 @@ func downloadAndExtract(tarballURL, destPath string) error {
 			}
 			outFile.Close()
 			os.Chmod(destPath, 0755)
+
+			// Verify integrity if available
+			if hasher != nil && integrity != "" {
+				// Read remaining data to ensure hasher has full tarball content
+				_, _ = io.Copy(io.Discard, gzr)
+
+				if err := verifyIntegrity(hasher, integrity); err != nil {
+					os.Remove(destPath)
+					return fmt.Errorf("integrity verification failed: %w", err)
+				}
+				slog.Info("upgrade: integrity verified", "algorithm", "sha512")
+			}
+
 			return nil
 		}
 	}
 
 	return fmt.Errorf("binary '%s' not found in tarball", binName)
+}
+
+// verifyIntegrity checks the downloaded tarball against the npm integrity string.
+// The integrity string format is "sha512-<base64-hash>".
+func verifyIntegrity(hasher hash.Hash, integrity string) error {
+	if !strings.HasPrefix(integrity, "sha512-") {
+		slog.Warn("upgrade: unsupported integrity algorithm, skipping verification", "integrity", integrity[:min(20, len(integrity))])
+		return nil
+	}
+	expectedB64 := strings.TrimPrefix(integrity, "sha512-")
+	expectedHash, err := base64.StdEncoding.DecodeString(expectedB64)
+	if err != nil {
+		return fmt.Errorf("failed to decode integrity hash: %w", err)
+	}
+	actualHash := hasher.Sum(nil)
+	if !equalHashes(actualHash, expectedHash) {
+		return fmt.Errorf("hash mismatch: expected %x, got %x", expectedHash[:8], actualHash[:8])
+	}
+	return nil
+}
+
+func equalHashes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var result byte
+	for i := range a {
+		result |= a[i] ^ b[i]
+	}
+	return result == 0
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// throttledProgress wraps an onProgress callback to only call it when the
+// percentage actually changes, preventing excessive WS broadcasts.
+func throttledProgress(fn func(int)) func(int) {
+	var lastPercent int
+	return func(p int) {
+		if p != lastPercent {
+			lastPercent = p
+			fn(p)
+		}
+	}
 }
 
 // progressReader wraps an io.Reader to report download progress.
@@ -410,20 +484,6 @@ func copyFile(src, dst string) error {
 	return os.Chmod(dst, info.Mode())
 }
 
-// replaceBinary replaces the target binary with the new one.
-func replaceBinary(newBin, target string) error {
-	// Try rename first (works on same filesystem)
-	if err := os.Rename(newBin, target); err != nil {
-		slog.Warn("upgrade: rename failed, falling back to copy", "error", err)
-		// Fallback: copy content
-		if err := copyFile(newBin, target); err != nil {
-			return fmt.Errorf("copy fallback failed: %w", err)
-		}
-	}
-	os.Chmod(target, 0755)
-	return nil
-}
-
 // isDocker checks if running inside a Docker container.
 func isDocker() bool {
 	if os.Getenv("container") != "" {
@@ -433,6 +493,12 @@ func isDocker() bool {
 		return true
 	}
 	return false
+}
+
+// setStateAndBroadcast sets upgrade state and broadcasts it via WS.
+func setStateAndBroadcast(phase UpgradePhase, progress int, message string) {
+	SetUpgradeState(phase, progress, message)
+	broadcastUpgradeUpdate()
 }
 
 // broadcastUpgradeUpdate sends the current upgrade state via WS.
@@ -447,4 +513,26 @@ func broadcastUpgradeUpdate() {
 		Event: "upgrade_update",
 		Data:  state,
 	})
+}
+
+// CleanStaleUpgradeTempDirs removes leftover temp directories from previous
+// upgrade attempts. Should be called on server startup.
+func CleanStaleUpgradeTempDirs() {
+	pattern := filepath.Join(os.TempDir(), "clawbench-upgrade-*")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return
+	}
+	for _, dir := range matches {
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// Only clean up directories older than 1 hour (avoid removing active upgrade)
+		if time.Since(info.ModTime()) > time.Hour {
+			if err := os.RemoveAll(dir); err == nil {
+				slog.Info("upgrade: cleaned stale temp dir", "path", dir)
+			}
+		}
+	}
 }

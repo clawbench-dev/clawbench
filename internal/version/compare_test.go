@@ -62,10 +62,15 @@ func TestIsDevBuild(t *testing.T) {
 		{"v0.66.0", false},
 		{"1.0.0", false},
 		{"dev", true},
-		{"g7702c4", true},
-		{"abcdef1", true},
+		{"g7702c47", true},
+		{"abcdef1", true},   // 7 hex chars
+		{"0", false},        // too short for git hash, no dots
+		{"123", false},      // too short
+		{"abc", false},      // too short
 		{"v0.66.0-5-gabc (2026-07-24 10:30:00)", true},
 		{"v1.0.0 (2026-07-24 10:30:00)", false},
+		{"g7702c473def", true}, // 12 hex chars with g prefix
+		{"release-1.0", true},  // has pre-release suffix
 	}
 
 	for _, tt := range tests {

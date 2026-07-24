@@ -31,6 +31,8 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 
 // ServeUpgradeStart handles POST /api/upgrade/start
 // Initiates the upgrade process. Returns error if already in progress.
+// Note: version verification is done inside PerformUpgrade(), so we don't
+// re-query the registry here (avoids TOCTOU race and redundant latency).
 func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -38,18 +40,6 @@ func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 
 	if service.IsUpgradeInProgress() {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "UpgradeInProgress")
-		return
-	}
-
-	// Verify upgrade is available
-	currentVer, latestVer, err := service.CheckForUpgrade()
-	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-		return
-	}
-
-	if version.CompareVersions(currentVer, latestVer) >= 0 && !version.IsDevBuild(currentVer) {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "AlreadyLatestVersion")
 		return
 	}
 

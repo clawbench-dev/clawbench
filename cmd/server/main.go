@@ -969,6 +969,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	service.SetUpgradeShutdownFunc(selfSignalInterrupt)
 	service.SetUpgradeIsSupervised(func() bool { return handler.IsRunningUnderSupervisor() })
 
+	// Clean up stale temp directories from previous upgrade attempts
+	service.CleanStaleUpgradeTempDirs()
+
 	// Wire up the hot-reload reconfigure function for config PATCH.
 	// Called by applyHotReloadGlobals() after each successful patch.
 	handler.SetReconfigureFunc(func() { hotReloadReconfigure(port) })

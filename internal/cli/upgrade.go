@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"syscall"
+	"strings"
 	"time"
 )
 
@@ -17,9 +17,10 @@ import (
 // 2. Waits for parent to die
 // 3. Replaces the target binary with the new one
 // 4. Starts the new binary with the original arguments
+// 5. Cleans up temp directory
 func RunUpgradeReplaceCommand(args []string) int {
-	var newBinPath, targetPath, dataDir string
-	var port string
+	var newBinPath, targetPath, tmpDir string
+	var serverArgs []string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -33,15 +34,22 @@ func RunUpgradeReplaceCommand(args []string) int {
 				targetPath = args[i+1]
 				i++
 			}
-		case "--data-dir":
+		case "--tmp-dir":
 			if i+1 < len(args) {
-				dataDir = args[i+1]
+				tmpDir = args[i+1]
 				i++
 			}
-		case "--port":
+		case "--data-dir", "--port", "--host":
+			// Pass through server flags
+			serverArgs = append(serverArgs, args[i])
 			if i+1 < len(args) {
-				port = args[i+1]
 				i++
+				serverArgs = append(serverArgs, args[i])
+			}
+		default:
+			// Pass through --flag=value style args
+			if startsWithServerFlag(args[i]) {
+				serverArgs = append(serverArgs, args[i])
 			}
 		}
 	}
@@ -53,14 +61,13 @@ func RunUpgradeReplaceCommand(args []string) int {
 
 	parentPID := os.Getppid()
 	slog.Info("upgrade-replace: starting", "parent_pid", parentPID, "new_bin", newBinPath, "target", targetPath,
-		"data_dir", dataDir, "port", port)
+		"tmp_dir", tmpDir, "server_args", serverArgs)
 
 	// 1. Kill parent process
 	if runtime.GOOS == "windows" {
-		cmd := exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", parentPID))
-		_ = cmd.Run()
+		killProcessForce(parentPID)
 	} else {
-		_ = syscall.Kill(parentPID, syscall.SIGKILL)
+		killProcessForce(parentPID)
 	}
 
 	// 2. Wait for parent to die (up to 30 seconds)
@@ -75,9 +82,7 @@ func RunUpgradeReplaceCommand(args []string) int {
 
 	if processAlive(parentPID) {
 		slog.Warn("upgrade-replace: parent still alive after timeout, forcing kill")
-		if runtime.GOOS != "windows" {
-			_ = syscall.Kill(parentPID, syscall.SIGKILL)
-		}
+		killProcessForce(parentPID)
 		time.Sleep(500 * time.Millisecond)
 	}
 
@@ -91,7 +96,7 @@ func RunUpgradeReplaceCommand(args []string) int {
 		slog.Info("upgrade-replace: new binary found", "path", newBinPath, "size", info.Size(), "mode", info.Mode())
 	}
 
-	// 3. Replace binary
+	// 4. Replace binary
 	slog.Info("upgrade-replace: replacing binary", "new", newBinPath, "target", targetPath)
 
 	if runtime.GOOS == "windows" {
@@ -117,28 +122,27 @@ func RunUpgradeReplaceCommand(args []string) int {
 
 	slog.Info("upgrade-replace: binary replaced successfully")
 
-	// 4. Wait for port to be released
+	// 5. Clean up temp directory
+	if tmpDir != "" {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			slog.Warn("upgrade-replace: failed to clean temp dir", "path", tmpDir, "error", err)
+		} else {
+			slog.Info("upgrade-replace: temp dir cleaned", "path", tmpDir)
+		}
+	}
+
+	// 6. Wait for port to be released
 	slog.Info("upgrade-replace: waiting for port to be released...")
 	time.Sleep(2 * time.Second)
 
-	// 5. Start new binary
-	startArgs := []string{}
-	if dataDir != "" {
-		startArgs = append(startArgs, "--data-dir", dataDir)
-	}
-	if port != "" {
-		startArgs = append(startArgs, "--port", port)
-	}
+	// 7. Start new binary with original server flags
+	slog.Info("upgrade-replace: starting new binary", "target", targetPath, "args", serverArgs)
 
-	slog.Info("upgrade-replace: starting new binary", "target", targetPath, "args", startArgs)
-
-	cmd := exec.Command(targetPath, startArgs...)
+	cmd := exec.Command(targetPath, serverArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	setNewProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
 		slog.Error("upgrade-replace: failed to start new binary", "error", err)
@@ -159,12 +163,11 @@ func RunUpgradeReplaceCommand(args []string) int {
 	return 0
 }
 
-func processAlive(pid int) bool {
-	if runtime.GOOS == "windows" {
-		_, err := os.FindProcess(pid)
-		return err == nil
-	}
-	return syscall.Kill(pid, 0) == nil
+// startsWithServerFlag checks if an arg is a server flag that should be passed through.
+func startsWithServerFlag(arg string) bool {
+	return strings.HasPrefix(arg, "--data-dir=") ||
+		strings.HasPrefix(arg, "--port=") ||
+		strings.HasPrefix(arg, "--host=")
 }
 
 func copyFile(src, dst string) error {

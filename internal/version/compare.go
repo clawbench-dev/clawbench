@@ -59,7 +59,7 @@ func CompareVersions(a, b string) int {
 }
 
 // IsDevBuild returns true if the version string indicates a development build
-// (has a pre-release suffix like "-5-gabc" or is a short VCS hash / "dev").
+// (has a pre-release suffix like "-5-gabc" or is a short git VCS hash / "dev").
 func IsDevBuild(v string) bool {
 	v = strings.TrimPrefix(v, "v")
 	if idx := strings.Index(v, " ("); idx >= 0 {
@@ -68,11 +68,30 @@ func IsDevBuild(v string) bool {
 	if v == "dev" {
 		return true
 	}
-	if len(v) <= 7 && !strings.Contains(v, ".") {
-		return true // short VCS hash like "g7702c47"
+	// Git short hash format: 7+ hex chars, optionally prefixed with 'g'
+	if isGitHash(v) {
+		return true
 	}
 	_, pre := splitPreRelease(v)
 	return pre != ""
+}
+
+// isGitHash checks if the string looks like a git VCS short hash
+// (7+ hex characters, optionally prefixed with 'g').
+func isGitHash(v string) bool {
+	s := v
+	if len(s) > 0 && s[0] == 'g' {
+		s = s[1:]
+	}
+	if len(s) < 7 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 // splitPreRelease splits a version string into core and pre-release parts.
