@@ -91,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onBeforeUpdate, onBeforeUnmount, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUpdate, onBeforeUnmount, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Search, ChevronLeft, User, Bot, RotateCcw, MessageSquare } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -112,7 +112,7 @@ const { state: searchState, setQuery, clear } = useSessionSearch()
 const search = { state: searchState, setQuery, clear }
 
 const selectedSession = ref<SessionSearchResult | null>(null)
-const inputRef = ref(null)
+const inputRef = ref<InstanceType<typeof SearchInput> | null>(null)
 
 // ── Search mode selector ──
 function setMode(mode: 'hybrid' | 'fts') {
@@ -139,8 +139,9 @@ onUnmounted(unregisterBack)
 
 // ── Chunk DOM refs for highlight application ──
 const chunkRefs = new Map<number, HTMLElement>()
-function setChunkRef(id: number, el: HTMLElement | null) {
-  if (el) chunkRefs.set(id, el)
+function setChunkRef(id: number, el: Element | ComponentPublicInstance | null) {
+  const htmlEl = el instanceof HTMLElement ? el : null
+  if (htmlEl) chunkRefs.set(id, htmlEl)
   else chunkRefs.delete(id)
 }
 onBeforeUpdate(() => chunkRefs.clear())

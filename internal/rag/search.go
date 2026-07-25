@@ -246,7 +246,7 @@ type SessionSearchResponse struct {
 // RAGSessionSearch performs RAG search and aggregates results by session.
 // It fetches an expanded pool of chunks, groups by session_id with a per-session
 // chunk cap, and returns up to searchLimit sessions sorted by best chunk score.
-func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, params SearchParams, searchLimit int, searchPoolSize int) (*SessionSearchResponse, error) { //nolint:gocyclo
+func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, params SearchParams, searchLimit int, searchPoolSize int) (*SessionSearchResponse, error) {
 	if store == nil {
 		return nil, fmt.Errorf("RAG not initialized: store is nil")
 	}

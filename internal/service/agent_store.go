@@ -229,7 +229,7 @@ type AgentPatch struct {
 
 // PatchAgentFields updates only the non-nil fields in the AgentPatch struct.
 // Returns nil even if the agent doesn't exist (no rows affected).
-func PatchAgentFields(id string, patch AgentPatch) error { //nolint:gocyclo // multi-field dynamic patch builder
+func PatchAgentFields(id string, patch AgentPatch) error {
 	// Build dynamic SET clause
 	setClauses := []string{}
 	args := []any{}
