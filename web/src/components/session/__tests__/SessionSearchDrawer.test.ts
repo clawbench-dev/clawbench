@@ -19,6 +19,8 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.roleAssistant': 'Assistant',
       'sessionSearch.resume': 'Resume Session',
       'sessionSearch.openSession': 'Open',
+      'sessionSearch.modeHybrid': 'Hybrid',
+      'sessionSearch.modeFts': 'Full-text',
     }
     return map[key] ?? key
   }}),
@@ -88,7 +90,7 @@ function createState(overrides = {}) {
     loading: false,
     error: null as string | null,
     searchMode: '',
-    ragAvailable: null as boolean | null,
+    preferMode: 'hybrid' as const,
     ...overrides,
   }
 }
@@ -276,5 +278,32 @@ describe('SessionSearchDrawer', () => {
     const bs = wrapper.findComponent({ name: 'BottomSheet' })
     await bs.vm.$emit('close')
     expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('renders mode selector with hybrid active by default', () => {
+    const wrapper = mountDrawer()
+    const buttons = wrapper.findAll('.mode-btn')
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0].classes()).toContain('active')
+    expect(buttons[0].text()).toBe('Hybrid')
+    expect(buttons[1].text()).toBe('Full-text')
+  })
+
+  it('switches to FTS mode and re-searches when clicking FTS button', async () => {
+    const state = createState({ query: 'test' })
+    mockSearchState.mockReturnValue(state)
+    const wrapper = mountDrawer()
+    const ftsBtn = wrapper.findAll('.mode-btn')[1]
+
+    await ftsBtn.trigger('click')
+    expect(state.preferMode).toBe('fts')
+    // setMode triggers re-search via setQuery
+    expect(mockSetQuery).toHaveBeenCalledWith('test')
+  })
+
+  it('shows actual search mode badge in results', async () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult], searchMode: 'hybrid' }))
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-mode').text()).toBe('Hybrid')
   })
 })

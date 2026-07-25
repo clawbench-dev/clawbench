@@ -20,6 +20,10 @@
     <div v-if="!selectedSession" class="session-search-body">
       <div class="session-search-input-row">
         <SearchInput ref="inputRef" :model-value="searchState.query" :placeholder="t('sessionSearch.placeholder')" @update:model-value="search.setQuery" />
+        <div class="mode-selector">
+          <button class="mode-btn" :class="{ active: searchState.preferMode === 'hybrid' }" @click="setMode('hybrid')">{{ t('sessionSearch.modeHybrid') }}</button>
+          <button class="mode-btn" :class="{ active: searchState.preferMode === 'fts' }" @click="setMode('fts')">{{ t('sessionSearch.modeFts') }}</button>
+        </div>
       </div>
 
       <div class="session-search-content">
@@ -28,7 +32,10 @@
         <div v-else-if="searchState.error" class="session-search-error">{{ searchState.error }}</div>
         <div v-else-if="searchState.results.length === 0" class="session-search-empty">{{ t('sessionSearch.noResults') }}</div>
         <div v-else class="session-search-results">
-          <div class="session-search-count">{{ t('sessionSearch.resultCount', { count: searchState.results.length }) }}</div>
+          <div class="session-search-count">
+            {{ t('sessionSearch.resultCount', { count: searchState.results.length }) }}
+            <span v-if="searchState.searchMode" class="session-search-mode">{{ searchModeLabel }}</span>
+          </div>
           <div v-for="session in searchState.results" :key="session.session_id" class="session-search-item" @click="selectedSession = session">
             <div class="session-search-item-header">
               <span class="session-search-item-title">{{ session.session_title || t('sessionSearch.untitledSession') }}</span>
@@ -106,6 +113,20 @@ const search = { state: searchState, setQuery, clear }
 
 const selectedSession = ref<SessionSearchResult | null>(null)
 const inputRef = ref(null)
+
+// ── Search mode selector ──
+function setMode(mode: 'hybrid' | 'fts') {
+  searchState.preferMode = mode
+  // Re-search with new mode if there's an active query
+  if (searchState.query.trim()) {
+    search.setQuery(searchState.query)
+  }
+}
+
+const searchModeLabel = computed(() => {
+  if (!searchState.searchMode) return ''
+  return searchState.searchMode === 'hybrid' ? t('sessionSearch.modeHybrid') : t('sessionSearch.modeFts')
+})
 
 // ── Back handler for drilldown ──
 const unregisterBack = registerBackHandler({
@@ -285,6 +306,38 @@ function handleClose() {
   flex: 1;
 }
 
+.mode-selector {
+  display: flex;
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.mode-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+  border: none;
+  background: var(--bg-primary, #fff);
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.mode-btn:not(:last-child) {
+  border-right: 1px solid var(--border-color, #e5e5e5);
+}
+
+.mode-btn.active {
+  background: var(--color-purple, #7c3aed);
+  color: #fff;
+}
+
+.mode-btn:not(.active):hover {
+  background: var(--bg-secondary, #f8f9fa);
+}
+
 .session-search-content {
   flex: 1;
   overflow: hidden;
@@ -320,6 +373,16 @@ function handleClose() {
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
+}
+
+.session-search-mode {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(124, 58, 237, 0.08);
+  color: var(--color-purple, #7c3aed);
+  margin-left: 6px;
+  font-weight: 500;
 }
 
 .session-search-item {
@@ -581,5 +644,27 @@ function handleClose() {
 
 [data-theme="dark"] .detail-chunk-role.role-assistant {
   background: rgba(163, 113, 247, 0.06);
+}
+
+[data-theme="dark"] .mode-selector {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="dark"] .mode-btn {
+  background: transparent;
+  color: var(--text-muted, #999);
+}
+
+[data-theme="dark"] .mode-btn:not(:last-child) {
+  border-right-color: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="dark"] .mode-btn.active {
+  background: var(--color-purple, #7c3aed);
+  color: #fff;
+}
+
+[data-theme="dark"] .mode-btn:not(.active):hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 </style>

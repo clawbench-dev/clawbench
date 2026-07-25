@@ -37,7 +37,7 @@ describe('useSessionSearch', () => {
       expect(state.loading).toBe(false)
       expect(state.error).toBeNull()
       expect(state.searchMode).toBe('')
-      expect(state.ragAvailable).toBeNull()
+      expect(state.preferMode).toBe('hybrid')
     })
   })
 
@@ -69,7 +69,7 @@ describe('useSessionSearch', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: 'test query' }),
+        body: JSON.stringify({ q: 'test query', prefer_mode: 'hybrid' }),
       }))
       expect(state.results).toHaveLength(1)
       expect(state.results[0]).toEqual(mockResult)
@@ -89,7 +89,7 @@ describe('useSessionSearch', () => {
       await search('  test  ')
 
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: 'test' }),
+        body: JSON.stringify({ q: 'test', prefer_mode: 'hybrid' }),
       }))
     })
 
@@ -186,6 +186,20 @@ describe('useSessionSearch', () => {
       // Only the second search should have results
       expect(state.loading).toBe(false)
     })
+    it('sends prefer_mode=fts when set', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'fts' }),
+      })
+
+      const { state, search } = useSessionSearch()
+      state.preferMode = 'fts'
+      await search('test')
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
+        body: JSON.stringify({ q: 'test', prefer_mode: 'fts' }),
+      }))
+    })
   })
 
   describe('setQuery (debounce)', () => {
@@ -212,7 +226,7 @@ describe('useSessionSearch', () => {
       // Only one search should fire, with the latest query
       expect(mockFetch).toHaveBeenCalledTimes(1)
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: 'abc' }),
+        body: JSON.stringify({ q: 'abc', prefer_mode: 'hybrid' }),
       }))
     })
 
@@ -268,105 +282,6 @@ describe('useSessionSearch', () => {
 
       vi.advanceTimersByTime(300)
       expect(mockFetch).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('checkRagAvailability', () => {
-    it('returns true when RAG has data', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ available: true }),
-      })
-
-      const { state, checkRagAvailability } = useSessionSearch()
-      const result = await checkRagAvailability()
-
-      expect(result).toBe(true)
-      expect(state.ragAvailable).toBe(true)
-    })
-
-    it('returns false when RAG has no data', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ available: false }),
-      })
-
-      const { state, checkRagAvailability } = useSessionSearch()
-      const result = await checkRagAvailability()
-
-      expect(result).toBe(false)
-      expect(state.ragAvailable).toBe(false)
-    })
-
-    it('returns false on HTTP error', async () => {
-      mockFetch.mockResolvedValue({ ok: false })
-
-      const { state, checkRagAvailability } = useSessionSearch()
-      const result = await checkRagAvailability()
-
-      expect(result).toBe(false)
-      expect(state.ragAvailable).toBe(false)
-    })
-
-    it('returns false on network error', async () => {
-      mockFetch.mockRejectedValue(new Error('Network error'))
-
-      const { state, checkRagAvailability } = useSessionSearch()
-      const result = await checkRagAvailability()
-
-      expect(result).toBe(false)
-      expect(state.ragAvailable).toBe(false)
-    })
-
-    it('caches result within TTL (5 minutes)', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ available: true }),
-      })
-
-      const { checkRagAvailability } = useSessionSearch()
-
-      // First call hits API
-      await checkRagAvailability()
-      expect(mockFetch).toHaveBeenCalledTimes(1)
-
-      // Second call within TTL uses cache
-      const result = await checkRagAvailability()
-      expect(result).toBe(true)
-      expect(mockFetch).toHaveBeenCalledTimes(1) // No additional fetch
-    })
-
-    it('re-fetches after TTL expires', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ has_data: true }),
-      })
-
-      const { checkRagAvailability } = useSessionSearch()
-
-      // First call
-      await checkRagAvailability()
-      expect(mockFetch).toHaveBeenCalledTimes(1)
-
-      // Advance past TTL (5 minutes + 1ms)
-      vi.advanceTimersByTime(5 * 60 * 1000 + 1)
-
-      // Second call should re-fetch
-      await checkRagAvailability()
-      expect(mockFetch).toHaveBeenCalledTimes(2)
-    })
-
-    it('handles missing available field gracefully', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({}),
-      })
-
-      const { state, checkRagAvailability } = useSessionSearch()
-      const result = await checkRagAvailability()
-
-      expect(result).toBe(false)
-      expect(state.ragAvailable).toBe(false)
     })
   })
 })

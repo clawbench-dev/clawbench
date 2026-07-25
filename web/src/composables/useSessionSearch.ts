@@ -35,10 +35,6 @@ interface SessionSearchResponse {
 }
 
 const DEBOUNCE_MS = 300
-const RAG_STATUS_TTL_MS = 5 * 60 * 1000 // 5 minutes
-
-// Module-level cache shared across all useSessionSearch instances
-let ragStatusCache: { available: boolean; timestamp: number } | null = null
 
 export function useSessionSearch() {
   const state = reactive({
@@ -48,7 +44,7 @@ export function useSessionSearch() {
     loading: false,
     error: null as string | null,
     searchMode: '',
-    ragAvailable: null as boolean | null,
+    preferMode: 'hybrid' as 'hybrid' | 'fts',
   })
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -82,6 +78,7 @@ export function useSessionSearch() {
       state.total = 0
       state.loading = false
       state.error = null
+      state.searchMode = ''
       return
     }
 
@@ -95,7 +92,7 @@ export function useSessionSearch() {
       const res = await fetch('/api/rag/session-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: trimmed }),
+        body: JSON.stringify({ q: trimmed, prefer_mode: state.preferMode }),
         signal: abortController.signal,
       })
 
@@ -135,35 +132,9 @@ export function useSessionSearch() {
     }, DEBOUNCE_MS)
   }
 
-  async function checkRagAvailability(): Promise<boolean> {
-    const now = Date.now()
-    if (ragStatusCache && (now - ragStatusCache.timestamp) < RAG_STATUS_TTL_MS) {
-      state.ragAvailable = ragStatusCache.available
-      return ragStatusCache.available
-    }
-
-    try {
-      const res = await fetch('/api/rag/status')
-      if (!res.ok) {
-        ragStatusCache = { available: false, timestamp: now }
-        state.ragAvailable = false
-        return false
-      }
-      const data = await res.json()
-      const available = !!data?.available
-      ragStatusCache = { available, timestamp: now }
-      state.ragAvailable = available
-      return available
-    } catch {
-      ragStatusCache = { available: false, timestamp: now }
-      state.ragAvailable = false
-      return false
-    }
-  }
-
   onUnmounted(() => {
     cancelPending()
   })
 
-  return { state, setQuery, search, clear, checkRagAvailability }
+  return { state, setQuery, search, clear }
 }

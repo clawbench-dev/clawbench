@@ -472,6 +472,8 @@ export default {
     roleAssistant: '助手',
     untitledSession: '未命名会话',
     deleted: '已删除',
+    modeHybrid: '混合',
+    modeFts: '全文',
   },
   task: {
     title: '定时任务',

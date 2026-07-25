@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"clawbench/internal/service"
@@ -30,6 +31,7 @@ type SearchParams struct {
 	ExcludeSessionID string `json:"exclude_session_id"`
 	FromTime         string `json:"from"`
 	ToTime           string `json:"to"`
+	PreferMode       string `json:"prefer_mode,omitempty"` // "hybrid" (default) or "fts"
 }
 
 // SearchResult represents the response from a RAG search.
@@ -77,11 +79,19 @@ func RAGSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, par
 	// FTS5 is always available with SQLite (no extension loading needed)
 	ftsAvailable := true
 
+	// User can force FTS-only mode via PreferMode
+	forceFTS := strings.EqualFold(params.PreferMode, string(SearchModeFTS))
+
 	var hits []SearchHit
 	var mode SearchMode
 	var err error
 
 	switch {
+	case forceFTS:
+		// User explicitly requested FTS-only
+		mode = SearchModeFTS
+		hits, err = store.SearchFTS(params.Query, limit, params.ProjectPath, params.Backend, params.Role, params.SessionID, params.ExcludeSessionID, params.FromTime, params.ToTime)
+
 	case embedderHealthy && vecReady && ftsAvailable:
 		// Hybrid: vector + FTS with RRF fusion
 		if embedder == nil {

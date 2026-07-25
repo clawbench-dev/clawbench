@@ -208,6 +208,7 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		ExcludeSessionID string `json:"exclude_session_id"`
 		FromTime         string `json:"from"`
 		ToTime           string `json:"to"`
+		PreferMode       string `json:"prefer_mode"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -233,6 +234,7 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		ExcludeSessionID: req.ExcludeSessionID,
 		FromTime:         req.FromTime,
 		ToTime:           req.ToTime,
+		PreferMode:       req.PreferMode,
 	}
 
 	result, err := rag.RAGSessionSearch(r.Context(), rag.GlobalStore, rag.GlobalEmbedder, params, searchLimit, searchPoolSize)

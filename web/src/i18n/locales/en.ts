@@ -472,6 +472,8 @@ export default {
     roleAssistant: 'Assistant',
     untitledSession: 'Untitled Session',
     deleted: 'Deleted',
+    modeHybrid: 'Hybrid',
+    modeFts: 'Full-text',
   },
   task: {
     title: 'Scheduled tasks',

@@ -323,6 +323,22 @@ func TestRAGSearch_EmbedderHealthyButNoVecData(t *testing.T) {
 	assert.Equal(t, SearchModeFTS, result.Mode, "should fall back to FTS when HasVecData() is false even if embedder healthy")
 }
 
+func TestRAGSearch_ForceFTS_ViaPreferMode(t *testing.T) {
+	// Even with a healthy embedder and vec data, PreferMode="fts" should force FTS-only.
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(true)
+	insertTestChunksSQLite(t, store, 3)
+
+	result, err := RAGSearch(context.Background(), store, nil, SearchParams{
+		Query:       "chunk",
+		ProjectPath: testProjectPath,
+		PreferMode:  "fts",
+	}, 5, 20)
+	require.NoError(t, err)
+	assert.Equal(t, SearchModeFTS, result.Mode, "should use FTS when PreferMode=fts")
+	assert.NotEmpty(t, result.Results)
+}
+
 // ---------- getSessionTitles ----------
 
 func TestGetSessionTitles_EmptyInput(t *testing.T) {

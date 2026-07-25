@@ -9,7 +9,7 @@
           <span class="session-counter-text">{{ sessionCount }}/{{ sessionMaxCount }}</span>
         </div>
       </div>
-      <button v-if="ragAvailable" class="header-action-btn" @click.stop="searchDrawer.open()" :title="t('sessionSearch.title')">
+      <button class="header-action-btn" @click.stop="searchDrawer.open()" :title="t('sessionSearch.title')">
         <Search :size="16" />
       </button>
       <button v-if="showResumeIcon" class="header-action-btn" @click.stop="$emit('open-acp-sessions')" :title="t('chat.acpSession.resumeTitle', { agent: currentAgentName })">
@@ -90,7 +90,6 @@ import { useAgents, agentCanResume } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import { useSessionSearch } from '@/composables/useSessionSearch'
 import SessionSearchDrawer from './SessionSearchDrawer.vue'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
@@ -123,9 +122,7 @@ const { runningSessionsVersion } = useSessionIdentity()
 const toast = inject('toast', null)
 
 // Session search
-const ragAvailable = ref(false)
 const searchDrawer = useTabDrawer('chat', { autoRestore: false })
-const sessionSearch = useSessionSearch()
 
 const showResumeIcon = computed(() => props.isACPTransport && props.currentAgentId && agentCanResume(props.currentAgentId))
 const currentAgentName = computed(() => props.currentAgentId ? getAgentName(props.currentAgentId) : '')
@@ -270,7 +267,7 @@ function addSessionLocally(session) {
 // while the drawer is open (e.g. after a successful delete).
 watch(() => props.open, async (val) => {
   if (val) {
-    await Promise.all([loadSessions(), loadAgents(), checkRag()])
+    await Promise.all([loadSessions(), loadAgents()])
   }
 })
 watch(() => store.state.sessionCount, async () => {
@@ -285,10 +282,6 @@ onUnmounted(() => {
     observer = null
   }
 })
-
-async function checkRag() {
-  ragAvailable.value = await sessionSearch.checkRagAvailability()
-}
 
 function handleOpenFromSearch(session) {
   if (!session?.session_id) return
