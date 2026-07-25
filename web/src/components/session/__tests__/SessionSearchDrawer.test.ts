@@ -15,6 +15,10 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.untitledSession': 'Untitled',
       'sessionSearch.deleted': 'Deleted',
       'sessionSearch.chunks': `${params?.count ?? 0} chunks`,
+      'sessionSearch.roleUser': 'User',
+      'sessionSearch.roleAssistant': 'Assistant',
+      'sessionSearch.resume': 'Resume Session',
+      'sessionSearch.openSession': 'Open',
     }
     return map[key] ?? key
   }}),
@@ -39,6 +43,15 @@ vi.mock('@/utils/html.ts', () => ({
   escapeHtml: (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
 }))
 
+vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
+  renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
+}))
+
+vi.mock('@/composables/useBackHandler', () => ({
+  registerBackHandler: () => vi.fn(),
+  PRIORITY_OVERLAY: 1000,
+}))
+
 const mockClear = vi.fn()
 const mockSetQuery = vi.fn()
 const mockSearchState = vi.fn()
@@ -55,7 +68,7 @@ vi.mock('@/composables/useSessionSearch', () => ({
 vi.mock('@/components/common/BottomSheet.vue', () => ({
   default: {
     name: 'BottomSheet',
-    template: '<div class="bottom-sheet-stub"><slot name="header" /><slot /></div>',
+    template: '<div class="bottom-sheet-stub"><slot name="header" /><slot /><slot name="footer" /></div>',
   },
 }))
 
@@ -64,13 +77,6 @@ vi.mock('@/components/common/SearchInput.vue', () => ({
     name: 'SearchInput',
     template: '<div class="search-input-stub" />',
     methods: { focus: vi.fn() },
-  },
-}))
-
-vi.mock('@/components/session/SessionSearchDetailModal.vue', () => ({
-  default: {
-    name: 'SessionSearchDetailModal',
-    template: '<div class="detail-modal-stub" />',
   },
 }))
 
@@ -85,6 +91,26 @@ function createState(overrides = {}) {
     ragAvailable: null as boolean | null,
     ...overrides,
   }
+}
+
+const sampleResult = {
+  session_id: 's1',
+  session_title: 'My Session',
+  score: 0.9,
+  backend: 'cli',
+  project_path: '/tmp',
+  deleted: false,
+  created_at: '2025-01-01',
+  match_count: 3,
+  chunks: [{
+    chunk_id: 1,
+    chunk_text: 'some matching text here',
+    match_positions: [{ start: 5, end: 13 }],
+    score: 0.9,
+    role: 'user',
+    message_id: 1,
+    created_at: '2025-01-01',
+  }],
 }
 
 function mountDrawer(props = {}) {
@@ -133,28 +159,7 @@ describe('SessionSearchDrawer', () => {
   })
 
   it('shows search results', () => {
-    mockSearchState.mockReturnValue(createState({
-      query: 'test',
-      results: [{
-        session_id: 's1',
-        session_title: 'My Session',
-        score: 0.9,
-        backend: 'cli',
-        project_path: '/tmp',
-        deleted: false,
-        created_at: '2025-01-01',
-        match_count: 3,
-        chunks: [{
-          chunk_id: 1,
-          chunk_text: 'some matching text here',
-          match_positions: [{ start: 5, end: 13 }],
-          score: 0.9,
-          role: 'user',
-          message_id: 1,
-          created_at: '2025-01-01',
-        }],
-      }],
-    }))
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
 
     const wrapper = mountDrawer()
     expect(wrapper.find('.session-search-results').exists()).toBe(true)
@@ -204,11 +209,66 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.session-search-item-deleted').text()).toBe('Deleted')
   })
 
-  it('clears search state when closed', async () => {
+  it('drills down to detail view when clicking a result', async () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
+
     const wrapper = mountDrawer()
-    // BottomSheet stub may not propagate open prop changes to watch
-    // Verify the component has the watch that calls clear on close
+    // Click on a search result item
+    await wrapper.find('.session-search-item').trigger('click')
+    await flushPromises()
+
+    // Should show detail view
+    expect(wrapper.find('.detail-page').exists()).toBe(true)
+    expect(wrapper.find('.detail-chunk').exists()).toBe(true)
+    expect(wrapper.find('.detail-resume-btn').exists()).toBe(true)
+    // Search results list should be hidden
+    expect(wrapper.find('.session-search-body').exists()).toBe(false)
+  })
+
+  it('returns to search list from detail view via back button', async () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
+
+    const wrapper = mountDrawer()
+    // Drill down
+    await wrapper.find('.session-search-item').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.detail-page').exists()).toBe(true)
+
+    // Click back button
+    await wrapper.find('.detail-back-btn').trigger('click')
+    await flushPromises()
+
+    // Should return to search results list
     expect(wrapper.find('.session-search-body').exists()).toBe(true)
+    expect(wrapper.find('.detail-page').exists()).toBe(false)
+  })
+
+  it('emits open for non-deleted session from detail view', async () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
+
+    const wrapper = mountDrawer()
+    // Drill down
+    await wrapper.find('.session-search-item').trigger('click')
+    await flushPromises()
+
+    // Click open button (non-deleted session)
+    await wrapper.find('.detail-resume-btn').trigger('click')
+    expect(wrapper.emitted('open')).toBeTruthy()
+    expect(wrapper.emitted('resume')).toBeFalsy()
+  })
+
+  it('emits resume for deleted session from detail view', async () => {
+    const deletedResult = { ...sampleResult, deleted: true }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [deletedResult] }))
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.session-search-item').trigger('click')
+    await flushPromises()
+
+    // Click resume button (deleted session)
+    await wrapper.find('.detail-resume-btn').trigger('click')
+    expect(wrapper.emitted('resume')).toBeTruthy()
+    expect(wrapper.emitted('open')).toBeFalsy()
   })
 
   it('emits close when handleClose is triggered', async () => {

@@ -9,7 +9,7 @@
           <span class="session-counter-text">{{ sessionCount }}/{{ sessionMaxCount }}</span>
         </div>
       </div>
-      <button v-if="ragAvailable" class="header-action-btn" @click.stop="searchDrawerOpen = true" :title="t('sessionSearch.title')">
+      <button v-if="ragAvailable" class="header-action-btn" @click.stop="searchDrawer.open()" :title="t('sessionSearch.title')">
         <Search :size="16" />
       </button>
       <button v-if="showResumeIcon" class="header-action-btn" @click.stop="$emit('open-acp-sessions')" :title="t('chat.acpSession.resumeTitle', { agent: currentAgentName })">
@@ -70,9 +70,10 @@
 
   <!-- Session search drawer -->
   <SessionSearchDrawer
-    :open="searchDrawerOpen"
-    @close="searchDrawerOpen = false"
+    :open="searchDrawer.effectiveOpen.value"
+    @close="searchDrawer.close()"
     @resume="handleResumeFromSearch"
+    @open="handleOpenFromSearch"
   />
 </template>
 
@@ -123,7 +124,7 @@ const toast = inject('toast', null)
 
 // Session search
 const ragAvailable = ref(false)
-const searchDrawerOpen = ref(false)
+const searchDrawer = useTabDrawer('chat', { autoRestore: false })
 const sessionSearch = useSessionSearch()
 
 const showResumeIcon = computed(() => props.isACPTransport && props.currentAgentId && agentCanResume(props.currentAgentId))
@@ -289,6 +290,12 @@ async function checkRag() {
   ragAvailable.value = await sessionSearch.checkRagAvailability()
 }
 
+function handleOpenFromSearch(session) {
+  if (!session?.session_id) return
+  searchDrawer.close()
+  selectSession(session.session_id, session.backend)
+}
+
 async function handleResumeFromSearch(session) {
   if (!session?.session_id) return
   const title = session.session_title || t('sessionSearch.untitledSession')
@@ -312,7 +319,7 @@ async function handleResumeFromSearch(session) {
       }
       return
     }
-    searchDrawerOpen.value = false
+    searchDrawer.close()
     selectSession(session.session_id, session.backend)
   } catch {
     if (toast) toast.show(t('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })

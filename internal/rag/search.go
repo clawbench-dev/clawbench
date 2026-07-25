@@ -347,7 +347,7 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 }
 
 // getSessionDeletedStatus fetches the deleted status for a set of session IDs.
-// NOTE: N+1 pattern is acceptable because searchLimit caps at 5 sessions.
+// NOTE: N+1 pattern is acceptable because searchLimit caps at 20 sessions.
 // If searchLimit grows significantly, replace with a batch query.
 func getSessionDeletedStatus(sessionIDs map[string]bool) map[string]bool {
 	deletedMap := make(map[string]bool, len(sessionIDs))

@@ -219,7 +219,7 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 
 	searchLimit := model.ConfigInstance.RAG.SearchLimit
 	if searchLimit <= 0 {
-		searchLimit = 5
+		searchLimit = 20
 	}
 
 	searchPoolSize := model.ConfigInstance.RAG.SearchPoolSize

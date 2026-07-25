@@ -45,12 +45,12 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 
 ### Backend (Go)
 
-**Entry point:** `cmd/server/main.go` — config → port → LoadAgents → SyncDiscoverAgents → SyncDiscoverModels → MergeDiscoveredData → AsyncRefreshModelCache → scheduler init.
+**Entry point:** `cmd/server/main.go` — config → port → `SyncDiscoverAgentsDB` → `LoadYamlAgents` → `SyncDiscoverModels` → `MigrateCustomSystemPrompt` → `MergeDiscoveredDataDB` → `AsyncRefreshModelCache` → scheduler init.
 
 **Packages:**
 - `internal/handler/` — HTTP endpoints. All `/api/` routes use `middleware.Auth` (localhost bypass for CLI). Chat streaming via WebSocket (`/api/ai/events/ws`).
 - `internal/service/` — Business logic: chat persistence, auto-summary, scheduler, SQLite, versioned schema migration, agent store (DB-backed), API key encryption (AES-256-GCM), default project persistence (`is_default` column in `recent_projects`). `SessionExecutor` unifies AI session execution for both chat and scheduled tasks.
-- `internal/ai/` + `internal/ai/backends/` — AI backend abstraction and plugin system. `AIBackend` interface → `CLIBackend` (CLI args + LineParser) → `AutoResumeBackend` (ExitPlanMode → cancel → resume) → `ACPBackend` (JSON-RPC over stdio, connection pool). 12 backend sub-packages (claude, cline, codebuddy, copilot, codex, qoder, vecli, deepseek, kimi, mimo, opencode, pi), each registering via `ai.RegisterBackend()` in `init()`. `all.go` aggregates imports for `main.go`. ACP mapping wired by `backends/acp_wire.go`. `acpStdoutFilter` fixes JSON-RPC protocol violations (string-number ID mismatch, non-JSON stdout lines). CodeWhale (registered as `"deepseek"`, CLI: `codewhale`) has ACP support with remaps and stdout filter. Pi has ACP bridge support via `@touchtechclub/pi-acp`. `BackendSpec.AltCmd` for fallback CLI detection.
+- `internal/ai/` + `internal/ai/backends/` — AI backend abstraction and plugin system. `AIBackend` interface → `CLIBackend` (CLI args + LineParser) → `AutoResumeBackend` (ExitPlanMode → cancel → resume) → `ACPBackend` (JSON-RPC over stdio). ACP 连接由 `internal/ai/acp_pool.go` 的 `ACPConnManager` 单例管理（一对一映射，5 分钟空闲自动回收）。12 backend sub-packages (claude, cline, codebuddy, copilot, codex, qoder, vecli, deepseek, kimi, mimo, opencode, pi), each registering via `ai.RegisterBackend()` in `init()`. `all.go` aggregates imports for `main.go`. ACP mapping wired by `backends/acp_wire.go`. `acpStdoutFilter` fixes JSON-RPC protocol violations (string-number ID mismatch, non-JSON stdout lines). CodeWhale (registered as `"deepseek"`, CLI: `codewhale`) has ACP support with remaps and stdout filter. Pi has ACP bridge support via `@touchtechclub/pi-acp`. `BackendSpec.AltCmd` for fallback CLI detection. ACP 工具调用以 50ms 窗口批量发送（`acp_debounce.go`）。
 - `internal/model/` — Data models, `BackendRegistry` (backend specs + model discovery), `ProviderRegistry` (28 LLM providers).
 - `internal/cli/` — AI agent self-service: `task`, `rag`, `migrate`.
 - `internal/middleware/` — Auth, request logging, panic recovery, request ID.
@@ -66,25 +66,25 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 
 ### Frontend (Vue 3 + TypeScript)
 
-**Source root:** `web/src/` — No Vue Router, drawer-based single-page layout. Single `reactive()` store in `stores/app.ts`.
+**Source root:** `web/src/` — No Vue Router, drawer-based single-page layout. Single `reactive()` store in `stores/app.ts`. Composable 总数：81 个文件（`ls web/src/composables/use*.ts | wc -l`），按域分组（见下）。新建 composable 必须放在 `web/src/composables/` 并以 `useXxx` 命名；测试用 `*.test.ts` 同目录或 `__tests__/`。
 
 **Composables** (by domain):
-- Chat: `useChatSession`, `useChatStream`, `useChatRender`, `useChatContext`, `useChatKeyboard`, `useAutoSpeech`, `useQuickSend`, `useQuoteQuestion`, `useUserMsgIndex`
-- Session: `useSessionIdentity`, `useSessionManager`, `useReconnect`, `useSessionSearch`
-- Terminal: `useTerminalSession`, `useTerminalTabs`, `useTerminalKeys`, `useTerminalGestures`, `useTerminalKeyboard`, `useTerminalViewport`, `useKeyConfig`
-- File: `useFileNavStack`, `useFileRefresh`, `useFileUpload`, `useFilePathAnnotation`, `useWorktreeAnnotation`, `useFileWatch`
+- Chat: `useChatSession`, `useChatStream`, `useChatRender`, `useChatContext`, `useChatKeyboard`, `useAutoSpeech`, `useQuickSend`, `useQuoteQuestion`, `useUserMsgIndex`, `useCodeBlockHeader`, `usePlanProgress`, `useQuickCommands`, `useMarkdownRenderer`, `useMarkdownDiff`
+- Session: `useSessionIdentity`, `useSessionManager`, `useReconnect`, `useSessionSearch`, `useServerList`
+- Terminal: `useTerminalSession`, `useTerminalTabs`, `useTerminalKeys`, `useTerminalGestures`, `useTerminalKeyboard`, `useTerminalViewport`, `useKeyConfig`, `useTerminalStatus`
+- File: `useFileNavStack`, `useFileRefresh`, `useFileUpload`, `useFilePathAnnotation`, `useWorktreeAnnotation`, `useFileWatch`, `useFileSearch`, `useRecentFiles`, `useUploadRecent`, `useCommitHashAnnotation`, `useCommitNavigation`, `useLocalhostAnnotation`, `useShareIn`
 - Navigation/Gesture: `useBackHandler`, `useEdgeSwipeBack`, `useSwipeDelete`, `useSwipeSession`, `useStickyScroll`
 - Settings: `useSettingsConfig`, `useSettingsNavigation`
 - Agent: `useAgents`, `useAcpSession`
 - Task: `useTaskTab`, `useTaskForm`, `useTaskHistory`, `useTaskOverview`, `useTaskExecStream`
-- Infrastructure: `useGlobalEvents`, `useConnectivityTest`, `usePortForward`, `useFrp`, `useCodeSymbols`, `useToast`, `useDialog`, `useTabDrawer`, `usePwaInstall`, `useAppMode`, `useLocale`, `useWakeLock`
+- Infrastructure: `useGlobalEvents`, `useConnectivityTest`, `usePortForward`, `useFrp`, `useCodeSymbols`, `useToast`, `useDialog`, `useTabDrawer`, `usePwaInstall`, `useAppMode`, `useLocale`, `useWakeLock`, `useNotification`, `useNotificationSound`, `usePanelSnapshot`, `usePendingStore`, `useUpgrade`, `useSelectState`, `useCrudList`, `useDiffDrawer`, `useDiffMarkerClick`, `useDockOverflow`, `useDoubleClickCopy`, `useMseAudio`, `useTableRowExpand`, `useToolbarOverflow`, `useToolDetailDrawer`
 
 **Components** (by domain):
 - Chat: `ChatInputBar`, `ChatMessageItem`, `ChatMessageList`, `ChatPanelContent`, `ChatMetadataModal`, `ContentBlocks`, `SummaryToggle`, `QuickCommandDrawer`, `QuickCommandEditModal`, `QuickSendDrawer`, `QuickSendEditModal`, `QuoteQuestionBar`, `UserMsgIndexDrawer`, `OutputDrawer`, `ToolDetailDrawer`, `PlanPanel`, `AttachDrawer`
 - File: `FileManagerContent`, `FileOverlay`, `FileViewer`, `FileHeader`, `FileIcon`, `DirBreadcrumb`, `FileAttachmentList`, `FileChangesDrawer`, `FileDetailsDrawer`, `CodePreview`, `MarkdownPreview`, `PdfPreview`, `OfficePreview`, `ImagePreview`, `VideoPreview`, `AudioPreview`, `OpenApiPreview`
 - Terminal: `TerminalPanelContent`, `KeyConfigDrawer`, `KeyConfigTab`, `TerminalTabMenu`
 - Git: `GitGraph`, `GitManageContent`, `GitHistoryDrawer`, `GitHistoryContent`, `GitDiffView`, `GitBreadcrumb`, `GitBranchList`, `GitBranchRow`, `GitCommitList`, `GitCommitMeta`, `GitTagList`, `GitWorktreeList`, `GitWorktreeCard`, `DiffDrawer`
-- Session/Agent: `SessionDrawer`, `AcpSessionDrawer`, `AgentInstallDialog`, `CopyAgentDialog`, `SearchDrawer`, `RagDetailDrawer`, `SessionSearchDrawer`, `SessionSearchDetailModal`
+- Session/Agent: `SessionDrawer`, `AcpSessionDrawer`, `AgentInstallDialog`, `CopyAgentDialog`, `SearchDrawer`, `RagDetailDrawer`, `SessionSearchDrawer`
 - Task: `TaskTab`, `TaskListPage`, `TaskDetailPage`, `TaskFormPage`, `TaskExecDetail`, `TaskBreadcrumb`, `TaskHistoryTab`, `TaskOverviewTab`
 - Settings: `SettingsPage`, `SettingsIndex`, `SettingsCategory`, `SettingsGroupPanel`, `SettingsItem`, `SettingsAgentsIndex`, `SettingsAgentDetail`, `SettingsRestartDialog`, `PasswordChangeDialog`
 - Common: `BottomSheet`, `PopupMenu`, `Lightbox`, `ModalDialog`, `DialogOverlay`, `ToastNotification`, `SwipeToDeleteRow`, `AppHeader`, `HeaderMarquee`, `IosInstallDrawer`, `TabPanel`, `TableRowModal`, `ProxyPanelContent`, `ProxyPortItem`, `SearchInput`, `VersionMismatchOverlay`, `WelcomeOverlay`, `LoginView`, `ProjectDialog`

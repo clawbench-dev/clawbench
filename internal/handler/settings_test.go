@@ -46,7 +46,7 @@ func TestServeConfig_Get(t *testing.T) {
 	cfg.RAG.BaseURL = "http://localhost:11434"
 	cfg.RAG.Model = "bge-m3"
 	cfg.RAG.ChunkSize = 512
-	cfg.RAG.SearchLimit = 5
+	cfg.RAG.SearchLimit = 20
 	cfg.RAG.RetentionDays = 30
 	cfg.PortForward.Enabled = true
 	cfg.PortForward.Port = 20001
