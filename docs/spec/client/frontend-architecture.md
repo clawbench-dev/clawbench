@@ -23,8 +23,8 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    A[useGlobalEvents<br/>WS 单例] --> B[useSessionIdentity<br/>会话身份]
-    B --> C[useChatStream<br/>SSE 连接]
+    A[useGlobalEvents<br/>WebSocket 单例<br/>/api/ai/events/ws] --> B[useSessionIdentity<br/>会话身份]
+    B --> C[useChatStream<br/>WS 订阅 session_id]
     C --> D[useChatRender<br/>Block 解析]
     D --> E[ChatPanel<br/>渲染]
 
@@ -40,15 +40,28 @@ flowchart LR
 - **Tab 式单页布局**：底部 Tab 栏切换主功能区（chat、browse、tasks 等），溢出 Tab 放入弹出菜单。`TabPanel` 使用 `v-show` 保持状态持久——切换 Tab 不销毁组件，回到之前的 Tab 状态还在
 - **抽屉式导航**：Session 抽屉（会话列表，含"定时"标识的续接会话）、ACP Session 抽屉（ACP 模式/权限管理）、TOC 抽屉（文件目录）、搜索抽屉等。从侧面滑入，不占常驻空间——移动端屏幕有限，抽屉比常驻面板更节省空间
 - **模块级 Composable 单例**：多个 composable 使用模块级 `ref`，所有消费者共享同一份状态（如 `useToast`、`useSessionIdentity`、`useGlobalEvents`）。跨组件状态协调无需 provide/inject
-- **SSE/WebSocket 双通道**：聊天内容走 SSE（单向流式，含 ACP 能力状态事件），系统事件走 WebSocket（双向、ack、register、summary_update、permission_pending）。两种通道各有重连策略和 HTTP 轮询降级
+- **WebSocket 单通道**：所有实时推送走 `/api/ai/events/ws`。聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）由 `StreamHub.EmitToSession` 推送；系统事件（`session_update/task_update/summary_update`）通过 `ws.Manager` 广播。断线 ≤10s 自动缓冲重放（≤50 条），>120s 清理订阅（`internal/ws/manager.go:42,46,50`）。客户端通过 `subscribe`/`unsubscribe`/`cancel`/`permission_respond` 四种消息与后端交互
+
+  旁注：还存在几条独立小通道用于专门场景——`GET /api/file/watch`（SSE）、`GET /api/dir/search`（SSE）、`GET /api/tts/audio/ws`（WebSocket）——与聊天流无关
 - **ACP 会话管理**：`useAcpSession` 管理 ACP 模式切换、思考深度、斜杠命令、权限审批和计划进度。`AcpSessionDrawer` 展示 ACP 特有的会话状态，`PlanPanel` 显示计划步骤和进度
 - **标注管道**：聊天消息依次经过 Worktree 标注 → 文件路径标注（双候选路径解析）→ localhost URL 标注 → commit hash 标注，全部基于 DOM 遍历而非正则替换。文件路径标注优先基于当前文件所在目录解析，解析失败时回退到项目根目录，验证阶段自动替换为主候选存在的路径。让聊天中的技术信息可直接交互
 - **SPA 热切换项目**：切换项目不需要 `window.location.reload()`，而是原地重置 store + Vue `:key` 重建组件树（0.15s 渐隐过渡）。无页面闪烁
 - **会话设置模态框**：`SessionSettingModal` 组件提供统一的模型切换、思考深度选择和工作模式选择，支持 ACP 模式/CLI 传输切换。设置即时持久化（PATCH 端点），页面重载后自动恢复
 - **摘要切换**：`SummaryToggle` 组件在聊天消息中提供按钮模式切换摘要/原文，在任务执行详情中提供标签页模式——两种场景共享同一摘要数据源
-- **设置向导**：`SetupWizard` 组件引导首次用户 5 步创建 Agent（欢迎 → 供应商 → API Key → 模型验证 → 命名），支持 27+ 供应商和自定义 URL
+- **首次访问欢迎面板**：`WelcomeOverlay` 组件在用户首次访问时显示，展示后端检测状态与安装入口。不是 5 步分步向导——Agent 创建通过自动发现或 `AgentInstallDialog` 完成
 - **Android 硬件返回键**：全局 `useBackHandler` 注册表管理返回导航，Android `onBackPressed` 委托给 JS 层——注册了返回处理器则拦截（不退出 App），未注册则传递给原生处理。处理器按显式优先级排序（overlay 级 1000 > page 级 100），同一优先级内最近注册的优先，确保覆盖层返回不被页面级处理器截获
 - **Sticky Scroll**：`useStickyScroll` 为多级标题提供粘性定位，支持范围过期和点击遮挡处理。长文档浏览时保持上下文可见
+
+### appLog 统一日志（强制规范）
+
+> 所有前端代码**必须**使用 `appLog.d/i/w/e()` 替代原始 `console.*`（仅 `*.test.ts` 文件内允许裸 `console.*`）。
+
+- **入口**：`web/src/utils/appLog.ts`
+- **Web 模式端点**：`POST /api/client-log`（`LOG_ENDPOINT`，200 条/请求上限，2s flush）
+- **Android Bridge**：`AndroidNative.log(level, tag, msg)` 三参数签名 + `isNativeApp()` + `window !== window.top` 双保险
+- **日志级别映射**：DEBUG → D、INFO → I、WARN → W、ERROR → E
+- **标签约定**：PascalCase 模块名（'ChatStream' / 'PortForward' / 'Store' 等）
+- **失败保护**：`fetch` 失败或非原生环境时静默降级，不影响业务代码
 
 ### 设计要点
 
@@ -59,3 +72,8 @@ flowchart LR
 - **会话设置即时持久化**：模式/思考深度/模型/传输方式的变更通过 PATCH `/api/ai/session/update` 即时写入数据库，无需发送聊天消息。解决了页面重载后设置丢失的问题
 - **单调序列号防竞态**：并发目录加载时使用单调计数器，保证旧结果不会覆盖新状态。这是异步 UI 的经典问题，单调计数器是最简单的解决方案
 - **返回处理器使用显式优先级**：`useBackHandler` 的处理器按优先级排序（overlay > page），而非依赖注册顺序——注册顺序受组件挂载时机影响，不确定且难以调试。显式优先级让覆盖层返回始终优先于页面级返回
+- **FileHeader 三层弹性布局**：`FileHeader`（`web/src/components/file/FileHeader.vue`）使用三层 flex 区域约束工具栏宽度：
+  1. **文件名区**：`flex: 0 1 auto; min-width: 80px; overflow: hidden`（line 427）——可收缩但不会消失
+  2. **工具栏区**：`flex: 1 1 0; min-width: 0; overflow: hidden`（line 456）——**flex:1 + overflow:hidden** 是关键约束，让 ResizeObserver 能检测溢出并动态将按钮移入 "More" 下拉（`useToolbarOverflow`，line 200-218，`inlineCount: 1` 仅保留下拉按钮常驻）
+  3. **覆盖层导航区**：`flex-shrink: 0`（line 506）——固定宽度不收缩，关闭按钮始终可见
+  工具栏不设固定宽度，而是由 flex:1 自适应——剩余空间全归工具栏，空间不足时按钮逐个折叠进下拉菜单

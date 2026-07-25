@@ -1,6 +1,6 @@
 # 聊天流程
 
-聊天是 ClawBench 的核心业务——用户发送一条消息，系统启动对应的 AI 后端执行，流式输出结果到前端，同时持久化到 SQLite 并建立 RAG 索引。会话完成后自动生成摘要，定时任务的执行结果可以续接为交互式对话。ACP 后端还支持模式切换、计划审批和权限管理，让 AI 从纯文本输出扩展为结构化的交互体验。这条链路贯穿了 handler、SessionExecutor、AI 后端、SSE/WebSocket 和前端五个层，是理解整个系统的入口。
+聊天是 ClawBench 的核心业务——用户发送一条消息，系统启动对应的 AI 后端执行，流式输出结果到前端，同时持久化到 SQLite 并建立 RAG 索引。会话完成后自动生成摘要，定时任务的执行结果可以续接为交互式对话。ACP 后端还支持模式切换、计划审批和权限管理，让 AI 从纯文本输出扩展为结构化的交互体验。这条链路贯穿了 handler、SessionExecutor、AI 后端、WebSocket 和前端五个层，是理解整个系统的入口。
 
 ## 流程图
 
@@ -21,12 +21,12 @@ sequenceDiagram
     AI后端->>AI后端: CLI 子进程 或 ACP JSON-RPC
     AI后端-->>SessionExecutor: 返回 StreamEvent channel
     SessionExecutor-->>handler: RunResult（含 Blocks、Metadata）
-    handler-->>前端: SSE 连接建立，开始推送事件
+    handler-->>前端: WS 连接建立（subscribe + 推送）
 ```
 
-用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（CLI 或 ACP）；SessionExecutor 负责创建会话、管理运行时状态，然后将执行委托给 AI 后端。SessionExecutor 统一处理交互式聊天和定时任务执行两种模式，差异化行为（SSE 转发、i18n 错误、取消原因）通过 RunConfig 控制。
+用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（CLI 或 ACP）；SessionExecutor 负责创建会话、管理运行时状态，然后将执行委托给 AI 后端。SessionExecutor 统一处理交互式聊天和定时任务执行两种模式，差异化行为（i18n 错误、取消原因）通过 RunConfig 控制；事件推送统一走 WebSocket StreamHub。
 
-### SSE 推送链路：流式事件到前端渲染
+### WebSocket 推送链路：流式事件到前端渲染
 
 ```mermaid
 sequenceDiagram
@@ -36,16 +36,14 @@ sequenceDiagram
     participant 前端
 
     AI后端->>SessionExecutor: StreamEvent(content/thinking/tool_use/done)
-    SessionExecutor->>SessionExecutor: 持久化消息到 SQLite（每 5 事件或 1s）
+    SessionExecutor->>SessionExecutor: 持久化消息到 SQLite
     SessionExecutor->>SessionExecutor: 触发 RAG 索引（异步）
-    SessionExecutor->>handler: 通过 StreamChannel 推送事件
-    handler->>handler: 写入 SSE（15s 心跳）
-    handler-->>前端: SSE data: {type, content}
+    SessionExecutor->>StreamHub: EmitToSession(sessionID, event)
+    StreamHub-->>前端: WS {type:"event", data:{ChatStreamData | session_update}}
     前端->>前端: useChatRender 解析+合并 Block
-    SessionExecutor->>SessionExecutor: 广播 WebSocket 事件（session_update）
 ```
 
-AI 后端产出的事件同时流向两个方向：一路经 SSE 推送给当前连接的客户端用于实时渲染，另一路触发 SessionExecutor 的增量持久化和 WebSocket 广播（通知其他客户端会话状态变化）。会话完成后自动生成摘要——`simple` 模式直接提取最后回答文本（无需 AI 调用），`ai` 模式异步调用 `AsyncSummarize`，空字符串禁用摘要。摘要结果通过 WebSocket `summary_update` 事件实时推送到前端。
+AI 后端产出的事件经 WebSocket StreamHub 推送给已订阅该 session 的客户端（多客户端扇出）；同时触发 SessionExecutor 的增量持久化和 RAG 索引。会话完成后自动生成摘要——`simple` 模式直接提取最后回答文本（无需 AI 调用），`ai` 模式异步调用 `AsyncSummarize`，空字符串禁用摘要。摘要结果通过 WebSocket `summary_update` 事件实时推送到前端。
 
 ### ACP 权限审批流程
 
@@ -86,12 +84,13 @@ ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写
 - **ACP 模式切换**：ACP 后端支持多种工作模式（如 code、ask、architect），用户可在聊天中切换，切换即时生效并持久化。不同模式适合不同任务，用户按需选择
 - **ACP 权限审批**：ACP 后端请求工具调用审批时，系统推送通知提醒用户，避免因未审批而阻塞执行
 - **ACP 计划模式**：ACP 后端在执行前展示计划（步骤列表），用户可以跟踪进度。让用户理解 AI 将要做什么，而非只能看到结果
+- **@chatsearch / @task 命令注入**：用户消息以 `@chatsearch ` 或 `@task ` 开头时，后端 `processAtCommand()`（`internal/handler/at_command.go:64-96`）检测并替换为模板指令——`@chatsearch` 注入 `rag search` CLI 用法（模板含 `{{CLAWBENCH_BIN}}`、`{{PROJECT_PATH}}`、`{{SESSION_ID}}` 等占位符），`@task` 注入 `task` CLI 用法。前端 `extractAtCommand()`（`web/src/utils/contentBlocks.ts:200-217`）检测相同前缀，将命令部分渲染为紫色徽章（`<span class="at-command-badge">`，`ContentBlocks.vue:213-215`），`ChatInputBar.vue` 提供自动补全
 
 ### 设计要点
 
 - **消息排队在内存中**：排队消息存储在内存中，重启丢失——这是有意为之的权衡，排队消息本质是待执行的瞬时指令，不需要跨重启持久化
 - **软删除保留 RAG 可搜索性**：删除的会话和消息标记 `deleted=1` 而非物理删除，RAG 索引仍可检索到——历史知识不应因用户整理而丢失
-- **双通道推送**：SSE 负责聊天内容的实时流式推送（长连接、单向），WebSocket 负责系统事件广播（会话状态、任务更新、权限待审）。两种推送模式互补，SSE 适合大体积流式数据，WebSocket 适合轻量级状态变更
+- **单 WS 通道统一推送**：聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）和系统事件（`session_update`/`task_update`/`summary_update`/`permission_pending`）共用 `/api/ai/events/ws`，由 `StreamHub`（`internal/ws/stream_hub.go`）做会话级扇出。同一 session 可被多客户端同时订阅；客户端通过 `subscribe` 消息加入，`unsubscribe` 退出
 - **前端 Block 合并**：连续的 text/thinking 事件合并为同一个 Block 渲染，tool_use 作为 Block 边界——减少 DOM 更新频率，提升渲染性能
 - **自动摘要有三种模式**：`simple` 模式从消息 Block 中直接提取最后回答文本（同步、无 AI 调用），`ai` 模式在 session_complete 事件后异步调用 `AsyncSummarize`，空字符串禁用摘要。短文本跳过摘要。摘要结果存入统一的 `summaries` 表，通过 WS `summary_update` 事件推送——摘要生成与聊天流解耦，不影响流式体验
 - **SessionExecutor 统一执行引擎**：交互式聊天和定时任务执行共用 `SessionExecutor`，差异化行为通过 `RunConfig.Mode` 控制（ModeInteractive / ModeScheduled）。消除了 handler 和 scheduler 中的重复执行逻辑

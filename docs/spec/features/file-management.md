@@ -99,6 +99,7 @@ sequenceDiagram
 - **归档打包**：选择文件/目录打包为 zip/tar 下载。移动端不方便 `tar czf`，一键打包是刚需
 - **文件变更监听**：后端通过 fsnotify 监听文件变更，SSE 推送给前端，前端自动刷新目录和文件内容。用户不用手动刷新就能看到 AI 编辑的代码变化
 - **文件路径标注**：聊天中和代码预览中出现的文件路径自动标注为可点击链接，点击打开文件查看器。支持双候选路径解析：优先基于当前文件所在目录（baseDir）解析相对路径，解析失败时自动回退到项目根目录解析——解决相对路径在不同上下文中可能指向不同文件的问题。外部文件路径（项目根目录之外）也可标注和打开
+- **二进制文件处理**：后端 `sanitizeTextContent()`（`internal/handler/file.go:957-978`）检测并安全处理二进制文件——前 8KB 检测 null 字节（`hasBinaryContent`，line 980-992），二进制文件截断至 64KB 并将非打印字符替换为 `.`（`sanitizeBinaryContent`，line 994-1009），大文本文件截断至 512KB（`maxForceTextSize`，line 950）且在 UTF-8 边界处截断。默认情况下二进制文件返回 `isBinary: true` + 空内容，前端显示占位符和"Open as text"按钮（`FileViewer.vue:109-112`、`FileHeader.vue:114-117`）；用户点击后请求 `?forceText=1`（line 240）获取净化后的文本内容
 
 ### 设计要点
 

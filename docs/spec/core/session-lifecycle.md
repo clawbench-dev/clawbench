@@ -16,7 +16,7 @@ flowchart TD
     F --> G{完成?}
     G -->|正常完成| H[EmitSessionEvent complete]
     G -->|用户取消| I[CancelSession reason=user]
-    G -->|SSE 断开| J[CancelSession reason=disconnect]
+    G -->|WS 断开| J[CancelSession reason=disconnect]
     G -->|僵尸进程| K[ForceCancelSession]
     H --> L{队列中有消息?}
     I --> L
@@ -47,8 +47,8 @@ sequenceDiagram
 
     rect rgb(255, 255, 220)
         Note over 前端,AI后端: 断线取消
-        前端->>service: SSE 连接断开
-        service->>service: 检测到无活跃 SSE 订阅者
+        前端->>service: WS 连接断开
+        service->>service: 检测到无活跃 WS 订阅者
         service->>service: 设置 cancel reason = "disconnect"
         service->>AI后端: context.Cancel()
     end

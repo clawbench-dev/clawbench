@@ -10,14 +10,16 @@ RAG（Retrieval-Augmented Generation）让用户搜索历史对话内容——"�
 sequenceDiagram
     participant service
     participant indexer
-    participant Ollama
+    participant EmbeddingClient
     participant SQLite
 
     service->>indexer: 新消息（indexed=0）
     indexer->>indexer: 分块（512 token，重叠）
     indexer->>indexer: 过滤 thinking/tool_use
-    indexer->>Ollama: 生成嵌入向量（BGE-M3）
-    Ollama-->>indexer: 向量
+    indexer->>EmbeddingClient: POST {BaseURL}/v1/embeddings
+    Note over EmbeddingClient: 默认 Ollama/BGE-M3
+    兼容任意 OpenAI 协议端点
+    EmbeddingClient-->>indexer: 向量
     indexer->>SQLite: 存储分块+向量（vec0）+FTS 索引
     indexer->>service: 标记 indexed=1
 ```
@@ -46,10 +48,11 @@ flowchart TD
 - **过滤条件**：支持按项目、后端、角色、会话、时间范围过滤。缩小搜索范围，提高结果精度
 - **增量索引**：新消息自动标记为待索引，Indexer 轮询处理。不影响聊天主流程的响应速度
 - **自动清理**：超过 `RetentionDays`（默认 90 天）的软删除数据定期清理，防止索引无限增长
+- **会话聚合搜索**：`RAGSessionSearch()`（`internal/rag/search.go:239`）在向量/FTS 搜索基础上按 `session_id` 聚合结果——返回 `SessionSearchResult`（含 `session_id`、`title`、`score`、`match_count`、`chunks []ChunkHit`），每会话最多 `maxChunksPerSession=5` 个分块。`ChunkHit` 携带 `match_positions []MatchRange`（字符级偏移）用于高亮。前端 `SessionSearchDrawer`（`web/src/components/session/SessionSearchDrawer.vue`）提供搜索结果列表 + 钻取详情两种视图：列表显示 150 字符预览（`getPreviewHtml`，line 230-247），详情页用 `applyHighlights()`（line 147-181）将 rune 偏移转 UTF-16 索引后通过 TreeWalker 在 DOM 文本节点中插入 `<mark class="search-hl">`。`useSessionSearch` composable（`web/src/composables/useSessionSearch.ts`）封装 `POST /api/rag/session-search` 调用，300ms 防抖，5 分钟 TTL 缓存 RAG 可用性检查
 
 ### 设计要点
 
 - **统一 SQLite 存储**：聊天消息和向量索引都存储在 SQLite 中，向量索引使用 sqlite-vec 纯 Go 扩展的 vec0 虚拟表（余弦相似度）。SQLite 的 WAL 模式适合高频写入，vec0 虚拟表支持高效向量搜索——无需引入额外的数据库依赖
-- **优雅降级**：如果 Ollama/嵌入 API 不可用，退化为 FTS-only 索引和搜索，后续嵌入 API 恢复后自动回填向量——嵌入服务不是强制依赖
+- **优雅降级**：如果 OpenAI 兼容嵌入端点（默认 `http://localhost:11434` Ollama）不可用，退化为 FTS-only 索引和搜索。`BaseURL` 与 `Model` 由用户在 `rag.{base_url,model}` 配置；任何 OpenAI 兼容服务都可作为嵌入后端，后续嵌入 API 恢复后自动回填向量——嵌入服务不是强制依赖
 - **自适应嵌入维度**：从 API 响应自动检测向量维度，维度变化时重建表。支持切换嵌入模型而无需手动迁移
 - **中文分词用 gse**：BM25 全文检索使用 gse 分词器处理中文文本，gse 不可用时退化为字符级分词——中文搜索不依赖外部分词服务

@@ -79,3 +79,19 @@ sequenceDiagram
 
 - **前端**：`processedEventIds` Set（cap 100），WS 回放和 pending fetch 共享同一去重集合
 - **Android**：`processedEventIds` LinkedHashSet（cap 100），防止 WS 回放 + pending fetch 产生重复通知
+
+## 钉钉企业推送
+
+当配置 `push_mode: "dingtalk"` 时，系统通过钉钉企业机器人将事件推送到用户钉钉单聊。适用于企业内网部署场景——用户可能无法直接访问 ClawBench Web 界面，但钉钉始终在线。
+
+### 架构
+
+- **Stream API 长连接**：`Manager`（`internal/push/dingtalk/manager.go`）通过钉钉 Stream SDK（`open-dingtalk/dingtalk-stream-sdk-go`）建立长轮询连接，注册 ChatBot 回调处理单聊消息
+- **Markdown 单聊消息**：`SendMarkdownMessage()`（`internal/push/dingtalk/sender.go:101`）调用 `/v1.0/robot/oToMessages/batchSend` API，以 `sampleMarkdown` 格式发送，4000 字符截断（`truncateForDingTalk`）
+- **DB Outbox 可靠投递**：`PushSessionEvent()` / `PushTaskEvent()`（`internal/push/dingtalk/push.go:206`）遍历 DB 订阅者列表逐个发送。**当 WS 客户端在线时抑制推送**——避免重复通知。订阅者数据由 `internal/service/dingtalk_subscribers.go` 管理
+- **交互式命令**：用户在钉钉单聊中发 `@{短ID} 消息内容` 即可向对应会话发送消息。`handleSessionCommand()`（`internal/push/dingtalk/session_command.go`）解析短 ID、匹配运行中会话、入队消息。`handleSessionList()` 列出最近会话按项目分组
+- **热重载**：`hotReloadDingTalk()`（`cmd/server/main.go:1204-1243`）检测凭证变更后原地重配置或重启 Manager，无需重启服务
+
+### 初始化桥接
+
+为避免 `push/dingtalk` 与 `service` 包的循环依赖，`cmd/server/main.go`（line 60-160）定义 `dingtalkDBAdapter` 和 `dingtalkSessionMessenger` 桥接结构，将 `DingtalkDB` / `SessionMessenger` 接口适配到 `service` 包函数。`main.go:894-943` 在启动时注册适配器、创建 Manager、启动 Stream 连接

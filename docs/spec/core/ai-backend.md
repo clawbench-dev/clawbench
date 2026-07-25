@@ -78,20 +78,29 @@ AutoResume 只用于 CLI 模式后端。ACP 后端使用会话级取消而非进
 - **统一流式接口**：所有 AI 后端实现 `AIBackend` 接口，对外暴露统一的 `ExecuteStream()` 方法，返回 `<-chan StreamEvent`。调用方无需关心底层差异
 - **双传输模式**：CLI shell-out（传统模式，通过 stdout 解析）和 ACP stdio（JSON-RPC 双向通信，提供模式切换、斜杠命令、权限审批等结构化能力）。Agent 的 `Transport` 字段决定使用哪种传输，可按会话切换
 - **多后端支持**：支持 12 种 AI 后端（Claude、Codebuddy、OpenCode、Codex、Qoder、VeCLI、DeepSeek/CodeWhale、Cline、Kimi、Copilot、MiMo-Code、Pi），每个后端在 `BackendRegistry` 中声明规格（CLI 命令、模型发现策略、ACP 命令），factory 根据后端类型创建对应的 `AIBackend` 实例
-- **ACP 连接管理**：每个聊天会话独占一个 ACP 连接（一对一模型），5 分钟空闲自动回收，活跃会话受保护不被回收。连接断开后自动重生并重试，崩溃的配置值自动跳过
+- **ACP 连接管理**：每个 ClawBench 会话独占一个 ACP 连接（通过 `ACPConnManager` 单例的 `conns map[string]*ACPConn` 维护，键为 `clawbenchSID`，`internal/ai/acp_pool.go:75-98`）。5 分钟空闲自动回收（`idleConnTimeout=5*time.Minute`，每 1 分钟 sweep 一次），活跃会话受保护不被回收。，活跃会话受保护不被回收。连接断开后自动重生并重试，崩溃的配置值自动跳过
 - **自动恢复（AutoResume）**：仅 CLI 模式。对 ExitPlanMode 场景自动执行"取消→恢复继续"流程，避免用户手动干预
 - **流式事件标准化**：各后端不同的输出格式经 LineParser（CLI）或 ACP 事件翻译层（ACP）统一为标准 StreamEvent 类型。ACP 额外提供 mode_update、config_update、thinking_effort_update、plan_update、model_list_update、commands_update 等能力事件
 - **ACP 权限审批**：ACP 后端请求用户审批工具调用时，系统推送 `permission_pending` 事件，前端展示审批界面，用户批准/拒绝后通过 `/api/ai/permission/respond` 回传
 - **工具名称归一化**：不同后端对同一操作使用不同的工具名称（如 `read_file` vs `Read`），归一化层统一映射，保证前端显示和 RAG 索引的一致性
 - **孤儿进程清理**：服务启动时扫描系统中的 AI 子进程孤儿（通过环境变量标记），检查父进程存活后安全清理。防止服务崩溃后遗留的进程占用资源
+- **ACP Stdout 过滤器（acpStdoutFilter）**：所有 ACP 连接的 stdout 经过 `acpStdoutFilter`（`internal/ai/acp_stdout_filter.go`）过滤，修复两类 JSON-RPC 协议违规：
+  1. **String-Number ID 不匹配**：CodeWhale 等后端在响应中返回 `"id":"1"`（字符串），而请求发送的是 `"id":1`（数字）。ACP SDK 严格匹配 ID，`"1" != 1` 会导致响应被静默丢弃。过滤器用正则 `"id"\s*:\s*"(\d+)"` 检测并转换回数字形式（`fixStringNumericID`，line 101）
+  2. **非 JSON 行**：某些后端在 ACP stdio 模式下向 stdout 输出终端转义序列（如 `\x1b[?1004l`），过滤器跳过不以 `{` 开头的行（`pump`，line 56-58）
+  - **io.Pipe 防挂起**：过滤器用 `io.Pipe` 在后台 goroutine 中读取、过滤、重发行。当 Agent 进程被 kill 但 OS 尚未关闭 stdout 管道时，`Close()` 方法调用 `pw.CloseWithError(io.EOF)` 立即解除阻塞的 `Read()` 调用，防止 `cmd.Wait()` 挂起（`Close`，line 83-92；清理序列见 `acp_pool.go:1152-1158`）
+- **CodeWhale ACP 字段重映射**：CodeWhale（注册为 `"deepseek"`，CLI: `codewhale`）在 ACP 模式下使用简写字段名（如 `path` 代替 `file_path`、`search` 代替 `old_string`）。`CodeWhaleACPInputRemaps`（11 项，`internal/ai/backends/deepseek/acp.go:6-18`）将其映射为前端渲染器的标准字段名。此外 `CodeWhaleACPToolCallIDPrefixes`（11 项，`acp.go:23-35`）将 CodeWhale 工具名（如 `read_file`）映射为 UI 友好的显示前缀（如 `Read`）
+- **BackendSpec.AltCmd 回退检测**：`AltCmd` 字段（`internal/model/discovery.go:49`）提供备用 CLI 命令名——当主命令 `DefaultCmd` 在 PATH 中未找到时，检查 `AltCmd` 是否存在。当前仅 CodeWhale 使用：`DefaultCmd: "codewhale", AltCmd: "deepseek"`（`internal/ai/backends/deepseek/cli.go:24`），兼容旧版 `deepseek` 二进制名的用户
+- **Pi 仅支持 CLI 模式**：Pi 当前**不支持 ACP**（测试显式断言 `p.ACP == nil`，`acp_register_test.go:121-130`）。请求 `acp-stdio` 传输时自动降级为 CLI 模式（`factory_test.go:330-351`）。AGENTS.md 曾提及 `@touchtechclub/pi-acp` 桥接支持，但该功能已被移除
+- **共享规则模板（commonRulesTemplate）**：所有 Agent 的系统提示词前注入 `commonRulesTemplate`（`internal/model/agent.go:120-153`），包含用户交互格式规范（XML `ask-question` 标签）和媒体生成规则。模板用 `«»` 占位反引号，`bt()` 函数在运行时替换（line 164-169）。`BuildCommonPrompt()` 返回处理后的模板文本（line 171-175）。另有 `mediaRulesTemplate`（line 155-162）仅在用户消息携带文件附件时注入
 
 ### 设计要点
 
 - **双传输分流在 factory 层**：`NewBackendForAgentWithTransport` 根据 Agent 的 `Transport` 字段（"cli" / "acp-stdio"）决定创建 ACPBackend 还是 CLIBackend。ACP 不可用时降级到 CLI 并记录警告——用户选择 ACP 是有意的，降级是容错而非静默回退
+- **ACP 连接管理实现注意**：实现文件名为 `internal/ai/acp_pool.go`，但导出类型名是 `ACPConnManager`（单例，非"连接池"）。文档统一以 `ACPConnManager` 称呼。`ACPConn` 内部可能复用 go routine，但对外是一对一映射。参考：`internal/ai/acp_pool.go:75`
 - **ACP 一对一而非连接池**：`ACPConnManager` 是单例，管理每个 ClawBench 会话独占一个 ACP 连接。AI Agent 的会话状态是私有的，无法在连接间共享
 - **CLIBackend 是通用骨架**：所有 shell-out 后端共享 `CLIBackend` 的进程管理、stdout 管道、上下文取消逻辑，差异仅在于 CLI 参数构建和输出解析策略——新增后端只需提供这两个策略
 - **后端规格集中声明**：所有后端的规格（CLI 命令、模型发现策略、ACP 命令）在 `BackendRegistry` 中集中声明，factory 通过后端类型字符串匹配创建实例。新增后端需要同时添加规格条目和 factory 分支
 - **AutoResumeBackend 是透明包装器**：仅包装 CLI 后端。ACP 后端不使用 AutoResume——ACP 用会话级取消替代进程终止，两种取消策略不兼容
 - **ACP 状态缓存与重发**：每个连接缓存当前的 mode、thinking effort、config、commands、plan 状态。新连接或重连时自动重发，保证前端在任何时刻都能恢复完整的 UI 状态
-- **ACP 工具调用防抖**：`ToolCallUpdate` 事件以 50ms 窗口批量发送，将 SSE 事件率降低约 95% 而不丢失信息——AI 工具调用的流式更新频率极高，逐条推送会淹没前端
+- **ACP 工具调用防抖**：`ToolCallUpdate` 事件以 50ms 窗口批量发送（`internal/ai/acp_debounce.go`），将推送给前端的 WS 事件率降低约 95% 而不丢失信息——AI 工具调用的流式更新频率极高，逐条推送会淹没前端
 - **Agent 存储是纯 DB 驱动**：Agent 配置存储在数据库（`agents` 表），YAML 仅用于手动定义的特殊 Agent。DB 优先，`source` 字段区分 "auto"（自动发现）和 "setup"（向导创建）。ACP 相关字段（`transport`、`acp_command`、可用模式/思考深度/命令等）持久化在 `agents` 表中，重启后无需重新发现

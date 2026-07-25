@@ -1,68 +1,92 @@
 # 流式传输体系
 
-ClawBench 使用 SSE 和 WebSocket 两种机制实现实时数据推送。SSE 用于聊天内容的流式传输（单向、大体积、长连接），WebSocket 用于系统事件的广播（双向、轻量、状态变更）。两者都有独立的重连策略和 HTTP 轮询降级方案，保证在弱网和移动端场景下的可用性。
+ClawBench 使用**单一 WebSocket**（`/api/ai/events/ws`）实现所有实时数据推送。聊天流（`content`/`thinking`/`tool_use`）和系统事件（`session_update`/`task_update`/`summary_update`）共用此通道，由 `StreamHub` 做会话级扇出。后端还有几条独立的小 SSE/WS 通道用于文件监听、目录搜索和 TTS 流式音频——这些与聊天流无关。
+
+> **历史说明**：早期版本曾用 SSE（`/api/ai/chat/stream`）做聊天流、`/api/events` 做系统事件，现已全部合并到统一 WebSocket。文档不再保留 SSE 聊天流相关描述。
 
 ## 流程图
 
-### SSE 聊天流式传输
-
-```mermaid
-sequenceDiagram
-    participant 前端
-    participant handler
-    participant service
-
-    前端->>handler: GET /api/ai/chat/stream (SSE)
-    handler->>service: 订阅 StreamChannel
-    loop 每 15s
-        handler-->>前端: SSE heartbeat
-    end
-    service-->>handler: StreamEvent
-    handler-->>前端: SSE data: {type, content}
-    前端->>前端: useChatStream 解析事件
-    Note over 前端: 连接断开
-    前端->>前端: 重连（3次指数退避）
-    前端->>前端: 降级为 HTTP 轮询（2s 间隔）
-```
-
-### WebSocket 系统事件通道
+### 主通道：WebSocket 统一推送
 
 ```mermaid
 sequenceDiagram
     participant 前端
     participant ws.Manager
-    participant EventBus
+    participant StreamHub
+    participant AI后端
 
-    前端->>ws.Manager: WS 连接 + client_id
-    ws.Manager-->>前端: 回放缓冲事件
-    loop 每 30s
+    前端->>ws.Manager: WS /api/ai/events/ws + client_id
+    ws.Manager->>前端: 回放缓冲事件 (≤10s 窗口, ≤50 条)
+    loop ping/pong
         ws.Manager-->>前端: ping
         前端-->>ws.Manager: pong
     end
-    EventBus->>ws.Manager: 状态变更事件
-    ws.Manager-->>前端: session_update / task_update
-    前端-->>ws.Manager: ack
-    Note over 前端: WS 断开
-    ws.Manager->>ws.Manager: 缓冲事件（10s 窗口）
-    前端->>ws.Manager: 重连
-    ws.Manager-->>前端: 回放缓冲事件
+    前端->>ws.Manager: {type:"subscribe", session_id}
+    ws.Manager->>StreamHub: Subscribe(clientID, sessionID)
+    StreamHub-->>前端: ACP 缓存状态 (mode/effort/config/commands)
+    AI后端-->>StreamHub: StreamEvent
+    StreamHub-->>前端: {type:"event", event:"session_update"|"task_update"|"summary_update"}
+    StreamHub-->>前端: ChatStreamData (content/thinking/tool_use)
+    Note over 前端: 断线 ≤10s
+    ws.Manager->>ws.Manager: 缓冲事件 (≤50)
+    前端->>ws.Manager: 重连 + 回放
+    Note over 前端: 断线 >120s
+    ws.Manager->>ws.Manager: 清理订阅
+```
+
+### 客户端侧消息类型
+
+```mermaid
+sequenceDiagram
+    participant 前端
+    participant ws.Manager
+
+    前端->>ws.Manager: {type:"subscribe", session_id}
+    前端->>ws.Manager: {type:"unsubscribe", session_id}
+    前端->>ws.Manager: {type:"cancel", session_id}
+    前端->>ws.Manager: {type:"permission_respond", session_id, decision}
+    前端->>ws.Manager: {type:"ack", id}
+    前端->>ws.Manager: {type:"pong"}
 ```
 
 ## 功能与设计要点
 
 ### 功能清单
 
-- **SSE 聊天流**：GET `/api/ai/chat/stream` 建立 SSE 连接，实时推送 AI 回复内容。SSE 天然支持单向流式数据，适合聊天场景的"一发多收"模式
-- **WebSocket 系统事件**：`/api/ai/events/ws` 提供 3 种事件类型（session_update、task_update、summary_update），其中 `session_update` 的 status 字段包含 running、completed、cancelled、permission_pending、permission_resolved 等状态，客户端可实时感知系统状态变化
-- **SSE 重连与降级**：聊天 SSE 断开后尝试 3 次重连（指数退避），失败后降级为 HTTP 轮询（2s 间隔），保证在弱网环境下仍能获取数据
-- **WebSocket 重连与缓冲**：WebSocket 断开后客户端重连时自动回放断线期间的缓冲事件（10s 窗口，最多 50 条），防止状态丢失
-- **SSE 心跳与超时**：SSE 15s 心跳保活，30s 超时检测连接有效性；WebSocket 30s ping，5min 空闲超时
-- **排队状态推送**：排队消息的状态变更通过 SSE `queue_drain`/`queue_update` 事件推送，与聊天内容共用 SSE 连接。`queue_drain` 原子性地完成当前消息并启动下一条排队消息，`queue_update` 在新消息入队时同步状态
-- **摘要实时推送**：会话完成后 `summary_update` 事件推送生成的摘要，前端 `SummaryToggle` 组件可立即切换显示摘要，无需轮询
+- **WebSocket 单通道**：所有实时推送走 `GET /api/ai/events/ws`（`internal/handler/handler.go`），无独立聊天流 SSE
+  - 聊天内容事件：`ChatStreamData` 携带 `event_type`（`content`/`thinking`/`tool_use` 等子事件），通过 `StreamHub.EmitToSession` 推送（`internal/ws/stream_hub.go:120`）
+  - 系统事件信封：`{type:"event", event:"session_update"|"task_update"|"summary_update"}`（`internal/ws/protocol.go:13`）
+  - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong` 六种客户端消息（`protocol.go:19`）
+- **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`（`internal/ws/manager.go:42,46`）
+- **订阅超时清理**：客户端超过 `staleTimeout = 120s` 无活动（`manager.go:50`）即清理订阅，避免僵尸连接
+- **重连时 ACP 状态重发**：`StreamHub` 在客户端重新订阅时，重新推送该会话缓存的 ACP 状态（mode/effort/config/commands），使断线后状态保持一致
+- **HTTP cancel 兜底**：`StreamHub` 还提供 `POST /api/ai/cancel` HTTP 端点作为 cancel 备选通道——WS 不可达时仍能取消（来自 `handler.go`，由 `SessionExecutor` 监听）
+
+### 旁注：独立小通道（与聊天无关）
+
+> 主通道之外，还有几条独立的小 SSE/WS 通道用于专门场景，与聊天流无关联。
+
+| 端点 | 通道 | 用途 | 代码位置 |
+|------|------|------|----------|
+| `GET /api/file/watch` | SSE | 文件系统 fsnotify 变更流 | `internal/handler/file_watch.go:35` |
+| `GET /api/dir/search` | SSE | 目录 fuzzy 搜索进度 | `internal/handler/dir_search.go:120` |
+| `GET /api/tts/audio/ws` | WebSocket | TTS 流式音频分片 | `internal/handler/tts_audio_ws.go:36` |
 
 ### 设计要点
 
-- **SSE 和 WebSocket 各司其职**：SSE 用于大体积的聊天内容流（单向推送），WebSocket 用于轻量的系统状态广播（双向通信）。不把所有实时通信塞进一个通道，避免聊天数据影响状态事件的及时性
-- **HTTP 轮询是最终保底**：两种实时通道都有 HTTP 轮询降级方案——这是移动端场景的必要设计，移动网络不稳定时轮询虽然低效但可靠
-- **WebSocket 替代了 SSE 系统事件**：系统事件最初使用 SSE（`/api/events`，5 次重连后降级轮询），后来迁移到 WebSocket——WebSocket 的双向通信能力更适合推送确认（ack）和注册（register）场景
-- **断线缓冲窗口有限**：WebSocket 断线后只缓冲 10s 内的事件，超过 10s 的事件丢失。重连后客户端通过 REST API 做 fullStateSync 恢复完整状态——缓冲只是减少重连瞬间的数据丢失，不是持久化方案
+- **WS 单通道统一推送**：聊天流和系统事件共用 `/api/ai/events/ws`，由 `StreamHub` 做会话级扇出（多客户端订阅同一 session）；避免双通道带来的状态同步问题
+- **断线缓冲只是减震**：缓冲窗口（10s / 50 条）有限，**不是持久化方案**。重连超时（>120s）后通过 `fullStateSync` REST 端点恢复完整状态
+- **客户端 ack 用 `permission_respond`**：WS 客户端消息支持 `permission_respond`（替代旧 HTTP `/api/ai/permission`），ACP 权限待审场景下前端用此消息回传决策
+- **HTTP cancel 兜底**：WS 不可达时（弱网），HTTP cancel 端点仍可工作——`SessionExecutor` 同时监听 WS cancel 消息和 HTTP cancel 调用
+
+## 关键代码引用
+
+| 文件 | 关键符号/常量 |
+|------|---------------|
+| `internal/ws/stream_hub.go:120` | `func EmitToSession(sessionID string, event ai.StreamEvent)` |
+| `internal/ws/manager.go:42,46,50` | `disconnectedBufferWindow=10s` / `maxBufferedEvents=50` / `staleTimeout=120s` |
+| `internal/ws/protocol.go:10-15,18-25` | 服务端信封 `ServerMessage` + 客户端消息 `ClientMessage` |
+| `internal/handler/handler.go` | WS 端点注册（`/api/ai/events/ws`、`/api/ai/cancel`） |
+| `internal/handler/file_watch.go:35` | `/api/file/watch` SSE |
+| `internal/handler/dir_search.go:120` | `/api/dir/search` SSE |
+| `internal/handler/tts_audio_ws.go:36` | `/api/tts/audio/ws` WS |
