@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 410" font-family="system-ui, -apple-system, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arr-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3b82f6"/>
+    </marker>
+    <filter id="sh" x="-3%" y="-3%" width="106%" height="112%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+
+  <rect width="720" height="410" rx="12" fill="#f8fafc"/>
+
+  <!-- ===== Clients ===== -->
+  <text x="28" y="32" font-size="10" fill="#94a3b8" font-weight="600" letter-spacing="1">CLIENTS</text>
+
+  <g filter="url(#sh)">
+    <rect x="50" y="48" width="130" height="56" rx="8" fill="white" stroke="#e2e8f0"/>
+    <text x="115" y="73" text-anchor="middle" font-size="13" fill="#1e293b" font-weight="600">🌐 Browser</text>
+    <text x="115" y="91" text-anchor="middle" font-size="9" fill="#94a3b8">PC / Tablet / Phone</text>
+  </g>
+  <g filter="url(#sh)">
+    <rect x="200" y="48" width="130" height="56" rx="8" fill="white" stroke="#e2e8f0"/>
+    <text x="265" y="73" text-anchor="middle" font-size="13" fill="#1e293b" font-weight="600">📱 Android</text>
+    <text x="265" y="91" text-anchor="middle" font-size="9" fill="#94a3b8">App</text>
+  </g>
+  <g filter="url(#sh)">
+    <rect x="350" y="48" width="130" height="56" rx="8" fill="white" stroke="#e2e8f0"/>
+    <text x="415" y="73" text-anchor="middle" font-size="13" fill="#1e293b" font-weight="600">📲 PWA</text>
+    <text x="415" y="91" text-anchor="middle" font-size="9" fill="#94a3b8">Home Screen Install</text>
+  </g>
+
+  <!-- Clients → Server -->
+  <line x1="115" y1="104" x2="220" y2="165" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)" stroke-dasharray="4,3"/>
+  <line x1="265" y1="104" x2="290" y2="165" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)" stroke-dasharray="4,3"/>
+  <line x1="415" y1="104" x2="360" y2="165" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)" stroke-dasharray="4,3"/>
+  <text x="150" y="140" font-size="9" fill="#64748b" transform="rotate(-15,150,140)">HTTP / WebSocket</text>
+  <text x="265" y="135" font-size="9" fill="#64748b">HTTP / WebSocket</text>
+  <text x="400" y="140" font-size="9" fill="#64748b" transform="rotate(15,400,140)">HTTP / WebSocket</text>
+
+  <!-- ===== Server ===== -->
+  <text x="28" y="185" font-size="10" fill="#94a3b8" font-weight="600" letter-spacing="1">SERVER</text>
+
+  <g filter="url(#sh)">
+    <rect x="100" y="165" width="380" height="150" rx="10" fill="white" stroke="#3b82f6" stroke-width="1.5"/>
+    <rect x="100" y="165" width="380" height="28" rx="10" fill="#3b82f6"/>
+    <rect x="100" y="183" width="380" height="10" fill="#3b82f6"/>
+    <text x="290" y="186" text-anchor="middle" font-size="12" fill="white" font-weight="700">ClawBench Server</text>
+
+    <rect x="118" y="204" width="105" height="28" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="170" y="223" text-anchor="middle" font-size="10" fill="#1e40af" font-weight="600">🤖 AI Chat</text>
+    <rect x="233" y="204" width="105" height="28" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="285" y="223" text-anchor="middle" font-size="10" fill="#1e40af" font-weight="600">📁 File Mgmt</text>
+    <rect x="348" y="204" width="115" height="28" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="405" y="223" text-anchor="middle" font-size="10" fill="#1e40af" font-weight="600">🔀 Git Ops</text>
+    <rect x="118" y="242" width="105" height="28" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="170" y="261" text-anchor="middle" font-size="10" fill="#1e40af" font-weight="600">⏰ Cron Tasks</text>
+    <rect x="233" y="242" width="105" height="28" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="285" y="261" text-anchor="middle" font-size="10" fill="#1e40af" font-weight="600">💻 Terminal</text>
+    <rect x="348" y="242" width="115" height="28" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="405" y="261" text-anchor="middle" font-size="10" fill="#1e40af" font-weight="600">🔊 TTS</text>
+
+    <text x="290" y="298" text-anchor="middle" font-size="9" fill="#94a3b8">Single Binary · Zero Deps · Cross-Platform · One-Click Install · Auto Update</text>
+  </g>
+
+  <!-- Server → Agents -->
+  <line x1="480" y1="240" x2="498" y2="240" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#arr-b)"/>
+  <text x="489" y="233" text-anchor="middle" font-size="8" fill="#3b82f6" font-weight="500">CLI / ACP</text>
+
+  <!-- ===== AI AGENTS ===== -->
+  <text x="500" y="178" font-size="10" fill="#94a3b8" font-weight="600" letter-spacing="1">AI AGENTS</text>
+
+  <!-- Row 1: CodeBuddy + Claude Code -->
+  <g filter="url(#sh)">
+    <rect x="500" y="188" width="90" height="36" rx="6" fill="#fef3c7" stroke="#fbbf24"/>
+    <g transform="translate(510,198) scale(0.5)">
+      <path d="M18.821 0H5.18A5.179 5.179 0 000 5.179V18.82A5.179 5.179 0 005.179 24H18.82A5.179 5.179 0 0024 18.821V5.18A5.179 5.179 0 0018.821 0z" fill="url(#cb-grad)"/>
+      <path d="M18.777 1.647c.28-.02.536.114.972.51 1.018.926 2.437 2.828 3.318 4.452l.34.631.482.24.11.06v3.638a5.206 5.206 0 00-5.32-1.23c-.491.166-1.021.471-2.08 1.082l-6.09 3.516c-1.057.61-1.586.916-1.975 1.259a5.208 5.208 0 00-1.493 5.572c.165.49.471 1.02 1.082 2.08l.315.543h-3.26c-.685 0-1.34-.135-1.939-.377-.169-.956-.009-1.789.469-2.335.158-.18.164-.189.13-.493a11.846 11.846 0 01-.057-1.711l.02-.444-.667-1.18C2.1 15.622 1.445 14.078 1.192 12.9c-.133-.647-.125-.934.04-1.146.1-.128.427-.261.822-.334.994-.175 3.162-.017 5.575.41l.25.043.551-.487c.915-.81 1.522-1.264 2.641-1.962 1.167-.73 2.484-1.331 3.967-1.807l.476-.152.261-.688c.937-2.471 1.896-4.293 2.58-4.9.235-.21.25-.22.422-.23z" fill="#fff"/>
+      <path d="M12.139 18.2a1.203 1.203 0 011.642.44l1.296 2.243a1.204 1.204 0 01-2.083 1.203l-1.296-2.243a1.203 1.203 0 01.44-1.644zM18.629 14.452a1.203 1.203 0 011.642.44l1.295 2.244a1.203 1.203 0 11-2.083 1.203l-1.295-2.243a1.203 1.203 0 01.44-1.644z" fill="#fff"/>
+      <defs><radialGradient cx="0" cy="0" gradientTransform="matrix(-9.00009 -16 16 -9.00009 21 24.5)" gradientUnits="userSpaceOnUse" id="cb-grad" r="1"><stop stop-color="#2EA99D"/><stop offset="1" stop-color="#6C4DFF"/></radialGradient></defs>
+    </g>
+    <text x="524" y="210" font-size="8.5" fill="#92400e" font-weight="600">CodeBuddy</text>
+  </g>
+
+  <g filter="url(#sh)">
+    <rect x="598" y="188" width="90" height="36" rx="6" fill="#fef3c7" stroke="#fbbf24"/>
+    <g transform="translate(608,198) scale(0.5)">
+      <path clip-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z" fill="#D97757" fill-rule="evenodd"/>
+    </g>
+    <text x="622" y="210" font-size="8.5" fill="#92400e" font-weight="600">Claude Code</text>
+  </g>
+
+  <!-- Row 2: OpenCode + Codex -->
+  <g filter="url(#sh)">
+    <rect x="500" y="232" width="90" height="36" rx="6" fill="#fef3c7" stroke="#fbbf24"/>
+    <g transform="translate(510,242) scale(0.5)">
+      <path d="M16 6H8v12h8V6zm4 16H4V2h16v20z" fill="#475569"/>
+    </g>
+    <text x="524" y="254" font-size="8.5" fill="#92400e" font-weight="600">OpenCode</text>
+  </g>
+
+  <g filter="url(#sh)">
+    <rect x="598" y="232" width="90" height="36" rx="6" fill="#fef3c7" stroke="#fbbf24"/>
+    <g transform="translate(608,242) scale(0.5)">
+      <path d="M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z" fill="#fff"/>
+      <path d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275a.09.09 0 00.043.021.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z" fill="url(#cx-grad)"/>
+      <defs><linearGradient gradientUnits="userSpaceOnUse" id="cx-grad" x1="12" x2="12" y1="3" y2="21"><stop stop-color="#B1A7FF"/><stop offset=".5" stop-color="#7A9DFF"/><stop offset="1" stop-color="#3941FF"/></linearGradient></defs>
+    </g>
+    <text x="622" y="254" font-size="8.5" fill="#92400e" font-weight="600">Codex</text>
+  </g>
+
+  <!-- Row 3: Cline + Copilot -->
+  <g filter="url(#sh)">
+    <rect x="500" y="276" width="90" height="36" rx="6" fill="#fef3c7" stroke="#fbbf24"/>
+    <g transform="translate(510,286) scale(0.5)">
+      <path d="M17.035 3.991c2.75 0 4.98 2.24 4.98 5.003v1.667l1.45 2.896a1.01 1.01 0 01-.002.909l-1.448 2.864v1.668c0 2.762-2.23 5.002-4.98 5.002H7.074c-2.751 0-4.98-2.24-4.98-5.002V17.33l-1.48-2.855a1.01 1.01 0 01-.003-.927l1.482-2.887V8.994c0-2.763 2.23-5.003 4.98-5.003h9.962zM8.265 9.6a2.274 2.274 0 00-2.274 2.274v4.042a2.274 2.274 0 004.547 0v-4.042A2.274 2.274 0 008.265 9.6zm7.326 0a2.274 2.274 0 00-2.274 2.274v4.042a2.274 2.274 0 104.548 0v-4.042A2.274 2.274 0 0015.59 9.6z" fill="#6366f1"/>
+      <path d="M12.054 5.558a2.779 2.779 0 100-5.558 2.779 2.779 0 000 5.558z" fill="#6366f1"/>
+    </g>
+    <text x="524" y="298" font-size="8.5" fill="#92400e" font-weight="600">Cline</text>
+  </g>
+
+  <g filter="url(#sh)">
+    <rect x="598" y="276" width="90" height="36" rx="6" fill="#fef3c7" stroke="#fbbf24"/>
+    <g transform="translate(611,286) scale(0.45)">
+      <path d="M9 22h8.749c2.5 0 4-3.332 5-6.663 1.184-3.948 2.734-9.227-1.75-9.227H17.22c-1.129 0-2.12.754-2.43 1.848a1149.2 1149.2 0 01-2.713 9.437c-.46 1.564-.842 2.907-1.43 3.743A1.97 1.97 0 019 22" fill="#6366f1"/>
+      <path d="M15 0H6.252c-2.5 0-4 3.331-5 6.662-1.184 3.947-2.734 9.225 1.75 9.225H6.78c1.13 0 2.12-.753 2.43-1.847.657-2.317 1.809-6.359 2.713-9.436.46-1.563.842-2.906 1.43-3.742A1.97 1.97 0 0115 0" fill="#22c55e"/>
+    </g>
+    <text x="624" y="298" font-size="8.5" fill="#92400e" font-weight="600">Copilot</text>
+  </g>
+
+  <!-- Remaining agents -->
+  <text x="594" y="328" text-anchor="middle" font-size="9" fill="#94a3b8" font-style="italic">Qoder · VeCLI · CodeWhale · MiMo · Pi · Kimi</text>
+
+  <!-- ===== Data ===== -->
+  <text x="28" y="365" font-size="10" fill="#94a3b8" font-weight="600" letter-spacing="1">DATA</text>
+
+  <g filter="url(#sh)">
+    <rect x="100" y="345" width="140" height="48" rx="8" fill="white" stroke="#e2e8f0"/>
+    <text x="170" y="366" text-anchor="middle" font-size="12" fill="#1e293b" font-weight="600">SQLite</text>
+    <text x="170" y="383" text-anchor="middle" font-size="9" fill="#94a3b8">Sessions / Config / Agents</text>
+  </g>
+  <g filter="url(#sh)">
+    <rect x="260" y="345" width="140" height="48" rx="8" fill="white" stroke="#e2e8f0"/>
+    <text x="330" y="366" text-anchor="middle" font-size="12" fill="#1e293b" font-weight="600">File System</text>
+    <text x="330" y="383" text-anchor="middle" font-size="9" fill="#94a3b8">Projects / RAG Index</text>
+  </g>
+
+  <line x1="170" y1="315" x2="170" y2="345" stroke="#64748b" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="330" y1="315" x2="330" y2="345" stroke="#64748b" stroke-width="1" marker-end="url(#arr)"/>
+</svg>

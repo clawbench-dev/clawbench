@@ -23,7 +23,7 @@
           <!-- Chat Tab -->
           <TabPanel tabId="chat" :activeTab="activeTab">
             <template #header>
-              <span class="bs-header-title">{{ sessionIdentity.agentHeaderTitle.value }}</span>
+              <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" /> {{ sessionIdentity.agentHeaderTitle.value }}</span>
               <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description">
                 <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
               </div>
@@ -299,12 +299,13 @@ import SessionDrawer from './components/session/SessionDrawer.vue'
 import AcpSessionDrawer from './components/chat/AcpSessionDrawer.vue'
 import QuoteQuestionBar from './components/common/QuoteQuestionBar.vue'
 import HeaderMarquee from './components/common/HeaderMarquee.vue'
+import AgentIcon from './components/common/AgentIcon.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
-import { resetAgents } from '@/composables/useAgents'
+import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useSessionIdentity, registerSessionDrawerRef, resetIdentity } from './composables/useSessionIdentity.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
@@ -565,6 +566,7 @@ const toast = useToast()
 provide('toast', toast)
 
 const sessionIdentity = useSessionIdentity()
+const { getAgentBackend, getAgentName } = useAgents()
 
 // Register chat-scoped drawers with tab-drawer binding
 // Session drawer is now owned by useSessionIdentity (encapsulated TabDrawer)

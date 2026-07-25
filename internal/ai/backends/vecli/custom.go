@@ -11,7 +11,7 @@ func init() {
 	backends.Register(&backends.BackendPlugin{
 		ID: "vecli",
 		Spec: model.BackendSpec{
-			ID: "vecli", Backend: "vecli", DefaultCmd: "vecli", Name: "VeCLI", Icon: "🌿", Specialty: "字节跳动 AI 助手",
+			ID: "vecli", Backend: "vecli", DefaultCmd: "vecli", Name: "VeCLI", Specialty: "字节跳动 AI 助手",
 			InstallCmd: "npm install -g @volcengine/vecli",
 			SortOrder:  6,
 		},

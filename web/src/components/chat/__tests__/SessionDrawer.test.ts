@@ -71,7 +71,6 @@ const mockAgents = {
     {
       id: 'claude',
       name: 'Claude',
-      icon: '🤖',
       backend: 'claude',
       models: [
         { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
@@ -87,7 +86,6 @@ const mockAgents = {
     {
       id: 'kimi',
       name: 'Kimi',
-      icon: '💎',
       backend: 'kimi',
       models: [],
       thinkingEffortLevels: [],

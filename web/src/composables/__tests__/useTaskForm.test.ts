@@ -24,7 +24,7 @@ vi.mock('vue-i18n', () => ({
 // Mock useAgents
 vi.mock('@/composables/useAgents.ts', () => ({
   useAgents: () => ({
-    agents: { value: [{ id: 'agent-1', icon: '🤖', name: 'TestAgent' }] },
+    agents: { value: [{ id: 'agent-1', backend: 'codebuddy', name: 'TestAgent' }] },
     loadAgents: vi.fn(),
   }),
 }))

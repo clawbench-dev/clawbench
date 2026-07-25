@@ -20,7 +20,7 @@ const AgentDDL = `
 CREATE TABLE IF NOT EXISTS agents (
 	id TEXT PRIMARY KEY,
 	name TEXT NOT NULL,
-	icon TEXT NOT NULL DEFAULT '',
+	icon TEXT NOT NULL DEFAULT '',  -- deprecated: kept for SQLite <3.35 compat; not read or written
 	specialty TEXT NOT NULL DEFAULT '',
 	backend TEXT NOT NULL,
 	command TEXT NOT NULL DEFAULT '',
@@ -67,7 +67,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_api_keys_agent_provider
 // LoadAgentsFromDB loads all agents from the database and returns them sorted by ID.
 func LoadAgentsFromDB() ([]*model.Agent, error) {
 	rows, err := dbRead.Query(`
-		SELECT id, name, icon, specialty, backend, command,
+		SELECT id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
@@ -87,7 +87,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		var modelsAutoDetected int
 
 		err := rows.Scan(
-			&a.ID, &a.Name, &a.Icon, &a.Specialty, &a.Backend, &a.Command,
+			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
 			&a.ThinkingEffort, &levelsJSON,
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.SystemPrompt, &a.CustomSystemPrompt, &modelsJSON, &modelsAutoDetected,
@@ -152,16 +152,15 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 	}
 
 	_, err = db.Exec(`
-		INSERT INTO agents (id, name, icon, specialty, backend, command,
+		INSERT INTO agents (id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
 			source, sort_order,
 			transport, acp_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
-			icon = excluded.icon,
 			specialty = excluded.specialty,
 			backend = excluded.backend,
 			command = excluded.command,
@@ -179,7 +178,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			transport = excluded.transport,
 			acp_command = excluded.acp_command,
 			updated_at = CURRENT_TIMESTAMP
-	`, agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
+	`, agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), modelsAutoDetected,
@@ -223,7 +222,6 @@ type AgentPatch struct {
 	PreferredThinkingEffort *string
 	Transport               *string
 	Name                    *string
-	Icon                    *string
 	Specialty               *string
 	CustomSystemPrompt      *string
 	SortOrder               *int
@@ -259,10 +257,6 @@ func PatchAgentFields(id string, patch AgentPatch) error { //nolint:gocyclo // m
 	if patch.Name != nil {
 		setClauses = append(setClauses, "name = ?")
 		args = append(args, *patch.Name)
-	}
-	if patch.Icon != nil {
-		setClauses = append(setClauses, "icon = ?")
-		args = append(args, *patch.Icon)
 	}
 	if patch.Specialty != nil {
 		setClauses = append(setClauses, "specialty = ?")
@@ -369,7 +363,6 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 	clone := &model.Agent{
 		ID:                      newID,
 		Name:                    newName,
-		Icon:                    source.Icon,
 		Specialty:               source.Specialty,
 		Backend:                 source.Backend,
 		Command:                 source.Command,

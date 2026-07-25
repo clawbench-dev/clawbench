@@ -253,7 +253,7 @@ const isACP = computed(() => {
 
 const agentName = computed(() => {
   const agent = getAgent(props.agentId || '')
-  return agent ? `${agent.icon} ${agent.name}` : ''
+  return agent ? agent.name : ''
 })
 
 const defaultModelId = computed(() => {

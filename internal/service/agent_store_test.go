@@ -93,7 +93,6 @@ func TestSaveAgent_Insert(t *testing.T) {
 	agent := &model.Agent{
 		ID:        "pi",
 		Name:      "Pi",
-		Icon:      "🥧",
 		Specialty: "极简编程智能体",
 		Backend:   "pi",
 		Command:   "/path/to/pi",
@@ -117,7 +116,6 @@ func TestSaveAgent_Insert(t *testing.T) {
 	got := agents[0]
 	assert.Equal(t, "pi", got.ID)
 	assert.Equal(t, "Pi", got.Name)
-	assert.Equal(t, "🥧", got.Icon)
 	assert.Equal(t, "极简编程智能体", got.Specialty)
 	assert.Equal(t, "pi", got.Backend)
 	assert.Equal(t, "/path/to/pi", got.Command)
@@ -578,20 +576,6 @@ func TestPatchAgentFields_Name(t *testing.T) {
 	assert.Equal(t, "Pi Updated", agents[0].Name)
 }
 
-func TestPatchAgentFields_Icon(t *testing.T) {
-	db := setupTestDBForAgents(t)
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
-
-	icon := "🥧"
-	err := service.PatchAgentFields("pi", service.AgentPatch{Icon: &icon})
-	require.NoError(t, err)
-
-	agents, err := service.LoadAgentsFromDB()
-	require.NoError(t, err)
-	require.Len(t, agents, 1)
-	assert.Equal(t, "🥧", agents[0].Icon)
-}
-
 func TestPatchAgentFields_Specialty(t *testing.T) {
 	db := setupTestDBForAgents(t)
 	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
@@ -641,7 +625,7 @@ func TestPatchAgentFields_SortOrder(t *testing.T) {
 
 func TestPatchAgentFields_PartialPatch(t *testing.T) {
 	db := setupTestDBForAgents(t)
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Icon: "🤖", Specialty: "old", Backend: "pi", Source: "auto"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Specialty: "old", Backend: "pi", Source: "auto"}))
 
 	// Only patch name, verify other fields unchanged
 	name := "Pi New"
@@ -652,7 +636,6 @@ func TestPatchAgentFields_PartialPatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "Pi New", agents[0].Name)
-	assert.Equal(t, "🤖", agents[0].Icon)        // unchanged
 	assert.Equal(t, "old", agents[0].Specialty) // unchanged
 }
 
@@ -762,7 +745,6 @@ func TestDuplicateAgent_Success(t *testing.T) {
 	agent := &model.Agent{
 		ID:                      "pi",
 		Name:                    "Pi",
-		Icon:                    "🥧",
 		Specialty:               "极简编程智能体",
 		Backend:                 "pi",
 		Command:                 "/path/to/pi",
@@ -789,7 +771,6 @@ func TestDuplicateAgent_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, clone.ID, "pi-copy-")
 	assert.Equal(t, "Pi Copy", clone.Name)
-	assert.Equal(t, "🥧", clone.Icon)
 	assert.Equal(t, "pi", clone.Backend)
 	assert.Equal(t, "manual", clone.Source)
 

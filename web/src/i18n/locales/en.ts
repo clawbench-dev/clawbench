@@ -1094,7 +1094,6 @@ export default {
       agentPreferredMode: 'Preferred Mode',
       agentTransport: 'Transport',
       agentName: 'Name',
-      agentIcon: 'Icon',
       agentSpecialty: 'Description',
       agentSystemPrompt: 'System Prompt',
       agentSystemPromptDesc: 'Custom rules for agent behavior, appended after built-in rules',

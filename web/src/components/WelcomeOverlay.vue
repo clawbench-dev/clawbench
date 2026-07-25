@@ -18,7 +18,7 @@
             class="backend-item"
             :class="{ 'backend-not-detected': !loading && !detectedBackends.has(b.id) }"
           >
-            <div class="backend-icon">{{ b.icon }}</div>
+            <div class="backend-icon"><AgentIcon :backend="b.id" :name="b.name" :size="20" /></div>
             <div class="backend-info">
               <div class="backend-name">{{ b.name }}</div>
               <div class="backend-specialty">{{ b.specialty }}</div>
@@ -86,12 +86,12 @@ import { useAgents } from '@/composables/useAgents'
 import { MonitorSmartphone, Smartphone, Loader2 } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
 import AgentInstallDialog from './AgentInstallDialog.vue'
+import AgentIcon from './common/AgentIcon.vue'
 import { appLog } from '@/utils/appLog'
 
 interface BackendInfo {
   id: string
   name: string
-  icon: string
   specialty: string
   default_cmd: string
   thinking_effort_levels?: string[]
@@ -307,7 +307,6 @@ onUnmounted(() => {
 }
 
 .backend-icon {
-  font-size: 20px;
   line-height: 1;
   flex-shrink: 0;
   width: 24px;

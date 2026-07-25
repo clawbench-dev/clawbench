@@ -362,7 +362,7 @@ export async function patchAgentPref(agentId: string, field: 'preferred_model' |
 
 /**
  * Patch an agent's settings-panel configurable field on the server.
- * Supports: name, icon, specialty, custom_system_prompt, sort_order,
+ * Supports: name, specialty, custom_system_prompt, sort_order,
  * plus the original preferred_model/preferred_thinking_effort/transport.
  */
 export async function patchAgentField(agentId: string, field: string, value: string | boolean | number | null): Promise<void> {
@@ -375,7 +375,7 @@ export async function patchAgentField(agentId: string, field: string, value: str
     transport: 'transport',
     custom_system_prompt: 'customSystemPrompt',
     sort_order: 'sortOrder',
-    // name, icon, specialty map to themselves
+    // name, specialty map to themselves
   }
   updateAgentField(agentId, fieldMap[field] || field, value)
   // When custom_system_prompt changes, reload agents to get the server-composed

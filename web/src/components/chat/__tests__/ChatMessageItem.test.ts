@@ -119,7 +119,7 @@ function createWrapper(props = {}) {
           hasImagesInContent: vi.fn(() => false),
         },
         chatSession: {
-          getAgentIcon: vi.fn(() => ''),
+          getAgentBackend: vi.fn(() => ''),
           getAgentName: vi.fn(() => ''),
         },
       },

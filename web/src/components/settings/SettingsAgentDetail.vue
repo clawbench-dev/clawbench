@@ -173,13 +173,6 @@ const items = computed<AgentItem[]>(() => {
   })
 
   result.push({
-    key: 'icon',
-    label: t('settings.items.agentIcon'),
-    type: 'text',
-    patchField: 'icon',
-  })
-
-  result.push({
     key: 'specialty',
     label: t('settings.items.agentSpecialty'),
     type: 'text',
@@ -270,8 +263,6 @@ function getItemValue(item: AgentItem): unknown {
       return a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
     case 'name':
       return a.name || ''
-    case 'icon':
-      return a.icon || ''
     case 'specialty':
       return a.specialty || ''
     case 'custom_system_prompt':

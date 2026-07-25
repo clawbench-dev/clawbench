@@ -32,7 +32,7 @@
         >
           <div class="task-item-main">
             <div class="task-item-header">
-              <span class="task-item-icon">{{ getAgentIcon(task.agentId) }}</span>
+              <AgentIcon class="task-item-icon" :backend="getAgentBackend(task.agentId)" :name="getAgentName(task.agentId)" :size="16" />
               <span class="task-item-name">{{ task.name }}</span>
               <span v-if="task.runningCount > 0" class="task-item-running-dot" :title="t('task.exec.running')"></span>
               <span v-if="task.unreadCount > 0" class="task-item-unread">{{ task.unreadCount }}</span>
@@ -80,10 +80,11 @@ import { useAgents } from '@/composables/useAgents'
 import { humanizeCron, repeatLabel, statusLabel, formatDateTime } from '@/utils/format'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 
 const { t } = useI18n()
 const { loadTasks, markAllTasksRead } = useTaskTab()
-const { loadAgents, getAgentIcon } = useAgents()
+const { loadAgents, getAgentBackend, getAgentName } = useAgents()
 
 interface TaskItem {
   id: number
@@ -295,8 +296,8 @@ onMounted(refresh)
 }
 
 .task-item-icon {
-  font-size: 16px;
   flex-shrink: 0;
+  vertical-align: middle;
 }
 
 .task-item-name {

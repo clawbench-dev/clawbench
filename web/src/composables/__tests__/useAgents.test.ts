@@ -42,7 +42,7 @@ vi.mock('@/composables/usePlanProgress', () => ({
 }))
 
 describe('useAgents', () => {
-  const { agents, defaultAgentId, loadAgents, getAgentIcon, getAgentName,
+  const { agents, defaultAgentId, loadAgents, getAgentBackend, getAgentName,
     isDefaultAgent, getDefaultModelId, getAgentModels, isMultiModel,
     getAgent, getAgentModel, getAgentDefaultModelName, agentHeaderTitle,
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
@@ -67,7 +67,7 @@ describe('useAgents', () => {
     {
       id: 'claude',
       name: 'Claude',
-      icon: '🤖',
+      backend: 'claude',
       canRefreshModels: true,
       models: [
         { id: 'claude-3.5', name: 'Claude 3.5 Sonnet', default: true },
@@ -78,7 +78,7 @@ describe('useAgents', () => {
     {
       id: 'gpt',
       name: 'GPT-4',
-      icon: '🧠',
+      backend: 'gpt',
       canRefreshModels: true,
       models: [{ id: 'gpt-4o', name: 'GPT-4o', default: true }],
       thinkingEffortLevels: ['low', 'medium', 'high'],
@@ -86,7 +86,7 @@ describe('useAgents', () => {
     {
       id: 'simple',
       name: 'Simple Agent',
-      icon: '⚡',
+      backend: 'simple',
       models: [],
       canRefreshModels: false,
       // no thinkingEffortLevels — unsupported backend
@@ -144,19 +144,19 @@ describe('useAgents', () => {
     })
   })
 
-  // --- getAgentIcon ---
+  // --- getAgentBackend ---
 
-  describe('getAgentIcon', () => {
-    it('returns the icon for a known agent', () => {
-      expect(getAgentIcon('claude')).toBe('🤖')
+  describe('getAgentBackend', () => {
+    it('returns the backend for a known agent', () => {
+      expect(getAgentBackend('claude')).toBe('claude')
     })
 
-    it('returns default robot emoji for unknown agent', () => {
-      expect(getAgentIcon('nonexistent')).toBe('🤖')
+    it('returns empty string for unknown agent', () => {
+      expect(getAgentBackend('nonexistent')).toBe('')
     })
 
-    it('returns default for empty string', () => {
-      expect(getAgentIcon('')).toBe('🤖')
+    it('returns empty string for empty string', () => {
+      expect(getAgentBackend('')).toBe('')
     })
   })
 
@@ -306,8 +306,8 @@ describe('useAgents', () => {
   // --- agentHeaderTitle ---
 
   describe('agentHeaderTitle', () => {
-    it('returns "icon name" for a known agent', () => {
-      expect(agentHeaderTitle('claude')).toBe('🤖 Claude')
+    it('returns name for a known agent', () => {
+      expect(agentHeaderTitle('claude')).toBe('Claude')
     })
 
     it('returns i18n key for empty agentId', () => {

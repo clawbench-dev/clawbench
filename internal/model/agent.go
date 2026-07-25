@@ -15,7 +15,6 @@ type AgentModel struct {
 type Agent struct {
 	ID                      string       `json:"id"`
 	Name                    string       `json:"name"`
-	Icon                    string       `json:"icon"`
 	Specialty               string       `json:"specialty"`
 	Backend                 string       `json:"backend"`
 	Models                  []AgentModel `json:"models"`

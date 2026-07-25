@@ -339,7 +339,7 @@ func isValidThinkingEffort(agent *model.Agent, level string) bool {
 
 // Expects: {"id": "claude", "preferred_model": "claude-opus-4-5", "preferred_thinking_effort": "high", ...}
 // Patchable fields: preferred_model, preferred_thinking_effort, transport,
-// name, icon, specialty, custom_system_prompt, sort_order.
+// name, specialty, custom_system_prompt, sort_order.
 func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-field agent patch logic
 	var patch map[string]any
 	if !decodeJSON(w, r, &patch) {
@@ -443,16 +443,6 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.Name = &name
 	}
 
-	// Validate and apply icon
-	if v, exists := patch["icon"]; exists {
-		icon, _ := v.(string)
-		if utf8.RuneCountInString(icon) > 8 {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentIcon")
-			return
-		}
-		ap.Icon = &icon
-	}
-
 	// Validate and apply specialty
 	if v, exists := patch["specialty"]; exists {
 		specialty, _ := v.(string)
@@ -520,9 +510,6 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	}
 	if ap.Name != nil {
 		agent.Name = *ap.Name
-	}
-	if ap.Icon != nil {
-		agent.Icon = *ap.Icon
 	}
 	if ap.Specialty != nil {
 		agent.Specialty = *ap.Specialty
@@ -838,7 +825,6 @@ func ServeBackends(w http.ResponseWriter, r *http.Request) {
 	type backendInfo struct {
 		ID                   string   `json:"id"`
 		Name                 string   `json:"name"`
-		Icon                 string   `json:"icon"`
 		Specialty            string   `json:"specialty"`
 		DefaultCmd           string   `json:"default_cmd"`
 		ThinkingEffortLevels []string `json:"thinking_effort_levels,omitempty"`
@@ -853,7 +839,6 @@ func ServeBackends(w http.ResponseWriter, r *http.Request) {
 		backends = append(backends, backendInfo{
 			ID:                   spec.ID,
 			Name:                 spec.Name,
-			Icon:                 spec.Icon,
 			Specialty:            spec.Specialty,
 			DefaultCmd:           spec.DefaultCmd,
 			ThinkingEffortLevels: spec.ThinkingEffortLevels,

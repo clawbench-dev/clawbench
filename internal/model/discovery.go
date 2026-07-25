@@ -49,7 +49,6 @@ type BackendSpec struct {
 	AltCmd               string   // fallback CLI command (e.g. "deepseek" when primary is "codewhale"); used for detection if DefaultCmd not found
 	NoCLI                bool     // if true, this backend has no CLI (e.g. mock); always considered "present"
 	Name                 string   // display name, e.g. "Claude"
-	Icon                 string   // emoji icon, e.g. "🤖"
 	Specialty            string   // short description, e.g. "代码编写与推理"
 	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
 	AcpCommand           string   // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
@@ -274,14 +273,11 @@ func SyncDiscoverAgentsDB(db dbutil.Writer) map[string]bool { //nolint:gocognit,
 			// Update spec-derived fields if they changed in BackendSpec
 			// (e.g., deepseek renamed to CodeWhale, ACP command changed)
 			updates := map[string]interface{}{}
-			var existingName, existingIcon, existingCommand string
-			_ = db.QueryRow("SELECT COALESCE(name,''), COALESCE(icon,''), COALESCE(command,'') FROM agents WHERE backend = ?", r.spec.Backend).Scan(&existingName, &existingIcon, &existingCommand)
+			var existingName, existingCommand string
+			_ = db.QueryRow("SELECT COALESCE(name,''), COALESCE(command,'') FROM agents WHERE backend = ?", r.spec.Backend).Scan(&existingName, &existingCommand)
 
 			if r.spec.Name != "" && existingName != r.spec.Name {
 				updates["name"] = r.spec.Name
-			}
-			if r.spec.Icon != "" && existingIcon != r.spec.Icon {
-				updates["icon"] = r.spec.Icon
 			}
 			// Update command if the primary CLI changed (e.g., "deepseek" → "codewhale")
 			if r.spec.DefaultCmd != "" && existingCommand != "" && existingCommand != r.spec.DefaultCmd && CheckCLIExists(r.spec.DefaultCmd) {
@@ -328,7 +324,6 @@ func SyncDiscoverAgentsDB(db dbutil.Writer) map[string]bool { //nolint:gocognit,
 		agent := &Agent{
 			ID:        r.spec.ID,
 			Name:      r.spec.Name,
-			Icon:      r.spec.Icon,
 			Specialty: r.spec.Specialty,
 			Backend:   r.spec.Backend,
 			Source:    "auto",
@@ -388,13 +383,13 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 		}
 	}
 
-	_, err = db.Exec(`INSERT INTO agents (id, name, icon, specialty, backend, command,
+	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		system_prompt, custom_system_prompt, models, models_auto_detected, source, sort_order,
 		transport, acp_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.Source, agent.SortOrder,
 		transport, agent.AcpCommand)
@@ -407,7 +402,6 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 type yamlAgent struct {
 	ID                      string       `yaml:"id"`
 	Name                    string       `yaml:"name"`
-	Icon                    string       `yaml:"icon"`
 	Specialty               string       `yaml:"specialty"`
 	Backend                 string       `yaml:"backend"`
 	Command                 string       `yaml:"command"`
@@ -474,7 +468,6 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) {
 		agent := &Agent{
 			ID:                      ya.ID,
 			Name:                    ya.Name,
-			Icon:                    ya.Icon,
 			Specialty:               ya.Specialty,
 			Backend:                 ya.Backend,
 			Command:                 ya.Command,
@@ -646,7 +639,7 @@ func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]Agent
 
 // loadAgentsFromDBRows loads agents from the database into Agent structs.
 func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
-	rows, err := db.Query(`SELECT id, name, icon, specialty, backend, command,
+	rows, err := db.Query(`SELECT id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		system_prompt, custom_system_prompt, models, models_auto_detected, source, sort_order,
@@ -663,7 +656,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		var modelsJSON, levelsJSON string
 		var autoDetected int
 
-		err := rows.Scan(&agent.ID, &agent.Name, &agent.Icon, &agent.Specialty,
+		err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.SystemPrompt, &agent.CustomSystemPrompt, &modelsJSON, &autoDetected,

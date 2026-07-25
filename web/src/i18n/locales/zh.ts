@@ -1095,7 +1095,6 @@ export default {
       agentPreferredMode: '首选模式',
       agentTransport: '传输模式',
       agentName: '名称',
-      agentIcon: '图标',
       agentSpecialty: '描述',
       agentSystemPrompt: '系统提示',
       agentSystemPromptDesc: '自定义Agent行为规则，追加在内置规则之后',

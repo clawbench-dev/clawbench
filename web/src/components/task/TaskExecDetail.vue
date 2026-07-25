@@ -164,8 +164,8 @@ async function onRefresh() {
   }
 }
 
-// ── Agents (for getAgentIcon/getAgentName) ──
-const { getAgentIcon, getAgentName } = useAgents()
+// ── Agents (for getAgentBackend/getAgentName) ──
+const { getAgentBackend, getAgentName } = useAgents()
 
 // ── ChatRender — full pipeline for markdown rendering ──
 const messages = ref([])
@@ -182,7 +182,7 @@ provide('chatRender', {
   truncate: chatRender.truncate,
   hasImagesInContent: chatRender.hasImagesInContent,
 })
-provide('chatSession', { getAgentIcon, getAgentName })
+provide('chatSession', { getAgentBackend, getAgentName })
 provide('chatUI', { navigateToFileViewer: () => emit('close') })
 provide('autoSpeech', useAutoSpeech())
 provide('layoutRefreshKey', ref(0))

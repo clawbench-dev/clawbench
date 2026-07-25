@@ -14,6 +14,9 @@
 
 **单文件部署，无任何依赖**
 
+<p align="center">
+  <img src="assets/architecture.zh.svg" alt="ClawBench 部署架构" width="640">
+</p>
 
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA
 - **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi

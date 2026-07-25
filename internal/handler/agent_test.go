@@ -41,7 +41,6 @@ func setupAgentTestEnv(t *testing.T) func() {
 	codebuddyAgent := &model.Agent{
 		ID:        "codebuddy",
 		Name:      "Test",
-		Icon:      "🤖",
 		Specialty: "testing",
 		Backend:   "codebuddy",
 		Models: []model.AgentModel{
@@ -54,7 +53,6 @@ func setupAgentTestEnv(t *testing.T) func() {
 	claudeAgent := &model.Agent{
 		ID:        "claude",
 		Name:      "Claude",
-		Icon:      "🧠",
 		Specialty: "reasoning",
 		Backend:   "claude",
 		Models: []model.AgentModel{
@@ -1094,18 +1092,6 @@ func TestAgentPatch_InvalidName(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestAgentPatch_Icon(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	body := map[string]any{"id": "codebuddy", "icon": "🧠"}
-	req := newRequest(t, http.MethodPatch, "/api/agents", body)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeAgents, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "🧠", model.Agents["codebuddy"].Icon)
-}
-
 func TestAgentPatch_Specialty(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
@@ -1317,7 +1303,6 @@ func TestAgentDuplicate_Success(t *testing.T) {
 
 	assert.Contains(t, resp, "id")
 	assert.Equal(t, "My Custom Claude", resp["name"])
-	assert.Equal(t, "🧠", resp["icon"])
 	assert.Equal(t, "claude", resp["backend"])
 	assert.Equal(t, "manual", resp["source"])
 

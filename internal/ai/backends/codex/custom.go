@@ -11,7 +11,7 @@ func init() {
 	backends.Register(&backends.BackendPlugin{
 		ID: "codex",
 		Spec: model.BackendSpec{
-			ID: "codex", Backend: "codex", DefaultCmd: "codex", Name: "Codex", Icon: "🐙", Specialty: "OpenAI 编码代理",
+			ID: "codex", Backend: "codex", DefaultCmd: "codex", Name: "Codex", Specialty: "OpenAI 编码代理",
 			ThinkingEffortLevels: []string{"low", "medium", "high"},
 			AcpCommand:           "npx -y @agentclientprotocol/codex-acp@latest",
 			InstallCmd:           "npm install -g @openai/codex",

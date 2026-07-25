@@ -42,7 +42,7 @@ func init() {
 	backends.Register(&backends.BackendPlugin{
 		ID: "kimi",
 		Spec: model.BackendSpec{
-			ID: "kimi", Backend: "kimi", DefaultCmd: "kimi", Name: "Kimi", Icon: "🌙", Specialty: "Kimi AI 编码助手",
+			ID: "kimi", Backend: "kimi", DefaultCmd: "kimi", Name: "Kimi", Specialty: "Kimi AI 编码助手",
 			ThinkingEffortLevels: []string{"off", "on"},
 			AcpCommand:           "kimi acp",
 			InstallCmd:           "npm install -g kimiai-cli",

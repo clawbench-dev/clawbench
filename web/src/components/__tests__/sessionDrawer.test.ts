@@ -78,7 +78,6 @@ const mockAgents = {
     {
       id: 'claude',
       name: 'Claude',
-      icon: '🤖',
       backend: 'claude',
       models: [
         { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
@@ -95,7 +94,6 @@ const mockAgents = {
     {
       id: 'kimi',
       name: 'Kimi',
-      icon: '💎',
       backend: 'kimi',
       models: [],
       thinkingEffortLevels: [],
@@ -448,9 +446,9 @@ describe('SessionDrawer', () => {
 
   // --- Agent name in header ---
 
-  it('displays agent icon and name in drawer header', () => {
+  it('displays agent name in drawer header', () => {
     const wrapper = mountDrawer()
-    expect(wrapper.find('.bs-header-title').text()).toBe('🤖 Claude')
+    expect(wrapper.find('.bs-header-title').text()).toBe('Claude')
   })
 
   // --- Thinking tab dividers ---

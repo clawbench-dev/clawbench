@@ -82,7 +82,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
   }
   const mockAgentFns = {
     loadAgents: vi.fn().mockResolvedValue(undefined),
-    getAgentIcon: vi.fn().mockReturnValue('🤖'),
+    getAgentBackend: vi.fn().mockReturnValue(''),
     getAgentName: vi.fn().mockReturnValue('Test'),
     syncModelFromAgent: vi.fn().mockReturnValue({ modelId: '', modelName: '' }),
     getAgentModel: vi.fn().mockReturnValue(undefined),
@@ -105,7 +105,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockUpdateUsageState.mockReset()
     mockClearUsageState.mockReset()
     mockAgentFns.loadAgents.mockReset().mockResolvedValue(undefined)
-    mockAgentFns.getAgentIcon.mockReset().mockReturnValue('🤖')
+    mockAgentFns.getAgentBackend.mockReset().mockReturnValue('')
     mockAgentFns.getAgentName.mockReset().mockReturnValue('Test')
     mockAgentFns.syncModelFromAgent.mockReset().mockReturnValue({ modelId: '', modelName: '' })
     mockAgentFns.getAgentModel.mockReset().mockReturnValue(undefined)
@@ -281,7 +281,7 @@ vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: { value: [] },
     loadAgents: mockAgentFns.loadAgents,
-    getAgentIcon: mockAgentFns.getAgentIcon,
+    getAgentBackend: mockAgentFns.getAgentBackend,
     getAgentName: mockAgentFns.getAgentName,
     getAgent: vi.fn().mockReturnValue(undefined),
     syncModelFromAgent: mockAgentFns.syncModelFromAgent,

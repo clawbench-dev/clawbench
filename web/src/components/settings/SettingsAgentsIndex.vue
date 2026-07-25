@@ -12,7 +12,7 @@
       @click="$emit('navigate', `agents:${agent.id}`)"
     >
       <div class="settings-agents-index__left">
-        <span class="settings-agents-index__icon">{{ agent.icon }}</span>
+        <span class="settings-agents-index__icon"><AgentIcon :backend="agent.backend" :name="agent.name" :size="20" /></span>
         <div class="settings-agents-index__text">
           <div class="settings-agents-index__name-row">
             <span class="settings-agents-index__name">{{ agent.name }}</span>
@@ -34,6 +34,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ChevronRight, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useAgents } from '@/composables/useAgents'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useToast } from '@/composables/useToast'
 
 defineEmits<{
@@ -172,7 +173,6 @@ async function handleRescan() {
 
 .settings-agents-index__icon {
   flex-shrink: 0;
-  font-size: 20px;
   line-height: 1;
 }
 

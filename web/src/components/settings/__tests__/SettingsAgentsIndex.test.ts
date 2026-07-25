@@ -108,8 +108,8 @@ describe('SettingsAgentsIndex', () => {
 
   it('renders agent rows', () => {
     mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: 'coding', sortOrder: 0 },
-      { id: 'agent-2', name: 'Claude', icon: '🧠', specialty: 'analysis', sortOrder: 1 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: 'coding', sortOrder: 0 },
+      { id: 'agent-2', name: 'Claude', backend: 'claude', specialty: 'analysis', sortOrder: 1 },
     ]
     const wrapper = mountIndex()
     expect(wrapper.text()).toContain('CodeBuddy')
@@ -118,8 +118,8 @@ describe('SettingsAgentsIndex', () => {
 
   it('renders default badge for default agent', () => {
     mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
-      { id: 'agent-2', name: 'Claude', icon: '🧠', specialty: '', sortOrder: 1 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
+      { id: 'agent-2', name: 'Claude', backend: 'claude', specialty: '', sortOrder: 1 },
     ]
     mockDefaultAgentId.value = 'agent-1'
     const wrapper = mountIndex()
@@ -128,7 +128,7 @@ describe('SettingsAgentsIndex', () => {
 
   it('does not render default badge for non-default agent', () => {
     mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
     ]
     mockDefaultAgentId.value = 'agent-2'
     const wrapper = mountIndex()
@@ -137,7 +137,7 @@ describe('SettingsAgentsIndex', () => {
 
   it('emits navigate with agent ID on row click', async () => {
     mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
     ]
     const wrapper = mountIndex()
     const row = wrapper.find('.settings-agents-index__row')
@@ -194,8 +194,8 @@ describe('SettingsAgentsIndex', () => {
 
   it('agents are sorted by sortOrder', () => {
     mockAgents.value = [
-      { id: 'agent-2', name: 'Claude', icon: '🧠', specialty: '', sortOrder: 1 },
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+      { id: 'agent-2', name: 'Claude', backend: 'claude', specialty: '', sortOrder: 1 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
     ]
     const wrapper = mountIndex()
     const names = wrapper.findAll('.settings-agents-index__name')
@@ -205,7 +205,7 @@ describe('SettingsAgentsIndex', () => {
 
   it('does not render delete button in agent rows', () => {
     mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
     ]
     const wrapper = mountIndex()
     expect(wrapper.find('.settings-agents-index__icon-btn--danger').exists()).toBe(false)
@@ -213,7 +213,7 @@ describe('SettingsAgentsIndex', () => {
 
   it('renders specialty text when agent has specialty', () => {
     mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: 'coding', sortOrder: 0 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: 'coding', sortOrder: 0 },
     ]
     const wrapper = mountIndex()
     expect(wrapper.find('.settings-agents-index__specialty').exists()).toBe(true)
@@ -222,7 +222,7 @@ describe('SettingsAgentsIndex', () => {
 
   it('does not render specialty element when agent has no specialty', () => {
     mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
     ]
     const wrapper = mountIndex()
     // v-if="agent.specialty" should not render the span

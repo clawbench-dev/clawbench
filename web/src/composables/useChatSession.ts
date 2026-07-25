@@ -103,7 +103,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, thinkingEffortState, modeState } = identity
 
   // ── Agents from singleton ──
-  const { agents, loadAgents, getAgentIcon, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsDualTransport } = useAgents()
+  const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsDualTransport } = useAgents()
 
   // Helper: sync model state from agent config when agent changes
   function syncModelFromAgentLocal(agentId: string) {
@@ -1052,7 +1052,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     forkSession,
     checkContinueSession,
     // Agent helpers — delegate to singleton
-    getAgentIcon,
+    getAgentBackend,
     getAgentName,
   }
 }

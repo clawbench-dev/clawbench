@@ -42,8 +42,8 @@ const serverConfig = ref<Record<string, any>>({
 })
 
 const mockAgents = [
-  { id: 'codebuddy', name: 'CodeBuddy', icon: '🤖', backend: 'codebuddy', models: [{ id: 'glm-5.1', name: 'GLM 5.1', default: true }, { id: 'glm-4', name: 'GLM 4', default: false }], thinkingEffortLevels: ['low', 'medium', 'high'], thinkingEffort: 'medium', preferredModel: '' },
-  { id: 'claude', name: 'Claude', icon: '🧠', backend: 'claude', models: [{ id: 'claude-sonnet', name: 'Sonnet', default: true }], thinkingEffortLevels: [], thinkingEffort: '', preferredModel: '' },
+  { id: 'codebuddy', name: 'CodeBuddy', backend: 'codebuddy', models: [{ id: 'glm-5.1', name: 'GLM 5.1', default: true }, { id: 'glm-4', name: 'GLM 4', default: false }], thinkingEffortLevels: ['low', 'medium', 'high'], thinkingEffort: 'medium', preferredModel: '' },
+  { id: 'claude', name: 'Claude', backend: 'claude', models: [{ id: 'claude-sonnet', name: 'Sonnet', default: true }], thinkingEffortLevels: [], thinkingEffort: '', preferredModel: '' },
 ]
 
 vi.mock('@/composables/useSettingsConfig', () => ({

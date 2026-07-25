@@ -19,7 +19,6 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 			ID:        "test-backend",
 			Backend:   "test-backend",
 			Name:      "Test",
-			Icon:      "T",
 			Specialty: "test backend",
 		},
 		CLI: &backends.CLIPlugin{

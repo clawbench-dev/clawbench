@@ -33,7 +33,6 @@ export function registerIdentityUpdaters(opts: {
 interface AgentRecord {
   id: string
   name: string
-  icon: string
   backend: string
   command?: string
   source?: string
@@ -159,9 +158,9 @@ async function loadAgents(force = false): Promise<void> {
     return loadPromise
 }
 
-function getAgentIcon(agentId: string): string {
+function getAgentBackend(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
-    return agent ? agent.icon : '🤖'
+    return agent?.backend || ''
 }
 
 function getAgentName(agentId: string): string {
@@ -210,10 +209,10 @@ function getAgentDefaultModelName(agentId: string): string {
     return model?.name || modelId
 }
 
-/** Build the "icon name" header string for an agent. */
+/** Build the header title string for an agent. */
 function agentHeaderTitle(agentId: string): string {
     const agent = getAgent(agentId)
-    if (agent) return `${agent.icon} ${agent.name}`
+    if (agent) return agent.name
     return agentId ? getAgentName(agentId) : gt('chat.session.aiDialog')
 }
 
@@ -427,7 +426,7 @@ export function useAgents() {
         agents,
         defaultAgentId,
         loadAgents,
-        getAgentIcon,
+        getAgentBackend,
         getAgentName,
         isDefaultAgent,
         getDefaultModelId,

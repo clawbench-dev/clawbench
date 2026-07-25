@@ -14,7 +14,7 @@ func init() {
 	backends.Register(&backends.BackendPlugin{
 		ID: "claude",
 		Spec: model.BackendSpec{
-			ID: "claude", Backend: "claude", DefaultCmd: "claude", Name: "Claude", Icon: "🤖", Specialty: "代码编写与推理",
+			ID: "claude", Backend: "claude", DefaultCmd: "claude", Name: "Claude", Specialty: "代码编写与推理",
 			ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
 			AcpCommand:           "npx -y @agentclientprotocol/claude-agent-acp@latest",
 			InstallCmd:           "npm install -g @anthropic-ai/claude-code",

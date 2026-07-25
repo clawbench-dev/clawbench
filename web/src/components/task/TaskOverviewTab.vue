@@ -5,7 +5,7 @@
       <!-- Header section -->
       <div class="task-header">
         <div class="task-title-row">
-          <span class="agent-icon">{{ getAgentIcon(taskAgentId) }}</span>
+          <AgentIcon class="agent-icon" :backend="taskBackend" :name="getAgentName(taskAgentId)" :size="18" />
           <h2 class="task-name">{{ taskName }}</h2>
           <span class="status-badge" :class="taskStatus">
             <span v-if="taskRunningCount > 0" class="status-dot running"></span>
@@ -104,6 +104,7 @@ import { useI18n } from 'vue-i18n'
 import { useTaskOverview } from '@/composables/useTaskOverview.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer'
 import { useAgents } from '@/composables/useAgents'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useFilePathAnnotation, useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
@@ -112,7 +113,7 @@ import { store } from '@/stores/app.ts'
 import { humanizeCron, repeatLabel, formatDateTime } from '@/utils/format'
 
 const { t } = useI18n()
-const { getAgentIcon, getAgentName } = useAgents()
+const { getAgentBackend, getAgentName } = useAgents()
 const { verifyFilePaths, openFilePath } = useFilePathAnnotation()
 const { handleContextMenu: handlePromptContextMenu, handleLongPress: handlePromptLongPress } = useFilePathNavHandlers()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
@@ -126,6 +127,7 @@ const task = computed(() => props.task)
 const taskId = computed(() => task.value.id as number)
 const taskName = computed(() => task.value.name as string)
 const taskAgentId = computed(() => task.value.agentId as string)
+const taskBackend = computed(() => getAgentBackend(taskAgentId.value))
 const taskStatus = computed(() => task.value.status as string)
 const taskCronExpr = computed(() => task.value.cronExpr as string)
 const taskRepeatMode = computed(() => task.value.repeatMode as string)
@@ -295,7 +297,8 @@ function handlePromptClick(event: MouseEvent) {
 }
 
 .agent-icon {
-  font-size: 18px;
+  flex-shrink: 0;
+  vertical-align: middle;
 }
 
 .task-name {

@@ -242,7 +242,7 @@ vi.mock('@/composables/useAgents', () => ({
     agents: { value: [] },
     defaultAgentId: { value: '' },
     getAgent: () => null,
-    getAgentIcon: () => '',
+    getAgentBackend: () => '',
     getAgentName: () => '',
     isDefaultAgent: () => false,
     getDefaultModelId: () => '',

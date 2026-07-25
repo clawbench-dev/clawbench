@@ -14,7 +14,7 @@ func init() {
 	backends.Register(&backends.BackendPlugin{
 		ID: "cline",
 		Spec: model.BackendSpec{
-			ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Icon: "🔮", Specialty: "自主编码智能体",
+			ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Specialty: "自主编码智能体",
 			ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh"},
 			AcpCommand:           "cline --acp",
 			InstallCmd:           "npm install -g cline",

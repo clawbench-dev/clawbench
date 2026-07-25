@@ -110,7 +110,7 @@ const currentCategoryTitle = computed(() => {
     const { getAgent } = useAgents()
     const agentId = cat.slice(7)
     const agent = getAgent(agentId)
-    return agent ? `${agent.icon} ${agent.name}` : t('settings.categories.agents')
+    return agent ? agent.name : t('settings.categories.agents')
   }
   // For sub-page routes (colon-separated, except agents), use data-driven title lookup
   if (isSubPageRoute(cat)) {

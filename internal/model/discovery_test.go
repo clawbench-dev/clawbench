@@ -45,7 +45,6 @@ func TestBackendRegistry_FieldsPopulated(t *testing.T) {
 			assert.NotEmpty(t, spec.DefaultCmd, "DefaultCmd should not be empty for %s", spec.ID)
 		}
 		assert.NotEmpty(t, spec.Name, "Name should not be empty for %s", spec.ID)
-		assert.NotEmpty(t, spec.Icon, "Icon should not be empty for %s", spec.ID)
 		assert.NotEmpty(t, spec.Specialty, "Specialty should not be empty for %s", spec.ID)
 	}
 }
@@ -175,7 +174,6 @@ func TestDiscoverModels_WithEchoCLI(t *testing.T) {
 		Backend:    "mock-echo-cli",
 		DefaultCmd: "echo",
 		Name:       "Mock",
-		Icon:       "🧪",
 		Specialty:  "Testing",
 	}
 

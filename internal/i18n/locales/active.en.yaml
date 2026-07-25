@@ -72,7 +72,6 @@ InvalidModelForAgent: Invalid model for this agent
 InvalidThinkingEffort: Invalid thinking effort level for this agent
 InvalidModeForAgent: Invalid mode for this agent
 InvalidAgentName: Invalid agent name
-InvalidAgentIcon: Invalid icon
 InvalidAgentSpecialty: Invalid description
 InvalidSystemPrompt: System prompt too long
 SystemPromptOverride: System prompt contains unsafe override instructions

@@ -17,6 +17,10 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
 - **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, Kimi
 
+<p align="center">
+  <img src="assets/architecture.en.svg" alt="ClawBench Deployment Architecture" width="640">
+</p>
+
 ---
 
 ## Screenshots

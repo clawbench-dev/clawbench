@@ -73,7 +73,6 @@ InvalidModelForAgent: 无效的模型
 InvalidThinkingEffort: 无效的思考深度级别
 InvalidModeForAgent: 无效的模式
 InvalidAgentName: 无效的智能体名称
-InvalidAgentIcon: 无效的图标
 InvalidAgentSpecialty: 无效的描述
 InvalidSystemPrompt: 系统提示过长
 SystemPromptOverride: 系统提示包含不安全的覆盖指令

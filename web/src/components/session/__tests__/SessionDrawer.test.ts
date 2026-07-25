@@ -18,9 +18,9 @@ vi.mock('@/stores/app', () => ({
   },
 }))
 
-const { mockLoadAgents, mockGetAgentIcon, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent, mockAgentCanResume } = vi.hoisted(() => ({
+const { mockLoadAgents, mockGetAgentBackend, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent, mockAgentCanResume } = vi.hoisted(() => ({
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
-  mockGetAgentIcon: vi.fn(() => '🤖'),
+  mockGetAgentBackend: vi.fn(() => ''),
   mockGetAgentName: vi.fn(() => 'Agent'),
   mockIsDefaultAgent: vi.fn(() => false),
   mockGetAgentDefaultModelName: vi.fn(() => ''),
@@ -31,11 +31,11 @@ const { mockLoadAgents, mockGetAgentIcon, mockGetAgentName, mockIsDefaultAgent, 
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: ref([
-      { id: 'agent-1', name: 'Agent One', icon: '🤖', backend: 'cli', specialty: 'Coding' },
-      { id: 'agent-2', name: 'Agent Two', icon: '💎', backend: 'acp', specialty: 'Design' },
+      { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' },
+      { id: 'agent-2', name: 'Agent Two', backend: 'acp', specialty: 'Design' },
     ]),
     loadAgents: mockLoadAgents,
-    getAgentIcon: mockGetAgentIcon,
+    getAgentBackend: mockGetAgentBackend,
     getAgentName: mockGetAgentName,
     isDefaultAgent: mockIsDefaultAgent,
     getAgentDefaultModelName: mockGetAgentDefaultModelName,

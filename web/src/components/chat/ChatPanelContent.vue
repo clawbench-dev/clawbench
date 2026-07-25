@@ -198,7 +198,7 @@ const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click'])
 // ── Singletons ──
 const identity = useSessionIdentity()
 const agentsComposable = useAgents()
-const { agents: agentsList, getAgent, getAgentIcon, getAgentName } = agentsComposable
+const { agents: agentsList, getAgent, getAgentBackend, getAgentName } = agentsComposable
 const messages = ref([])
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
 const renderedMessages = computed(() => messages.value)
@@ -494,7 +494,7 @@ provide('chatRender', {
   truncate: render.truncate,
   hasImagesInContent: render.hasImagesInContent,
 })
-provide('chatSession', { getAgentIcon, getAgentName })
+provide('chatSession', { getAgentBackend, getAgentName })
 provide('chatUI', { navigateToFileViewer: () => switchTab('browse') })
 provide('autoSpeech', autoSpeech)
 provide('layoutRefreshKey', layoutRefreshKey)

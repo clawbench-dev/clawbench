@@ -20,7 +20,6 @@ vi.mock('vue-i18n', () => ({
         'settings.items.agentTransport': 'Transport',
         'settings.items.agentSectionIdentity': 'Identity',
         'settings.items.agentName': 'Name',
-        'settings.items.agentIcon': 'Icon',
         'settings.items.agentSpecialty': 'Specialty',
         'settings.items.agentSectionAdvanced': 'Advanced',
         'settings.items.agentSystemPrompt': 'System Prompt',
@@ -79,7 +78,6 @@ import SettingsAgentDetail from '@/components/settings/SettingsAgentDetail.vue'
 const baseAgent = {
   id: 'test-agent',
   name: 'Test Agent',
-  icon: 'bot',
   specialty: 'coding',
   backend: 'claude',
   command: 'claude',

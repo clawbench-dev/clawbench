@@ -31,7 +31,7 @@
       </template>
       <template v-else-if="currentAgent">
         <div class="agent-welcome">
-          <span class="agent-welcome-icon">{{ currentAgent.icon }}</span>
+          <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :size="28" /></span>
           <div class="agent-welcome-info">
             <span class="agent-welcome-name">{{ currentAgent.name }}</span>
             <span class="agent-welcome-specialty">{{ currentAgent.specialty }}</span>
@@ -131,6 +131,7 @@ import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } fr
 import { useI18n } from 'vue-i18n'
 import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
@@ -671,7 +672,6 @@ defineExpose({
 }
 
 .agent-welcome-icon {
-  font-size: 28px;
   flex-shrink: 0;
   width: 40px;
   height: 40px;

@@ -25,7 +25,7 @@
         :humanizeCron="humanizeCron"
         :repeatLabel="repeatLabel"
         :truncate="truncate"
-        :getAgentIcon="getAgentIcon"
+        :getAgentBackend="getAgentBackend"
         :getAgentName="getAgentName"
         :staticBlockCache="staticBlockCache"
         :active="active"
@@ -159,7 +159,7 @@ const chatRender = inject('chatRender', {})
 const chatSession = inject('chatSession', {})
 
 const { renderTextBlock, toolCallSummary, formatToolInput, humanizeCron, repeatLabel, truncate, hasImagesInContent } = chatRender
-const { getAgentIcon, getAgentName } = chatSession
+const { getAgentBackend, getAgentName } = chatSession
 
 // File changes extraction (Write → created, Edit → modified)
 const fileChanges = computed(() => {
