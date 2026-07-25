@@ -2007,6 +2007,78 @@ func TestGitDiff_SpecificCommit(t *testing.T) {
 	assert.NotEmpty(t, output)
 }
 
+func TestGitDiff_NewFileInCommit(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	// Add a new file and commit it
+	createTestFile(t, env.ProjectDir, "newfile.txt", "line1\nline2\nline3\n")
+	gitCommitAll(t, env.ProjectDir, "add newfile")
+	sha := getHeadSHA(t, env.ProjectDir)
+
+	output, err := gitDiff(env.ProjectDir, "newfile.txt", sha)
+	assert.NoError(t, err)
+	diffStr := string(output)
+	// Must contain unified diff markers, not just raw content
+	assert.Contains(t, diffStr, "@@")
+	assert.Contains(t, diffStr, "+line1")
+	assert.Contains(t, diffStr, "+line2")
+	assert.Contains(t, diffStr, "+line3")
+	// Should show as new file (diff against /dev/null)
+	assert.Contains(t, diffStr, "--- /dev/null")
+	assert.Contains(t, diffStr, "+++ b/newfile.txt")
+}
+
+func TestGitDiff_UntrackedFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	// Create an untracked file (not staged, not committed)
+	createTestFile(t, env.ProjectDir, "untracked.txt", "hello world\n")
+
+	output, err := gitDiff(env.ProjectDir, "untracked.txt", "HEAD")
+	assert.NoError(t, err)
+	diffStr := string(output)
+	// Must show full content as added lines
+	assert.Contains(t, diffStr, "@@")
+	assert.Contains(t, diffStr, "+hello world")
+	assert.Contains(t, diffStr, "--- /dev/null")
+}
+
+func TestGitDiff_InitialCommitNewFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a fresh repo with an initial commit containing README.md
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+	run("git", "init")
+	run("git", "config", "user.email", "test@test.com")
+	run("git", "config", "user.name", "Test")
+
+	createTestFile(t, env.ProjectDir, "README.md", "# Hello\n")
+	run("git", "add", ".")
+	run("git", "commit", "-m", "initial commit")
+
+	sha := getHeadSHA(t, env.ProjectDir)
+
+	output, err := gitDiff(env.ProjectDir, "README.md", sha)
+	assert.NoError(t, err)
+	diffStr := string(output)
+	// Initial commit: should still show diff with proper markers
+	assert.Contains(t, diffStr, "@@")
+	assert.Contains(t, diffStr, "+# Hello")
+}
+
 // --- writeDiffResponse edge cases ---
 
 func TestWriteDiffResponse_ErrorWithNoOutput(t *testing.T) {

@@ -411,6 +411,21 @@ func ServeGitBranch(w http.ResponseWriter, r *http.Request) {
 // users see the complete picture of uncommitted modifications.
 func gitDiff(projectPath, relPath, commit string) ([]byte, error) {
 	if commit == "" || commit == "HEAD" {
+		// Check if the file is untracked first
+		lsCmd := exec.Command("git", "ls-files", "--error-unmatch", relPath)
+		lsCmd.Dir = projectPath
+		if _, lsErr := lsCmd.CombinedOutput(); lsErr != nil {
+			// File is untracked: diff against /dev/null to show full content as added
+			cmd := exec.Command("git", "diff", "--no-index", "/dev/null", relPath)
+			cmd.Dir = projectPath
+			out, err := cmd.CombinedOutput()
+			// git diff --no-index exits with code 1 when there are differences, which is not an error
+			if err != nil && len(out) == 0 {
+				return nil, err
+			}
+			return out, nil
+		}
+
 		// Staged changes (diff between HEAD and index)
 		cmdCached := exec.Command("git", "diff", "--cached", "--", relPath)
 		cmdCached.Dir = projectPath
@@ -438,7 +453,11 @@ func gitDiff(projectPath, relPath, commit string) ([]byte, error) {
 		return combined, nil
 	}
 
-	cmd := exec.Command("git", "show", commit, "--", relPath)
+	// Use git show --format="" to get unified diff output. The bare "git show <commit>"
+	// without --format="" can return raw blob content for added files without diff markers.
+	// With --format="" (empty commit message format), git show produces proper unified diff
+	// including @@ -0,0 +1,N @@ hunks for new files, and works for the initial commit too.
+	cmd := exec.Command("git", "show", "--format=", commit, "--", relPath)
 	cmd.Dir = projectPath
 	return cmd.CombinedOutput()
 }
