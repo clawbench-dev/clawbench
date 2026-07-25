@@ -5,12 +5,17 @@
       <span class="bs-header-title">{{ title }}</span>
     </template>
     <div class="agent-list">
-      <button
+      <div v-if="agents.length === 0" class="agent-list-empty">{{ t('session.noAgentsTitle') }}</div>
+      <div
         v-for="agent in agents"
         :key="agent.id"
         class="agent-option"
         :class="{ selected: agent.id === modelValue }"
+        role="button"
+        tabindex="0"
         @click="handleSelect(agent.id)"
+        @keydown.enter="handleSelect(agent.id)"
+        @keydown.space.prevent="handleSelect(agent.id)"
       >
         <span class="agent-option-icon"><AgentIcon :backend="agent.backend" :name="agent.name" :size="16" /></span>
         <div class="agent-option-detail">
@@ -25,18 +30,22 @@
         <button v-else class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
           <Star :size="14" />
         </button>
-      </button>
+      </div>
     </div>
   </BottomSheet>
 </template>
 
 <script setup lang="ts">
+import { watch } from 'vue'
 import { Bot, Star } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents } from '@/composables/useAgents'
 
-withDefaults(defineProps<{
+const { t } = useI18n()
+
+const props = withDefaults(defineProps<{
   open: boolean
   modelValue?: string
   title?: string
@@ -81,17 +90,13 @@ function defaultModelName(agentId: string): string {
   return getAgentDefaultModelName(agentId) || ''
 }
 
-/** Call after opening to reset the touch guard timer. */
-function resetTouchGuard() {
-  openTime = Date.now()
-}
-
-/** Pre-load agents before showing the drawer. */
-async function preload() {
-  await loadAgents()
-}
-
-defineExpose({ resetTouchGuard, preload })
+// Auto-reset touch guard and preload agents when drawer opens
+watch(() => props.open, (val) => {
+  if (val) {
+    openTime = Date.now()
+    loadAgents()
+  }
+}, { immediate: true })
 </script>
 
 <style scoped>
@@ -101,6 +106,15 @@ defineExpose({ resetTouchGuard, preload })
   gap: 0;
   padding: 0;
   overflow-y: auto;
+}
+
+.agent-list-empty {
+  min-height: 30vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #999);
+  font-size: 13px;
 }
 
 .agent-option {

@@ -41,6 +41,8 @@
                 <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
                 <span v-if="session.sourceSessionId" class="session-item-scheduled">{{ t('session.fromTask') }}</span>
                 <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                <span class="session-item-backend">{{ session.backend }}</span>
+                <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
               </div>
             </div>
           </div>
@@ -146,7 +148,6 @@ async function openAgentSelector() {
     return
   }
   agentSelectorDrawer.open()
-  agentSelectorRef.value?.resetTouchGuard()
 }
 
 async function handleCreateClick() {
@@ -158,7 +159,6 @@ async function handleCreateClick() {
     return
   }
   agentSelectorDrawer.open()
-  agentSelectorRef.value?.resetTouchGuard()
 }
 
 async function loadSessions() {

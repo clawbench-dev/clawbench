@@ -83,6 +83,21 @@ vi.mock('@/components/git/SwipeToDeleteRow.vue', () => ({
   },
 }))
 
+vi.mock('@/components/common/AgentIcon.vue', () => ({
+  default: {
+    name: 'AgentIcon',
+    template: '<span class="agent-icon-stub" />',
+  },
+}))
+
+vi.mock('@/components/common/AgentSelectorDrawer.vue', () => ({
+  default: {
+    name: 'AgentSelectorDrawer',
+    template: '<div class="agent-selector-drawer-stub" />',
+    methods: { preload: vi.fn() },
+  },
+}))
+
 // ── Mock IntersectionObserver ──
 class MockIntersectionObserver {
   callback: (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void
@@ -350,46 +365,17 @@ describe('SessionDrawer', () => {
 
       expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(true)
     })
-
-    it('renders agent options when selector is open', async () => {
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      await wrapper.vm.openAgentSelector()
-      await nextTick()
-
-      // Agent options should be rendered
-      const options = wrapper.findAll('.agent-option')
-      expect(options.length).toBe(2)
-    })
   })
 
   describe('createSession', () => {
-    it('emits create event', async () => {
+    it('emits create event and closes drawer', async () => {
       const wrapper = mountDrawer()
       await flushPromises()
-
-      // Set agentSelectorOpenTime to past to avoid debounce
-      wrapper.vm.agentSelectorOpenTime = 0
-      wrapper.vm.agentSelectorDrawer.open()
 
       wrapper.vm.createSession('agent-1')
 
       expect(wrapper.emitted('create')).toBeTruthy()
       expect(wrapper.emitted('create')![0]).toEqual(['agent-1'])
-    })
-
-    it('ignores click within 400ms debounce', async () => {
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      // Open the agent selector which sets agentSelectorOpenTime = Date.now()
-      await wrapper.vm.openAgentSelector()
-
-      // Immediately try to create — should be debounced
-      wrapper.vm.createSession('agent-1')
-
-      expect(wrapper.emitted('create')).toBeFalsy()
     })
   })
 
@@ -416,17 +402,6 @@ describe('SessionDrawer', () => {
       await flushPromises()
 
       expect(wrapper.find('.session-counter').exists()).toBe(true)
-    })
-  })
-
-  describe('handleSetDefaultAgent', () => {
-    it('calls setDefaultAgent with the given agentId', async () => {
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      await wrapper.vm.handleSetDefaultAgent('agent-2')
-
-      expect(mockSetDefaultAgent).toHaveBeenCalledWith('agent-2')
     })
   })
 

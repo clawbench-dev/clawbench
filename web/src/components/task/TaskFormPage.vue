@@ -247,7 +247,6 @@ const selectedModelName = computed(() => form.value.agentId ? getAgentDefaultMod
 async function openAgentSelector() {
   await loadAgents()
   agentSelectorOpen.value = true
-  agentSelectorRef.value?.resetTouchGuard()
 }
 
 function handleAgentSelect(agentId) {
