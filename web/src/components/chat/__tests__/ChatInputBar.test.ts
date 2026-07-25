@@ -410,11 +410,13 @@ describe('ChatInputBar', () => {
   })
 
   it('saveDraft saves input text to draft cache', async () => {
-    const wrapper = mountBar({ currentSessionId: 'sess-1' })
-    wrapper.vm.inputText = 'my draft'
+    const wrapper = mountBar()
+    // First set currentSessionId, then input text
+    await wrapper.setProps({ currentSessionId: 'sess-1' })
+    wrapper.vm.injectToInput('my draft')
     await wrapper.vm.$nextTick()
-    wrapper.vm.saveDraft()
     expect(wrapper.vm.inputText).toBe('my draft')
+    wrapper.vm.saveDraft()
     // Clear only the visible text, preserve draft
     wrapper.vm.clearInputPreserveDraft()
     expect(wrapper.vm.inputText).toBe('')
@@ -427,8 +429,9 @@ describe('ChatInputBar', () => {
   })
 
   it('clearInputPreserveDraft clears text but keeps draft for session switch', async () => {
-    const wrapper = mountBar({ currentSessionId: 'sess-1' })
-    wrapper.vm.inputText = 'typing something'
+    const wrapper = mountBar()
+    await wrapper.setProps({ currentSessionId: 'sess-1' })
+    wrapper.vm.injectToInput('typing something')
     await wrapper.vm.$nextTick()
     wrapper.vm.saveDraft()
     wrapper.vm.clearInputPreserveDraft()
@@ -442,13 +445,18 @@ describe('ChatInputBar', () => {
 
   it('draft is preserved across session switches via watcher', async () => {
     const wrapper = mountBar({ currentSessionId: 'sess-1' })
-    wrapper.vm.inputText = 'hello from session 1'
+    // Use DOM-based input to avoid ref assignment issues
+    const textarea = wrapper.find('.chat-textarea')
+    await textarea.setValue('hello from session 1')
     await wrapper.vm.$nextTick()
-    // Switch session via prop change (bypasses clearInputState, triggers watcher)
+    expect(wrapper.vm.inputText).toBe('hello from session 1')
+    // Switch session via prop change — watcher should save draft and clear input
     await wrapper.setProps({ currentSessionId: 'sess-2' })
+    await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('')
-    // Switch back
+    // Switch back — draft should be restored
     await wrapper.setProps({ currentSessionId: 'sess-1' })
+    await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('hello from session 1')
   })
 
@@ -474,7 +482,7 @@ describe('ChatInputBar', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('hello')
     const textarea = wrapper.find('.chat-textarea')
-    await textarea.trigger('keydown.enter', { key: 'Enter' })
+    await textarea.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('send')).toBeTruthy()
     expect(wrapper.emitted('send')![0]).toEqual(['hello'])
   })

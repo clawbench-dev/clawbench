@@ -312,11 +312,13 @@ describe('ChatInputBar — send/queue behavior', () => {
   })
 
   it('emits send with trimmed text on Enter key', async () => {
-    const wrapper = mountInputBar()
+    const wrapper = mountInputBar({}, { deep: true })
     setInputText(wrapper, 'test message')
     await nextTick()
 
-    await wrapper.find('.chat-textarea').trigger('keydown.enter.exact')
+    const textarea = wrapper.find('.chat-textarea')
+    // Dispatch a proper keyboard event that sets e.key='Enter'
+    await textarea.trigger('keydown', { key: 'Enter' })
 
     expect(wrapper.emitted('send')).toBeTruthy()
     expect(wrapper.emitted('send')[0]).toEqual(['test message'])
