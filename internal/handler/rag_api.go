@@ -161,3 +161,88 @@ func ServeRAGSession(w http.ResponseWriter, r *http.Request) {
 		"total":      len(messages),
 	})
 }
+
+// ServeRAGStatus handles GET /api/rag/status — returns RAG availability status.
+func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	hasVecData := rag.GlobalStore != nil && rag.GlobalStore.HasVecData()
+	hasFTSData := rag.GlobalStore != nil && rag.GlobalStore.HasFTSData()
+	embedderHealthy := rag.EmbedderHealthy()
+
+	mode := "none"
+	if embedderHealthy && hasVecData {
+		mode = "hybrid"
+	} else if hasFTSData {
+		mode = "fts"
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"available":        hasFTSData || hasVecData,
+		"mode":             mode,
+		"has_fts_data":     hasFTSData,
+		"has_vec_data":     hasVecData,
+		"embedder_healthy": embedderHealthy,
+	})
+}
+
+// ServeRAGSessionSearch handles POST /api/rag/session-search — session-aggregated RAG search.
+func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	projectPath := middleware.GetProjectFromCookie(r)
+	if projectPath == "" && !middleware.IsLocalhost(r) {
+		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
+		return
+	}
+
+	var req struct {
+		Query            string `json:"q"`
+		Backend          string `json:"backend"`
+		Role             string `json:"role"`
+		SessionID        string `json:"session_id"`
+		ExcludeSessionID string `json:"exclude_session_id"`
+		FromTime         string `json:"from"`
+		ToTime           string `json:"to"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Query == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
+		return
+	}
+
+	searchLimit := model.ConfigInstance.RAG.SearchLimit
+	if searchLimit <= 0 {
+		searchLimit = 5
+	}
+
+	searchPoolSize := model.ConfigInstance.RAG.SearchPoolSize
+
+	params := rag.SearchParams{
+		Query:            req.Query,
+		ProjectPath:      projectPath,
+		Backend:          req.Backend,
+		Role:             req.Role,
+		SessionID:        req.SessionID,
+		ExcludeSessionID: req.ExcludeSessionID,
+		FromTime:         req.FromTime,
+		ToTime:           req.ToTime,
+	}
+
+	result, err := rag.RAGSessionSearch(r.Context(), rag.GlobalStore, rag.GlobalEmbedder, params, searchLimit, searchPoolSize)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSearchFailed")
+		return
+	}
+
+	if result.Sessions == nil {
+		result.Sessions = []rag.SessionSearchResult{}
+	}
+	writeJSON(w, http.StatusOK, result)
+}

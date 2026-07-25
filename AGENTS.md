@@ -55,12 +55,12 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - `internal/cli/` — AI agent self-service: `task`, `rag`, `migrate`.
 - `internal/middleware/` — Auth, request logging, panic recovery, request ID.
 - `internal/platform/` — Cross-platform path resolution, shell detection, Windows CLI utilities.
-- `internal/speech/` — TTS: MiniMax, Edge TTS (native Go), Piper/Kokoro/MOSS-Nano.
+- `internal/speech/` — TTS: Edge TTS (native Go), Piper, Kokoro (Python venv bridge), MOSS-TTS-Nano (CLI wrapper). (MiniMax TTS 为预留配置项，尚未实装)
 - `internal/summarize/` — Text summarization for auto-summary, TTS, task summaries.
-- `internal/ssh/` — SSH tunnel server. Publishes `tunnel_status` via EventBus.
+- `internal/ssh/` — SSH tunnel server (password auth, auto host key, IP-level brute-force backoff). 状态查询通过 `GET /api/ssh/info`（无需鉴权，供 Android native 调用）。不发布 WS 事件。
 - `internal/proxy/` — HTTP reverse proxy + port forwarding. Rewrites Host header for virtual-host backends.
 - `internal/symbol/` — Code symbol extraction via tree-sitter (`gotreesitter`, pure Go, no CGO). 17 symbol kinds, 100+ languages.
-- `internal/rag/` — RAG: DuckDB vector store, Ollama BGE-M3 embeddings.
+- `internal/rag/` — RAG: SQLite + sqlite-vec (vec0 虚拟表) 向量存储 + FTS5 全文检索；OpenAI 兼容嵌入 API（默认 Ollama BGE-M3，可指向任意 OpenAI 兼容端点）。DuckDB 是历史对比项，不再使用。
 - `internal/terminal/` — Web terminal: PTY sessions, ring buffer replay, multi-tab support, key/symbol configuration.
 - `internal/ws/` — WebSocket event channel. `StreamHub` for session-scoped chat streaming fan-out. `Manager` for broadcast + buffered replay on reconnect. Client subscribe/unsubscribe/cancel/permission_respond messages.
 
@@ -70,21 +70,21 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 
 **Composables** (by domain):
 - Chat: `useChatSession`, `useChatStream`, `useChatRender`, `useChatContext`, `useChatKeyboard`, `useAutoSpeech`, `useQuickSend`, `useQuoteQuestion`, `useUserMsgIndex`
-- Session: `useSessionIdentity`, `useSessionManager`, `useReconnect`
+- Session: `useSessionIdentity`, `useSessionManager`, `useReconnect`, `useSessionSearch`
 - Terminal: `useTerminalSession`, `useTerminalTabs`, `useTerminalKeys`, `useTerminalGestures`, `useTerminalKeyboard`, `useTerminalViewport`, `useKeyConfig`
 - File: `useFileNavStack`, `useFileRefresh`, `useFileUpload`, `useFilePathAnnotation`, `useWorktreeAnnotation`, `useFileWatch`
 - Navigation/Gesture: `useBackHandler`, `useEdgeSwipeBack`, `useSwipeDelete`, `useSwipeSession`, `useStickyScroll`
 - Settings: `useSettingsConfig`, `useSettingsNavigation`
 - Agent: `useAgents`, `useAcpSession`
 - Task: `useTaskTab`, `useTaskForm`, `useTaskHistory`, `useTaskOverview`, `useTaskExecStream`
-- Infrastructure: `useGlobalEvents`, `useSystemEvents`, `useConnectivityTest`, `usePortForward`, `useFrp`, `useCodeSymbols`, `useToast`, `useDialog`, `useTabDrawer`, `usePwaInstall`, `useAppMode`, `useLocale`, `useWakeLock`
+- Infrastructure: `useGlobalEvents`, `useConnectivityTest`, `usePortForward`, `useFrp`, `useCodeSymbols`, `useToast`, `useDialog`, `useTabDrawer`, `usePwaInstall`, `useAppMode`, `useLocale`, `useWakeLock`
 
 **Components** (by domain):
 - Chat: `ChatInputBar`, `ChatMessageItem`, `ChatMessageList`, `ChatPanelContent`, `ChatMetadataModal`, `ContentBlocks`, `SummaryToggle`, `QuickCommandDrawer`, `QuickCommandEditModal`, `QuickSendDrawer`, `QuickSendEditModal`, `QuoteQuestionBar`, `UserMsgIndexDrawer`, `OutputDrawer`, `ToolDetailDrawer`, `PlanPanel`, `AttachDrawer`
 - File: `FileManagerContent`, `FileOverlay`, `FileViewer`, `FileHeader`, `FileIcon`, `DirBreadcrumb`, `FileAttachmentList`, `FileChangesDrawer`, `FileDetailsDrawer`, `CodePreview`, `MarkdownPreview`, `PdfPreview`, `OfficePreview`, `ImagePreview`, `VideoPreview`, `AudioPreview`, `OpenApiPreview`
 - Terminal: `TerminalPanelContent`, `KeyConfigDrawer`, `KeyConfigTab`, `TerminalTabMenu`
 - Git: `GitGraph`, `GitManageContent`, `GitHistoryDrawer`, `GitHistoryContent`, `GitDiffView`, `GitBreadcrumb`, `GitBranchList`, `GitBranchRow`, `GitCommitList`, `GitCommitMeta`, `GitTagList`, `GitWorktreeList`, `GitWorktreeCard`, `DiffDrawer`
-- Session/Agent: `SessionDrawer`, `AcpSessionDrawer`, `AgentInstallDialog`, `CopyAgentDialog`, `SearchDrawer`, `RagDetailDrawer`
+- Session/Agent: `SessionDrawer`, `AcpSessionDrawer`, `AgentInstallDialog`, `CopyAgentDialog`, `SearchDrawer`, `RagDetailDrawer`, `SessionSearchDrawer`, `SessionSearchDetailModal`
 - Task: `TaskTab`, `TaskListPage`, `TaskDetailPage`, `TaskFormPage`, `TaskExecDetail`, `TaskBreadcrumb`, `TaskHistoryTab`, `TaskOverviewTab`
 - Settings: `SettingsPage`, `SettingsIndex`, `SettingsCategory`, `SettingsGroupPanel`, `SettingsItem`, `SettingsAgentsIndex`, `SettingsAgentDetail`, `SettingsRestartDialog`, `PasswordChangeDialog`
 - Common: `BottomSheet`, `PopupMenu`, `Lightbox`, `ModalDialog`, `DialogOverlay`, `ToastNotification`, `SwipeToDeleteRow`, `AppHeader`, `HeaderMarquee`, `IosInstallDrawer`, `TabPanel`, `TableRowModal`, `ProxyPanelContent`, `ProxyPortItem`, `SearchInput`, `VersionMismatchOverlay`, `WelcomeOverlay`, `LoginView`, `ProjectDialog`

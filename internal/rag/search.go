@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
+	"time"
 
 	"clawbench/internal/service"
 )
@@ -130,6 +132,15 @@ func RAGSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, par
 		return nil, fmt.Errorf("search: %w", err)
 	}
 
+	// Compute match positions for all hits using textMatchPositions.
+	// This is done uniformly for all search modes (FTS, vector, hybrid) because:
+	// - FTS5 offsets() returns positions in chunk_text_segmented (not chunk_text), making them unusable
+	// - Vector search has no native position information
+	// - textMatchPositions provides consistent, correct highlighting for all modes
+	for i := range hits {
+		hits[i].MatchPositions = textMatchPositions(params.Query, hits[i].ChunkText)
+	}
+
 	// Enrich hits with session titles from SQLite
 	sessionIDs := make(map[string]bool)
 	for _, h := range hits {
@@ -185,4 +196,170 @@ func getSessionTitles(sessionIDs map[string]bool) map[string]string {
 		}
 	}
 	return titles
+}
+
+// maxChunksPerSession caps the number of chunk details returned per session
+// to prevent one dominant session from consuming all result space.
+const maxChunksPerSession = 5
+
+// SessionSearchResult represents an aggregated search result grouped by session.
+type SessionSearchResult struct {
+	SessionID    string     `json:"session_id"`
+	SessionTitle string     `json:"session_title"`
+	Score        float64    `json:"score"`
+	Backend      string     `json:"backend"`
+	ProjectPath  string     `json:"project_path"`
+	Deleted      bool       `json:"deleted"`
+	CreatedAt    time.Time  `json:"created_at"`
+	MatchCount   int        `json:"match_count"`
+	Chunks       []ChunkHit `json:"chunks"`
+}
+
+// ChunkHit represents a single matching chunk within a session search result.
+type ChunkHit struct {
+	ChunkID        int64        `json:"chunk_id"`
+	ChunkText      string       `json:"chunk_text"`
+	MatchPositions []MatchRange `json:"match_positions"`
+	Score          float64      `json:"score"`
+	Role           string       `json:"role"`
+	MessageID      int64        `json:"message_id"`
+	CreatedAt      time.Time    `json:"created_at"`
+}
+
+// SessionSearchResponse is the response for session-aggregated RAG search.
+type SessionSearchResponse struct {
+	Sessions []SessionSearchResult `json:"sessions"`
+	Total    int                   `json:"total"`
+	Mode     SearchMode            `json:"mode"`
+}
+
+// RAGSessionSearch performs RAG search and aggregates results by session.
+// It fetches an expanded pool of chunks, groups by session_id with a per-session
+// chunk cap, and returns up to searchLimit sessions sorted by best chunk score.
+func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, params SearchParams, searchLimit int, searchPoolSize int) (*SessionSearchResponse, error) { //nolint:gocyclo
+	if store == nil {
+		return nil, fmt.Errorf("RAG not initialized: store is nil")
+	}
+	if params.Query == "" {
+		return &SessionSearchResponse{}, nil
+	}
+
+	// Use searchPoolSize as expanded limit (already configurable, default 20)
+	// This ensures enough chunks to aggregate into searchLimit sessions
+	expandedLimit := searchPoolSize
+	if expandedLimit < searchLimit*3 {
+		expandedLimit = searchLimit * 3
+	}
+
+	expandedParams := params
+	expandedParams.Limit = expandedLimit
+
+	result, err := RAGSearch(ctx, store, embedder, expandedParams, expandedLimit, searchPoolSize)
+	if err != nil {
+		return nil, err
+	}
+
+	// Aggregate by session_id with per-session chunk cap
+	sessionMap := make(map[string]*SessionSearchResult)
+	var sessionOrder []string
+
+	for _, hit := range result.Results {
+		sr, exists := sessionMap[hit.SessionID]
+		if !exists {
+			sr = &SessionSearchResult{
+				SessionID:   hit.SessionID,
+				Score:       hit.Score,
+				Backend:     hit.Backend,
+				ProjectPath: hit.ProjectPath,
+				CreatedAt:   hit.CreatedAt,
+			}
+			sessionMap[hit.SessionID] = sr
+			sessionOrder = append(sessionOrder, hit.SessionID)
+		}
+		// Per-session chunk cap: don't accumulate more than maxChunksPerSession
+		if len(sr.Chunks) >= maxChunksPerSession {
+			sr.MatchCount++ // Still count it
+			continue
+		}
+		sr.MatchCount++
+		sr.Chunks = append(sr.Chunks, ChunkHit{
+			ChunkID:        hit.ChunkID,
+			ChunkText:      hit.ChunkText,
+			MatchPositions: hit.MatchPositions,
+			Score:          hit.Score,
+			Role:           hit.Role,
+			MessageID:      hit.MessageID,
+			CreatedAt:      hit.CreatedAt,
+		})
+		// Keep the best score for the session
+		if hit.Score > sr.Score {
+			sr.Score = hit.Score
+		}
+	}
+
+	// Sort sessions by score descending
+	sessions := make([]*SessionSearchResult, 0, len(sessionMap))
+	for _, id := range sessionOrder {
+		sessions = append(sessions, sessionMap[id])
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].Score > sessions[j].Score
+	})
+
+	// Truncate to searchLimit
+	if len(sessions) > searchLimit {
+		sessions = sessions[:searchLimit]
+	}
+
+	// Enrich with session titles and deleted status
+	sessionIDs := make(map[string]bool)
+	for _, s := range sessions {
+		sessionIDs[s.SessionID] = true
+	}
+	titles := getSessionTitles(sessionIDs)
+	deletedMap := getSessionDeletedStatus(sessionIDs)
+
+	// Build response
+	out := make([]SessionSearchResult, len(sessions))
+	for i, s := range sessions {
+		out[i] = *s
+		if title, ok := titles[s.SessionID]; ok {
+			out[i].SessionTitle = title
+		}
+		if del, ok := deletedMap[s.SessionID]; ok {
+			out[i].Deleted = del
+		}
+	}
+
+	slog.Info(
+		"rag session search completed",
+		slog.String("query", params.Query),
+		slog.String("mode", string(result.Mode)),
+		slog.Int("sessions", len(out)),
+		slog.Int("search_limit", searchLimit),
+	)
+
+	return &SessionSearchResponse{
+		Sessions: out,
+		Total:    len(out),
+		Mode:     result.Mode,
+	}, nil
+}
+
+// getSessionDeletedStatus fetches the deleted status for a set of session IDs.
+// NOTE: N+1 pattern is acceptable because searchLimit caps at 5 sessions.
+// If searchLimit grows significantly, replace with a batch query.
+func getSessionDeletedStatus(sessionIDs map[string]bool) map[string]bool {
+	deletedMap := make(map[string]bool, len(sessionIDs))
+	if !service.DBReady() || len(sessionIDs) == 0 {
+		return deletedMap
+	}
+	for id := range sessionIDs {
+		var deleted int
+		err := service.ReadDB().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", id).Scan(&deleted)
+		if err == nil {
+			deletedMap[id] = deleted == 1
+		}
+	}
+	return deletedMap
 }

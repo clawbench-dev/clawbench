@@ -325,7 +325,159 @@ func TestServeRAGSession_LocalhostCrossProject(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// ---------- RAG test helpers ----------
+// ---------- ServeRAGStatus ----------
+
+func TestServeRAGStatus_MethodCheck(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/rag/status", nil)
+	w := callHandlerWithAuth(ServeRAGStatus, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeRAGStatus_ReturnsFields(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/status", nil)
+	w := callHandlerWithAuth(ServeRAGStatus, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	assert.Contains(t, result, "available")
+	assert.Contains(t, result, "mode")
+	assert.Contains(t, result, "has_fts_data")
+	assert.Contains(t, result, "has_vec_data")
+	assert.Contains(t, result, "embedder_healthy")
+}
+
+func TestServeRAGStatus_NilStore(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+	rag.GlobalStore = nil
+	rag.GlobalEmbedder = nil
+
+	req := newRequest(t, http.MethodGet, "/api/rag/status", nil)
+	w := callHandlerWithAuth(ServeRAGStatus, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	assert.Equal(t, false, result["available"])
+	assert.Equal(t, "none", result["mode"])
+}
+
+// ---------- ServeRAGSessionSearch ----------
+
+func TestServeRAGSessionSearch_MethodCheck(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-search", nil)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeRAGSessionSearch_MissingQuery(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeRAGSessionSearch_RemoteNoProjectDenied(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "test"})
+	// Default RemoteAddr is 192.0.2.1 (non-localhost)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeRAGSessionSearch_NilStoreReturns503(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+	rag.GlobalStore = nil
+	rag.GlobalEmbedder = nil
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "test"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestServeRAGSessionSearch_EmptyResultsArray(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	embedder := setupWorkingMockEmbedder(t)
+	rag.GlobalEmbedder = embedder
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "test"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	sessions, ok := result["sessions"].([]any)
+	assert.True(t, ok, "sessions should be an array")
+	assert.Empty(t, sessions)
+}
+
+func TestServeRAGSessionSearch_LocalhostGlobalSearch(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	embedder := setupWorkingMockEmbedder(t)
+	rag.GlobalEmbedder = embedder
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "test"})
+	req.RemoteAddr = "127.0.0.1:12345"
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
 
 // setupRAGStore creates a temporary SQLite store for handler tests.
 func setupRAGStore(t *testing.T) *rag.Store {

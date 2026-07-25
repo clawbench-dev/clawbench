@@ -31,18 +31,25 @@ type Chunk struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+// MatchRange represents a character-level (rune offset) match position within chunk text.
+type MatchRange struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
 // SearchHit represents a search result with similarity score.
 type SearchHit struct {
-	ChunkID      int64     `json:"chunk_id"`
-	ChunkText    string    `json:"chunk_text"`
-	Score        float64   `json:"score"`
-	SessionID    string    `json:"session_id"`
-	SessionTitle string    `json:"session_title"`
-	MessageID    int64     `json:"message_id"`
-	Role         string    `json:"role"`
-	ProjectPath  string    `json:"project_path"`
-	Backend      string    `json:"backend"`
-	CreatedAt    time.Time `json:"created_at"`
+	ChunkID        int64        `json:"chunk_id"`
+	ChunkText      string       `json:"chunk_text"`
+	Score          float64      `json:"score"`
+	SessionID      string       `json:"session_id"`
+	SessionTitle   string       `json:"session_title"`
+	MessageID      int64        `json:"message_id"`
+	Role           string       `json:"role"`
+	ProjectPath    string       `json:"project_path"`
+	Backend        string       `json:"backend"`
+	CreatedAt      time.Time    `json:"created_at"`
+	MatchPositions []MatchRange `json:"match_positions,omitempty"`
 }
 
 // PendingChunk represents a chunk that needs embedding backfill.
@@ -396,6 +403,16 @@ func (s *Store) SearchVector(queryEmbedding []float64, limit int, projectPath, b
 func (s *Store) HasVecData() bool {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM rag_chunks WHERE has_embedding = 1").Scan(&count)
+	if err != nil {
+		return false
+	}
+	return count > 0
+}
+
+// HasFTSData returns true if the FTS5 table contains any indexed chunks.
+func (s *Store) HasFTSData() bool {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM rag_chunks_fts").Scan(&count)
 	if err != nil {
 		return false
 	}

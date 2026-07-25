@@ -9,10 +9,13 @@
           <span class="session-counter-text">{{ sessionCount }}/{{ sessionMaxCount }}</span>
         </div>
       </div>
-      <button v-if="showResumeIcon" class="create-btn" @click.stop="$emit('open-acp-sessions')" :title="t('chat.acpSession.resumeTitle', { agent: currentAgentName })">
+      <button v-if="ragAvailable" class="header-action-btn" @click.stop="searchDrawerOpen = true" :title="t('sessionSearch.title')">
+        <Search :size="16" />
+      </button>
+      <button v-if="showResumeIcon" class="header-action-btn" @click.stop="$emit('open-acp-sessions')" :title="t('chat.acpSession.resumeTitle', { agent: currentAgentName })">
         <RotateCcw :size="16" />
       </button>
-      <button class="create-btn" @click.stop="handleCreateClick" :title="t('session.newSession')">
+      <button class="header-action-btn" @click.stop="handleCreateClick" :title="t('session.newSession')">
         <Plus :size="16" />
       </button>
     </template>
@@ -64,13 +67,20 @@
     @update:open="v => v ? agentSelectorDrawer.open() : agentSelectorDrawer.close()"
     @select="createSession"
   />
+
+  <!-- Session search drawer -->
+  <SessionSearchDrawer
+    :open="searchDrawerOpen"
+    @close="searchDrawerOpen = false"
+    @resume="handleResumeFromSearch"
+  />
 </template>
 
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
-import { Plus, RotateCcw } from 'lucide-vue-next'
-import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
+import { Plus, RotateCcw, Search } from 'lucide-vue-next'
+import { ref, watch, computed, onUnmounted, nextTick, inject } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
@@ -79,6 +89,8 @@ import { useAgents, agentCanResume } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer'
+import { useSessionSearch } from '@/composables/useSessionSearch'
+import SessionSearchDrawer from './SessionSearchDrawer.vue'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
 
@@ -107,6 +119,12 @@ const pageSize = computed(() => store.state.chatSessionPageSize || 10)
 const { agents, loadAgents, getAgentBackend, getAgentName } = useAgents()
 const dialog = useDialog()
 const { runningSessionsVersion } = useSessionIdentity()
+const toast = inject('toast', null)
+
+// Session search
+const ragAvailable = ref(false)
+const searchDrawerOpen = ref(false)
+const sessionSearch = useSessionSearch()
 
 const showResumeIcon = computed(() => props.isACPTransport && props.currentAgentId && agentCanResume(props.currentAgentId))
 const currentAgentName = computed(() => props.currentAgentId ? getAgentName(props.currentAgentId) : '')
@@ -251,7 +269,7 @@ function addSessionLocally(session) {
 // while the drawer is open (e.g. after a successful delete).
 watch(() => props.open, async (val) => {
   if (val) {
-    await Promise.all([loadSessions(), loadAgents()])
+    await Promise.all([loadSessions(), loadAgents(), checkRag()])
   }
 })
 watch(() => store.state.sessionCount, async () => {
@@ -266,6 +284,40 @@ onUnmounted(() => {
     observer = null
   }
 })
+
+async function checkRag() {
+  ragAvailable.value = await sessionSearch.checkRagAvailability()
+}
+
+async function handleResumeFromSearch(session) {
+  if (!session?.session_id) return
+  const title = session.session_title || t('sessionSearch.untitledSession')
+  const confirmed = await dialog.confirm(
+    t('sessionSearch.resumeConfirm', { title }),
+    { title: t('sessionSearch.resume'), confirmText: t('common.confirm') }
+  )
+  if (!confirmed) return
+  try {
+    const resp = await fetch('/api/ai/session/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: session.session_id }),
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      if (resp.status === 403 && toast) {
+        toast.show(t('sessionSearch.resumeProjectMismatch'), { icon: '⚠️', type: 'error' })
+      } else if (toast) {
+        toast.show(data.error || t('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
+      }
+      return
+    }
+    searchDrawerOpen.value = false
+    selectSession(session.session_id, session.backend)
+  } catch {
+    if (toast) toast.show(t('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
+  }
+}
 </script>
 
 <style scoped>
@@ -496,7 +548,7 @@ onUnmounted(() => {
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
 }
 
-.create-btn {
+.header-action-btn {
   margin-left: 6px;
   width: 24px;
   height: 24px;
@@ -511,7 +563,7 @@ onUnmounted(() => {
   transition: background 0.15s;
 }
 
-.create-btn:hover {
+.header-action-btn:hover {
   background: rgba(0, 102, 204, 0.1);
 }
 

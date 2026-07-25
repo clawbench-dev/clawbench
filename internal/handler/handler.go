@@ -294,6 +294,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/search", middleware.Auth(ServeRAGSearch))
 	register("/api/rag/message", middleware.Auth(ServeRAGMessage))
 	register("/api/rag/session", middleware.Auth(ServeRAGSession))
+	register("/api/rag/status", middleware.Auth(ServeRAGStatus))
+	register("/api/rag/session-search", middleware.Auth(ServeRAGSessionSearch))
 
 	// Client log collection — intentionally unauthenticated:
 	// Android AppLog sends logs via native HttpURLConnection (no WebView cookies).

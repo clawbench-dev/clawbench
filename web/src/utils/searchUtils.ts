@@ -84,3 +84,45 @@ export function searchRawContent(
   }
   return out
 }
+
+/**
+ * Highlight text at specified character positions using <mark> tags.
+ * Positions are rune-based (character-level), matching backend MatchRange.
+ * All text is escaped via escapeHtml to prevent XSS.
+ */
+export function highlightTextByPositions(text: string, positions: { start: number; end: number }[]): string {
+  if (!text) return ''
+  if (!positions || positions.length === 0) return escapeHtml(text)
+
+  // Convert rune offsets to string indices (JavaScript strings are UTF-16)
+  const runes = [...text]
+  const runeToIndex: number[] = []
+  let idx = 0
+  for (let i = 0; i < runes.length; i++) {
+    runeToIndex.push(idx)
+    idx += runes[i].length // surrogate pairs occupy 2 UTF-16 units
+  }
+  runeToIndex.push(idx) // sentinel
+
+  let result = ''
+  let lastEnd = 0
+
+  for (const pos of positions) {
+    const byteStart = runeToIndex[Math.min(pos.start, runes.length)]
+    const byteEnd = runeToIndex[Math.min(pos.end, runes.length)]
+
+    if (byteStart > lastEnd) {
+      result += escapeHtml(text.slice(lastEnd, byteStart))
+    }
+    if (byteEnd > byteStart) {
+      result += '<mark>' + escapeHtml(text.slice(byteStart, byteEnd)) + '</mark>'
+    }
+    lastEnd = Math.max(lastEnd, byteEnd)
+  }
+
+  if (lastEnd < text.length) {
+    result += escapeHtml(text.slice(lastEnd))
+  }
+
+  return result
+}
