@@ -5,7 +5,18 @@ import SessionDrawer from '@/components/session/SessionDrawer.vue'
 
 // ── Mocks ────────────────────────────────────────────────────
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
+  useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
+  createI18n: () => ({ global: { t: (key: string) => key, locale: { value: 'en' } } }),
+}))
+
+vi.mock('@/composables/useLocale', () => ({
+  useLocale: () => ({
+    currentLocale: { value: 'en' },
+    setLocale: vi.fn(),
+    toggleLocale: vi.fn(),
+    localeLabel: { value: 'EN' },
+  }),
+  gt: (key: string) => key,
 }))
 
 vi.mock('@/utils/appLog', () => ({

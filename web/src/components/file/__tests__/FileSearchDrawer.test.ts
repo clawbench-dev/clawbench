@@ -36,6 +36,7 @@ vi.mock('@/composables/useFileSearch', () => ({
     startSearch: mockStartSearch,
     cancelSearch: mockCancelSearch,
     reset: mockReset,
+    getDisplayLimit: () => 100,
   }),
 }))
 
