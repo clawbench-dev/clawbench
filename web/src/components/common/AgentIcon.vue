@@ -50,11 +50,11 @@ const initialStyle = computed(() => ({
 
 <style scoped>
 .agent-icon-svg {
-    display: inline-block;
-    vertical-align: middle;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
     line-height: 1;
-    margin-right: 4px;
 }
 
 /* Contrasting background for icons with dark/light fills that would be
@@ -74,6 +74,5 @@ const initialStyle = computed(() => ({
     background: var(--bg-tertiary);
     color: var(--text-secondary);
     font-weight: 600;
-    margin-right: 4px;
 }
 </style>
