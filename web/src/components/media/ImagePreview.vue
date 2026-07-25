@@ -198,7 +198,6 @@ watch(() => props.file, () => {
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
-    border-radius: var(--radius-sm);
     cursor: zoom-in;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
     will-change: transform;

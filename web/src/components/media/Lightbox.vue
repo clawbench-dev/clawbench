@@ -728,6 +728,5 @@ onUnmounted(() => {
     transform-origin: center center;
     user-select: none;
     background: var(--bg-primary);
-    border-radius: 4px;
 }
 </style>
