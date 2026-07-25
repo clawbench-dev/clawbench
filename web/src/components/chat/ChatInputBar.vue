@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-input-wrapper">
+  <div class="chat-input-wrapper" ref="rootRef">
     <!-- Top action bar (above input box) -->
     <div class="chat-top-actions">
       <div class="chat-action-group">
@@ -81,7 +81,7 @@
           :disabled="inputDisabled"
           :placeholder="dynamicPlaceholder"
           rows="1"
-          @keydown.enter.exact.prevent="$emit('send', inputText.trim())"
+          @keydown="onTextareaKeydown"
           @focus="onTextareaFocus"
           @blur="onTextareaBlur"
           ></textarea>
@@ -147,16 +147,16 @@
       <!-- @ command autocomplete menu (ClawBench built-in) -->
       <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" anchor="left" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
         <div class="at-menu-title">{{ t('chat.atCommand.title') }}</div>
-        <button v-for="cmd in atMenuItems" :key="cmd.key" class="at-menu-item" @mousedown.prevent="handleAtSelect(cmd)">
-          <span class="at-menu-label">{{ cmd.label }}</span>
+        <button v-for="(cmd, idx) in atMenuItems" :key="cmd.key" class="at-menu-item" :class="{ 'at-menu-selected': idx === atMenuIndex }" :data-at-idx="idx" @mousedown.prevent="handleAtSelect(cmd)">
+          <span class="at-menu-label" v-html="highlightText(cmd.label, cmd.query)" />
           <span class="at-menu-desc">{{ cmd.description }}</span>
         </button>
       </PopupMenu>
       <!-- Slash command autocomplete menu (ACP backend commands — only in acp-stdio transport) -->
       <PopupMenu v-if="isACPTransport && availableCommands.length > 0" v-model:show="showSlashMenu" :target-element="textareaRef" anchor="left" :max-width="300" :max-height="240" :menu-items-count="slashMenuItems.length">
         <div class="at-menu-title">{{ t('chat.slashCommand.title') }}</div>
-        <button v-for="cmd in slashMenuItems" :key="cmd.key" class="at-menu-item" @mousedown.prevent="handleSlashSelect(cmd)">
-          <span class="at-menu-label slash-label">{{ cmd.label }}</span>
+        <button v-for="(cmd, idx) in slashMenuItems" :key="cmd.key" class="at-menu-item" :class="{ 'at-menu-selected': idx === slashMenuIndex }" :data-slash-idx="idx" @mousedown.prevent="handleSlashSelect(cmd)">
+          <span class="at-menu-label slash-label" v-html="highlightText(cmd.label, cmd.query)" />
           <span class="at-menu-desc">{{ cmd.description }}</span>
         </button>
       </PopupMenu>
@@ -233,6 +233,7 @@ import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
+import { highlightText } from '@/utils/searchUtils.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
@@ -417,6 +418,7 @@ const emit = defineEmits([
 ])
 
 const inputText = ref('')
+const rootRef = ref(null)
 const textareaRef = ref(null)
 const isDragOver = ref(false)
 const dragCounter = ref(0)
@@ -431,8 +433,7 @@ function openSettingsDrawer(tab) {
   settingsDrawer.open()
 }
 
-// ── @ command autocomplete ──
-const showAtMenu = ref(false)
+// ── Context usage popup ──
 const showUsagePopup = ref(false)
 const usageElRef = ref(null)
 const atCommands = computed(() => {
@@ -444,33 +445,44 @@ const atCommands = computed(() => {
 
 // ── Slash command autocomplete (ACP backend commands) ──
 const showSlashMenu = ref(false)
+const slashMenuIndex = ref(-1)
+
+// ── @ command autocomplete ──
+const showAtMenu = ref(false)
+const atMenuIndex = ref(-1)
 
 const atMenuItems = computed(() => {
   const text = inputText.value
   if (!text.startsWith('@')) return []
-  const query = text.toLowerCase().slice(1) // strip leading '@'
+  const query = text.slice(1) // strip leading '@'
   const cmds = atCommands.value // unwrap computed ref
-  if (!query) return cmds // empty query → show all
-  return cmds.filter(cmd => cmd.key.toLowerCase().includes(query))
+  if (!query) return cmds.map(cmd => ({ ...cmd, query: '' })) // empty query → show all
+  const lowerQ = query.toLowerCase()
+  return cmds
+    .filter(cmd => cmd.key.toLowerCase().includes(lowerQ))
+    .map(cmd => ({ ...cmd, query }))
 })
 
 const slashMenuItems = computed(() => {
   const text = inputText.value
   if (!text.startsWith('/')) return []
-  const query = text.toLowerCase().slice(1) // strip leading '/'
+  const query = text.slice(1) // strip leading '/'
   if (!query) return availableCommands.value.map(cmd => ({
     key: '/' + cmd.name,
     label: '/' + cmd.name,
     description: cmd.description,
     inputHint: cmd.inputHint || '',
+    query: '',
   }))
+  const lowerQ = query.toLowerCase()
   return availableCommands.value
-    .filter(cmd => cmd.name.toLowerCase().includes(query))
+    .filter(cmd => cmd.name.toLowerCase().includes(lowerQ))
     .map(cmd => ({
       key: '/' + cmd.name,
       label: '/' + cmd.name,
       description: cmd.description,
       inputHint: cmd.inputHint || '',
+      query,
     }))
 })
 
@@ -489,9 +501,30 @@ watch(inputText, () => {
   showSlashMenu.value = shouldShowSlash
 })
 
+// Reset selection when menu items change
+watch(slashMenuItems, () => { slashMenuIndex.value = -1 })
+watch(atMenuItems, () => { atMenuIndex.value = -1 })
+
+// Scroll selected menu item into view
+watch(slashMenuIndex, (idx) => {
+  if (idx < 0) return
+  nextTick(() => {
+    const el = rootRef.value?.querySelector('[data-slash-idx="' + idx + '"]')
+    el?.scrollIntoView({ block: 'nearest' })
+  })
+})
+watch(atMenuIndex, (idx) => {
+  if (idx < 0) return
+  nextTick(() => {
+    const el = rootRef.value?.querySelector('[data-at-idx="' + idx + '"]')
+    el?.scrollIntoView({ block: 'nearest' })
+  })
+})
+
 function handleAtSelect(cmd) {
   inputText.value = cmd.key + ' '
   showAtMenu.value = false
+  atMenuIndex.value = -1
   nextTick(() => {
     const el = textareaRef.value
     if (el) el.focus()
@@ -501,10 +534,60 @@ function handleAtSelect(cmd) {
 function handleSlashSelect(cmd) {
   inputText.value = cmd.key + ' '
   showSlashMenu.value = false
+  slashMenuIndex.value = -1
   nextTick(() => {
     const el = textareaRef.value
     if (el) el.focus()
   })
+}
+
+// ── Menu keyboard navigation (PC: ArrowUp/Down + Enter + Escape) ──
+function handleMenuKeydown(e) {
+  // Determine which menu is active (slash takes priority if both open)
+  const isSlash = showSlashMenu.value
+  const isAt = showAtMenu.value
+  if (!isSlash && !isAt) return false
+
+  // Escape closes the active menu
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    if (isSlash) { showSlashMenu.value = false; slashMenuIndex.value = -1 }
+    else { showAtMenu.value = false; atMenuIndex.value = -1 }
+    return true
+  }
+
+  const items = isSlash ? slashMenuItems.value : atMenuItems.value
+  const indexRef = isSlash ? slashMenuIndex : atMenuIndex
+  if (items.length === 0) return false
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    indexRef.value = (indexRef.value + 1) % items.length
+    return true
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    indexRef.value = indexRef.value <= 0 ? items.length - 1 : indexRef.value - 1
+    return true
+  }
+  if (e.key === 'Enter' && indexRef.value >= 0 && indexRef.value < items.length) {
+    e.preventDefault()
+    const selected = items[indexRef.value]
+    if (isSlash) handleSlashSelect(selected)
+    else handleAtSelect(selected)
+    return true
+  }
+  return false
+}
+
+function onTextareaKeydown(e) {
+  // Menu keyboard navigation takes priority
+  if (handleMenuKeydown(e)) return
+  // Default: Enter (without modifier) sends
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault()
+    emit('send', inputText.value.trim())
+  }
 }
 
 // Keyboard detection for iOS (no adjustResize) — activates visualViewport monitoring
@@ -1598,7 +1681,8 @@ defineExpose({
   transition: background 0.1s;
 }
 
-.at-menu-item:hover {
+.at-menu-item:hover,
+.at-menu-item.at-menu-selected {
   background: var(--bg-secondary, #f1f3f5);
 }
 
@@ -1619,6 +1703,17 @@ defineExpose({
 
 :root[data-theme="dark"] .at-menu-label.slash-label {
   color: #38bdf8;
+}
+
+.at-menu-label mark {
+  background: rgba(255, 230, 0, 0.5);
+  color: inherit;
+  padding: 0 1px;
+  font-weight: 700;
+}
+
+:root[data-theme="dark"] .at-menu-label mark {
+  background: rgba(255, 230, 0, 0.35);
 }
 
 .at-menu-desc {
