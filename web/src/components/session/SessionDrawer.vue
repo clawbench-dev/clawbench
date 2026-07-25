@@ -40,9 +40,7 @@
               <div class="session-item-meta">
                 <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
                 <span v-if="session.sourceSessionId" class="session-item-scheduled">{{ t('session.fromTask') }}</span>
-                <span class="session-item-agent">{{ getAgentIcon(session.agentId) }} {{ getAgentName(session.agentId) }}</span>
-                <span class="session-item-backend">{{ session.backend }}</span>
-                <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
               </div>
             </div>
           </div>
@@ -55,44 +53,25 @@
   </BottomSheet>
 
   <!-- Agent selector drawer -->
-  <BottomSheet :open="agentSelectorDrawer.effectiveOpen.value" auto @close="agentSelectorDrawer.close()">
-    <template #header>
-      <Bot :size="16" class="bs-header-icon" />
-      <span class="bs-header-title">{{ t('session.selectAgent') }}</span>
-    </template>
-    <div class="agent-list">
-      <button
-        v-for="agent in agents"
-        :key="agent.id"
-        class="agent-option"
-        @click="createSession(agent.id)"
-      >
-        <span class="agent-option-icon">{{ agent.icon }}</span>
-        <div class="agent-option-detail">
-          <span class="agent-option-name">
-            {{ agent.name }}
-          </span>
-          <span class="agent-option-specialty">{{ agent.specialty }}</span>
-          <div class="agent-option-tags">
-            <span class="agent-tag backend-tag">{{ agent.backend }}</span>
-            <span v-if="agentDefaultModelName(agent.id)" class="agent-tag model-tag">{{ agentDefaultModelName(agent.id) }}</span>
-          </div>
-        </div>
-        <span v-if="isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ t('chat.sessionSetting.defaultBadge') }}</span>
-        <button v-else class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="t('session.setAsDefaultAgent')">
-          <Star :size="14" />
-        </button>
-      </button>
-    </div>
-  </BottomSheet>
+  <AgentSelectorDrawer
+    ref="agentSelectorRef"
+    :open="agentSelectorDrawer.effectiveOpen.value"
+    :title="t('session.selectAgent')"
+    :default-badge="t('chat.sessionSetting.defaultBadge')"
+    :set-default-title="t('session.setAsDefaultAgent')"
+    @update:open="v => v ? agentSelectorDrawer.open() : agentSelectorDrawer.close()"
+    @select="createSession"
+  />
 </template>
 
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
-import { Bot, Plus, Star, RotateCcw } from 'lucide-vue-next'
+import { Plus, RotateCcw } from 'lucide-vue-next'
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
+import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import SwipeToDeleteRow from '@/components/git/SwipeToDeleteRow.vue'
 import { useAgents, agentCanResume } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -114,6 +93,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'select', 'create', 'delete', 'open-acp-sessions'])
 
 const bottomSheetRef = ref(null)
+const agentSelectorRef = ref(null)
 const sessions = ref([])
 const loading = ref(false)
 const loadingMore = ref(false)
@@ -122,7 +102,7 @@ const listRef = ref(null)
 const sentinelRef = ref(null)
 let observer = null
 const pageSize = computed(() => store.state.chatSessionPageSize || 10)
-const { agents, loadAgents, getAgentIcon, getAgentName, isDefaultAgent, getAgentDefaultModelName, setDefaultAgent } = useAgents()
+const { agents, loadAgents, getAgentBackend, getAgentName } = useAgents()
 const dialog = useDialog()
 const { runningSessionsVersion } = useSessionIdentity()
 
@@ -139,18 +119,7 @@ const sessionBarColor = computed(() => {
   return 'var(--accent-color, #0066cc)'
 })
 
-/** Get the display name of an agent's default model. */
-function agentDefaultModelName(agentId) {
-  return getAgentDefaultModelName(agentId)
-}
 const agentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
-
-async function handleSetDefaultAgent(agentId) {
-  await setDefaultAgent(agentId)
-}
-// Guard against accidental clicks right after opening the agent selector
-// (touch event propagation race: dialog appears under finger → click lands on option)
-let agentSelectorOpenTime = 0
 
 const sessionsWithStatus = computed(() => {
   // Access runningSessionsVersion to establish reactive dependency
@@ -177,7 +146,7 @@ async function openAgentSelector() {
     return
   }
   agentSelectorDrawer.open()
-  agentSelectorOpenTime = Date.now()
+  agentSelectorRef.value?.resetTouchGuard()
 }
 
 async function handleCreateClick() {
@@ -189,7 +158,7 @@ async function handleCreateClick() {
     return
   }
   agentSelectorDrawer.open()
-  agentSelectorOpenTime = Date.now()
+  agentSelectorRef.value?.resetTouchGuard()
 }
 
 async function loadSessions() {
@@ -253,9 +222,6 @@ function selectSession(sessionId, backend) {
 }
 
 function createSession(agentId) {
-  // Ignore clicks within 400ms of opening — prevents accidental session creation
-  // from touch events that propagate to the newly rendered dialog
-  if (Date.now() - agentSelectorOpenTime < 400) return
   agentSelectorDrawer.close()
   emit('create', agentId)
   bottomSheetRef.value?.close()
@@ -355,6 +321,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .session-item-header {
@@ -367,6 +334,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1;
+  min-width: 0;
 }
 
 .session-item-title {
@@ -377,7 +346,7 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-right: 18px;
+  padding-right: 10px;
 }
 
 .session-item.active .session-item-title {
@@ -460,6 +429,9 @@ onUnmounted(() => {
   flex-shrink: 0;
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-secondary, #495057);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .session-item-backend {
@@ -541,143 +513,6 @@ onUnmounted(() => {
 
 .create-btn:hover {
   background: rgba(0, 102, 204, 0.1);
-}
-
-/* Agent selector content */
-.agent-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 0;
-  overflow-y: auto;
-}
-
-.agent-option {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border: none;
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
-  background: none;
-  cursor: pointer;
-  transition: background 0.12s;
-  text-align: left;
-}
-
-.agent-option:last-child {
-  border-bottom: none;
-}
-
-.agent-option:hover {
-  background: var(--bg-secondary, #f8f9fa);
-}
-
-.agent-option:hover .agent-option-name {
-  color: var(--accent-color, #0066cc);
-}
-
-.agent-option:hover .agent-option-specialty {
-  color: var(--text-secondary, #666);
-}
-
-.agent-option:hover .agent-tag {
-  opacity: 1;
-}
-
-.agent-option:active {
-  background: var(--bg-hover, rgba(0,0,0,0.06));
-}
-
-.agent-option-icon {
-  font-size: 16px;
-  flex-shrink: 0;
-}
-
-.agent-option-detail {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.agent-option-name {
-  font-size: 13px;
-  color: var(--text-primary, #1a1a1a);
-  font-weight: 500;
-}
-
-.agent-set-default-btn {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  color: var(--text-secondary, #666);
-  cursor: pointer;
-  opacity: 0.4;
-  transition: opacity 0.15s, background 0.15s;
-}
-.agent-default-badge-pill {
-  flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 600;
-  color: #fff;
-  background: var(--accent-color, #0066cc);
-  padding: 1px 5px;
-  border-radius: 3px;
-  white-space: nowrap;
-}
-.agent-set-default-btn:hover {
-  opacity: 1;
-  background: var(--hover-bg, rgba(0,0,0,0.06));
-}
-
-.agent-option:hover .agent-set-default-btn {
-  opacity: 0.7;
-}
-
-.agent-option-specialty {
-  font-size: 11px;
-  color: var(--text-secondary, #666);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-option-tags {
-  display: flex;
-  gap: 4px;
-  margin-top: 2px;
-}
-
-.agent-tag {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 0;
-  font-weight: 500;
-  flex-shrink: 0;
-}
-
-.backend-tag {
-  background: rgba(0, 102, 204, 0.1);
-  color: var(--accent-color, #0066cc);
-  text-transform: lowercase;
-}
-
-.model-tag {
-  background: rgba(100, 100, 100, 0.08);
-  color: var(--text-muted, #999);
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .session-list-sentinel {

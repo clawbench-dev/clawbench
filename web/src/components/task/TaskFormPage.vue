@@ -24,15 +24,22 @@
         <!-- Agent -->
         <div class="form-group">
           <label class="form-label">{{ t('task.form.executeAgent') }} <span class="required">*</span></label>
-          <div class="select-wrapper">
-            <select class="form-select" v-model="form.agentId">
-              <option value="" disabled>{{ t('task.form.selectAgent') }}</option>
-              <option v-for="agent in agents" :key="agent.id" :value="agent.id">
-                {{ agent.icon }} {{ agent.name }}
-              </option>
-            </select>
-            <ChevronDown class="select-icon" :size="14" />
-          </div>
+          <button class="agent-display" @click="openAgentSelector">
+            <template v-if="form.agentId && selectedAgent">
+              <AgentIcon :backend="selectedAgent.backend" :name="selectedAgent.name" :size="16" />
+              <div class="agent-display-detail">
+                <span class="agent-display-name">{{ selectedAgent.name }}</span>
+                <div class="agent-display-tags">
+                  <span class="agent-display-tag backend-tag">{{ selectedAgent.backend }}</span>
+                  <span v-if="selectedModelName" class="agent-display-tag model-tag">{{ selectedModelName }}</span>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <span class="agent-display-placeholder">{{ t('task.form.selectAgent') }}</span>
+            </template>
+            <ChevronDown class="agent-display-icon" :size="14" />
+          </button>
           <div v-if="errors.agentId" class="form-error">{{ errors.agentId }}</div>
         </div>
       </div>
@@ -195,6 +202,17 @@
       </button>
     </div>
   </div>
+
+  <!-- Agent selector drawer -->
+  <AgentSelectorDrawer
+    ref="agentSelectorRef"
+    v-model:open="agentSelectorOpen"
+    :model-value="form.agentId"
+    :title="t('session.selectAgent')"
+    :default-badge="t('chat.sessionSetting.defaultBadge')"
+    :set-default-title="t('session.setAsDefaultAgent')"
+    @select="handleAgentSelect"
+  />
 </template>
 
 <script setup>
@@ -202,6 +220,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, Loader2, Save } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
+import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
 import { humanizeCron } from '@/utils/format.ts'
@@ -215,7 +235,29 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'saved'])
 
-const { agents, loadAgents } = useAgents()
+const { agents, loadAgents, getAgent, getAgentDefaultModelName } = useAgents()
+
+// Agent selector state
+const agentSelectorOpen = ref(false)
+const agentSelectorRef = ref(null)
+
+const selectedAgent = computed(() => form.value.agentId ? getAgent(form.value.agentId) : null)
+const selectedModelName = computed(() => form.value.agentId ? getAgentDefaultModelName(form.value.agentId) : '')
+
+async function openAgentSelector() {
+  await loadAgents()
+  agentSelectorOpen.value = true
+  agentSelectorRef.value?.resetTouchGuard()
+}
+
+function handleAgentSelect(agentId) {
+  form.value.agentId = agentId
+  if (errors.value.agentId) {
+    const e = { ...errors.value }
+    delete e.agentId
+    errors.value = e
+  }
+}
 
 // Task form composable (ISS-011 + ISS-012)
 const { form, errors, formError, saving, submit: _submit, init } = useTaskForm({
@@ -499,6 +541,88 @@ onMounted(() => {
   transform: translateY(-50%);
   color: var(--text-muted, #9ca3af);
   pointer-events: none;
+}
+
+/* Agent display button */
+.agent-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #1a1a1a);
+  box-sizing: border-box;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.agent-display:focus {
+  border-color: var(--accent-color, #0066cc);
+  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+  outline: none;
+}
+
+.agent-display:hover {
+  border-color: var(--accent-color, #0066cc);
+}
+
+.agent-display-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-display-name {
+  font-size: 13px;
+  color: var(--text-primary, #1a1a1a);
+  font-weight: 500;
+}
+
+.agent-display-tags {
+  display: flex;
+  gap: 4px;
+}
+
+.agent-display-tag {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 0;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.agent-display-tag.backend-tag {
+  background: rgba(0, 102, 204, 0.1);
+  color: var(--accent-color, #0066cc);
+  text-transform: lowercase;
+}
+
+.agent-display-tag.model-tag {
+  background: rgba(100, 100, 100, 0.08);
+  color: var(--text-muted, #999);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-display-placeholder {
+  flex: 1;
+  color: var(--text-muted, #9ca3af);
+  font-size: 13px;
+}
+
+.agent-display-icon {
+  flex-shrink: 0;
+  color: var(--text-muted, #9ca3af);
 }
 
 .form-textarea {

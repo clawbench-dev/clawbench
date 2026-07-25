@@ -1,0 +1,73 @@
+<template>
+    <svg v-if="processedSvg" class="agent-icon-svg" :style="style" :viewBox="svgData!.viewBox" v-html="processedSvg" />
+    <span v-else class="agent-icon-initial" :style="initialStyle">{{ initial }}</span>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { getAgentSvg } from '@/utils/agentIcons'
+
+// Per-instance unique suffix to avoid SVG gradient ID collisions when
+// multiple AgentIcon instances render on the same page. Without this,
+// url(#ai-cb-g) in one <svg> can resolve to a <defs> in a different <svg>,
+// causing wrong colors/shapes (especially visible for CodeBuddy, Copilot, Codex).
+const uid = `_${Math.random().toString(36).slice(2, 8)}`
+
+const props = withDefaults(defineProps<{
+    backend: string
+    name?: string
+    size?: number
+}>(), {
+    size: 16,
+})
+
+const svgData = computed(() => getAgentSvg(props.backend))
+
+// Replace all `ai-` prefixed IDs in both defs and references (url(#ai-..., id="ai-...)
+// with unique-per-instance versions to prevent cross-SVG gradient collisions.
+const processedSvg = computed(() => {
+    const data = svgData.value
+    if (!data) return null
+    // Replace id="ai-xxx" and url(#ai-xxx) with id="ai-xxx_UID" and url(#ai-xxx_UID)
+    return data.svg.replace(/(id="ai-|url\(#ai-)([^")]+)/g, `$1$2${uid}`)
+})
+
+const style = computed(() => ({
+    width: `${props.size}px`,
+    height: `${props.size}px`,
+}))
+
+const initial = computed(() => {
+    if (props.name) return props.name.charAt(0).toUpperCase()
+    return props.backend ? props.backend.charAt(0).toUpperCase() : '?'
+})
+
+const initialStyle = computed(() => ({
+    width: `${props.size}px`,
+    height: `${props.size}px`,
+    fontSize: `${Math.max(props.size * 0.55, 8)}px`,
+}))
+</script>
+
+<style scoped>
+.agent-icon-svg {
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+    line-height: 1;
+    margin-right: 4px;
+}
+
+.agent-icon-initial {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    line-height: 1;
+    border-radius: 20%;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-weight: 600;
+    margin-right: 4px;
+}
+</style>
