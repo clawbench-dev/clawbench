@@ -116,7 +116,7 @@ git log $PREV_TAG..origin/main --format="%H%n%s%n%b%n---END---"
 
 ---
 
-**完整变更日志**: https://github.com/xulongzhe/clawbench/compare/{上一个版本}...{新版本}
+**完整变更日志**: [查看所有变更](https://github.com/clawbench-dev/clawbench/compare/{上一个版本}...{新版本})
 ```
 
 **规则：**
@@ -206,6 +206,7 @@ gh release view $NEW_TAG
 - 使用 gh CLI 操作 GitHub，确保 gh 已认证
 - Release Notes 必须在流水线成功后更新，替换 GitHub 自动生成的简略说明
 - Release Notes 要对用户有价值：说明"做了什么"而不是"改了哪些文件"
+- **所有发布信息必须使用中文**：Release Notes 的分类标题、功能描述、修复说明等全部用中文撰写，包括分类标题（🚀 新特性、🐛 问题修复 等）
 
 ## PR 提交安全规则（2026-07-21 事故教训）
 
