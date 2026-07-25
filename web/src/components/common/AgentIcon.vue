@@ -1,5 +1,5 @@
 <template>
-    <svg v-if="processedSvg" class="agent-icon-svg" :style="style" :viewBox="svgData!.viewBox" v-html="processedSvg" />
+    <svg v-if="processedSvg" class="agent-icon-svg" :class="{ 'agent-icon-bg': svgData!.needsBg }" :style="style" :viewBox="svgData!.viewBox" role="img" :aria-label="name || backend" v-html="processedSvg" />
     <span v-else class="agent-icon-initial" :style="initialStyle">{{ initial }}</span>
 </template>
 
@@ -23,13 +23,12 @@ const props = withDefaults(defineProps<{
 
 const svgData = computed(() => getAgentSvg(props.backend))
 
-// Replace all `ai-` prefixed IDs in both defs and references (url(#ai-..., id="ai-...)
+// Replace all `ai-` prefixed IDs in defs and references (id="ai-...", url(#ai-...", href="#ai-...")
 // with unique-per-instance versions to prevent cross-SVG gradient collisions.
 const processedSvg = computed(() => {
     const data = svgData.value
     if (!data) return null
-    // Replace id="ai-xxx" and url(#ai-xxx) with id="ai-xxx_UID" and url(#ai-xxx_UID)
-    return data.svg.replace(/(id="ai-|url\(#ai-)([^")]+)/g, `$1$2${uid}`)
+    return data.svg.replace(/(id="ai-|url\(#ai-|href="#ai-)([^")]+)/g, `$1$2${uid}`)
 })
 
 const style = computed(() => ({
@@ -56,6 +55,13 @@ const initialStyle = computed(() => ({
     flex-shrink: 0;
     line-height: 1;
     margin-right: 4px;
+}
+
+/* Contrasting background for icons with dark/light fills that would be
+   invisible on same-colored backgrounds (opencode, codex, mimo, pi) */
+.agent-icon-bg {
+    border-radius: 20%;
+    background: var(--bg-tertiary);
 }
 
 .agent-icon-initial {

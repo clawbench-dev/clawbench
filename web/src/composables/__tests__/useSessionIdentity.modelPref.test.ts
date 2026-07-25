@@ -28,7 +28,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgentName: vi.fn().mockReturnValue('Test'),
     syncModelFromAgent: mockSyncModelFromAgent,
     getAgentBackend: vi.fn().mockReturnValue(''),
-    agentHeaderTitle: vi.fn().mockReturnValue('🤖 Test'),
+    agentHeaderTitle: vi.fn().mockReturnValue('Test'),
     getAgent: mockGetAgent,
     getEffectiveThinkingEffort: mockGetEffectiveThinkingEffort,
   }),
