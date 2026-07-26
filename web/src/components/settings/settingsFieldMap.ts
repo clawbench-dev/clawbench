@@ -56,6 +56,8 @@ export interface ItemSpec {
   appOnly?: boolean
   /** For action items: navigate to this category sub-route ID on click */
   navigateTo?: string
+  /** Progress bar for info-type items: { value, max }. Bar hidden when value >= max. */
+  progress?: { value: number; max: number }
 }
 
 // ── Group panel config types ─────────────────────────────
@@ -330,6 +332,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
         { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server' },
         { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
+        // ── Status indicators (populated dynamically by RAG status polling) ──
+        { labelKey: 'settings.items.ragEmbedderStatus', descriptionKey: 'settings.items.ragEmbedderStatusDesc', key: 'rag.status.embedder_healthy', type: 'info', source: 'server' },
+        { labelKey: 'settings.items.ragSearchMode', descriptionKey: 'settings.items.ragSearchModeDesc', key: 'rag.status.mode', type: 'info', source: 'server' },
+        { labelKey: 'settings.items.ragIndexProgress', descriptionKey: 'settings.items.ragIndexProgressDesc', key: 'rag.status.index_progress', type: 'info', source: 'server' },
+        { labelKey: 'settings.items.ragEmbedProgress', descriptionKey: 'settings.items.ragEmbedProgressDesc', key: 'rag.status.embed_progress', type: 'info', source: 'server' },
       ],
       requiredFields: ['rag.base_url'],
       hasConnectivityTest: (v) => !!v['rag.base_url'],

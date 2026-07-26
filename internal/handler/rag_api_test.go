@@ -325,6 +325,73 @@ func TestServeRAGSession_LocalhostCrossProject(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// ---------- ServeRAGMessageIndexStatus ----------
+
+func TestServeRAGMessageIndexStatus_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/rag/message-index-status?id=1", nil)
+	w := callHandlerWithAuth(ServeRAGMessageIndexStatus, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeRAGMessageIndexStatus_MissingID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/message-index-status", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGMessageIndexStatus, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeRAGMessageIndexStatus_NotFound(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/message-index-status?id=99999", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGMessageIndexStatus, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeRAGMessageIndexStatus_ReturnsFields(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Insert a message
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/message-index-status?id="+fmt.Sprint(msgID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGMessageIndexStatus, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	assert.Contains(t, result, "fts_indexed")
+	assert.Contains(t, result, "vec_indexed")
+	// Message not yet indexed by RAG
+	assert.Equal(t, false, result["fts_indexed"])
+	assert.Equal(t, false, result["vec_indexed"])
+}
+
+func TestServeRAGMessageIndexStatus_CrossProjectDenied(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/message-index-status?id="+fmt.Sprint(msgID), nil)
+	req = withProjectCookie(req, "/other/project/path")
+	w := callHandlerWithAuth(ServeRAGMessageIndexStatus, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 // ---------- ServeRAGStatus ----------
 
 func TestServeRAGStatus_MethodCheck(t *testing.T) {
@@ -352,6 +419,32 @@ func TestServeRAGStatus_ReturnsFields(t *testing.T) {
 	assert.Contains(t, result, "has_fts_data")
 	assert.Contains(t, result, "has_vec_data")
 	assert.Contains(t, result, "embedder_healthy")
+	assert.Contains(t, result, "total_messages")
+	assert.Contains(t, result, "indexed_messages")
+	assert.Contains(t, result, "total_chunks")
+	assert.Contains(t, result, "embedded_chunks")
+}
+
+func TestServeRAGStatus_ProgressCounts(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Insert some messages
+	_, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", "", "user", "world", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/status", nil)
+	w := callHandlerWithAuth(ServeRAGStatus, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	// 2 messages inserted, none indexed yet
+	assert.Equal(t, float64(2), result["total_messages"])
+	assert.Equal(t, float64(0), result["indexed_messages"])
 }
 
 func TestServeRAGStatus_NilStore(t *testing.T) {

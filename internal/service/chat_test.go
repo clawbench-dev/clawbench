@@ -2834,6 +2834,36 @@ func TestUnindexedCount(t *testing.T) {
 	assert.Greater(t, count, 0)
 }
 
+func TestTotalAndIndexedMessageCount(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Count Test")
+
+	// Initially 0
+	total, err := service.TotalMessageCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 0, total)
+	indexed, err := service.IndexedMessageCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 0, indexed)
+
+	// Add 3 messages
+	for i := range 3 {
+		id, err := service.AddChatMessage("/project", "claude", sid, "user", fmt.Sprintf("msg %d", i), nil, false, "")
+		assert.NoError(t, err)
+		if i < 2 {
+			assert.NoError(t, service.MarkMessageIndexed(id))
+		}
+	}
+
+	total, err = service.TotalMessageCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 3, total)
+	indexed, err = service.IndexedMessageCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 2, indexed)
+}
+
 // ---------- GetChatHistoryPaged (cursor-based) ----------
 
 func TestGetChatHistoryPaged_LimitAndBeforeID(t *testing.T) {

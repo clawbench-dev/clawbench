@@ -1121,6 +1121,20 @@ func UnindexedCount() (int, error) {
 	return count, err
 }
 
+// TotalMessageCount returns the total number of finalized (non-streaming) messages.
+func TotalMessageCount() (int, error) {
+	var count int
+	err := dbRead.QueryRow("SELECT COUNT(*) FROM chat_history WHERE streaming = 0").Scan(&count)
+	return count, err
+}
+
+// IndexedMessageCount returns the number of messages that have been indexed by RAG.
+func IndexedMessageCount() (int, error) {
+	var count int
+	err := dbRead.QueryRow("SELECT COUNT(*) FROM chat_history WHERE indexed = 1 AND streaming = 0").Scan(&count)
+	return count, err
+}
+
 // GetExpiredDeletedSessions returns session IDs of soft-deleted sessions
 // whose updated_at (set to deletion time) is older than the cutoff.
 func GetExpiredDeletedSessions(cutoff time.Time) ([]string, error) {

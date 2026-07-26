@@ -704,6 +704,32 @@ func (s *Store) ChunkCount() (int, error) {
 	return count, err
 }
 
+// EmbeddedChunkCount returns the number of chunks that have vector embeddings.
+func (s *Store) EmbeddedChunkCount() (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM rag_chunks WHERE has_embedding = 1").Scan(&count)
+	return count, err
+}
+
+// GetMessageIndexStatus returns FTS and vector embedding status for a specific message.
+// ftsIndexed is true if the message has any chunks in rag_chunks (FTS is always synced on INSERT).
+// vecIndexed is true if all chunks for the message have embeddings (has_embedding = 1).
+func (s *Store) GetMessageIndexStatus(messageID int64) (ftsIndexed bool, vecIndexed bool, err error) {
+	var total int
+	var pending int
+	err = s.db.QueryRow(
+		"SELECT COUNT(*), COALESCE(SUM(CASE WHEN has_embedding = 0 THEN 1 ELSE 0 END), 0) FROM rag_chunks WHERE message_id = ?",
+		messageID,
+	).Scan(&total, &pending)
+	if err != nil {
+		return false, false, err
+	}
+	if total == 0 {
+		return false, false, nil
+	}
+	return true, pending == 0, nil
+}
+
 // DeleteChunksBySessionIDs deletes all chunks belonging to the given session IDs.
 // FTS entries are deleted in the same transaction for consistency.
 func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {

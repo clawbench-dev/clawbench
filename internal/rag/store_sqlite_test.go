@@ -595,6 +595,114 @@ func TestSQLiteStore_ChunkCount_WithData(t *testing.T) {
 	assert.Equal(t, 7, count)
 }
 
+// ---------- EmbeddedChunkCount ----------
+
+func TestSQLiteStore_EmbeddedChunkCount_Empty(t *testing.T) {
+	store := setupSQLiteStore(t)
+	count, err := store.EmbeddedChunkCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
+
+func TestSQLiteStore_EmbeddedChunkCount_WithEmbeddings(t *testing.T) {
+	store := setupSQLiteStore(t)
+	chunks := make([]Chunk, 4)
+	now := time.Now()
+	for i := range chunks {
+		chunks[i] = Chunk{
+			SessionID:          "s1",
+			MessageID:          int64(i + 1),
+			ChunkText:          fmt.Sprintf("chunk %d", i),
+			ChunkTextSegmented: fmt.Sprintf("chunk %d", i),
+			ChunkIndex:         i,
+			TokenCount:         10,
+			ProjectPath:        "/project",
+			Backend:            "claude",
+			Role:               "user",
+			CreatedAt:          now,
+		}
+		// Only first 2 have embeddings (use 1024-dim to match vec0 default)
+		if i < 2 {
+			chunks[i].Embedding = makeTestEmbedding()
+			chunks[i].HasEmbedding = true
+		}
+	}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	total, err := store.ChunkCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 4, total)
+
+	embedded, err := store.EmbeddedChunkCount()
+	assert.NoError(t, err)
+	assert.Equal(t, 2, embedded)
+}
+
+// ---------- GetMessageIndexStatus ----------
+
+func TestSQLiteStore_GetMessageIndexStatus_NotIndexed(t *testing.T) {
+	store := setupSQLiteStore(t)
+	fts, vec, err := store.GetMessageIndexStatus(999)
+	assert.NoError(t, err)
+	assert.False(t, fts)
+	assert.False(t, vec)
+}
+
+func TestSQLiteStore_GetMessageIndexStatus_FTSOnly(t *testing.T) {
+	store := setupSQLiteStore(t)
+	// Insert chunk without embedding
+	chunks := []Chunk{
+		{
+			SessionID: "s1", MessageID: 1, ChunkText: "hello", ChunkTextSegmented: "hello",
+			ChunkIndex: 0, TokenCount: 5, ProjectPath: "/p", Backend: "claude", Role: "user", CreatedAt: time.Now(),
+		},
+	}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	fts, vec, err := store.GetMessageIndexStatus(1)
+	assert.NoError(t, err)
+	assert.True(t, fts)
+	assert.False(t, vec)
+}
+
+func TestSQLiteStore_GetMessageIndexStatus_FullyIndexed(t *testing.T) {
+	store := setupSQLiteStore(t)
+	chunks := []Chunk{
+		{
+			SessionID: "s1", MessageID: 1, ChunkText: "hello", ChunkTextSegmented: "hello",
+			ChunkIndex: 0, TokenCount: 5, ProjectPath: "/p", Backend: "claude", Role: "user", CreatedAt: time.Now(),
+			Embedding: makeTestEmbedding(), HasEmbedding: true,
+		},
+	}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	fts, vec, err := store.GetMessageIndexStatus(1)
+	assert.NoError(t, err)
+	assert.True(t, fts)
+	assert.True(t, vec)
+}
+
+func TestSQLiteStore_GetMessageIndexStatus_PartiallyEmbedded(t *testing.T) {
+	store := setupSQLiteStore(t)
+	chunks := []Chunk{
+		{
+			SessionID: "s1", MessageID: 1, ChunkText: "hello", ChunkTextSegmented: "hello",
+			ChunkIndex: 0, TokenCount: 5, ProjectPath: "/p", Backend: "claude", Role: "user", CreatedAt: time.Now(),
+			Embedding: makeTestEmbedding(), HasEmbedding: true,
+		},
+		{
+			SessionID: "s1", MessageID: 1, ChunkText: "world", ChunkTextSegmented: "world",
+			ChunkIndex: 1, TokenCount: 5, ProjectPath: "/p", Backend: "claude", Role: "user", CreatedAt: time.Now(),
+		},
+	}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	fts, vec, err := store.GetMessageIndexStatus(1)
+	assert.NoError(t, err)
+	assert.True(t, fts)
+	assert.False(t, vec) // Not all chunks have embeddings
+}
+
 // ---------- SetEmbeddingDim ----------
 
 func TestSQLiteStore_SetEmbeddingDim(t *testing.T) {

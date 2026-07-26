@@ -405,22 +405,6 @@ describe('SettingsItem', () => {
     })
   })
 
-  // ── Status dot ──
-
-  describe('status dot', () => {
-    it('renders green status dot', () => {
-      const wrapper = mountItem({ type: 'switch', statusDot: 'green' })
-      expect(wrapper.find('.settings-item__status-dot').exists()).toBe(true)
-      expect(wrapper.find('.settings-item__status-dot').classes()).toContain('settings-item__status-dot--green')
-    })
-
-    it('renders gray status dot', () => {
-      const wrapper = mountItem({ type: 'switch', statusDot: 'gray' })
-      expect(wrapper.find('.settings-item__status-dot').exists()).toBe(true)
-      expect(wrapper.find('.settings-item__status-dot').classes()).toContain('settings-item__status-dot--gray')
-    })
-  })
-
   // ── Disabled state ──
 
   describe('disabled state', () => {
@@ -453,6 +437,34 @@ describe('SettingsItem', () => {
       await wrapper.find('.settings-item').trigger('click')
       expect(wrapper.emitted('editToggle')).toBeTruthy()
       expect(wrapper.emitted('editToggle')![0]).toEqual([true])
+    })
+  })
+
+  // ── Progress bar (info type) ──
+
+  describe('progress bar', () => {
+    it('renders progress bar when value < max', () => {
+      const wrapper = mountItem({ type: 'info', modelValue: '50/100', progress: { value: 50, max: 100 } })
+      const bar = wrapper.find('.settings-item__progress')
+      expect(bar.exists()).toBe(true)
+      const inner = wrapper.find('.settings-item__progress-bar')
+      expect(inner.exists()).toBe(true)
+      expect((inner.element as HTMLElement).style.width).toBe('50%')
+    })
+
+    it('hides progress bar when value >= max', () => {
+      const wrapper = mountItem({ type: 'info', modelValue: '100/100', progress: { value: 100, max: 100 } })
+      expect(wrapper.find('.settings-item__progress').exists()).toBe(false)
+    })
+
+    it('hides progress bar when no progress prop', () => {
+      const wrapper = mountItem({ type: 'info', modelValue: 'some value' })
+      expect(wrapper.find('.settings-item__progress').exists()).toBe(false)
+    })
+
+    it('hides progress bar when max is 0', () => {
+      const wrapper = mountItem({ type: 'info', modelValue: '0/0', progress: { value: 0, max: 0 } })
+      expect(wrapper.find('.settings-item__progress').exists()).toBe(false)
     })
   })
 })

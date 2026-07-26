@@ -122,7 +122,8 @@
     :relatedFile="metadataModal.relatedFile"
     :messageId="metadataModal.messageId"
     :sessionId="metadataModal.sessionId"
-    :indexed="metadataModal.indexed"
+    :ftsIndexed="metadataModal.ftsIndexed"
+    :vecIndexed="metadataModal.vecIndexed"
     :formatDetailTime="render.formatDetailTime"
     @close="metadataDrawer.close()"
   />
@@ -151,6 +152,7 @@
 import { ref, computed, watch, onUnmounted, onMounted, inject, provide, toRef, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
+import { apiGet } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import RagDetailDrawer from './RagDetailDrawer.vue'
@@ -218,7 +220,8 @@ const metadataModal = ref({
   relatedFile: '',
   messageId: null,
   sessionId: '',
-  indexed: false
+  ftsIndexed: false,
+  vecIndexed: false
 })
 const metadataDrawer = useTabDrawer('chat')
 const toast = useToast()
@@ -830,11 +833,22 @@ function showMetadata(msg) {
     metadataModal.value.data = msg.metadata || {}
     metadataModal.value.backend = msg.backend || ''
     metadataModal.value.createdAt = msg.createdAt || ''
-    metadataModal.value.relatedFile = (msg.files && msg.files.length > 0) ? msg.files[0] : ''
+    metadataModal.value.relatedFile = (msg.files && msg.files.length > 0) ? msg.files[0].path || msg.files[0] : ''
     metadataModal.value.messageId = msg.id || null
     metadataModal.value.sessionId = msg.sessionId || ''
-    metadataModal.value.indexed = !!msg.indexed
+    metadataModal.value.ftsIndexed = false
+    metadataModal.value.vecIndexed = false
     metadataDrawer.open()
+
+    // Async: fetch FTS/Vec index status from RAG store
+    if (msg.id) {
+      apiGet(`/api/rag/message-index-status?id=${msg.id}`).then((data) => {
+        metadataModal.value.ftsIndexed = !!data.fts_indexed
+        metadataModal.value.vecIndexed = !!data.vec_indexed
+      }).catch(() => {
+        // RAG not configured or message not found — leave as false
+      })
+    }
 }
 
 // Wire up WS event handler for session_update

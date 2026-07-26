@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -117,6 +118,59 @@ func ServeRAGMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, msg)
 }
 
+// ServeRAGMessageIndexStatus handles GET /api/rag/message-index-status?id=<id> —
+// returns FTS and vector embedding status for a specific message.
+// Project isolation: remote requires project cookie; localhost may omit it for cross-project access.
+func ServeRAGMessageIndexStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	projectPath := middleware.GetProjectFromCookie(r)
+	if projectPath == "" && !middleware.IsLocalhost(r) {
+		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
+		return
+	}
+
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "MessageIdRequired")
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidMessageId")
+		return
+	}
+
+	// Verify message exists and belongs to the authenticated project
+	msg, err := service.GetMessageByID(id)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "MessageNotFound")
+		return
+	}
+	if projectPath != "" && msg.ProjectPath != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	// Query RAG store for index status
+	ftsIndexed, vecIndexed := false, false
+	if rag.GlobalStore != nil {
+		fts, vec, err := rag.GlobalStore.GetMessageIndexStatus(id)
+		if err != nil {
+			slog.Warn("rag: failed to get message index status", slog.Int64("message_id", id), slog.String("err", err.Error()))
+		} else {
+			ftsIndexed, vecIndexed = fts, vec
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"fts_indexed": ftsIndexed,
+		"vec_indexed": vecIndexed,
+	})
+}
+
 // ServeRAGSession handles GET /api/rag/session?id=<id> — get all messages in a session.
 // Project isolation: remote requires project cookie; localhost may omit it for cross-project access.
 func ServeRAGSession(w http.ResponseWriter, r *http.Request) {
@@ -162,15 +216,36 @@ func ServeRAGSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeRAGStatus handles GET /api/rag/status — returns RAG availability status.
+// ServeRAGStatus handles GET /api/rag/status — returns RAG availability status and indexing progress.
 func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
-	hasVecData := rag.GlobalStore != nil && rag.GlobalStore.HasVecData()
 	hasFTSData := rag.GlobalStore != nil && rag.GlobalStore.HasFTSData()
 	embedderHealthy := rag.EmbedderHealthy()
+
+	// Progress counters
+	totalMessages, err := service.TotalMessageCount()
+	if err != nil {
+		slog.Warn("rag: failed to count total messages", slog.String("err", err.Error()))
+	}
+	indexedMessages, err := service.IndexedMessageCount()
+	if err != nil {
+		slog.Warn("rag: failed to count indexed messages", slog.String("err", err.Error()))
+	}
+	var totalChunks, embeddedChunks int
+	if rag.GlobalStore != nil {
+		totalChunks, err = rag.GlobalStore.ChunkCount()
+		if err != nil {
+			slog.Warn("rag: failed to count total chunks", slog.String("err", err.Error()))
+		}
+		embeddedChunks, err = rag.GlobalStore.EmbeddedChunkCount()
+		if err != nil {
+			slog.Warn("rag: failed to count embedded chunks", slog.String("err", err.Error()))
+		}
+	}
+	hasVecData := embeddedChunks > 0
 
 	mode := "none"
 	if embedderHealthy && hasVecData {
@@ -180,11 +255,15 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"available":        hasFTSData || hasVecData,
-		"mode":             mode,
-		"has_fts_data":     hasFTSData,
-		"has_vec_data":     hasVecData,
-		"embedder_healthy": embedderHealthy,
+		"available":         hasFTSData || hasVecData,
+		"mode":              mode,
+		"has_fts_data":      hasFTSData,
+		"has_vec_data":      hasVecData,
+		"embedder_healthy":  embedderHealthy,
+		"total_messages":    totalMessages,
+		"indexed_messages":  indexedMessages,
+		"total_chunks":      totalChunks,
+		"embedded_chunks":   embeddedChunks,
 	})
 }
 

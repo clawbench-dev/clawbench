@@ -293,6 +293,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/tasks/", middleware.Auth(ServeTaskByID))
 	register("/api/rag/search", middleware.Auth(ServeRAGSearch))
 	register("/api/rag/message", middleware.Auth(ServeRAGMessage))
+	register("/api/rag/message-index-status", middleware.Auth(ServeRAGMessageIndexStatus))
 	register("/api/rag/session", middleware.Auth(ServeRAGSession))
 	register("/api/rag/status", middleware.Auth(ServeRAGStatus))
 	register("/api/rag/session-search", middleware.Auth(ServeRAGSessionSearch))

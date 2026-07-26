@@ -54,6 +54,7 @@
         :default-value="entry.field.defaultValue"
         :display-format="entry.field.displayFormat"
         :display-transform="entry.field.displayTransform"
+        :progress="resolveProgress(entry.field)"
         :no-divider="false"
         @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
@@ -152,6 +153,7 @@ import { useConnectivityTest } from '@/composables/useConnectivityTest'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useFrp } from '@/composables/useFrp'
+import { useRagStatus } from '@/composables/useRagStatus'
 
 // ── Props & Emits ──
 
@@ -169,6 +171,7 @@ const toast = useToast()
 const { registerGuard, unregisterGuard } = useSettingsNavigation()
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
 const { frpState } = useFrp()
+const { status: ragStatus, startPolling: startRagPolling, stopPolling: stopRagPolling } = useRagStatus()
 
 // ── Panel snapshot ──
 
@@ -195,10 +198,20 @@ onMounted(() => {
 
   // Register unsaved-changes guard with panel-specific ID (C3 fix)
   registerGuard(`panel-${props.config.panelId}`, () => !hasChanges.value && !hasFailedSave.value)
+
+  // Start RAG status polling when the rag panel is visible
+  if (props.config.panelId === 'rag') {
+    startRagPolling()
+  }
 })
 
 onUnmounted(() => {
   unregisterGuard(`panel-${props.config.panelId}`)
+
+  // Stop RAG status polling when the rag panel is destroyed
+  if (props.config.panelId === 'rag') {
+    stopRagPolling()
+  }
 })
 
 // ── Enable toggle ──
@@ -308,7 +321,39 @@ const { getServerValueWithDefault, localConfig: settingsLocalConfig } = useSetti
 function getLocalValue(field: ItemSpec): unknown {
   const k = field.key
   if (k in localValues) return localValues[k]
+  // RAG status fields: resolve from polled RAG status
+  if (k.startsWith('rag.status.')) return getRagStatusValue(k)
   return field.source === 'server' ? getServerValueWithDefault(k) : settingsLocalConfig[k]
+}
+
+// ── RAG status field resolution ──
+
+function getRagStatusValue(key: string): unknown {
+  const s = ragStatus.value
+  switch (key) {
+    case 'rag.status.embedder_healthy':
+      return s.embedder_healthy ? t('settings.items.ragEmbedderHealthy') : t('settings.items.ragEmbedderUnhealthy')
+    case 'rag.status.mode':
+      return t(`settings.items.ragMode_${s.mode}`)
+    case 'rag.status.index_progress':
+      return t('settings.items.ragProgressFormat', { done: Math.min(s.indexed_messages, s.total_messages), total: s.total_messages })
+    case 'rag.status.embed_progress':
+      return t('settings.items.ragProgressFormat', { done: Math.min(s.embedded_chunks, s.total_chunks), total: s.total_chunks })
+    default:
+      return ''
+  }
+}
+
+function resolveProgress(field: ItemSpec): { value: number; max: number } | undefined {
+  const s = ragStatus.value
+  switch (field.key) {
+    case 'rag.status.index_progress':
+      return { value: s.indexed_messages, max: Math.max(s.total_messages, 1) }
+    case 'rag.status.embed_progress':
+      return { value: s.embedded_chunks, max: Math.max(s.total_chunks, 1) }
+    default:
+      return field.progress
+  }
 }
 
 function setLocalValue(key: string, value: unknown) {

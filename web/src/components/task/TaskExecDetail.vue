@@ -62,7 +62,8 @@
       :relatedFile="metadataModal.relatedFile"
       :messageId="metadataModal.messageId"
       :sessionId="metadataModal.sessionId"
-      :indexed="metadataModal.indexed"
+      :ftsIndexed="metadataModal.ftsIndexed"
+      :vecIndexed="metadataModal.vecIndexed"
       :formatDetailTime="chatRender.formatDetailTime"
       @close="metadataModal.show = false"
     />
@@ -370,7 +371,8 @@ const metadataModal = ref({
   relatedFile: '',
   messageId: null,
   sessionId: '',
-  indexed: false,
+  ftsIndexed: false,
+  vecIndexed: false,
 })
 
 function showMetadata() {
@@ -382,7 +384,8 @@ function showMetadata() {
   metadataModal.value.relatedFile = ''
   metadataModal.value.messageId = exec.id || null
   metadataModal.value.sessionId = ''
-  metadataModal.value.indexed = false
+  metadataModal.value.ftsIndexed = false
+  metadataModal.value.vecIndexed = false
   metadataModal.value.show = true
 }
 

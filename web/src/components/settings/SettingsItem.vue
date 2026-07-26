@@ -5,7 +5,6 @@
       <div class="settings-item__text">
         <span class="settings-item__label">{{ label }}</span>
         <span v-if="needsRestart" class="settings-item__badge">{{ t('settings.needsRestart') }}</span>
-        <span v-if="statusDot" class="settings-item__status-dot" :class="'settings-item__status-dot--' + statusDot" />
       </div>
     </div>
     <div class="settings-item__right">
@@ -56,6 +55,10 @@
     <div v-if="description" class="settings-item__desc">{{ description }}</div>
     <!-- Info-type: show value as a full-width detail line below the label/desc -->
     <div v-if="type === 'info' && displayValue" class="settings-item__info-detail">{{ displayValue }}</div>
+    <!-- Progress bar for info-type items (hidden when 100%) -->
+    <div v-if="type === 'info' && progress && progress.value < progress.max && progress.max > 0" class="settings-item__progress">
+      <div class="settings-item__progress-bar" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
+    </div>
   </div>
   <!-- Inline editor (non-select types) -->
   <div v-if="editing && type !== 'select'" class="settings-item__editor" @click.stop>
@@ -173,7 +176,8 @@ interface Props {
   defaultValue?: unknown
   displayFormat?: 'percent' | 'raw'
   displayTransform?: (value: unknown) => unknown
-  statusDot?: 'green' | 'gray' | 'red' | 'yellow'
+  /** Progress bar for info-type items: { value, max }. Bar hidden when value >= max. */
+  progress?: { value: number; max: number }
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -395,36 +399,6 @@ function confirmEdit() {
   flex-shrink: 0;
 }
 
-/* Status dot indicator (inline next to label) */
-.settings-item__status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-left: 6px;
-  vertical-align: middle;
-  flex-shrink: 0;
-}
-.settings-item__status-dot--green {
-  background: #22c55e;
-}
-.settings-item__status-dot--yellow {
-  background: #eab308;
-  animation: status-dot-pulse 1.5s ease-in-out infinite;
-}
-.settings-item__status-dot--red {
-  background: #ef4444;
-}
-.settings-item__status-dot--gray {
-  background: var(--text-muted);
-  opacity: 0.5;
-}
-
-@keyframes status-dot-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
 /* Inline description (always visible below label row) */
 .settings-item__desc {
   width: 100%;
@@ -459,6 +433,23 @@ function confirmEdit() {
   word-break: break-all;
   line-height: 1.4;
   margin-top: 0;
+}
+
+/* Progress bar for info-type items */
+.settings-item__progress {
+  width: 100%;
+  height: 3px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.settings-item__progress-bar {
+  height: 100%;
+  background: var(--accent-color);
+  border-radius: 2px;
+  transition: width 0.3s ease;
 }
 
 /* Section header */

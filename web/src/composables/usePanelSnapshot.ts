@@ -40,16 +40,27 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
     return undefined
   }
 
-  /** Get all field keys in the config */
+  /** Get all field keys in the config (excluding read-only status fields) */
   function getAllFieldKeys(): string[] {
     const keys: string[] = []
     if (config.enableKey) keys.push(config.enableKey)
     if (config.entrySelector) keys.push(config.entrySelector.key)
-    for (const f of config.commonFields) keys.push(f.key)
+    for (const f of config.commonFields) {
+      if (isStatusField(f.key)) continue
+      keys.push(f.key)
+    }
     for (const osf of config.optionSubFields ?? []) {
-      for (const f of osf.fields) keys.push(f.key)
+      for (const f of osf.fields) {
+        if (isStatusField(f.key)) continue
+        keys.push(f.key)
+      }
     }
     return keys
+  }
+
+  /** Check if a field key is a read-only status field (excluded from snapshot/save) */
+  function isStatusField(key: string): boolean {
+    return key.startsWith('rag.status.')
   }
 
   // ── Snapshot on init ──
@@ -69,12 +80,14 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
 
     // Common fields
     for (const f of config.commonFields) {
+      if (isStatusField(f.key)) continue
       snap[f.key] = f.source === 'server' ? getServerValueWithDefault(f.key) : localConfig[f.key]
     }
 
     // Option sub-fields (snapshot all possible sub-fields)
     for (const osf of config.optionSubFields ?? []) {
       for (const f of osf.fields) {
+        if (isStatusField(f.key)) continue
         snap[f.key] = f.source === 'server' ? getServerValueWithDefault(f.key) : localConfig[f.key]
       }
     }

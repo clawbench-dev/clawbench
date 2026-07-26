@@ -68,8 +68,12 @@
         </div>
       </div>
       <div class="metadata-item">
-        <span class="metadata-label">{{ t('chat.metadata.ragIndexed') }}</span>
-        <span class="metadata-value" :class="indexed ? 'metadata-indexed-yes' : 'metadata-indexed-no'">{{ indexed ? t('chat.metadata.indexedYes') : t('chat.metadata.indexedNo') }}</span>
+        <span class="metadata-label">{{ t('chat.metadata.ftsIndexed') }}</span>
+        <span class="metadata-value" :class="ftsIndexed ? 'metadata-indexed-yes' : 'metadata-indexed-no'">{{ ftsIndexed ? t('chat.metadata.indexedYes') : t('chat.metadata.indexedNo') }}</span>
+      </div>
+      <div class="metadata-item">
+        <span class="metadata-label">{{ t('chat.metadata.vecIndexed') }}</span>
+        <span class="metadata-value" :class="vecIndexed ? 'metadata-indexed-yes' : 'metadata-indexed-no'">{{ vecIndexed ? t('chat.metadata.indexedYes') : t('chat.metadata.indexedNo') }}</span>
       </div>
       <div v-if="data.stopReason" class="metadata-item">
         <span class="metadata-label">{{ t('chat.metadata.stopReason') }}</span>
@@ -100,7 +104,8 @@ defineProps({
   relatedFile: String,
   messageId: Number,
   sessionId: String,
-  indexed: Boolean,
+  ftsIndexed: Boolean,
+  vecIndexed: Boolean,
   formatDetailTime: Function,
 })
 
