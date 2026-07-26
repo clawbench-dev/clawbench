@@ -207,6 +207,13 @@ func TestStreamEventToPayload_Done(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestStreamEventToPayload_ReplayDone(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "replay_done"})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Empty(t, m)
+}
+
 func TestStreamEventToPayload_Cancelled(t *testing.T) {
 	payload := StreamEventToPayload(ai.StreamEvent{Type: "cancelled"})
 	m, ok := payload.(map[string]string)

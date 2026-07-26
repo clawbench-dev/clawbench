@@ -258,7 +258,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 	// the user can send messages even before replay completes — the agent
 	// has full context from the loaded session.
 	writeJSON(w, http.StatusOK, map[string]any{
-		strSessionID:   sessionID,
+		strSessionID:    sessionID,
 		"replayPending": true,
 	})
 
@@ -269,7 +269,8 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				slog.Error("handler: acp-load replay goroutine panicked",
+				slog.Error(
+					"handler: acp-load replay goroutine panicked",
 					slog.String("session_id", sessionID),
 					"panic", r,
 					"stack", string(debug.Stack()),

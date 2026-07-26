@@ -88,7 +88,6 @@ func ServeAgents(w http.ResponseWriter, r *http.Request) {
 	writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 }
 
-//nolint:gocyclo // serveAgentsGet fan-outs across ACP/CLI transport branches
 func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 	configMutex.RLock()
 	agents := make([]*model.Agent, len(model.AgentList))

@@ -133,23 +133,25 @@ func EmitToSession(sessionID string, event ai.StreamEvent) {
 // that was previously written as SSE `data:` fields. The payload format
 // is kept identical to the SSE format for frontend compatibility.
 func StreamEventToPayload(event ai.StreamEvent) any {
+	// Simple empty-payload signal events
+	switch event.Type {
+	case "thinking_done", "done", "replay_done":
+		return map[string]any{}
+	case "resume_split":
+		return nil
+	}
+
 	switch event.Type {
 	case "content":
 		return map[string]string{"content": event.Content}
 	case "thinking":
 		return map[string]string{"text": event.Content}
-	case "thinking_done":
-		return map[string]any{}
 	case "tool_use":
 		return toolUsePayload(event)
 	case "tool_result":
 		return toolResultPayload(event)
 	case "metadata":
 		return event.Meta
-	case "done":
-		return map[string]any{}
-	case "replay_done":
-		return map[string]any{}
 	case "cancelled":
 		return map[string]string{"reason": "cancelled"}
 	case "error":
@@ -162,9 +164,6 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 		return queueDrainPayload(event)
 	case "queue_cancel":
 		return queueCancelPayload(event)
-	case "resume_split":
-		// Handled by EmitResumeSplitEvent which injects message_id after handleResumeSplit
-		return nil
 	default:
 		return acpStatePayload(event)
 	}

@@ -255,15 +255,15 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"available":         hasFTSData || hasVecData,
-		"mode":              mode,
-		"has_fts_data":      hasFTSData,
-		"has_vec_data":      hasVecData,
-		"embedder_healthy":  embedderHealthy,
-		"total_messages":    totalMessages,
-		"indexed_messages":  indexedMessages,
-		"total_chunks":      totalChunks,
-		"embedded_chunks":   embeddedChunks,
+		"available":        hasFTSData || hasVecData,
+		"mode":             mode,
+		"has_fts_data":     hasFTSData,
+		"has_vec_data":     hasVecData,
+		"embedder_healthy": embedderHealthy,
+		"total_messages":   totalMessages,
+		"indexed_messages": indexedMessages,
+		"total_chunks":     totalChunks,
+		"embedded_chunks":  embeddedChunks,
 	})
 }
 
