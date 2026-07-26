@@ -48,6 +48,7 @@ const i18n = createI18n({
         delete: { confirm: 'Delete session?' },
         atCommand: { title: 'At', chatsearchDesc: 'Search', taskDesc: 'Task' },
         slashCommand: { title: 'Slash' },
+        acpSession: { title: 'ACP Sessions' },
         sessionInfo: {
           contextUsage: 'Context',
           used: 'Used',
@@ -237,6 +238,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 
 // Mock useAgents — return enough functions to avoid TypeError
 const mockSupportsDualTransport = vi.fn().mockReturnValue(false)
+const mockAgentCanResume = vi.fn().mockReturnValue(false)
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: { value: [] },
@@ -259,7 +261,7 @@ vi.mock('@/composables/useAgents', () => ({
     updateAgentField: vi.fn(),
     setDefaultAgent: vi.fn(),
     canRefreshModels: () => false,
-    agentCanResume: () => false,
+    agentCanResume: mockAgentCanResume,
     supportsDualTransport: mockSupportsDualTransport,
     getAgentTransport: () => 'cli',
     invalidateACPStateCache: vi.fn(),
@@ -309,6 +311,7 @@ const stubs = {
   Trash2: true,
   Volume2: true,
   MessagesSquare: true,
+  RotateCcw: true,
   Paperclip: true,
   XCircle: true,
   Send: true,
@@ -1001,6 +1004,59 @@ describe('ChatInputBar', () => {
       await modeChip.trigger('mouseup')
       expect(mockToggleAutoApprove).toHaveBeenCalledWith(false)
       vi.useRealTimers()
+    })
+  })
+
+  describe('showResumeBtn', () => {
+    afterEach(() => {
+      mockSessionTransport.value = ''
+      mockAgentCanResume.mockReturnValue(false)
+    })
+
+    it('shows resume button when ACP transport and agentCanResume', async () => {
+      mockSessionTransport.value = 'acp-stdio'
+      mockAgentCanResume.mockReturnValue(true)
+      const wrapper = mountBar({ currentAgentId: 'codex' })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.showResumeBtn).toBe(true)
+    })
+
+    it('hides resume button when not ACP transport', async () => {
+      mockSessionTransport.value = 'cli'
+      mockAgentCanResume.mockReturnValue(true)
+      const wrapper = mountBar({ currentAgentId: 'codex' })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.showResumeBtn).toBe(false)
+    })
+
+    it('hides resume button when agent cannot resume', async () => {
+      mockSessionTransport.value = 'acp-stdio'
+      mockAgentCanResume.mockReturnValue(false)
+      const wrapper = mountBar({ currentAgentId: 'codebuddy' })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.showResumeBtn).toBe(false)
+    })
+
+    it('hides resume button when no currentAgentId', async () => {
+      mockSessionTransport.value = 'acp-stdio'
+      mockAgentCanResume.mockReturnValue(true)
+      const wrapper = mountBar({ currentAgentId: '' })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.showResumeBtn).toBe(false)
+    })
+
+    it('emits open-acp-sessions when resume button is clicked', async () => {
+      mockSessionTransport.value = 'acp-stdio'
+      mockAgentCanResume.mockReturnValue(true)
+      const wrapper = mountBar({ currentAgentId: 'codex' })
+      await wrapper.vm.$nextTick()
+      // The resume button is the 4th action btn (after Sessions, Plus, Index)
+      const buttons = wrapper.findAll('.chat-action-btn')
+      // Find the button that emits open-acp-sessions
+      const resumeBtn = buttons.find(b => b.attributes('title') === 'ACP Sessions')
+      expect(resumeBtn).toBeTruthy()
+      await resumeBtn!.trigger('click')
+      expect(wrapper.emitted('open-acp-sessions')).toBeTruthy()
     })
   })
 })

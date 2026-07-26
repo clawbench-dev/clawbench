@@ -22,6 +22,11 @@
           :title="t('chat.actions.userMsgIndex')">
           <MessagesSquare :size="14" />
         </button>
+        <button v-if="showResumeBtn" class="chat-action-btn"
+          @click="$emit('open-acp-sessions')"
+          :title="t('chat.acpSession.title')">
+          <RotateCcw :size="14" />
+        </button>
         <button class="chat-action-btn chat-action-btn-delete" :class="{ disabled: !currentSessionId }"
           @click="handleDelete"
           :title="currentSessionId ? t('chat.actions.deleteCurrentSession') : t('chat.actions.noSessionToDelete')">
@@ -231,7 +236,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, RotateCcw } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
@@ -254,7 +259,7 @@ import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
-const { supportsDualTransport, hasThinkingEffortLevels, hasPreferredMode } = useAgents()
+const { supportsDualTransport, hasThinkingEffortLevels, hasPreferredMode, agentCanResume } = useAgents()
 const toast = useToast()
 
 // isACP: true when the current agent supports ACP (has acpCommand).
@@ -273,6 +278,7 @@ const isACPTransport = computed(() => {
 const showModeInfo = computed(() => isACP.value && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
 const showThinkingInfo = computed(() => isACP.value && (availableThinkingEfforts.value.length > 0 || hasThinkingEffortLevels(props.currentAgentId || '')))
 const showTransportInfo = computed(() => supportsDualTransport(props.currentAgentId || '') || !isACP.value)
+const showResumeBtn = computed(() => isACPTransport.value && !!props.currentAgentId && agentCanResume(props.currentAgentId))
 
 function onModeClick() {
   if (modeMouseLongFired) {
@@ -411,6 +417,7 @@ const emit = defineEmits([
   'show-agent-selector',
   'delete-session',
   'open-user-msg-index',
+  'open-acp-sessions',
   'switch-model',
   'switch-thinking-effort',
   'switch-mode',

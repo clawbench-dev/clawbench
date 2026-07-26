@@ -35,6 +35,7 @@
               @open="switchTab('chat')"
               @open-file="handleSelectFile"
               @task-card-click="onTaskCardClick"
+              @open-acp-sessions="acpSessionDrawer.open()"
             />
           </TabPanel>
 
@@ -162,13 +163,11 @@
         :open="sessionIdentity.sessionDrawer.effectiveOpen.value"
         :currentSessionId="sessionIdentity.currentSessionId.value"
         :runningSessionIds="sessionIdentity.runningSessions.value"
-        :isACPTransport="sessionIdentity.currentTransport.value === 'acp-stdio'"
         :currentAgentId="sessionIdentity.currentAgentId.value"
         @close="sessionIdentity.sessionDrawer.close()"
         @select="handleSessionSelect"
         @create="handleSessionCreate"
         @delete="handleSessionDelete"
-        @open-acp-sessions="acpSessionDrawer.open()"
       />
 
       <!-- ACP session resume drawer -->

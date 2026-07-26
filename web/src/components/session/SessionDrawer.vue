@@ -12,9 +12,6 @@
       <button class="header-action-btn" @click.stop="searchDrawer.open()" :title="t('sessionSearch.title')">
         <Search :size="16" />
       </button>
-      <button v-if="showResumeIcon" class="header-action-btn" @click.stop="$emit('open-acp-sessions')" :title="t('chat.acpSession.resumeTitle', { agent: currentAgentName })">
-        <RotateCcw :size="16" />
-      </button>
       <button class="header-action-btn" @click.stop="handleCreateClick" :title="t('session.newSession')">
         <Plus :size="16" />
       </button>
@@ -80,13 +77,13 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
-import { Plus, RotateCcw, Search } from 'lucide-vue-next'
+import { Plus, Search } from 'lucide-vue-next'
 import { ref, watch, computed, onUnmounted, nextTick, inject } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import SwipeToDeleteRow from '@/components/git/SwipeToDeleteRow.vue'
-import { useAgents, agentCanResume } from '@/composables/useAgents'
+import { useAgents } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -100,11 +97,10 @@ const props = defineProps({
   open: Boolean,
   currentSessionId: String,
   runningSessionIds: { type: Set, default: () => new Set() },
-  isACPTransport: Boolean,
   currentAgentId: String,
 })
 
-const emit = defineEmits(['close', 'select', 'create', 'delete', 'open-acp-sessions'])
+const emit = defineEmits(['close', 'select', 'create', 'delete'])
 
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
@@ -123,9 +119,6 @@ const toast = inject('toast', null)
 
 // Session search
 const searchDrawer = useTabDrawer('chat', { autoRestore: false })
-
-const showResumeIcon = computed(() => props.isACPTransport && props.currentAgentId && agentCanResume(props.currentAgentId))
-const currentAgentName = computed(() => props.currentAgentId ? getAgentName(props.currentAgentId) : '')
 
 // Session count indicator
 const sessionCount = computed(() => store.state.sessionCount)

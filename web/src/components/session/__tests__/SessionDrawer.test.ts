@@ -29,14 +29,13 @@ vi.mock('@/stores/app', () => ({
   },
 }))
 
-const { mockLoadAgents, mockGetAgentBackend, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent, mockAgentCanResume } = vi.hoisted(() => ({
+const { mockLoadAgents, mockGetAgentBackend, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent } = vi.hoisted(() => ({
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockGetAgentBackend: vi.fn(() => ''),
   mockGetAgentName: vi.fn(() => 'Agent'),
   mockIsDefaultAgent: vi.fn(() => false),
   mockGetAgentDefaultModelName: vi.fn(() => ''),
   mockSetDefaultAgent: vi.fn().mockResolvedValue(undefined),
-  mockAgentCanResume: vi.fn(() => false),
 }))
 
 vi.mock('@/composables/useAgents', () => ({
@@ -52,7 +51,6 @@ vi.mock('@/composables/useAgents', () => ({
     getAgentDefaultModelName: mockGetAgentDefaultModelName,
     setDefaultAgent: mockSetDefaultAgent,
   }),
-  agentCanResume: mockAgentCanResume,
 }))
 
 vi.mock('@/composables/useDialog', () => ({
@@ -413,51 +411,6 @@ describe('SessionDrawer', () => {
       await flushPromises()
 
       expect(wrapper.find('.session-counter').exists()).toBe(true)
-    })
-  })
-
-  describe('showResumeIcon', () => {
-    it('shows resume icon when isACPTransport and agentCanResume are true', async () => {
-      mockAgentCanResume.mockReturnValue(true)
-
-      const wrapper = mountDrawer({ isACPTransport: true, currentAgentId: 'agent-1' })
-      await flushPromises()
-
-      expect(wrapper.vm.showResumeIcon).toBe(true)
-    })
-
-    it('hides resume icon when not ACP transport', async () => {
-      mockAgentCanResume.mockReturnValue(true)
-
-      const wrapper = mountDrawer({ isACPTransport: false, currentAgentId: 'agent-1' })
-      await flushPromises()
-
-      expect(wrapper.vm.showResumeIcon).toBe(false)
-    })
-
-    it('hides resume icon when agent cannot resume', async () => {
-      mockAgentCanResume.mockReturnValue(false)
-
-      const wrapper = mountDrawer({ isACPTransport: true, currentAgentId: 'agent-1' })
-      await flushPromises()
-
-      expect(wrapper.vm.showResumeIcon).toBe(false)
-    })
-  })
-
-  describe('open-acp-sessions emit', () => {
-    it('emits open-acp-sessions when resume button is clicked', async () => {
-      mockAgentCanResume.mockReturnValue(true)
-
-      const wrapper = mountDrawer({ isACPTransport: true, currentAgentId: 'agent-1' })
-      await flushPromises()
-
-      // Click the resume button
-      const resumeBtn = wrapper.find('.create-btn[title]')
-      if (resumeBtn.exists()) {
-        await resumeBtn.trigger('click')
-        expect(wrapper.emitted('open-acp-sessions')).toBeTruthy()
-      }
     })
   })
 

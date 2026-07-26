@@ -104,6 +104,7 @@
       @show-agent-selector="handleShowAgentSelector"
       @delete-session="() => manager.deleteCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @open-user-msg-index="handleOpenUserMsgIndex"
+      @open-acp-sessions="$emit('open-acp-sessions')"
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
@@ -193,7 +194,7 @@ const props = defineProps({
     currentFile: Object,
     currentDir: String,
 })
-const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click'])
+const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click', 'open-acp-sessions'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()
