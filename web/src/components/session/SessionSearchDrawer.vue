@@ -550,15 +550,8 @@ function handleClose() {
 }
 
 .detail-chunk {
-  margin: 0 14px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.06));
-  background: var(--bg-primary, #fff);
-  overflow: hidden;
-}
-
-.detail-chunk:first-child {
-  margin-top: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.04));
 }
 
 .detail-chunk-role {
@@ -567,25 +560,22 @@ function handleClose() {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.04));
+  padding: 2px 0;
   letter-spacing: 0.3px;
 }
 
 .detail-chunk-role.role-user {
   color: var(--accent-color, #4a90d9);
-  background: rgba(74, 144, 217, 0.04);
 }
 
 .detail-chunk-role.role-assistant {
   color: var(--color-purple, #7c3aed);
-  background: rgba(124, 58, 237, 0.04);
 }
 
 .detail-chunk-text {
   font-size: 13px;
   line-height: 1.6;
-  padding: 10px 12px;
+  padding: 4px 0 0;
   word-break: break-word;
   overflow-wrap: break-word;
 }
@@ -637,14 +627,6 @@ function handleClose() {
 
 [data-theme="dark"] .detail-chunk {
   border-color: rgba(255, 255, 255, 0.06);
-}
-
-[data-theme="dark"] .detail-chunk-role.role-user {
-  background: rgba(88, 166, 255, 0.06);
-}
-
-[data-theme="dark"] .detail-chunk-role.role-assistant {
-  background: rgba(163, 113, 247, 0.06);
 }
 
 [data-theme="dark"] .mode-selector {
