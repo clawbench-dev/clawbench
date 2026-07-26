@@ -455,6 +455,84 @@
     text-align: center;
   }
 
+  /* Confirm dialog — matches web DialogOverlay.vue */
+  .dlg-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+    padding: 0 20px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+
+  .dlg-overlay.visible {
+    opacity: 1;
+  }
+
+  .dlg-box {
+    background: var(--bg-secondary);
+    border-radius: 14px;
+    padding: 18px 16px 14px;
+    max-width: 320px;
+    width: 100%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    transform: scale(0.9);
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .dlg-overlay.visible .dlg-box {
+    transform: scale(1);
+  }
+
+  .dlg-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+
+  .dlg-msg {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: 14px;
+    white-space: pre-line;
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+
+  .dlg-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .dlg-btn {
+    padding: 6px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .dlg-btn:active { opacity: 0.7; }
+
+  .dlg-cancel {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+  }
+
+  .dlg-ok {
+    background: var(--color-red);
+    color: #fff;
+  }
+
   /* Safe area padding for notch devices */
   @supports (padding: env(safe-area-inset-bottom)) {
     .content {
@@ -561,6 +639,18 @@
     </div>
 
     <div class="version" id="version"></div>
+  </div>
+
+  <!-- Custom confirm dialog -->
+  <div class="dlg-overlay" id="dlgOverlay" style="display:none;">
+    <div class="dlg-box">
+      <div class="dlg-title" id="dlgTitle"></div>
+      <div class="dlg-msg" id="dlgMsg"></div>
+      <div class="dlg-actions">
+        <button class="dlg-btn dlg-cancel" id="dlgCancel">取消</button>
+        <button class="dlg-btn dlg-ok" id="dlgOk">确认</button>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -753,12 +843,57 @@
     }
   }
 
+  function customConfirm(message, opts) {
+    opts = opts || {};
+    var title = opts.title || '';
+    var confirmText = opts.confirmText || '确认';
+    var cancelText = opts.cancelText || '取消';
+
+    return new Promise(function(resolve) {
+      var overlay = document.getElementById('dlgOverlay');
+      var titleEl = document.getElementById('dlgTitle');
+      var msgEl = document.getElementById('dlgMsg');
+      var okBtn = document.getElementById('dlgOk');
+      var cancelBtn = document.getElementById('dlgCancel');
+
+      titleEl.textContent = title;
+      titleEl.style.display = title ? 'block' : 'none';
+      msgEl.textContent = message;
+      okBtn.textContent = confirmText;
+      cancelBtn.textContent = cancelText;
+
+      overlay.style.display = 'flex';
+      // Force reflow before adding visible class for transition
+      overlay.offsetHeight;
+      overlay.classList.add('visible');
+
+      function cleanup(result) {
+        overlay.classList.remove('visible');
+        setTimeout(function() { overlay.style.display = 'none'; }, 200);
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onBackdrop);
+        resolve(result);
+      }
+
+      function onOk() { cleanup(true); }
+      function onCancel() { cleanup(false); }
+      function onBackdrop(e) { if (e.target === overlay) cleanup(false); }
+
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onBackdrop);
+    });
+  }
+
   function deleteServer(url) {
-    if (!confirm('删除此服务器？')) return;
-    try {
-      AndroidNative.removeServer(url);
-    } catch(e) {}
-    loadServerList();
+    customConfirm('删除此服务器？', { title: '删除服务器', confirmText: '删除' }).then(function(ok) {
+      if (!ok) return;
+      try {
+        AndroidNative.removeServer(url);
+      } catch(e) {}
+      loadServerList();
+    });
   }
 
   function showAddForm() {
