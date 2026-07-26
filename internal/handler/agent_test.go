@@ -1203,14 +1203,13 @@ func TestServeAgentsGet_PrefetchACPStateForUncachedAgent(t *testing.T) {
 	conn := mgr.GetConn("_prefetch_acp-prefetch")
 	// The connection may have been cleaned up if the spawn failed (echo isn't ACP),
 	// but the key behavior is that PrefetchACPState was called.
-	// At minimum, the agent should not have acpStates in the response
-	// since no pool cache existed at request time and it's an ACP agent
-	// without registry data (no fallback for ACP agents).
+	// This agent has Transport=acp-stdio but no AcpCommand, so SupportsACP()
+	// returns false and it won't appear in acpStates.
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	acpStates, _ := resp["acpStates"].(map[string]any)
 	_, hasState := acpStates["acp-prefetch"]
-	assert.False(t, hasState, "ACP agent with no registry data should not have acpState")
+	assert.False(t, hasState, "agent without AcpCommand should not have acpState")
 
 	_ = origSpec
 	_ = conn

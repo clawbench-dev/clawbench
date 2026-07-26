@@ -112,48 +112,28 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 	states := make(map[string]*acpState, len(agents))
 	reg := ai.GetAgentCapabilityRegistry()
 	for _, a := range agents {
-		if a.SupportsACP() {
-			// ACP agents: populate from AgentCapabilityRegistry
-			agentCap := reg.Get(a.ID)
-			if agentCap == nil || !agentCap.HasData() {
-				// Agent supports ACP but pool hasn't been initialized yet.
-				// Still include a minimal state so the frontend can show
-				// loadSession/listSessions capabilities from DB.
-				loadSession := reg.GetLoadSession(a.ID)
-				listSessions := reg.GetListSessions(a.ID)
-				if loadSession || listSessions {
-					states[a.ID] = &acpState{LoadSession: loadSession, ListSessions: listSessions}
-				}
-				continue
-			}
+		if !a.SupportsACP() {
+			continue
+		}
+		// Use BackendSpec.ACPLoadSession as the authoritative source —
+		// some agents (e.g. CodeBuddy) report LoadSession in ACP Initialize
+		// but don't actually support it.
+		spec := model.FindSpecByBackend(a.Backend)
+		loadSession := spec != nil && spec.ACPLoadSession
+		s := &acpState{LoadSession: loadSession, ListSessions: reg.GetListSessions(a.ID)}
 
-			var ms *ai.ModeState
-			var es *ai.ThinkingEffortState
-			var cmds []ai.AvailableCommandInfo
-			var ml *ai.ModelListState
+		agentCap := reg.Get(a.ID)
+		if agentCap != nil && agentCap.HasData() {
+			s.Mode = reg.GetModeState(a.ID, "")
+			s.Effort = reg.GetThinkingEffortState(a.ID, "")
+			s.Commands = reg.GetCommands(a.ID)
+			s.ModelList = reg.GetModelListState(a.ID, "")
 
-			ms = reg.GetModeState(a.ID, "")
-			es = reg.GetThinkingEffortState(a.ID, "")
-			cmds = reg.GetCommands(a.ID)
-			ml = reg.GetModelListState(a.ID, "")
-
-			// When ACP provides a model list, override the agent's Models
-			// so the frontend SessionSettingModal shows ACP models instead of CLI-discovered ones.
-			if ml != nil && len(ml.Models) > 0 {
-				a.Models = ml.Models
-			}
-
-			if ms != nil || es != nil || len(cmds) > 0 || ml != nil {
-				states[a.ID] = &acpState{
-					Mode: ms, Effort: es, Commands: cmds, ModelList: ml,
-					LoadSession: reg.GetLoadSession(a.ID), ListSessions: reg.GetListSessions(a.ID),
-				}
-			}
-			// Even without mode/effort/commands/model, include LoadSession/ListSessions
-			if states[a.ID] == nil && (reg.GetLoadSession(a.ID) || reg.GetListSessions(a.ID)) {
-				states[a.ID] = &acpState{LoadSession: reg.GetLoadSession(a.ID), ListSessions: reg.GetListSessions(a.ID)}
+			if s.ModelList != nil && len(s.ModelList.Models) > 0 {
+				a.Models = s.ModelList.Models
 			}
 		}
+		states[a.ID] = s
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -706,9 +686,11 @@ func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
 		conn = mgr.GetOrCreateConnNoSession(r.Context(), agent)
 	}
 
-	// Check capabilities — they may have been populated by the EnsureAlive
-	// call above (via spawnLocked → Initialize), or from DB persistence.
-	loadSession := reg.GetLoadSession(agentID)
+	// Check capabilities — use BackendSpec as authoritative source for LoadSession
+	// (some agents like CodeBuddy report LoadSession=true in ACP Initialize but
+	// don't actually support it). ListSessions still comes from registry.
+	spec := model.FindSpecByBackend(agent.Backend)
+	loadSession := spec != nil && spec.ACPLoadSession
 	listSessions := reg.GetListSessions(agentID)
 
 	// If neither capability is supported, return 501

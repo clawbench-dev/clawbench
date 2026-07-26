@@ -234,15 +234,14 @@ func TestServeAgentsGet_IncludesLoadSessionCapability(t *testing.T) {
 
 	agentID := "acp-with-load"
 	model.Agents = map[string]*model.Agent{
-		agentID: {ID: agentID, Backend: "acp-stdio", Transport: "acp-stdio", AcpCommand: "echo"},
+		agentID: {ID: agentID, Backend: "claude", Transport: "acp-stdio", AcpCommand: "echo"},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	// Register LoadSession/ListSessions capability
+	// Register ListSessions capability (LoadSession comes from BackendSpec)
 	reg := ai.GetAgentCapabilityRegistry()
-	ls := true
 	lss := true
-	reg.Update(agentID, &ai.AgentCapability{LoadSession: &ls, ListSessions: &lss})
+	reg.Update(agentID, &ai.AgentCapability{ListSessions: &lss})
 
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -261,6 +260,7 @@ func TestServeAgentsGet_IncludesLoadSessionCapability(t *testing.T) {
 	agentState, ok := states[agentID].(map[string]any)
 	require.True(t, ok, "agent state should be present")
 
+	// LoadSession comes from BackendSpec (claude has ACPLoadSession=true)
 	assert.Equal(t, true, agentState["loadSession"])
 	assert.Equal(t, true, agentState["listSessions"])
 }
@@ -270,8 +270,9 @@ func TestServeAgentsGet_NoCapabilityOmitsFields(t *testing.T) {
 	defer teardown()
 
 	agentID := "acp-no-cap"
+	// Use codebuddy backend (has AcpCommand but ACPLoadSession=false)
 	model.Agents = map[string]*model.Agent{
-		agentID: {ID: agentID, Backend: "acp-stdio", Transport: "acp-stdio", AcpCommand: "echo"},
+		agentID: {ID: agentID, Backend: "codebuddy", Transport: "acp-stdio", AcpCommand: "codebuddy --acp"},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
@@ -293,7 +294,7 @@ func TestServeAgentsGet_NoCapabilityOmitsFields(t *testing.T) {
 		// No acpStates at all — also fine
 		return
 	}
-	// If agent has state, loadSession/listSessions should be false
+	// If agent has state, loadSession should be false (BackendSpec says so)
 	if agentState, ok := states[agentID].(map[string]any); ok {
 		assert.Equal(t, false, agentState["loadSession"])
 		assert.Equal(t, false, agentState["listSessions"])

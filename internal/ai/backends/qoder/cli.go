@@ -15,9 +15,10 @@ func init() {
 		ID: "qoder",
 		Spec: model.BackendSpec{
 			ID: "qoder", Backend: "qoder", DefaultCmd: "qodercli", Name: "Qoder", Specialty: "AI 编码助手",
-			AcpCommand: "qodercli --acp",
-			InstallCmd: "curl -fsSL https://qoder.com/install | bash",
-			SortOrder:  5,
+			AcpCommand:     "qodercli --acp",
+			ACPLoadSession: true,
+			InstallCmd:     "curl -fsSL https://qoder.com/install | bash",
+			SortOrder:      5,
 		},
 	})
 }

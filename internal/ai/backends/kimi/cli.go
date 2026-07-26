@@ -45,6 +45,7 @@ func init() {
 			ID: "kimi", Backend: "kimi", DefaultCmd: "kimi", Name: "Kimi", Specialty: "Kimi AI 编码助手",
 			ThinkingEffortLevels: []string{"off", "on"},
 			AcpCommand:           "kimi acp",
+			ACPLoadSession:       true,
 			InstallCmd:           "npm install -g kimiai-cli",
 			SortOrder:            10,
 		},

@@ -440,15 +440,17 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 
 	slog.Info("acp perf: spawnLocked.Initialize", "agent_id", c.agent.ID, "clawbench_sid", c.clawbenchSID, "protocol_version", initResp.ProtocolVersion, "elapsed", time.Since(initStart))
 
-	// Extract LoadSession and ListSessions capabilities
+	// Extract ListSessions capability from ACP Initialize.
+	// LoadSession is NOT written from the ACP response — BackendSpec.ACPLoadSession
+	// is the authoritative source, because some agents (e.g. CodeBuddy) report
+	// LoadSession=true in Initialize but don't actually support it.
 	if c.agent != nil && c.agent.ID != "" {
 		reg := GetAgentCapabilityRegistry()
-		reg.UpdateLoadSession(c.agent.ID, initResp.AgentCapabilities.LoadSession)
 		listSessions := initResp.AgentCapabilities.SessionCapabilities.List != nil
 		reg.UpdateListSessions(c.agent.ID, listSessions)
 		slog.Info("acp conn: extracted capabilities from Initialize",
 			"agent_id", c.agent.ID,
-			"loadSession", initResp.AgentCapabilities.LoadSession,
+			"loadSession", "skipped (use BackendSpec)",
 			"listSessions", listSessions)
 	}
 

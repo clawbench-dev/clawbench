@@ -17,6 +17,7 @@ func init() {
 			ID: "claude", Backend: "claude", DefaultCmd: "claude", Name: "Claude", Specialty: "代码编写与推理",
 			ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
 			AcpCommand:           "npx -y @agentclientprotocol/claude-agent-acp@latest",
+			ACPLoadSession:       true,
 			InstallCmd:           "npm install -g @anthropic-ai/claude-code",
 			SortOrder:            1,
 		},

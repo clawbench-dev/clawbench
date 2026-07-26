@@ -163,10 +163,11 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 	c.SetCurrentModelID(ext.modelCurrentID)
 
 	// Force-update agent-level registry (full overwrite, once per process instance)
-	// Preserve loadSession/listSessions from spawnLocked's Initialize response.
+	// LoadSession comes from BackendSpec (authoritative), ListSessions from registry.
 	agentID := c.AgentID()
 	reg := GetAgentCapabilityRegistry()
-	loadSession := reg.GetLoadSession(agentID)
+	spec := model.FindSpecByBackend(c.agent.Backend)
+	loadSession := spec != nil && spec.ACPLoadSession
 	listSessions := reg.GetListSessions(agentID)
 	reg.ForceUpdateIfNeeded(agentID, ext.modes, ext.efforts, ext.models, nil, ext.configState, loadSession, listSessions)
 }

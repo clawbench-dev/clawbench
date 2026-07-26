@@ -947,7 +947,7 @@ describe('useAgents', () => {
   // --- agentCanResume ---
 
   describe('agentCanResume', () => {
-    it('returns true when acpStatesCache has loadSession', async () => {
+    it('returns true when acpStatesCache has loadSession:true', async () => {
       resetAgents()
       registerMocks()
       mockApiGet.mockResolvedValue({
@@ -959,17 +959,29 @@ describe('useAgents', () => {
       expect(agentCanResume('claude')).toBe(true)
     })
 
-    it('returns true when agent has acpCommand', async () => {
+    it('returns false when acpStatesCache has loadSession:false', async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({
+        agents: testAgents,
+        defaultAgent: 'claude',
+        acpStates: { claude: { loadSession: false } },
+      })
+      await loadAgents()
+      expect(agentCanResume('claude')).toBe(false)
+    })
+
+    it('returns false when agent has no acpStates entry', () => {
+      expect(agentCanResume('simple')).toBe(false)
+    })
+
+    it('returns false when agent has acpCommand but no acpStates entry', async () => {
       resetAgents()
       registerMocks()
       const agentsWithAcp = testAgents.map(a => a.id === 'claude' ? { ...a, acpCommand: 'claude-acp' } : a)
       mockApiGet.mockResolvedValue({ agents: agentsWithAcp, defaultAgent: 'claude' })
       await loadAgents()
-      expect(agentCanResume('claude')).toBe(true)
-    })
-
-    it('returns false when no loadSession and no acpCommand', () => {
-      expect(agentCanResume('simple')).toBe(false)
+      expect(agentCanResume('claude')).toBe(false)
     })
 
     it('returns false for unknown agent', () => {

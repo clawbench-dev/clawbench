@@ -252,16 +252,10 @@ export function getAgentThinkingEffortLevelsIncludingACP(agentId: string): strin
     return agent.thinkingEffortLevels || []
 }
 
-/** Check if an agent supports @resume (LoadSession + ListSessions capabilities). */
+/** Check if an agent supports session resume (LoadSession capability). */
 export function agentCanResume(agentId: string): boolean {
     const state = acpStatesCache[agentId] as AcpState | undefined
-    // If cache has explicit loadSession, use it
-    if (state?.loadSession) return true
-    // If agent supports ACP (has acpCommand) but pool hasn't been initialized yet,
-    // assume it may support resume — the AcpSessionDrawer will handle 501 gracefully
-    // if the agent doesn't actually support it.
-    const agent = agents.value.find(a => a.id === agentId)
-    return !!agent?.acpCommand
+    return !!state?.loadSession
 }
 
 /** Check if an agent supports thinking effort selection (has levels defined). */

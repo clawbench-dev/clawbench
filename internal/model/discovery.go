@@ -52,6 +52,7 @@ type BackendSpec struct {
 	Specialty            string   // short description, e.g. "代码编写与推理"
 	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
 	AcpCommand           string   // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
+	ACPLoadSession       bool     // whether the ACP agent truly supports LoadSession (overrides ACP Initialize report)
 	InstallCmd           string   // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
 	SortOrder            int      // display/registration order for deterministic BackendRegistry ordering
 }

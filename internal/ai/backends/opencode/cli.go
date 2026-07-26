@@ -42,6 +42,7 @@ func init() {
 			ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Specialty: "终端编码工具",
 			ThinkingEffortLevels: []string{"minimal", "high", "max"},
 			AcpCommand:           "opencode acp",
+			ACPLoadSession:       true,
 			InstallCmd:           "npm install -g opencode-ai",
 			SortOrder:            3,
 		},

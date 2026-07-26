@@ -179,8 +179,11 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reg := ai.GetAgentCapabilityRegistry()
-	if !reg.GetLoadSession(req.AgentID) {
+	// Use BackendSpec as authoritative source for LoadSession capability.
+	// Some agents (e.g. CodeBuddy) report LoadSession=true in ACP Initialize
+	// but don't actually support it.
+	spec := model.FindSpecByBackend(agent.Backend)
+	if spec == nil || !spec.ACPLoadSession {
 		writeLocalizedErrorf(w, r, http.StatusNotImplemented, "NotImplemented")
 		return
 	}
