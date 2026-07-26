@@ -242,7 +242,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   autoSpeech: false,
   showHidden: false,
   wordWrap: true,
-  lineNumbers: true,
+  lineNumbers: false,
   stickyScroll: true,
   fileView: 'list',
   terminalFontSize: 12,
