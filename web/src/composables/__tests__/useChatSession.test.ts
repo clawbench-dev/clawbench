@@ -1552,6 +1552,50 @@ describe('switchSession', () => {
     // but does NOT clear existing cache (SSE-cached data is preserved)
     expect(mockUpdateUsageState).not.toHaveBeenCalled()
   })
+
+  it('keeps inputDisabled=true when replayPending is true', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's2',
+          messages: [],
+          total: 0,
+          backend: 'claude',
+          agentId: 'agent1',
+          modelId: '',
+          running: false,
+          replayPending: true,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [] }),
+      })
+
+    const inputDisabled = ref(false)
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading: ref(false),
+      inputDisabled,
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+    await session.switchSession('s2')
+
+    expect(inputDisabled.value).toBe(true)
+  })
 })
 
 // ───────────────────────────────────────────────────────────

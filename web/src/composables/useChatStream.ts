@@ -30,6 +30,7 @@ export interface UseChatStreamOptions {
   onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
   onToolResult?: (toolId: string) => void
   onToolUpdate?: (toolId: string) => void
+  onReplayDone?: () => void
 }
 
 export function useChatStream(options: UseChatStreamOptions) {
@@ -51,6 +52,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     onExtractScheduledTasks,
     onToolResult,
     onToolUpdate,
+    onReplayDone,
   } = options
 
   let streamTimeout: ReturnType<typeof setTimeout> | null = null
@@ -446,6 +448,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         clearToolUseTimeouts()
         thinkingBlockCounter = 0
         disconnectStream()
+        onReplayDone?.()
         onLoadHistory().then(() => {
           loading.value = false
           onRenderNeeded()

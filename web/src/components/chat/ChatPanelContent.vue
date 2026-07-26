@@ -380,6 +380,7 @@ const stream = useChatStream({
   onToast: (msg, opts) => toast.show(msg, opts),
   onNotification: (title, opts) => notification.show(title, opts),
   onStreamEnd,
+  onReplayDone: () => { inputDisabled.value = false },
   onFileModified: (filePath) => {
     // Chat-driven file refresh: when AI's Write/Edit tool completes,
     // refresh the file preview if the modified file is currently being viewed.
