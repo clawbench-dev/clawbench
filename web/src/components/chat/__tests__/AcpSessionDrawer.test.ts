@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref, nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
@@ -9,17 +9,41 @@ import type { AcpSessionInfo } from '@/composables/useAcpSession'
 const mockAcpLoadSession = vi.fn()
 const mockLoadAcpSessions = vi.fn()
 
+// Controllable refs for useAcpSession mock
+const mockSessions = ref<AcpSessionInfo[]>([])
+const mockLoading = ref(false)
+const mockNextCursor = ref<string | null>(null)
+
 vi.mock('@/composables/useAcpSession', () => ({
   useAcpSession: () => ({
-    acpSessions: ref([]),
-    acpSessionsLoading: ref(false),
+    acpSessions: mockSessions,
+    acpSessionsLoading: mockLoading,
     acpResuming: ref(false),
     acpSessionsNotSupported: ref(false),
-    nextCursor: ref(null),
+    nextCursor: mockNextCursor,
     loadAcpSessions: mockLoadAcpSessions,
     acpLoadSession: mockAcpLoadSession,
   }),
 }))
+
+// IntersectionObserver mock
+const mockObserve = vi.fn()
+const mockDisconnect = vi.fn()
+let observerCallback: IntersectionObserverCallback | null = null
+
+beforeEach(() => {
+  observerCallback = null
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(cb: IntersectionObserverCallback) {
+      observerCallback = cb
+      return { observe: mockObserve, disconnect: mockDisconnect }
+    }
+  })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 vi.mock('@/composables/useSessionIdentity', () => ({
   currentAgentId: ref('agent-1'),
@@ -60,6 +84,9 @@ const testSession: AcpSessionInfo = { sessionId: 'acp-s1', title: 'Test', create
 describe('AcpSessionDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockSessions.value = []
+    mockLoading.value = false
+    mockNextCursor.value = null
   })
 
   describe('handleSelect', () => {
@@ -109,6 +136,75 @@ describe('AcpSessionDrawer', () => {
 
       expect(wrapper.emitted('select')).toBeFalsy()
       expect(wrapper.emitted('close')).toBeFalsy()
+    })
+  })
+
+  describe('infinite scroll', () => {
+    it('triggers loadMore when sentinel intersects and nextCursor exists', async () => {
+      mockSessions.value = [testSession]
+      mockNextCursor.value = 'cursor-1'
+
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      // IntersectionObserver should have been set up
+      expect(mockObserve).toHaveBeenCalled()
+
+      // Simulate sentinel becoming visible
+      expect(observerCallback).toBeTruthy()
+      observerCallback!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+
+      expect(mockLoadAcpSessions).toHaveBeenCalledWith('agent-1', true)
+    })
+
+    it('does not load more when loading is in progress', async () => {
+      mockSessions.value = [testSession]
+      mockNextCursor.value = 'cursor-1'
+      mockLoading.value = true
+
+      mountDrawer()
+      await nextTick()
+
+      observerCallback!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+
+      // loadAcpSessions should NOT be called with append=true while loading
+      expect(mockLoadAcpSessions).not.toHaveBeenCalledWith('agent-1', true)
+    })
+
+    it('does not load more when no nextCursor', async () => {
+      mockSessions.value = [testSession]
+      mockNextCursor.value = null
+
+      mountDrawer()
+      await nextTick()
+
+      observerCallback!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+
+      // No append call should happen
+      expect(mockLoadAcpSessions).not.toHaveBeenCalledWith('agent-1', true)
+    })
+
+    it('does not load more when sentinel is not intersecting', async () => {
+      mockSessions.value = [testSession]
+      mockNextCursor.value = 'cursor-1'
+
+      mountDrawer()
+      await nextTick()
+
+      observerCallback!([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver)
+
+      expect(mockLoadAcpSessions).not.toHaveBeenCalledWith('agent-1', true)
+    })
+
+    it('disconnects observer on unmount', async () => {
+      mockSessions.value = [testSession]
+
+      const wrapper = mountDrawer()
+      await nextTick()
+      expect(mockObserve).toHaveBeenCalled()
+
+      wrapper.unmount()
+      expect(mockDisconnect).toHaveBeenCalled()
     })
   })
 })

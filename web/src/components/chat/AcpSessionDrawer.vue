@@ -38,13 +38,14 @@
             <RotateCwIcon v-else :size="14" />
           </button>
         </div>
-        <button
-          v-if="nextCursor && !acpSessionsLoading"
-          class="acp-session-more"
-          @click="loadMore"
-        >
-          {{ t('chat.acpSession.loadMore') }}
-        </button>
+        <div v-if="acpSessionsLoading && acpSessions.length > 0" class="acp-session-loading-more">
+          <Loader2Icon :size="14" class="spin" />
+          <span>{{ t('chat.acpSession.loading') }}</span>
+        </div>
+        <div
+          ref="sentinelRef"
+          class="acp-session-sentinel"
+        />
       </template>
     </div>
 
@@ -61,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, toRef } from 'vue'
+import { ref, watch, computed, toRef, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { History as HistoryIcon, RotateCw as RotateCwIcon, Loader2 as Loader2Icon } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -112,8 +113,38 @@ async function handleSelect(session: AcpSessionInfo) {
 }
 
 function loadMore() {
+  if (!nextCursor.value || acpSessionsLoading.value) return
   loadAcpSessions(props.agentId, true)
 }
+
+// Infinite scroll via IntersectionObserver on sentinel element
+const sentinelRef = ref<HTMLElement | null>(null)
+let observer: IntersectionObserver | null = null
+
+function setupObserver() {
+  teardownObserver()
+  if (!sentinelRef.value) return
+  observer = new IntersectionObserver(([entry]) => {
+    if (entry.isIntersecting && nextCursor.value && !acpSessionsLoading.value) {
+      loadMore()
+    }
+  }, { root: sentinelRef.value.parentElement, threshold: 0 })
+  observer.observe(sentinelRef.value)
+}
+
+function teardownObserver() {
+  if (observer) {
+    observer.disconnect()
+    observer = null
+  }
+}
+
+watch(sentinelRef, (el) => {
+  if (el) setupObserver()
+  else teardownObserver()
+})
+
+onBeforeUnmount(teardownObserver)
 
 function formatTime(iso: string): string {
   try {
@@ -232,21 +263,20 @@ function formatTime(iso: string): string {
   cursor: not-allowed;
 }
 
-.acp-session-more {
-  display: block;
+.acp-session-sentinel {
+  height: 1px;
   width: 100%;
-  padding: 10px;
-  margin-top: 4px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-muted, #999);
-  text-align: center;
+  flex-shrink: 0;
 }
 
-.acp-session-more:hover {
-  color: var(--text-secondary, #666);
+.acp-session-loading-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--text-muted, #999);
 }
 
 /* Loading overlay */
