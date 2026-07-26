@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
@@ -772,14 +773,15 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 
 	sid := resp["sessionId"].(string)
 
-	// Verify messages were saved to chat_history
-	var msgCount int
-	err = service.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?",
-		sid,
-	).Scan(&msgCount)
-	assert.NoError(t, err)
-	assert.Equal(t, 2, msgCount, "should have 2 replay messages (user + assistant)")
+	// Wait for async replay goroutine to complete (it sleeps 500ms + processing)
+	require.Eventually(t, func() bool {
+		var msgCount int
+		err := service.UnsafeDBForTest().QueryRow(
+			"SELECT COUNT(*) FROM chat_history WHERE session_id = ?",
+			sid,
+		).Scan(&msgCount)
+		return err == nil && msgCount == 2
+	}, 3*time.Second, 50*time.Millisecond, "should have 2 replay messages (user + assistant)")
 
 	// Verify title was set from first user message
 	var title string
@@ -942,6 +944,16 @@ func TestServeACPLoadSession_ReplayWithTitleTruncation(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	sid := resp["sessionId"].(string)
+
+	// Wait for async replay goroutine to complete
+	require.Eventually(t, func() bool {
+		var title string
+		err := service.UnsafeDBForTest().QueryRow(
+			"SELECT title FROM chat_sessions WHERE id = ?",
+			sid,
+		).Scan(&title)
+		return err == nil && title != ""
+	}, 3*time.Second, 50*time.Millisecond, "title should be set after replay completes")
 
 	// Verify title was truncated
 	var title string

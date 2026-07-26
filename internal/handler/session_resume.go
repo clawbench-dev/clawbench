@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/ws"
 )
 
 const (
@@ -248,126 +250,155 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Collect replayed messages from the buffer and parse through
-	// mapACPSessionUpdate to produce properly structured content blocks
-	// (same pipeline as live streaming), instead of storing raw ACP JSON.
-	// Some ACP agents (e.g., OpenCode) send replay notifications AFTER the
-	// LoadSession RPC response returns. Wait briefly for late notifications
-	// before reading the buffer.
+	// Return sessionId immediately so the frontend can switch to the session
+	// without waiting for replay processing. The ACP connection is live and
+	// the user can send messages even before replay completes — the agent
+	// has full context from the loaded session.
+	writeJSON(w, http.StatusOK, map[string]any{
+		strSessionID:   sessionID,
+		"replayPending": true,
+	})
+
+	// Spawn async goroutine to replay buffered notifications, persist to DB,
+	// and signal completion via WS. This runs after the HTTP response is sent,
+	// so long conversations don't block the frontend.
 	client := conn.GetClient()
-	type persistedMessage struct {
-		role    string
-		content string // JSON: {"blocks":[...]}
-	}
-	var messages []persistedMessage
-	if client != nil {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("handler: acp-load replay goroutine panicked",
+					slog.String("session_id", sessionID),
+					"panic", r,
+					"stack", string(debug.Stack()),
+				)
+				conn.ClearLoadSessionActive()
+				// Best-effort: emit replay_done so frontend doesn't hang forever
+				ws.EmitToSession(sessionID, ai.StreamEvent{Type: "replay_done"})
+			}
+		}()
+
+		replayStart := time.Now()
+
 		// Wait for late-arriving SessionUpdate notifications.
 		// Some ACP agents replay history via notifications that arrive
 		// after the LoadSession RPC response. A short delay ensures
 		// these are captured before we read the buffer.
 		time.Sleep(500 * time.Millisecond)
-		buf := client.GetAndClearLoadSessionBuf()
 
-		// Accumulate blocks across notifications, splitting on role boundaries.
-		var blocks []model.ContentBlock
-		var currentRole string // strUser or strAssistant
+		// Clear loadSessionActive BEFORE reading the buffer so that
+		// notifications arriving after our read are routed normally
+		// (to sessionRoutes → WS) instead of being orphaned in the buffer.
+		conn.ClearLoadSessionActive()
 
-		flushBlocks := func() {
-			if len(blocks) == 0 || currentRole == "" {
-				return
+		// Read buffered notifications
+		type persistedMessage struct {
+			role    string
+			content string // JSON: {"blocks":[...]}
+		}
+		var messages []persistedMessage
+
+		if client != nil {
+			buf := client.GetAndClearLoadSessionBuf()
+
+			// Accumulate blocks across notifications, splitting on role boundaries.
+			var blocks []model.ContentBlock
+			var currentRole string // strUser or strAssistant
+
+			flushBlocks := func() {
+				if len(blocks) == 0 || currentRole == "" {
+					return
+				}
+				blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
+				contentMap := map[string]any{strBlocks: blocks}
+				if currentRole == strAssistant {
+					contentMap["metadata"] = map[string]any{
+						"transport": transportACP,
+					}
+				}
+				contentJSON, _ := json.Marshal(contentMap)
+				messages = append(messages, persistedMessage{
+					role:    currentRole,
+					content: string(contentJSON),
+				})
+				blocks = nil
 			}
-			blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
-			contentMap := map[string]any{strBlocks: blocks}
-			if currentRole == strAssistant {
-				contentMap["metadata"] = map[string]any{
-					"transport": transportACP,
+
+			for _, n := range buf {
+				// Determine the role of this notification
+				notifRole := strAssistant
+				if n.Update.UserMessageChunk != nil {
+					notifRole = strUser
+				}
+
+				// Flush accumulated blocks when role changes
+				if notifRole != currentRole && currentRole != "" {
+					flushBlocks()
+				}
+				currentRole = notifRole
+
+				// UserMessageChunk is not handled by mapACPSessionUpdate —
+				// extract text directly from the ACP notification.
+				if n.Update.UserMessageChunk != nil {
+					if text := n.Update.UserMessageChunk.Content.Text; text != nil && text.Text != "" {
+						ai.AccumulateBlock(&blocks, ai.StreamEvent{Type: strContent, Content: text.Text})
+					}
+					continue
+				}
+
+				// Parse the SessionUpdate through the same pipeline used for
+				// live streaming (mapACPSessionUpdate → StreamEvent → AccumulateBlock)
+				ch := make(chan ai.StreamEvent, 64)
+				ai.MapACPSessionUpdateForTest(n.Update, ch)
+				close(ch)
+				for event := range ch {
+					// Skip non-content events (mode_update, config_update, etc.)
+					switch event.Type {
+					case strContent, "thinking", "thinking_done", "tool_use", "tool_result", "warning", strError:
+						ai.AccumulateBlock(&blocks, event)
+					}
 				}
 			}
-			contentJSON, _ := json.Marshal(contentMap)
-			messages = append(messages, persistedMessage{
-				role:    currentRole,
-				content: string(contentJSON),
-			})
-			blocks = nil
+			// Flush remaining blocks
+			flushBlocks()
 		}
 
-		for _, n := range buf {
-			// Determine the role of this notification
-			notifRole := strAssistant
-			if n.Update.UserMessageChunk != nil {
-				notifRole = strUser
-			}
-
-			// Flush accumulated blocks when role changes
-			if notifRole != currentRole && currentRole != "" {
-				flushBlocks()
-			}
-			currentRole = notifRole
-
-			// UserMessageChunk is not handled by mapACPSessionUpdate —
-			// extract text directly from the ACP notification.
-			if n.Update.UserMessageChunk != nil {
-				if text := n.Update.UserMessageChunk.Content.Text; text != nil && text.Text != "" {
-					ai.AccumulateBlock(&blocks, ai.StreamEvent{Type: strContent, Content: text.Text})
-				}
-				continue
-			}
-
-			// Parse the SessionUpdate through the same pipeline used for
-			// live streaming (mapACPSessionUpdate → StreamEvent → AccumulateBlock)
-			ch := make(chan ai.StreamEvent, 64)
-			ai.MapACPSessionUpdateForTest(n.Update, ch)
-			close(ch)
-			for event := range ch {
-				// Skip non-content events (mode_update, config_update, etc.)
-				switch event.Type {
-				case strContent, "thinking", "thinking_done", "tool_use", "tool_result", "warning", strError:
-					ai.AccumulateBlock(&blocks, event)
-				}
+		// Batch insert replay messages to chat_history
+		for _, msg := range messages {
+			_, err := service.WriteExec(
+				"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, indexed) VALUES (?, ?, ?, ?, ?, 0, 0)",
+				projectPath, agent.Backend, sessionID, msg.role, msg.content,
+			)
+			if err != nil {
+				slog.Error("handler: failed to save LoadSession replay message", "error", err)
 			}
 		}
-		// Flush remaining blocks
-		flushBlocks()
-	}
 
-	// Now that the buffer has been read, clear loadSessionActive so future
-	// SessionUpdate notifications are routed normally (to SSE or dropped).
-	conn.ClearLoadSessionActive()
-
-	// Batch insert replay messages to chat_history
-	for _, msg := range messages {
-		_, err := service.WriteExec( // r.Context() not easily propagated through ServeACPLoadSession
-			"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, indexed) VALUES (?, ?, ?, ?, ?, 0, 0)",
-			projectPath, agent.Backend, sessionID, msg.role, msg.content,
-		)
-		if err != nil {
-			slog.Error("handler: failed to save LoadSession replay message", "error", err)
-		}
-	}
-
-	// Set session title from first user message
-	for _, msg := range messages {
-		if msg.role == strUser {
-			title := service.ExtractPlainText(msg.content)
-			if title != "" {
-				if runes := []rune(title); len(runes) > 50 {
-					title = string(runes[:50]) + "..."
+		// Set session title from first user message
+		for _, msg := range messages {
+			if msg.role == strUser {
+				title := service.ExtractPlainText(msg.content)
+				if title != "" {
+					if runes := []rune(title); len(runes) > 50 {
+						title = string(runes[:50]) + "..."
+					}
+					if err := service.UpdateSessionTitle(sessionID, title); err != nil {
+						slog.Warn("handler: failed to set title for acp-load session", "session_id", sessionID, "error", err)
+					}
 				}
-				if err := service.UpdateSessionTitle(sessionID, title); err != nil {
-					slog.Warn("handler: failed to set title for acp-load session", "session_id", sessionID, "error", err)
-				}
+				break
 			}
-			break
 		}
-	}
 
-	slog.Info("handler: acp-load completed",
-		"session_id", sessionID,
-		"agent", req.AgentID,
-		"acp_sid", req.AcpSessionID,
-		"messages", len(messages))
+		slog.Info("handler: acp-load replay completed",
+			"session_id", sessionID,
+			"agent", req.AgentID,
+			"acp_sid", req.AcpSessionID,
+			"messages", len(messages),
+			"elapsed", time.Since(replayStart))
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		strSessionID: sessionID,
-	})
+		// Signal replay completion so the frontend can reload history from DB.
+		// If no WS subscriber is connected yet (frontend still switching),
+		// the event is dropped — the frontend will load from DB on switchSession.
+		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "replay_done"})
+	}()
 }

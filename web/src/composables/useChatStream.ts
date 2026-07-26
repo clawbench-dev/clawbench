@@ -140,37 +140,41 @@ export function useChatStream(options: UseChatStreamOptions) {
    * cleanup (tool_use timeouts, loading state).
    */
 
-  function connectStream(sessionId: string) {
+  function connectStream(sessionId: string, options?: { subscribeOnly?: boolean }) {
     disconnectStream()
     isStreaming = true
 
-    // Ensure a streaming assistant message exists — create one if needed
-    const existingStreaming = findStreamingMsg(messages.value)
-    if (!existingStreaming) {
-      const newStreaming: ChatMessage = {
-        role: 'assistant' as const,
-        id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        content: '',
-        blocks: [] as ContentBlock[],
-        streaming: true,
-        createdAt: new Date().toISOString(),
-        backend: currentBackend.value
+    // Only create a streaming assistant message for actual AI generation,
+    // not for replay waiting (subscribeOnly) where we just need WS events.
+    if (!options?.subscribeOnly) {
+      // Ensure a streaming assistant message exists — create one if needed
+      const existingStreaming = findStreamingMsg(messages.value)
+      if (!existingStreaming) {
+        const newStreaming: ChatMessage = {
+          role: 'assistant' as const,
+          id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          content: '',
+          blocks: [] as ContentBlock[],
+          streaming: true,
+          createdAt: new Date().toISOString(),
+          backend: currentBackend.value
+        }
+        // Insert after the last non-pending user message, not at the end.
+        const lastUserIdx = messages.value.findLastIndex(
+          (m) => m.role === 'user' && !m.pending
+        )
+        if (lastUserIdx !== -1) {
+          messages.value.splice(lastUserIdx + 1, 0, newStreaming)
+        } else {
+          messages.value.push(newStreaming)
+        }
+        thinkingBlockCounter = 0
+        onRenderNeeded()
+      } else if ((existingStreaming as ChatMessage).fromDB) {
+        delete (existingStreaming as ChatMessage).fromDB
       }
-      // Insert after the last non-pending user message, not at the end.
-      const lastUserIdx = messages.value.findLastIndex(
-        (m) => m.role === 'user' && !m.pending
-      )
-      if (lastUserIdx !== -1) {
-        messages.value.splice(lastUserIdx + 1, 0, newStreaming)
-      } else {
-        messages.value.push(newStreaming)
-      }
-      thinkingBlockCounter = 0
-      onRenderNeeded()
-    } else if ((existingStreaming as ChatMessage).fromDB) {
-      delete (existingStreaming as ChatMessage).fromDB
+      onScrollBottom()
     }
-    onScrollBottom()
 
     // Subscribe to session's streaming events via WS
     sendWsMessage({ type: 'subscribe', session_id: sessionId })
@@ -431,6 +435,25 @@ export function useChatStream(options: UseChatStreamOptions) {
               })
             }
           }
+        })
+        break
+      }
+
+      case 'replay_done': {
+        if (sessionChanged()) return
+        appLog.i(TAG, '[replay_done] LoadSession replay completed, reloading history from DB')
+        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
+        clearToolUseTimeouts()
+        thinkingBlockCounter = 0
+        disconnectStream()
+        onLoadHistory().then(() => {
+          loading.value = false
+          onRenderNeeded()
+          if (isOpen.value) {
+            onScrollBottom()
+          }
+        }).catch(() => {
+          loading.value = false
         })
         break
       }

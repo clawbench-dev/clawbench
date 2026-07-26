@@ -404,13 +404,14 @@ func (m *ACPConnManager) MarkIdle(clawbenchSID string) {
 
 // ACPCachedState holds the cached ACP state for a connection.
 type ACPCachedState struct {
-	Mode      *ModeState
-	Config    *ConfigOptionState
-	Effort    *ThinkingEffortState
-	Commands  []AvailableCommandInfo
-	ModelList *ModelListState
-	Plan      *PlanState
-	Usage     *UsageState
+	Mode          *ModeState
+	Config        *ConfigOptionState
+	Effort        *ThinkingEffortState
+	Commands      []AvailableCommandInfo
+	ModelList     *ModelListState
+	Plan          *PlanState
+	Usage         *UsageState
+	ReplayPending bool // true if LoadSession replay is still in progress (async goroutine)
 }
 
 // GetCachedStateByClawbenchSID returns the cached state for the connection
@@ -432,6 +433,7 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 	currentModelID := conn.currentModelID
 	planState := conn.cachedPlanState
 	usageState := conn.cachedUsageState
+	replayPending := conn.loadSessionActive.Load()
 	agentID := ""
 	if conn.agent != nil {
 		agentID = conn.agent.ID
@@ -444,13 +446,14 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 
 	reg := GetAgentCapabilityRegistry()
 	return ACPCachedState{
-		Mode:      reg.GetModeState(agentID, currentModeID),
-		Effort:    reg.GetThinkingEffortState(agentID, currentThinkingEffortID),
-		ModelList: reg.GetModelListState(agentID, currentModelID),
-		Commands:  reg.GetCommands(agentID),
-		Config:    reg.GetConfigState(agentID),
-		Plan:      planState,
-		Usage:     usageState,
+		Mode:          reg.GetModeState(agentID, currentModeID),
+		Effort:        reg.GetThinkingEffortState(agentID, currentThinkingEffortID),
+		ModelList:     reg.GetModelListState(agentID, currentModelID),
+		Commands:      reg.GetCommands(agentID),
+		Config:        reg.GetConfigState(agentID),
+		Plan:          planState,
+		Usage:         usageState,
+		ReplayPending: replayPending,
 	}
 }
 

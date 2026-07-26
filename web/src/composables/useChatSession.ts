@@ -72,7 +72,7 @@ export interface UseChatSessionOptions {
   onExtractScheduledTasks: (msgs: Array<Record<string, unknown>>) => void
   onRenderUpdate: (forceFull: boolean) => void
   onScrollBottom: (force?: boolean) => void
-  onConnectStream: (sessionId: string) => void
+  onConnectStream: (sessionId: string, options?: { subscribeOnly?: boolean }) => void
   onDisconnectStream: () => void
   onOpen: () => void
   onStreamDone?: () => void
@@ -329,6 +329,9 @@ export function useChatSession(options: UseChatSessionOptions) {
               if (recoverData.running && !forceNotRunning) {
                 loading.value = true
                 onConnectStream(currentSessionId.value)
+              } else if (recoverData.replayPending && !forceNotRunning) {
+                loading.value = true
+                onConnectStream(currentSessionId.value)
               } else {
                 loading.value = false
               }
@@ -495,6 +498,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       onExtractScheduledTasks(messages.value)
       onRenderUpdate(true)
       if (data.running && !forceNotRunning) {
+        loading.value = true
+        onScrollBottom(forceScrollBottom)
+        onConnectStream(currentSessionId.value)
+      } else if (data.replayPending && !forceNotRunning) {
+        // LoadSession replay is in progress — connect WS to receive replay_done event
         loading.value = true
         onScrollBottom(forceScrollBottom)
         onConnectStream(currentSessionId.value)
@@ -683,6 +691,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (data.running) {
         loading.value = true
         onConnectStream(sessionId)
+      } else if (data.replayPending) {
+        // LoadSession replay is in progress — connect WS to receive replay_done event
+        // Use subscribeOnly to avoid creating a phantom streaming message
+        loading.value = true
+        onConnectStream(sessionId, { subscribeOnly: true })
       } else {
         loading.value = false
       }

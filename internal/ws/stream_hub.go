@@ -148,6 +148,8 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 		return event.Meta
 	case "done":
 		return map[string]any{}
+	case "replay_done":
+		return map[string]any{}
 	case "cancelled":
 		return map[string]string{"reason": "cancelled"}
 	case "error":
