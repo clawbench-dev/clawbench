@@ -40,6 +40,7 @@ import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import android.content.pm.PackageManager;
@@ -113,6 +114,8 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progressBar;
     private View splashScreen;
     private ImageView splashSweep;
+    private TextView splashProgress;
+    private View splashCancelButton;
     private ObjectAnimator sweepAnimator;
     private SharedPreferences prefs;
 
@@ -130,7 +133,7 @@ public class MainActivity extends AppCompatActivity {
     // TIMEOUT_MS, navigate back to the login page. Prevents the user from
     // being stuck on a black screen when the server is unreachable or slow.
     private Runnable connectionTimeoutRunnable;
-    private static final int CONNECTION_TIMEOUT_MS = 30_000;
+    private static final int CONNECTION_TIMEOUT_MS = 90_000;
 
     // Pending error message to deliver to the login page once it finishes loading.
     // Replaces the old fixed 300ms delay — see showLoginPage() and onPageFinished().
@@ -245,6 +248,15 @@ public class MainActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progressBar);
         splashScreen = findViewById(R.id.splashScreen);
         splashSweep = findViewById(R.id.splashSweep);
+        splashProgress = findViewById(R.id.splashProgress);
+        splashCancelButton = findViewById(R.id.splashCancelButton);
+        if (splashCancelButton != null) {
+            splashCancelButton.setOnClickListener(v -> {
+                AppLog.i(TAG, "User cancelled connection — returning to login page");
+                webView.stopLoading();
+                showLoginPage(null);
+            });
+        }
 
         // Start sweep rotation animation on splash screen
         if (splashSweep != null) {
@@ -308,6 +320,13 @@ public class MainActivity extends AppCompatActivity {
         if (splashScreen == null) return;
         splashScreen.setAlpha(1f);
         splashScreen.setVisibility(View.VISIBLE);
+        if (splashProgress != null) {
+            splashProgress.setVisibility(View.GONE);
+            splashProgress.setText("");
+        }
+        if (splashCancelButton != null) {
+            splashCancelButton.setVisibility(View.VISIBLE);
+        }
         if (splashSweep != null && sweepAnimator == null) {
             sweepAnimator = ObjectAnimator.ofFloat(splashSweep, View.ROTATION, 0f, 360f);
             sweepAnimator.setDuration(1600);
@@ -327,6 +346,12 @@ public class MainActivity extends AppCompatActivity {
         if (sweepAnimator != null) {
             sweepAnimator.cancel();
             sweepAnimator = null;
+        }
+        if (splashProgress != null) {
+            splashProgress.setVisibility(View.GONE);
+        }
+        if (splashCancelButton != null) {
+            splashCancelButton.setVisibility(View.GONE);
         }
         splashScreen.animate()
                 .alpha(0f)
@@ -409,8 +434,15 @@ public class MainActivity extends AppCompatActivity {
             public void onProgressChanged(WebView view, int newProgress) {
                 if (newProgress < 100) {
                     progressBar.setVisibility(View.VISIBLE);
+                    if (splashProgress != null && splashScreen != null && splashScreen.getVisibility() == View.VISIBLE) {
+                        splashProgress.setVisibility(View.VISIBLE);
+                        splashProgress.setText(newProgress + "%");
+                    }
                 } else {
                     progressBar.setVisibility(View.GONE);
+                    if (splashProgress != null) {
+                        splashProgress.setVisibility(View.GONE);
+                    }
                 }
             }
 
@@ -1235,6 +1267,8 @@ public class MainActivity extends AppCompatActivity {
             sweepAnimator = null;
         }
         splashSweep = null;
+        splashProgress = null;
+        splashCancelButton = null;
         splashScreen = null;
         cleanupSharedCacheDir();
         instance = null; // Clear static reference to prevent memory leak / stale access
@@ -2150,6 +2184,44 @@ public class MainActivity extends AppCompatActivity {
                 // which forces WebView to trigger the DownloadListener instead of rendering inline
                 activity.webView.loadUrl(url);
             });
+        }
+
+        /**
+         * Download a file by its full URL (e.g. /api/apk) using DownloadManager.
+         * Unlike downloadFile(), this does not hardcode the /api/local-file/ prefix
+         * and uses DownloadManager directly for reliable progress notifications.
+         * @param url Full URL or server-relative path (e.g. "/api/apk")
+         */
+        @JavascriptInterface
+        public void downloadUrl(String url) {
+            new Thread(() -> {
+                try {
+                    String serverUrl = activity.prefs.getString(KEY_SERVER_URL, "");
+                    if (serverUrl.isEmpty()) return;
+                    String fullUrl = url.startsWith("http") ? url : serverUrl + url;
+
+                    DownloadManager.Request request = new DownloadManager.Request(Uri.parse(fullUrl));
+                    // Carry auth cookies so the download is authorized
+                    String cookies = CookieManager.getInstance().getCookie(fullUrl);
+                    if (cookies != null) {
+                        request.addRequestHeader("Cookie", cookies);
+                    }
+                    String fileName = Uri.parse(fullUrl).getLastPathSegment();
+                    if (fileName == null || fileName.isEmpty()) fileName = "download";
+                    request.setTitle(fileName);
+                    request.setDescription(activity.getString(R.string.download_description));
+                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
+                            "ClawBench/" + fileName);
+                    request.setNotificationVisibility(
+                            DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
+                    dm.enqueue(request);
+                } catch (Exception e) {
+                    AppLog.e(TAG, "downloadUrl failed", e);
+                    activity.runOnUiThread(() ->
+                            Toast.makeText(activity, R.string.download_failed, Toast.LENGTH_SHORT).show());
+                }
+            }).start();
         }
 
         /**

@@ -69,6 +69,35 @@
                 android:letterSpacing="0.06"
                 android:alpha="0.85" />
 
+            <!-- WebView loading progress percentage -->
+            <TextView
+                android:id="@+id/splashProgress"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textSize="14sp"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="#8b949e"
+                android:alpha="0.7"
+                android:visibility="gone" />
+
+            <!-- Cancel connection button — flat, minimal, low-contrast -->
+            <TextView
+                android:id="@+id/splashCancelButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="28dp"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="8dp"
+                android:text="@string/splash_cancel"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif"
+                android:textColor="#484f58"
+                android:background="@drawable/splash_cancel_button_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone" />
+
         </LinearLayout>
 
     </FrameLayout>

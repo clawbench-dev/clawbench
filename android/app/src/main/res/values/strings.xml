@@ -43,4 +43,5 @@
     <string name="push_task_completed">定时任务已完成</string>
     <string name="push_task_failed">定时任务失败</string>
     <string name="push_task_cancelled">定时任务已取消</string>
+    <string name="splash_cancel">取消连接</string>
 </resources>

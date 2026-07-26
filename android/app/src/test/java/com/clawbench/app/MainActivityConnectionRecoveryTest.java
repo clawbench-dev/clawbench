@@ -198,7 +198,7 @@ public class MainActivityConnectionRecoveryTest {
         invokeMethod(activity, "startConnectionTimeout");
 
         // Should post a delayed runnable on the WebView
-        verify(mockWebView).postDelayed(any(Runnable.class), eq(30_000L));
+        verify(mockWebView).postDelayed(any(Runnable.class), eq(90_000L));
 
         // The timeout runnable field should be set
         assertNotNull(getField(activity, "connectionTimeoutRunnable"));
@@ -394,7 +394,7 @@ public class MainActivityConnectionRecoveryTest {
         Field field = MainActivity.class.getDeclaredField("CONNECTION_TIMEOUT_MS");
         field.setAccessible(true);
         int timeout = field.getInt(null);
-        assertEquals(30_000, timeout);
+        assertEquals(90_000, timeout);
     }
 
     // =====================================================
@@ -440,11 +440,11 @@ public class MainActivityConnectionRecoveryTest {
     // =====================================================
 
     @Test
-    public void connectionTimeoutConstant_is30Seconds() throws Exception {
+    public void connectionTimeoutConstant_is90Seconds() throws Exception {
         Field field = MainActivity.class.getDeclaredField("CONNECTION_TIMEOUT_MS");
         field.setAccessible(true);
         int timeout = field.getInt(null);
-        assertEquals(30_000, timeout);
+        assertEquals(90_000, timeout);
     }
 
     // =====================================================
