@@ -67,6 +67,29 @@ export function downloadFileByPath(path: string, fileName?: string): void {
 }
 
 /**
+ * Download a file by its full URL (e.g. /api/apk).
+ * - Web: <a> tag click
+ * - APP (Android): native.downloadUrl() → DownloadManager
+ */
+export function downloadByUrl(url: string, fileName?: string): void {
+    if (!url) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const native = (window as any).AndroidNative
+    if (typeof native !== 'undefined' && native?.downloadUrl) {
+        native.downloadUrl(url, fileName || '')
+        return
+    }
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName || url.split('/').pop() || ''
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => {
+        document.body.removeChild(a)
+    }, 1000)
+}
+
+/**
  * Download a string as a file via Blob.
  * - Web: URL.createObjectURL + <a> tag click
  * - APP (Android): FileReader → base64 → AndroidNative.downloadBlob

@@ -28,6 +28,7 @@ import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { appLog } from '@/utils/appLog'
 import { normalizeVersion, isVersionedBuild, compareVersions, extractBaseVersion } from '@/utils/version'
+import { downloadByUrl } from '@/utils/download'
 
 const STORAGE_KEY = 'clawbench_version_mismatch_skip'
 
@@ -116,7 +117,7 @@ function skip() {
 }
 
 function downloadApk() {
-  window.location.href = '/api/apk'
+  downloadByUrl('/api/apk', 'clawbench-android.apk')
 }
 </script>
 

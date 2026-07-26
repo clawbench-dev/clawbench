@@ -84,6 +84,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
 import { startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { usePwaInstall } from '@/composables/usePwaInstall'
+import { downloadByUrl } from '@/utils/download'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 
 const props = defineProps<{
@@ -261,7 +262,7 @@ function handleClick(item: ItemSpec) {
     handleAddToHomeScreen()
   }
   if (item.key === 'downloadAndroidApp') {
-    window.location.href = '/api/apk'
+    downloadByUrl('/api/apk', 'clawbench-android.apk')
   }
   if (item.navigateTo) {
     emit('navigate', item.navigateTo)

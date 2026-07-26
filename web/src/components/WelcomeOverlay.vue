@@ -89,6 +89,7 @@ import IosInstallDrawer from './common/IosInstallDrawer.vue'
 import AgentInstallDialog from './AgentInstallDialog.vue'
 import AgentIcon from './common/AgentIcon.vue'
 import { appLog } from '@/utils/appLog'
+import { downloadByUrl } from '@/utils/download'
 
 interface BackendInfo {
   id: string
@@ -194,7 +195,7 @@ async function handlePwaInstall() {
 }
 
 function handleApkDownload() {
-  window.location.href = '/api/apk'
+  downloadByUrl('/api/apk', 'clawbench-android.apk')
 }
 
 function forceShow() {

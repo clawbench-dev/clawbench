@@ -321,8 +321,8 @@ public class MainActivity extends AppCompatActivity {
         splashScreen.setAlpha(1f);
         splashScreen.setVisibility(View.VISIBLE);
         if (splashProgress != null) {
-            splashProgress.setVisibility(View.GONE);
-            splashProgress.setText("");
+            splashProgress.setVisibility(View.VISIBLE);
+            splashProgress.setText(getString(R.string.splash_status_connecting));
         }
         if (splashCancelButton != null) {
             splashCancelButton.setVisibility(View.VISIBLE);
@@ -358,6 +358,23 @@ public class MainActivity extends AppCompatActivity {
                 .setDuration(200)
                 .withEndAction(() -> splashScreen.setVisibility(View.GONE))
                 .start();
+    }
+
+    /**
+     * Map WebView progress percentage to a localized status string.
+     * After ~70% Chromium stops tracking JS-driven work meaningfully,
+     * so we use stage-based text instead of raw percentages.
+     */
+    private String getSplashStatusText(int progress) {
+        if (progress < 30) {
+            return getString(R.string.splash_status_connecting);
+        } else if (progress < 60) {
+            return getString(R.string.splash_status_loading);
+        } else if (progress < 90) {
+            return getString(R.string.splash_status_rendering);
+        } else {
+            return getString(R.string.splash_status_finishing);
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -436,12 +453,13 @@ public class MainActivity extends AppCompatActivity {
                     progressBar.setVisibility(View.VISIBLE);
                     if (splashProgress != null && splashScreen != null && splashScreen.getVisibility() == View.VISIBLE) {
                         splashProgress.setVisibility(View.VISIBLE);
-                        splashProgress.setText(newProgress + "%");
+                        splashProgress.setText(getSplashStatusText(newProgress));
                     }
                 } else {
                     progressBar.setVisibility(View.GONE);
                     if (splashProgress != null) {
-                        splashProgress.setVisibility(View.GONE);
+                        splashProgress.setVisibility(View.VISIBLE);
+                        splashProgress.setText(getString(R.string.splash_status_initializing));
                     }
                 }
             }
@@ -569,8 +587,13 @@ public class MainActivity extends AppCompatActivity {
                         Environment.DIRECTORY_DOWNLOADS, "ClawBench/" + fileName);
 
                 DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-                dm.enqueue(request);
+                long downloadId = dm.enqueue(request);
                 Toast.makeText(this, R.string.download_started, Toast.LENGTH_SHORT).show();
+
+                // For APK files, automatically trigger installer when download completes
+                if (fileName.toLowerCase().endsWith(".apk")) {
+                    waitForApkInstall(dm, downloadId, fileName);
+                }
             } catch (Exception e) {
                 AppLog.e(TAG, "Download failed", e);
                 Toast.makeText(this, R.string.download_failed, Toast.LENGTH_SHORT).show();
@@ -625,6 +648,107 @@ public class MainActivity extends AppCompatActivity {
             return matcher.group(1).trim();
         }
         return null;
+    }
+
+    /**
+     * Poll DownloadManager until the APK download completes, then launch the system installer.
+     * Called from both DownloadListener (file manager downloads) and WebAppInterface.downloadUrl().
+     */
+    private void waitForApkInstall(DownloadManager dm, long downloadId, String fileName) {
+        new Thread("APK-Install-Wait") {
+            @Override
+            public void run() {
+                try {
+                    long startTime = System.currentTimeMillis();
+                    long MAX_POLL_MS = 10 * 60 * 1000; // 10 minutes
+                    boolean downloading = true;
+                    String localUri = null;
+                    while (downloading) {
+                        if (System.currentTimeMillis() - startTime > MAX_POLL_MS) {
+                            AppLog.w(TAG, "APK download polling timed out");
+                            return;
+                        }
+                        DownloadManager.Query query = new DownloadManager.Query().setFilterById(downloadId);
+                        try (android.database.Cursor cursor = dm.query(query)) {
+                            if (cursor == null || !cursor.moveToFirst()) {
+                                AppLog.w(TAG, "Download query returned no results for APK");
+                                return;
+                            }
+                            int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                            if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                                downloading = false;
+                                int uriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI);
+                                if (uriIdx >= 0) {
+                                    localUri = cursor.getString(uriIdx);
+                                }
+                            } else if (status == DownloadManager.STATUS_FAILED) {
+                                int reasonIdx = cursor.getColumnIndex(DownloadManager.COLUMN_REASON);
+                                int reason = reasonIdx >= 0 ? cursor.getInt(reasonIdx) : -1;
+                                AppLog.w(TAG, "APK download failed, reason=" + reason);
+                                return;
+                            } else {
+                                Thread.sleep(500);
+                            }
+                        }
+                    }
+
+                    AppLog.i(TAG, "APK download complete");
+
+                    // Resolve the APK file — prefer localUri from DownloadManager
+                    java.io.File apkFile = null;
+                    if (localUri != null) {
+                        apkFile = new java.io.File(Uri.parse(localUri).getPath());
+                    }
+                    if (apkFile == null || !apkFile.exists()) {
+                        apkFile = new java.io.File(
+                                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                                "ClawBench/" + fileName);
+                    }
+                    if (!apkFile.exists()) {
+                        AppLog.w(TAG, "APK file not found after download: " + apkFile.getAbsolutePath());
+                        return;
+                    }
+
+                    // On Android 8+, check install permission before attempting
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        if (!getPackageManager().canRequestPackageInstalls()) {
+                            runOnUiThread(() -> {
+                                try {
+                                    Intent settingsIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                                    settingsIntent.setData(Uri.parse("package:" + getPackageName()));
+                                    settingsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                    startActivity(settingsIntent);
+                                } catch (Exception e) {
+                                    AppLog.e(TAG, "Failed to open install permission settings", e);
+                                }
+                            });
+                            return;
+                        }
+                    }
+
+                    Intent installIntent = new Intent(Intent.ACTION_VIEW);
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                        Uri apkUri = androidx.core.content.FileProvider.getUriForFile(
+                                MainActivity.this, getPackageName() + ".fileprovider", apkFile);
+                        installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } else {
+                        installIntent.setDataAndType(Uri.fromFile(apkFile),
+                                "application/vnd.android.package-archive");
+                    }
+                    installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    runOnUiThread(() -> {
+                        try {
+                            startActivity(installIntent);
+                        } catch (Exception e) {
+                            AppLog.e(TAG, "Failed to launch APK installer", e);
+                        }
+                    });
+                } catch (Exception e) {
+                    AppLog.e(TAG, "waitForApkInstall failed", e);
+                }
+            }
+        }.start();
     }
 
     /**
@@ -1848,6 +1972,11 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
 
+        @JavascriptInterface
+        public String getLanguage() {
+            return Locale.getDefault().getLanguage();
+        }
+
         /**
          * Dismiss the native splash overlay. Called by the JS app after Vue finishes
          * mounting, so the native splash covers the entire gap from cold start to app ready.
@@ -2190,10 +2319,12 @@ public class MainActivity extends AppCompatActivity {
          * Download a file by its full URL (e.g. /api/apk) using DownloadManager.
          * Unlike downloadFile(), this does not hardcode the /api/local-file/ prefix
          * and uses DownloadManager directly for reliable progress notifications.
+         * For APK files, automatically triggers the system installer when download completes.
          * @param url Full URL or server-relative path (e.g. "/api/apk")
+         * @param fileName Optional file name override; if empty, derived from URL
          */
         @JavascriptInterface
-        public void downloadUrl(String url) {
+        public void downloadUrl(String url, String fileName) {
             new Thread(() -> {
                 try {
                     String serverUrl = activity.prefs.getString(KEY_SERVER_URL, "");
@@ -2206,16 +2337,23 @@ public class MainActivity extends AppCompatActivity {
                     if (cookies != null) {
                         request.addRequestHeader("Cookie", cookies);
                     }
-                    String fileName = Uri.parse(fullUrl).getLastPathSegment();
-                    if (fileName == null || fileName.isEmpty()) fileName = "download";
-                    request.setTitle(fileName);
+                    String resolvedName = (fileName != null && !fileName.isEmpty())
+                            ? fileName : Uri.parse(fullUrl).getLastPathSegment();
+                    if (resolvedName == null || resolvedName.isEmpty()) resolvedName = "download";
+                    final String finalFileName = resolvedName;
+                    request.setTitle(finalFileName);
                     request.setDescription(activity.getString(R.string.download_description));
                     request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
-                            "ClawBench/" + fileName);
+                            "ClawBench/" + finalFileName);
                     request.setNotificationVisibility(
                             DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
                     DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
-                    dm.enqueue(request);
+                    long downloadId = dm.enqueue(request);
+
+                    // For APK files, poll until download completes then trigger installer
+                    if (finalFileName.toLowerCase().endsWith(".apk")) {
+                        activity.waitForApkInstall(dm, downloadId, finalFileName);
+                    }
                 } catch (Exception e) {
                     AppLog.e(TAG, "downloadUrl failed", e);
                     activity.runOnUiThread(() ->

@@ -12,4 +12,8 @@
     <cache-path
         name="shared_files"
         path="shared/" />
+    <!-- External Downloads directory for APK install via FileProvider -->
+    <external-path
+        name="downloads"
+        path="Download/ClawBench/" />
 </paths>

@@ -38,7 +38,7 @@ if (typeof window !== 'undefined') {
  * - Android browser: show PWA install + APK download
  * - iOS browser: show PWA install (manual iOS steps)
  * - Desktop browser: show PWA install (if beforeinstallprompt available)
- * - APP mode (native Android): show nothing
+ * - APP mode (native Android): show APK download (for self-update)
  */
 export function usePwaInstall() {
   const { isAppMode } = useAppMode()
@@ -52,7 +52,7 @@ export function usePwaInstall() {
   // Desktop Chrome/Edge: beforeinstallprompt triggers canInstallPwa
   // iOS: no beforeinstallprompt, but isIOSUA is true → show manual steps
   const showPwaInstall = computed(() => !isAppMode.value && !installed.value && (canInstallPwa.value || isIOSUA))
-  const showApkDownload = computed(() => isAndroid.value && !installed.value)
+  const showApkDownload = computed(() => isAndroidUA && !installed.value)
 
   async function installPwa(): Promise<boolean> {
     if (!deferredPrompt.value) return false

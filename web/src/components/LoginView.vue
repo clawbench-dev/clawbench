@@ -145,6 +145,7 @@ import { useServerList } from '@/composables/useServerList'
 import { formatServerHost } from '@/utils/url'
 import { Server, X, Plus, MonitorSmartphone, Smartphone, ChevronRight } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
+import { downloadByUrl } from '@/utils/download'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
@@ -293,7 +294,7 @@ async function handlePwaInstall() {
 }
 
 function handleApkDownload() {
-  window.location.href = '/api/apk'
+  downloadByUrl('/api/apk', 'clawbench-android.apk')
 }
 
 onMounted(() => {

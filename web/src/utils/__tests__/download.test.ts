@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
+import { buildLocalFileUrl, downloadFileByPath, downloadByUrl } from '@/utils/download.ts'
 
 // Track setTimeout IDs to clean up after each test
 const pendingTimers: ReturnType<typeof setTimeout>[] = []
@@ -95,5 +95,45 @@ describe('downloadFileByPath', () => {
 
     appendChildSpy.mockRestore()
     anchor.remove()
+  })
+})
+
+describe('downloadByUrl', () => {
+  it('does nothing for empty URL', () => {
+    downloadByUrl('')
+  })
+
+  it('creates anchor element with correct href for web mode', () => {
+    const appendChildSpy = vi.spyOn(document.body, 'appendChild')
+    downloadByUrl('/api/apk', 'clawbench-android.apk')
+
+    expect(appendChildSpy).toHaveBeenCalled()
+    const anchor = appendChildSpy.mock.calls[0][0] as HTMLAnchorElement
+    expect(anchor.href).toContain('/api/apk')
+    expect(anchor.download).toBe('clawbench-android.apk')
+
+    appendChildSpy.mockRestore()
+    anchor.remove()
+  })
+
+  it('uses last URL segment as default fileName', () => {
+    const appendChildSpy = vi.spyOn(document.body, 'appendChild')
+    downloadByUrl('/api/apk')
+
+    const anchor = appendChildSpy.mock.calls[0][0] as HTMLAnchorElement
+    expect(anchor.download).toBe('apk')
+
+    appendChildSpy.mockRestore()
+    anchor.remove()
+  })
+
+  it('calls AndroidNative.downloadUrl in app mode', () => {
+    const mockDownloadUrl = vi.fn()
+    ;(window as any).AndroidNative = { downloadUrl: mockDownloadUrl }
+
+    downloadByUrl('/api/apk', 'clawbench-android.apk')
+    expect(mockDownloadUrl).toHaveBeenCalledWith('/api/apk', 'clawbench-android.apk')
+
+    delete (window as any).AndroidNative
   })
 })
