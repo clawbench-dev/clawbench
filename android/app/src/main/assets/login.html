@@ -4,6 +4,61 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>ClawBench</title>
+<script>
+  // i18n — loaded before DOM to avoid flash of wrong-language text
+  var I18N = {
+    en: {
+      slogan: 'From Terminal to Palm',
+      subtitle: 'AI Workstation for Mobile',
+      password_label: 'Password',
+      password_placeholder: 'Password',
+      connect: 'Connect',
+      protocol: 'Protocol',
+      server_address: 'Server Address',
+      add_connect: 'Add & Connect',
+      cancel: 'Cancel',
+      add_server: 'Add Server',
+      confirm: 'Confirm',
+      delete: 'Delete',
+      delete_server_title: 'Delete Server',
+      delete_server_msg: 'Delete this server?',
+      authenticating: 'Authenticating...',
+      enter_password: 'Please enter password',
+      enter_address: 'Please enter server address',
+      connection_failed: 'Connection failed: ',
+      connect_error: 'Unable to connect. Check address and network.',
+      wrong_password: 'Wrong password',
+      too_many_attempts: 'Too many attempts'
+    },
+    zh: {
+      slogan: '从终端到掌心',
+      subtitle: '为移动端打造的 AI 工作台',
+      password_label: '登录密码',
+      password_placeholder: '密码',
+      connect: '连 接',
+      protocol: '协议',
+      server_address: '服务器地址',
+      add_connect: '添 加 并 连 接',
+      cancel: '取 消',
+      add_server: '添加服务器',
+      confirm: '确认',
+      delete: '删除',
+      delete_server_title: '删除服务器',
+      delete_server_msg: '删除此服务器？',
+      authenticating: '认证中...',
+      enter_password: '请输入密码',
+      enter_address: '请输入服务器地址',
+      connection_failed: '连接失败: ',
+      connect_error: '无法连接到服务器，请检查地址和网络。',
+      wrong_password: '密码错误',
+      too_many_attempts: '尝试次数过多'
+    }
+  };
+  var LANG = 'en';
+  try { LANG = AndroidNative.getLanguage(); } catch(e) {}
+  if (!I18N[LANG]) LANG = 'en';
+  function t(key) { return I18N[LANG][key] || I18N['en'][key] || key; }
+</script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -553,8 +608,8 @@
         <div class="logo-ring"></div>
       </div>
       <h1 class="title">ClawBench</h1>
-      <p class="slogan">从终端到掌心</p>
-      <p class="subtitle">为移动端打造的 AI 工作台</p>
+      <p class="slogan" data-i18n="slogan">从终端到掌心</p>
+      <p class="subtitle" data-i18n="subtitle">为移动端打造的 AI 工作台</p>
     </div>
 
     <!-- Form -->
@@ -565,12 +620,12 @@
       <!-- Login form for existing / current server -->
       <form id="connectForm" onsubmit="return false;" style="display:none;">
         <div id="passwordGroup" class="field-group">
-          <span class="field-label">登录密码</span>
-          <input type="password" id="password" placeholder="密码">
+          <span class="field-label" data-i18n="password_label">登录密码</span>
+          <input type="password" id="password" data-i18n-placeholder="password_placeholder" placeholder="密码">
         </div>
 
         <button type="submit" class="connect-btn" id="connectBtn">
-          <span id="btnText">连 接</span>
+          <span id="btnText" data-i18n="connect">连 接</span>
         </button>
 
         <div class="error" id="errorMsg">
@@ -587,7 +642,7 @@
       <form id="addServerForm" onsubmit="return false;" style="display:none;">
         <!-- Protocol -->
         <div class="field-group">
-          <span class="field-label">协议</span>
+          <span class="field-label" data-i18n="protocol">协议</span>
           <div class="protocol-group">
             <label>
               <input type="radio" name="addProtocol" value="https" checked>
@@ -602,7 +657,7 @@
 
         <!-- Host + Port -->
         <div class="field-group">
-          <span class="field-label">服务器地址</span>
+          <span class="field-label" data-i18n="server_address">服务器地址</span>
           <div class="host-row">
             <input type="text" id="addHost" placeholder="192.168.1.100" autocorrect="off" autocapitalize="none" spellcheck="false">
             <span class="colon">:</span>
@@ -612,14 +667,14 @@
 
         <!-- Password -->
         <div class="field-group">
-          <span class="field-label">登录密码</span>
-          <input type="password" id="addPassword" placeholder="密码">
+          <span class="field-label" data-i18n="password_label">登录密码</span>
+          <input type="password" id="addPassword" data-i18n-placeholder="password_placeholder" placeholder="密码">
         </div>
 
         <button type="submit" class="connect-btn" id="addConnectBtn">
-          <span id="addBtnText">添 加 并 连 接</span>
+          <span id="addBtnText" data-i18n="add_connect">添 加 并 连 接</span>
         </button>
-        <button type="button" class="cancel-btn" id="cancelAddBtn">取 消</button>
+        <button type="button" class="cancel-btn" id="cancelAddBtn" data-i18n="cancel">取 消</button>
 
         <div class="error" id="addErrorMsg">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
@@ -634,7 +689,7 @@
       <!-- Add server button (shown in main view when server list exists) -->
       <button type="button" class="add-server-btn" id="addServerBtn" style="display:none;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span>添加服务器</span>
+        <span data-i18n="add_server">添加服务器</span>
       </button>
     </div>
 
@@ -647,8 +702,8 @@
       <div class="dlg-title" id="dlgTitle"></div>
       <div class="dlg-msg" id="dlgMsg"></div>
       <div class="dlg-actions">
-        <button class="dlg-btn dlg-cancel" id="dlgCancel">取消</button>
-        <button class="dlg-btn dlg-ok" id="dlgOk">确认</button>
+        <button class="dlg-btn dlg-cancel" id="dlgCancel" data-i18n="cancel">取消</button>
+        <button class="dlg-btn dlg-ok" id="dlgOk" data-i18n="confirm">确认</button>
       </div>
     </div>
   </div>
@@ -661,7 +716,19 @@
   var SVG_SERVER = '<svg class="server-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>';
   var SVG_X = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
+  function applyI18n() {
+    document.querySelectorAll('[data-i18n]').forEach(function(el) {
+      el.textContent = t(el.getAttribute('data-i18n'));
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) {
+      el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+    });
+  }
+
   window.addEventListener('DOMContentLoaded', function() {
+    // Apply i18n to all elements with data-i18n / data-i18n-placeholder
+    applyI18n();
+
     // Load server list (single source of truth)
     loadServerList();
 
@@ -682,7 +749,7 @@
       var password = passwordVisible ? passwordEl.value : (connectForm.getAttribute('data-saved-password') || '');
 
       if (!password) {
-        showError('errorMsg', '请输入密码');
+        showError('errorMsg', t('enter_password'));
         passwordEl.focus();
         return;
       }
@@ -697,7 +764,7 @@
         AndroidNative.saveServer(url, password);
         AndroidNative.connectToServer(url, password);
       } catch(e) {
-        showError('errorMsg', '连接失败: ' + e.message);
+        showError('errorMsg', t('connection_failed') + e.message);
         setConnecting(false);
       }
     });
@@ -714,7 +781,7 @@
       var protocol = document.querySelector('input[name="addProtocol"]:checked').value;
 
       if (!host) {
-        showError('addErrorMsg', '请输入服务器地址');
+        showError('addErrorMsg', t('enter_address'));
         document.getElementById('addHost').focus();
         return;
       }
@@ -731,7 +798,7 @@
         AndroidNative.saveServer(url, password);
         AndroidNative.connectToServer(url, password);
       } catch(e) {
-        showError('addErrorMsg', '连接失败: ' + e.message);
+        showError('addErrorMsg', t('connection_failed') + e.message);
         setConnecting(false, true);
       }
     });
@@ -781,7 +848,7 @@
       html += '    ' + SVG_SERVER;
       html += '    <span class="server-item-url">' + escHtml(formatHost(srv.url)) + '</span>';
       html += '  </div>';
-      html += '  <button class="server-delete-btn" onclick="event.stopPropagation(); deleteServer(\'' + escJs(srv.url) + '\')" title="删除">';
+      html += '  <button class="server-delete-btn" onclick="event.stopPropagation(); deleteServer(\'' + escJs(srv.url) + '\')" title="' + t('delete') + '">';
       html += '    ' + SVG_X;
       html += '  </button>';
       html += '</div>';
@@ -846,8 +913,8 @@
   function customConfirm(message, opts) {
     opts = opts || {};
     var title = opts.title || '';
-    var confirmText = opts.confirmText || '确认';
-    var cancelText = opts.cancelText || '取消';
+    var confirmText = opts.confirmText || t('confirm');
+    var cancelText = opts.cancelText || t('cancel');
 
     return new Promise(function(resolve) {
       var overlay = document.getElementById('dlgOverlay');
@@ -887,7 +954,7 @@
   }
 
   function deleteServer(url) {
-    customConfirm('删除此服务器？', { title: '删除服务器', confirmText: '删除' }).then(function(ok) {
+    customConfirm(t('delete_server_msg'), { title: t('delete_server_title'), confirmText: t('delete') }).then(function(ok) {
       if (!ok) return;
       try {
         AndroidNative.removeServer(url);
@@ -943,13 +1010,13 @@
     var btn = document.getElementById(btnId);
     if (loading) {
       btn.disabled = true;
-      btn.innerHTML = '<div class="spinner"></div><span>认证中...</span>';
+      btn.innerHTML = '<div class="spinner"></div><span>' + t('authenticating') + '</span>';
     } else {
       btn.disabled = false;
       if (isAddForm) {
-        btn.innerHTML = '<span id="addBtnText">添 加 并 连 接</span>';
+        btn.innerHTML = '<span id="addBtnText">' + t('add_connect') + '</span>';
       } else {
-        btn.innerHTML = '<span id="btnText">连 接</span>';
+        btn.innerHTML = '<span id="btnText">' + t('connect') + '</span>';
       }
     }
   }
@@ -960,15 +1027,16 @@
     setConnecting(false, true);
     var addForm = document.getElementById('addServerForm');
     if (addForm.style.display !== 'none') {
-      showError('addErrorMsg', msg || '无法连接到服务器，请检查地址和网络。');
+      showError('addErrorMsg', msg || t('connect_error'));
     } else {
-      showError('errorMsg', msg || '无法连接到服务器，请检查地址和网络。');
+      showError('errorMsg', msg || t('connect_error'));
       // Only show password field on auth errors (wrong password, too many attempts).
       // Network/server errors should NOT reveal the password input — the user can't
       // fix a connection issue by entering a different password.
       var passwordGroup = document.getElementById('passwordGroup');
       var passwordEl = document.getElementById('password');
-      if (msg && (msg.indexOf('密码错误') !== -1 || msg.indexOf('尝试次数过多') !== -1)) {
+      if (msg && (msg.indexOf('密码错误') !== -1 || msg.indexOf('尝试次数过多') !== -1 ||
+                  msg.indexOf(t('wrong_password')) !== -1 || msg.indexOf(t('too_many_attempts')) !== -1)) {
         passwordGroup.style.display = 'block';
         passwordEl.value = '';
         passwordEl.focus();

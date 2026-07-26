@@ -43,10 +43,10 @@
     <string name="push_task_completed">定时任务已完成</string>
     <string name="push_task_failed">定时任务失败</string>
     <string name="push_task_cancelled">定时任务已取消</string>
-    <string name="splash_cancel">Cancel</string>
-    <string name="splash_status_connecting">Connecting…</string>
-    <string name="splash_status_loading">Loading page…</string>
-    <string name="splash_status_rendering">Rendering…</string>
-    <string name="splash_status_finishing">Almost ready…</string>
-    <string name="splash_status_initializing">Initializing app…</string>
+    <string name="splash_cancel">取消连接</string>
+    <string name="splash_status_connecting">正在连接…</string>
+    <string name="splash_status_loading">正在加载页面…</string>
+    <string name="splash_status_rendering">正在渲染…</string>
+    <string name="splash_status_finishing">即将完成…</string>
+    <string name="splash_status_initializing">正在初始化应用…</string>
 </resources>
