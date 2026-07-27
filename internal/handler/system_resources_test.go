@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"clawbench/internal/system"
 )
 
 func TestServeSystemResources(t *testing.T) {
@@ -89,5 +91,22 @@ func TestServeSystemResources_DeleteMethod(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestServeSystemResources_InternalError(t *testing.T) {
+	system.ResetSampler()
+	system.SetForceError("injected error")
+	defer system.SetForceError("")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/resources", http.NoBody)
+	w := httptest.NewRecorder()
+
+	ServeSystemResources(w, req)
+
+	// GetResources() never actually returns an error (it returns partial data with errors)
+	// So the handler should still return 200 with error details in the response
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (GetResources returns partial data, not error)", w.Code, http.StatusOK)
 	}
 }

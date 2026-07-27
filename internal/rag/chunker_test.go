@@ -70,3 +70,75 @@ func TestExtractTextFromContent_AssistantMessage_ThinkingSkipped(t *testing.T) {
 	got := ExtractTextFromContent(string(content), "assistant")
 	assert.Equal(t, "Visible answer", got)
 }
+
+func TestChunkText_EmptyInput(t *testing.T) {
+	assert.Nil(t, ChunkText("", 100, 20))
+	assert.Nil(t, ChunkText("hello", 0, 20))
+}
+
+func TestChunkText_ShortText(t *testing.T) {
+	chunks := ChunkText("hello world", 100, 20)
+	assert.Len(t, chunks, 1)
+	assert.Equal(t, "hello world", chunks[0].Text)
+	assert.Equal(t, 0, chunks[0].Index)
+}
+
+func TestChunkText_LongText_MultipleChunks(t *testing.T) {
+	// Create text that will need multiple chunks
+	text := "First paragraph with enough content to fill a chunk. " +
+		"Second paragraph with more content to fill another chunk. " +
+		"Third paragraph to ensure we get multiple chunks from the text."
+	chunks := ChunkText(text, 10, 2)
+	assert.GreaterOrEqual(t, len(chunks), 2)
+	// Verify indices are sequential
+	for i, c := range chunks {
+		assert.Equal(t, i, c.Index, "chunk index mismatch")
+	}
+}
+
+func TestChunkText_ParagraphBreak(t *testing.T) {
+	text := "First paragraph here.\n\nSecond paragraph here."
+	chunks := ChunkText(text, 5, 1)
+	assert.GreaterOrEqual(t, len(chunks), 1)
+}
+
+func TestChunkText_SentenceBreak(t *testing.T) {
+	text := "This is sentence one. This is sentence two. This is sentence three."
+	chunks := ChunkText(text, 5, 1)
+	assert.GreaterOrEqual(t, len(chunks), 1)
+}
+
+func TestChunkText_CJK(t *testing.T) {
+	text := "这是一段中文文本，用来测试CJK字符的分块功能。这是第二部分，继续测试。"
+	chunks := ChunkText(text, 10, 2)
+	assert.GreaterOrEqual(t, len(chunks), 1)
+}
+
+func TestEstimateTokens(t *testing.T) {
+	// Pure English
+	enTokens := estimateTokens("hello world")
+	assert.Greater(t, enTokens, 0)
+
+	// Pure CJK
+	cjkTokens := estimateTokens("你好世界")
+	assert.Greater(t, cjkTokens, 0)
+
+	// Mixed
+	mixedTokens := estimateTokens("hello 你好 world 世界")
+	assert.Greater(t, mixedTokens, 0)
+}
+
+func TestEstimateCharsPerToken(t *testing.T) {
+	// English text should have higher chars-per-token
+	enRatio := estimateCharsPerToken("hello world test")
+	assert.Greater(t, enRatio, 0.0)
+
+	// CJK text should have lower chars-per-token
+	cjkRatio := estimateCharsPerToken("你好世界测试")
+	assert.Greater(t, cjkRatio, 0.0)
+	assert.Less(t, cjkRatio, enRatio)
+
+	// Empty-ish text defaults to 4.0
+	zeroRatio := estimateCharsPerToken("")
+	assert.Equal(t, 4.0, zeroRatio)
+}

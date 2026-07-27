@@ -92,6 +92,10 @@ type sampler struct {
 	// near-zero CPU/network values due to artificially short intervals
 	cachedResp *ResourceResponse
 	cachedAt   time.Time
+
+	// forceErr injects errors into all sample methods (for testing).
+	// When non-empty, each sample method returns an error with this message.
+	forceErr string
 }
 
 var globalSampler = &sampler{}
@@ -101,6 +105,11 @@ const cacheTTL = 500 * time.Millisecond
 // ResetSampler resets the global sampler state (for testing).
 func ResetSampler() {
 	globalSampler = &sampler{}
+}
+
+// SetForceError injects errors into all sample methods (for testing).
+func SetForceError(err string) {
+	globalSampler.forceErr = err
 }
 
 // dataDir returns the data directory path for disk usage reporting.
@@ -177,6 +186,9 @@ func GetResources() (*ResourceResponse, error) {
 }
 
 func (s *sampler) sampleCPU(resp *ResourceResponse) error {
+	if s.forceErr != "" {
+		return fmt.Errorf("%s", s.forceErr)
+	}
 	coreCount, err := cpu.Counts(true)
 	if err != nil {
 		return fmt.Errorf("cpu counts: %w", err)
@@ -241,6 +253,9 @@ func cpuTimesTotal(t cpu.TimesStat) float64 {
 }
 
 func (s *sampler) sampleMemory(resp *ResourceResponse) error {
+	if s.forceErr != "" {
+		return fmt.Errorf("%s", s.forceErr)
+	}
 	vm, err := mem.VirtualMemory()
 	if err != nil {
 		return fmt.Errorf("virtual memory: %w", err)
@@ -257,6 +272,9 @@ func (s *sampler) sampleMemory(resp *ResourceResponse) error {
 }
 
 func (s *sampler) sampleDisk(resp *ResourceResponse) error {
+	if s.forceErr != "" {
+		return fmt.Errorf("%s", s.forceErr)
+	}
 	dir := dataDir()
 	usage, err := disk.Usage(dir)
 	if err != nil {
@@ -269,6 +287,9 @@ func (s *sampler) sampleDisk(resp *ResourceResponse) error {
 }
 
 func (s *sampler) sampleNetwork(resp *ResourceResponse) error {
+	if s.forceErr != "" {
+		return fmt.Errorf("%s", s.forceErr)
+	}
 	counters, err := psutilNet.IOCounters(true) // true = per-interface
 	if err != nil {
 		return fmt.Errorf("net io counters: %w", err)
@@ -320,6 +341,9 @@ func (s *sampler) sampleNetwork(resp *ResourceResponse) error {
 }
 
 func (s *sampler) sampleDiskIO(resp *ResourceResponse) error {
+	if s.forceErr != "" {
+		return fmt.Errorf("%s", s.forceErr)
+	}
 	counters, err := disk.IOCounters() // all devices
 	if err != nil {
 		return fmt.Errorf("disk io counters: %w", err)
@@ -363,6 +387,9 @@ func (s *sampler) sampleDiskIO(resp *ResourceResponse) error {
 }
 
 func (s *sampler) sampleLoad(resp *ResourceResponse) error {
+	if s.forceErr != "" {
+		return fmt.Errorf("%s", s.forceErr)
+	}
 	avg, err := load.Avg()
 	if err != nil {
 		return fmt.Errorf("load avg: %w", err)

@@ -223,3 +223,107 @@ func TestGetResourcesDiskPercent(t *testing.T) {
 		t.Errorf("Disk.Percent = %f, want [0, 100]", res.Disk.Percent)
 	}
 }
+
+func TestGetResources_SampleErrors(t *testing.T) {
+	ResetSampler()
+	SetForceError("test error")
+	defer SetForceError("")
+
+	res, err := GetResources()
+	if err != nil {
+		t.Fatalf("GetResources() error: %v", err)
+	}
+	if res.CPU.Percent != -1 {
+		t.Errorf("CPU.Percent = %f, want -1 on error", res.CPU.Percent)
+	}
+	if len(res.Errors) == 0 {
+		t.Error("expected errors when forceErr is set")
+	}
+	if res.Memory.Total != 0 {
+		t.Error("expected Memory.Total = 0 on error")
+	}
+	if res.Disk.Total != 0 {
+		t.Error("expected Disk.Total = 0 on error")
+	}
+	if res.Network.UploadRate != 0 || res.Network.DownloadRate != 0 {
+		t.Error("expected Network zeroed on error")
+	}
+	if res.DiskIO.ReadRate != 0 || res.DiskIO.WriteRate != 0 {
+		t.Error("expected DiskIO zeroed on error")
+	}
+	if res.Load.Load1 != 0 {
+		t.Error("expected Load zeroed on error")
+	}
+}
+
+func TestGetResources_PartialSampleErrors(t *testing.T) {
+	ResetSampler()
+	res1, err := GetResources()
+	if err != nil {
+		t.Fatalf("first GetResources() error: %v", err)
+	}
+	if len(res1.Errors) > 0 {
+		t.Errorf("expected no errors on normal call, got %v", res1.Errors)
+	}
+
+	// Expire cache so next call re-samples
+	globalSampler.mu.Lock()
+	globalSampler.cachedAt = time.Time{}
+	globalSampler.mu.Unlock()
+
+	SetForceError("injected")
+	defer SetForceError("")
+	res2, err := GetResources()
+	if err != nil {
+		t.Fatalf("second GetResources() error: %v", err)
+	}
+	if res2.CPU.Percent != -1 {
+		t.Errorf("CPU.Percent = %f, want -1 with forced error", res2.CPU.Percent)
+	}
+}
+
+func TestGetResources_NegativeNetworkDiff(t *testing.T) {
+	ResetSampler()
+	_, _ = GetResources() // initialize
+
+	globalSampler.mu.Lock()
+	globalSampler.prevBytesSent = ^uint64(0)
+	globalSampler.prevBytesRecv = ^uint64(0)
+	globalSampler.netInited = true
+	globalSampler.cachedAt = time.Time{}
+	globalSampler.mu.Unlock()
+
+	res, err := GetResources()
+	if err != nil {
+		t.Fatalf("GetResources() error: %v", err)
+	}
+	if res.Network.UploadRate < 0 {
+		t.Errorf("Network.UploadRate = %f, want >= 0 (clamped)", res.Network.UploadRate)
+	}
+	if res.Network.DownloadRate < 0 {
+		t.Errorf("Network.DownloadRate = %f, want >= 0 (clamped)", res.Network.DownloadRate)
+	}
+}
+
+func TestGetResources_NegativeDiskIODiff(t *testing.T) {
+	ResetSampler()
+	_, _ = GetResources() // initialize
+
+	globalSampler.mu.Lock()
+	globalSampler.prevDiskReadBytes = ^uint64(0)
+	globalSampler.prevDiskWriteBytes = ^uint64(0)
+	globalSampler.diskIOInited = true
+	globalSampler.cachedAt = time.Time{}
+	globalSampler.mu.Unlock()
+
+	res, err := GetResources()
+	if err != nil {
+		t.Fatalf("GetResources() error: %v", err)
+	}
+	if res.DiskIO.ReadRate < 0 {
+		t.Errorf("DiskIO.ReadRate = %f, want >= 0 (clamped)", res.DiskIO.ReadRate)
+	}
+	if res.DiskIO.WriteRate < 0 {
+		t.Errorf("DiskIO.WriteRate = %f, want >= 0 (clamped)", res.DiskIO.WriteRate)
+	}
+}

@@ -875,7 +875,7 @@ defineExpose({
 .scroll-fab-dir {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
 }
 
 /* Direction swap transition (out-in) */
