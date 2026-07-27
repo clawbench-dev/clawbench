@@ -47,7 +47,7 @@
     <!-- Disk Read -->
     <div class="resource-row">
       <div class="resource-header">
-        <ArrowDown :size="13" class="resource-icon disk-read" />
+        <HardDriveDownload :size="13" class="resource-icon disk-read" />
         <span class="resource-label">{{ t('systemResources.diskRead') }}</span>
         <span class="resource-value">{{ formatRate(resources.disk_io.read_rate) }}</span>
       </div>
@@ -55,7 +55,7 @@
     <!-- Disk Write -->
     <div class="resource-row">
       <div class="resource-header">
-        <ArrowUp :size="13" class="resource-icon disk-write" />
+        <HardDriveUpload :size="13" class="resource-icon disk-write" />
         <span class="resource-label">{{ t('systemResources.diskWrite') }}</span>
         <span class="resource-value">{{ formatRate(resources.disk_io.write_rate) }}</span>
       </div>
@@ -80,7 +80,7 @@
 </template>
 
 <script setup>
-import { Cpu, Activity, MemoryStick, Database, ArrowUp, ArrowDown } from 'lucide-vue-next'
+import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, ArrowUp, ArrowDown } from 'lucide-vue-next'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSystemResources } from '@/composables/useSystemResources'
