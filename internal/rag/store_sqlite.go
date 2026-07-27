@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/service"
+
 	_ "modernc.org/sqlite"     // register SQLite driver (pure Go, FTS5 built-in)
 	_ "modernc.org/sqlite/vec" // register sqlite-vec extension for vec0 virtual tables
 )
@@ -62,17 +64,47 @@ type PendingChunk struct {
 	SessionID   string
 }
 
+// WriteLocker abstracts the global write mutex for database writes.
+// In production, this is backed by service.WriteLock/WriteUnlock.
+// In tests, this is a no-op (the test DB has its own connection).
+type WriteLocker interface {
+	Lock()
+	Unlock()
+}
+
+// noOpLocker is a WriteLocker that does nothing (used in tests).
+type noOpLocker struct{}
+
+func (noOpLocker) Lock()   {}
+func (noOpLocker) Unlock() {}
+
+// serviceWriteLocker delegates to service.WriteLock/WriteUnlock.
+type serviceWriteLocker struct{}
+
+func (serviceWriteLocker) Lock()   { service.WriteLock() }
+func (serviceWriteLocker) Unlock() { service.WriteUnlock() }
+
 // Store manages the SQLite connection and FTS5 index.
 type Store struct {
 	db            *sql.DB
 	embDim        int
-	vecTableReady bool // cached: true after rag_vec table confirmed to exist
+	vecTableReady bool   // cached: true after rag_vec table confirmed to exist
+	writeMu       WriteLocker
 }
 
 // NewSQLiteStore creates a new SQLite-backed RAG store.
 // If dbPath is ":memory:", creates an in-memory database (for testing).
 // Uses shared cache mode for in-memory databases to allow cross-goroutine access.
 func NewSQLiteStore(dbPath string) (*Store, error) {
+	return newSQLiteStoreWithLocker(dbPath, serviceWriteLocker{})
+}
+
+// NewSQLiteStoreForTest creates a store without the global write mutex (for unit tests).
+func NewSQLiteStoreForTest(dbPath string) (*Store, error) {
+	return newSQLiteStoreWithLocker(dbPath, noOpLocker{})
+}
+
+func newSQLiteStoreWithLocker(dbPath string, locker WriteLocker) (*Store, error) {
 	dsn := dbPath
 	if dbPath == ":memory:" {
 		// Shared cache required for in-memory DB to work across goroutines
@@ -101,7 +133,8 @@ func NewSQLiteStore(dbPath string) (*Store, error) {
 	}
 
 	s := &Store{
-		db: db,
+		db:      db,
+		writeMu: locker,
 	}
 
 	if err := s.initSchema(); err != nil {
@@ -245,11 +278,13 @@ func (s *Store) migrateEmbeddingsToVec() error {
 		vec64 := deserializeEmbedding(blob, dim)
 		vec32 := float64ToFloat32(vec64)
 		vecBlob := serializeFloat32(vec32)
+		s.writeMu.Lock()
 		_, err := s.db.Exec(
 			`INSERT OR IGNORE INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
 			VALUES (?, ?, ?, ?, ?, ?)`,
 			id, vecBlob, projectPath, backend, role, sessionID,
 		)
+		s.writeMu.Unlock()
 		if err != nil {
 			slog.Warn("rag: failed to migrate embedding to vec0",
 				slog.Int64("chunk_id", id), slog.String("err", err.Error()))
@@ -291,6 +326,7 @@ func (s *Store) ensureVecTable() error {
 		return fmt.Errorf("cannot create rag_vec: embedding dimension unknown (set via SetEmbeddingDim first)")
 	}
 
+	s.writeMu.Lock()
 	_, err = s.db.Exec(fmt.Sprintf(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS rag_vec USING vec0(
 			embedding float[%d] distance_metric=cosine,
@@ -300,6 +336,7 @@ func (s *Store) ensureVecTable() error {
 			session_id TEXT
 		)
 	`, dim))
+	s.writeMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("create rag_vec: %w", err)
 	}
@@ -792,13 +829,14 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 	}
 
 	embBlob := serializeEmbedding(embedding)
-	_, err := s.db.Exec(
-		`
+	s.writeMu.Lock()
+	_, err := s.db.Exec(`
 		UPDATE rag_chunks
 		SET embedding = ?, has_embedding = 1, embedding_dim = ?
 		WHERE id = ?`,
 		embBlob, len(embedding), chunkID,
 	)
+	s.writeMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("update embedding: %w", err)
 	}
@@ -820,6 +858,7 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 		return nil
 	}
 
+	s.writeMu.Lock()
 	_, _ = s.db.Exec(`DELETE FROM rag_vec WHERE rowid = ?`, chunkID)
 	vecBlob := serializeFloat32(float64ToFloat32(embedding))
 	_, err = s.db.Exec(
@@ -827,6 +866,7 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		chunkID, vecBlob, projectPath, backend, role, sessionID,
 	)
+	s.writeMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("insert vec entry: %w", err)
 	}
@@ -1006,7 +1046,9 @@ func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {
 
 // FTSIntegrityCheck verifies FTS5 index consistency.
 func (s *Store) FTSIntegrityCheck() error {
+	s.writeMu.Lock()
 	_, err := s.db.Exec("INSERT INTO rag_chunks_fts(rag_chunks_fts) VALUES('integrity-check')")
+	s.writeMu.Unlock()
 	return err
 }
 

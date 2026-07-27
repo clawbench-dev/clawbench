@@ -32,6 +32,20 @@ var dbRead *sql.DB
 // locked — WAL mode allows reads and writes to proceed concurrently.
 var writeMu sync.Mutex
 
+// WriteLock acquires the global write mutex.
+// Callers MUST call WriteUnlock after the write operation completes.
+// Use this for write transactions that span multiple SQL statements:
+//
+//	service.WriteLock()
+//	tx, err := db.Begin()
+//	// ... tx.Exec ...
+//	tx.Commit()
+//	service.WriteUnlock()
+func WriteLock() { writeMu.Lock() }
+
+// WriteUnlock releases the global write mutex.
+func WriteUnlock() { writeMu.Unlock() }
+
 // WriteExec executes a write statement on DB under the write mutex.
 // Use this for all INSERT/UPDATE/DELETE/DDL operations instead of DB.Exec directly.
 func WriteExec(query string, args ...any) (sql.Result, error) {

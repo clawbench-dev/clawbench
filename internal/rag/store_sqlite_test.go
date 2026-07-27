@@ -25,8 +25,8 @@ func setupSQLiteStore(t *testing.T) *Store {
 			t.Logf("Warning: gse segmenter not available: %v", err)
 		}
 	}
-	store, err := NewSQLiteStore(":memory:")
-	require.NoError(t, err, "NewSQLiteStore should succeed")
+	store, err := NewSQLiteStoreForTest(":memory:")
+	require.NoError(t, err, "NewSQLiteStoreForTest should succeed")
 	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
@@ -794,14 +794,14 @@ func TestSQLiteStore_LoadEmbeddingDimFromDB_WithExistingData(t *testing.T) {
 	dbPath := dir + "/test_dim.db"
 
 	// First store: insert data
-	store1, err := NewSQLiteStore(dbPath)
+	store1, err := NewSQLiteStoreForTest(dbPath)
 	require.NoError(t, err)
 	chunk := makeTestChunk(testSession1, 1, 0, "dim test")
 	require.NoError(t, store1.InsertChunks([]Chunk{chunk}))
 	_ = store1.Close()
 
 	// Second store: should load dim from existing data
-	store2, err := NewSQLiteStore(dbPath)
+	store2, err := NewSQLiteStoreForTest(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store2.Close() })
 
@@ -971,7 +971,7 @@ func TestSQLiteStore_NewSQLiteStore_TempFile(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := dir + "/test.db"
 
-	store, err := NewSQLiteStore(dbPath)
+	store, err := NewSQLiteStoreForTest(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
@@ -1038,7 +1038,7 @@ func TestSQLiteStore_NewSQLiteStore_SetsWALMode(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := dir + "/test_wal.db"
 
-	store, err := NewSQLiteStore(dbPath)
+	store, err := NewSQLiteStoreForTest(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
@@ -1053,7 +1053,7 @@ func TestSQLiteStore_NewSQLiteStore_SetsBusyTimeout(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := dir + "/test_busy.db"
 
-	store, err := NewSQLiteStore(dbPath)
+	store, err := NewSQLiteStoreForTest(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
@@ -1067,7 +1067,7 @@ func TestSQLiteStore_NewSQLiteStore_SetsBusyTimeout(t *testing.T) {
 func TestSQLiteStore_NewSQLiteStore_InvalidPath(t *testing.T) {
 	// Opening a database in a non-existent deeply nested path may fail
 	// depending on the driver. Test that the error is returned properly.
-	_, err := NewSQLiteStore("/nonexistent/deeply/nested/dir/test.db")
+	_, err := NewSQLiteStoreForTest("/nonexistent/deeply/nested/dir/test.db")
 	// modernc.org/sqlite creates the file, so this may not error on open
 	// but the important thing is that the function doesn't panic
 	_ = err
@@ -1206,7 +1206,7 @@ func TestSQLiteStore_MigrateExistingEmbeddings_ToVec0(t *testing.T) {
 	require.NoError(t, db.Close())
 
 	// Step 3: Re-open the store (this triggers initSchema + migration)
-	store, err := NewSQLiteStore(dbPath)
+	store, err := NewSQLiteStoreForTest(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
@@ -1230,7 +1230,7 @@ func TestSQLiteStore_MigrateExistingEmbeddings_ToVec0(t *testing.T) {
 
 	// Step 7: Verify idempotency — re-opening the store should not duplicate
 	require.NoError(t, store.Close())
-	store2, err := NewSQLiteStore(dbPath)
+	store2, err := NewSQLiteStoreForTest(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store2.Close() })
 

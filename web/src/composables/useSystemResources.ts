@@ -75,7 +75,7 @@ function startPolling() {
 }
 
 function stopPolling() {
-  activeCount--
+  activeCount = Math.max(0, activeCount - 1)
   if (activeCount > 0) return // still in use
 
   if (timer) {
