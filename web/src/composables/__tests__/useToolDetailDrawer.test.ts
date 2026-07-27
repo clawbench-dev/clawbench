@@ -3,6 +3,7 @@ import { nextTick } from 'vue'
 
 // Mock i18n modules before importing the composable
 vi.mock('@/i18n', () => ({
+  STORAGE_KEY: 'clawbench-locale',
   default: {
     global: {
       locale: { value: 'en' },

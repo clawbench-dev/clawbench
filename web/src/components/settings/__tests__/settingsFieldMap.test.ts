@@ -223,12 +223,12 @@ describe('settingsFieldMap', () => {
 
   // ── RAG panel ──
 
-  it('rag panel has 7 commonFields and requiredFields', () => {
+  it('rag panel has 12 commonFields and requiredFields', () => {
     const panels = getCategoryPanels('rag')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
-    expect(cfg.commonFields.length).toBe(7)
-    expect(cfg.commonFields[0].key).toBe('rag.base_url')
+    expect(cfg.commonFields.length).toBe(12)
+    expect(cfg.commonFields[0].key).toBe('rag.vector_enabled')
     expect(cfg.requiredFields).toEqual(['rag.base_url'])
   })
 
@@ -363,8 +363,9 @@ describe('settingsFieldMap', () => {
     expect(panels.length).toBe(1)
     const cfg = panels[0]
     expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
-    expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': 'http://localhost:11434' })).toBe(true)
-    expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': '' })).toBe(false)
+    expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': 'http://localhost:11434', 'rag.vector_enabled': true })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': 'http://localhost:11434', 'rag.vector_enabled': false })).toBe(false)
+    expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': '', 'rag.vector_enabled': true })).toBe(false)
     expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
 })
