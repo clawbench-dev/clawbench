@@ -71,6 +71,12 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 |----------------|---------------------|-------------------------|
 | ![Port Forwarding](docs/screenshots/port-forwarding.png) | ![Interactive Terminal](docs/screenshots/terminal.png) | ![Key/Symbol Configuration](docs/screenshots/terminal-key-config.png) |
 
+### System Resource Monitor
+
+| System Monitor |
+|----------------|
+| ![System Monitor](docs/screenshots/system-monitor.png) |
+
 ---
 
 ## Quick Start

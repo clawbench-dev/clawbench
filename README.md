@@ -78,6 +78,12 @@
 |---------|-----------|--------------|
 | ![端口转发](docs/screenshots/port-forwarding.png) | ![交互式终端](docs/screenshots/terminal.png) | ![按键配置](docs/screenshots/terminal-key-config.png) |
 
+### 系统资源监控
+
+| 系统监控 |
+|----------|
+| ![系统监控](docs/screenshots/system-monitor.png) |
+
 ---
 
 ## 快速开始
