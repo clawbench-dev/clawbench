@@ -88,7 +88,7 @@ var hotReloadFields = map[string]bool{
 	"port_forward.port":          true,
 	"port_forward.allowed_ports": true,
 	// RAG — reconfigure embedder, indexer, cleanup worker
-	"rag.vector_enabled":                true,
+	"rag.vector_enabled":        true,
 	"rag.base_url":              true,
 	"rag.model":                 true,
 	"rag.api_key":               true,
@@ -324,7 +324,7 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.kokoro.lang":             true,
 	"tts.moss_nano.model_dir":     true,
 	"tts.moss_nano.backend":       true,
-	"rag.vector_enabled":                 true,
+	"rag.vector_enabled":          true,
 	"rag.base_url":                true,
 	"rag.model":                   true,
 	"rag.api_key":                 true,

@@ -88,7 +88,7 @@ func (serviceWriteLocker) Unlock() { service.WriteUnlock() }
 type Store struct {
 	db            *sql.DB
 	embDim        int
-	vecTableReady bool   // cached: true after rag_vec table confirmed to exist
+	vecTableReady bool // cached: true after rag_vec table confirmed to exist
 	writeMu       WriteLocker
 }
 
@@ -247,8 +247,8 @@ func (s *Store) migrateEmbeddingsToVec() error {
 	}
 
 	// Ensure vec0 table exists
-	if err := s.ensureVecTable(); err != nil {
-		return fmt.Errorf("ensure vec0 table for migration: %w", err)
+	if vecErr := s.ensureVecTable(); vecErr != nil {
+		return fmt.Errorf("ensure vec0 table for migration: %w", vecErr)
 	}
 
 	rows, err := s.db.Query(`
@@ -367,22 +367,7 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 		return nil
 	}
 
-	// Ensure vec0 table exists before starting any transaction.
-	hasEmbedding := false
-	for _, c := range chunks {
-		if c.HasEmbedding && c.Embedding != nil {
-			hasEmbedding = true
-			break
-		}
-	}
-	vecReady := false
-	if hasEmbedding {
-		if err := s.ensureVecTable(); err != nil {
-			slog.Warn("rag: vec0 table not available, storing text-only", slog.String("err", err.Error()))
-		} else {
-			vecReady = true
-		}
-	}
+	vecReady := s.prepareVecTable(chunks)
 
 	// Process in sub-batches to limit write-lock duration
 	const chunksPerTx = 100
@@ -391,79 +376,102 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 		if batchEnd > len(chunks) {
 			batchEnd = len(chunks)
 		}
-		batch := chunks[batchStart:batchEnd]
-
-		s.writeMu.Lock()
-		tx, err := s.db.Begin()
-		if err != nil {
-			s.writeMu.Unlock()
-			return fmt.Errorf("begin transaction: %w", err)
+		if err := s.insertChunkBatch(chunks[batchStart:batchEnd], vecReady); err != nil {
+			return err
 		}
-
-		for _, c := range batch {
-			if c.Embedding != nil {
-				if err := validateEmbedding(c.Embedding); err != nil {
-					_ = tx.Rollback()
-					s.writeMu.Unlock()
-					return fmt.Errorf("embedding validation for chunk (message_id=%d): %w", c.MessageID, err)
-				}
-			}
-
-			var embBlob []byte
-			var embDim int
-			if c.Embedding != nil {
-				embBlob = serializeEmbedding(c.Embedding)
-				embDim = len(c.Embedding)
-			}
-
-			result, err := tx.Exec(
-				`INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
-					chunk_index, token_count, embedding, has_embedding, embedding_dim,
-					project_path, backend, role, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				c.SessionID, c.MessageID, c.ChunkText, c.ChunkTextSegmented,
-				c.ChunkIndex, c.TokenCount, embBlob, boolToInt(c.HasEmbedding), embDim,
-				c.ProjectPath, c.Backend, c.Role, c.CreatedAt,
-			)
-			if err != nil {
-				_ = tx.Rollback()
-				s.writeMu.Unlock()
-				return fmt.Errorf("insert chunk (message_id=%d, chunk_index=%d): %w", c.MessageID, c.ChunkIndex, err)
-			}
-
-			chunkID, _ := result.LastInsertId()
-
-			_, err = tx.Exec(`INSERT INTO rag_chunks_fts(rowid, chunk_text_segmented) VALUES (?, ?)`,
-				chunkID, c.ChunkTextSegmented)
-			if err != nil {
-				_ = tx.Rollback()
-				s.writeMu.Unlock()
-				return fmt.Errorf("insert fts entry for chunk %d: %w", chunkID, err)
-			}
-
-			if c.HasEmbedding && c.Embedding != nil && vecReady {
-				vecBlob := serializeFloat32(float64ToFloat32(c.Embedding))
-				_, err = tx.Exec(
-					`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
-					VALUES (?, ?, ?, ?, ?, ?)`,
-					chunkID, vecBlob, c.ProjectPath, c.Backend, c.Role, c.SessionID,
-				)
-				if err != nil {
-					_ = tx.Rollback()
-					s.writeMu.Unlock()
-					return fmt.Errorf("insert vec entry for chunk %d: %w", chunkID, err)
-				}
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			s.writeMu.Unlock()
-			return fmt.Errorf("commit insert transaction: %w", err)
-		}
-		s.writeMu.Unlock()
 	}
 
 	return nil
+}
+
+// prepareVecTable ensures the vec0 virtual table exists if any chunk has embeddings.
+// Returns true if vec0 is ready for inserts.
+func (s *Store) prepareVecTable(chunks []Chunk) bool {
+	for _, c := range chunks {
+		if c.HasEmbedding && c.Embedding != nil {
+			if err := s.ensureVecTable(); err != nil {
+				slog.Warn("rag: vec0 table not available, storing text-only", slog.String("err", err.Error()))
+				return false
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// insertChunkBatch inserts a batch of chunks within a single transaction.
+func (s *Store) insertChunkBatch(batch []Chunk, vecReady bool) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+
+	for _, c := range batch {
+		chunkID, err := s.insertOneChunk(tx, c, vecReady)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		_ = chunkID
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit insert transaction: %w", err)
+	}
+	return nil
+}
+
+// insertOneChunk inserts a single chunk and its FTS + vec entries within a transaction.
+// Returns the chunk ID on success.
+func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool) (int64, error) {
+	if c.Embedding != nil {
+		if err := validateEmbedding(c.Embedding); err != nil {
+			return 0, fmt.Errorf("embedding validation for chunk (message_id=%d): %w", c.MessageID, err)
+		}
+	}
+
+	var embBlob []byte
+	var embDim int
+	if c.Embedding != nil {
+		embBlob = serializeEmbedding(c.Embedding)
+		embDim = len(c.Embedding)
+	}
+
+	result, err := tx.Exec(
+		`INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
+			chunk_index, token_count, embedding, has_embedding, embedding_dim,
+			project_path, backend, role, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.SessionID, c.MessageID, c.ChunkText, c.ChunkTextSegmented,
+		c.ChunkIndex, c.TokenCount, embBlob, boolToInt(c.HasEmbedding), embDim,
+		c.ProjectPath, c.Backend, c.Role, c.CreatedAt,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("insert chunk (message_id=%d, chunk_index=%d): %w", c.MessageID, c.ChunkIndex, err)
+	}
+
+	chunkID, _ := result.LastInsertId()
+
+	if _, err = tx.Exec(`INSERT INTO rag_chunks_fts(rowid, chunk_text_segmented) VALUES (?, ?)`,
+		chunkID, c.ChunkTextSegmented); err != nil {
+		return 0, fmt.Errorf("insert fts entry for chunk %d: %w", chunkID, err)
+	}
+
+	if c.HasEmbedding && c.Embedding != nil && vecReady {
+		vecBlob := serializeFloat32(float64ToFloat32(c.Embedding))
+		if _, err = tx.Exec(
+			`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			chunkID, vecBlob, c.ProjectPath, c.Backend, c.Role, c.SessionID,
+		); err != nil {
+			return 0, fmt.Errorf("insert vec entry for chunk %d: %w", chunkID, err)
+		}
+	}
+
+	return chunkID, nil
 }
 
 // SearchVector performs vector similarity search using sqlite-vec KNN.
@@ -776,7 +784,8 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 
 	insertVecStmt, err := tx.Prepare(
 		`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
-		VALUES (?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+	)
 	if err != nil {
 		_ = deleteVecStmt.Close()
 		_ = updateStmt.Close()
@@ -848,7 +857,8 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 	}
 
 	// Update rag_chunks
-	_, err = tx.Exec(`
+	_, err = tx.Exec(
+		`
 		UPDATE rag_chunks
 		SET embedding = ?, has_embedding = 1, embedding_dim = ?
 		WHERE id = ?`,

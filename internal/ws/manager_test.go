@@ -812,13 +812,12 @@ func TestManager_BroadcastEvent_MarshalError(t *testing.T) {
 
 func TestInitManager(t *testing.T) {
 	// Reset sync.Once so InitManager actually runs
-	origOnce := defaultManagerOnce
 	origManager := defaultManager
 	defer func() {
-		defaultManagerOnce = origOnce
 		defaultManager = origManager
 	}()
 
+	// Reset the Once by assigning a fresh one (can't copy sync.Once by value)
 	defaultManagerOnce = sync.Once{}
 	defaultManager = nil
 

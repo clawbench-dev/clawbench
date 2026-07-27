@@ -203,7 +203,7 @@ func TestRAGSearch_Hybrid_WithMockEmbedder(t *testing.T) {
 	embedder := NewEmbeddingClient(server.URL, "test-model", "")
 
 	// Create store with 1024-dim embeddings (must set dimension for vec0 table creation)
-	store := setupSQLiteStoreWithDim(t, 1024)
+	store := setupSQLiteStoreWithDim(t)
 
 	// Insert chunk with 1024-dim embedding
 	chunk := Chunk{

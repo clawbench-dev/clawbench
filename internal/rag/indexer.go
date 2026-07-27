@@ -280,24 +280,61 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
 	batchStart := time.Now()
 
 	// Phase 1: Extract text and chunk all messages
-	type msgChunks struct {
-		msg    service.UnindexedMessage
-		text   string
-		chunks []Chunk
+	allMsgChunks, allTexts := idx.chunkMessages(messages)
+
+	// Phase 2: Batch embedding in sub-batches to avoid timeouts
+	allEmbeddings := idx.batchEmbed(ctx, allTexts)
+
+	// Phase 3: Assign embeddings to chunks and collect results
+	allChunks, indexedIDs, skipped := idx.assignEmbeddings(allMsgChunks, allEmbeddings)
+
+	// Phase 4: Insert all chunks in a single transaction
+	if len(allChunks) > 0 {
+		if err := idx.store.InsertChunks(allChunks); err != nil {
+			slog.Error("rag: failed to insert chunks batch", slog.String("err", err.Error()))
+		}
 	}
-	allMsgChunks := make([]msgChunks, 0, len(messages))
-	var allTexts []string // flat list of all chunk texts for batch embedding
+
+	// Phase 5: Batch mark all indexed messages
+	if len(indexedIDs) > 0 {
+		if err := service.MarkMessagesIndexed(indexedIDs); err != nil {
+			slog.Error("rag: failed to batch mark messages indexed", slog.String("err", err.Error()))
+		}
+	}
+
+	slog.Info(
+		"rag: batch complete",
+		slog.Int("messages", len(indexedIDs)),
+		slog.Int("chunks", len(allChunks)),
+		slog.Int("skipped", skipped),
+		slog.Duration("elapsed", time.Since(batchStart)),
+	)
+
+	// More work remains if we fetched a full batch
+	return len(messages) >= idx.cfg.BatchSize
+}
+
+// chunkMessages extracts text from messages and chunks them for indexing.
+type msgChunkResult struct {
+	msg    service.UnindexedMessage
+	text   string
+	chunks []Chunk
+}
+
+func (idx *Indexer) chunkMessages(messages []service.UnindexedMessage) ([]msgChunkResult, []string) {
+	results := make([]msgChunkResult, 0, len(messages))
+	var allTexts []string
 
 	for _, msg := range messages {
 		text := ExtractTextFromContent(msg.Content, msg.Role)
 		if text == "" {
-			allMsgChunks = append(allMsgChunks, msgChunks{msg: msg, text: ""})
+			results = append(results, msgChunkResult{msg: msg})
 			continue
 		}
 
 		textChunks := ChunkText(text, idx.cfg.ChunkSize, idx.cfg.ChunkOverlap)
 		if len(textChunks) == 0 {
-			allMsgChunks = append(allMsgChunks, msgChunks{msg: msg, text: text})
+			results = append(results, msgChunkResult{msg: msg, text: text})
 			continue
 		}
 
@@ -326,41 +363,37 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
 			allTexts = append(allTexts, tc.Text)
 		}
 
-		allMsgChunks = append(allMsgChunks, msgChunks{msg: msg, text: text, chunks: chunks})
+		results = append(results, msgChunkResult{msg: msg, text: text, chunks: chunks})
 	}
 
-	// Phase 2: Batch embedding in sub-batches to avoid timeouts
-	var allEmbeddings [][]float64
-	if idx.embedderHealthy && len(allTexts) > 0 {
-		allEmbeddings = idx.embedInSubBatches(ctx, allTexts)
-		// Check if any embeddings were actually returned
-		hasAny := false
-		for _, e := range allEmbeddings {
-			if e != nil {
-				hasAny = true
-				break
-			}
-		}
-		if !hasAny {
-			allEmbeddings = nil
+	return results, allTexts
+}
+
+// batchEmbed calls embedInSubBatches and returns nil if no embeddings were produced.
+func (idx *Indexer) batchEmbed(ctx context.Context, texts []string) [][]float64 {
+	if !idx.embedderHealthy || len(texts) == 0 {
+		return nil
+	}
+	allEmbeddings := idx.embedInSubBatches(ctx, texts)
+	for _, e := range allEmbeddings {
+		if e != nil {
+			return allEmbeddings
 		}
 	}
+	return nil
+}
 
-	// Phase 3: Assign embeddings to chunks
-	textIdx := 0 // cursor into allTexts/allEmbeddings
-	var allChunks []Chunk
-	var indexedIDs []int64
-	skipped := 0
-
-	for i := range allMsgChunks {
-		mc := &allMsgChunks[i]
+// assignEmbeddings distributes embeddings across message chunks and collects results.
+func (idx *Indexer) assignEmbeddings(msgChunks []msgChunkResult, allEmbeddings [][]float64) (allChunks []Chunk, indexedIDs []int64, skipped int) {
+	textIdx := 0
+	for i := range msgChunks {
+		mc := &msgChunks[i]
 		if mc.text == "" || len(mc.chunks) == 0 {
 			skipped++
 			indexedIDs = append(indexedIDs, mc.msg.ID)
 			continue
 		}
 
-		// Assign embeddings from the flat batch result
 		if allEmbeddings != nil {
 			for j := range mc.chunks {
 				if textIdx < len(allEmbeddings) && allEmbeddings[textIdx] != nil {
@@ -376,31 +409,7 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
 		allChunks = append(allChunks, mc.chunks...)
 		indexedIDs = append(indexedIDs, mc.msg.ID)
 	}
-
-	// Phase 4: Insert all chunks in a single transaction
-	if len(allChunks) > 0 {
-		if err := idx.store.InsertChunks(allChunks); err != nil {
-			slog.Error("rag: failed to insert chunks batch", slog.String("err", err.Error()))
-		}
-	}
-
-	// Phase 5: Batch mark all indexed messages
-	if len(indexedIDs) > 0 {
-		if err := service.MarkMessagesIndexed(indexedIDs); err != nil {
-			slog.Error("rag: failed to batch mark messages indexed", slog.String("err", err.Error()))
-		}
-	}
-
-	slog.Info(
-		"rag: batch complete",
-		slog.Int("messages", len(indexedIDs)),
-		slog.Int("chunks", len(allChunks)),
-		slog.Int("skipped", skipped),
-		slog.Duration("elapsed", time.Since(batchStart)),
-	)
-
-	// More work remains if we fetched a full batch
-	return len(messages) >= idx.cfg.BatchSize
+	return allChunks, indexedIDs, skipped
 }
 
 // backfillEmbeddings generates embeddings for chunks that were stored without them.
