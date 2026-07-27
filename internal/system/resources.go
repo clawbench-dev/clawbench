@@ -9,6 +9,7 @@ import (
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
 	psutilNet "github.com/shirou/gopsutil/v3/net"
 )
@@ -18,7 +19,9 @@ type ResourceResponse struct {
 	CPU     CPUInfo     `json:"cpu"`
 	Memory  MemoryInfo  `json:"memory"`
 	Disk    DiskInfo    `json:"disk"`
+	DiskIO  DiskIOInfo  `json:"disk_io"`
 	Network NetworkInfo `json:"network"`
+	Load    LoadInfo    `json:"load"`
 	Errors  []string    `json:"errors,omitempty"` // per-metric errors, if any
 }
 
@@ -49,6 +52,19 @@ type NetworkInfo struct {
 	DownloadRate float64 `json:"download_rate"` // bytes/sec
 }
 
+// DiskIOInfo holds disk I/O throughput rates.
+type DiskIOInfo struct {
+	ReadRate  float64 `json:"read_rate"`  // bytes/sec
+	WriteRate float64 `json:"write_rate"` // bytes/sec
+}
+
+// LoadInfo holds system load averages.
+type LoadInfo struct {
+	Load1  float64 `json:"load1"`  // 1-minute load average
+	Load5  float64 `json:"load5"`  // 5-minute load average
+	Load15 float64 `json:"load15"` // 15-minute load average
+}
+
 // sampler holds state for interval-based calculations.
 type sampler struct {
 	mu sync.Mutex
@@ -65,6 +81,12 @@ type sampler struct {
 	prevBytesRecv uint64
 	netTime       time.Time
 	netInited     bool
+
+	// Disk I/O sampling — same scalar prev pattern as network
+	prevDiskReadBytes  uint64
+	prevDiskWriteBytes uint64
+	diskIOTime         time.Time
+	diskIOInited       bool
 
 	// Response cache — prevents concurrent requests from getting
 	// near-zero CPU/network values due to artificially short intervals
@@ -127,6 +149,18 @@ func GetResources() (*ResourceResponse, error) {
 	if err := s.sampleNetwork(resp); err != nil {
 		resp.Network = NetworkInfo{}
 		errs = append(errs, fmt.Sprintf("network: %v", err))
+	}
+
+	// Disk I/O
+	if err := s.sampleDiskIO(resp); err != nil {
+		resp.DiskIO = DiskIOInfo{}
+		errs = append(errs, fmt.Sprintf("disk_io: %v", err))
+	}
+
+	// Load
+	if err := s.sampleLoad(resp); err != nil {
+		resp.Load = LoadInfo{}
+		errs = append(errs, fmt.Sprintf("load: %v", err))
 	}
 
 	resp.Errors = errs
@@ -279,5 +313,59 @@ func (s *sampler) sampleNetwork(resp *ResourceResponse) error {
 	s.prevBytesSent = totalBytesSent
 	s.prevBytesRecv = totalBytesRecv
 	s.netTime = now
+	return nil
+}
+
+func (s *sampler) sampleDiskIO(resp *ResourceResponse) error {
+	counters, err := disk.IOCounters() // all devices
+	if err != nil {
+		return fmt.Errorf("disk io counters: %w", err)
+	}
+
+	now := time.Now()
+
+	var totalReadBytes, totalWriteBytes uint64
+	for _, c := range counters {
+		totalReadBytes += c.ReadBytes
+		totalWriteBytes += c.WriteBytes
+	}
+
+	if !s.diskIOInited {
+		s.prevDiskReadBytes = totalReadBytes
+		s.prevDiskWriteBytes = totalWriteBytes
+		s.diskIOTime = now
+		s.diskIOInited = true
+		resp.DiskIO = DiskIOInfo{}
+		return nil
+	}
+
+	elapsed := now.Sub(s.diskIOTime).Seconds()
+	if elapsed > 0 {
+		readDiff := int64(totalReadBytes - s.prevDiskReadBytes)
+		writeDiff := int64(totalWriteBytes - s.prevDiskWriteBytes)
+		if readDiff < 0 {
+			readDiff = 0
+		}
+		if writeDiff < 0 {
+			writeDiff = 0
+		}
+		resp.DiskIO.ReadRate = float64(readDiff) / elapsed
+		resp.DiskIO.WriteRate = float64(writeDiff) / elapsed
+	}
+
+	s.prevDiskReadBytes = totalReadBytes
+	s.prevDiskWriteBytes = totalWriteBytes
+	s.diskIOTime = now
+	return nil
+}
+
+func (s *sampler) sampleLoad(resp *ResourceResponse) error {
+	avg, err := load.Avg()
+	if err != nil {
+		return fmt.Errorf("load avg: %w", err)
+	}
+	resp.Load.Load1 = avg.Load1
+	resp.Load.Load5 = avg.Load5
+	resp.Load.Load15 = avg.Load15
 	return nil
 }

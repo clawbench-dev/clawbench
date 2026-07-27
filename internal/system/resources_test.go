@@ -39,6 +39,17 @@ func TestGetResources(t *testing.T) {
 	if res.Network.DownloadRate < 0 {
 		t.Errorf("Network.DownloadRate = %f, want >= 0", res.Network.DownloadRate)
 	}
+	// Disk I/O should have non-negative values (first call returns 0)
+	if res.DiskIO.ReadRate < 0 {
+		t.Errorf("DiskIO.ReadRate = %f, want >= 0", res.DiskIO.ReadRate)
+	}
+	if res.DiskIO.WriteRate < 0 {
+		t.Errorf("DiskIO.WriteRate = %f, want >= 0", res.DiskIO.WriteRate)
+	}
+	// Load should have non-negative values
+	if res.Load.Load1 < 0 {
+		t.Errorf("Load.Load1 = %f, want >= 0", res.Load.Load1)
+	}
 }
 
 func TestGetResourcesCPUSampling(t *testing.T) {
