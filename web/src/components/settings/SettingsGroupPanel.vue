@@ -141,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
@@ -169,7 +169,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-const { registerGuard, unregisterGuard } = useSettingsNavigation()
+const { unregisterGuard } = useSettingsNavigation()
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
 const { frpState } = useFrp()
 const { status: ragStatus, startPolling: startRagPolling, stopPolling: stopRagPolling } = useRagStatus()
@@ -181,11 +181,9 @@ const {
   saving,
   serverError,
   hotReloadWarning,
-  hasFailedSave,
   hasChanges,
   canSave,
   needsRestartHint,
-  initSnapshot,
   handleSave,
 } = usePanelSnapshot(props.config)
 
@@ -194,22 +192,17 @@ const entryPicker = useTabDrawer('settings', { autoRestore: false })
 
 // ── Lifecycle ──
 
-onMounted(() => {
-  initSnapshot()
-
-  // Register unsaved-changes guard with panel-specific ID (C3 fix)
-  registerGuard(`panel-${props.config.panelId}`, () => !hasChanges.value && !hasFailedSave.value)
-
-  // Start RAG status polling when the rag panel is visible
-  if (props.config.panelId === 'rag') {
+// Start RAG status polling when the rag panel is visible, stop when hidden
+watch(() => props.config.panelId === 'rag', (isRag: boolean) => {
+  if (isRag) {
     startRagPolling()
+  } else {
+    stopRagPolling()
   }
-})
+}, { immediate: true })
 
 onUnmounted(() => {
   unregisterGuard(`panel-${props.config.panelId}`)
-
-  // Stop RAG status polling when the rag panel is destroyed
   if (props.config.panelId === 'rag') {
     stopRagPolling()
   }

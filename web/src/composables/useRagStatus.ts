@@ -31,7 +31,6 @@ const status = ref<RagStatus>({
 })
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
-let activeCount = 0
 let visibilityHandler: (() => void) | null = null
 
 // Speed tracking: previous values + timestamp for instantaneous rate
@@ -74,8 +73,7 @@ async function fetchStatus(): Promise<void> {
 }
 
 function startPolling(): void {
-  activeCount++
-  if (pollTimer) return
+  if (pollTimer) return // already polling
   // Reset speed tracking on fresh start
   prevIndexed = 0
   prevEmbedded = 0
@@ -93,7 +91,7 @@ function startPolling(): void {
           clearInterval(pollTimer)
           pollTimer = null
         }
-      } else if (activeCount > 0 && !pollTimer) {
+      } else if (!pollTimer) {
         // Reset speed tracking after visibility change to avoid stale deltas
         prevIndexed = 0
         prevEmbedded = 0
@@ -109,8 +107,6 @@ function startPolling(): void {
 }
 
 function stopPolling(): void {
-  activeCount = Math.max(0, activeCount - 1)
-  if (activeCount > 0) return
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null

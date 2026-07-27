@@ -24,8 +24,6 @@ describe('useRagStatus', () => {
     // Ensure polling is stopped between tests
     const { stopPolling } = useRagStatus()
     stopPolling()
-    stopPolling()
-    stopPolling()
     vi.useRealTimers()
     vi.restoreAllMocks()
   })
