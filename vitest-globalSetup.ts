@@ -20,18 +20,41 @@
 
 import { execSync } from 'node:child_process'
 
-function killOrphanedWorkers(label: string) {
+// Find fork workers that are children of THIS vitest process.
+// Uses PPID matching (pgrep -P) instead of pgrep -f to avoid killing
+// workers from other vitest instances (e.g., worktrees).
+function killOurWorkers(label: string) {
   try {
-    const pids = execSync(
-      `pgrep -f "vitest/dist/workers/forks" 2>/dev/null || true`,
+    // Fork workers are direct children of the vitest main process.
+    // process.pid is the vitest main process when running in teardown().
+    const ourPid = process.pid
+    const childPids = execSync(
+      `pgrep -P ${ourPid} 2>/dev/null || true`,
       { encoding: 'utf-8', timeout: 3000 }
     ).trim().split('\n').filter(Boolean).map(Number)
-    if (pids.length > 0) {
+
+    // Filter to only fork worker processes (not sh/npm children)
+    const workerPids: number[] = []
+    for (const pid of childPids) {
+      try {
+        // On Linux, /proc/PID/cmdline has full args separated by NUL.
+        // On macOS, fall back to ps -o args= which shows full command line.
+        const cmdline = execSync(
+          `cat /proc/${pid}/cmdline 2>/dev/null || ps -o args= -p ${pid} 2>/dev/null || true`,
+          { encoding: 'utf-8', timeout: 2000 }
+        ).replace(/\0/g, ' ').trim()
+        if (cmdline.includes('/vitest/dist/workers/forks')) {
+          workerPids.push(pid)
+        }
+      } catch {}
+    }
+
+    if (workerPids.length > 0) {
       console.error(
-        `[vitest-globalSetup] ${label}: killing ${pids.length} orphaned vitest worker(s) ` +
-        '(vitest pool cleanup hang — vitest-dev/vitest#8766)'
+        `[vitest-globalSetup] ${label}: killing ${workerPids.length} fork worker(s) ` +
+        `(children of PID ${ourPid}, vitest pool cleanup hang — vitest-dev/vitest#8766)`
       )
-      for (const pid of pids) {
+      for (const pid of workerPids) {
         try { process.kill(pid, 'SIGKILL') } catch {}
       }
     }
@@ -47,11 +70,11 @@ export function teardown() {
   // At this point all tests have finished and vitest is about to call
   // pool.close(). If workers have open handles, pool.close() will hang.
   // Killing workers lets pool.close() return so vitest can exit.
-  killOrphanedWorkers('POST-TEST CLEANUP')
+  killOurWorkers('POST-TEST CLEANUP')
 
   // Secondary safety net: kill any workers that respawn or linger
   // after the first kill attempt.
   setTimeout(() => {
-    killOrphanedWorkers('POST-TEARDOWN CLEANUP')
+    killOurWorkers('POST-TEARDOWN CLEANUP')
   }, 3_000)
 }
