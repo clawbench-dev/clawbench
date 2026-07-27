@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { appLog } from '@/utils/appLog'
 
 export interface CPUInfo {
@@ -44,19 +44,14 @@ const resources = ref<SystemResources>({
   network: { upload_rate: 0, download_rate: 0 },
 })
 
-const loading = ref(false)
-
 async function fetchResources() {
   try {
-    loading.value = true
     const resp = await fetch('/api/system/resources')
     if (!resp.ok) return
     const data: SystemResources = await resp.json()
     resources.value = data
   } catch (e) {
     appLog.w('SystemResources', 'fetch failed', e)
-  } finally {
-    loading.value = false
   }
 }
 
@@ -88,14 +83,34 @@ function stopPolling() {
   }
 }
 
+// Pause polling when tab is hidden, resume when visible
+function onVisibilityChange() {
+  if (document.hidden) {
+    if (timer) {
+      clearInterval(timer)
+      timer = null
+    }
+    if (initTimeout) {
+      clearTimeout(initTimeout)
+      initTimeout = null
+    }
+  } else if (activeCount > 0 && !timer) {
+    fetchResources()
+    timer = setInterval(fetchResources, POLL_INTERVAL)
+  }
+}
+
 export function useSystemResources() {
+  onMounted(() => {
+    document.addEventListener('visibilitychange', onVisibilityChange)
+  })
   onUnmounted(() => {
     stopPolling()
+    document.removeEventListener('visibilitychange', onVisibilityChange)
   })
 
   return {
     resources,
-    loading,
     startPolling,
     stopPolling,
   }

@@ -239,10 +239,10 @@ func (s *sampler) sampleNetwork(resp *ResourceResponse) error {
 
 	now := time.Now()
 
-	// Sum all non-lo interfaces
+	// Sum all non-loopback interfaces (lo on Linux, lo0 on macOS)
 	var totalBytesSent, totalBytesRecv uint64
 	for _, c := range counters {
-		if c.Name == "lo" {
+		if c.Name == "lo" || c.Name == "lo0" {
 			continue
 		}
 		totalBytesSent += c.BytesSent

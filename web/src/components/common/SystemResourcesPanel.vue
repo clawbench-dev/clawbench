@@ -63,7 +63,7 @@ const { resources, startPolling, stopPolling } = useSystemResources()
 
 const cpuPercent = computed(() => {
   const p = resources.value.cpu.percent
-  return p < 0 ? '0.0' : p.toFixed(1)
+  return p < 0 ? '—' : p.toFixed(1)
 })
 
 const cpuBarWidth = computed(() => {
