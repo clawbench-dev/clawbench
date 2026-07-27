@@ -131,10 +131,45 @@ func (idx *Indexer) run() {
 	}
 }
 
+// embedSubBatchSize is the maximum number of texts per embedding API call.
+// Local models (e.g. Ollama) can be slow; smaller sub-batches avoid timeouts
+// and allow partial progress to be saved.
+const embedSubBatchSize = 20
+
+// embedInSubBatches calls EmbedBatch in smaller sub-batches to avoid timeouts.
+// Returns all embeddings in the same order as input texts. If a sub-batch fails,
+// its embeddings are nil (caller handles gracefully).
+func (idx *Indexer) embedInSubBatches(ctx context.Context, texts []string) [][]float64 {
+	results := make([][]float64, len(texts))
+	for i := 0; i < len(texts); i += embedSubBatchSize {
+		end := i + embedSubBatchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+		subBatch := texts[i:end]
+		embeddings, err := idx.embedder.EmbedBatch(ctx, subBatch)
+		if err != nil {
+			slog.Warn("rag: sub-batch embedding failed",
+				slog.Int("from", i), slog.Int("to", end),
+				slog.String("err", err.Error()))
+			// nil entries left in results — caller treats as no embedding
+			continue
+		}
+		for j, emb := range embeddings {
+			results[i+j] = emb
+		}
+		// Check context cancellation between sub-batches
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return results
+}
+
 // indexBatch processes one batch of unindexed messages and backfills embeddings.
 // Returns true if more unindexed messages may remain (caller should loop).
 func (idx *Indexer) indexBatch() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
 	idx.mu.Lock()
@@ -293,12 +328,19 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
 		allMsgChunks = append(allMsgChunks, msgChunks{msg: msg, text: text, chunks: chunks})
 	}
 
-	// Phase 2: Batch embedding (single API call for all chunks)
+	// Phase 2: Batch embedding in sub-batches to avoid timeouts
 	var allEmbeddings [][]float64
 	if idx.embedderHealthy && len(allTexts) > 0 {
-		allEmbeddings, err = idx.embedder.EmbedBatch(ctx, allTexts)
-		if err != nil {
-			slog.Warn("rag: batch embedding failed, storing text-only", slog.String("err", err.Error()))
+		allEmbeddings = idx.embedInSubBatches(ctx, allTexts)
+		// Check if any embeddings were actually returned
+		hasAny := false
+		for _, e := range allEmbeddings {
+			if e != nil {
+				hasAny = true
+				break
+			}
+		}
+		if !hasAny {
 			allEmbeddings = nil
 		}
 	}
@@ -361,7 +403,8 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
 }
 
 // backfillEmbeddings generates embeddings for chunks that were stored without them.
-// Optimization: all updates are wrapped in a single transaction.
+// Processes in sub-batches: each sub-batch is embedded and committed independently,
+// so partial progress is preserved even if a later sub-batch times out.
 func (idx *Indexer) backfillEmbeddings(ctx context.Context) {
 	pending, err := idx.store.PendingEmbeddingCount()
 	if err != nil {
@@ -393,27 +436,42 @@ func (idx *Indexer) backfillEmbeddings(ctx context.Context) {
 		return
 	}
 
-	texts := make([]string, len(pendingChunks))
-	for i, p := range pendingChunks {
-		texts[i] = p.ChunkText
-	}
+	totalBackfilled := 0
+	// Process in embedSubBatchSize chunks, committing each to DB
+	for i := 0; i < len(pendingChunks); i += embedSubBatchSize {
+		if ctx.Err() != nil {
+			break
+		}
+		end := i + embedSubBatchSize
+		if end > len(pendingChunks) {
+			end = len(pendingChunks)
+		}
+		subBatch := pendingChunks[i:end]
 
-	embeddings, err := idx.embedder.EmbedBatch(ctx, texts)
-	if err != nil {
-		slog.Warn("rag: backfill embedding failed", slog.String("err", err.Error()))
-		return
-	}
+		texts := make([]string, len(subBatch))
+		for j, p := range subBatch {
+			texts[j] = p.ChunkText
+		}
 
-	// Batch update all embeddings in a single transaction
-	backfilled, err := idx.store.BatchUpdateEmbeddings(pendingChunks, embeddings)
-	if err != nil {
-		slog.Error("rag: batch update embeddings failed", slog.String("err", err.Error()))
-		return
+		embeddings, err := idx.embedder.EmbedBatch(ctx, texts)
+		if err != nil {
+			slog.Warn("rag: backfill sub-batch embedding failed",
+				slog.Int("from", i), slog.Int("to", end),
+				slog.String("err", err.Error()))
+			continue
+		}
+
+		backfilled, err := idx.store.BatchUpdateEmbeddings(subBatch, embeddings)
+		if err != nil {
+			slog.Error("rag: batch update embeddings failed", slog.String("err", err.Error()))
+			continue
+		}
+		totalBackfilled += backfilled
 	}
 
 	slog.Info(
-		"rag: backfill complete",
-		slog.Int("backfilled", backfilled),
+		"rag: backfill pass complete",
+		slog.Int("backfilled", totalBackfilled),
 		slog.Int("total_pending", pending),
 	)
 }

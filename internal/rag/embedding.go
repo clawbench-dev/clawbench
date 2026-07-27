@@ -32,7 +32,7 @@ func NewEmbeddingClient(baseURL, model, apiKey string) *EmbeddingClient {
 		Model:   model,
 		APIKey:  apiKey,
 		HTTPClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 180 * time.Second,
 		},
 	}
 }
