@@ -47,7 +47,7 @@ flowchart TD
 
 ### 功能清单
 
-- **WebSocket 事件通道**：`/api/ai/events/ws` 统一推送聊天流和系统事件。聊天流事件（`content`/`thinking`/`tool_use` 等 `ChatStreamData`）由 `StreamHub.EmitToSession` 推送；系统事件（`session_update`/`task_update`/`summary_update`/`permission_pending`）由 `ws.Manager` 广播。`session_update` 的 status 字段区分 running、completed、cancelled、permission_pending、permission_resolved 等状态
+- **WebSocket 事件通道**：`/api/ai/events/ws` 统一推送聊天流和系统事件。聊天流事件（`content`/`thinking`/`tool_use` 等 `ChatStreamData`）由 `StreamHub.EmitToSession` 推送；系统事件（`session_update`/`task_update`/`summary_update`/`permission_pending`）由 `ws.Manager` 广播。信号事件（`replay_done`/`thinking_done`/`done`）使用空 payload。`session_update` 的 status 字段区分 running、completed、cancelled、permission_pending、permission_resolved 等状态
 - **断线缓冲与回放**：WS 断线后缓冲 10s 内的事件（最多 50 条），重连后自动回放。确保不丢失关键通知
 - **摘要推送**：`summary_update` 事件在聊天或任务摘要生成后实时推送，前端 `SummaryToggle` 组件可立即切换显示摘要，无需轮询
 - **心跳保活**：服务端每 30 秒发送 ping；连续 10 分钟未收到客户端消息时关闭读取循环，防止半开连接长期占用资源

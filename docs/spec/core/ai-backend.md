@@ -49,6 +49,28 @@ sequenceDiagram
     ACPBackend->>Agent进程: 自动重生 + 重试 Prompt（跳过导致崩溃的配置）
 ```
 
+### LoadSession 异步回放流程
+
+```mermaid
+sequenceDiagram
+    participant 前端
+    participant handler
+    participant ACPConn
+    participant Agent进程
+    participant WS
+
+    前端->>handler: POST /api/ai/session/acp-load
+    handler->>ACPConn: LoadSession(sessionID)
+    Agent进程-->>ACPConn: SessionUpdate 通知（缓冲）
+    handler-->>前端: {sessionId, replayPending: true}
+    Note over 前端: 前端可立即发消息
+    handler->>handler: 异步 goroutine 处理回放
+    handler->>handler: 持久化消息到 DB
+    handler->>WS: replay_done 事件
+    WS-->>前端: replay_done
+    Note over 前端: 回放完成，可显示历史
+```
+
 ### AutoResume 流程（仅 CLI 模式）
 
 ```mermaid
@@ -82,6 +104,7 @@ AutoResume 只用于 CLI 模式后端。ACP 后端使用会话级取消而非进
 - **自动恢复（AutoResume）**：仅 CLI 模式。对 ExitPlanMode 场景自动执行"取消→恢复继续"流程，避免用户手动干预
 - **流式事件标准化**：各后端不同的输出格式经 LineParser（CLI）或 ACP 事件翻译层（ACP）统一为标准 StreamEvent 类型。ACP 额外提供 mode_update、config_update、thinking_effort_update、plan_update、model_list_update、commands_update 等能力事件
 - **ACP 权限审批**：ACP 后端请求用户审批工具调用时，系统推送 `permission_pending` 事件，前端展示审批界面，用户批准/拒绝后通过 `/api/ai/permission/respond` 回传
+- **ACP LoadSession 异步回放**：ACP LoadSession 立即返回 `replayPending: true`，前端无需等待历史回放即可发送新消息——Agent 已从加载的会话获得完整上下文。回放在后台 goroutine 中异步执行，持久化消息到 DB 后通过 `replay_done` WS 事件通知前端。LoadSession 能力来源是 `BackendSpec.ACPLoadSession` 而非 ACP Initialize 响应——某些 Agent（如 CodeBuddy）在 Initialize 中报告 `LoadSession=true` 但实际不支持
 - **工具名称归一化**：不同后端对同一操作使用不同的工具名称（如 `read_file` vs `Read`），归一化层统一映射，保证前端显示和 RAG 索引的一致性
 - **孤儿进程清理**：服务启动时扫描系统中的 AI 子进程孤儿（通过环境变量标记），检查父进程存活后安全清理。防止服务崩溃后遗留的进程占用资源
 - **ACP Stdout 过滤器（acpStdoutFilter）**：所有 ACP 连接的 stdout 经过过滤器处理，修复两类 JSON-RPC 协议违规：
@@ -101,6 +124,6 @@ AutoResume 只用于 CLI 模式后端。ACP 后端使用会话级取消而非进
 - **CLIBackend 是通用骨架**：所有 shell-out 后端共享 `CLIBackend` 的进程管理、stdout 管道、上下文取消逻辑，差异仅在于 CLI 参数构建和输出解析策略——新增后端只需提供这两个策略
 - **后端规格集中声明**：所有后端的规格（CLI 命令、模型发现策略、ACP 命令）在 `BackendRegistry` 中集中声明，factory 通过后端类型字符串匹配创建实例。新增后端需要同时添加规格条目和 factory 分支
 - **AutoResumeBackend 是透明包装器**：仅包装 CLI 后端。ACP 后端不使用 AutoResume——ACP 用会话级取消替代进程终止，两种取消策略不兼容
-- **ACP 状态缓存与重发**：每个连接缓存当前的 mode、thinking effort、config、commands、plan 状态。新连接或重连时自动重发，保证前端在任何时刻都能恢复完整的 UI 状态
+- **ACP 状态缓存与重发**：每个连接缓存当前的 mode、thinking effort、config、commands、plan 状态和 `replayPending` 标志。新连接或重连时自动重发，保证前端在任何时刻都能恢复完整的 UI 状态。`replayPending` 标识 LoadSession 异步回放是否仍在进行
 - **ACP 工具调用防抖**：`ToolCallUpdate` 事件以 50ms 窗口批量发送，将推送给前端的 WS 事件率降低约 95% 而不丢失信息——AI 工具调用的流式更新频率极高，逐条推送会淹没前端
 - **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent。`source` 字段支持 `auto`（自动发现）、`setup`（安装/设置流程创建）和 `manual`（手动定义）。ACP 相关字段（`transport`、`acp_command`、可用模式、思考深度、命令等）持久化在 `agents` 表中，重启后无需重新发现

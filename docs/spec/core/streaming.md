@@ -56,6 +56,7 @@ sequenceDiagram
 - **WebSocket 单通道**：所有实时推送走 `GET /api/ai/events/ws`（`internal/handler/handler.go`），无独立聊天流 SSE
   - 聊天内容事件：`ChatStreamData` 携带 `event_type`（`content`/`thinking`/`tool_use` 等子事件），通过 `StreamHub.EmitToSession` 推送（`internal/ws/stream_hub.go:120`）
   - 系统事件信封：`{type:"event", event:"session_update"|"task_update"|"summary_update"}`（`internal/ws/protocol.go:13`）
+  - 信号事件：`replay_done`（LoadSession 异步回放完成，空 payload）、`thinking_done`、`done`（均为空 payload）
   - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong` 六种客户端消息（`protocol.go:19`）
 - **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`（`internal/ws/manager.go:42,46`）
 - **订阅超时清理**：客户端超过 `staleTimeout = 120s` 无活动（`manager.go:50`）即清理订阅，避免僵尸连接

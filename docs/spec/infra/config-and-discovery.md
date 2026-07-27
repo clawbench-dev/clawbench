@@ -42,13 +42,13 @@ flowchart TD
 - **双传输支持**：Agent 的 `Transport` 字段（"cli" / "acp-stdio"）决定使用哪种传输模式。ACP 支持的 Agent 自动设置 `acp_command`，用户可以在会话中切换传输方式
 - **Model 自动发现**：通过 CLI 命令（如 `deepseek models`）或 `BackendSpec.RegisterDiscoverModelsFunc` 注册的自定义发现函数发现可用模型。当 `ListModelsCmd` 为空时使用 `KnownModels` 或用户手动定义；ACP 后端优先用 ACP 返回的模型列表（覆盖 CLI 发现结果）。结果缓存到 SQLite 与内存
 - **后台模型刷新**：启动后后台定期刷新模型缓存，更新自动发现的 Agent 的模型列表。新增模型无需重启
-- **运行时连通性与升级**：前端 `useConnectivityTest` 检查服务连通性；`useUpgrade` 调用 `/api/upgrade/check`、`/api/upgrade/start` 和 `/api/upgrade/status` 完成版本检查、启动升级和进度查询，三个端点均要求认证
+- **运行时连通性与升级**：前端 `useConnectivityTest` 检查服务连通性；`useUpgrade` 调用 `/api/upgrade/check`、`/api/upgrade/start` 和 `/api/upgrade/status` 完成版本检查、启动升级和进度查询，三个端点均要求认证；`useSystemResources` 轮询 `GET /api/system/resources` 获取 CPU、内存、磁盘、网络和负载指标，用于设置页资源监控
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖，标志区分用户定义和自动发现。用户对配置有最终控制权
 - **供应商注册表**：内置 27 个 LLM 供应商规格（含 minimax / minimax-cn）。已知模型由 `BackendSpec.KnownModels` 静态声明，或由后端通过 `RegisterDiscoverModelsFunc()` 动态注册。运行时可通过 `POST /api/agents/rescan` 重新扫描 PATH；当前实现不依赖外部模型目录生成服务
 - **API 密钥加密存储**：LLM 供应商的 API 密钥使用 AES-256-GCM 加密后存入 `agent_api_keys` 表，加密密钥由登录密码经 HKDF-SHA256 派生。密码变更时自动轮换
 - **绿色便携部署**：所有运行时数据在 `.clawbench/` 目录下，删除即干净卸载，拷贝二进制目录即可多实例部署。不需要系统级安装
 - **多实例 Cookie 隔离**：`ScopedCookieName()`（`internal/model/config.go:215-224`）为非默认端口实例的 Cookie 名添加前缀——端口 20300 的 `clawbench_session` 变为 `cb20300_clawbench_session`。默认端口 20000 保持原名称（向后兼容）。前端 `scopedCookieKey()`（`web/src/i18n/index.ts:8-14`）镜像相同逻辑。不同端口实例可安全共存于同一浏览器
-- **版本化 Schema 迁移**：数据库迁移采用列检测模式（`internal/service/database.go:125-692`）——每条迁移通过 `pragma_table_info('table')` 查询列是否已存在，不存在才执行 `ALTER TABLE`。此方式天然幂等，无需 `schema_migrations` 版本表或 dirty flag。`InitDB()` 先用 `CREATE TABLE IF NOT EXISTS` 创建最新表结构，再依次运行增量迁移（如 line 398 `summary` 列、line 419 `transport` 列、line 460 `custom_system_prompt` 列、line 606-649 ACP 相关列等）。数据迁移由独立函数处理（`MigrateMetadataFromContent` line 697、`MigrateTaskExecutionSummaries` line 825、`MigrateToolCallsFromContent` line 904）
+- **版本化 Schema 迁移**：数据库迁移采用列检测模式（`internal/service/database.go:125-692`）——每条迁移通过 `pragma_table_info('table')` 查询列是否已存在，不存在才执行 `ALTER TABLE`。此方式天然幂等，无需 `schema_migrations` 版本表或 dirty flag。`InitDB()` 先用 `CREATE TABLE IF NOT EXISTS` 创建最新表结构，再依次运行增量迁移（如 line 398 `summary` 列、line 419 `transport` 列、line 460 `custom_system_prompt` 列、line 606-649 ACP 相关列、`indexed` 列用于 RAG 索引进度跟踪等）。数据迁移由独立函数处理（`MigrateMetadataFromContent` line 697、`MigrateTaskExecutionSummaries` line 825、`MigrateToolCallsFromContent` line 904）
 - **覆盖率门禁**：两层强制执行，每次 PR/push 到 main 分支触发（`scripts/check-go-coverage.sh`、`scripts/check-frontend-coverage.sh`、`scripts/check-android-coverage.sh`）：
   - **Tier 1 项目门禁**：当前包覆盖率 `>= 基线% - 1.5%`（`TIER1_TOLERANCE = 1.5`，`check-go-coverage.sh:88`）
   - **Tier 2 Diff 覆盖率**：变更行覆盖率 `>= 80%`（`DIFF_THRESHOLD = 80.0`，`check-go-coverage.sh:89`）
