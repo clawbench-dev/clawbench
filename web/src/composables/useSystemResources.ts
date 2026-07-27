@@ -23,11 +23,24 @@ export interface NetworkInfo {
   download_rate: number
 }
 
+export interface DiskIOInfo {
+  read_rate: number
+  write_rate: number
+}
+
+export interface LoadInfo {
+  load1: number
+  load5: number
+  load15: number
+}
+
 export interface SystemResources {
   cpu: CPUInfo
   memory: MemoryInfo
   disk: DiskInfo
+  disk_io: DiskIOInfo
   network: NetworkInfo
+  load: LoadInfo
   errors?: string[]
 }
 
@@ -41,7 +54,9 @@ const resources = ref<SystemResources>({
   cpu: { percent: 0, core_count: 0 },
   memory: { used: 0, total: 0, percent: 0 },
   disk: { used: 0, total: 0, percent: 0 },
+  disk_io: { read_rate: 0, write_rate: 0 },
   network: { upload_rate: 0, download_rate: 0 },
+  load: { load1: 0, load5: 0, load15: 0 },
 })
 
 async function fetchResources() {

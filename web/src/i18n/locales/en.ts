@@ -109,8 +109,11 @@ export default {
     cpu: 'CPU',
     memory: 'Memory',
     disk: 'Disk',
+    diskRead: 'Disk Read',
+    diskWrite: 'Disk Write',
     upload: 'Upload',
     download: 'Download',
+    loadAvg: 'Load',
   },
   chat: {
     title: 'AI Chat',

@@ -11,6 +11,17 @@
         <div class="progress-fill" :style="{ width: cpuBarWidth + '%' }" :class="getBarClass(resources.cpu.percent)"></div>
       </div>
     </div>
+    <!-- Load Average -->
+    <div class="resource-row">
+      <div class="resource-header">
+        <Activity :size="13" class="resource-icon" />
+        <span class="resource-label">{{ t('systemResources.loadAvg') }}</span>
+        <span class="resource-value">{{ resources.load.load1.toFixed(2) }}</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" :style="{ width: loadBarPercent + '%' }" :class="getBarClass(loadBarPercent)"></div>
+      </div>
+    </div>
     <!-- Memory -->
     <div class="resource-row">
       <div class="resource-header">
@@ -33,6 +44,22 @@
         <div class="progress-fill" :style="{ width: resources.disk.percent.toFixed(1) + '%' }" :class="getBarClass(resources.disk.percent)"></div>
       </div>
     </div>
+    <!-- Disk Read -->
+    <div class="resource-row">
+      <div class="resource-header">
+        <ArrowDown :size="13" class="resource-icon disk-read" />
+        <span class="resource-label">{{ t('systemResources.diskRead') }}</span>
+        <span class="resource-value">{{ formatRate(resources.disk_io.read_rate) }}</span>
+      </div>
+    </div>
+    <!-- Disk Write -->
+    <div class="resource-row">
+      <div class="resource-header">
+        <ArrowUp :size="13" class="resource-icon disk-write" />
+        <span class="resource-label">{{ t('systemResources.diskWrite') }}</span>
+        <span class="resource-value">{{ formatRate(resources.disk_io.write_rate) }}</span>
+      </div>
+    </div>
     <!-- Network Up -->
     <div class="resource-row">
       <div class="resource-header">
@@ -53,7 +80,7 @@
 </template>
 
 <script setup>
-import { Cpu, MemoryStick, Database, ArrowUp, ArrowDown } from 'lucide-vue-next'
+import { Cpu, Activity, MemoryStick, Database, ArrowUp, ArrowDown } from 'lucide-vue-next'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSystemResources } from '@/composables/useSystemResources'
@@ -69,6 +96,14 @@ const cpuPercent = computed(() => {
 const cpuBarWidth = computed(() => {
   const p = resources.value.cpu.percent
   return p < 0 ? 0 : p
+})
+
+// Load average as percentage of CPU capacity (load1 / coreCount * 100)
+const loadBarPercent = computed(() => {
+  const cores = resources.value.cpu.core_count
+  if (cores <= 0) return 0
+  const pct = (resources.value.load.load1 / cores) * 100
+  return Math.min(pct, 100)
 })
 
 function getBarClass(percent) {
@@ -127,6 +162,14 @@ defineExpose({ startPolling, stopPolling })
 
 .resource-icon.net-down {
   color: var(--accent-color, #3b82f6);
+}
+
+.resource-icon.disk-read {
+  color: var(--color-yellow, #eab308);
+}
+
+.resource-icon.disk-write {
+  color: #f97316;
 }
 
 .resource-label {

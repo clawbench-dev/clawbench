@@ -109,8 +109,11 @@ export default {
     cpu: 'CPU',
     memory: '内存',
     disk: '磁盘',
+    diskRead: '磁盘读',
+    diskWrite: '磁盘写',
     upload: '上传',
     download: '下载',
+    loadAvg: '负载',
   },
   chat: {
     title: 'AI 对话',
