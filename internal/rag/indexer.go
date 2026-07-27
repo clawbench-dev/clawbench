@@ -132,9 +132,10 @@ func (idx *Indexer) run() {
 }
 
 // embedSubBatchSize is the maximum number of texts per embedding API call.
-// Local models (e.g. Ollama) can be slow; smaller sub-batches avoid timeouts
-// and allow partial progress to be saved.
-const embedSubBatchSize = 20
+// Local models (e.g. Ollama bge-m3) process texts serially; a batch of N
+// texts takes ~N×single_latency. Keep small so each API call finishes well
+// within the HTTPClient timeout.
+const embedSubBatchSize = 5
 
 // embedInSubBatches calls EmbedBatch in smaller sub-batches to avoid timeouts.
 // Returns all embeddings in the same order as input texts. If a sub-batch fails,
