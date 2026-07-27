@@ -57,7 +57,7 @@
     <div v-if="type === 'info' && displayValue" class="settings-item__info-detail">{{ displayValue }}</div>
     <!-- Progress bar for info-type items -->
     <div v-if="type === 'info' && progress && progress.max > 0" class="settings-item__progress">
-      <div class="settings-item__progress-bar" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
+      <div class="settings-item__progress-bar" :class="{ 'settings-item__progress-bar--active': progress.value < progress.max }" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
       <span v-if="speedLabel" class="settings-item__speed">{{ speedLabel }}</span>
     </div>
   </div>
@@ -453,7 +453,26 @@ function confirmEdit() {
   height: 100%;
   background: var(--accent-color);
   border-radius: 2px;
-  transition: width 0.3s ease;
+  transition: width 0.5s ease;
+}
+
+.settings-item__progress-bar--active {
+  background-image: linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.15) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.15) 50%,
+    rgba(255, 255, 255, 0.15) 75%,
+    transparent 75%
+  );
+  background-size: 12px 12px;
+  animation: progress-stripe 0.8s linear infinite;
+}
+
+@keyframes progress-stripe {
+  0% { background-position: 0 0; }
+  100% { background-position: 12px 0; }
 }
 
 .settings-item__speed {
