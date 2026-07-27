@@ -60,8 +60,8 @@ describe('registerSessionActions', () => {
     await deleteSession('s2', 'claude')
     expect(mockDelete).toHaveBeenCalledWith('s2', 'claude')
 
-    await sendMessage('hello', ['/file.ts'])
-    expect(mockSend).toHaveBeenCalledWith('hello', ['/file.ts'])
+    await sendMessage('hello')
+    expect(mockSend).toHaveBeenCalledWith('hello')
 
     openChatPanel()
     expect(mockOpen).toHaveBeenCalled()
@@ -166,7 +166,7 @@ describe('action delegation', () => {
     expect(mockDelete).toHaveBeenCalledWith('session-1', 'claude')
   })
 
-  it('delegates sendMessage with filePaths', async () => {
+  it('delegates sendMessage', async () => {
     const mockSend = vi.fn()
     registerSessionActions({
       switchSession: vi.fn(),
@@ -179,8 +179,8 @@ describe('action delegation', () => {
     })
 
     const { sendMessage } = useSessionIdentity()
-    await sendMessage('hello', ['/tmp/file.go'])
-    expect(mockSend).toHaveBeenCalledWith('hello', ['/tmp/file.go'])
+    await sendMessage('hello')
+    expect(mockSend).toHaveBeenCalledWith('hello')
   })
 
   it('delegates openChatPanel to registered callback', () => {

@@ -3281,3 +3281,60 @@ func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["queued"])
 }
+
+func TestFileEntryLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		entry    model.FileEntry
+		expected string
+	}{
+		{
+			name:     "no line info",
+			entry:    model.FileEntry{Path: "/src/main.go"},
+			expected: "/src/main.go",
+		},
+		{
+			name:     "single line",
+			entry:    model.FileEntry{Path: "/src/main.go", StartLine: 10, EndLine: 10},
+			expected: "/src/main.go:10",
+		},
+		{
+			name:     "line range",
+			entry:    model.FileEntry{Path: "/src/main.go", StartLine: 10, EndLine: 20},
+			expected: "/src/main.go:10-20",
+		},
+		{
+			name:     "start line only (endLine zero)",
+			entry:    model.FileEntry{Path: "/src/main.go", StartLine: 5},
+			expected: "/src/main.go:5",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, fileEntryLabel(tt.entry))
+		})
+	}
+}
+
+func TestBuildChatRequestFromQueue_LineNumbers(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "queue-lines", "", "", "codebuddy", "chat")
+	assert.NoError(t, err)
+
+	// Queued message with files that have line info should include line numbers in prompt
+	qMsg := model.QueuedMessage{
+		Text: "explain this code",
+		Files: []model.FileEntry{
+			{Path: "/src/foo.ts", StartLine: 10, EndLine: 20},
+			{Path: "/src/bar.go", StartLine: 5, EndLine: 5},
+			{Path: "/src/baz.rs"},
+		},
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	assert.Contains(t, req.Prompt, "/src/foo.ts:10-20", "prompt should include line range for foo.ts")
+	assert.Contains(t, req.Prompt, "/src/bar.go:5", "prompt should include single line for bar.go")
+	assert.Contains(t, req.Prompt, "/src/baz.rs", "prompt should include path without line info for baz.rs")
+}
