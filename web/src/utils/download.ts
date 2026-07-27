@@ -23,11 +23,10 @@ function isAbsolutePath(p: string): boolean {
  */
 export function buildLocalFileUrl(
     path: string,
-    options?: { download?: boolean; timestamp?: boolean }
+    options?: { download?: boolean }
 ): string {
     const params: string[] = []
     if (options?.download) params.push('download=1')
-    if (options?.timestamp) params.push(`t=${Date.now()}`)
 
     if (isAbsolutePath(path)) {
         // External file: use ?path= query param

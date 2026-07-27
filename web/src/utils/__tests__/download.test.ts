@@ -30,17 +30,6 @@ describe('buildLocalFileUrl', () => {
     )
   })
 
-  it('adds timestamp query param', () => {
-    const url = buildLocalFileUrl('test.txt', { timestamp: true })
-    expect(url).toMatch(/\/api\/local-file\/test\.txt\?t=\d+/)
-  })
-
-  it('combines download and timestamp params', () => {
-    const url = buildLocalFileUrl('file.pdf', { download: true, timestamp: true })
-    expect(url).toContain('download=1')
-    expect(url).toMatch(/t=\d+/)
-  })
-
   it('handles simple filename without slashes', () => {
     expect(buildLocalFileUrl('readme.md')).toBe('/api/local-file/readme.md')
   })
@@ -53,11 +42,6 @@ describe('buildLocalFileUrl', () => {
   it('uses ?path= query param for absolute paths with download', () => {
     const url = buildLocalFileUrl('/tmp/data.csv', { download: true })
     expect(url).toBe('/api/local-file/?download=1&path=%2Ftmp%2Fdata.csv')
-  })
-
-  it('uses ?path= query param for absolute paths with timestamp', () => {
-    const url = buildLocalFileUrl('/var/log/syslog', { timestamp: true })
-    expect(url).toMatch(/\/api\/local-file\/\?t=\d+&path=%2Fvar%2Flog%2Fsyslog/)
   })
 })
 

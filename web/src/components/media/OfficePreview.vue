@@ -89,7 +89,9 @@ const isWord = computed(() => lower.value.endsWith('.docx'))
 const isExcel = computed(() => lower.value.endsWith('.xlsx') || lower.value.endsWith('.xls'))
 const isPpt = computed(() => lower.value.endsWith('.pptx'))
 
-// File URL via /api/local-file/ (same pattern as ImagePreview/PdfPreview)
+// Reactivity trigger: changes the computed URL when file changes or reload() is called,
+// forcing the office viewer to re-fetch the file.
+// (Server-side Cache-Control: no-store handles browser caching; this handles Vue DOM reuse.)
 const mediaTimestamp = ref(Date.now())
 const fileUrl = computed(() =>
   `/api/local-file/${encodeURIComponent(props.file.path)}?t=${mediaTimestamp.value}`

@@ -27,7 +27,9 @@ const props = defineProps({
     file: Object,
 })
 
-// Cache-busting: update timestamp when file changes to bust browser cache
+// Reactivity trigger: changes the computed URL when the file prop changes,
+// forcing Vue to re-fetch rather than reusing the same <audio> element.
+// (Server-side Cache-Control: no-store handles browser caching; this handles Vue DOM reuse.)
 const mediaTimestamp = ref(Date.now())
 watch(() => props.file, () => { mediaTimestamp.value = Date.now() })
 const mediaUrl = computed(() =>

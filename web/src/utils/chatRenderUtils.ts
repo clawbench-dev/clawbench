@@ -33,7 +33,7 @@ export function rewriteImageUrls(html: string, projectRoot: string): string {
           let decoded = rel
           try { decoded = decodeURIComponent(rel) } catch { /* malformed encoding, use as-is */ }
           const encoded = decoded.split('/').map((s: string) => encodeURIComponent(s)).join('/')
-          cleanAttrs = cleanAttrs.replace(`src="${src}"`, `src="/api/local-file/${encoded}?t=${Date.now()}"`)
+          cleanAttrs = cleanAttrs.replace(`src="${src}"`, `src="/api/local-file/${encoded}"`)
         }
       }
     }

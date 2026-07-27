@@ -305,7 +305,7 @@ function navigateToIndex(newIdx, direction) {
     currentFilePath.value = entryPath
 
     // Build URL for the new file
-    currentUrl.value = buildLocalFileUrl(entryPath, { timestamp: true })
+    currentUrl.value = buildLocalFileUrl(entryPath)
     currentSvg.value = ''
 
     // Sync with store

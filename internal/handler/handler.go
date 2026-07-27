@@ -215,6 +215,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 			middleware.WithRequestID,
 			middleware.RequestLogger,
 			middleware.WithLocalizer,
+			middleware.NoCache,
 		)(handler)
 		mux.HandleFunc(pattern, wrapped)
 	}
