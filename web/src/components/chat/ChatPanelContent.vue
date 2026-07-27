@@ -463,7 +463,7 @@ const manager = useSessionManager({
 
 // Register identity actions — all paths now go through manager
 manager.registerIdentityActions({
-  sendMessage: (text, filePaths) => sendMessage(text, filePaths),
+  sendMessage: (text) => sendMessage(text),
   openChatPanel: () => emit('open'),
 })
 

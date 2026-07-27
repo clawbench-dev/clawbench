@@ -258,7 +258,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   /** Wire the identity singleton's proxy callbacks to our unified methods.
    *  Call this from ChatPanel's setup. */
   function registerIdentityActions(extra: {
-    sendMessage: (text: string, filePaths?: string[]) => Promise<void>
+    sendMessage: (text: string) => Promise<void>
     openChatPanel: () => void
   }) {
     identity.registerSessionActions({

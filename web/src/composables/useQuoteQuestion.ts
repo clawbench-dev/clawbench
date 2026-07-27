@@ -2,6 +2,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
+import { buildQuoteMessage } from '@/utils/doubleClickUtils.ts'
 import { closestElement, getLineInfo, getFileInfo } from '@/utils/quoteQuestionUtils.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
@@ -9,7 +10,7 @@ import type { QuoteData } from '@/composables/useChatContext.ts'
 // Module-level singleton: bar visibility state shared across all consumers.
 // quoteData is stored in useChatContext (global singleton) so ChatInputBar
 // can render a quote chip in any tab.
-const { quoteData, setQuoteData, addAttachedFile, hasAttachedFile, clearAll } = useChatContext()
+const { quoteData, setQuoteData, addAttachedFile, clearAll } = useChatContext()
 const barVisible = ref(false)
 const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the bar
 const sheetOpen = ref(false)
@@ -109,10 +110,15 @@ export function useQuoteQuestion() {
 
     const q = quoteData.value
 
-    // Add the quoted file (with line info) as an attached file — unified channel
-    if (q.filePath && !hasAttachedFile(q.filePath)) {
+    // Add the quoted file (with line info) as an attached file — unified channel.
+    // addAttachedFile handles dedup: if file already attached without line info,
+    // it upgrades the entry with startLine/endLine.
+    if (q.filePath) {
       addAttachedFile(q.filePath, false, q.startLine, q.endLine)
     }
+
+    // Embed quoted code text in the message body as context for the AI
+    const message = buildQuoteMessage(userMessage, q.text, q.filePath, q.language, q.startLine, q.endLine)
 
     // Capture animation coordinates BEFORE any await — the bar's handleSend()
     // sets expanded=false synchronously right after emit('send'), so the
@@ -125,7 +131,7 @@ export function useQuoteQuestion() {
     // Delegate to session identity singleton — it routes to ChatPanel's
     // sendMessage if registered, otherwise falls back to a direct API call.
     try {
-      await sessionIdentity.sendMessage(userMessage)
+      await sessionIdentity.sendMessage(message)
       toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })
       // Dispatch animation event with pre-captured coordinates
       if (animFrom && animTo) {

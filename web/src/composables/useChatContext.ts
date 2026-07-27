@@ -20,9 +20,17 @@ const attachedFiles = ref<FileEntry[]>([])
 const quoteData = ref<QuoteData | null>(null)
 
 function addAttachedFile(path: string, isDir: boolean = false, startLine?: number, endLine?: number) {
-  if (path && !attachedFiles.value.some(f => f.path === path)) {
-    attachedFiles.value.push({ path, isDir, startLine, endLine })
+  if (!path) return
+  const existing = attachedFiles.value.find(f => f.path === path)
+  if (existing) {
+    // Upgrade with line info if the existing entry lacks it
+    if (startLine !== undefined && existing.startLine === undefined) {
+      existing.startLine = startLine
+      existing.endLine = endLine
+    }
+    return
   }
+  attachedFiles.value.push({ path, isDir, startLine, endLine })
 }
 
 function removeAttachedFile(index: number) {

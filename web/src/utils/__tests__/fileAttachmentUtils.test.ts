@@ -14,6 +14,17 @@ describe('normalizeFileEntry', () => {
   it('normalizes object with path and isDir false', () => {
     expect(normalizeFileEntry({ path: '/main.go', isDir: false })).toEqual({ path: '/main.go', isDir: false })
   })
+  it('preserves startLine and endLine', () => {
+    expect(normalizeFileEntry({ path: '/foo.ts', isDir: false, startLine: 10, endLine: 20 })).toEqual({ path: '/foo.ts', isDir: false, startLine: 10, endLine: 20 })
+  })
+  it('preserves startLine only', () => {
+    expect(normalizeFileEntry({ path: '/bar.go', isDir: false, startLine: 5 })).toEqual({ path: '/bar.go', isDir: false, startLine: 5 })
+  })
+  it('string input has no line info', () => {
+    const result = normalizeFileEntry('/foo.ts')
+    expect(result.startLine).toBeUndefined()
+    expect(result.endLine).toBeUndefined()
+  })
   it('handles object with empty path', () => {
     expect(normalizeFileEntry({ path: '' })).toEqual({ path: '', isDir: false })
   })

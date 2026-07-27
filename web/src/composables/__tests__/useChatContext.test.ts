@@ -17,6 +17,25 @@ describe('useChatContext', () => {
       expect(ctx.attachedFiles.value).toEqual([{ path: '/some/path.txt', isDir: false }])
     })
 
+    it('addAttachedFile adds a file entry with line info', () => {
+      ctx.addAttachedFile('/src/foo.ts', false, 10, 20)
+      expect(ctx.attachedFiles.value).toEqual([{ path: '/src/foo.ts', isDir: false, startLine: 10, endLine: 20 }])
+    })
+
+    it('addAttachedFile upgrades existing entry with line info', () => {
+      ctx.addAttachedFile('/src/foo.ts')
+      expect(ctx.attachedFiles.value).toEqual([{ path: '/src/foo.ts', isDir: false }])
+
+      ctx.addAttachedFile('/src/foo.ts', false, 10, 20)
+      expect(ctx.attachedFiles.value).toEqual([{ path: '/src/foo.ts', isDir: false, startLine: 10, endLine: 20 }])
+    })
+
+    it('addAttachedFile does not overwrite existing line info', () => {
+      ctx.addAttachedFile('/src/foo.ts', false, 5, 15)
+      ctx.addAttachedFile('/src/foo.ts', false, 10, 20)
+      expect(ctx.attachedFiles.value).toEqual([{ path: '/src/foo.ts', isDir: false, startLine: 5, endLine: 15 }])
+    })
+
     it('addAttachedFile adds a directory entry', () => {
       ctx.addAttachedFile('/src', true)
       expect(ctx.attachedFiles.value).toEqual([{ path: '/src', isDir: true }])

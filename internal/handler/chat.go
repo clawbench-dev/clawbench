@@ -367,13 +367,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		if f.IsDir {
 			fileEntryDirPaths = append(fileEntryDirPaths, f.Path)
 		} else {
-			label := f.Path
-			if f.StartLine > 0 && f.EndLine > 0 && f.StartLine != f.EndLine {
-				label = fmt.Sprintf("%s:%d-%d", f.Path, f.StartLine, f.EndLine)
-			} else if f.StartLine > 0 {
-				label = fmt.Sprintf("%s:%d", f.Path, f.StartLine)
-			}
-			fileEntryFileLabels = append(fileEntryFileLabels, label)
+			fileEntryFileLabels = append(fileEntryFileLabels, fileEntryLabel(f))
 		}
 	}
 
@@ -914,6 +908,18 @@ func buildForkContext(sessionID string) string {
 	return sb.String()
 }
 
+// fileEntryLabel returns a prompt label for a FileEntry, appending line info
+// when present: "path", "path:10", or "path:10-20".
+func fileEntryLabel(f model.FileEntry) string {
+	if f.StartLine > 0 && f.EndLine > 0 && f.StartLine != f.EndLine {
+		return fmt.Sprintf("%s:%d-%d", f.Path, f.StartLine, f.EndLine)
+	}
+	if f.StartLine > 0 {
+		return fmt.Sprintf("%s:%d", f.Path, f.StartLine)
+	}
+	return f.Path
+}
+
 // buildChatRequestFromQueue constructs an ai.ChatRequest from a queued message.
 func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath, backendName, agentID, fileDir string) ai.ChatRequest {
 	prompt := qMsg.Text
@@ -945,7 +951,28 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 		}
 	}
 	if len(qMsg.Files) > 0 {
-		prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(qMsg.Files), strings.Join(model.PathsFromFileEntries(qMsg.Files), ", "), prompt)
+		// Build line-number-aware labels, excluding files already in filePaths
+		filePathsLookup := make(map[string]struct{}, len(qMsg.FilePaths))
+		for _, p := range qMsg.FilePaths {
+			filePathsLookup[p] = struct{}{}
+		}
+		var fileLabels, dirPaths []string
+		for _, f := range qMsg.Files {
+			if _, exists := filePathsLookup[f.Path]; exists {
+				continue
+			}
+			if f.IsDir {
+				dirPaths = append(dirPaths, f.Path)
+			} else {
+				fileLabels = append(fileLabels, fileEntryLabel(f))
+			}
+		}
+		if len(fileLabels) > 0 {
+			prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileLabels), strings.Join(fileLabels, ", "), prompt)
+		}
+		if len(dirPaths) > 0 {
+			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(dirPaths, ", "), prompt)
+		}
 	}
 
 	// @ command injection for queued messages (same logic as primary message path)
