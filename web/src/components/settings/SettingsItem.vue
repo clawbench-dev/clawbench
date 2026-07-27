@@ -57,7 +57,7 @@
     <div v-if="type === 'info' && displayValue" class="settings-item__info-detail">{{ displayValue }}</div>
     <!-- Progress bar for info-type items -->
     <div v-if="type === 'info' && progress && progress.max > 0" class="settings-item__progress">
-      <div class="settings-item__progress-bar" :class="{ 'settings-item__progress-bar--active': progress.value < progress.max }" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
+      <div class="settings-item__progress-bar" :class="{ 'settings-item__progress-bar--active': !disabled && progress.value < progress.max }" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
       <span v-if="speedLabel" class="settings-item__speed">{{ speedLabel }}</span>
     </div>
   </div>
@@ -444,8 +444,8 @@ function confirmEdit() {
   height: 3px;
   background: var(--bg-tertiary);
   border-radius: 2px;
-  overflow: hidden;
-  margin-top: 4px;
+  overflow: visible;
+  margin-top: 8px;
   position: relative;
 }
 
@@ -478,10 +478,11 @@ function confirmEdit() {
 .settings-item__speed {
   position: absolute;
   right: 0;
-  top: -16px;
+  bottom: 6px;
   font-size: 11px;
   color: var(--text-tertiary);
   white-space: nowrap;
+  pointer-events: none;
 }
 
 /* Section header */
