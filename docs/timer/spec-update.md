@@ -15,34 +15,7 @@
 
 ## 文档位置
 
-docs/spec/ 目录下。目录结构如下：
-
-```
-docs/spec/
-├── README.md                        # 系统总览
-├── core/                            # 核心业务
-│   ├── chat-flow.md                 # 聊天核心流程
-│   ├── ai-backend.md                # AI 后端抽象层
-│   ├── streaming.md                 # 流式传输体系
-│   └── session-lifecycle.md         # 会话生命周期
-├── features/                        # 功能特性
-│   ├── scheduled-tasks.md           # 定时任务
-│   ├── tts.md                       # 语音合成
-│   ├── terminal.md                  # Web 终端
-│   ├── git-management.md           # Git 管理
-│   ├── file-management.md           # 文件管理
-│   ├── rag.md                       # RAG 检索
-│   └── push-notifications.md       # 推送通知
-├── infra/                           # 基础设施
-│   ├── auth-and-middleware.md       # 认证与中间件
-│   ├── ssh-tunnel.md               # SSH 隧道
-│   ├── proxy.md                    # 代理注册表
-│   ├── config-and-discovery.md     # 配置与自动发现
-│   └── event-system.md             # 事件体系
-└── client/                          # 客户端
-    ├── frontend-architecture.md    # 前端架构
-    └── android-integration.md      # Android 集成
-```
+docs/spec/ 目录下。执行时直接 `ls -R docs/spec/` 查看当前实际结构，不要依赖静态目录树。
 
 ## 每个文件的格式（三段式）
 
