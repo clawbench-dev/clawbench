@@ -54,20 +54,26 @@ function saveToStorage() {
   }
 }
 
-// Module-level watchers — run exactly once
-// Guard against store not being initialized (test environment)
-watch(() => store?.state?.projectRoot, () => {
-  loadFromStorage()
-})
+let _watchersInitialized = false
 
-watch(() => localConfig.recentFilesCount, () => {
-  trimEntries()
-})
+function ensureWatchers() {
+  if (_watchersInitialized) return
+  _watchersInitialized = true
+  // Deferred to first use to avoid accessing store during module initialization
+  // (circular dep: app.ts → useFileNavStack → useRecentFiles → app.ts)
+  watch(() => store?.state?.projectRoot, () => {
+    loadFromStorage()
+  })
+  watch(() => localConfig.recentFilesCount, () => {
+    trimEntries()
+  })
+}
 
 /** @internal Reset all state — for tests only */
 export function _resetForTesting() {
   _entries.value = []
   _loaded = false
+  _watchersInitialized = false
 }
 
 /**
@@ -75,6 +81,7 @@ export function _resetForTesting() {
  * Deduplicates (moves to front if already present), caps at current max.
  */
 export function recordRecentFile(path: string) {
+  ensureWatchers()
   if (!path || !store.state.projectRoot) return
   const now = Date.now()
   const filtered = _entries.value.filter(e => e.path !== path)
@@ -86,11 +93,13 @@ export function recordRecentFile(path: string) {
  * Remove a file from recent history (e.g. after deletion).
  */
 export function removeRecentFile(path: string) {
+  ensureWatchers()
   _entries.value = _entries.value.filter(e => e.path !== path)
   saveToStorage()
 }
 
 export function useRecentFiles() {
+  ensureWatchers()
   // Lazy-load on first use
   if (!_loaded) {
     loadFromStorage()
