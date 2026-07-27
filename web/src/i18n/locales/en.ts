@@ -1272,6 +1272,7 @@ export default {
       ragEmbedProgress: 'Embedding Progress',
       ragEmbedProgressDesc: 'Number of chat messages with vector embeddings completed',
       ragProgressFormat: '{done}/{total}',
+      ragSpeedFormat: '{speed} msg/s',
       portForwardEnabled: 'Enable Port Forward',
       portForwardEnabledDesc: 'Forward specified ports through SSH tunnel for remote access to server local ports',
       portForwardPort: 'Port Forward Port',

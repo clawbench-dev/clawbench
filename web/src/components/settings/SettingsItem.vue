@@ -58,6 +58,7 @@
     <!-- Progress bar for info-type items -->
     <div v-if="type === 'info' && progress && progress.max > 0" class="settings-item__progress">
       <div class="settings-item__progress-bar" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
+      <span v-if="speedLabel" class="settings-item__speed">{{ speedLabel }}</span>
     </div>
   </div>
   <!-- Inline editor (non-select types) -->
@@ -178,6 +179,8 @@ interface Props {
   displayTransform?: (value: unknown) => unknown
   /** Progress bar for info-type items: { value, max }. Bar hidden when value >= max. */
   progress?: { value: number; max: number }
+  /** Speed label shown next to progress (e.g. "2.5 条/秒"). Only shown when > 0. */
+  speedLabel?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -443,6 +446,7 @@ function confirmEdit() {
   border-radius: 2px;
   overflow: hidden;
   margin-top: 4px;
+  position: relative;
 }
 
 .settings-item__progress-bar {
@@ -450,6 +454,15 @@ function confirmEdit() {
   background: var(--accent-color);
   border-radius: 2px;
   transition: width 0.3s ease;
+}
+
+.settings-item__speed {
+  position: absolute;
+  right: 0;
+  top: -16px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
 }
 
 /* Section header */

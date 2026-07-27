@@ -1273,6 +1273,7 @@ export default {
       ragEmbedProgress: '向量嵌入进度',
       ragEmbedProgressDesc: '已完成向量嵌入的聊天消息数量',
       ragProgressFormat: '{done}/{total}',
+      ragSpeedFormat: '{speed} 条/秒',
       portForwardEnabled: '启用端口转发',
       portForwardEnabledDesc: '通过 SSH 隧道转发指定端口，启用后可从手机远程访问服务器本地端口',
       portForwardPort: '端口转发端口',

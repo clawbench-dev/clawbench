@@ -11,9 +11,11 @@ export interface RagStatus {
   total_messages: number
   indexed_messages: number
   embedded_messages: number
+  index_speed: number   // messages/sec (instantaneous)
+  embed_speed: number   // messages/sec (instantaneous)
 }
 
-const POLL_INTERVAL = 10_000
+const POLL_INTERVAL = 5_000
 
 const status = ref<RagStatus>({
   available: false,
@@ -24,15 +26,38 @@ const status = ref<RagStatus>({
   total_messages: 0,
   indexed_messages: 0,
   embedded_messages: 0,
+  index_speed: 0,
+  embed_speed: 0,
 })
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let activeCount = 0
 let visibilityHandler: (() => void) | null = null
 
+// Speed tracking: previous values + timestamp for instantaneous rate
+let prevIndexed = 0
+let prevEmbedded = 0
+let prevFetchTime = 0
+
 async function fetchStatus(): Promise<void> {
   try {
     const data = await apiGet<RagStatus>('/api/rag/status')
+
+    // Compute instantaneous speed from delta since last fetch
+    const now = Date.now()
+    if (prevFetchTime > 0 && now > prevFetchTime) {
+      const elapsedSec = (now - prevFetchTime) / 1000
+      data.index_speed = Math.max(0, (data.indexed_messages - prevIndexed) / elapsedSec)
+      data.embed_speed = Math.max(0, (data.embedded_messages - prevEmbedded) / elapsedSec)
+    } else {
+      data.index_speed = 0
+      data.embed_speed = 0
+    }
+
+    prevIndexed = data.indexed_messages
+    prevEmbedded = data.embedded_messages
+    prevFetchTime = now
+
     status.value = data
   } catch (err) {
     appLog.w('RagStatus', 'Failed to fetch RAG status', err)
@@ -42,6 +67,10 @@ async function fetchStatus(): Promise<void> {
 function startPolling(): void {
   activeCount++
   if (pollTimer) return
+  // Reset speed tracking on fresh start
+  prevIndexed = 0
+  prevEmbedded = 0
+  prevFetchTime = 0
   fetchStatus()
   pollTimer = setInterval(fetchStatus, POLL_INTERVAL)
 
@@ -54,6 +83,10 @@ function startPolling(): void {
           pollTimer = null
         }
       } else if (activeCount > 0 && !pollTimer) {
+        // Reset speed tracking after visibility change to avoid stale deltas
+        prevIndexed = 0
+        prevEmbedded = 0
+        prevFetchTime = 0
         fetchStatus()
         pollTimer = setInterval(fetchStatus, POLL_INTERVAL)
       }

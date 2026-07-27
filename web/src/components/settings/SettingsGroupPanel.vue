@@ -55,6 +55,7 @@
         :display-format="entry.field.displayFormat"
         :display-transform="entry.field.displayTransform"
         :progress="resolveProgress(entry.field)"
+        :speed-label="resolveSpeedLabel(entry.field)"
         :no-divider="false"
         @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
@@ -362,6 +363,18 @@ function resolveProgress(field: ItemSpec): { value: number; max: number } | unde
       return s.total_messages > 0 ? { value: s.embedded_messages, max: s.total_messages } : undefined
     default:
       return field.progress
+  }
+}
+
+function resolveSpeedLabel(field: ItemSpec): string | undefined {
+  const s = ragStatus.value
+  switch (field.key) {
+    case 'rag.status.index_progress':
+      return s.index_speed > 0 ? t('settings.items.ragSpeedFormat', { speed: s.index_speed.toFixed(1) }) : undefined
+    case 'rag.status.embed_progress':
+      return s.embed_speed > 0 ? t('settings.items.ragSpeedFormat', { speed: s.embed_speed.toFixed(1) }) : undefined
+    default:
+      return undefined
   }
 }
 
