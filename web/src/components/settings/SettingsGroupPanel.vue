@@ -201,7 +201,7 @@ onMounted(() => {
 
 // Start RAG status polling only when the RAG panel is both the active category
 // AND the settings tab is visible. Stop when either condition is false.
-const activeTab = inject<Ref<string>>('activeTab')
+const activeTab = inject<Ref<string>>('activeTab', ref('settings'))
 
 watch(
   () => props.config.panelId === 'rag' && activeTab?.value === 'settings',

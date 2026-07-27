@@ -59,14 +59,16 @@ async function fetchStatus(): Promise<void> {
       if (data.embedded_messages >= data.total_messages) lastEmbedSpeed = 0
     }
 
-    data.index_speed = lastIndexSpeed
-    data.embed_speed = lastEmbedSpeed
-
     prevIndexed = data.indexed_messages
     prevEmbedded = data.embedded_messages
     prevFetchTime = now
 
-    status.value = data
+    // Create new object instead of mutating API response
+    status.value = {
+      ...data,
+      index_speed: lastIndexSpeed,
+      embed_speed: lastEmbedSpeed,
+    }
   } catch (err) {
     appLog.w('RagStatus', 'Failed to fetch RAG status', err)
   }
@@ -115,6 +117,16 @@ function stopPolling(): void {
     document.removeEventListener('visibilitychange', visibilityHandler)
     visibilityHandler = null
   }
+}
+
+/** @internal Reset all state — for tests only */
+export function _resetForTesting() {
+  prevIndexed = 0
+  prevEmbedded = 0
+  prevFetchTime = 0
+  lastIndexSpeed = 0
+  lastEmbedSpeed = 0
+  stopPolling()
 }
 
 export function useRagStatus() {

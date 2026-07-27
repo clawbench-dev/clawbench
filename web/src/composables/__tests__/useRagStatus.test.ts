@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { useRagStatus } from '../useRagStatus'
+import { useRagStatus, _resetForTesting } from '../useRagStatus'
 import { apiGet } from '@/utils/api'
 
 vi.mock('@/utils/api', () => ({
@@ -21,9 +21,7 @@ describe('useRagStatus', () => {
   })
 
   afterEach(() => {
-    // Ensure polling is stopped between tests
-    const { stopPolling } = useRagStatus()
-    stopPolling()
+    _resetForTesting()
     vi.useRealTimers()
     vi.restoreAllMocks()
   })

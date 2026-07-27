@@ -304,7 +304,7 @@ func (s *Store) migrateEmbeddingsToVec() error {
 // ensureVecTable creates the rag_vec vec0 virtual table if it doesn't exist.
 // The dimension is determined from s.embDim (set by SetEmbeddingDim or loaded from DB).
 // Returns an error if dimension is unknown (0) and no existing table is found.
-// Must NOT be called from within a transaction (opens its own queries).
+// Must NOT be called while holding writeMu or from within a transaction (opens its own queries).
 func (s *Store) ensureVecTable() error {
 	if s.vecTableReady {
 		return nil // already confirmed
@@ -844,47 +844,63 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 	}
 
 	embBlob := serializeEmbedding(embedding)
+
+	// Ensure vec0 table exists before starting the transaction.
+	// Must NOT be called while holding writeMu or from within a transaction.
+	if err := s.ensureVecTable(); err != nil {
+		slog.Warn("rag: skipping vec0 upsert — table not available", slog.String("err", err.Error()))
+		// Fall through — still update rag_chunks without vec0
+	}
+
 	s.writeMu.Lock()
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		s.writeMu.Unlock()
+		return fmt.Errorf("begin update embedding transaction: %w", err)
+	}
+
+	// Update rag_chunks
+	_, err = tx.Exec(`
 		UPDATE rag_chunks
 		SET embedding = ?, has_embedding = 1, embedding_dim = ?
 		WHERE id = ?`,
 		embBlob, len(embedding), chunkID,
 	)
-	s.writeMu.Unlock()
 	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
 		return fmt.Errorf("update embedding: %w", err)
 	}
 
-	// Fetch chunk metadata for vec0 insert
-	var projectPath, backend, role, sessionID string
-	err = s.db.QueryRow(
-		`SELECT project_path, backend, role, session_id FROM rag_chunks WHERE id = ?`,
-		chunkID,
-	).Scan(&projectPath, &backend, &role, &sessionID)
-	if err != nil {
-		return fmt.Errorf("fetch chunk metadata for vec insert: %w", err)
-	}
-
 	// Upsert into vec0 (delete old + insert new)
-	// Ensure vec0 table exists before insert (outside transaction to avoid deadlock)
-	if err := s.ensureVecTable(); err != nil {
-		slog.Warn("rag: skipping vec0 upsert — table not available", slog.String("err", err.Error()))
-		return nil
-	}
-
-	s.writeMu.Lock()
-	_, _ = s.db.Exec(`DELETE FROM rag_vec WHERE rowid = ?`, chunkID)
+	_, _ = tx.Exec(`DELETE FROM rag_vec WHERE rowid = ?`, chunkID)
 	vecBlob := serializeFloat32(float64ToFloat32(embedding))
-	_, err = s.db.Exec(
+	_, err = tx.Exec(
 		`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		chunkID, vecBlob, projectPath, backend, role, sessionID,
+		chunkID, vecBlob, "", "", "", "",
 	)
-	s.writeMu.Unlock()
 	if err != nil {
-		return fmt.Errorf("insert vec entry: %w", err)
+		// Vec0 insert failed — still commit the rag_chunks update
+		slog.Warn("rag: vec0 insert failed in UpdateEmbedding", slog.String("err", err.Error()))
+	} else {
+		// Fetch metadata and update vec0 columns
+		var projectPath, backend, role, sessionID string
+		_ = tx.QueryRow(
+			`SELECT project_path, backend, role, session_id FROM rag_chunks WHERE id = ?`,
+			chunkID,
+		).Scan(&projectPath, &backend, &role, &sessionID)
+		_, _ = tx.Exec(
+			`UPDATE rag_vec SET project_path = ?, backend = ?, role = ?, session_id = ? WHERE rowid = ?`,
+			projectPath, backend, role, sessionID, chunkID,
+		)
 	}
+
+	if err := tx.Commit(); err != nil {
+		s.writeMu.Unlock()
+		return fmt.Errorf("commit update embedding: %w", err)
+	}
+	s.writeMu.Unlock()
 
 	return nil
 }
@@ -991,9 +1007,10 @@ func (s *Store) ChunkEmbeddingCounts() (total int, embedded int, err error) {
 func (s *Store) EmbeddedMessageCount() (int, error) {
 	var count int
 	err := s.db.QueryRow(`
-		SELECT COUNT(DISTINCT message_id) FROM rag_chunks
-		WHERE message_id NOT IN (
-			SELECT DISTINCT message_id FROM rag_chunks WHERE has_embedding = 0
+		SELECT COUNT(DISTINCT a.message_id) FROM rag_chunks a
+		WHERE NOT EXISTS (
+			SELECT 1 FROM rag_chunks b
+			WHERE b.message_id = a.message_id AND b.has_embedding = 0
 		)
 	`).Scan(&count)
 	return count, err
