@@ -164,6 +164,22 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return fmt.Errorf("failed to set busy_timeout: %w", err)
 	}
 
+	// Pre-migration: add columns that must exist before createTables runs
+	// (because createTables creates indexes referencing these columns).
+	// Only apply when the table already exists (upgrading from an older schema).
+	// chat_history.indexed — added for RAG indexing progress tracking
+	var chatHistoryExists int
+	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_history'").Scan(&chatHistoryExists)
+	if chatHistoryExists > 0 {
+		var hasIndexed int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='indexed'").Scan(&hasIndexed)
+		if hasIndexed == 0 {
+			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN indexed INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return fmt.Errorf("failed to add indexed column: %w", err)
+			}
+		}
+	}
+
 	// Create tables with latest schema
 	_, err = WriteExec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
