@@ -312,9 +312,9 @@ describe('useSessionIdentity', () => {
             const identity = useSessionIdentity()
             identity.currentSessionId.value = 'session-1'
 
-            await identity.sendMessage('hello', ['/path1'])
+            await identity.sendMessage('hello')
 
-            expect(mockSend).toHaveBeenCalledWith('hello', ['/path1'])
+            expect(mockSend).toHaveBeenCalledWith('hello')
         })
 
         it('delegates to registered callback when available', async () => {
@@ -330,9 +330,9 @@ describe('useSessionIdentity', () => {
             })
 
             const identity = useSessionIdentity()
-            await identity.sendMessage('test message', ['/path'])
+            await identity.sendMessage('test message')
 
-            expect(mockSend).toHaveBeenCalledWith('test message', ['/path'])
+            expect(mockSend).toHaveBeenCalledWith('test message')
         })
     })
 

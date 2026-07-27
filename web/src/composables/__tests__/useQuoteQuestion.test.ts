@@ -233,7 +233,7 @@ describe('useQuoteQuestion', () => {
       await qq.sendMessage('explain this')
 
       // sendMessage called with buildQuoteMessage result (includes quoted code)
-      expect(mockSendMessage).toHaveBeenCalledWith('[/src/foo.ts:10-20]\nsome code\n---\nexplain this')
+      expect(mockSendMessage).toHaveBeenCalledWith('explain this\n\n```typescript:/src/foo.ts:10-20\nsome code\n```')
       expect(ctx.attachedFiles.value).toHaveLength(0) // cleared by clearAll
     })
 

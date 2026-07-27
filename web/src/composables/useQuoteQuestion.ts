@@ -6,6 +6,24 @@ import { closestElement, getLineInfo, getFileInfo } from '@/utils/quoteQuestionU
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
 
+function buildQuoteMessage(
+  userMessage: string,
+  text: string,
+  filePath: string,
+  language: string,
+  startLine: number,
+  endLine: number,
+): string {
+  const langPrefix = language ? `${language}:` : ':'
+  let lineSuffix = ''
+  if (startLine && endLine && startLine !== endLine) {
+    lineSuffix = `:${startLine}-${endLine}`
+  } else if (startLine) {
+    lineSuffix = `:${startLine}`
+  }
+  return `${userMessage.trim()}\n\n\`\`\`${langPrefix}${filePath}${lineSuffix}\n${text}\n\`\`\``
+}
+
 // Module-level singleton: bar visibility state shared across all consumers.
 // quoteData is stored in useChatContext (global singleton) so ChatInputBar
 // can render a quote chip in any tab.
