@@ -328,17 +328,18 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'panel', config: {
       panelId: 'rag',
       commonFields: [
+        // ── Vector embedding toggle ──
+        { labelKey: 'settings.items.ragEnabled', key: 'rag.vector_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.ragVectorSectionHeader' },
         { labelKey: 'settings.items.ragBaseUrl', descriptionKey: 'settings.items.ragBaseUrlDesc', key: 'rag.base_url', type: 'text', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
         { labelKey: 'settings.items.ragModel', descriptionKey: 'settings.items.ragModelDesc', key: 'rag.model', type: 'text', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
         { labelKey: 'settings.items.ragApiKey', descriptionKey: 'settings.items.ragApiKeyDesc', key: 'rag.api_key', type: 'password', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+        { labelKey: 'settings.items.ragEmbedderStatus', descriptionKey: 'settings.items.ragEmbedderStatusDesc', key: 'rag.status.embedder_healthy', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+        // ── FTS settings (always visible) ──
         { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server' },
         { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
         { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server' },
         { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
-        // ── Vector embedding toggle ──
-        { labelKey: 'settings.items.ragEnabled', key: 'rag.vector_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.ragVectorSectionHeader' },
-        // ── Status indicators (populated dynamically by RAG status polling) ──
-        { labelKey: 'settings.items.ragEmbedderStatus', descriptionKey: 'settings.items.ragEmbedderStatusDesc', key: 'rag.status.embedder_healthy', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+        // ── Status indicators ──
         { labelKey: 'settings.items.ragSearchMode', descriptionKey: 'settings.items.ragSearchModeDesc', key: 'rag.status.mode', type: 'info', source: 'server' },
         { labelKey: 'settings.items.ragIndexProgress', descriptionKey: 'settings.items.ragIndexProgressDesc', key: 'rag.status.index_progress', type: 'info', source: 'server' },
         { labelKey: 'settings.items.ragEmbedProgress', descriptionKey: 'settings.items.ragEmbedProgressDesc', key: 'rag.status.embed_progress', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
