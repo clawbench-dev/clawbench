@@ -97,8 +97,8 @@ PushActionRequired: Action requires approval
 NotFound: Not found
 PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side
-ForkPrefix: "[Fork] "
-InvalidForkPoint: Invalid fork point — message not found or not a user message
+ForkPrefix: "🔀 "
+InvalidForkPoint: Invalid fork point — message not found, not a user or assistant message, or still streaming
 Session: Untitled Session
 SearchQueryRequired: Search query is required
 UpgradeInProgress: Upgrade already in progress

@@ -175,7 +175,7 @@ func IsMessageRole(id int64, sessionID, role string) bool {
 func GetPrecedingUserMessageContent(afterID int64, sessionID string) (string, error) {
 	var content string
 	err := dbRead.QueryRow(
-		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1",
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND id < ? ORDER BY id DESC LIMIT 1",
 		sessionID, afterID,
 	).Scan(&content)
 	if errors.Is(err, sql.ErrNoRows) {

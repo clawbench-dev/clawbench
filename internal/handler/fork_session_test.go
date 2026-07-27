@@ -41,11 +41,11 @@ func TestServeForkSession_NormalFlow(t *testing.T) {
 	assert.NotEqual(t, sessID, result["sessionId"])
 	assert.NotNil(t, result["sessionCount"])
 
-	// Verify forked session title has [Fork] prefix
+	// Verify forked session title has 🔀 prefix
 	newSessID := result["sessionId"].(string)
 	title, err := service.GetSessionTitle(newSessID)
 	require.NoError(t, err)
-	assert.Contains(t, title, "Fork")
+	assert.Contains(t, title, "🔀")
 }
 
 func TestServeForkSession_MethodNotAllowed(t *testing.T) {
@@ -254,8 +254,8 @@ func TestServeForkSession_BeforeMessageID_LongContentTruncated(t *testing.T) {
 	require.NoError(t, err)
 	// Title should contain truncated content (50 runes + "...")
 	assert.Contains(t, title, "...")
-	// Title should start with Fork prefix
-	assert.Contains(t, title, "Fork")
+	// Title should start with 🔀 prefix
+	assert.Contains(t, title, "🔀")
 }
 
 func TestServeForkSession_BeforeMessageID_EmptyContentFallsBackToSessionTitle(t *testing.T) {

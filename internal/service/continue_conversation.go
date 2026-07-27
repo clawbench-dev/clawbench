@@ -300,7 +300,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 			return "", fmt.Errorf("cannot fork from a streaming message (message %d)", beforeMessageID)
 		}
 		switch role {
-		case cancelReasonUser:
+		case roleUser:
 			// User message: find the next non-streaming assistant reply and include it
 			var asstID int64
 			err = dbRead.QueryRow(

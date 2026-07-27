@@ -98,8 +98,8 @@ PushActionRequired: 操作需批准
 NotFound: 未找到
 PermissionNotFound: 未找到待审批的权限请求
 ACPSessionNotFound: 该会话在智能体端已不存在
-ForkPrefix: "［派生］"
-InvalidForkPoint: 无效的派生点 — 消息不存在或不是用户消息
+ForkPrefix: "🔀 "
+InvalidForkPoint: 无效的分叉点 — 消息不存在、非用户或助手消息、或仍在流式传输
 Session: 会话
 SearchQueryRequired: 请输入搜索关键词
 UpgradeInProgress: 升级正在进行中
