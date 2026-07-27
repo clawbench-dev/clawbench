@@ -81,6 +81,35 @@ describe('useTableRowExpand', () => {
     expect(tableRowModal.value).toBeNull()
   })
 
+  it('handleTableRowClick returns false for mouse clicks (pointerType !== touch)', () => {
+    const { handleTableRowClick } = useTableRowExpand()
+    const tr = document.createElement('tr')
+    tr.setAttribute('data-row-idx', '0')
+    const tbody = document.createElement('tbody')
+    tbody.appendChild(tr)
+    document.body.appendChild(tbody)
+
+    const event = new MouseEvent('click', { bubbles: true })
+    Object.defineProperty(event, 'target', { value: tr, writable: false })
+    Object.defineProperty(event, 'pointerType', { value: 'mouse', writable: false })
+    expect(handleTableRowClick(event)).toBe(false)
+    tbody.remove()
+  })
+
+  it('handleTableRowClick returns false when pointerType is undefined', () => {
+    const { handleTableRowClick } = useTableRowExpand()
+    const tr = document.createElement('tr')
+    tr.setAttribute('data-row-idx', '0')
+    const tbody = document.createElement('tbody')
+    tbody.appendChild(tr)
+    document.body.appendChild(tbody)
+
+    const event = new MouseEvent('click', { bubbles: true })
+    Object.defineProperty(event, 'target', { value: tr, writable: false })
+    expect(handleTableRowClick(event)).toBe(false)
+    tbody.remove()
+  })
+
   it('handleTableRowClick returns false for interactive elements', () => {
     const { handleTableRowClick } = useTableRowExpand()
     const anchor = document.createElement('a')
@@ -88,6 +117,7 @@ describe('useTableRowExpand', () => {
     document.body.appendChild(anchor)
     const event = new MouseEvent('click', { bubbles: true })
     Object.defineProperty(event, 'target', { value: anchor, writable: false })
+    Object.defineProperty(event, 'pointerType', { value: 'touch', writable: false })
     expect(handleTableRowClick(event)).toBe(false)
     anchor.remove()
   })
@@ -98,6 +128,7 @@ describe('useTableRowExpand', () => {
     document.body.appendChild(div)
     const event = new MouseEvent('click', { bubbles: true })
     Object.defineProperty(event, 'target', { value: div, writable: false })
+    Object.defineProperty(event, 'pointerType', { value: 'touch', writable: false })
     expect(handleTableRowClick(event)).toBe(false)
     div.remove()
   })
@@ -114,11 +145,12 @@ describe('useTableRowExpand', () => {
 
     const event = new MouseEvent('click', { bubbles: true })
     Object.defineProperty(event, 'target', { value: tr, writable: false })
+    Object.defineProperty(event, 'pointerType', { value: 'touch', writable: false })
     expect(handleTableRowClick(event)).toBe(false)
     tbody.remove()
   })
 
-  it('handleTableRowClick opens modal for valid table row click', () => {
+  it('handleTableRowClick opens modal for valid table row touch click', () => {
     const { handleTableRowClick, tableRowModal } = useTableRowExpand()
     ;(isTableDragClick as ReturnType<typeof vi.fn>).mockReturnValue(false)
     ;(parseTableDataFromElement as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -141,6 +173,7 @@ describe('useTableRowExpand', () => {
 
     const event = new MouseEvent('click', { bubbles: true })
     Object.defineProperty(event, 'target', { value: tr, writable: false })
+    Object.defineProperty(event, 'pointerType', { value: 'touch', writable: false })
     const result = handleTableRowClick(event)
 
     expect(result).toBe(true)
@@ -169,6 +202,7 @@ describe('useTableRowExpand', () => {
 
     const event = new MouseEvent('click', { bubbles: true })
     Object.defineProperty(event, 'target', { value: tr, writable: false })
+    Object.defineProperty(event, 'pointerType', { value: 'touch', writable: false })
     handleTableRowClick(event)
     // Modal should not be opened since rows are empty
     expect(tableRowModal.value).toBeNull()

@@ -30,7 +30,9 @@ export function useTableRowExpand() {
    * Returns true if a table row was clicked and the modal was opened.
    * Returns false if the click was not on a table row (caller should continue event processing).
    */
-  function handleTableRowClick(event: MouseEvent): boolean {
+  function handleTableRowClick(event: MouseEvent | PointerEvent): boolean {
+    // Only activate on touch — skip mouse clicks for PC mode
+    if ('pointerType' in event && event.pointerType !== 'touch') return false
     // Skip if click target is an interactive element inside the cell
     if ((event.target as HTMLElement).closest('a, button, [contenteditable], input, select, textarea')) return false
     const tr = (event.target as HTMLElement).closest('tbody tr[data-row-idx]')

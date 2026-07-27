@@ -644,7 +644,9 @@ onMounted(() => {
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
     // Listen for clicks on images and mermaid diagrams to open lightbox
+    // Only activate on touch — skip mouse clicks for PC mode
     document.addEventListener('click', (e) => {
+        if (e.pointerType !== 'touch') return
         const img = e.target.closest('.lightbox-img')
         if (img) {
             e.preventDefault()
