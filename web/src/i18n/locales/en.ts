@@ -1269,7 +1269,7 @@ export default {
       ragIndexProgress: 'Full-Text Indexing Progress',
       ragIndexProgressDesc: 'Number of chat messages with full-text search index',
       ragEmbedProgress: 'Embedding Progress',
-      ragEmbedProgressDesc: 'Number of text chunks with vector embeddings',
+      ragEmbedProgressDesc: 'Number of chat messages with vector embeddings completed',
       ragProgressFormat: '{done}/{total}',
       portForwardEnabled: 'Enable Port Forward',
       portForwardEnabledDesc: 'Forward specified ports through SSH tunnel for remote access to server local ports',

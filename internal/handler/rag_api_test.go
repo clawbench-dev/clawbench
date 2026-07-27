@@ -495,8 +495,7 @@ func TestServeRAGStatus_ReturnsFields(t *testing.T) {
 	assert.Contains(t, result, "embedder_healthy")
 	assert.Contains(t, result, "total_messages")
 	assert.Contains(t, result, "indexed_messages")
-	assert.Contains(t, result, "total_chunks")
-	assert.Contains(t, result, "embedded_chunks")
+	assert.Contains(t, result, "embedded_messages")
 }
 
 func TestServeRAGStatus_VectorDisabled(t *testing.T) {
@@ -563,8 +562,7 @@ func TestServeRAGStatus_NilStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, false, result["available"])
 	assert.Equal(t, "none", result["mode"])
-	assert.Equal(t, float64(0), result["total_chunks"])
-	assert.Equal(t, float64(0), result["embedded_chunks"])
+	assert.Equal(t, float64(0), result["embedded_messages"])
 }
 
 func TestServeRAGStatus_WithStore_HybridMode(t *testing.T) {
@@ -592,8 +590,7 @@ func TestServeRAGStatus_WithStore_HybridMode(t *testing.T) {
 	require.NoError(t, err)
 	// With embedder healthy but no data, mode should be "none" (no vec data)
 	assert.Contains(t, result, "mode")
-	assert.Contains(t, result, "total_chunks")
-	assert.Contains(t, result, "embedded_chunks")
+	assert.Contains(t, result, "embedded_messages")
 }
 
 // ---------- ServeRAGSessionSearch ----------

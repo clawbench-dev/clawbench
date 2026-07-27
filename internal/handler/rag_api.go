@@ -233,14 +233,14 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("rag: failed to count messages", slog.String("err", err.Error()))
 	}
-	var totalChunks, embeddedChunks int
+	var embeddedMessages int
 	if rag.GlobalStore != nil {
-		totalChunks, embeddedChunks, err = rag.GlobalStore.ChunkEmbeddingCounts()
+		embeddedMessages, err = rag.GlobalStore.EmbeddedMessageCount()
 		if err != nil {
-			slog.Warn("rag: failed to count chunks", slog.String("err", err.Error()))
+			slog.Warn("rag: failed to count embedded messages", slog.String("err", err.Error()))
 		}
 	}
-	hasVecData := embeddedChunks > 0 && vectorEnabled
+	hasVecData := embeddedMessages > 0 && vectorEnabled
 
 	mode := "none"
 	if vectorEnabled && embedderHealthy && hasVecData {
@@ -250,15 +250,14 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"available":        hasFTSData || hasVecData,
-		"mode":             mode,
-		"has_fts_data":     hasFTSData,
-		"has_vec_data":     hasVecData,
-		"embedder_healthy": embedderHealthy,
-		"total_messages":   totalMessages,
-		"indexed_messages": indexedMessages,
-		"total_chunks":     totalChunks,
-		"embedded_chunks":  embeddedChunks,
+		"available":         hasFTSData || hasVecData,
+		"mode":              mode,
+		"has_fts_data":      hasFTSData,
+		"has_vec_data":      hasVecData,
+		"embedder_healthy":  embedderHealthy,
+		"total_messages":    totalMessages,
+		"indexed_messages":  indexedMessages,
+		"embedded_messages": embeddedMessages,
 	})
 }
 

@@ -338,7 +338,7 @@ function getRagStatusValue(key: string): unknown {
     case 'rag.status.index_progress':
       return s.total_messages > 0 ? t('settings.items.ragProgressFormat', { done: Math.min(s.indexed_messages, s.total_messages), total: s.total_messages }) : '—'
     case 'rag.status.embed_progress':
-      return s.total_chunks > 0 ? t('settings.items.ragProgressFormat', { done: Math.min(s.embedded_chunks, s.total_chunks), total: s.total_chunks }) : '—'
+      return s.total_messages > 0 ? t('settings.items.ragProgressFormat', { done: Math.min(s.embedded_messages, s.total_messages), total: s.total_messages }) : '—'
     default:
       return ''
   }
@@ -350,7 +350,7 @@ function resolveProgress(field: ItemSpec): { value: number; max: number } | unde
     case 'rag.status.index_progress':
       return s.total_messages > 0 ? { value: s.indexed_messages, max: s.total_messages } : undefined
     case 'rag.status.embed_progress':
-      return s.total_chunks > 0 ? { value: s.embedded_chunks, max: s.total_chunks } : undefined
+      return s.total_messages > 0 ? { value: s.embedded_messages, max: s.total_messages } : undefined
     default:
       return field.progress
   }

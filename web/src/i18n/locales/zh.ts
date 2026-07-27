@@ -1270,7 +1270,7 @@ export default {
       ragIndexProgress: '全文索引进度',
       ragIndexProgressDesc: '已建立全文检索索引的聊天消息数量',
       ragEmbedProgress: '向量嵌入进度',
-      ragEmbedProgressDesc: '已生成向量嵌入的文本块数量',
+      ragEmbedProgressDesc: '已完成向量嵌入的聊天消息数量',
       ragProgressFormat: '{done}/{total}',
       portForwardEnabled: '启用端口转发',
       portForwardEnabledDesc: '通过 SSH 隧道转发指定端口，启用后可从手机远程访问服务器本地端口',

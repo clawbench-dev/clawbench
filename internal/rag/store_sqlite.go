@@ -720,6 +720,18 @@ func (s *Store) ChunkEmbeddingCounts() (total int, embedded int, err error) {
 	return
 }
 
+// EmbeddedMessageCount returns the number of messages whose chunks all have embeddings.
+func (s *Store) EmbeddedMessageCount() (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(DISTINCT message_id) FROM rag_chunks
+		WHERE message_id NOT IN (
+			SELECT DISTINCT message_id FROM rag_chunks WHERE has_embedding = 0
+		)
+	`).Scan(&count)
+	return count, err
+}
+
 // GetMessageIndexStatus returns FTS and vector embedding status for a specific message.
 // ftsIndexed is true if the message has any chunks in rag_chunks (FTS is always synced on INSERT).
 // vecIndexed is true if all chunks for the message have embeddings (has_embedding = 1).

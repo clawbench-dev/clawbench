@@ -10,8 +10,7 @@ export interface RagStatus {
   embedder_healthy: boolean
   total_messages: number
   indexed_messages: number
-  total_chunks: number
-  embedded_chunks: number
+  embedded_messages: number
 }
 
 const POLL_INTERVAL = 10_000
@@ -24,8 +23,7 @@ const status = ref<RagStatus>({
   embedder_healthy: false,
   total_messages: 0,
   indexed_messages: 0,
-  total_chunks: 0,
-  embedded_chunks: 0,
+  embedded_messages: 0,
 })
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
