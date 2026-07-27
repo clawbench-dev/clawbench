@@ -78,12 +78,12 @@ export function useSessionManager(options: UseSessionManagerOptions) {
    *
    *  IMPORTANT: sessionId MUST be captured by the caller BEFORE any async
    *  boundary. */
-  async function enqueueMessage(sessionId: string, text: string, extraFilePaths: string[] = [], attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<{ needsStart: boolean; queueId?: string; message?: string; filePaths?: string[]; files?: FileEntry[] }> {
+  async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<{ needsStart: boolean; queueId?: string; message?: string; filePaths?: string[]; files?: FileEntry[] }> {
     const inputText = text !== undefined ? text : ''
-    const filePaths = [...(extraFilePaths || []), ...(attachedFiles.length > 0 ? attachedFiles.map(f => f.path) : [])]
+    const filePaths = attachedFiles.map(f => f.path)
     const allFileEntries: FileEntry[] = [
       ...(pendingFilePaths || []).map(p => ({ path: p, isDir: false })),
-      ...(attachedFiles.length > 0 ? attachedFiles : []),
+      ...attachedFiles,
     ]
 
     appLog.d(TAG, `[enqueueMessage] sid=${sessionId.slice(0,8)} queueId=${queueId || 'none'} text="${inputText.slice(0,40)}"`)

@@ -11,7 +11,7 @@ func TestNoCache_defaultValue(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/test", http.NoBody)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -31,7 +31,7 @@ func TestNoCache_handlerCanOverride(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/test", http.NoBody)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 

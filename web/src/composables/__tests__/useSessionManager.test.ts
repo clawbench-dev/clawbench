@@ -363,7 +363,7 @@ describe('useSessionManager', () => {
             } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.enqueueMessage('session-1', 'hello', ['/path1'], [{ path: 'attached', isDir: false }], ['pending'], 'pending-123')
+            await mgr.enqueueMessage('session-1', 'hello', [{ path: 'attached', isDir: false }], ['pending'], 'pending-123')
 
             expect(fetchSpy).toHaveBeenCalledWith(
                 expect.stringContaining('/api/ai/queue?session_id=session-1'),
@@ -372,7 +372,7 @@ describe('useSessionManager', () => {
             const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
             expect(body.message).toBe('hello')
             expect(body.queueId).toBe('pending-123')
-            expect(body.filePaths).toEqual(['/path1', 'attached'])
+            expect(body.filePaths).toEqual(['attached'])
             expect(body.files).toEqual([{ path: 'pending', isDir: false }, { path: 'attached', isDir: false }])
 
             fetchSpy.mockRestore()
@@ -466,7 +466,7 @@ describe('useSessionManager', () => {
             } as Response)
             const mgr = useSessionManager(opts)
 
-            const result = await mgr.enqueueMessage('session-1', 'hello', [], [], [], 'pending-456')
+            const result = await mgr.enqueueMessage('session-1', 'hello', [], [], 'pending-456')
 
             expect(result.needsStart).toBe(true)
             expect(result.message).toBe('hello')
@@ -493,7 +493,7 @@ describe('useSessionManager', () => {
             } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.enqueueMessage('session-1', 'hello', [], [], [], 'pending-456')
+            await mgr.enqueueMessage('session-1', 'hello', [], [], 'pending-456')
 
             // The pending message should have been removed from messages.value
             const pendingMsgs = opts.messages.value.filter((m: any) => m.pending)

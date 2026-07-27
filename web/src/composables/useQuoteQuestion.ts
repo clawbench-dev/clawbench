@@ -2,7 +2,6 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
-import { buildQuoteMessage } from '@/utils/doubleClickUtils.ts'
 import { closestElement, getLineInfo, getFileInfo } from '@/utils/quoteQuestionUtils.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
@@ -109,15 +108,10 @@ export function useQuoteQuestion() {
     if (!quoteData.value || !userMessage.trim()) return
 
     const q = quoteData.value
-    const message = buildQuoteMessage(userMessage, q.text, q.filePath, q.language, q.startLine, q.endLine)
 
-    // Pass the quoted file as a file attachment so the backend builds
-    // the [当前文件: ...] prompt prefix and sets the CLI work_dir.
-    const filePaths = q.filePath ? [q.filePath] : []
-
-    // Also add the file to the global attachedFiles so ChatInputBar shows a tag
+    // Add the quoted file (with line info) as an attached file — unified channel
     if (q.filePath && !hasAttachedFile(q.filePath)) {
-      addAttachedFile(q.filePath)
+      addAttachedFile(q.filePath, false, q.startLine, q.endLine)
     }
 
     // Capture animation coordinates BEFORE any await — the bar's handleSend()
@@ -131,7 +125,7 @@ export function useQuoteQuestion() {
     // Delegate to session identity singleton — it routes to ChatPanel's
     // sendMessage if registered, otherwise falls back to a direct API call.
     try {
-      await sessionIdentity.sendMessage(message, filePaths)
+      await sessionIdentity.sendMessage(userMessage)
       toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })
       // Dispatch animation event with pre-captured coordinates
       if (animFrom && animTo) {

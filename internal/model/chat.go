@@ -16,8 +16,10 @@ const PushPreviewMaxRunes = 200
 
 // FileEntry represents a file or directory attachment with metadata.
 type FileEntry struct {
-	Path  string `json:"path"`
-	IsDir bool   `json:"isDir"`
+	Path      string `json:"path"`
+	IsDir     bool   `json:"isDir"`
+	StartLine int    `json:"startLine,omitempty"`
+	EndLine   int    `json:"endLine,omitempty"`
 }
 
 // FileEntriesFromPaths creates []FileEntry from plain paths with isDir=false.

@@ -626,7 +626,7 @@ function persistSessionUpdate(fields) {
   }).catch(() => { /* best effort — next POST /api/ai/chat will also persist */ })
 }
 
-async function sendMessage(text, extraFilePaths) {
+async function sendMessage(text) {
     const inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
     const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quoteData.value
 
@@ -637,9 +637,9 @@ async function sendMessage(text, extraFilePaths) {
       // Capture file arrays before clearing (they're passed by reference)
       const capturedAttached = [...attachedFiles.value]
       const capturedPending = pendingFiles.value.map(f => ({ path: f.path, isDir: false }))
-      // Merge all file paths for the pending message (deduplicated)
-      const mergedPaths = [...new Set([...(extraFilePaths || []), ...(capturedAttached.length > 0 ? capturedAttached.map(f => f.path) : [])])]
-      const allFiles = [...capturedPending, ...capturedAttached.length > 0 ? capturedAttached : mergedPaths.map(p => ({ path: p, isDir: false }))]
+      // Build file paths and entries from attachedFiles (unified channel)
+      const mergedPaths = capturedAttached.map(f => f.path)
+      const allFiles = [...capturedPending, ...capturedAttached]
       // Generate unique queueId for precise matching in queue_drain/queue_cancel
       const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       // Clear input state synchronously so user sees immediate feedback
@@ -661,7 +661,7 @@ async function sendMessage(text, extraFilePaths) {
       // Capture session ID before any async boundary
       const capturedSessionId = identity.currentSessionId.value
       // Enqueue to backend (POST /api/ai/queue) with queueId
-      const result = await manager.enqueueMessage(capturedSessionId, inputText, extraFilePaths, capturedAttached, capturedPending, queueId)
+      const result = await manager.enqueueMessage(capturedSessionId, inputText, capturedAttached, capturedPending, queueId)
       // Race condition: if AI finished right as we enqueued, the backend
       // dequeued the message and wants us to resubmit as a new chat.
       if (result.needsStart) {
@@ -672,14 +672,10 @@ async function sendMessage(text, extraFilePaths) {
       return
     }
 
-    // Merge attached files from the input bar with extra file paths (e.g. from quote-question)
-    // Deduplicate paths that may appear in both extraFilePaths and attachedFiles
-    const filePaths = [...new Set([...(extraFilePaths || []), ...(attachedFiles.value.length > 0 ? attachedFiles.value.map(f => f.path) : [])])]
+    // Build file paths and entries from attachedFiles (unified channel)
+    const filePaths = attachedFiles.value.map(f => f.path)
     const uploadedFiles = pendingFiles.value.map(f => ({ path: f.path, isDir: false }))
-    const projectFiles = filePaths.map(p => {
-      const existing = attachedFiles.value.find(f => f.path === p)
-      return { path: p, isDir: existing?.isDir ?? false }
-    })
+    const projectFiles = attachedFiles.value.map(f => ({ path: f.path, isDir: f.isDir ?? false, startLine: f.startLine, endLine: f.endLine }))
     const allFiles = [...uploadedFiles, ...projectFiles]
 
     // Clear input state before async request
@@ -801,7 +797,7 @@ async function handleToolSendMessage(text) {
       })
       render.updateRenderedContents()
       scrollBottom(true)
-      manager.enqueueMessage(identity.currentSessionId.value, text, [], [], [], queueId)
+      manager.enqueueMessage(identity.currentSessionId.value, text, [], [], queueId)
     } else {
       await sendMessage(text)
     }

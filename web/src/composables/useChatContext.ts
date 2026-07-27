@@ -19,9 +19,9 @@ export interface QuoteData {
 const attachedFiles = ref<FileEntry[]>([])
 const quoteData = ref<QuoteData | null>(null)
 
-function addAttachedFile(path: string, isDir: boolean = false) {
+function addAttachedFile(path: string, isDir: boolean = false, startLine?: number, endLine?: number) {
   if (path && !attachedFiles.value.some(f => f.path === path)) {
-    attachedFiles.value.push({ path, isDir })
+    attachedFiles.value.push({ path, isDir, startLine, endLine })
   }
 }
 

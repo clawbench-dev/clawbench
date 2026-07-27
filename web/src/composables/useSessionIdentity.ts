@@ -315,7 +315,7 @@ export function toggleAutoApprove(enabled: boolean) {
 let _switchSession: ((sessionId: string) => Promise<void>) | null = null
 let _createSession: ((agentId?: string) => Promise<void>) | null = null
 let _deleteSession: ((sessionId: string, backend?: string) => Promise<void>) | null = null
-let _sendMessage: ((text: string, filePaths?: string[]) => Promise<void>) | null = null
+let _sendMessage: ((text: string) => Promise<void>) | null = null
 let _openChatPanel: (() => void) | null = null
 let _continueFromExecution: ((taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>) | null = null
 let _checkContinueSession: ((taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>) | null = null
@@ -327,7 +327,7 @@ export interface SessionActions {
   switchSession: (sessionId: string) => Promise<void>
   createSession: (agentId?: string) => Promise<void>
   deleteSession: (sessionId: string, backend?: string) => Promise<void>
-  sendMessage: (text: string, filePaths?: string[]) => Promise<void>
+  sendMessage: (text: string) => Promise<void>
   openChatPanel: () => void
   continueFromExecution: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   checkContinueSession: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
@@ -556,9 +556,9 @@ export function useSessionIdentity() {
    * Send a message to the current session. Delegates to ChatPanel
    * if available, otherwise makes a direct API call.
    */
-  async function sendMessage(text: string, filePaths?: string[]) {
+  async function sendMessage(text: string) {
     if (_sendMessage) {
-      await _sendMessage(text, filePaths)
+      await _sendMessage(text)
       return
     }
     // Fallback: direct API call (ChatPanel not yet mounted)
@@ -586,7 +586,7 @@ export function useSessionIdentity() {
       await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, filePaths: filePaths || [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
+        body: JSON.stringify({ message: text, filePaths: [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
       })
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to send message:', err)

@@ -4,7 +4,6 @@ import {
   isAnchorLink,
   slugifyForHeading,
   stripLeadingNumbering,
-  buildQuoteMessage,
 } from '@/utils/doubleClickUtils'
 
 describe('doubleClickUtils', () => {
@@ -141,40 +140,6 @@ describe('doubleClickUtils', () => {
 
     it('strips "1.2.3 " prefix', () => {
       expect(stripLeadingNumbering('1.2.3 Deep section')).toBe('Deep section')
-    })
-  })
-
-  // --- buildQuoteMessage ---
-
-  describe('buildQuoteMessage', () => {
-    it('builds message with language and single line', () => {
-      const result = buildQuoteMessage('Explain this', 'const x = 1', 'src/main.go', 'go', 10, 10)
-      expect(result).toBe('Explain this\n\n```go:src/main.go:10\nconst x = 1\n```')
-    })
-
-    it('builds message with language and line range', () => {
-      const result = buildQuoteMessage('Explain this', 'code', 'src/main.go', 'go', 10, 15)
-      expect(result).toBe('Explain this\n\n```go:src/main.go:10-15\ncode\n```')
-    })
-
-    it('builds message without language (uses colon prefix)', () => {
-      const result = buildQuoteMessage('Explain this', 'text', 'readme.md', '', 5, 5)
-      expect(result).toBe('Explain this\n\n```:readme.md:5\ntext\n```')
-    })
-
-    it('builds message without line numbers', () => {
-      const result = buildQuoteMessage('Explain this', 'text', 'readme.md', '', 0, 0)
-      expect(result).toBe('Explain this\n\n```:readme.md\ntext\n```')
-    })
-
-    it('trims user message', () => {
-      const result = buildQuoteMessage('  Explain this  ', 'code', 'file.ts', 'ts', 1, 1)
-      expect(result).toBe('Explain this\n\n```ts:file.ts:1\ncode\n```')
-    })
-
-    it('handles empty user message', () => {
-      const result = buildQuoteMessage('', 'code', 'file.ts', 'ts', 1, 1)
-      expect(result).toBe('\n\n```ts:file.ts:1\ncode\n```')
     })
   })
 })

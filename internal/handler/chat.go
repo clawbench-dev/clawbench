@@ -344,19 +344,36 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		validatedFileEntries = append(validatedFileEntries, model.FileEntry{
-			Path:  fAbsPath,
-			IsDir: info.IsDir(),
+			Path:      fAbsPath,
+			IsDir:     info.IsDir(),
+			StartLine: fEntry.StartLine,
+			EndLine:   fEntry.EndLine,
 		})
 	}
 
-	// Derive file/dir paths from validatedFileEntries for prompt prefixing
-	fileEntryPaths := make([]string, 0)
+	// Derive file/dir paths from validatedFileEntries for prompt prefixing,
+	// excluding entries already covered by filePaths (cross-deduplication).
+	filePathsSet := make(map[string]struct{}, len(validatedFilePaths)+len(validatedDirPaths))
+	for _, p := range append(validatedFilePaths, validatedDirPaths...) {
+		filePathsSet[p] = struct{}{}
+	}
+
+	fileEntryFileLabels := make([]string, 0) // "path" or "path:startLine-endLine"
 	fileEntryDirPaths := make([]string, 0)
 	for _, f := range validatedFileEntries {
+		if _, exists := filePathsSet[f.Path]; exists {
+			continue // already covered by filePaths
+		}
 		if f.IsDir {
 			fileEntryDirPaths = append(fileEntryDirPaths, f.Path)
 		} else {
-			fileEntryPaths = append(fileEntryPaths, f.Path)
+			label := f.Path
+			if f.StartLine > 0 && f.EndLine > 0 && f.StartLine != f.EndLine {
+				label = fmt.Sprintf("%s:%d-%d", f.Path, f.StartLine, f.EndLine)
+			} else if f.StartLine > 0 {
+				label = fmt.Sprintf("%s:%d", f.Path, f.StartLine)
+			}
+			fileEntryFileLabels = append(fileEntryFileLabels, label)
 		}
 	}
 
@@ -367,8 +384,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	if len(validatedDirPaths) > 0 {
 		prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(validatedDirPaths, ", "), prompt)
 	}
-	if len(fileEntryPaths) > 0 {
-		prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileEntryPaths), strings.Join(fileEntryPaths, ", "), prompt)
+	if len(fileEntryFileLabels) > 0 {
+		prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileEntryFileLabels), strings.Join(fileEntryFileLabels, ", "), prompt)
 	}
 	if len(fileEntryDirPaths) > 0 {
 		prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(fileEntryDirPaths, ", "), prompt)

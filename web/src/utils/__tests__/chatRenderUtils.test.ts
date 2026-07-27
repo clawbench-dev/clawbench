@@ -41,19 +41,19 @@ describe('rewriteImageUrls', () => {
   it('rewrites relative path to /api/local-file/ when projectRoot is set', () => {
     const html = '<img src="images/foo.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toMatch(/src="\/api\/local-file\/images\/foo\.png\?t=\d+"/)
+    expect(result).toContain('src="/api/local-file/images/foo.png"')
   })
 
   it('rewrites relative path without directory to /api/local-file/', () => {
     const html = '<img src="photo.jpg">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toMatch(/src="\/api\/local-file\/photo\.jpg\?t=\d+"/)
+    expect(result).toContain('src="/api/local-file/photo.jpg"')
   })
 
   it('rewrites nested relative path', () => {
     const html = '<img src="assets/img/logo.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toMatch(/src="\/api\/local-file\/assets\/img\/logo\.png\?t=\d+"/)
+    expect(result).toContain('src="/api/local-file/assets/img/logo.png"')
   })
 
   // ── Absolute paths within projectRoot ──
@@ -93,7 +93,7 @@ describe('rewriteImageUrls', () => {
     // No path normalization, so string startsWith(projectRoot + '/') is true → rewritten
     const html = '<img src="../other/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toMatch(/src="\/api\/local-file\/\.\.\/other\/img\.png\?t=\d+"/)
+    expect(result).toContain('src="/api/local-file/../other/img.png"')
   })
 
   // ── Paths starting with / ──
@@ -162,14 +162,14 @@ describe('rewriteImageUrls', () => {
   it('processes all images in a string with multiple <img> tags', () => {
     const html = '<img src="a.png"><p>text</p><img src="b.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toMatch(/src="\/api\/local-file\/a\.png\?t=\d+"/)
-    expect(result).toMatch(/src="\/api\/local-file\/b\.png\?t=\d+"/)
+    expect(result).toContain('src="/api/local-file/a.png"')
+    expect(result).toContain('src="/api/local-file/b.png"')
   })
 
   it('processes mixed local and external images', () => {
     const html = '<img src="local.png"><img src="https://ext.com/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toMatch(/src="\/api\/local-file\/local\.png\?t=\d+"/)
+    expect(result).toContain('src="/api/local-file/local.png"')
     expect(result).toContain('src="https://ext.com/img.png"')
   })
 

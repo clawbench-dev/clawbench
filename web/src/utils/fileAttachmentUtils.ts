@@ -6,13 +6,15 @@
 export interface FileEntry {
   path: string
   isDir?: boolean
+  startLine?: number
+  endLine?: number
 }
 
 /** Normalize a file entry to FileEntry format.
  *  Backend returns FileEntry[] (new) or string[] (legacy), local push uses [{path: "..."}]. */
 export function normalizeFileEntry(f: string | FileEntry): FileEntry {
   if (typeof f === 'string') return { path: f, isDir: false }
-  return { path: f.path || '', isDir: f.isDir ?? false }
+  return { path: f.path || '', isDir: f.isDir ?? false, startLine: f.startLine, endLine: f.endLine }
 }
 
 /** Check if a path points to an uploaded file (in .clawbench/uploads/). */
