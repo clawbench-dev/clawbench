@@ -104,9 +104,8 @@ func TestServeSystemResources_InternalError(t *testing.T) {
 
 	ServeSystemResources(w, req)
 
-	// GetResources() never actually returns an error (it returns partial data with errors)
-	// So the handler should still return 200 with error details in the response
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d (GetResources returns partial data, not error)", w.Code, http.StatusOK)
+	// When all samplers fail, GetResources returns error → handler returns 500
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
 }

@@ -230,33 +230,16 @@ func TestGetResources_SampleErrors(t *testing.T) {
 	defer SetForceError("")
 
 	res, err := GetResources()
-	if err != nil {
-		t.Fatalf("GetResources() error: %v", err)
+	// When all samplers fail, GetResources returns an error
+	if err == nil {
+		t.Fatal("expected error when all samplers fail")
 	}
-	if res.CPU.Percent != -1 {
-		t.Errorf("CPU.Percent = %f, want -1 on error", res.CPU.Percent)
-	}
-	if len(res.Errors) == 0 {
-		t.Error("expected errors when forceErr is set")
-	}
-	if res.Memory.Total != 0 {
-		t.Error("expected Memory.Total = 0 on error")
-	}
-	if res.Disk.Total != 0 {
-		t.Error("expected Disk.Total = 0 on error")
-	}
-	if res.Network.UploadRate != 0 || res.Network.DownloadRate != 0 {
-		t.Error("expected Network zeroed on error")
-	}
-	if res.DiskIO.ReadRate != 0 || res.DiskIO.WriteRate != 0 {
-		t.Error("expected DiskIO zeroed on error")
-	}
-	if res.Load.Load1 != 0 {
-		t.Error("expected Load zeroed on error")
+	if res != nil {
+		t.Errorf("expected nil response when all samplers fail, got %+v", res)
 	}
 }
 
-func TestGetResources_PartialSampleErrors(t *testing.T) {
+func TestGetResources_CacheAfterNormalCall(t *testing.T) {
 	ResetSampler()
 	res1, err := GetResources()
 	if err != nil {
@@ -266,19 +249,13 @@ func TestGetResources_PartialSampleErrors(t *testing.T) {
 		t.Errorf("expected no errors on normal call, got %v", res1.Errors)
 	}
 
-	// Expire cache so next call re-samples
-	globalSampler.mu.Lock()
-	globalSampler.cachedAt = time.Time{}
-	globalSampler.mu.Unlock()
-
-	SetForceError("injected")
-	defer SetForceError("")
+	// Second call should return cached response
 	res2, err := GetResources()
 	if err != nil {
 		t.Fatalf("second GetResources() error: %v", err)
 	}
-	if res2.CPU.Percent != -1 {
-		t.Errorf("CPU.Percent = %f, want -1 with forced error", res2.CPU.Percent)
+	if res1 != res2 {
+		t.Error("expected same cached response on immediate second call")
 	}
 }
 

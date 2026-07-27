@@ -182,6 +182,11 @@ func GetResources() (*ResourceResponse, error) {
 	s.cachedAt = time.Now()
 	s.mu.Unlock()
 
+	// Return error if all samplers failed (e.g., forceErr injection)
+	if len(errs) == 6 {
+		return nil, fmt.Errorf("all resource samplers failed: %v", errs)
+	}
+
 	return resp, nil
 }
 
