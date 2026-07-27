@@ -104,6 +104,14 @@ export default {
     serverDisconnected: 'Server disconnected',
     debugLog: 'Debug Log',
   },
+  systemResources: {
+    title: 'System Resources',
+    cpu: 'CPU',
+    memory: 'Memory',
+    disk: 'Disk',
+    upload: 'Upload',
+    download: 'Download',
+  },
   chat: {
     title: 'AI Chat',
     sendError: 'Error: {error}',

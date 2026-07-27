@@ -104,6 +104,14 @@ export default {
     serverDisconnected: '服务器连接异常',
     debugLog: '调试日志',
   },
+  systemResources: {
+    title: '系统资源',
+    cpu: 'CPU',
+    memory: '内存',
+    disk: '磁盘',
+    upload: '上传',
+    download: '下载',
+  },
   chat: {
     title: 'AI 对话',
     sendError: '错误: {error}',
