@@ -393,8 +393,10 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 		}
 		batch := chunks[batchStart:batchEnd]
 
+		s.writeMu.Lock()
 		tx, err := s.db.Begin()
 		if err != nil {
+			s.writeMu.Unlock()
 			return fmt.Errorf("begin transaction: %w", err)
 		}
 
@@ -402,6 +404,7 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 			if c.Embedding != nil {
 				if err := validateEmbedding(c.Embedding); err != nil {
 					_ = tx.Rollback()
+					s.writeMu.Unlock()
 					return fmt.Errorf("embedding validation for chunk (message_id=%d): %w", c.MessageID, err)
 				}
 			}
@@ -424,6 +427,7 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 			)
 			if err != nil {
 				_ = tx.Rollback()
+				s.writeMu.Unlock()
 				return fmt.Errorf("insert chunk (message_id=%d, chunk_index=%d): %w", c.MessageID, c.ChunkIndex, err)
 			}
 
@@ -433,6 +437,7 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 				chunkID, c.ChunkTextSegmented)
 			if err != nil {
 				_ = tx.Rollback()
+				s.writeMu.Unlock()
 				return fmt.Errorf("insert fts entry for chunk %d: %w", chunkID, err)
 			}
 
@@ -445,14 +450,17 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 				)
 				if err != nil {
 					_ = tx.Rollback()
+					s.writeMu.Unlock()
 					return fmt.Errorf("insert vec entry for chunk %d: %w", chunkID, err)
 				}
 			}
 		}
 
 		if err := tx.Commit(); err != nil {
+			s.writeMu.Unlock()
 			return fmt.Errorf("commit insert transaction: %w", err)
 		}
+		s.writeMu.Unlock()
 	}
 
 	return nil
@@ -753,14 +761,17 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 		}
 		batch := pendingChunks[batchStart:batchEnd]
 
+		s.writeMu.Lock()
 		tx, err := s.db.Begin()
 		if err != nil {
+			s.writeMu.Unlock()
 			return totalBackfilled, fmt.Errorf("begin batch update transaction: %w", err)
 		}
 
 		updateStmt, err := tx.Prepare(`UPDATE rag_chunks SET embedding = ?, has_embedding = 1, embedding_dim = ? WHERE id = ?`)
 		if err != nil {
 			_ = tx.Rollback()
+			s.writeMu.Unlock()
 			return totalBackfilled, fmt.Errorf("prepare update stmt: %w", err)
 		}
 
@@ -768,6 +779,7 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 		if err != nil {
 			_ = updateStmt.Close()
 			_ = tx.Rollback()
+			s.writeMu.Unlock()
 			return totalBackfilled, fmt.Errorf("prepare delete vec stmt: %w", err)
 		}
 
@@ -778,6 +790,7 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 			_ = deleteVecStmt.Close()
 			_ = updateStmt.Close()
 			_ = tx.Rollback()
+			s.writeMu.Unlock()
 			return totalBackfilled, fmt.Errorf("prepare insert vec stmt: %w", err)
 		}
 
@@ -812,8 +825,10 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 		_ = updateStmt.Close()
 
 		if err := tx.Commit(); err != nil {
+			s.writeMu.Unlock()
 			return totalBackfilled, fmt.Errorf("commit batch update: %w", err)
 		}
+		s.writeMu.Unlock()
 		totalBackfilled += backfilled
 	}
 
@@ -907,33 +922,42 @@ func (s *Store) SetEmbeddingDim(dim int) bool {
 // The vec0 virtual table must be dropped and recreated because its dimension
 // is fixed at CREATE time and cannot be altered.
 func (s *Store) ResetForDimensionMismatch(newDim int) error {
+	s.writeMu.Lock()
 	tx, err := s.db.Begin()
 	if err != nil {
+		s.writeMu.Unlock()
 		return fmt.Errorf("begin reset transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
 
 	// Delete FTS entries
 	_, err = tx.Exec("DELETE FROM rag_chunks_fts")
 	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
 		return fmt.Errorf("delete fts: %w", err)
 	}
 
 	// Delete main table
 	_, err = tx.Exec("DELETE FROM rag_chunks")
 	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
 		return fmt.Errorf("delete chunks: %w", err)
 	}
 
 	// Drop vec0 table (dimension is fixed at CREATE time)
 	_, err = tx.Exec("DROP TABLE IF EXISTS rag_vec")
 	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
 		return fmt.Errorf("drop rag_vec: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
+		s.writeMu.Unlock()
 		return fmt.Errorf("commit reset: %w", err)
 	}
+	s.writeMu.Unlock()
 
 	s.embDim = newDim
 	s.vecTableReady = false // rag_vec was dropped, need to re-confirm
@@ -1010,16 +1034,19 @@ func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {
 		args[i] = id
 	}
 
+	s.writeMu.Lock()
 	tx, err := s.db.Begin()
 	if err != nil {
+		s.writeMu.Unlock()
 		return 0, fmt.Errorf("begin delete transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
 
 	// Delete vec0 entries (table may not exist if dimension is unknown)
 	if hasVecTable {
 		_, err = tx.Exec("DELETE FROM rag_vec WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id IN ("+placeholders+"))", args...)
 		if err != nil {
+			_ = tx.Rollback()
+			s.writeMu.Unlock()
 			return 0, fmt.Errorf("delete vec entries: %w", err)
 		}
 	}
@@ -1027,19 +1054,25 @@ func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {
 	// Delete FTS entries
 	_, err = tx.Exec("DELETE FROM rag_chunks_fts WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id IN ("+placeholders+"))", args...)
 	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
 		return 0, fmt.Errorf("delete fts entries: %w", err)
 	}
 
 	// Delete main table
 	result, err := tx.Exec("DELETE FROM rag_chunks WHERE session_id IN ("+placeholders+")", args...)
 	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
 		return 0, fmt.Errorf("delete chunks: %w", err)
 	}
 	affected, _ := result.RowsAffected()
 
 	if err := tx.Commit(); err != nil {
+		s.writeMu.Unlock()
 		return 0, fmt.Errorf("commit delete: %w", err)
 	}
+	s.writeMu.Unlock()
 
 	return affected, nil
 }
