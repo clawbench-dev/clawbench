@@ -1244,6 +1244,7 @@ export default {
       ttsMaxCacheFilesDesc: 'TTS 音频缓存的最大文件数量，超限自动清理最早文件',
       ragEnabled: '启用向量嵌入',
       ragEnabledDesc: '启用向量嵌入索引。关闭后仅使用全文检索，不生成向量嵌入',
+      ragVectorSectionHeader: '向量嵌入',
       ragBaseUrl: '嵌入接口地址',
       ragBaseUrlDesc: 'OpenAI 兼容的文本向量化接口地址（如 Ollama、vLLM、OpenAI 等）',
       ragModel: '嵌入模型',

@@ -1243,6 +1243,7 @@ export default {
       ttsMaxCacheFilesDesc: 'Maximum TTS audio cache files, oldest auto-evicted when exceeded',
       ragEnabled: 'Enable Vector Embedding',
       ragEnabledDesc: 'Enable vector embedding index. When disabled, only full-text search is used without generating embeddings',
+      ragVectorSectionHeader: 'Vector Embedding',
       ragBaseUrl: 'Embedding API URL',
       ragBaseUrlDesc: 'OpenAI-compatible text embedding API URL (e.g. Ollama, vLLM, OpenAI)',
       ragModel: 'Embedding Model',
