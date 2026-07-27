@@ -331,7 +331,7 @@ function handleClose() {
 }
 
 .mode-btn.active {
-  background: var(--color-purple, #7c3aed);
+  background: var(--accent-color, #4a90d9);
   color: #fff;
 }
 
@@ -596,7 +596,7 @@ function handleClose() {
   padding: 10px 16px;
   border: none;
   border-radius: 8px;
-  background: var(--color-purple, #7c3aed);
+  background: var(--accent-color, #4a90d9);
   color: #fff;
   font-size: 14px;
   font-weight: 500;
