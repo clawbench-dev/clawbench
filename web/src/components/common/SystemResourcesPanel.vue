@@ -1,16 +1,5 @@
 <template>
   <div class="system-resources-panel">
-    <!-- CPU -->
-    <div class="resource-row">
-      <div class="resource-header">
-        <Cpu :size="13" class="resource-icon" />
-        <span class="resource-label">{{ t('systemResources.cpu') }}</span>
-        <span class="resource-value">{{ cpuPercent }}%</span>
-      </div>
-      <div class="progress-bar">
-        <div class="progress-fill" :style="{ width: cpuBarWidth + '%' }" :class="getBarClass(resources.cpu.percent)"></div>
-      </div>
-    </div>
     <!-- Load Average -->
     <div class="resource-row">
       <div class="resource-header">
@@ -20,6 +9,17 @@
       </div>
       <div class="progress-bar">
         <div class="progress-fill" :style="{ width: loadBarPercent + '%' }" :class="getBarClass(loadBarPercent)"></div>
+      </div>
+    </div>
+    <!-- CPU -->
+    <div class="resource-row">
+      <div class="resource-header">
+        <Cpu :size="13" class="resource-icon" />
+        <span class="resource-label">{{ t('systemResources.cpu') }}</span>
+        <span class="resource-value">{{ cpuPercent }}%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" :style="{ width: cpuBarWidth + '%' }" :class="getBarClass(resources.cpu.percent)"></div>
       </div>
     </div>
     <!-- Memory -->
