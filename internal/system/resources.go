@@ -157,7 +157,7 @@ func (s *sampler) sampleCPU(resp *ResourceResponse) error {
 	now := time.Now()
 	cur := times[0]
 	curIdle := cur.Idle + cur.Iowait // Iowait is 0 on Windows (harmless)
-	curTotal := cur.Total()
+	curTotal := cpuTimesTotal(cur)
 
 	if !s.cpuInited {
 		s.cpuPrevIdle = curIdle
@@ -194,6 +194,13 @@ func calculateCPUPercentRaw(prevIdle, prevTotal, curIdle, curTotal float64, elap
 		return 100
 	}
 	return usage
+}
+
+// cpuTimesTotal returns the total CPU time (sum of all fields).
+// Replaces the deprecated cpu.TimesStat.Total() method.
+func cpuTimesTotal(t cpu.TimesStat) float64 {
+	return t.User + t.System + t.Idle + t.Nice + t.Iowait +
+		t.Irq + t.Softirq + t.Steal + t.Guest + t.GuestNice
 }
 
 func (s *sampler) sampleMemory(resp *ResourceResponse) error {

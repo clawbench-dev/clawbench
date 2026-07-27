@@ -8,7 +8,7 @@ import (
 )
 
 func TestServeSystemResources(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/system/resources", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/system/resources", http.NoBody)
 	w := httptest.NewRecorder()
 
 	ServeSystemResources(w, req)
@@ -56,7 +56,7 @@ func TestServeSystemResources(t *testing.T) {
 }
 
 func TestServeSystemResources_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/system/resources", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/system/resources", http.NoBody)
 	w := httptest.NewRecorder()
 
 	ServeSystemResources(w, req)
