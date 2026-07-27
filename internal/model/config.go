@@ -129,8 +129,9 @@ func (s SummarizeConfig) IsChatSummaryEnabled() bool {
 }
 
 // RAGConfig holds configuration for the RAG history memory system.
-// RAG is always enabled. When the embedding API is unavailable, falls back to BM25 full-text search.
+// FTS (full-text search) is always enabled. VectorEnabled controls vector embedding only.
 type RAGConfig struct {
+	VectorEnabled  bool   `yaml:"vector_enabled"`   // Enable vector embedding (default: true). FTS is always on.
 	BaseURL        string `yaml:"base_url"`         // OpenAI-compatible API base URL (default: "http://localhost:11434")
 	Model          string `yaml:"model"`            // Embedding model name (default: "bge-m3")
 	APIKey         string `yaml:"api_key"`          // API key for the embedding service (optional, for cloud providers)

@@ -452,9 +452,13 @@ describe('SettingsItem', () => {
       expect((inner.element as HTMLElement).style.width).toBe('50%')
     })
 
-    it('hides progress bar when value >= max', () => {
+    it('shows full progress bar when value >= max', () => {
       const wrapper = mountItem({ type: 'info', modelValue: '100/100', progress: { value: 100, max: 100 } })
-      expect(wrapper.find('.settings-item__progress').exists()).toBe(false)
+      const bar = wrapper.find('.settings-item__progress')
+      expect(bar.exists()).toBe(true)
+      const inner = wrapper.find('.settings-item__progress-bar')
+      expect(inner.exists()).toBe(true)
+      expect((inner.element as HTMLElement).style.width).toBe('100%')
     })
 
     it('hides progress bar when no progress prop', () => {

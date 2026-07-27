@@ -1135,6 +1135,14 @@ func IndexedMessageCount() (int, error) {
 	return count, err
 }
 
+// MessageIndexCounts returns (total, indexed) message counts in a single query.
+func MessageIndexCounts() (total int, indexed int, err error) {
+	err = dbRead.QueryRow(
+		"SELECT COUNT(*), COALESCE(SUM(CASE WHEN indexed = 1 THEN 1 ELSE 0 END), 0) FROM chat_history WHERE streaming = 0",
+	).Scan(&total, &indexed)
+	return
+}
+
 // GetExpiredDeletedSessions returns session IDs of soft-deleted sessions
 // whose updated_at (set to deletion time) is older than the cutoff.
 func GetExpiredDeletedSessions(cutoff time.Time) ([]string, error) {

@@ -141,6 +141,7 @@ func (s *Store) initSchema() error {
 
 	// Create partial index for embedding queries
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_rag_chunks_has_embedding ON rag_chunks(id) WHERE has_embedding = 1`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_rag_chunks_no_embedding ON rag_chunks(id) WHERE has_embedding = 0`)
 
 	// Create FTS5 virtual table with external content mode
 	_, err = s.db.Exec(`
@@ -709,6 +710,14 @@ func (s *Store) EmbeddedChunkCount() (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM rag_chunks WHERE has_embedding = 1").Scan(&count)
 	return count, err
+}
+
+// ChunkEmbeddingCounts returns (total, embedded) chunk counts in a single query.
+func (s *Store) ChunkEmbeddingCounts() (total int, embedded int, err error) {
+	err = s.db.QueryRow(
+		"SELECT COUNT(*), COALESCE(SUM(CASE WHEN has_embedding = 1 THEN 1 ELSE 0 END), 0) FROM rag_chunks",
+	).Scan(&total, &embedded)
+	return
 }
 
 // GetMessageIndexStatus returns FTS and vector embedding status for a specific message.

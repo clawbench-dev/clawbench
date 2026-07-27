@@ -193,8 +193,11 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- RAG ---
-	// RAG is always enabled. No "enabled" toggle needed.
-	// When the embedding API is unavailable, falls back to BM25 full-text search.
+	// Bool zero-value trap: default to true when absent from config.
+	if !presence["rag.vector_enabled"] {
+		cfg.RAG.VectorEnabled = true
+	}
+	// FTS is always enabled. The Enabled field controls vector embedding only.
 	// Backward compatibility: migrate deprecated Ollama fields to new generic fields.
 	if cfg.RAG.BaseURL == "" && cfg.RAG.OllamaBaseURL != "" {
 		cfg.RAG.BaseURL = cfg.RAG.OllamaBaseURL

@@ -88,6 +88,7 @@ var hotReloadFields = map[string]bool{
 	"port_forward.port":          true,
 	"port_forward.allowed_ports": true,
 	// RAG — reconfigure embedder, indexer, cleanup worker
+	"rag.vector_enabled":                true,
 	"rag.base_url":              true,
 	"rag.model":                 true,
 	"rag.api_key":               true,
@@ -247,6 +248,7 @@ type configAPI struct {
 }
 
 type configRAG struct {
+	VectorEnabled  bool   `json:"vector_enabled"`
 	BaseURL        string `json:"base_url"`
 	Model          string `json:"model"`
 	APIKey         string `json:"api_key"`
@@ -322,6 +324,7 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.kokoro.lang":             true,
 	"tts.moss_nano.model_dir":     true,
 	"tts.moss_nano.backend":       true,
+	"rag.vector_enabled":                 true,
 	"rag.base_url":                true,
 	"rag.model":                   true,
 	"rag.api_key":                 true,
@@ -436,6 +439,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			MaxCacheFiles: cfg.TTS.MaxCacheFiles,
 		},
 		RAG: configRAG{
+			VectorEnabled:  cfg.RAG.VectorEnabled,
 			BaseURL:        cfg.RAG.BaseURL,
 			Model:          cfg.RAG.Model,
 			APIKey:         cfg.RAG.APIKey,
@@ -1003,6 +1007,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if rag, ok := patch["rag"].(map[string]any); ok {
+		if v, ok := rag["vector_enabled"].(bool); ok {
+			cfg.RAG.VectorEnabled = v
+		}
 		if v, ok := rag["base_url"].(string); ok {
 			cfg.RAG.BaseURL = v
 		}

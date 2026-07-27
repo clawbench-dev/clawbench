@@ -55,8 +55,8 @@
     <div v-if="description" class="settings-item__desc">{{ description }}</div>
     <!-- Info-type: show value as a full-width detail line below the label/desc -->
     <div v-if="type === 'info' && displayValue" class="settings-item__info-detail">{{ displayValue }}</div>
-    <!-- Progress bar for info-type items (hidden when 100%) -->
-    <div v-if="type === 'info' && progress && progress.value < progress.max && progress.max > 0" class="settings-item__progress">
+    <!-- Progress bar for info-type items -->
+    <div v-if="type === 'info' && progress && progress.max > 0" class="settings-item__progress">
       <div class="settings-item__progress-bar" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
     </div>
   </div>

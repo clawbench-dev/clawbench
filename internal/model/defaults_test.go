@@ -405,6 +405,21 @@ func TestApplyDefaults_RAGDefaults(t *testing.T) {
 	if cfg.RAG.RetentionDays != 90 {
 		t.Errorf("RAG.RetentionDays = %d, want 90", cfg.RAG.RetentionDays)
 	}
+	if !cfg.RAG.VectorEnabled {
+		t.Error("RAG.VectorEnabled should default to true when absent from config")
+	}
+}
+
+func TestApplyDefaults_RAGEnabledExplicitFalse(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{RAG: RAGConfig{VectorEnabled: false}}
+	presence := map[string]bool{"rag.vector_enabled": true}
+	ApplyDefaults(&cfg, presence)
+
+	if cfg.RAG.VectorEnabled {
+		t.Error("RAG.VectorEnabled should stay false when explicitly set to false")
+	}
 }
 
 func TestApplyDefaults_RAGOllamaMigration(t *testing.T) {

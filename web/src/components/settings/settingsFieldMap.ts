@@ -324,6 +324,8 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   rag: [
     { type: 'panel', config: {
       panelId: 'rag',
+      enableKey: 'rag.vector_enabled',
+      enableLabelKey: 'settings.items.ragEnabled',
       commonFields: [
         { labelKey: 'settings.items.ragBaseUrl', descriptionKey: 'settings.items.ragBaseUrlDesc', key: 'rag.base_url', type: 'text', source: 'server' },
         { labelKey: 'settings.items.ragModel', descriptionKey: 'settings.items.ragModelDesc', key: 'rag.model', type: 'text', source: 'server' },

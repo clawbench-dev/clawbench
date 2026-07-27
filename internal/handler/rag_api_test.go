@@ -29,6 +29,7 @@ func TestServeRAGSearch_EmptyQuery(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
+
 	req := newRequest(t, http.MethodPost, "/api/rag/search", map[string]any{"q": ""})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeRAGSearch, req)
@@ -39,6 +40,7 @@ func TestServeRAGSearch_MissingQuery(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
+
 	req := newRequest(t, http.MethodPost, "/api/rag/search", map[string]any{})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeRAGSearch, req)
@@ -48,6 +50,7 @@ func TestServeRAGSearch_MissingQuery(t *testing.T) {
 func TestServeRAGSearch_NilStoreReturns503(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
+
 
 	// With nil GlobalStore/GlobalEmbedder, RAGSearch should return 503
 	origStore := rag.GlobalStore
@@ -68,6 +71,7 @@ func TestServeRAGSearch_NilStoreReturns503(t *testing.T) {
 func TestServeRAGSearch_EmptyResultsArray(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
+
 
 	// Setup a real SQLite store + mock embedder
 	origStore := rag.GlobalStore
@@ -244,6 +248,7 @@ func TestServeRAGSearch_CrossProjectIsolation(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
+
 	// Setup a real SQLite store + mock embedder
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
@@ -274,6 +279,7 @@ func TestServeRAGSearch_LocalhostGlobalSearch(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
+
 	// Setup a real SQLite store + mock embedder
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
@@ -297,6 +303,7 @@ func TestServeRAGSearch_LocalhostGlobalSearch(t *testing.T) {
 func TestServeRAGSearch_RemoteNoProjectDenied(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
+
 
 	// Remote request without project cookie — should be denied
 	req := newRequest(t, http.MethodPost, "/api/rag/search", map[string]any{"q": "test"})
@@ -492,9 +499,28 @@ func TestServeRAGStatus_ReturnsFields(t *testing.T) {
 	assert.Contains(t, result, "embedded_chunks")
 }
 
+func TestServeRAGStatus_VectorDisabled(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// RAG.VectorEnabled defaults to false in test ConfigInstance (vector disabled)
+	// FTS should still be reported as available when store has data
+	req := newRequest(t, http.MethodGet, "/api/rag/status", nil)
+	w := callHandlerWithAuth(ServeRAGStatus, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	// No FTS data in empty test store, but vec should also be false
+	assert.Equal(t, false, result["has_vec_data"])
+	assert.Equal(t, false, result["embedder_healthy"])
+}
+
 func TestServeRAGStatus_ProgressCounts(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
+
 
 	// Insert some messages
 	_, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
@@ -517,6 +543,7 @@ func TestServeRAGStatus_ProgressCounts(t *testing.T) {
 func TestServeRAGStatus_NilStore(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
+
 
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
@@ -543,6 +570,7 @@ func TestServeRAGStatus_NilStore(t *testing.T) {
 func TestServeRAGStatus_WithStore_HybridMode(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
+
 
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
@@ -583,6 +611,7 @@ func TestServeRAGSessionSearch_MissingQuery(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
+
 	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
@@ -593,6 +622,7 @@ func TestServeRAGSessionSearch_RemoteNoProjectDenied(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
+
 	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"q": "test"})
 	// Default RemoteAddr is 192.0.2.1 (non-localhost)
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
@@ -602,6 +632,7 @@ func TestServeRAGSessionSearch_RemoteNoProjectDenied(t *testing.T) {
 func TestServeRAGSessionSearch_NilStoreReturns503(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
+
 
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
@@ -621,6 +652,7 @@ func TestServeRAGSessionSearch_NilStoreReturns503(t *testing.T) {
 func TestServeRAGSessionSearch_EmptyResultsArray(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
+
 
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
@@ -650,6 +682,7 @@ func TestServeRAGSessionSearch_EmptyResultsArray(t *testing.T) {
 func TestServeRAGSessionSearch_LocalhostGlobalSearch(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
+
 
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder

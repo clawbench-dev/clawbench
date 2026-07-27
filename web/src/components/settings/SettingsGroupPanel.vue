@@ -336,9 +336,9 @@ function getRagStatusValue(key: string): unknown {
     case 'rag.status.mode':
       return t(`settings.items.ragMode_${s.mode}`)
     case 'rag.status.index_progress':
-      return t('settings.items.ragProgressFormat', { done: Math.min(s.indexed_messages, s.total_messages), total: s.total_messages })
+      return s.total_messages > 0 ? t('settings.items.ragProgressFormat', { done: Math.min(s.indexed_messages, s.total_messages), total: s.total_messages }) : '—'
     case 'rag.status.embed_progress':
-      return t('settings.items.ragProgressFormat', { done: Math.min(s.embedded_chunks, s.total_chunks), total: s.total_chunks })
+      return s.total_chunks > 0 ? t('settings.items.ragProgressFormat', { done: Math.min(s.embedded_chunks, s.total_chunks), total: s.total_chunks }) : '—'
     default:
       return ''
   }
@@ -348,9 +348,9 @@ function resolveProgress(field: ItemSpec): { value: number; max: number } | unde
   const s = ragStatus.value
   switch (field.key) {
     case 'rag.status.index_progress':
-      return { value: s.indexed_messages, max: Math.max(s.total_messages, 1) }
+      return s.total_messages > 0 ? { value: s.indexed_messages, max: s.total_messages } : undefined
     case 'rag.status.embed_progress':
-      return { value: s.embedded_chunks, max: Math.max(s.total_chunks, 1) }
+      return s.total_chunks > 0 ? { value: s.embedded_chunks, max: s.total_chunks } : undefined
     default:
       return field.progress
   }

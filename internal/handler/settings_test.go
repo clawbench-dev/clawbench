@@ -1916,13 +1916,14 @@ func TestServeConfigPatch_RAGFields(t *testing.T) {
 	cfg := model.Config{}
 	model.ConfigInstance = cfg
 
-	body := `{"rag":{"base_url":"http://localhost:11434","model":"bge-m3","api_key":"valid-full-key","chunk_size":256,"search_limit":10,"search_pool_size":100,"retention_days":60}}`
+	body := `{"rag":{"vector_enabled":false,"base_url":"http://localhost:11434","model":"bge-m3","api_key":"valid-full-key","chunk_size":256,"search_limit":10,"search_pool_size":100,"retention_days":60}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, model.ConfigInstance.RAG.VectorEnabled)
 	assert.Equal(t, "http://localhost:11434", model.ConfigInstance.RAG.BaseURL)
 	assert.Equal(t, "bge-m3", model.ConfigInstance.RAG.Model)
 	assert.Equal(t, "valid-full-key", model.ConfigInstance.RAG.APIKey)

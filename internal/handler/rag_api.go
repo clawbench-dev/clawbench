@@ -222,33 +222,28 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// When vector embedding is disabled, report FTS-only mode
+	vectorEnabled := model.ConfigInstance.RAG.VectorEnabled
+
 	hasFTSData := rag.GlobalStore != nil && rag.GlobalStore.HasFTSData()
 	embedderHealthy := rag.EmbedderHealthy()
 
-	// Progress counters
-	totalMessages, err := service.TotalMessageCount()
+	// Progress counters — combined queries to reduce round trips
+	totalMessages, indexedMessages, err := service.MessageIndexCounts()
 	if err != nil {
-		slog.Warn("rag: failed to count total messages", slog.String("err", err.Error()))
-	}
-	indexedMessages, err := service.IndexedMessageCount()
-	if err != nil {
-		slog.Warn("rag: failed to count indexed messages", slog.String("err", err.Error()))
+		slog.Warn("rag: failed to count messages", slog.String("err", err.Error()))
 	}
 	var totalChunks, embeddedChunks int
 	if rag.GlobalStore != nil {
-		totalChunks, err = rag.GlobalStore.ChunkCount()
+		totalChunks, embeddedChunks, err = rag.GlobalStore.ChunkEmbeddingCounts()
 		if err != nil {
-			slog.Warn("rag: failed to count total chunks", slog.String("err", err.Error()))
-		}
-		embeddedChunks, err = rag.GlobalStore.EmbeddedChunkCount()
-		if err != nil {
-			slog.Warn("rag: failed to count embedded chunks", slog.String("err", err.Error()))
+			slog.Warn("rag: failed to count chunks", slog.String("err", err.Error()))
 		}
 	}
-	hasVecData := embeddedChunks > 0
+	hasVecData := embeddedChunks > 0 && vectorEnabled
 
 	mode := "none"
-	if embedderHealthy && hasVecData {
+	if vectorEnabled && embedderHealthy && hasVecData {
 		mode = "hybrid"
 	} else if hasFTSData {
 		mode = "fts"

@@ -256,6 +256,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- Without this, the unread subquery can only use the project_path prefix of idx_history_session,
 		-- requiring a full scan of all messages in the project to filter by role and streaming.
 		CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
+		-- Covering index for RAG indexing progress queries:
+		-- TotalMessageCount (WHERE streaming = 0) and IndexedMessageCount (WHERE indexed = 1 AND streaming = 0)
+		CREATE INDEX IF NOT EXISTS idx_history_indexing ON chat_history(streaming, indexed);
 
 		-- Tool call detail storage (input/output split from chat_history.content for performance)
 		CREATE TABLE IF NOT EXISTS chat_tool_calls (

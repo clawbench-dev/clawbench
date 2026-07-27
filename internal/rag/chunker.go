@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	"clawbench/internal/model"
+	"clawbench/internal/summarize"
 )
 
 // TextChunk represents a chunked segment of text with its token count.
@@ -23,7 +24,7 @@ func ExtractTextFromContent(content, role string) string {
 		return strings.TrimSpace(content)
 	}
 
-	// Assistant message: parse JSON and extract text blocks only
+	// Assistant message: parse JSON and extract only the conclusion
 	var msg struct {
 		Blocks []model.ContentBlock `json:"blocks"`
 	}
@@ -32,15 +33,7 @@ func ExtractTextFromContent(content, role string) string {
 		return strings.TrimSpace(content)
 	}
 
-	var texts []string
-	for _, block := range msg.Blocks {
-		if block.Type == "text" && block.Text != "" {
-			texts = append(texts, block.Text)
-		}
-		// Skip thinking, tool_use, warning, error blocks
-	}
-
-	return strings.TrimSpace(strings.Join(texts, "\n\n"))
+	return strings.TrimSpace(summarize.ExtractLastAnswerFromBlocks(msg.Blocks))
 }
 
 // ChunkText splits text into overlapping chunks of approximately chunkSize tokens.
