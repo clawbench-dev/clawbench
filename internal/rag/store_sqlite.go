@@ -54,8 +54,12 @@ type SearchHit struct {
 
 // PendingChunk represents a chunk that needs embedding backfill.
 type PendingChunk struct {
-	ID        int64
-	ChunkText string
+	ID          int64
+	ChunkText   string
+	ProjectPath string
+	Backend     string
+	Role        string
+	SessionID   string
 }
 
 // Store manages the SQLite connection and FTS5 index.
@@ -663,9 +667,9 @@ func (s *Store) PendingEmbeddingCount() (int, error) {
 	return total - embedded, err
 }
 
-// GetPendingEmbeddings returns chunk IDs and texts that need embedding backfill.
+// GetPendingEmbeddings returns chunks that need embedding backfill, including metadata for vec0.
 func (s *Store) GetPendingEmbeddings(limit int) ([]PendingChunk, error) {
-	rows, err := s.db.Query("SELECT id, chunk_text FROM rag_chunks WHERE has_embedding = 0 ORDER BY created_at DESC, id DESC LIMIT ?", limit)
+	rows, err := s.db.Query("SELECT id, chunk_text, project_path, backend, role, session_id FROM rag_chunks WHERE has_embedding = 0 ORDER BY created_at DESC, id DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -674,7 +678,7 @@ func (s *Store) GetPendingEmbeddings(limit int) ([]PendingChunk, error) {
 	var pending []PendingChunk
 	for rows.Next() {
 		var p PendingChunk
-		if err := rows.Scan(&p.ID, &p.ChunkText); err != nil {
+		if err := rows.Scan(&p.ID, &p.ChunkText, &p.ProjectPath, &p.Backend, &p.Role, &p.SessionID); err != nil {
 			return nil, err
 		}
 		pending = append(pending, p)
@@ -708,13 +712,6 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 	}
 	defer func() { _ = updateStmt.Close() }()
 
-	selectStmt, err := tx.Prepare(
-		`SELECT project_path, backend, role, session_id FROM rag_chunks WHERE id = ?`)
-	if err != nil {
-		return 0, fmt.Errorf("prepare select stmt: %w", err)
-	}
-	defer func() { _ = selectStmt.Close() }()
-
 	deleteVecStmt, err := tx.Prepare(`DELETE FROM rag_vec WHERE rowid = ?`)
 	if err != nil {
 		return 0, fmt.Errorf("prepare delete vec stmt: %w", err)
@@ -745,16 +742,10 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 			continue
 		}
 
-		// Fetch chunk metadata for vec0 insert
-		var projectPath, backend, role, sessionID string
-		if err := selectStmt.QueryRow(p.ID).Scan(&projectPath, &backend, &role, &sessionID); err != nil {
-			continue
-		}
-
-		// Upsert into vec0
+		// Upsert into vec0 using metadata from PendingChunk (no extra SELECT needed)
 		_, _ = deleteVecStmt.Exec(p.ID)
 		vecBlob := serializeFloat32(float64ToFloat32(emb))
-		if _, err := insertVecStmt.Exec(p.ID, vecBlob, projectPath, backend, role, sessionID); err != nil {
+		if _, err := insertVecStmt.Exec(p.ID, vecBlob, p.ProjectPath, p.Backend, p.Role, p.SessionID); err != nil {
 			slog.Warn("rag: batch insert vec failed", slog.Int64("chunk_id", p.ID), slog.String("err", err.Error()))
 			continue
 		}

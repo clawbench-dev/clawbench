@@ -218,10 +218,10 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.RAG.ChunkOverlap = 64
 	}
 	if cfg.RAG.PollInterval == "" {
-		cfg.RAG.PollInterval = "10s"
+		cfg.RAG.PollInterval = "5s"
 	}
 	if cfg.RAG.BatchSize <= 0 {
-		cfg.RAG.BatchSize = 10
+		cfg.RAG.BatchSize = 50
 	}
 	if cfg.RAG.SearchLimit <= 0 {
 		cfg.RAG.SearchLimit = 20

@@ -139,8 +139,8 @@ type RAGConfig struct {
 	OllamaModel    string `yaml:"ollama_model"`     // Deprecated: use model
 	ChunkSize      int    `yaml:"chunk_size"`       // Chunk size in tokens (default: 512)
 	ChunkOverlap   int    `yaml:"chunk_overlap"`    // Overlap between chunks in tokens (default: 64)
-	PollInterval   string `yaml:"poll_interval"`    // Indexer poll interval (default: "10s")
-	BatchSize      int    `yaml:"batch_size"`       // Messages per indexer batch (default: 10)
+	PollInterval   string `yaml:"poll_interval"`    // Indexer poll interval (default: "5s")
+	BatchSize      int    `yaml:"batch_size"`       // Messages per indexer batch (default: 50)
 	SearchLimit    int    `yaml:"search_limit"`     // Default search result limit (default: 20)
 	SearchPoolSize int    `yaml:"search_pool_size"` // Candidates per search source before RRF fusion (default: 20)
 	RetentionDays  int    `yaml:"retention_days"`   // Soft-deleted data retention days (0=keep forever, default: 90)

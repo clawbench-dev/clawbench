@@ -86,6 +86,8 @@ func (idx *Indexer) Stop() {
 }
 
 // run is the main indexer loop.
+// Uses continuous mode: after each batch, if more work remains, immediately
+// processes the next batch instead of waiting for the poll interval.
 func (idx *Indexer) run() {
 	defer close(idx.doneCh)
 
@@ -111,13 +113,27 @@ func (idx *Indexer) run() {
 				return
 			default:
 			}
-			idx.indexBatch()
+			// After each batch, check if more work remains.
+			// If so, loop immediately instead of waiting for the next tick.
+			for {
+				hasMore := idx.indexBatch()
+				if !hasMore {
+					break
+				}
+				// Check stop signal between continuous batches
+				select {
+				case <-idx.stopCh:
+					return
+				default:
+				}
+			}
 		}
 	}
 }
 
 // indexBatch processes one batch of unindexed messages and backfills embeddings.
-func (idx *Indexer) indexBatch() {
+// Returns true if more unindexed messages may remain (caller should loop).
+func (idx *Indexer) indexBatch() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -129,16 +145,18 @@ func (idx *Indexer) indexBatch() {
 	idx.checkEmbedderHealth(ctx)
 
 	// Phase 1: Index new messages from SQLite
-	idx.indexNewMessages(ctx)
+	hasMore := idx.indexNewMessages(ctx)
 
 	if ctx.Err() != nil {
-		return
+		return false
 	}
 
 	// Phase 2: Backfill embeddings for chunks that were indexed without them
 	if idx.embedderHealthy {
 		idx.backfillEmbeddings(ctx)
 	}
+
+	return hasMore
 }
 
 // checkEmbedderHealth checks embedding API availability and updates the healthy flag.
@@ -206,22 +224,20 @@ func (idx *Indexer) checkEmbedderHealth(ctx context.Context) {
 // indexNewMessages indexes new (unindexed) messages from SQLite.
 // Optimization: all messages in the batch are chunked first, then embeddings are
 // requested in a single EmbedBatch call, and all chunks are inserted together.
-func (idx *Indexer) indexNewMessages(ctx context.Context) {
+// Returns true if more unindexed messages may remain.
+func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
 	messages, err := service.GetUnindexedMessages(idx.cfg.BatchSize)
 	if err != nil {
 		slog.Error("rag: failed to fetch unindexed messages", slog.String("err", err.Error()))
-		return
+		return false
 	}
 	if len(messages) == 0 {
-		return
+		return false
 	}
-
-	totalRemaining, _ := service.UnindexedCount()
 
 	slog.Info(
 		"rag: indexing batch",
 		slog.Int("batch_size", len(messages)),
-		slog.Int("remaining", totalRemaining),
 		slog.Bool("embedder_healthy", idx.embedderHealthy),
 	)
 
@@ -234,8 +250,7 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) {
 		chunks []Chunk
 	}
 	allMsgChunks := make([]msgChunks, 0, len(messages))
-	var allTexts []string          // flat list of all chunk texts for batch embedding
-	var textToMsgIdx []int         // maps allTexts index → msgChunks index
+	var allTexts []string // flat list of all chunk texts for batch embedding
 
 	for _, msg := range messages {
 		text := ExtractTextFromContent(msg.Content, msg.Role)
@@ -259,7 +274,6 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) {
 		}
 
 		chunks := make([]Chunk, len(textChunks))
-		mcIdx := len(allMsgChunks)
 		for i, tc := range textChunks {
 			chunks[i] = Chunk{
 				SessionID:          msg.SessionID,
@@ -274,7 +288,6 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) {
 				CreatedAt:          msg.CreatedAt,
 			}
 			allTexts = append(allTexts, tc.Text)
-			textToMsgIdx = append(textToMsgIdx, mcIdx)
 		}
 
 		allMsgChunks = append(allMsgChunks, msgChunks{msg: msg, text: text, chunks: chunks})
@@ -290,12 +303,12 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) {
 		}
 	}
 
-	// Phase 3: Assign embeddings to chunks and insert
-	indexed := 0
-	skipped := 0
-	var indexedIDs []int64
-
+	// Phase 3: Assign embeddings to chunks
 	textIdx := 0 // cursor into allTexts/allEmbeddings
+	var allChunks []Chunk
+	var indexedIDs []int64
+	skipped := 0
+
 	for i := range allMsgChunks {
 		mc := &allMsgChunks[i]
 		if mc.text == "" || len(mc.chunks) == 0 {
@@ -317,18 +330,18 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) {
 			textIdx += len(mc.chunks)
 		}
 
-		if err := idx.store.InsertChunks(mc.chunks); err != nil {
-			slog.Error("rag: failed to insert chunks",
-				slog.Int64("message_id", mc.msg.ID),
-				slog.String("err", err.Error()))
-			continue
-		}
-
+		allChunks = append(allChunks, mc.chunks...)
 		indexedIDs = append(indexedIDs, mc.msg.ID)
-		indexed++
 	}
 
-	// Phase 4: Batch mark all indexed messages
+	// Phase 4: Insert all chunks in a single transaction
+	if len(allChunks) > 0 {
+		if err := idx.store.InsertChunks(allChunks); err != nil {
+			slog.Error("rag: failed to insert chunks batch", slog.String("err", err.Error()))
+		}
+	}
+
+	// Phase 5: Batch mark all indexed messages
 	if len(indexedIDs) > 0 {
 		if err := service.MarkMessagesIndexed(indexedIDs); err != nil {
 			slog.Error("rag: failed to batch mark messages indexed", slog.String("err", err.Error()))
@@ -337,10 +350,14 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) {
 
 	slog.Info(
 		"rag: batch complete",
-		slog.Int("indexed", indexed),
+		slog.Int("messages", len(indexedIDs)),
+		slog.Int("chunks", len(allChunks)),
 		slog.Int("skipped", skipped),
 		slog.Duration("elapsed", time.Since(batchStart)),
 	)
+
+	// More work remains if we fetched a full batch
+	return len(messages) >= idx.cfg.BatchSize
 }
 
 // backfillEmbeddings generates embeddings for chunks that were stored without them.
@@ -359,12 +376,12 @@ func (idx *Indexer) backfillEmbeddings(ctx context.Context) {
 
 	batchSize := idx.cfg.BatchSize
 	if batchSize <= 0 {
-		batchSize = 10
+		batchSize = 50
 	}
 
 	maxBackfill := batchSize
-	if maxBackfill > 50 {
-		maxBackfill = 50
+	if maxBackfill > 200 {
+		maxBackfill = 200
 	}
 
 	pendingChunks, err := idx.store.GetPendingEmbeddings(maxBackfill)
