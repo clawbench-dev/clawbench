@@ -311,7 +311,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 				cutBeforeID = asstID
 			}
 			// If no assistant reply found (e.g. last message is user), cut at the user message
-		case "assistant":
+		case roleAssistant:
 			// Assistant message: fork directly at this message
 			cutBeforeID = beforeMessageID
 		default:
