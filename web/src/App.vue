@@ -36,6 +36,7 @@
               @open-file="handleSelectFile"
               @task-card-click="onTaskCardClick"
               @open-acp-sessions="acpSessionDrawer.open()"
+              @open-session-search="sessionSearchDrawer.open()"
             />
           </TabPanel>
 
@@ -168,6 +169,15 @@
         @select="handleSessionSelect"
         @create="handleSessionCreate"
         @delete="handleSessionDelete"
+        @open-session-search="sessionSearchDrawer.open()"
+      />
+
+      <!-- Session search drawer -->
+      <SessionSearchDrawer
+        :open="sessionSearchDrawer.effectiveOpen.value"
+        @close="sessionSearchDrawer.close()"
+        @open="handleOpenFromSearch"
+        @resume="handleResumeFromSearch"
       />
 
       <!-- ACP session resume drawer -->
@@ -295,6 +305,7 @@ import RecentFilesDrawer from './components/file/RecentFilesDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
+import SessionSearchDrawer from './components/session/SessionSearchDrawer.vue'
 import AcpSessionDrawer from './components/chat/AcpSessionDrawer.vue'
 import QuoteQuestionBar from './components/common/QuoteQuestionBar.vue'
 import HeaderMarquee from './components/common/HeaderMarquee.vue'
@@ -310,6 +321,7 @@ import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSe
 import { resetTaskTabState } from './composables/useTaskTab.ts'
 import { clearPlanState } from './composables/usePlanProgress.ts'
 import { useToast } from './composables/useToast.ts'
+import { useDialog } from './composables/useDialog.ts'
 import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
 import { requestNotificationPermission } from './composables/useNotification'
@@ -741,6 +753,46 @@ function handleSessionDelete(sessionId, backend) {
 
 // ── ACP Session Resume ──
 const acpSessionDrawer = useTabDrawer('chat')
+
+// ── Session Search ──
+const sessionSearchDrawer = useTabDrawer('chat', { autoRestore: false })
+const searchConfirmDialog = useDialog()
+
+function handleOpenFromSearch(session) {
+  if (!session?.session_id) return
+  sessionSearchDrawer.close()
+  handleSessionSelect(session.session_id, session.backend)
+}
+
+async function handleResumeFromSearch(session) {
+  if (!session?.session_id) return
+  const title = session.session_title || gt('sessionSearch.untitledSession')
+  const confirmed = await searchConfirmDialog.confirm(
+    gt('sessionSearch.resumeConfirm', { title }),
+    { title: gt('sessionSearch.resume'), confirmText: gt('common.confirm') }
+  )
+  if (!confirmed) return
+  try {
+    const resp = await fetch('/api/ai/session/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: session.session_id }),
+    })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      if (resp.status === 403) {
+        toast.show(gt('sessionSearch.resumeProjectMismatch'), { icon: '⚠️', type: 'error' })
+      } else {
+        toast.show(data.error || gt('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
+      }
+      return
+    }
+    sessionSearchDrawer.close()
+    handleSessionSelect(session.session_id, session.backend)
+  } catch {
+    toast.show(gt('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
+  }
+}
 
 async function handleAcpSessionSelect(sessionId) {
   await sessionIdentity.switchSession(sessionId)

@@ -731,10 +731,21 @@ describe('ChatInputBar', () => {
   it('user-msg-index button emits open-user-msg-index', async () => {
     const wrapper = mountBar()
     const buttons = wrapper.findAll('.chat-action-btn')
-    // Third button in the action group is the user-msg-index button
-    const indexBtn = buttons[2]
+    // Fourth button in the action group is the user-msg-index button
+    // (List, Plus, Search, MessagesSquare, ...)
+    const indexBtn = buttons[3]
     await indexBtn.trigger('click')
     expect(wrapper.emitted('open-user-msg-index')).toBeTruthy()
+  })
+
+  it('session search button emits open-session-search', async () => {
+    const wrapper = mountBar()
+    const buttons = wrapper.findAll('.chat-action-btn')
+    // Third button in the action group is the session search button
+    // (List, Plus, Search, ...)
+    const searchBtn = buttons[2]
+    await searchBtn.trigger('click')
+    expect(wrapper.emitted('open-session-search')).toBeTruthy()
   })
 
   it('drop event resets drag state', async () => {

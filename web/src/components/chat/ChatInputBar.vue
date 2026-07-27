@@ -18,6 +18,11 @@
           <Plus :size="14" />
         </button>
         <button class="chat-action-btn"
+          @click="$emit('open-session-search')"
+          :title="t('chat.actions.sessionSearch')">
+          <Search :size="14" />
+        </button>
+        <button class="chat-action-btn"
           @click="$emit('open-user-msg-index')"
           :title="t('chat.actions.userMsgIndex')">
           <MessagesSquare :size="14" />
@@ -236,7 +241,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, RotateCcw } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Search, Trash2, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, RotateCcw } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
@@ -411,6 +416,7 @@ const emit = defineEmits([
   'remove-quote',
   'quote-click',
   'open-session-tab',
+  'open-session-search',
   'file-tag-click',
   'toggle-auto-speech',
   'create-session',

@@ -9,7 +9,7 @@
           <span class="session-counter-text">{{ sessionCount }}/{{ sessionMaxCount }}</span>
         </div>
       </div>
-      <button class="header-action-btn" @click.stop="searchDrawer.open()" :title="t('sessionSearch.title')">
+      <button class="header-action-btn" @click.stop="$emit('open-session-search')" :title="t('sessionSearch.title')">
         <Search :size="16" />
       </button>
       <button class="header-action-btn" @click.stop="handleCreateClick" :title="t('session.newSession')">
@@ -64,21 +64,13 @@
     @update:open="v => v ? agentSelectorDrawer.open() : agentSelectorDrawer.close()"
     @select="createSession"
   />
-
-  <!-- Session search drawer -->
-  <SessionSearchDrawer
-    :open="searchDrawer.effectiveOpen.value"
-    @close="searchDrawer.close()"
-    @resume="handleResumeFromSearch"
-    @open="handleOpenFromSearch"
-  />
 </template>
 
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { Plus, Search } from 'lucide-vue-next'
-import { ref, watch, computed, onUnmounted, nextTick, inject } from 'vue'
+import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
@@ -87,7 +79,6 @@ import { useAgents } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import SessionSearchDrawer from './SessionSearchDrawer.vue'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
 
@@ -100,7 +91,7 @@ const props = defineProps({
   currentAgentId: String,
 })
 
-const emit = defineEmits(['close', 'select', 'create', 'delete'])
+const emit = defineEmits(['close', 'select', 'create', 'delete', 'open-session-search'])
 
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
@@ -115,10 +106,6 @@ const pageSize = computed(() => store.state.chatSessionPageSize || 10)
 const { agents, loadAgents, getAgentBackend, getAgentName } = useAgents()
 const dialog = useDialog()
 const { runningSessionsVersion } = useSessionIdentity()
-const toast = inject('toast', null)
-
-// Session search
-const searchDrawer = useTabDrawer('chat', { autoRestore: false })
 
 // Session count indicator
 const sessionCount = computed(() => store.state.sessionCount)
@@ -276,41 +263,6 @@ onUnmounted(() => {
   }
 })
 
-function handleOpenFromSearch(session) {
-  if (!session?.session_id) return
-  searchDrawer.close()
-  selectSession(session.session_id, session.backend)
-}
-
-async function handleResumeFromSearch(session) {
-  if (!session?.session_id) return
-  const title = session.session_title || t('sessionSearch.untitledSession')
-  const confirmed = await dialog.confirm(
-    t('sessionSearch.resumeConfirm', { title }),
-    { title: t('sessionSearch.resume'), confirmText: t('common.confirm') }
-  )
-  if (!confirmed) return
-  try {
-    const resp = await fetch('/api/ai/session/resume', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: session.session_id }),
-    })
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}))
-      if (resp.status === 403 && toast) {
-        toast.show(t('sessionSearch.resumeProjectMismatch'), { icon: '⚠️', type: 'error' })
-      } else if (toast) {
-        toast.show(data.error || t('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
-      }
-      return
-    }
-    searchDrawer.close()
-    selectSession(session.session_id, session.backend)
-  } catch {
-    if (toast) toast.show(t('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
-  }
-}
 </script>
 
 <style scoped>

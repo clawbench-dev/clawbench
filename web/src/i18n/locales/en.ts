@@ -170,6 +170,7 @@ export default {
       switchThinkingEffort: 'Switch thinking effort',
       forkSession: 'Fork session',
       userMsgIndex: 'Message index',
+      sessionSearch: 'Search sessions',
       attachment: 'Attach',
       attachToChat: 'Add to chat',
     },

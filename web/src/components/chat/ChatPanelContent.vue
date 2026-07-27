@@ -98,6 +98,7 @@
       @remove-quote="setQuoteData(null)"
       @quote-click="handleQuoteClick"
       @open-session-tab="identity.openSessionTab"
+      @open-session-search="$emit('open-session-search')"
       @file-tag-click="handleFileTagClick"
       @toggle-auto-speech="autoSpeech.toggle"
       @create-session="() => manager.createSession()"
@@ -196,7 +197,7 @@ const props = defineProps({
     currentFile: Object,
     currentDir: String,
 })
-const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click', 'open-acp-sessions'])
+const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click', 'open-acp-sessions', 'open-session-search'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()

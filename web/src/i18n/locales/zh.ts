@@ -170,6 +170,7 @@ export default {
       switchThinkingEffort: '切换思考档位',
       forkSession: '派生会话',
       userMsgIndex: '消息索引',
+      sessionSearch: '搜索会话',
       attachment: '附件',
       attachToChat: '添加到聊天',
     },
