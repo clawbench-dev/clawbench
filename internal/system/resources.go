@@ -114,50 +114,48 @@ func dataDir() string {
 
 // GetResources collects all system resource metrics.
 // Uses response caching with 500ms TTL to handle concurrent requests safely.
+// Sampling is done outside the lock to avoid blocking concurrent readers.
 func GetResources() (*ResourceResponse, error) {
 	s := globalSampler
+
+	// Check cache under lock
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Return cached response if still fresh
 	if s.cachedResp != nil && time.Since(s.cachedAt) < cacheTTL {
-		return s.cachedResp, nil
+		cached := s.cachedResp
+		s.mu.Unlock()
+		return cached, nil
 	}
+	s.mu.Unlock()
 
+	// Sample outside the lock — these read /proc and may take ~100ms
 	var errs []string
 	resp := &ResourceResponse{}
 
-	// CPU
 	if err := s.sampleCPU(resp); err != nil {
 		resp.CPU = CPUInfo{Percent: -1}
 		errs = append(errs, fmt.Sprintf("cpu: %v", err))
 	}
 
-	// Memory
 	if err := s.sampleMemory(resp); err != nil {
 		resp.Memory = MemoryInfo{}
 		errs = append(errs, fmt.Sprintf("memory: %v", err))
 	}
 
-	// Disk
 	if err := s.sampleDisk(resp); err != nil {
 		resp.Disk = DiskInfo{}
 		errs = append(errs, fmt.Sprintf("disk: %v", err))
 	}
 
-	// Network
 	if err := s.sampleNetwork(resp); err != nil {
 		resp.Network = NetworkInfo{}
 		errs = append(errs, fmt.Sprintf("network: %v", err))
 	}
 
-	// Disk I/O
 	if err := s.sampleDiskIO(resp); err != nil {
 		resp.DiskIO = DiskIOInfo{}
 		errs = append(errs, fmt.Sprintf("disk_io: %v", err))
 	}
 
-	// Load
 	if err := s.sampleLoad(resp); err != nil {
 		resp.Load = LoadInfo{}
 		errs = append(errs, fmt.Sprintf("load: %v", err))
@@ -168,8 +166,13 @@ func GetResources() (*ResourceResponse, error) {
 		resp.Errors = nil // omit empty array from JSON
 	}
 
+	// Update cache under lock (may race with another goroutine that also
+	// sampled — last writer wins, which is fine for metrics data)
+	s.mu.Lock()
 	s.cachedResp = resp
 	s.cachedAt = time.Now()
+	s.mu.Unlock()
+
 	return resp, nil
 }
 

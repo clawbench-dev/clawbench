@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { appLog } from '@/utils/appLog'
 
 export interface CPUInfo {
@@ -74,6 +74,9 @@ function startPolling() {
   activeCount++
   if (activeCount > 1) return // already polling
 
+  // Register visibility handler on first consumer
+  document.addEventListener('visibilitychange', onVisibilityChange)
+
   // Initial fetch — two calls: first initializes CPU/network sampler,
   // second returns actual calculated rates
   fetchResources().then(() => {
@@ -96,6 +99,8 @@ function stopPolling() {
     clearTimeout(initTimeout)
     initTimeout = null
   }
+  // Remove visibility handler when last consumer stops
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 }
 
 // Pause polling when tab is hidden, resume when visible
@@ -116,12 +121,8 @@ function onVisibilityChange() {
 }
 
 export function useSystemResources() {
-  onMounted(() => {
-    document.addEventListener('visibilitychange', onVisibilityChange)
-  })
   onUnmounted(() => {
     stopPolling()
-    document.removeEventListener('visibilitychange', onVisibilityChange)
   })
 
   return {
