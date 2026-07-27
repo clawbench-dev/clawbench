@@ -76,9 +76,6 @@ func RAGSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, par
 	// (i.e., there are chunks with embeddings in the vec0 table)
 	vecReady := store.HasVecData()
 
-	// FTS5 is always available with SQLite (no extension loading needed)
-	ftsAvailable := true
-
 	// User can force FTS-only mode via PreferMode
 	forceFTS := strings.EqualFold(params.PreferMode, string(SearchModeFTS))
 
@@ -92,7 +89,7 @@ func RAGSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, par
 		mode = SearchModeFTS
 		hits, err = store.SearchFTS(params.Query, limit, params.ProjectPath, params.Backend, params.Role, params.SessionID, params.ExcludeSessionID, params.FromTime, params.ToTime)
 
-	case embedderHealthy && vecReady && ftsAvailable:
+	case embedderHealthy && vecReady:
 		// Hybrid: vector + FTS with RRF fusion
 		if embedder == nil {
 			// Embedder marked healthy but no client available — fall back to FTS
@@ -110,21 +107,6 @@ func RAGSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, par
 		} else {
 			hits, err = store.SearchHybrid(queryEmbedding, params.Query, poolSize, limit, params.ProjectPath, params.Backend, params.Role, params.SessionID, params.ExcludeSessionID, params.FromTime, params.ToTime)
 		}
-
-	case embedderHealthy && vecReady && !ftsAvailable:
-		// Vector-only (FTS not available — shouldn't happen with SQLite, but defensive)
-		if embedder == nil {
-			mode = SearchModeFTS
-			hits, err = store.SearchFTS(params.Query, limit, params.ProjectPath, params.Backend, params.Role, params.SessionID, params.ExcludeSessionID, params.FromTime, params.ToTime)
-			break
-		}
-		mode = SearchModeVector
-		var queryEmbedding []float64
-		queryEmbedding, err = embedder.Embed(ctx, params.Query)
-		if err != nil {
-			return nil, fmt.Errorf("embed query: %w", err)
-		}
-		hits, err = store.SearchVector(queryEmbedding, limit, params.ProjectPath, params.Backend, params.Role, params.SessionID, params.ExcludeSessionID, params.FromTime, params.ToTime)
 
 	case embedderHealthy && !vecReady:
 		// Embedder available but no vectors in vec0 — degrade to FTS-only
@@ -197,13 +179,7 @@ func getSessionTitles(sessionIDs map[string]bool) map[string]string {
 	}
 	titles, err := service.GetSessionTitlesBatchIncludeDeleted(ids)
 	if err != nil {
-		titles = make(map[string]string, len(sessionIDs))
-		for id := range sessionIDs {
-			title, err := service.GetSessionTitle(id)
-			if err == nil && title != "" {
-				titles[id] = title
-			}
-		}
+		return map[string]string{}
 	}
 	return titles
 }
@@ -357,17 +333,30 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 }
 
 // getSessionDeletedStatus fetches the deleted status for a set of session IDs.
-// NOTE: N+1 pattern is acceptable because searchLimit caps at 20 sessions.
-// If searchLimit grows significantly, replace with a batch query.
 func getSessionDeletedStatus(sessionIDs map[string]bool) map[string]bool {
 	deletedMap := make(map[string]bool, len(sessionIDs))
 	if !service.DBReady() || len(sessionIDs) == 0 {
 		return deletedMap
 	}
+	ids := make([]string, 0, len(sessionIDs))
 	for id := range sessionIDs {
+		ids = append(ids, id)
+	}
+	placeholders := strings.Repeat("?,", len(ids)-1) + "?"
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := service.ReadDB().Query(
+		"SELECT id, deleted FROM chat_sessions WHERE id IN ("+placeholders+")", args...)
+	if err != nil {
+		return deletedMap
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
 		var deleted int
-		err := service.ReadDB().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", id).Scan(&deleted)
-		if err == nil {
+		if err := rows.Scan(&id, &deleted); err == nil {
 			deletedMap[id] = deleted == 1
 		}
 	}

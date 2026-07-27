@@ -30,7 +30,6 @@ func ServeRAGSearch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Query            string `json:"q"`
 		Limit            int    `json:"limit"`
-		ProjectPath      string `json:"project"`
 		Backend          string `json:"backend"`
 		Role             string `json:"role"`
 		SessionID        string `json:"session_id"`
@@ -47,15 +46,15 @@ func ServeRAGSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defaultLimit := 5
+	effectiveLimit := defaultLimit
 	if req.Limit > 0 {
-		defaultLimit = req.Limit
+		effectiveLimit = req.Limit
 	}
 
 	// Project isolation: use cookie-derived project path when set.
 	// Empty projectPath (CLI global search) searches across all projects.
 	params := rag.SearchParams{
 		Query:            req.Query,
-		Limit:            req.Limit,
 		ProjectPath:      projectPath,
 		Backend:          req.Backend,
 		Role:             req.Role,
@@ -66,7 +65,7 @@ func ServeRAGSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	searchPoolSize := model.ConfigInstance.RAG.SearchPoolSize
-	result, err := rag.RAGSearch(r.Context(), rag.GlobalStore, rag.GlobalEmbedder, params, defaultLimit, searchPoolSize)
+	result, err := rag.RAGSearch(r.Context(), rag.GlobalStore, rag.GlobalEmbedder, params, effectiveLimit, searchPoolSize)
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSearchFailed")
 		return

@@ -232,7 +232,8 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) {
 
 	for _, msg := range messages {
 		msgStart := time.Now()
-		if err := idx.indexMessage(ctx, msg); err != nil {
+		text, err := idx.indexMessage(ctx, msg)
+		if err != nil {
 			slog.Error(
 				"rag: failed to index message",
 				slog.Int64("message_id", msg.ID),
@@ -250,7 +251,6 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) {
 			)
 		}
 
-		text := ExtractTextFromContent(msg.Content, msg.Role)
 		if text == "" {
 			skipped++
 		} else {
@@ -278,7 +278,8 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) {
 }
 
 // indexMessage processes a single message: extract text, chunk, (optionally) embed, store.
-func (idx *Indexer) indexMessage(ctx context.Context, msg service.UnindexedMessage) error {
+// Returns the extracted text (empty if skipped) and any error.
+func (idx *Indexer) indexMessage(ctx context.Context, msg service.UnindexedMessage) (string, error) {
 	text := ExtractTextFromContent(msg.Content, msg.Role)
 	if text == "" {
 		slog.Debug(
@@ -286,12 +287,12 @@ func (idx *Indexer) indexMessage(ctx context.Context, msg service.UnindexedMessa
 			slog.Int64("message_id", msg.ID),
 			slog.String("role", msg.Role),
 		)
-		return nil
+		return "", nil
 	}
 
 	textChunks := ChunkText(text, idx.cfg.ChunkSize, idx.cfg.ChunkOverlap)
 	if len(textChunks) == 0 {
-		return nil
+		return text, nil
 	}
 
 	maxChunks := 50
@@ -359,7 +360,7 @@ func (idx *Indexer) indexMessage(ctx context.Context, msg service.UnindexedMessa
 		}
 	}
 
-	return idx.store.InsertChunks(chunks)
+	return text, idx.store.InsertChunks(chunks)
 }
 
 // backfillEmbeddings generates embeddings for chunks that were stored without them.
@@ -407,7 +408,7 @@ func (idx *Indexer) backfillEmbeddings(ctx context.Context) {
 
 	backfilled := 0
 	for i, p := range pendingChunks {
-		if embeddings[i] == nil {
+		if i >= len(embeddings) || embeddings[i] == nil {
 			continue
 		}
 		if err := idx.store.UpdateEmbedding(p.ID, embeddings[i]); err != nil {

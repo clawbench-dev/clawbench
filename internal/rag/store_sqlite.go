@@ -104,8 +104,16 @@ func NewSQLiteStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("failed to init sqlite schema: %w", err)
 	}
 
-	// Load embedding dimension from existing data
+	// Load embedding dimension from existing data BEFORE migration
+	// (migration needs the dimension to create rag_vec table)
 	s.loadEmbeddingDimFromDB()
+
+	// Migrate existing float64 BLOB embeddings from rag_chunks to rag_vec.
+	// Must run after loadEmbeddingDimFromDB so rag_vec can be created with the correct dimension.
+	if err := s.migrateEmbeddingsToVec(); err != nil {
+		slog.Warn("rag: embedding migration to vec0 failed", slog.String("err", err.Error()))
+		// Non-fatal: new inserts will populate rag_vec going forward
+	}
 
 	return s, nil
 }
@@ -156,29 +164,9 @@ func (s *Store) initSchema() error {
 		return fmt.Errorf("create rag_chunks_fts: %w", err)
 	}
 
-	// Create vec0 virtual table for vector similarity search
-	dim := s.embDim
-	if dim <= 0 {
-		dim = 1024
-	}
-	_, err = s.db.Exec(fmt.Sprintf(`
-		CREATE VIRTUAL TABLE IF NOT EXISTS rag_vec USING vec0(
-			embedding float[%d] distance_metric=cosine,
-			project_path TEXT,
-			backend TEXT,
-			role TEXT,
-			session_id TEXT
-		)
-	`, dim))
-	if err != nil {
-		return fmt.Errorf("create rag_vec: %w", err)
-	}
-
-	// Migrate existing float64 BLOB embeddings from rag_chunks to rag_vec
-	if err := s.migrateEmbeddingsToVec(); err != nil {
-		slog.Warn("rag: embedding migration to vec0 failed", slog.String("err", err.Error()))
-		// Non-fatal: new inserts will populate rag_vec going forward
-	}
+	// Note: rag_vec is created lazily by ensureVecTable() on first vector insert,
+	// because the correct dimension is only known after loadEmbeddingDimFromDB().
+	// Migration is also deferred to NewSQLiteStore() after dimension is loaded.
 
 	return nil
 }
@@ -205,6 +193,24 @@ func (s *Store) migrateEmbeddingsToVec() error {
 	err := s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('rag_chunks') WHERE name = 'embedding'").Scan(&hasEmbCol)
 	if err != nil || hasEmbCol == 0 {
 		return nil // no embedding column — nothing to migrate
+	}
+
+	// Check if there are any embeddings to migrate
+	var embCount int
+	err = s.db.QueryRow("SELECT COUNT(*) FROM rag_chunks WHERE has_embedding = 1 AND embedding IS NOT NULL").Scan(&embCount)
+	if err != nil || embCount == 0 {
+		return nil
+	}
+
+	// Ensure dimension is set before creating vec0
+	if s.embDim <= 0 {
+		slog.Info("rag: embedding dimension unknown, skipping vec0 migration until embedder provides it")
+		return nil
+	}
+
+	// Ensure vec0 table exists
+	if err := s.ensureVecTable(); err != nil {
+		return fmt.Errorf("ensure vec0 table for migration: %w", err)
 	}
 
 	rows, err := s.db.Query(`
@@ -255,11 +261,75 @@ func (s *Store) migrateEmbeddingsToVec() error {
 	return nil
 }
 
+// ensureVecTable creates the rag_vec vec0 virtual table if it doesn't exist.
+// The dimension is determined from s.embDim (set by SetEmbeddingDim or loaded from DB).
+// Returns an error if dimension is unknown (0) and no existing table is found.
+// Must NOT be called from within a transaction (opens its own queries).
+func (s *Store) ensureVecTable() error {
+	// Check if rag_vec already exists
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vec'").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check rag_vec existence: %w", err)
+	}
+	if count > 0 {
+		return nil // already exists
+	}
+
+	dim := s.embDim
+	if dim <= 0 {
+		// Cannot create vec0 without knowing the dimension.
+		// Caller should set dimension first via SetEmbeddingDim.
+		return fmt.Errorf("cannot create rag_vec: embedding dimension unknown (set via SetEmbeddingDim first)")
+	}
+
+	_, err = s.db.Exec(fmt.Sprintf(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS rag_vec USING vec0(
+			embedding float[%d] distance_metric=cosine,
+			project_path TEXT,
+			backend TEXT,
+			role TEXT,
+			session_id TEXT
+		)
+	`, dim))
+	if err != nil {
+		return fmt.Errorf("create rag_vec: %w", err)
+	}
+	slog.Info("rag: created rag_vec table", slog.Int("dim", dim))
+	return nil
+}
+
+// vecTableExists checks if the rag_vec table exists in the database.
+func (s *Store) vecTableExists() bool {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vec'").Scan(&count)
+	return err == nil && count > 0
+}
+
 // InsertChunks inserts multiple chunks into SQLite with FTS5 sync.
 // Wraps all inserts in a transaction for atomicity.
 func (s *Store) InsertChunks(chunks []Chunk) error {
 	if len(chunks) == 0 {
 		return nil
+	}
+
+	// Ensure vec0 table exists before starting the transaction.
+	// This avoids deadlock with in-memory DBs (MaxOpenConns=1)
+	// where a nested query inside a transaction would block.
+	hasEmbedding := false
+	for _, c := range chunks {
+		if c.HasEmbedding && c.Embedding != nil {
+			hasEmbedding = true
+			break
+		}
+	}
+	vecReady := false
+	if hasEmbedding {
+		if err := s.ensureVecTable(); err != nil {
+			slog.Warn("rag: vec0 table not available, storing text-only", slog.String("err", err.Error()))
+		} else {
+			vecReady = true
+		}
 	}
 
 	tx, err := s.db.Begin()
@@ -307,8 +377,8 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 			return fmt.Errorf("insert fts entry for chunk %d: %w", chunkID, err)
 		}
 
-		// Insert into vec0 if embedding available
-		if c.HasEmbedding && c.Embedding != nil {
+		// Insert into vec0 if embedding available and table is ready
+		if c.HasEmbedding && c.Embedding != nil && vecReady {
 			vecBlob := serializeFloat32(float64ToFloat32(c.Embedding))
 			_, err = tx.Exec(
 				`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
@@ -332,6 +402,11 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 func (s *Store) SearchVector(queryEmbedding []float64, limit int, projectPath, backend, role, sessionID, excludeSessionID, fromTime, toTime string) ([]SearchHit, error) {
 	if err := validateEmbedding(queryEmbedding); err != nil {
 		return nil, fmt.Errorf("query embedding validation: %w", err)
+	}
+
+	// Check vec0 table exists (may not exist if no vectors have been indexed yet)
+	if !s.vecTableExists() {
+		return nil, nil
 	}
 
 	vecBlob := serializeFloat32(float64ToFloat32(queryEmbedding))
@@ -402,8 +477,14 @@ func (s *Store) SearchVector(queryEmbedding []float64, limit int, projectPath, b
 
 // HasVecData returns true if the vec0 table contains any vectors.
 func (s *Store) HasVecData() bool {
+	// Check if rag_vec table exists first
+	var tableExists int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vec'").Scan(&tableExists)
+	if err != nil || tableExists == 0 {
+		return false
+	}
 	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM rag_chunks WHERE has_embedding = 1").Scan(&count)
+	err = s.db.QueryRow("SELECT COUNT(*) FROM rag_vec").Scan(&count)
 	if err != nil {
 		return false
 	}
@@ -566,9 +647,8 @@ func (s *Store) SearchHybrid(queryEmbedding []float64, queryText string, poolSiz
 
 // PendingEmbeddingCount returns the number of chunks that need embedding backfill.
 func (s *Store) PendingEmbeddingCount() (int, error) {
-	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM rag_chunks WHERE has_embedding = 0").Scan(&count)
-	return count, err
+	total, embedded, err := s.ChunkEmbeddingCounts()
+	return total - embedded, err
 }
 
 // GetPendingEmbeddings returns chunk IDs and texts that need embedding backfill.
@@ -621,6 +701,12 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 	}
 
 	// Upsert into vec0 (delete old + insert new)
+	// Ensure vec0 table exists before insert (outside transaction to avoid deadlock)
+	if err := s.ensureVecTable(); err != nil {
+		slog.Warn("rag: skipping vec0 upsert — table not available", slog.String("err", err.Error()))
+		return nil
+	}
+
 	_, _ = s.db.Exec(`DELETE FROM rag_vec WHERE rowid = ?`, chunkID)
 	vecBlob := serializeFloat32(float64ToFloat32(embedding))
 	_, err = s.db.Exec(
@@ -665,18 +751,14 @@ func (s *Store) SetEmbeddingDim(dim int) bool {
 }
 
 // ResetForDimensionMismatch clears all chunks, FTS, and vec0 when dimension changes.
+// The vec0 virtual table must be dropped and recreated because its dimension
+// is fixed at CREATE time and cannot be altered.
 func (s *Store) ResetForDimensionMismatch(newDim int) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin reset transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-
-	// Delete vec0 entries first
-	_, err = tx.Exec("DELETE FROM rag_vec")
-	if err != nil {
-		return fmt.Errorf("delete vec entries: %w", err)
-	}
 
 	// Delete FTS entries
 	_, err = tx.Exec("DELETE FROM rag_chunks_fts")
@@ -690,11 +772,19 @@ func (s *Store) ResetForDimensionMismatch(newDim int) error {
 		return fmt.Errorf("delete chunks: %w", err)
 	}
 
+	// Drop vec0 table (dimension is fixed at CREATE time)
+	_, err = tx.Exec("DROP TABLE IF EXISTS rag_vec")
+	if err != nil {
+		return fmt.Errorf("drop rag_vec: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit reset: %w", err)
 	}
 
 	s.embDim = newDim
+	// rag_vec will be recreated by ensureVecTable() on next vector insert
+	slog.Info("rag: dropped rag_vec, will recreate with new dimension", slog.Int("dim", newDim))
 	return nil
 }
 
@@ -707,9 +797,8 @@ func (s *Store) ChunkCount() (int, error) {
 
 // EmbeddedChunkCount returns the number of chunks that have vector embeddings.
 func (s *Store) EmbeddedChunkCount() (int, error) {
-	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM rag_chunks WHERE has_embedding = 1").Scan(&count)
-	return count, err
+	_, embedded, err := s.ChunkEmbeddingCounts()
+	return embedded, err
 }
 
 // ChunkEmbeddingCounts returns (total, embedded) chunk counts in a single query.
@@ -758,30 +847,30 @@ func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {
 		return 0, nil
 	}
 
+	// Check vec0 table existence before starting transaction (avoids deadlock with in-memory DBs)
+	hasVecTable := s.vecTableExists()
+
+	placeholders := strings.Repeat("?,", len(sessionIDs)-1) + "?"
+	args := make([]any, len(sessionIDs))
+	for i, id := range sessionIDs {
+		args[i] = id
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin delete transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Build placeholders for IN clause
-	placeholders := ""
-	args := make([]any, len(sessionIDs))
-	for i, id := range sessionIDs {
-		if i > 0 {
-			placeholders += ","
+	// Delete vec0 entries (table may not exist if dimension is unknown)
+	if hasVecTable {
+		_, err = tx.Exec("DELETE FROM rag_vec WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id IN ("+placeholders+"))", args...)
+		if err != nil {
+			return 0, fmt.Errorf("delete vec entries: %w", err)
 		}
-		placeholders += "?"
-		args[i] = id
 	}
 
-	// Delete vec0 entries first
-	_, err = tx.Exec("DELETE FROM rag_vec WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id IN ("+placeholders+"))", args...)
-	if err != nil {
-		return 0, fmt.Errorf("delete vec entries: %w", err)
-	}
-
-	// Delete FTS entries (uses subquery to find IDs)
+	// Delete FTS entries
 	_, err = tx.Exec("DELETE FROM rag_chunks_fts WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id IN ("+placeholders+"))", args...)
 	if err != nil {
 		return 0, fmt.Errorf("delete fts entries: %w", err)

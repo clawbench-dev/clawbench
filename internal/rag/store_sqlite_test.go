@@ -31,6 +31,14 @@ func setupSQLiteStore(t *testing.T) *Store {
 	return store
 }
 
+// setupSQLiteStoreWithDim creates an in-memory SQLite store with a pre-set embedding dimension.
+func setupSQLiteStoreWithDim(t *testing.T, dim int) *Store {
+	t.Helper()
+	store := setupSQLiteStore(t)
+	store.SetEmbeddingDim(dim)
+	return store
+}
+
 // ---------- NewSQLiteStore ----------
 
 func TestSQLiteStore_CreatesSchema(t *testing.T) {
@@ -276,7 +284,7 @@ func TestSQLiteStore_SearchFTS_FiltersByProject(t *testing.T) {
 // ---------- SearchVector (vec0 KNN) ----------
 
 func TestStore_SearchVector_Basic(t *testing.T) {
-	store := setupSQLiteStore(t)
+	store := setupSQLiteStoreWithDim(t, 1024)
 	defer store.Close()
 
 	// Insert chunks with embeddings
@@ -299,7 +307,7 @@ func TestStore_SearchVector_Basic(t *testing.T) {
 }
 
 func TestStore_SearchVector_ProjectFilter(t *testing.T) {
-	store := setupSQLiteStore(t)
+	store := setupSQLiteStoreWithDim(t, 1024)
 	defer store.Close()
 
 	chunks := []Chunk{
@@ -317,7 +325,7 @@ func TestStore_SearchVector_ProjectFilter(t *testing.T) {
 }
 
 func TestStore_SearchVector_EmptyDB(t *testing.T) {
-	store := setupSQLiteStore(t)
+	store := setupSQLiteStoreWithDim(t, 1024)
 	defer store.Close()
 
 	hits, err := store.SearchVector(makeTestEmbedding(), 10, "", "", "", "", "", "", "")
@@ -326,7 +334,7 @@ func TestStore_SearchVector_EmptyDB(t *testing.T) {
 }
 
 func TestStore_SearchVector_ExcludeSessionID(t *testing.T) {
-	store := setupSQLiteStore(t)
+	store := setupSQLiteStoreWithDim(t, 1024)
 	defer store.Close()
 
 	chunks := []Chunk{
@@ -356,7 +364,7 @@ func TestStore_SearchVector_RejectsInvalidEmbedding(t *testing.T) {
 // ---------- HasVecData ----------
 
 func TestStore_HasVecData(t *testing.T) {
-	store := setupSQLiteStore(t)
+	store := setupSQLiteStoreWithDim(t, 1024)
 	defer store.Close()
 
 	assert.False(t, store.HasVecData(), "empty store should have no vec data")

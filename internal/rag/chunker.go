@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"clawbench/internal/model"
 	"clawbench/internal/summarize"
@@ -37,8 +38,8 @@ func ExtractTextFromContent(content, role string) string {
 }
 
 // ChunkText splits text into overlapping chunks of approximately chunkSize tokens.
-// Uses a simple whitespace-based token estimation (1 token ≈ 0.75 words for English,
-// 1 token ≈ 1.5 chars for CJK). This is a rough approximation sufficient for chunking.
+// Uses estimateTokens to determine actual token counts, and estimateCharsPerToken
+// to map token limits to character positions for splitting.
 func ChunkText(text string, chunkSize, chunkOverlap int) []TextChunk {
 	if text == "" || chunkSize <= 0 {
 		return nil
@@ -58,11 +59,13 @@ func ChunkText(text string, chunkSize, chunkOverlap int) []TextChunk {
 	var chunks []TextChunk
 	chunkIdx := 0
 
+	// Derive chars-per-token ratio from the actual text for accurate chunk sizing
+	charsPerToken := estimateCharsPerToken(text)
+
 	start := 0
 	for start < len(runes) {
 		// Estimate character position for chunkSize tokens
-		// Approximation: ~4 chars per token (mixed CJK/English average)
-		estChars := chunkSize * 4
+		estChars := int(float64(chunkSize) * charsPerToken)
 		end := start + estChars
 		if end > len(runes) {
 			end = len(runes)
@@ -84,7 +87,7 @@ func ChunkText(text string, chunkSize, chunkOverlap int) []TextChunk {
 		}
 
 		// Move start back by overlap
-		overlapChars := chunkOverlap * 4
+		overlapChars := int(float64(chunkOverlap) * charsPerToken)
 		nextStart := end - overlapChars
 		if nextStart <= start {
 			nextStart = end
@@ -172,6 +175,17 @@ func estimateTokens(text string) int {
 	enTokens := int(float64(wordCount) * 1.3)
 
 	return cjkTokens + enTokens
+}
+
+// estimateCharsPerToken returns the average characters-per-token ratio for the given text.
+// This is the inverse of estimateTokens, used to map token limits to character positions.
+// CJK text has ~1.5 chars/token, English has ~4 chars/token (1.3 words/token * ~3 chars/word).
+func estimateCharsPerToken(text string) float64 {
+	tokens := estimateTokens(text)
+	if tokens == 0 {
+		return 4.0 // default: English-like
+	}
+	return float64(utf8.RuneCountInString(text)) / float64(tokens)
 }
 
 // isCJK checks if a rune is a CJK character.
