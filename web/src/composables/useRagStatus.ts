@@ -38,6 +38,9 @@ let visibilityHandler: (() => void) | null = null
 let prevIndexed = 0
 let prevEmbedded = 0
 let prevFetchTime = 0
+// Persist last known speed so label doesn't flicker on zero-delta polls
+let lastIndexSpeed = 0
+let lastEmbedSpeed = 0
 
 async function fetchStatus(): Promise<void> {
   try {
@@ -47,12 +50,18 @@ async function fetchStatus(): Promise<void> {
     const now = Date.now()
     if (prevFetchTime > 0 && now > prevFetchTime) {
       const elapsedSec = (now - prevFetchTime) / 1000
-      data.index_speed = Math.max(0, (data.indexed_messages - prevIndexed) / elapsedSec)
-      data.embed_speed = Math.max(0, (data.embedded_messages - prevEmbedded) / elapsedSec)
-    } else {
-      data.index_speed = 0
-      data.embed_speed = 0
+      const iSpeed = Math.max(0, (data.indexed_messages - prevIndexed) / elapsedSec)
+      const eSpeed = Math.max(0, (data.embedded_messages - prevEmbedded) / elapsedSec)
+      // Update persisted speed only on positive delta; keep last known speed otherwise
+      if (iSpeed > 0) lastIndexSpeed = iSpeed
+      if (eSpeed > 0) lastEmbedSpeed = eSpeed
+      // Clear speed when indexing is complete
+      if (data.indexed_messages >= data.total_messages) lastIndexSpeed = 0
+      if (data.embedded_messages >= data.total_messages) lastEmbedSpeed = 0
     }
+
+    data.index_speed = lastIndexSpeed
+    data.embed_speed = lastEmbedSpeed
 
     prevIndexed = data.indexed_messages
     prevEmbedded = data.embedded_messages
@@ -71,6 +80,8 @@ function startPolling(): void {
   prevIndexed = 0
   prevEmbedded = 0
   prevFetchTime = 0
+  lastIndexSpeed = 0
+  lastEmbedSpeed = 0
   fetchStatus()
   pollTimer = setInterval(fetchStatus, POLL_INTERVAL)
 
@@ -87,6 +98,8 @@ function startPolling(): void {
         prevIndexed = 0
         prevEmbedded = 0
         prevFetchTime = 0
+        lastIndexSpeed = 0
+        lastEmbedSpeed = 0
         fetchStatus()
         pollTimer = setInterval(fetchStatus, POLL_INTERVAL)
       }
