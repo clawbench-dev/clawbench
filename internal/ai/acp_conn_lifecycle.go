@@ -151,7 +151,7 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	}
 
 	// No prior session — create new session.
-	newSessCtx, newSessCancel := context.WithTimeout(ctx, 15*time.Second)
+	newSessCtx, newSessCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer newSessCancel()
 
 	newSessStart := time.Now()
