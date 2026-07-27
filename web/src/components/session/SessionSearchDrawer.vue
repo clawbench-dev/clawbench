@@ -643,7 +643,7 @@ function handleClose() {
 }
 
 [data-theme="dark"] .mode-btn.active {
-  background: var(--color-purple, #7c3aed);
+  background: var(--accent-color, #4a90d9);
   color: #fff;
 }
 

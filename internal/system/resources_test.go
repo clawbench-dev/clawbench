@@ -3,6 +3,8 @@ package system
 import (
 	"testing"
 	"time"
+
+	"clawbench/internal/model"
 )
 
 func TestGetResources(t *testing.T) {
@@ -49,6 +51,10 @@ func TestGetResources(t *testing.T) {
 	// Load should have non-negative values
 	if res.Load.Load1 < 0 {
 		t.Errorf("Load.Load1 = %f, want >= 0", res.Load.Load1)
+	}
+	// First call should not have errors
+	if len(res.Errors) > 0 {
+		t.Errorf("expected no errors on first call, got %v", res.Errors)
 	}
 }
 
@@ -129,5 +135,91 @@ func TestResetSampler(t *testing.T) {
 	}
 	if s.cachedResp != nil {
 		t.Error("expected cachedResp=nil after ResetSampler")
+	}
+}
+
+func TestDataDir(t *testing.T) {
+	// Default: "."
+	orig := model.DataDir
+	defer func() { model.DataDir = orig }()
+
+	model.DataDir = ""
+	if got := dataDir(); got != "." {
+		t.Errorf("dataDir() = %q, want %q", got, ".")
+	}
+
+	model.DataDir = "/tmp/test-clawbench"
+	if got := dataDir(); got != "/tmp/test-clawbench" {
+		t.Errorf("dataDir() = %q, want %q", got, "/tmp/test-clawbench")
+	}
+}
+
+func TestGetResourcesNetworkAndDiskIOSampling(t *testing.T) {
+	ResetSampler()
+	// First call initializes samplers — network/diskIO rates should be 0
+	res1, err := GetResources()
+	if err != nil {
+		t.Fatalf("first GetResources() error: %v", err)
+	}
+	if res1.Network.UploadRate != 0 || res1.Network.DownloadRate != 0 {
+		t.Errorf("first call Network rates should be 0, got upload=%f download=%f",
+			res1.Network.UploadRate, res1.Network.DownloadRate)
+	}
+	if res1.DiskIO.ReadRate != 0 || res1.DiskIO.WriteRate != 0 {
+		t.Errorf("first call DiskIO rates should be 0, got read=%f write=%f",
+			res1.DiskIO.ReadRate, res1.DiskIO.WriteRate)
+	}
+
+	// Second call should have initialized state
+	res2, err := GetResources()
+	if err != nil {
+		t.Fatalf("second GetResources() error: %v", err)
+	}
+	// Network/DiskIO rates should be non-negative (even if 0)
+	if res2.Network.UploadRate < 0 || res2.Network.DownloadRate < 0 {
+		t.Error("Network rates should be non-negative after sampling")
+	}
+	if res2.DiskIO.ReadRate < 0 || res2.DiskIO.WriteRate < 0 {
+		t.Error("DiskIO rates should be non-negative after sampling")
+	}
+}
+
+func TestGetResourcesCacheExpiry(t *testing.T) {
+	ResetSampler()
+
+	res1, _ := GetResources()
+
+	// Force cache miss by manipulating the sampler state
+	time.Sleep(1 * time.Millisecond) // small wait to ensure clock advances
+	globalSampler.mu.Lock()
+	globalSampler.cachedAt = time.Now().Add(-1 * time.Hour) // expire cache
+	globalSampler.mu.Unlock()
+
+	res2, _ := GetResources()
+	// After cache expiry, a new response object should be created
+	if res1 == res2 {
+		t.Error("expected different response objects after cache expiry")
+	}
+}
+
+func TestGetResourcesMemoryPercent(t *testing.T) {
+	ResetSampler()
+	res, err := GetResources()
+	if err != nil {
+		t.Fatalf("GetResources() error: %v", err)
+	}
+	if res.Memory.Percent < 0 || res.Memory.Percent > 100 {
+		t.Errorf("Memory.Percent = %f, want [0, 100]", res.Memory.Percent)
+	}
+}
+
+func TestGetResourcesDiskPercent(t *testing.T) {
+	ResetSampler()
+	res, err := GetResources()
+	if err != nil {
+		t.Fatalf("GetResources() error: %v", err)
+	}
+	if res.Disk.Percent < 0 || res.Disk.Percent > 100 {
+		t.Errorf("Disk.Percent = %f, want [0, 100]", res.Disk.Percent)
 	}
 }

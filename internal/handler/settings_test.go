@@ -2618,3 +2618,22 @@ func TestServeConfig_Get_FRPFields(t *testing.T) {
 	assert.Equal(t, "long-secret-token-value-here", frp["token"])
 	assert.Equal(t, true, frp["auto_port"])
 }
+
+func TestTriggerRestart(t *testing.T) {
+	called := false
+	origRestartFunc := restartFunc
+	restartFunc = func() { called = true }
+	defer func() { restartFunc = origRestartFunc }()
+
+	TriggerRestart()
+	assert.True(t, called, "TriggerRestart should call the configured restartFunc")
+}
+
+func TestTriggerRestart_NilFunc(t *testing.T) {
+	origRestartFunc := restartFunc
+	restartFunc = nil
+	defer func() { restartFunc = origRestartFunc }()
+
+	// Should not panic when restartFunc is nil
+	TriggerRestart()
+}
