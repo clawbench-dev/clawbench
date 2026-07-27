@@ -141,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, inject, onMounted, onUnmounted, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
@@ -199,14 +199,21 @@ onMounted(() => {
   registerGuard(`panel-${props.config.panelId}`, () => !hasChanges.value && !hasFailedSave.value)
 })
 
-// Start RAG status polling when the rag panel is visible, stop when hidden
-watch(() => props.config.panelId === 'rag', (isRag: boolean) => {
-  if (isRag) {
-    startRagPolling()
-  } else {
-    stopRagPolling()
-  }
-}, { immediate: true })
+// Start RAG status polling only when the RAG panel is both the active category
+// AND the settings tab is visible. Stop when either condition is false.
+const activeTab = inject<Ref<string>>('activeTab')
+
+watch(
+  () => props.config.panelId === 'rag' && activeTab?.value === 'settings',
+  (shouldPoll: boolean) => {
+    if (shouldPoll) {
+      startRagPolling()
+    } else {
+      stopRagPolling()
+    }
+  },
+  { immediate: true },
+)
 
 onUnmounted(() => {
   unregisterGuard(`panel-${props.config.panelId}`)
