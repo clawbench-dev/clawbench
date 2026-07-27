@@ -401,7 +401,11 @@ function toggleResourcesMenu() {
 
 watch(resourcesMenuOpen, (open) => {
     if (open) {
-        resourcesPanelRef.value?.startPolling?.()
+        // Use nextTick because PopupMenu uses v-if — the panel component
+        // doesn't exist in DOM until after the next render cycle
+        nextTick(() => {
+            resourcesPanelRef.value?.startPolling?.()
+        })
     } else {
         resourcesPanelRef.value?.stopPolling?.()
     }
