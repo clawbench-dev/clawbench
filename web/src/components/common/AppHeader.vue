@@ -592,6 +592,7 @@ onUnmounted(() => {
     align-items: center;
     justify-content: center;
     color: var(--accent-color);
+    margin-left: auto;
 }
 
 @media (hover: hover) {
@@ -612,7 +613,6 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-left: auto;
 }
 
 @media (hover: hover) {
