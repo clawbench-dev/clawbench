@@ -251,18 +251,30 @@ const summaryMsgData = computed(() => {
 
 // ── Active message data based on tab ──
 const activeMsgData = computed(() => {
-  // When live streaming via WS, prefer the streaming message (has real-time blocks)
+  // When live streaming via WS, merge DB history blocks with streaming blocks
+  // so the user sees both prior content and new real-time output.
   if (execStream.isStreaming.value && execStream.streamingMsg.value) {
     const sm = execStream.streamingMsg.value
-    // Show streaming message if it has blocks (real-time content)
-    if (sm.blocks && sm.blocks.length > 0) return sm
+    if (sm.blocks && sm.blocks.length > 0) {
+      const dbBlocks = msgData.value?.blocks
+      if (dbBlocks && dbBlocks.length > 0) {
+        // Merge: DB history first, then streaming increments
+        return { ...sm, blocks: [...dbBlocks, ...sm.blocks] }
+      }
+      return sm
+    }
+    // Streaming started but no content yet — show DB history so it doesn't flash away
+    if (msgData.value) return msgData.value
   }
   // After streaming stops, the streamingMsg still has blocks (streaming flag removed).
-  // Use it as fallback while waiting for refreshExecDetail to complete,
-  // so the user sees content immediately instead of a blank/loading state.
+  // Merge with DB history so prior content is preserved while waiting for refreshExecDetail.
   if (!execStream.isStreaming.value && execStream.streamingMsg.value) {
     const sm = execStream.streamingMsg.value
     if (sm.blocks && sm.blocks.length > 0) {
+      const dbBlocks = msgData.value?.blocks
+      if (dbBlocks && dbBlocks.length > 0) {
+        return { ...sm, blocks: [...dbBlocks, ...sm.blocks], streaming: false }
+      }
       return { ...sm, streaming: false }
     }
   }
