@@ -85,6 +85,9 @@
           <span v-if="copied" class="chat-copy-copied-text">{{ t('common.copied') }}</span>
           <Copy v-else :size="14" />
         </button>
+        <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
+          <Split :size="14" />
+        </button>
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
@@ -105,7 +108,7 @@
 <script setup>
 import { ref, inject, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Copy } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split } from 'lucide-vue-next'
 import { formatDuration } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -133,7 +136,7 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'remove-pending'])
+defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'remove-pending', 'fork-from-message'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)

@@ -304,7 +304,7 @@ func TestServeForkSession_BeforeMessageID_NotFoundInSession(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestServeForkSession_BeforeMessageIDNotUserMessage(t *testing.T) {
+func TestServeForkSession_BeforeMessageID_AssistantMessage(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -315,8 +315,43 @@ func TestServeForkSession_BeforeMessageIDNotUserMessage(t *testing.T) {
 	asstID, err := service.AddChatMessage(env.ProjectDir, "claude", sessID, "assistant", "World", nil, false, "")
 	require.NoError(t, err)
 
-	// Fork from an assistant message should return 400
+	// Fork from an assistant message should succeed
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "beforeMessageId": asstID})
+	req = withProjectCookie(req, env.ProjectDir)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
+
+	w := callHandler(ServeForkSession, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.True(t, result["ok"].(bool))
+
+	// Title should use preceding user message content, not assistant content
+	newSessID := result["sessionId"].(string)
+	title, err := service.GetSessionTitle(newSessID)
+	require.NoError(t, err)
+	assert.Contains(t, title, "Hello")
+}
+
+func TestServeForkSession_BeforeMessageID_StreamingMessage(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Original", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "Hello", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "assistant", "Streaming...", nil, true, "")
+	require.NoError(t, err)
+
+	// Get the streaming message ID
+	var streamingID int64
+	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND streaming = 1", sessID).Scan(&streamingID)
+	require.NoError(t, err)
+
+	// Fork from a streaming message should return 400
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "beforeMessageId": streamingID})
 	req = withProjectCookie(req, env.ProjectDir)
 	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
 

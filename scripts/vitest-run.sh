@@ -236,9 +236,8 @@ while kill -0 "$VITEST_PID" 2>/dev/null; do
       if [ "$WORKER_FIRST_SEEN_S" -eq 0 ]; then
         WORKER_FIRST_SEEN_S=$WAITED
       fi
-      local worker_duration=$((WAITED - WORKER_FIRST_SEEN_S))
+      worker_duration=$((WAITED - WORKER_FIRST_SEEN_S))
       if [ "$worker_duration" -ge "$WORKER_STUCK_THRESHOLD_S" ]; then
-        local wcount
         wcount=$(echo "$local_workers" | wc -l)
         echo "[vitest-run] $wcount worker(s) stuck for ${worker_duration}s (threshold=${WORKER_STUCK_THRESHOLD_S}s) — killing to unblock pool.close()" >&2
         kill_our_workers

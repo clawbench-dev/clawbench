@@ -75,6 +75,7 @@
       @resume-session="$emit('resume-session', $event)"
       @show-rag-detail="$emit('show-rag-detail', $event)"
       @remove-pending="$emit('remove-pending', $event)"
+      @fork-from-message="$emit('fork-from-message', $event)"
     />
     </div>
   </div>

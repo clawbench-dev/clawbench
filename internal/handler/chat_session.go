@@ -342,7 +342,17 @@ func buildForkTitle(r *http.Request, sourceID string, beforeMessageID int64) str
 		if err != nil {
 			slog.Warn("handler: failed to get message content for fork title", "message_id", beforeMessageID, "error", err)
 		}
-		if err == nil && msgContent != "" {
+		// If the fork point is an assistant message, prefer the preceding user message for a more meaningful title
+		if msgContent == "" || service.IsMessageRole(beforeMessageID, sourceID, "assistant") {
+			userContent, userErr := service.GetPrecedingUserMessageContent(beforeMessageID, sourceID)
+			if userErr != nil {
+				slog.Warn("handler: failed to get preceding user message for fork title", "message_id", beforeMessageID, "error", userErr)
+			}
+			if userContent != "" {
+				msgContent = userContent
+			}
+		}
+		if msgContent != "" {
 			// Truncate long message content for title
 			runes := []rune(msgContent)
 			if len(runes) > 50 {
@@ -364,7 +374,7 @@ func writeForkError(w http.ResponseWriter, r *http.Request, err error) {
 	errMsg := err.Error()
 	if strings.Contains(errMsg, "session limit") {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
-	} else if strings.Contains(errMsg, "not found in session") || strings.Contains(errMsg, "must be a user message") {
+	} else if strings.Contains(errMsg, "not found in session") || strings.Contains(errMsg, "must be a user or assistant message") || strings.Contains(errMsg, "streaming message") {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidForkPoint")
 	} else if strings.Contains(errMsg, "not found") {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")

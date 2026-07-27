@@ -441,21 +441,91 @@ func TestForkSession_BeforeMessageID_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found in session")
 }
 
-// ---------- ForkSession: beforeMessageID = assistant message (not user) ----------
+// ---------- ForkSession: beforeMessageID = assistant message ----------
 
-func TestForkSession_BeforeMessageID_NotUserMessage(t *testing.T) {
+func TestForkSession_BeforeMessageID_AssistantMessage(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original")
+
+	// Create a conversation: user1 → asst1 → user2 → asst2 → user3 → asst3
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "First question", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "assistant", "First answer", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "Second question", nil, false, "")
+	assert.NoError(t, err)
+	asst2ID, err := service.AddChatMessage("/project", "claude", sessID, "assistant", "Second answer", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "Third question", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "assistant", "Third answer", nil, false, "")
+	assert.NoError(t, err)
+
+	// Fork from asst2 — should include user1 + asst1 + user2 + asst2
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Second question", asst2ID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, newSessID)
+
+	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 4) // user1 + asst1 + user2 + asst2
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "First question", msgs[0].Content)
+	assert.Equal(t, "assistant", msgs[1].Role)
+	assert.Equal(t, "First answer", msgs[1].Content)
+	assert.Equal(t, "user", msgs[2].Role)
+	assert.Equal(t, "Second question", msgs[2].Content)
+	assert.Equal(t, "assistant", msgs[3].Role)
+	assert.Equal(t, "Second answer", msgs[3].Content)
+}
+
+// ---------- ForkSession: beforeMessageID = last assistant message ----------
+
+func TestForkSession_BeforeMessageID_LastAssistantMessage(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original")
+
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Q1", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "assistant", "A1", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "Q2", nil, false, "")
+	assert.NoError(t, err)
+	asst2ID, err := service.AddChatMessage("/project", "claude", sessID, "assistant", "A2", nil, false, "")
+	assert.NoError(t, err)
+
+	// Fork from last assistant message — should include all 4 messages
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Q2", asst2ID)
+	assert.NoError(t, err)
+
+	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 4) // Q1 + A1 + Q2 + A2
+	assert.Equal(t, "A2", msgs[3].Content)
+}
+
+// ---------- ForkSession: beforeMessageID = streaming message ----------
+
+func TestForkSession_BeforeMessageID_StreamingMessage(t *testing.T) {
 	setupDB(t)
 
 	sessID := helperCreateSession(t, "/project", "claude", "Original")
 	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Hello", nil, false, "")
 	assert.NoError(t, err)
-	asstID, err := service.AddChatMessage("/project", "claude", sessID, "assistant", "World", nil, false, "")
+	_, err = service.AddChatMessage("/project", "claude", sessID, "assistant", "Streaming...", nil, true, "")
 	assert.NoError(t, err)
 
-	// Fork from an assistant message should fail
-	_, err = service.ForkSession(sessID, "/project", "[Fork] Hello", asstID)
+	// Get the streaming assistant message ID
+	var streamingID int64
+	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND streaming = 1", sessID).Scan(&streamingID)
+	assert.NoError(t, err)
+
+	// Fork from a streaming message should fail
+	_, err = service.ForkSession(sessID, "/project", "[Fork] Hello", streamingID)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "must be a user message")
+	assert.Contains(t, err.Error(), "streaming message")
 }
 
 // ---------- ForkSession: beforeMessageID = 0 (backward compatible, copies all) ----------

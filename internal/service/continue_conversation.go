@@ -281,34 +281,42 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 		return "", fmt.Errorf("session %s does not belong to project %q", sourceSessionID, projectPath)
 	}
 
-	// 2b. Validate beforeMessageID if provided, and resolve to include the assistant reply
+	// 2b. Validate beforeMessageID if provided, and resolve the cut point
 	cutBeforeID := beforeMessageID
 	if beforeMessageID > 0 {
 		var role string
+		var streaming int
 		err = dbRead.QueryRow(
-			"SELECT role FROM chat_history WHERE id = ? AND session_id = ?",
+			"SELECT role, streaming FROM chat_history WHERE id = ? AND session_id = ?",
 			beforeMessageID, sourceSessionID,
-		).Scan(&role)
+		).Scan(&role, &streaming)
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("message %d not found in session %s", beforeMessageID, sourceSessionID)
 		}
 		if err != nil {
 			return "", err
 		}
-		if role != cancelReasonUser {
-			return "", fmt.Errorf("fork point must be a user message, message %d is role %q", beforeMessageID, role)
+		if streaming == 1 {
+			return "", fmt.Errorf("cannot fork from a streaming message (message %d)", beforeMessageID)
 		}
-		// Find the next non-streaming assistant message after this user message
-		var asstID int64
-		err = dbRead.QueryRow(
-			"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND id > ? ORDER BY id LIMIT 1",
-			sourceSessionID, beforeMessageID,
-		).Scan(&asstID)
-		if err == nil {
-			// Include the assistant reply in the fork
-			cutBeforeID = asstID
+		switch role {
+		case cancelReasonUser:
+			// User message: find the next non-streaming assistant reply and include it
+			var asstID int64
+			err = dbRead.QueryRow(
+				"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND id > ? ORDER BY id LIMIT 1",
+				sourceSessionID, beforeMessageID,
+			).Scan(&asstID)
+			if err == nil {
+				cutBeforeID = asstID
+			}
+			// If no assistant reply found (e.g. last message is user), cut at the user message
+		case "assistant":
+			// Assistant message: fork directly at this message
+			cutBeforeID = beforeMessageID
+		default:
+			return "", fmt.Errorf("fork point must be a user or assistant message, message %d is role %q", beforeMessageID, role)
 		}
-		// If no assistant reply found (e.g. last message is user), cut at the user message
 	}
 
 	// 3. Max session count check
