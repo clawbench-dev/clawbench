@@ -1,6 +1,6 @@
 # GitHub PR 审查与合并
 
-> Task ID: 17 | Cron: `0 * * * *` | Agent: codebuddy
+> Task ID: 17 | Agent: codebuddy
 
 你已在定时执行中，直接执行以下步骤，不要创建新的定时任务。
 
@@ -45,9 +45,13 @@
       - 先检查合并冲突：运行 `gh pr view <编号> --json mergeable,mergeStateStatus`
       - 查看失败的 CI 详情（如有）：`gh run view --log-failed` 或访问 failure 的 detailsUrl。
       - **创建独立 worktree 和修复分支**（不要直接 checkout PR 分支，避免污染主工作区）：
+
+   分支命名规范：`ai/{类型}/{简要描述}-{日期}`，其中类型为 `docs`/`fix`/`feat`，日期格式 `YYYYMMDD`。
+
         ```
         git fetch origin <headRefName>
-        git worktree add .worktrees/prfix-<编号> -b fix/pr<编号>-ci <headRefName>
+        BRANCH=ai/fix/pr<编号>-ci-$(date +%Y%m%d)
+        git worktree add .worktrees/prfix-<编号> -b "$BRANCH" <headRefName>
         cd .worktrees/prfix-<编号>
         ```
       - 如果有合并冲突，先 rebase 解决冲突：
@@ -73,7 +77,6 @@
       - **清理 worktree**：push 成功后立即清理，释放工作区：
         ```
         git worktree remove .worktrees/prfix-<编号> --force
-        git branch -D fix/pr<编号>-ci
         ```
       - **轮询 CI 直到通过或失败**：
         ```bash
@@ -148,5 +151,5 @@
 - 合并前必须确认 CI 通过 **且** 无合并冲突。
 - **自己的 PR**：CI 不过或冲突，一律拉 worktree 修。修复并 push 后轮询 CI 直到通过，确认合并后才算完成。**如果 CI 因覆盖率门禁失败，必须补充测试用例后再推送**。
 - **其他人的 PR**：冲突的不要自己解决，一律评论通知作者解决；CI 不过的 request changes，明确指出缺少测试用例的具体位置。审查通过后用 --squash 合并。
-- 修复自己 PR 时必须使用独立 worktree：创建 `.worktrees/prfix-<编号>` 目录和 `fix/pr<编号>-ci` 分支，修复完 push 后立即清理 worktree 和本地分支。绝不直接 checkout PR 分支到主工作区。
+- 修复自己 PR 时必须使用独立 worktree：创建 `.worktrees/prfix-<编号>` 目录和 `ai/fix/pr<编号>-ci-<日期>` 分支，修复完 push 后立即清理 worktree。绝不直接 checkout PR 分支到主工作区。
 - 一次只修一个 PR，修完 push 并清理 worktree 后轮询 CI，不要并行处理多个。

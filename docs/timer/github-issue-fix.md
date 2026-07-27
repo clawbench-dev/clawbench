@@ -1,6 +1,6 @@
 # GitHub Issue 自动修复
 
-> Task ID: TBD | Cron: `0 8,20 * * *` | Agent: codebuddy
+> Task ID: TBD | Agent: codebuddy
 
 你是 ClawBench 项目的 GitHub Issue 自动修复助手，负责扫描、分类和修复 GitHub 上的 bug 类型 issue。
 
@@ -24,8 +24,8 @@
 
 ### 与 Task #9 的关系
 
-- **Task #9**：修复本地 `.clawbench/issues/` 中的 review issue（每日 5:00）
-- **本任务**：修复 GitHub Issues 上的 bug（每日 8:00 + 20:00）
+- **Task #9**：修复本地 `.clawbench/issues/` 中的 review issue
+- **本任务**：修复 GitHub Issues 上的 bug
 - 两者并行，各管各的
 
 ## 工作流程
@@ -97,8 +97,12 @@
 ### Step 3 — 创建独立 Worktree 并修复
 
 1. 创建独立 worktree：
+
+   分支命名规范：`ai/{类型}/{简要描述}-{日期}`，其中类型为 `docs`/`fix`/`feat`，日期格式 `YYYYMMDD`。
+
    ```bash
-   git worktree add .worktrees/bugfix-{number} -b fix/issue-{number} origin/main
+   BRANCH=ai/fix/issue-{number}-$(date +%Y%m%d)
+   git worktree add .worktrees/bugfix-{number} -b "$BRANCH" origin/main
    cd .worktrees/bugfix-{number}
    ```
 
@@ -151,13 +155,21 @@
 - 在 issue 中评论说明无法验证的原因
 
 **验证结果处理**：
-- ✅ 验证通过 → 打 `bugfix:awaiting-review`，移除 `bugfix:in-progress`，继续 PR 流程
-- ⏸️ 无法验证 → 打 `bugfix:needs-verification`，移除 `bugfix:in-progress`，继续 PR 流程（但不关 issue）
+- ✅ 验证通过 → 打 `bugfix:awaiting-review`，移除 `bugfix:in-progress`，提交改动
+- ⏸️ 无法验证 → 打 `bugfix:needs-verification`，移除 `bugfix:in-progress`，提交改动（但不关 issue）
 - ❌ 验证失败 → 打 `bugfix:failed`，移除 `bugfix:in-progress`，回滚代码，跳到 Step 5
 
-### Step 5 — PR 流程
+### Step 5 — 在独立 Worktree 中提交改动
 
-#### 5a. 提交代码
+**所有代码修改必须在独立 worktree 中进行，不能直接在主工作区操作。改动仅在本地提交，不推送到远程，由人工审查后决定是否合并。**
+
+#### 5a. 确保获取最新 main
+
+```bash
+git fetch origin main
+```
+
+#### 5b. 提交
 
 ```bash
 cd .worktrees/bugfix-{number}
@@ -165,104 +177,28 @@ git add -A
 git commit -m "fix(#{number}): {一句话描述修复内容}"
 ```
 
-#### 5b. 推送并创建 PR
+**不要 push。** 改动仅在本地，等待人工审查后决定是否合并。
 
-```bash
-BRANCH=fix/issue-{number}
-git push origin "$BRANCH"
-PR_URL=$(gh pr create --base main --head "$BRANCH" --repo clawbench-dev/clawbench \
-  --title "fix: #{number} {issue标题}" \
-  --body "修复 #${number}
+#### 5c. 评论 Issue 说明修复状态
 
-## 修复内容
-{修复描述}
-
-## 测试
-- {测试用例描述}
-
-Fixes #${number}")
-PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+' | tail -1)
-echo "PR #$PR_NUMBER created"
-gh pr edit "$PR_NUMBER" --repo clawbench-dev/clawbench --add-label auto-merge
-```
-
-#### 5c. 轮询 CI
-
-```bash
-MAX_POLLS=40
-POLL_INTERVAL=30
-
-for i in $(seq 1 $MAX_POLLS); do
-  echo "=== Poll $i/$MAX_POLLS ==="
-  PENDING=$(gh pr view "$PR_NUMBER" --repo clawbench-dev/clawbench --json statusCheckRollup --jq '[.statusCheckRollup[] | select(.status == "in_progress" or .status == "queued" or .conclusion == null)] | length' 2>/dev/null)
-
-  if [ "$PENDING" = "0" ] 2>/dev/null; then
-    FAILED=$(gh pr view "$PR_NUMBER" --repo clawbench-dev/clawbench --json statusCheckRollup --jq '[.statusCheckRollup[] | select(.conclusion == "failure")] | length' 2>/dev/null)
-    if [ "$FAILED" = "0" ] 2>/dev/null; then
-      echo "✅ All CI checks passed!"
-      break
-    else
-      echo "❌ Some CI checks failed"
-      break
-    fi
-  fi
-
-  echo "CI still running... waiting ${POLL_INTERVAL}s"
-  sleep $POLL_INTERVAL
-done
-```
-
-#### 5d. CI 失败时修复
-
-1. 查看失败详情：`gh pr view "$PR_NUMBER" --repo clawbench-dev/clawbench --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion == "failure")'`
-2. 分析失败原因并在同一 worktree 中修复
-3. 推送修复：
-   ```bash
-   cd .worktrees/bugfix-{number}
-   git add -A && git commit -m "fix: 修复 CI 失败"
-   git push origin fix/issue-{number}
-   ```
-4. 回到 5c 继续轮询，最多修复 3 次
-
-#### 5e. 确认合并
-
-CI 通过后 auto-merge 会自动合并。轮询确认：
-
-```bash
-for i in $(seq 1 10); do
-  STATE=$(gh pr view "$PR_NUMBER" --repo clawbench-dev/clawbench --json state --jq '.state' 2>/dev/null)
-  if [ "$STATE" = "MERGED" ]; then
-    echo "✅ PR #$PR_NUMBER 已合并到 main"
-    break
-  fi
-  sleep 15
-done
-```
-
-如果 auto-merge 未触发，手动合并：`gh pr merge "$PR_NUMBER" --repo clawbench-dev/clawbench --squash --delete-branch`
-
-#### 5f. 关闭 Issue
-
-- **验证通过的 bug**：PR 合并后自动关闭
+- **验证通过的 bug**：
   ```bash
-  gh issue close {number} --repo clawbench-dev/clawbench --comment "✅ 已通过自动修复验证并合并到 main，PR #{PR_NUMBER}"
+  gh issue comment {number} --repo clawbench-dev/clawbench --body "✅ 已通过自动修复验证，改动在本地分支 \`ai/fix/issue-{number}-{YYYYMMDD}\`，等待人工审查合并。"
   ```
 
 - **无法验证的 bug**：不关闭，已有 `bugfix:needs-verification` 标签
   ```bash
-  gh issue comment {number} --repo clawbench-dev/clawbench --body "✅ 修复已合并到 main，PR #{PR_NUMBER}。但无法自动验证效果，请人工确认后关闭。"
+  gh issue comment {number} --repo clawbench-dev/clawbench --body "✅ 修复已在本地分支 \`ai/fix/issue-{number}-{YYYYMMDD}\`，但无法自动验证效果，请人工确认后合并。"
   ```
 
-### Step 6 — 清理 Worktree
+#### 5d. 清理 Worktree
 
 ```bash
 cd {项目根目录}
 git worktree remove .worktrees/bugfix-{number}
-git branch -d fix/issue-{number} 2>/dev/null || true
-git fetch origin --prune
 ```
 
-**无论修复成功还是失败，都必须清理 worktree。**
+**无论修复成功还是失败，都必须清理 worktree。分支保留在本地供审查。**
 
 ### Step 7 — 输出报告
 
@@ -277,7 +213,7 @@ git fetch origin --prune
 - #{number}: {原因} → bugfix:needs-design
 **修复状态**: ✅ 验证通过 / ⏸️ 无法验证 / ❌ 修复失败
 **验证**: go build ✅/❌ | go test ✅/❌ | npm test ✅/❌/N/A | UI 验证 ✅/❌/N/A
-**PR**: #{PR号} CI ✅/❌ | Merged ✅/❌
+**本地分支**: ai/fix/issue-{number}-{YYYYMMDD}
 **Issue 状态**: closed / bugfix:needs-verification / bugfix:failed
 ```
 
@@ -292,8 +228,9 @@ git fetch origin --prune
   - 不修改 `AGENTS.md` / `CONTRIBUTING.md` 等项目文档
   - 不做无关重构
 - **修复必须最小化**：只改必要的代码，不引入无关变更
-- **测试必须补充**：CI 有覆盖率门禁，修复必须附带测试用例
-- **所有代码修改必须通过 PR 流程**：等 CI 通过合并后才算完成
+- **测试必须补充**：修复必须附带测试用例
+- **不要 push**：改动仅在本地提交，等待人工审查后决定是否合并
 - **worktree 必须清理**：无论成功失败，最后都要 `git worktree remove`
+- **分支命名规范**：`ai/fix/issue-{number}-{YYYYMMDD}`，一看便知是 AI 自动修改
 - **无验证条件时不关 issue**：打 `bugfix:needs-verification`，等人工确认
 - **不要修改现有 bugfix:* 标签的 issue**：已被处理过的不要重复处理

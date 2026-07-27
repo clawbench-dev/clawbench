@@ -1,8 +1,8 @@
-# 系统设计文档周更新
+# 系统设计文档更新
 
-> Task ID: 25 | Cron: `0 10 * * 1` | Agent: codebuddy
+> Task ID: 25 | Agent: codebuddy
 
-你正在执行 ClawBench 系统设计文档的每周更新任务。直接执行以下步骤，不要创建新的定时任务。
+你正在执行 ClawBench 系统设计文档的更新任务。直接执行以下步骤，不要创建新的定时任务。
 
 **项目根目录：** 运行 `cd` 到 Git 仓库根目录（即本文件所在仓库的根目录），后续所有命令均基于该目录执行。
 
@@ -120,7 +120,7 @@ docs/spec/
 读取 docs/spec/ 下所有文件，建立当前文档状态的心理模型。
 
 ### 第二步：扫描代码变化
-快速浏览以下目录，了解本周代码的主要变化方向：
+快速浏览以下目录，了解最近代码的主要变化方向：
 - internal/ 各子包的变更（重点关注接口、新文件、删除的文件）
 - web/src/ composables/ 和 components/ 的变更
 - config/agents/ 的变更
@@ -146,98 +146,48 @@ docs/spec/
 
 如果自检发现问题，立即修正。
 
-### 第五步：通过 PR 流程提交并等待 CI 通过
+### 第五步：在独立 Worktree 中提交改动
 
-**所有文档修改必须通过 PR 流程，不能直接推送到 main。任务在 CI 通过且 PR 合并后才算完成。**
+**所有文档修改必须在独立 worktree 中进行，不能直接在主工作区操作。改动仅在本地提交，不推送到远程，由人工审查后决定是否合并。**
 
-#### 5a. 创建特性分支
+#### 5a. 确保获取最新 main
 
 ```bash
-git checkout -b docs/spec-update-$(date +%Y-%m-%d) origin/main
+git fetch origin main
 ```
 
-#### 5b. 提交改动
+#### 5b. 创建 Worktree 和分支
+
+分支命名规范：`ai/{类型}/{简要描述}-{日期}`，其中类型为 `docs`/`fix`/`feat`，日期格式 `YYYYMMDD`。
+
+```bash
+BRANCH=ai/docs/spec-update-$(date +%Y%m%d)
+git worktree add .worktrees/spec-update -b "$BRANCH" origin/main
+cd .worktrees/spec-update
+```
+
+#### 5c. 应用改动
+
+将之前步骤中准备好的文档改动应用到 worktree 中。
+
+#### 5d. 提交
 
 ```bash
 git add -A
 git status
-git commit -m "docs: 系统设计文档周更新 — $(date +%Y-%m-%d)"
+git commit -m "docs: 系统设计文档更新 — $(date +%Y-%m-%d)"
 ```
 
-#### 5c. 推送分支并创建 PR
+**不要 push。** 改动仅在本地，等待人工审查后决定是否合并。
+
+#### 5e. 清理 Worktree
 
 ```bash
-BRANCH=docs/spec-update-$(date +%Y-%m-%d)
-git push origin "$BRANCH"
-PR_URL=$(gh pr create --base main --head "$BRANCH" --title "docs: 系统设计文档周更新 $(date +%Y-%m-%d)" --body "每周系统设计文档更新：对比代码变化，增量更新 spec 文档。")
-PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+' | tail -1)
-echo "PR #$PR_NUMBER created"
-gh pr edit "$PR_NUMBER" --add-label auto-merge
+cd {项目根目录}
+git worktree remove .worktrees/spec-update --force
 ```
 
-如果分支名已存在，加后缀 `-2`。
-
-#### 5d. 轮询 CI 直到通过或失败
-
-```bash
-MAX_POLLS=40
-POLL_INTERVAL=30
-
-for i in $(seq 1 $MAX_POLLS); do
-  echo "=== Poll $i/$MAX_POLLS ==="
-  PENDING=$(gh pr view "$PR_NUMBER" --json statusCheckRollup --jq '[.statusCheckRollup[] | select(.status == "in_progress" or .status == "queued" or .conclusion == null)] | length' 2>/dev/null)
-
-  if [ "$PENDING" = "0" ] 2>/dev/null; then
-    FAILED=$(gh pr view "$PR_NUMBER" --json statusCheckRollup --jq '[.statusCheckRollup[] | select(.conclusion == "failure")] | length' 2>/dev/null)
-    if [ "$FAILED" = "0" ] 2>/dev/null; then
-      echo "✅ All CI checks passed!"
-      break
-    else
-      echo "❌ Some CI checks failed"
-      break
-    fi
-  fi
-
-  echo "CI still running... waiting ${POLL_INTERVAL}s"
-  sleep $POLL_INTERVAL
-done
-```
-
-#### 5e. CI 失败时修复
-
-1. 查看失败详情：`gh pr view "$PR_NUMBER" --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion == "failure")'`
-2. 分析失败原因并修复
-3. 在同一分支上推送修复：
-   ```bash
-   git add -A && git commit -m "docs: 修复 CI 失败"
-   git push origin docs/spec-update-$(date +%Y-%m-%d)
-   ```
-4. 回到步骤 5d 继续轮询
-5. 最多修复 3 次，超过后记录失败信息并结束
-
-#### 5f. 确认合并
-
-CI 通过后，auto-merge workflow 会自动合并 PR。轮询确认：
-
-```bash
-for i in $(seq 1 10); do
-  STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null)
-  if [ "$STATE" = "MERGED" ]; then
-    echo "✅ PR #$PR_NUMBER 已合并到 main"
-    break
-  fi
-  sleep 15
-done
-```
-
-如果 auto-merge 未触发，手动合并：`gh pr merge "$PR_NUMBER" --squash --delete-branch`
-
-#### 5g. 清理
-
-```bash
-git checkout main && git pull origin main
-git branch -d docs/spec-update-$(date +%Y-%m-%d) 2>/dev/null || true
-```
+**无论修改成功还是失败，都必须清理 worktree。分支保留在本地供审查。**
 
 **如果没有文档需要更新，跳过步骤 5，直接输出报告。**
 
@@ -245,7 +195,7 @@ git branch -d docs/spec-update-$(date +%Y-%m-%d) 2>/dev/null || true
 
 - 更新了哪些文档文件
 - 每个文件的具体修改内容（一句话概括）
-- PR 号码和 CI 状态
+- 本地分支名（供审查合并）
 - 自检结果
 
 ## 特别注意
@@ -253,5 +203,4 @@ git branch -d docs/spec-update-$(date +%Y-%m-%d) 2>/dev/null || true
 - 你已经在定时执行中，直接执行步骤，不要创建新的定时任务
 - 文档的价值在于帮助读者建立心智模型，不在于覆盖每个代码细节
 - 一份读起来轻松愉悦的文档，比一份面面俱到但让人昏昏欲睡的文档更有用
-- 如果某个模块本周没有变化，不要为了"有所作为"而修改它
-- **所有文档修改必须通过 PR 流程并等待 CI 通过合并后，任务才算完成**
+- 如果某个模块最近没有变化，不要为了"有所作为"而修改它

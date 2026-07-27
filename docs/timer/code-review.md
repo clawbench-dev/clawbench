@@ -1,8 +1,8 @@
-# 每日代码 Review
+# 代码 Review
 
-> Task ID: 4 | Cron: `00 03 * * *` | Agent: codebuddy
+> Task ID: 4 | Agent: codebuddy
 
-你是 ClawBench 项目的每日代码审查专家。请严格按照以下流程执行自动化代码 Review。
+你是 ClawBench 项目的代码审查专家。请严格按照以下流程执行自动化代码 Review。
 
 **项目根目录：** 运行 `cd` 到 Git 仓库根目录（即本文件所在仓库的根目录），后续所有命令均基于该目录执行。
 
@@ -34,23 +34,34 @@
 
 ## Step 1 — 确定模式
 
-- **周日** → 全量扫描：枚举所有非排除的 `.go` / `.vue` / `.ts` 文件
-- **其他天** → 增量扫描：找到最新报告中的 `Baseline Commit`，用 `git diff {baseline-commit}..HEAD` 获取变更文件
+- **距上次全量扫描超过 7 天** → 全量扫描：枚举所有非排除的 `.go` / `.vue` / `.ts` 文件
+- **否则** → 增量扫描：找到最新报告中的 `Baseline Commit`，用 `git diff {baseline-commit}..HEAD` 获取变更文件
 - 如果没有任何历史报告（首次运行），按全量扫描执行
 
 ```bash
 # 从最新报告中获取上次 review 的 commit id
+# 检查上次全量扫描距今天数
 LATEST_REPORT=$(ls -t .clawbench/reviews/*/report.md 2>/dev/null | head -1)
 if [ -n "$LATEST_REPORT" ]; then
   BASELINE_COMMIT=$(grep -oP 'Baseline Commit: `\K[^`]+' "$LATEST_REPORT" 2>/dev/null || true)
+  # 检查是否有全量扫描标记文件，以及距今天数
+  LATEST_FULL=$(ls -t .clawbench/reviews/*/full-scan.marker 2>/dev/null | head -1)
+  if [ -n "$LATEST_FULL" ]; then
+    FULL_DATE=$(basename $(dirname "$LATEST_FULL"))
+    DAYS_SINCE_FULL=$(( ($(date +%s) - $(date -d "$FULL_DATE" +%s 2>/dev/null || echo 0)) / 86400 ))
+  else
+    DAYS_SINCE_FULL=999
+  fi
 else
   BASELINE_COMMIT=""
+  DAYS_SINCE_FULL=999
 fi
-echo "Baseline commit: ${BASELINE_COMMIT:-N/A}"
+echo "Baseline commit: ${BASELINE_COMMIT:-N/A}, Days since full scan: ${DAYS_SINCE_FULL}"
 
-DOW=$(date +%u)  # 7=Sunday
-if [ "$DOW" = "7" ] || [ -z "$BASELINE_COMMIT" ]; then
+if [ "$DAYS_SINCE_FULL" -ge 7 ] || [ -z "$BASELINE_COMMIT" ]; then
   echo "MODE: full"
+  mkdir -p .clawbench/reviews/$(date +%Y-%m-%d)
+  touch .clawbench/reviews/$(date +%Y-%m-%d)/full-scan.marker
 else
   echo "MODE: incremental"
   CHANGED_FILES=$(git diff --name-only $BASELINE_COMMIT..HEAD -- '*.go' '*.vue' '*.ts' | grep -v '_test.go' | grep -v '__tests__' | grep -v 'public/' | grep -v '.worktrees/' | grep -v 'vendor/')
@@ -229,7 +240,7 @@ echo "Baseline Commit for next review: $CURRENT_COMMIT"
 ## 重要提醒
 
 - 使用 `date +%Y-%m-%d` 获取当天日期用于目录和文件命名
-- 使用 `date +%u` 判断周几（7=周日）
+- 全量扫描时创建 `.clawbench/reviews/{date}/full-scan.marker` 标记文件，用于下次判断是否需要全量扫描
 - 必须用 Read 工具逐行阅读代码，不要跳过任何文件
 - Critical 发现项必须同时创建 Issue 文件
 - 报告中必须列出之前 Review 的未解决 Issue 状态

@@ -1,14 +1,14 @@
-# 每日夜间发布
+# 发布
 
-> Task ID: 3 | Cron: `00 02 * * *` | Agent: codebuddy
+> Task ID: 3 | Agent: codebuddy
 
-你是 ClawBench 项目的每日发布助手。请执行以下流程：
+你是 ClawBench 项目的发布助手。请执行以下流程：
 
 **项目根目录：** 运行 `cd` 到 Git 仓库根目录（即本文件所在仓库的根目录），后续所有命令均基于该目录执行。
 
 ## 1. 检查是否有新提交需要发布
 
-**只基于远程 `origin/main` 已合并的提交发布，不推本地未验证的代码。** 所有代码改动现在走 PR 流程，本地工作区可能有未合入 main 的内容，不能直接推。
+**只基于远程 `origin/main` 已合并的提交发布，不推本地未验证的代码。**
 
 ```bash
 # 先拉取最新的远程 main
@@ -57,20 +57,37 @@ echo "$NEW_COMMITS"
 
 在打标签之前，先生成详细的版本发布说明。你需要分析自上一个版本以来的所有提交，并生成结构化的 Release Notes。
 
-### 3.1 获取完整提交信息
+### 3.1 获取完整提交信息和代码变更
+
+**不能只看 commit message，必须查看实际代码变更来确认真正修改了什么。** Commit message 可能不准确或遗漏重要变更（如 squash merge 后多个子提交被压缩，标题无法反映全部内容）。
 
 ```bash
 PREV_TAG=$LATEST_TAG
 git log $PREV_TAG..origin/main --format="%H%n%s%n%b%n---END---"
 ```
 
+同时获取每个提交的实际代码变更：
+
+```bash
+git diff $PREV_TAG..origin/main --stat
+```
+
+对涉及重要功能或修复的提交，进一步查看具体 diff：
+
+```bash
+# 查看某个提交的完整代码变更
+git show {commit-hash} --stat
+git show {commit-hash} -- {关键文件路径}
+```
+
 ### 3.2 分析并分类提交
 
-仔细阅读每个提交的 message 和 body，按以下类别分类：
+仔细阅读每个提交的 message、body **以及实际代码变更**，按以下类别分类：
 
 - **🚀 新特性 (Features)**: 所有 `feat:` / `feature:` 开头的提交
   - 用简洁的中文描述每个特性做了什么（不要直接复制 commit message，要用人话说明用户能感受到的变化）
   - 如果提交 body 中有更详细的说明，提取关键信息
+  - **必须对照实际代码变更确认**：commit message 说"feat"但实际只是重构，应归入内部改进；commit message 说"fix"但实际新增了功能，应归入新特性
 
 - **🐛 问题修复 (Bug Fixes)**: 所有 `fix:` / `bugfix:` 开头的提交
   - 说明修了什么问题，以及修复后的行为
@@ -123,7 +140,8 @@ git log $PREV_TAG..origin/main --format="%H%n%s%n%b%n---END---"
 - 如果某个分类没有内容，整个分类段落省略（不要输出空分类）
 - 分类顺序固定：新特性 → 问题修复 → 性能优化 → 内部改进 → 破坏性变更
 - 每个条目末尾附上 commit hash 前7位方便追溯
-- 描述用中文，要具体、有价值，不要写"更新了代码"这种废话
+- **描述用中文，要具体、有价值，不要写"更新了代码"这种废话**
+- **分类必须基于实际代码变更，而非仅看 commit message 前缀**：squash merge 会压缩多个子提交，标题可能无法反映全部变更，务必查看 diff 确认
 - 内部改进中琐碎的提交可以合并描述，不要一个一个列
 
 ## 4. 同步本地 main 并创建标签
@@ -135,7 +153,7 @@ git checkout main
 git pull origin main
 ```
 
-注意：不要管工作区中未提交的文件，只处理已合入 main 的内容。**不要执行 `git push origin main` 推送本地代码**——所有代码改动走 PR 流程，发布任务只管打标签。
+注意：不要管工作区中未提交的文件，只处理已合入 main 的内容。**不要执行 `git push origin main` 推送本地代码**——发布任务只管打标签。
 
 ## 5. 创建并推送标签触发 Release
 
@@ -157,7 +175,7 @@ gh run watch $RUN_ID --exit-status
 
 1. 查看失败日志：`gh run view $RUN_ID --log-failed`
 2. 分析失败原因
-3. 如果是构建配置问题（如版本号、依赖），通过 PR 流程修复，**不要直接推 main**
+3. 如果是构建配置问题（如版本号、依赖），需先修复后再重新打标签
 4. 如果是标签问题（如版本号打错），删除标签重打：
    ```bash
    git push origin :refs/tags/$NEW_TAG
@@ -200,7 +218,7 @@ gh release view $NEW_TAG
 
 - **只基于 `origin/main` 已合并的提交发布**，不推本地未验证的代码
 - 工作区未提交的文件不要管，只处理已合入 main 的内容
-- **不要执行 `git push origin main`**——代码改动走 PR 流程，发布任务只负责打标签和更新 Release Notes
+- **不要执行 `git push origin main`**——发布任务只负责打标签和更新 Release Notes
 - 不要修改 Go 版本、Node 版本等构建配置（除非流水线因版本问题失败）
 - 如果多次重试仍失败，记录错误信息后结束，不要无限循环
 - 使用 gh CLI 操作 GitHub，确保 gh 已认证
@@ -208,17 +226,3 @@ gh release view $NEW_TAG
 - Release Notes 要对用户有价值：说明"做了什么"而不是"改了哪些文件"
 - **所有发布信息必须使用中文**：Release Notes 的分类标题、功能描述、修复说明等全部用中文撰写，包括分类标题（🚀 新特性、🐛 问题修复 等）
 
-## PR 提交安全规则（2026-07-21 事故教训）
-
-### 背景
-
-PR #311 因 rebase 到远程旧分支 `fix/ci-compliance-and-tests`，导致该旧分支的全部 42 个历史提交被混入 PR。squash merge 后，这些不相关的变更（TTS 流式、FileEntry 迁移、DingTalk 预览优化等）被错误归入一个 commit，release note 也全部指向同一个 hash，与之前版本的内容严重重复。最终需要 force reset origin/main 才能清除脏历史。
-
-### 规则
-
-1. **创建分支前必须检查远程是否有同名分支**：如果 `git ls-remote --heads origin <branch-name>` 返回结果，必须用不同的分支名，避免 rebase/merge 时污染 PR diff
-2. **Rebase 前确认分支历史是干净的**：执行 `git log --oneline origin/main..HEAD` 检查待推送的提交数量，如果远超预期（本例中预期 6 个实际 42 个），说明分支历史有问题
-3. **推送前用 `gh pr diff --name-only` 预览变更文件列表**：确认只包含预期的文件，如果出现不相关的文件，必须先清理
-4. **Squash merge 不是万能的**：虽然 squash merge 把所有提交压成一个，但如果 PR 包含了不相关的旧提交，diff 内容仍然会全部合入 main，release note 也会把所有变更归到一个 commit
-5. **如果发现 PR 内容不干净，宁可关闭重开**：不要试图在脏分支上修修补补（rebase 旧分支 → 合并冲突 → 修冲突 → 又引入更多问题），直接关掉 PR，从干净的 base 创建新分支
-6. **删除已合并的远程特性分支**：合入后立即删除远程分支，防止后续误 rebase 到残留的旧分支上
