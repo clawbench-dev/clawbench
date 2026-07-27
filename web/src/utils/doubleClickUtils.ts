@@ -37,25 +37,3 @@ export function slugifyForHeading(text: string): string {
 export function stripLeadingNumbering(text: string): string {
   return text.replace(/^[\d\s.、:：]+/, '').trim()
 }
-
-/**
- * Build the quote message text for a code selection.
- * Formats as: <userMessage>\n\n```<language>:<filePath>:<lineRange>\n<text>\n```
- */
-export function buildQuoteMessage(
-  userMessage: string,
-  text: string,
-  filePath: string,
-  language: string,
-  startLine: number,
-  endLine: number,
-): string {
-  const langPrefix = language ? `${language}:` : ':'
-  let lineSuffix = ''
-  if (startLine && endLine && startLine !== endLine) {
-    lineSuffix = `:${startLine}-${endLine}`
-  } else if (startLine) {
-    lineSuffix = `:${startLine}`
-  }
-  return `${userMessage.trim()}\n\n\`\`\`${langPrefix}${filePath}${lineSuffix}\n${text}\n\`\`\``
-}

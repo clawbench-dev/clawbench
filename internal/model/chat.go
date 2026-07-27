@@ -36,6 +36,7 @@ func FileEntriesFromPaths(paths []string) []FileEntry {
 }
 
 // PathsFromFileEntries extracts plain paths from []FileEntry.
+//
 // Deprecated: Use fileEntryLabel (in handler) instead to preserve line info.
 // This function strips StartLine/EndLine, which causes prompt prefix regression.
 func PathsFromFileEntries(entries []FileEntry) []string {

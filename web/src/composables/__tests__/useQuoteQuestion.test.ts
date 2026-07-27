@@ -21,12 +21,6 @@ vi.mock('@/composables/useLocale', () => ({
   gt: (key: string, params?: Record<string, string>) => key + (params ? JSON.stringify(params) : ''),
 }))
 
-// Mock buildQuoteMessage
-vi.mock('@/utils/doubleClickUtils', () => ({
-  buildQuoteMessage: (msg: string, text: string, path: string, lang: string, start: number, end: number) =>
-    `[${path}:${start}-${end}]\n${text}\n---\n${msg}`,
-}))
-
 // Keep real quoteQuestionUtils for selectionchange tests (closestElement, getLineInfo, getFileInfo)
 
 // Import the real useChatContext (not mocked) — it's a singleton
