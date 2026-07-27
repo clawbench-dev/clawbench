@@ -46,6 +46,16 @@
       </Transition>
     </Teleport>
 
+    <!-- System resources monitor -->
+    <button ref="gaugeBtnRef" class="gauge-toggle" @click="toggleResourcesMenu" :title="t('systemResources.title')">
+      <Gauge :size="15" />
+    </button>
+
+    <!-- System resources popup (both Web and APP mode) -->
+    <PopupMenu v-model:show="resourcesMenuOpen" :target-element="gaugeBtnRef" :max-width="320" :max-height="400" :menu-items-count="5" anchor="right">
+      <SystemResourcesPanel ref="resourcesPanelRef" />
+    </PopupMenu>
+
     <!-- Status dot: in APP mode it doubles as server switcher, in web mode it shows connection status -->
     <button ref="statusBtnRef" class="status-toggle" @click="onStatusDotClick" :title="isAppMode ? t('login.switchServer') : t('appHeader.connectionStatus')">
       <span class="status-dot" :class="statusDotClass"></span>
@@ -96,7 +106,7 @@
 </template>
 
 <script setup>
-import { Projector, Search, GitBranch, Server, LogOut } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, LogOut, Gauge } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -107,6 +117,7 @@ import { baseName } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
 import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 
 const { t } = useI18n()
@@ -379,7 +390,24 @@ function handleLogout() {
     }
 }
 
-// Close server dropdown on outside click
+// --- System resources monitor (Gauge icon) ---
+const gaugeBtnRef = ref(null)
+const resourcesMenuOpen = ref(false)
+const resourcesPanelRef = ref(null)
+
+function toggleResourcesMenu() {
+    resourcesMenuOpen.value = !resourcesMenuOpen.value
+}
+
+watch(resourcesMenuOpen, (open) => {
+    if (open) {
+        resourcesPanelRef.value?.startPolling?.()
+    } else {
+        resourcesPanelRef.value?.stopPolling?.()
+    }
+})
+
+// --- Close server dropdown on outside click ---
 function onServerClickOutside(e) {
     if (statusBtnRef.value && statusBtnRef.value.contains(e.target)) return
     if (serverDropdownPanelRef.value && serverDropdownPanelRef.value.contains(e.target)) return
@@ -414,7 +442,7 @@ onUnmounted(() => {
     border-radius: 999px;
     flex: 0 1 auto;
     min-width: 0;
-    max-width: calc(100% - 44px); /* leave room for logo + status dot */
+    max-width: calc(100% - 74px); /* leave room for logo + gauge + status dot */
     transition: background 0.15s, border-color 0.15s;
 }
 
@@ -545,6 +573,27 @@ onUnmounted(() => {
     white-space: nowrap;
     min-width: 0;
     line-height: 1.4;
+}
+
+/* Gauge icon button for system resources */
+.gauge-toggle {
+    padding: 6px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: background 0.15s;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+}
+
+@media (hover: hover) {
+    .gauge-toggle:hover {
+        background: var(--bg-tertiary);
+    }
 }
 
 /* Connection status button / server switcher dot */
