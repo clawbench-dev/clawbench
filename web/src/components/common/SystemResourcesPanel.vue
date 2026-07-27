@@ -63,7 +63,7 @@
     <!-- Network Up -->
     <div class="resource-row">
       <div class="resource-header">
-        <ArrowUp :size="13" class="resource-icon net-up" />
+        <CloudUpload :size="13" class="resource-icon net-up" />
         <span class="resource-label">{{ t('systemResources.upload') }}</span>
         <span class="resource-value">{{ formatRate(resources.network.upload_rate) }}</span>
       </div>
@@ -71,7 +71,7 @@
     <!-- Network Down -->
     <div class="resource-row">
       <div class="resource-header">
-        <ArrowDown :size="13" class="resource-icon net-down" />
+        <CloudDownload :size="13" class="resource-icon net-down" />
         <span class="resource-label">{{ t('systemResources.download') }}</span>
         <span class="resource-value">{{ formatRate(resources.network.download_rate) }}</span>
       </div>
@@ -80,7 +80,7 @@
 </template>
 
 <script setup>
-import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, ArrowUp, ArrowDown } from 'lucide-vue-next'
+import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload } from 'lucide-vue-next'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSystemResources } from '@/composables/useSystemResources'
