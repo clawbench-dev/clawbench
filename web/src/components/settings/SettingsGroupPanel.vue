@@ -49,7 +49,7 @@
         :max="entry.field.max"
         :step="entry.field.step"
         :needs-restart="entry.field.needsRestart"
-        :disabled="fieldsDisabled"
+        :disabled="isFieldDisabled(entry.field)"
         :force-close="activeKey !== null && activeKey !== entry.field.key"
         :default-value="entry.field.defaultValue"
         :display-format="entry.field.displayFormat"
@@ -230,6 +230,15 @@ const fieldsDisabled = computed(() => {
   if (!props.config.enableKey) return false
   return !localValues[props.config.enableKey]
 })
+
+/** Check if a specific field should be disabled due to its disableUnless condition. */
+function isFieldDisabled(field: ItemSpec): boolean {
+  if (fieldsDisabled.value) return true
+  if (field.disableUnless) {
+    return !isDependsOnMet(field.disableUnless, (k) => localValues[k])
+  }
+  return false
+}
 
 function onEnableToggle(e: Event) {
   const checked = (e.target as HTMLInputElement).checked
