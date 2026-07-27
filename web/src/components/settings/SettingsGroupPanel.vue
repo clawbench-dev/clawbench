@@ -370,9 +370,9 @@ function resolveSpeedLabel(field: ItemSpec): string | undefined {
   const s = ragStatus.value
   switch (field.key) {
     case 'rag.status.index_progress':
-      return s.index_speed > 0 ? t('settings.items.ragSpeedFormat', { speed: s.index_speed.toFixed(1) }) : undefined
+      return s.index_speed > 0 ? t('settings.items.ragSpeedFormat', { speed: s.index_speed.toFixed(2) }) : undefined
     case 'rag.status.embed_progress':
-      return s.embed_speed > 0 ? t('settings.items.ragSpeedFormat', { speed: s.embed_speed.toFixed(1) }) : undefined
+      return s.embed_speed > 0 ? t('settings.items.ragSpeedFormat', { speed: s.embed_speed.toFixed(2) }) : undefined
     default:
       return undefined
   }
