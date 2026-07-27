@@ -391,6 +391,43 @@ func TestStore_HasVecData_NoEmbedding(t *testing.T) {
 	assert.False(t, store.HasVecData(), "store with only non-embedded chunks should have no vec data")
 }
 
+// ---------- BatchUpdateEmbeddings ----------
+
+func TestStore_BatchUpdateEmbeddings(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t, 1024)
+	defer store.Close()
+
+	// Insert chunks without embeddings
+	chunks := []Chunk{
+		{SessionID: "s1", MessageID: 1, ChunkText: "hello", ChunkTextSegmented: "hello", ChunkIndex: 0, TokenCount: 1, ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant, CreatedAt: time.Now().Truncate(time.Millisecond)},
+		{SessionID: "s1", MessageID: 2, ChunkText: "world", ChunkTextSegmented: "world", ChunkIndex: 0, TokenCount: 1, ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant, CreatedAt: time.Now().Truncate(time.Millisecond)},
+	}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	// Get pending chunk IDs
+	pending, err := store.GetPendingEmbeddings(10)
+	require.NoError(t, err)
+	require.Len(t, pending, 2)
+
+	// Batch update
+	emb1 := makeTestEmbedding()
+	emb2 := makeTestEmbedding()
+	emb2[0] = 0.99 // slightly different
+	backfilled, err := store.BatchUpdateEmbeddings(pending, [][]float64{emb1, emb2})
+	require.NoError(t, err)
+	assert.Equal(t, 2, backfilled)
+	assert.True(t, store.HasVecData())
+}
+
+func TestStore_BatchUpdateEmbeddings_Empty(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t, 1024)
+	defer store.Close()
+
+	backfilled, err := store.BatchUpdateEmbeddings(nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, backfilled)
+}
+
 // ---------- SearchHybrid ----------
 
 func TestSQLiteStore_SearchHybrid_CombinesSources(t *testing.T) {

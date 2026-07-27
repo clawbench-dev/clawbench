@@ -2815,6 +2815,27 @@ func TestMarkMessageIndexed(t *testing.T) {
 	assert.Equal(t, 1, indexed)
 }
 
+func TestMarkMessagesIndexed(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Batch Index Test")
+	msg1, _ := service.AddChatMessage("/project", "claude", sid, "user", "hello", nil, false, "")
+	msg2, _ := service.AddChatMessage("/project", "claude", sid, "user", "world", nil, false, "")
+
+	err := service.MarkMessagesIndexed([]int64{msg1, msg2})
+	assert.NoError(t, err)
+
+	// Verify both messages are indexed
+	var count int
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE id IN (?, ?) AND indexed = 1", msg1, msg2).Scan(&count)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	// Empty slice should be no-op
+	err = service.MarkMessagesIndexed(nil)
+	assert.NoError(t, err)
+}
+
 func TestUnindexedCount(t *testing.T) {
 	setupDB(t)
 

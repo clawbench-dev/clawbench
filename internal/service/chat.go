@@ -1114,6 +1114,20 @@ func MarkMessageIndexed(messageID int64) error {
 	return err
 }
 
+// MarkMessagesIndexed marks multiple chat messages as indexed by RAG in a single query.
+func MarkMessagesIndexed(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := strings.Repeat("?,", len(ids)-1) + "?"
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	_, err := WriteExec("UPDATE chat_history SET indexed = 1 WHERE id IN ("+placeholders+")", args...)
+	return err
+}
+
 // UnindexedCount returns the number of messages waiting to be indexed by RAG.
 func UnindexedCount() (int, error) {
 	var count int
