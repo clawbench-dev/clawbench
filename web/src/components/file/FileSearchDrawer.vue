@@ -242,6 +242,12 @@ function formatPath(path: string): string {
   if (lastSlash <= 0) return ''
   return path.substring(0, lastSlash)
 }
+
+function focusSearchInput() {
+  inputRef.value?.focus()
+}
+
+defineExpose({ focusSearchInput })
 </script>
 
 <style scoped>

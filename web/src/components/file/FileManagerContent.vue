@@ -339,6 +339,7 @@
       <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" />
     </Teleport>
     <FileSearchDrawer
+      ref="fileSearchDrawerRef"
       :open="props.searchDrawer?.effectiveOpen.value"
       :currentDir="currentDir"
       @close="props.searchDrawer?.close()"
@@ -522,6 +523,7 @@ function closeDropdowns(e) {
 let highlightRetryTimer = null
 const fileListRef = ref(null)
 const fileGridRef = ref(null)
+const fileSearchDrawerRef = ref(null)
 
 function handleHighlightFileItem(e) {
   const { path } = e.detail
@@ -580,6 +582,7 @@ defineExpose({
     viewMode,
     _setViewMode(val) { viewMode.value = val },
     _getFilteredEntries() { return filteredEntries.value },
+    focusSearchInput() { fileSearchDrawerRef.value?.focusSearchInput() },
 })
 
 function onSearchNavigateDir(path) {

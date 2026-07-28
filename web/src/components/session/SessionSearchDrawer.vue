@@ -282,6 +282,12 @@ watch(() => props.open, async (val) => {
 function handleClose() {
   emit('close')
 }
+
+function focusSearchInput() {
+  inputRef.value?.focus()
+}
+
+defineExpose({ focusSearchInput })
 </script>
 
 <style scoped>

@@ -211,6 +211,7 @@ defineExpose({
   _getResults() { return results.value },
   _jumpTo(result) { jumpTo(result) },
   _jumpToFirst() { jumpToFirst() },
+  focusSearchInput() { inputRef.value?.focus() },
 })
 </script>
 

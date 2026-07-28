@@ -174,6 +174,7 @@
 
       <!-- Session search drawer -->
       <SessionSearchDrawer
+        ref="sessionSearchDrawerRef"
         :open="sessionSearchDrawer.effectiveOpen.value"
         @close="sessionSearchDrawer.close()"
         @open="handleOpenFromSearch"
@@ -968,6 +969,7 @@ const tocFile = computed(() => {
 // PDF TOC integration
 const fileOverlayRef = ref(null)
 const fileManagerRef = ref(null)
+const sessionSearchDrawerRef = ref(null)
 const pdfOutline = computed(() => fileOverlayRef.value?.pdfOutline || [])
 function handleJumpPdfPage(pageNum) {
     fileOverlayRef.value?.pdfScrollToPage(pageNum)
@@ -1593,6 +1595,50 @@ onMounted(async () => {
     }
 })
 
+// ── Ctrl+F / Cmd+F: open context-aware search drawer ──
+const _dlg = useDialog()
+function handleCtrlF(e) {
+    if (!(e.ctrlKey || e.metaKey) || e.key !== 'f') return
+    // Skip when focus is in input/textarea/contenteditable/terminal
+    const tag = e.target?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    if (e.target?.isContentEditable) return
+    if (e.target?.closest?.('.terminal-panel')) return
+    // Skip when modal dialog or project dialog is open
+    if (_dlg.state.value.visible || projectDialogOpen.value) return
+
+    if (activeTab.value === 'chat') {
+        // Chat tab → SessionSearchDrawer
+        e.preventDefault()
+        if (sessionSearchDrawer.isOpen.value) {
+            sessionSearchDrawerRef.value?.focusSearchInput()
+        } else {
+            sessionSearchDrawer.open()
+        }
+    } else if (activeTab.value === 'browse') {
+        // Browse tab → context-aware: overlay open → SearchDrawer (content), else → FileSearchDrawer (filename)
+        e.preventDefault()
+        if (fileNav.overlayOpen.value) {
+            if (searchDrawer.isOpen.value) {
+                fileOverlayRef.value?.focusSearchInput()
+            } else if (currentFile.value?.content) {
+                searchDrawer.open()
+            }
+        } else {
+            if (fileSearchDrawer.isOpen.value) {
+                fileManagerRef.value?.focusSearchInput()
+            } else {
+                fileSearchDrawer.open()
+            }
+        }
+    }
+    // Other tabs: don't preventDefault — let browser handle Ctrl+F natively
+}
+
+onMounted(() => {
+    document.addEventListener('keydown', handleCtrlF)
+})
+
 onUnmounted(() => {
     stopDockResize()
     removeTaskHandler()
@@ -1607,6 +1653,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     document.removeEventListener('click', handleOverflowOutsideClick)
+    document.removeEventListener('keydown', handleCtrlF)
     stopFlushTimer()
 })
 </script>

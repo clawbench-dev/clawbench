@@ -44,6 +44,7 @@
       />
 
       <SearchDrawer
+        ref="searchDrawerRef"
         :open="searchOpen"
         :file="currentFile"
         :view-mode="markdownViewMode"
@@ -92,6 +93,7 @@ const emit = defineEmits([
 
 const contentRef = ref(null)
 const fileViewerRef = ref(null)
+const searchDrawerRef = ref(null)
 
 // Forward pdfOutline from FileViewer's exposed API
 const pdfOutline = computed(() => fileViewerRef.value?.pdfOutline || props.pdfOutline || [])
@@ -100,7 +102,11 @@ function pdfScrollToPage(pageNum) {
   fileViewerRef.value?.pdfScrollToPage(pageNum)
 }
 
-defineExpose({ pdfScrollToPage, pdfOutline })
+function focusSearchInput() {
+  searchDrawerRef.value?.focusSearchInput()
+}
+
+defineExpose({ pdfScrollToPage, pdfOutline, focusSearchInput })
 
 // Intercept file-path link clicks inside the overlay content.
 // When a user clicks a .chat-file-open-btn, .chat-file-path, or .code-file-path,
