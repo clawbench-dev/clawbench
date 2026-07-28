@@ -355,7 +355,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
 		"preferred_mode": true, "preferred_model": true, "preferred_thinking_effort": true, "system_prompt": true,
 		"custom_system_prompt": true,
-		"models": true, "models_auto_detected": true, "sort_order": true,
+		"models":               true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
 		"acp_config_options": true, "acp_cached_usage_state": true,

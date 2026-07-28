@@ -76,7 +76,7 @@ func TestContinueFromExecution_NormalFlow(t *testing.T) {
 	title, err := service.GetSessionTitle(newSessID)
 	assert.NoError(t, err)
 	assert.Contains(t, title, "Daily Code Review")
-	assert.Regexp(t, `^\[\d{2}-\d{2} \d{2}:\d{2}\] Daily Code Review$`, title)
+	assert.Regexp(t, `^⏰ \[\d{2}-\d{2} \d{2}:\d{2}\] Daily Code Review$`, title)
 
 	// New session should inherit agent/model/thinking
 	info, err := service.GetSessionInfo(newSessID)
@@ -717,7 +717,7 @@ func TestContinueFromExecution_TitleFormatWithExplicitTimestamp(t *testing.T) {
 
 	title, err := service.GetSessionTitle(newSessID)
 	assert.NoError(t, err)
-	assert.Equal(t, "[03-15 08:30] Daily Review", title)
+	assert.Equal(t, "⏰ [03-15 08:30] Daily Review", title)
 }
 
 // Regression test: copied messages must NOT have ISO 8601 UTC timestamps

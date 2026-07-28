@@ -965,6 +965,8 @@ defineExpose({
   clearInputPreserveDraft,
   inputText,
   deleteDraft: (sessionId) => { draftCache.delete(sessionId) },
+  hasDraft: (sessionId) => draftCache.has(sessionId),
+  getDraft: (sessionId) => draftCache.get(sessionId) ?? null,
   injectToInput,
   handleQuickSendClick,
   onQuickSendTouchStart,

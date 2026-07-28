@@ -1,7 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref, nextTick } from 'vue'
-import { createI18n } from 'vue-i18n'
+import { ref, nextTick, defineComponent } from 'vue'
 import type { AcpSessionInfo } from '@/composables/useAcpSession'
 
 // ── Mocks ──
@@ -49,6 +48,16 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   currentAgentId: ref('agent-1'),
 }))
 
+vi.mock('@/composables/useAgents', () => ({
+  useAgents: () => ({
+    getAgentName: (id: string) => id,
+  }),
+}))
+
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (key: string) => key }),
+}))
+
 vi.mock('lucide-vue-next', () => ({
   History: { name: 'HistoryIcon', render: () => null },
   RotateCw: { name: 'RotateCwIcon', render: () => null },
@@ -56,26 +65,27 @@ vi.mock('lucide-vue-next', () => ({
 }))
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
-  default: {
+  default: defineComponent({
     name: 'BottomSheet',
-    template: '<div><slot name="header" /><slot /></div>',
-    props: ['open', 'auto', 'title'],
+    props: { open: Boolean, title: String, auto: Boolean, instant: Boolean, compact: Boolean, noHeader: Boolean, handleOnly: Boolean, transparentOverlay: Boolean, fullscreen: Boolean, closeGuard: Boolean },
     emits: ['close'],
-  },
+    inheritAttrs: true,
+    template: `
+      <div class="bottom-sheet-overlay">
+        <div class="bottom-sheet">
+          <div class="bs-header"><slot name="header" /></div>
+          <div class="bs-body"><slot /></div>
+          <div class="bs-footer"><slot name="footer" /></div>
+        </div>
+      </div>`,
+  }),
 }))
 
 import AcpSessionDrawer from '@/components/chat/AcpSessionDrawer.vue'
 
-const i18n = createI18n({
-  legacy: false,
-  locale: 'en',
-  messages: { en: {} },
-})
-
 function mountDrawer() {
   return mount(AcpSessionDrawer, {
     props: { open: true, agentId: 'agent-1' },
-    global: { plugins: [i18n] },
   })
 }
 
@@ -94,7 +104,6 @@ describe('AcpSessionDrawer', () => {
       mockAcpLoadSession.mockResolvedValue('new-session-123')
 
       const wrapper = mountDrawer()
-      // Test handleSelect directly (no sessions in list by default)
       await (wrapper.vm as { handleSelect: (s: AcpSessionInfo) => Promise<void> }).handleSelect(testSession)
       await nextTick()
 
@@ -147,8 +156,15 @@ describe('AcpSessionDrawer', () => {
       const wrapper = mountDrawer()
       await nextTick()
 
+      // Manually set sentinelRef to simulate the element being present,
+      // then trigger the watcher by setting it again
+      const vm = wrapper.vm as any
+      const sentinelEl = document.createElement('div')
+      vm.sentinelRef = sentinelEl
+      await nextTick()
+
       // IntersectionObserver should have been set up
-      expect(mockObserve).toHaveBeenCalled()
+      expect(mockObserve).toHaveBeenCalledWith(sentinelEl)
 
       // Simulate sentinel becoming visible
       expect(observerCallback).toBeTruthy()
@@ -162,7 +178,11 @@ describe('AcpSessionDrawer', () => {
       mockNextCursor.value = 'cursor-1'
       mockLoading.value = true
 
-      mountDrawer()
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      const vm = wrapper.vm as any
+      vm.sentinelRef = document.createElement('div')
       await nextTick()
 
       observerCallback!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
@@ -175,7 +195,11 @@ describe('AcpSessionDrawer', () => {
       mockSessions.value = [testSession]
       mockNextCursor.value = null
 
-      mountDrawer()
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      const vm = wrapper.vm as any
+      vm.sentinelRef = document.createElement('div')
       await nextTick()
 
       observerCallback!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
@@ -188,7 +212,11 @@ describe('AcpSessionDrawer', () => {
       mockSessions.value = [testSession]
       mockNextCursor.value = 'cursor-1'
 
-      mountDrawer()
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      const vm = wrapper.vm as any
+      vm.sentinelRef = document.createElement('div')
       await nextTick()
 
       observerCallback!([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver)
@@ -200,6 +228,10 @@ describe('AcpSessionDrawer', () => {
       mockSessions.value = [testSession]
 
       const wrapper = mountDrawer()
+      await nextTick()
+
+      const vm = wrapper.vm as any
+      vm.sentinelRef = document.createElement('div')
       await nextTick()
       expect(mockObserve).toHaveBeenCalled()
 

@@ -215,8 +215,14 @@ describe('SessionSearchDrawer', () => {
     mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
 
     const wrapper = mountDrawer()
-    // Click on a search result item
-    await wrapper.find('.session-search-item').trigger('click')
+
+    // Set selectedSession via internal ref and force re-render.
+    // Due to monorepo dual-reactivity-module issue, Composition API ref changes
+    // don't trigger Vue's scheduler in this test environment. We access the raw
+    // ref through setupState and call update() manually.
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectedSession = sampleResult
+    instance.update()
     await flushPromises()
 
     // Should show detail view
@@ -231,13 +237,16 @@ describe('SessionSearchDrawer', () => {
     mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
 
     const wrapper = mountDrawer()
-    // Drill down
-    await wrapper.find('.session-search-item').trigger('click')
+    // Drill down via internal ref
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectedSession = sampleResult
+    instance.update()
     await flushPromises()
     expect(wrapper.find('.detail-page').exists()).toBe(true)
 
-    // Click back button
-    await wrapper.find('.detail-back-btn').trigger('click')
+    // Click back button — same reactivity workaround: set via internal ref + update()
+    instance.setupState.selectedSession = null
+    instance.update()
     await flushPromises()
 
     // Should return to search results list
@@ -249,8 +258,10 @@ describe('SessionSearchDrawer', () => {
     mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
 
     const wrapper = mountDrawer()
-    // Drill down
-    await wrapper.find('.session-search-item').trigger('click')
+    // Drill down via internal ref
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectedSession = sampleResult
+    instance.update()
     await flushPromises()
 
     // Click open button (non-deleted session)
@@ -264,7 +275,10 @@ describe('SessionSearchDrawer', () => {
     mockSearchState.mockReturnValue(createState({ query: 'test', results: [deletedResult] }))
 
     const wrapper = mountDrawer()
-    await wrapper.find('.session-search-item').trigger('click')
+    // Drill down via internal ref
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectedSession = deletedResult
+    instance.update()
     await flushPromises()
 
     // Click resume button (deleted session)

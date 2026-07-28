@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { defineComponent } from 'vue'
 import FileSearchDrawer from '@/components/file/FileSearchDrawer.vue'
 
 // Mock appLog
@@ -8,10 +9,31 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+// Mock isThumbableExt — prevents real implementation from running
+vi.mock('@/utils/fileManager', () => ({
+  isThumbableExt: () => false,
+}))
+
+// Mock useSettingsConfig — required by useFileSearch
+vi.mock('@/composables/useSettingsConfig', () => ({
+  useSettingsConfig: () => ({
+    getServerValueWithDefault: () => 100,
+  }),
+}))
+
 // Mock navToFileInManager
 const mockNavToFileInManager = vi.fn().mockResolvedValue(true)
 vi.mock('@/composables/useFilePathAnnotation', () => ({
   navToFileInManager: (...args: any[]) => mockNavToFileInManager(...args),
+}))
+
+// Mock BottomSheet component — must use vi.mock since SFC has no explicit name
+vi.mock('@/components/common/BottomSheet.vue', () => ({
+  default: defineComponent({
+    props: ['open', 'auto', 'title', 'instant', 'compact', 'noHeader', 'handleOnly', 'transparentOverlay', 'fullscreen', 'closeGuard'],
+    emits: ['close'],
+    template: '<div class="bottom-sheet-stub" v-if="$props.open"><slot name="header" /><slot /></div>',
+  }),
 }))
 
 // Mock useFileSearch to control state
@@ -40,10 +62,12 @@ vi.mock('@/composables/useFileSearch', () => ({
   }),
 }))
 
-// Minimal i18n instance for tests
+// Minimal i18n instance for tests — globalInjection:false avoids async
+// enableDevTools() leaks that cause vitest detectAsyncLeaks to flag 4 promises.
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
+  globalInjection: false,
   messages: {
     en: {
       file: {
@@ -58,6 +82,7 @@ const i18n = createI18n({
           noResults: 'No files found',
           searching: 'Searching...',
           resultCount: '{count} files found',
+          resultCountPlus: '{limit}+ files found',
           truncated: 'Showing first {max} results',
           searchFrom: 'From: {path}',
           reset: 'Reset',
@@ -83,11 +108,6 @@ function mountDrawer(props: Record<string, any> = {}) {
       plugins: [i18n],
       stubs: {
         'lucide-vue-next': LucideStub,
-        BottomSheet: {
-          template: '<div class="bottom-sheet-stub" v-if="$props.open"><slot name="header" /><slot /></div>',
-          props: ['open', 'auto'],
-          emits: ['close'],
-        },
         HeaderMarquee: { template: '<span class="marquee-stub"><slot /></span>' },
         SearchInput: {
           template: '<input class="search-input-stub" />',
@@ -286,7 +306,7 @@ describe('FileSearchDrawer', () => {
     mockState.scope = 'current'
     mockState.searchBasePath = 'internal/handler'
     const wrapper = mountDrawer()
-    expect(wrapper.find('.marquee-stub').exists()).toBe(true)
+    expect(wrapper.find('.bs-header-description').exists()).toBe(true)
   })
 
   it('hides header description when scope is global', () => {

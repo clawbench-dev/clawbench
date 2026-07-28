@@ -489,7 +489,7 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) {
 // 1. Fill ThinkingEffortLevels from BackendRegistry and update DB
 // 2. Fill Models from cache for agents with empty models and update DB
 // 3. Reload in-memory state from DB
-func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]AgentModel) { //nolint:gocognit,gocyclo // multi-step data merge
+func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]AgentModel) { //nolint:gocyclo // multi-step data merge
 	// Step 1: Fill ThinkingEffortLevels from BackendRegistry and update DB
 	rows, err := db.Query("SELECT id, backend FROM agents")
 	if err != nil {

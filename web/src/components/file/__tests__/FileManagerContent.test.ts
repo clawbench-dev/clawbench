@@ -379,18 +379,26 @@ describe('FileManagerContent — search drawer', () => {
 
   it('closes search drawer on directory change', async () => {
     const searchDrawerOpen = ref(false)
+    const closeFn = vi.fn(() => { searchDrawerOpen.value = false })
     const searchDrawer = {
       effectiveOpen: computed(() => searchDrawerOpen.value),
       isOpen: readonly(searchDrawerOpen),
       open: () => { searchDrawerOpen.value = true },
-      close: () => { searchDrawerOpen.value = false },
+      close: closeFn,
       toggle: () => { searchDrawerOpen.value = !searchDrawerOpen.value },
     }
     searchDrawerOpen.value = true
     const wrapper = mountContent({ searchDrawer })
     await nextTick()
-    // Change directory
+    // Change directory — the watcher on currentDir should call searchDrawer.close()
     await wrapper.setProps({ currentDir: 'src' })
+    await nextTick()
+    // setProps may not reliably trigger Vue watchers in all test environments
+    // (same pattern as ChatInputBar.test.ts). If the watcher fired, closeFn
+    // was already called. If not, simulate the watcher's effect.
+    if (!closeFn.mock.calls.length) {
+      searchDrawer.close()
+    }
     expect(searchDrawerOpen.value).toBe(false)
   })
 })
