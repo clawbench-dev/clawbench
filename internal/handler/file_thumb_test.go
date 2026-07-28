@@ -8,11 +8,13 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type encoderFunc func(w io.Writer, m image.Image) error
@@ -296,8 +298,13 @@ func TestFileThumb(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		// Absolute path outside project
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=/etc/passwd", nil)
+		// Absolute path outside project — must work on all platforms including Windows.
+		// model.RootPaths is set to watchDir (a temp dir). Use a sibling path outside it.
+		outsidePath := filepath.Join(filepath.Dir(env.ProjectDir), "..", "outside-project", "file.txt")
+		absOutside, err := filepath.Abs(outsidePath)
+		require.NoError(t, err)
+
+		req := newRequest(t, http.MethodGet, "/api/file/thumb?path="+url.QueryEscape(absOutside), nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
