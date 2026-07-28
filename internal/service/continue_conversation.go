@@ -164,7 +164,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	newSessionID := generateSessionID()
 	// Prefix title with execution date+time (no year) to identify which run this came from
 	execTime := execCreatedAt.Format("01-02 15:04")
-	displayTitle := "[" + execTime + "] " + taskName
+	displayTitle := "⏰ [" + execTime + "] " + taskName
 	// Copy external_session_id from the source session so that --resume works correctly.
 	// The continued session inherits the CLI backend's session context, allowing the
 	// same resume flow as a normal session (no special-casing needed).
