@@ -56,7 +56,7 @@ flowchart TD
 
 ### 设计要点
 
-- **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent（如 E2E 测试使用的 acp-mock）。DB 优先，`source` 字段支持 `auto`（自动发现）、`setup`（安装/设置流程创建）和 `manual`（手动定义）
+- **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent（如 E2E 测试使用的 acp-mock）。DB 优先；自动发现只更新基础设施字段（`acp_command`、`transport`），用户自定义的 `name`、`command` 不被覆盖
 - **默认项目持久化**：`recent_projects.is_default` 标记服务端默认项目。读取时依次回退到显式默认项目、最近访问项目、用户主目录和首个可用根路径，确保首次启动和旧数据均可用
 - **ACP 能力持久化**：Agent 的 ACP 相关属性（`transport`、`acp_command`、可用模式、思考深度、命令等）持久化在 `agents` 表中，重启后无需重新发现——这些信息在首次连接时从 ACP Initialize 握手中提取并缓存
 - **供应商模型注册**：已知模型列表通过各后端的 `RegisterDiscoverModelsFunc()` 在 `init()` 注册，或通过 `BackendSpec.KnownModels` 静态声明。运行时可通过 `POST /api/agents/rescan` 重新触发 PATH 扫描；模型数据不依赖 `<dataDir>/provider_models.json` 或生成脚本

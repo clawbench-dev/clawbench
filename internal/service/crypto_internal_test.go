@@ -111,7 +111,7 @@ func TestLoadAllAPIKeys_WithKeys(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	err = SaveAgentAPIKey(db, "pi", "openai", "https://api.openai.com", "sk-test-key")
@@ -134,7 +134,7 @@ func TestLoadAllAPIKeys_MultipleKeys(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	err = SaveAgentAPIKey(db, "pi", "openai", "", "sk-openai-key")
@@ -155,7 +155,7 @@ func TestLoadAllAPIKeys_CorruptKey(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// Insert a key with corrupted encrypted data directly
@@ -198,7 +198,7 @@ func TestRotateAPIKeyEncryption_SaveKeyError(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// Encrypt with old password
@@ -299,7 +299,7 @@ func TestRotateAPIKeyEncryption_WithPasswordChange(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// Encrypt with old password (cache must reflect old-password)
@@ -347,7 +347,7 @@ func TestDecryptAPIKey_PreviousKeyFallback(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// Step 1: Encrypt with old password

@@ -48,7 +48,6 @@ func setupAgentTestEnv(t *testing.T) func() {
 			{ID: "glm-4-flash", Name: "GLM 4 Flash"},
 		},
 		ThinkingEffortLevels: []string{"low", "medium", "high"},
-		Source:               "auto",
 	}
 	claudeAgent := &model.Agent{
 		ID:        "claude",
@@ -59,7 +58,6 @@ func setupAgentTestEnv(t *testing.T) func() {
 			{ID: "claude-sonnet-4-6", Name: "Claude Sonnet", Default: true},
 		},
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
-		Source:               "auto",
 	}
 
 	require.NoError(t, service.SaveAgent(db, codebuddyAgent))
@@ -1303,7 +1301,6 @@ func TestAgentDuplicate_Success(t *testing.T) {
 	assert.Contains(t, resp, "id")
 	assert.Equal(t, "My Custom Claude", resp["name"])
 	assert.Equal(t, "claude", resp["backend"])
-	assert.Equal(t, "manual", resp["source"])
 
 	// Verify the new agent was added to in-memory maps
 	newID, _ := resp["id"].(string)

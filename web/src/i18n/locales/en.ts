@@ -1137,7 +1137,6 @@ export default {
       agentSystemPromptACPNote: 'ACP agent manages its own system prompt; not editable here',
       agentBackend: 'Backend',
       agentCommand: 'Command',
-      agentSource: 'Source',
       agentModels: 'Models',
       agentModelCount: '{count} models',
       agentAcpCommand: 'ACP Command',

@@ -271,19 +271,11 @@ func SyncDiscoverAgentsDB(db dbutil.Writer) map[string]bool { //nolint:gocognit,
 			continue
 		}
 		if count > 0 {
-			// Update spec-derived fields if they changed in BackendSpec
-			// (e.g., deepseek renamed to CodeWhale, ACP command changed)
+			// Update spec-derived infrastructure fields (acp_command, transport)
+			// when they change in BackendSpec. Do NOT update name or command —
+			// those may have been customized by the user.
 			updates := map[string]interface{}{}
-			var existingName, existingCommand string
-			_ = db.QueryRow("SELECT COALESCE(name,''), COALESCE(command,'') FROM agents WHERE backend = ?", r.spec.Backend).Scan(&existingName, &existingCommand)
 
-			if r.spec.Name != "" && existingName != r.spec.Name {
-				updates["name"] = r.spec.Name
-			}
-			// Update command if the primary CLI changed (e.g., "deepseek" → "codewhale")
-			if r.spec.DefaultCmd != "" && existingCommand != "" && existingCommand != r.spec.DefaultCmd && CheckCLIExists(r.spec.DefaultCmd) {
-				updates["command"] = r.spec.DefaultCmd
-			}
 			// Sync acp_command: update when spec changes (including clearing
 			// stale values when ACP support is removed from a backend).
 			if r.spec.AcpCommand != existingAcpCommand {
@@ -307,11 +299,11 @@ func SyncDiscoverAgentsDB(db dbutil.Writer) map[string]bool { //nolint:gocognit,
 					args = append(args, val)
 				}
 				args = append(args, r.spec.Backend)
-				query := "UPDATE agents SET " + strings.Join(setClauses, ", ") + " WHERE backend = ? AND source = 'auto'"
+				query := "UPDATE agents SET " + strings.Join(setClauses, ", ") + " WHERE backend = ?"
 				if _, updateErr := db.Exec(query, args...); updateErr != nil {
-					slog.Warn("failed to update auto-discovered agent", "backend", r.spec.Backend, "error", updateErr)
+					slog.Warn("failed to update discovered agent infrastructure", "backend", r.spec.Backend, "error", updateErr)
 				} else {
-					slog.Info("updated auto-discovered agent", "backend", r.spec.Backend, "updates", updates)
+					slog.Info("updated discovered agent infrastructure", "backend", r.spec.Backend, "updates", updates)
 				}
 			}
 			continue // Don't overwrite other existing DB fields
@@ -327,7 +319,6 @@ func SyncDiscoverAgentsDB(db dbutil.Writer) map[string]bool { //nolint:gocognit,
 			Name:      r.spec.Name,
 			Specialty: r.spec.Specialty,
 			Backend:   r.spec.Backend,
-			Source:    "auto",
 		}
 
 		// Store ACP command info from BackendSpec (transport defaults to "acp-stdio")
@@ -344,8 +335,7 @@ func SyncDiscoverAgentsDB(db dbutil.Writer) map[string]bool { //nolint:gocognit,
 	}
 
 	// Include backends that have existing DB records but are not in BackendRegistry
-	// (e.g., wizard-created agents, manual agents, mock backend).
-	// This ensures MergeDiscoveredDataDB doesn't soft-delete them.
+	// (e.g., wizard-created agents, YAML-defined agents, mock backend).
 	rows, err := db.Query("SELECT DISTINCT backend FROM agents")
 	if err == nil {
 		defer func() { _ = rows.Close() }()
@@ -387,12 +377,12 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
-		system_prompt, custom_system_prompt, models, models_auto_detected, source, sort_order,
+		system_prompt, custom_system_prompt, models, models_auto_detected, sort_order,
 		transport, acp_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.Source, agent.SortOrder,
+		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
 		transport, agent.AcpCommand)
 	return err
 }
@@ -483,7 +473,6 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) {
 			AcpCommand:              ya.AcpCommand,
 			Models:                  ya.Models,
 			SortOrder:               ya.SortOrder,
-			Source:                  "manual",
 			ModelsAutoDetected:      len(ya.Models) == 0,
 		}
 
@@ -497,49 +486,11 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) {
 
 // MergeDiscoveredDataDB is the DB-based replacement for MergeDiscoveredData.
 // It performs three operations:
-// 1. Soft-delete: DELETE auto-source agents whose backend is not in the present map
-// 2. Fill ThinkingEffortLevels from BackendRegistry and update DB
-// 3. Fill Models from cache for agents with empty models and update DB
-// 4. Reload in-memory state from DB
-func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]AgentModel, present map[string]bool) { //nolint:gocognit,gocyclo // multi-step data merge
-	// Step 1: Soft-delete auto agents whose CLI is not present
-	if present != nil {
-		// Build list of present backends for SQL
-		presentBackends := make([]string, 0, len(present))
-		for backend := range present {
-			presentBackends = append(presentBackends, backend)
-		}
-
-		// Delete auto-source agents whose backend is NOT in present
-		if len(presentBackends) > 0 {
-			// Build placeholders
-			placeholders := make([]string, len(presentBackends))
-			args := make([]any, len(presentBackends)+1)
-			args[0] = "auto" // source
-			for i, b := range presentBackends {
-				placeholders[i] = "?"
-				args[i+1] = b
-			}
-			query := fmt.Sprintf("DELETE FROM agents WHERE source = ? AND backend NOT IN (%s)",
-				strings.Join(placeholders, ","))
-			result, err := db.Exec(query, args...)
-			if err != nil {
-				slog.Warn("failed to soft-delete missing CLI agents", "error", err)
-			} else if rows, _ := result.RowsAffected(); rows > 0 {
-				slog.Info("soft-deleted agents with missing CLIs", "count", rows)
-			}
-		} else {
-			// No backends present — delete all auto agents
-			result, err := db.Exec("DELETE FROM agents WHERE source = ?", "auto")
-			if err != nil {
-				slog.Warn("failed to soft-delete all auto agents", "error", err)
-			} else if rows, _ := result.RowsAffected(); rows > 0 {
-				slog.Info("soft-deleted all auto agents (no CLIs present)", "count", rows)
-			}
-		}
-	}
-
-	// Step 2: Fill ThinkingEffortLevels from BackendRegistry and update DB
+// 1. Fill ThinkingEffortLevels from BackendRegistry and update DB
+// 2. Fill Models from cache for agents with empty models and update DB
+// 3. Reload in-memory state from DB
+func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]AgentModel) { //nolint:gocognit,gocyclo // multi-step data merge
+	// Step 1: Fill ThinkingEffortLevels from BackendRegistry and update DB
 	rows, err := db.Query("SELECT id, backend FROM agents")
 	if err != nil {
 		slog.Warn("failed to query agents for merge", "error", err)
@@ -643,7 +594,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 	rows, err := db.Query(`SELECT id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
-		system_prompt, custom_system_prompt, models, models_auto_detected, source, sort_order,
+		system_prompt, custom_system_prompt, models, models_auto_detected, sort_order,
 		transport, acp_command
 		FROM agents ORDER BY id`)
 	if err != nil {
@@ -661,7 +612,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 			&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.SystemPrompt, &agent.CustomSystemPrompt, &modelsJSON, &autoDetected,
-			&agent.Source, &agent.SortOrder,
+			&agent.SortOrder,
 			&agent.Transport, &agent.AcpCommand)
 		if err != nil {
 			return nil, err

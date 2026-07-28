@@ -35,7 +35,6 @@ interface AgentRecord {
   name: string
   backend: string
   command?: string
-  source?: string
   specialty?: string
   models?: Array<{ id: string; name: string; default: boolean }>
   preferredModel?: string

@@ -37,7 +37,6 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 			custom_system_prompt TEXT NOT NULL DEFAULT '',
 			models TEXT NOT NULL DEFAULT '[]',
 			models_auto_detected INTEGER NOT NULL DEFAULT 0,
-			source TEXT NOT NULL DEFAULT 'auto',
 			sort_order INTEGER NOT NULL DEFAULT 0,
 			transport TEXT NOT NULL DEFAULT 'cli',
 			acp_command TEXT NOT NULL DEFAULT '',
@@ -50,7 +49,6 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_agents_backend ON agents(backend);
-		CREATE INDEX IF NOT EXISTS idx_agents_source ON agents(source);
 		CREATE INDEX IF NOT EXISTS idx_agents_sort ON agents(sort_order);
 
 		CREATE TABLE IF NOT EXISTS agent_api_keys (
@@ -102,7 +100,6 @@ func TestSaveAgent_Insert(t *testing.T) {
 		},
 		ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
 		PreferredModel:       "openai/gpt-5.5",
-		Source:               "setup",
 	}
 
 	err := service.SaveAgent(db, agent)
@@ -119,7 +116,6 @@ func TestSaveAgent_Insert(t *testing.T) {
 	assert.Equal(t, "极简编程智能体", got.Specialty)
 	assert.Equal(t, "pi", got.Backend)
 	assert.Equal(t, "/path/to/pi", got.Command)
-	assert.Equal(t, "setup", got.Source)
 	assert.Equal(t, "openai/gpt-5.5", got.PreferredModel)
 	assert.Len(t, got.Models, 2)
 	assert.Equal(t, "openai/gpt-5.5", got.Models[0].ID)
@@ -136,7 +132,6 @@ func TestSaveAgent_Upsert(t *testing.T) {
 		ID:      "pi",
 		Name:    "Pi",
 		Backend: "pi",
-		Source:  "auto",
 	}
 	err := service.SaveAgent(db, agent)
 	require.NoError(t, err)
@@ -159,9 +154,9 @@ func TestSaveAgent_MultipleAgents(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	agents := []*model.Agent{
-		{ID: "claude", Name: "Claude", Backend: "claude", Source: "auto"},
-		{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"},
-		{ID: "codebuddy", Name: "Codebuddy", Backend: "codebuddy", Source: "auto"},
+		{ID: "claude", Name: "Claude", Backend: "claude"},
+		{ID: "pi", Name: "Pi", Backend: "pi"},
+		{ID: "codebuddy", Name: "Codebuddy", Backend: "codebuddy"},
 	}
 
 	for _, a := range agents {
@@ -183,9 +178,9 @@ func TestDeleteAgent(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	// Insert two agents
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
-	err = service.SaveAgent(db, &model.Agent{ID: "claude", Name: "Claude", Backend: "claude", Source: "auto"})
+	err = service.SaveAgent(db, &model.Agent{ID: "claude", Name: "Claude", Backend: "claude"})
 	require.NoError(t, err)
 
 	// Delete one
@@ -211,7 +206,7 @@ func TestPatchAgent(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	// Insert an agent
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// Patch preferred model and thinking
@@ -236,7 +231,6 @@ func TestPatchAgent_ClearPreferences(t *testing.T) {
 		Backend:                 "pi",
 		PreferredModel:          "openai/gpt-5.5",
 		PreferredThinkingEffort: "high",
-		Source:                  "setup",
 	}
 	err := service.SaveAgent(db, agent)
 	require.NoError(t, err)
@@ -272,7 +266,6 @@ func TestLoadAgentsFromDB_ModelsJSON(t *testing.T) {
 			{ID: "minimax/MiniMax-M2.7", Name: "MiniMax-M2.7", Default: true},
 			{ID: "openai/gpt-5.5", Name: "GPT-5.5"},
 		},
-		Source: "auto",
 	}
 	err := service.SaveAgent(db, agent)
 	require.NoError(t, err)
@@ -296,7 +289,6 @@ func TestLoadAgentsFromDB_ThinkingEffortLevelsJSON(t *testing.T) {
 		Name:                 "Pi",
 		Backend:              "pi",
 		ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
-		Source:               "auto",
 	}
 	err := service.SaveAgent(db, agent)
 	require.NoError(t, err)
@@ -314,7 +306,6 @@ func TestLoadAgentsFromDB_EmptyModelsAndLevels(t *testing.T) {
 		ID:      "pi",
 		Name:    "Pi",
 		Backend: "pi",
-		Source:  "auto",
 		// Models and ThinkingEffortLevels are nil/empty
 	}
 	err := service.SaveAgent(db, agent)
@@ -327,41 +318,11 @@ func TestLoadAgentsFromDB_EmptyModelsAndLevels(t *testing.T) {
 	assert.Empty(t, agents[0].ThinkingEffortLevels)
 }
 
-func TestSaveAgent_SourceField(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	for _, source := range []string{"auto", "setup", "manual"} {
-		t.Run(source, func(t *testing.T) {
-			agent := &model.Agent{
-				ID:      "test-" + source,
-				Name:    "Test " + source,
-				Backend: "pi",
-				Source:  source,
-			}
-			err := service.SaveAgent(db, agent)
-			require.NoError(t, err)
-		})
-	}
-
-	agents, err := service.LoadAgentsFromDB()
-	require.NoError(t, err)
-	assert.Len(t, agents, 3)
-
-	// Verify each source
-	agentMap := make(map[string]*model.Agent)
-	for i := range agents {
-		agentMap[agents[i].ID] = agents[i]
-	}
-	assert.Equal(t, "auto", agentMap["test-auto"].Source)
-	assert.Equal(t, "setup", agentMap["test-setup"].Source)
-	assert.Equal(t, "manual", agentMap["test-manual"].Source)
-}
-
 func TestDeleteAgent_CascadesAPIKeys(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	// Insert agent
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// Insert API key (directly, since encryption is in Task 2)
@@ -394,7 +355,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
 		"preferred_mode": true, "preferred_model": true, "preferred_thinking_effort": true, "system_prompt": true,
 		"custom_system_prompt": true,
-		"models":               true, "models_auto_detected": true, "source": true, "sort_order": true,
+		"models": true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
 		"acp_config_options": true, "acp_cached_usage_state": true,
@@ -452,7 +413,6 @@ func TestAgentIndexes(t *testing.T) {
 
 	expectedIndexes := map[string]bool{
 		"idx_agents_backend":                true,
-		"idx_agents_source":                 true,
 		"idx_agents_sort":                   true,
 		"idx_agent_api_keys_agent_provider": true,
 	}
@@ -482,7 +442,6 @@ func TestSaveAgent_ModelsWithSpecialChars(t *testing.T) {
 		ID:      "pi",
 		Name:    "Pi",
 		Backend: "pi",
-		Source:  "auto",
 		Models: []model.AgentModel{
 			{ID: "anthropic/claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Default: true},
 		},
@@ -506,7 +465,6 @@ func TestSaveAgent_WithTransport(t *testing.T) {
 		ID:         "kimi",
 		Name:       "Kimi",
 		Backend:    "kimi",
-		Source:     "auto",
 		Transport:  "acp-stdio",
 		AcpCommand: "kimi --acp",
 	}
@@ -532,7 +490,6 @@ func TestSaveAgent_TransportDefaultsToCLI(t *testing.T) {
 		ID:      "pi",
 		Name:    "Pi",
 		Backend: "pi",
-		Source:  "auto",
 	}
 
 	err := service.SaveAgent(db, agent)
@@ -564,7 +521,7 @@ func TestAgentModelsJSON_Serialization(t *testing.T) {
 
 func TestPatchAgentFields_Name(t *testing.T) {
 	db := setupTestDBForAgents(t)
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
 
 	name := "Pi Updated"
 	err := service.PatchAgentFields("pi", service.AgentPatch{Name: &name})
@@ -578,7 +535,7 @@ func TestPatchAgentFields_Name(t *testing.T) {
 
 func TestPatchAgentFields_Specialty(t *testing.T) {
 	db := setupTestDBForAgents(t)
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
 
 	specialty := "极简编程"
 	err := service.PatchAgentFields("pi", service.AgentPatch{Specialty: &specialty})
@@ -592,7 +549,7 @@ func TestPatchAgentFields_Specialty(t *testing.T) {
 
 func TestPatchAgentFields_CustomSystemPrompt(t *testing.T) {
 	db := setupTestDBForAgents(t)
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
 
 	custom := "You are a helpful math tutor."
 	err := service.PatchAgentFields("pi", service.AgentPatch{CustomSystemPrompt: &custom})
@@ -611,7 +568,7 @@ func TestPatchAgentFields_CustomSystemPrompt(t *testing.T) {
 
 func TestPatchAgentFields_SortOrder(t *testing.T) {
 	db := setupTestDBForAgents(t)
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
 
 	order := 5
 	err := service.PatchAgentFields("pi", service.AgentPatch{SortOrder: &order})
@@ -625,7 +582,7 @@ func TestPatchAgentFields_SortOrder(t *testing.T) {
 
 func TestPatchAgentFields_PartialPatch(t *testing.T) {
 	db := setupTestDBForAgents(t)
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Specialty: "old", Backend: "pi", Source: "auto"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Specialty: "old", Backend: "pi"}))
 
 	// Only patch name, verify other fields unchanged
 	name := "Pi New"
@@ -641,7 +598,7 @@ func TestPatchAgentFields_PartialPatch(t *testing.T) {
 
 func TestPatchAgentFields_NilFieldsSkipped(t *testing.T) {
 	db := setupTestDBForAgents(t)
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
 
 	// Empty patch — should be a no-op
 	err := service.PatchAgentFields("pi", service.AgentPatch{})
@@ -668,7 +625,6 @@ func TestMigrateCustomSystemPrompt(t *testing.T) {
 		ID:                 "pi",
 		Name:               "Pi",
 		Backend:            "pi",
-		Source:             "auto",
 		SystemPrompt:       fullPrompt,
 		CustomSystemPrompt: "", // not yet migrated
 	}
@@ -693,7 +649,6 @@ func TestMigrateCustomSystemPrompt_CommonOnly(t *testing.T) {
 		ID:                 "pi",
 		Name:               "Pi",
 		Backend:            "pi",
-		Source:             "auto",
 		SystemPrompt:       commonPrompt,
 		CustomSystemPrompt: "",
 	}
@@ -716,7 +671,6 @@ func TestMigrateCustomSystemPrompt_AlreadyMigrated(t *testing.T) {
 		ID:                 "pi",
 		Name:               "Pi",
 		Backend:            "pi",
-		Source:             "auto",
 		SystemPrompt:       "some prompt",
 		CustomSystemPrompt: custom,
 	}
@@ -759,7 +713,6 @@ func TestDuplicateAgent_Success(t *testing.T) {
 		Models: []model.AgentModel{
 			{ID: "openai/gpt-5.5", Name: "GPT-5.5", Default: true},
 		},
-		Source: "setup",
 	}
 	require.NoError(t, service.SaveAgent(db, agent))
 
@@ -772,7 +725,6 @@ func TestDuplicateAgent_Success(t *testing.T) {
 	assert.Contains(t, clone.ID, "pi-copy-")
 	assert.Equal(t, "Pi Copy", clone.Name)
 	assert.Equal(t, "pi", clone.Backend)
-	assert.Equal(t, "manual", clone.Source)
 
 	// Verify both agents in DB
 	agents, err := service.LoadAgentsFromDB()
@@ -784,8 +736,8 @@ func TestLoadAgentsIntoMemory(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	// Insert agents
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "test-1", Name: "Test 1", Backend: "pi", Source: "auto"}))
-	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "test-2", Name: "Test 2", Backend: "pi", Source: "auto"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "test-1", Name: "Test 1", Backend: "pi"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "test-2", Name: "Test 2", Backend: "pi"}))
 
 	// Load into memory
 	service.LoadAgentsIntoMemory()

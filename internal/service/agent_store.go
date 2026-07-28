@@ -33,7 +33,6 @@ CREATE TABLE IF NOT EXISTS agents (
 	custom_system_prompt TEXT NOT NULL DEFAULT '',
 	models TEXT NOT NULL DEFAULT '[]',
 	models_auto_detected INTEGER NOT NULL DEFAULT 0,
-	source TEXT NOT NULL DEFAULT 'auto',
 	sort_order INTEGER NOT NULL DEFAULT 0,
 	transport TEXT NOT NULL DEFAULT 'cli',
 	acp_command TEXT NOT NULL DEFAULT '',
@@ -46,7 +45,6 @@ CREATE TABLE IF NOT EXISTS agents (
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_agents_backend ON agents(backend);
-CREATE INDEX IF NOT EXISTS idx_agents_source ON agents(source);
 CREATE INDEX IF NOT EXISTS idx_agents_sort ON agents(sort_order);
 
 CREATE TABLE IF NOT EXISTS agent_api_keys (
@@ -71,7 +69,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
-			source, sort_order,
+			sort_order,
 			transport, acp_command
 		FROM agents ORDER BY id
 	`)
@@ -91,7 +89,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.ThinkingEffort, &levelsJSON,
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.SystemPrompt, &a.CustomSystemPrompt, &modelsJSON, &modelsAutoDetected,
-			&a.Source, &a.SortOrder,
+			&a.SortOrder,
 			&a.Transport, &a.AcpCommand,
 		)
 		if err != nil {
@@ -156,9 +154,9 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
-			source, sort_order,
+			sort_order,
 			transport, acp_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -173,7 +171,6 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			custom_system_prompt = excluded.custom_system_prompt,
 			models = excluded.models,
 			models_auto_detected = excluded.models_auto_detected,
-			source = excluded.source,
 			sort_order = excluded.sort_order,
 			transport = excluded.transport,
 			acp_command = excluded.acp_command,
@@ -182,7 +179,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), modelsAutoDetected,
-		agent.Source, sortOrder,
+		sortOrder,
 		transport, agent.AcpCommand)
 	if err != nil {
 		return fmt.Errorf("save agent %s: %w", agent.ID, err)
@@ -351,7 +348,7 @@ func LoadAgentsIntoMemory() error {
 
 // DuplicateAgent creates a new agent by cloning an existing one.
 // It generates a unique ID (sourceID-copy-timestamp), copies all configuration
-// fields from the source, sets source="manual", and saves to DB.
+// fields from the source, and saves to DB.
 func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 	source, ok := model.Agents[sourceID]
 	if !ok {
@@ -374,7 +371,6 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		CustomSystemPrompt:      source.CustomSystemPrompt,
 		Transport:               source.Transport,
 		AcpCommand:              source.AcpCommand,
-		Source:                  "manual",
 		SortOrder:               source.SortOrder,
 	}
 	copy(clone.ThinkingEffortLevels, source.ThinkingEffortLevels)

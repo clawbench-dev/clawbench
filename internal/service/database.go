@@ -709,6 +709,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: drop source column from agents — no longer used for agent origin tracking.
+	var hasAgentSource int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='source'").Scan(&hasAgentSource)
+	if hasAgentSource > 0 {
+		_, _ = WriteExec("DROP INDEX IF EXISTS idx_agents_source")
+		if _, err := WriteExec("ALTER TABLE agents DROP COLUMN source"); err != nil {
+			return fmt.Errorf("failed to drop source column from agents: %w", err)
+		}
+		slog.Info("dropped source column from agents table")
+	}
+
 	// Migrate: extract metadata from chat_history.content into chat_metadata table.
 	// This is a one-time migration for existing data; new messages are saved
 	// to chat_metadata automatically via SaveMetadata().

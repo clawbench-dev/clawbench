@@ -705,7 +705,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ClawbenchBin = absBinPath
 
 	// 1. Detect installed CLIs and write new agents to DB
-	present := model.SyncDiscoverAgentsDB(service.WriteDB())
+	model.SyncDiscoverAgentsDB(service.WriteDB())
 
 	// 1a. Load manually-defined agents from config/agents/*.yaml (e.g., acp-mock for E2E)
 	model.LoadYamlAgents(service.WriteDB(), filepath.Dir(configPath))
@@ -718,8 +718,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// on first startup with legacy system_prompt data.
 	service.MigrateCustomSystemPrompt()
 
-	// 3. Merge runtime data: fill models/levels from discovery results/registry, delete missing CLIs, reload memory
-	model.MergeDiscoveredDataDB(service.WriteDB(), discoveredModels, present)
+	// 3. Merge runtime data: fill models/levels from discovery results/registry, reload memory
+	model.MergeDiscoveredDataDB(service.WriteDB(), discoveredModels)
 
 	slog.Info("agents loaded", slog.Int("count", len(model.AgentList)))
 

@@ -201,9 +201,9 @@ func serveAgentsRescan(w http.ResponseWriter, _ *http.Request) {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
-	present := model.SyncDiscoverAgentsDB(service.WriteDB())
+	model.SyncDiscoverAgentsDB(service.WriteDB())
 	discoveredModels := model.SyncDiscoverModels()
-	model.MergeDiscoveredDataDB(service.WriteDB(), discoveredModels, present)
+	model.MergeDiscoveredDataDB(service.WriteDB(), discoveredModels)
 
 	// Return the current agent list (same shape as GET /api/agents)
 	agents := make([]*model.Agent, len(model.AgentList))

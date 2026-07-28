@@ -1138,7 +1138,6 @@ export default {
       agentSystemPromptACPNote: 'ACP智能体自行管理系统提示，此处不可编辑',
       agentBackend: '后端',
       agentCommand: '命令',
-      agentSource: '来源',
       agentModels: '模型',
       agentModelCount: '{count} 个模型',
       agentAcpCommand: 'ACP命令',

@@ -102,7 +102,7 @@ func TestSaveAndLoadAgentAPIKey(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	// Insert agent first
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// Save API key
@@ -119,7 +119,7 @@ func TestSaveAndLoadAgentAPIKey(t *testing.T) {
 func TestSaveAndLoadAgentAPIKey_NoCustomURL(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// Save without custom URL
@@ -135,7 +135,7 @@ func TestSaveAndLoadAgentAPIKey_NoCustomURL(t *testing.T) {
 func TestLoadAgentAPIKey_NotFound(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	_, _, err = service.LoadAgentAPIKey("pi", "nonexistent-provider")
@@ -145,7 +145,7 @@ func TestLoadAgentAPIKey_NotFound(t *testing.T) {
 func TestSaveAgentAPIKey_Upsert(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// Save first time
@@ -178,7 +178,7 @@ func TestRotateAPIKeyEncryption_NoKeys(t *testing.T) {
 func TestLoadAgentAnyAPIKey_Found(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	err = service.SaveAgentAPIKey(db, "pi", "openai", "https://api.openai.com", "sk-test-any-key")
@@ -194,7 +194,7 @@ func TestLoadAgentAnyAPIKey_Found(t *testing.T) {
 func TestLoadAgentAnyAPIKey_NotFound(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	// No API keys stored for this agent
@@ -208,7 +208,7 @@ func TestLoadAgentAnyAPIKey_NotFound(t *testing.T) {
 func TestLoadAgentAnyAPIKey_MultipleProviders(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	err = service.SaveAgentAPIKey(db, "pi", "openai", "", "sk-openai-key")
@@ -247,7 +247,7 @@ func TestSaveAgentAPIKey_EncryptError(t *testing.T) {
 	// This test just verifies the happy path with a non-empty key.
 	db := setupTestDBForAgents(t)
 
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	err = service.SaveAgentAPIKey(db, "pi", "openai", "", "valid-api-key")
@@ -284,7 +284,7 @@ func TestRotateAPIKeyEncryption_WithKeys(t *testing.T) {
 	service.ResetEncryptionKeyCache()
 
 	// Create agent and save API keys
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
+	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
 	require.NoError(t, err)
 
 	err = service.SaveAgentAPIKey(db, "pi", "openai", "", "sk-test-key-1")

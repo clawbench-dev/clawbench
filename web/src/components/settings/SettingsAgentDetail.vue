@@ -218,12 +218,6 @@ const items = computed<AgentItem[]>(() => {
     })
   }
 
-  result.push({
-    key: 'source',
-    label: t('settings.items.agentSource'),
-    type: 'info',
-  })
-
   const modelCount = a.models?.length ?? 0
   result.push({
     key: 'models_count',
@@ -277,8 +271,6 @@ function getItemValue(item: AgentItem): unknown {
       return a.backend || ''
     case 'command':
       return a.command || ''
-    case 'source':
-      return a.source || ''
     case 'acp_command':
       return a.acpCommand || ''
     default:
