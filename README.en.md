@@ -71,6 +71,15 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 |----------------|---------------------|-------------------------|
 | ![Port Forwarding](docs/screenshots/port-forwarding.png) | ![Interactive Terminal](docs/screenshots/terminal.png) | ![Key/Symbol Configuration](docs/screenshots/terminal-key-config.png) |
 
+### System Resource Monitor
+
+| System Monitor |
+|----------------|
+| ![System Monitor](docs/screenshots/system-monitor.png) |
+
+- Real-time monitoring of server CPU, memory, disk, and network usage
+- Header panel display with WebSocket push updates
+
 ---
 
 ## Quick Start
@@ -142,6 +151,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - Toggle hidden file visibility
 - **Document search exclusion**: Office documents are excluded from file content search to improve performance (same as PDF)
 - **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
+- **Ctrl+F/Cmd+F Context-Aware Search**: Automatically opens the appropriate search drawer based on current tab — Chat tab: session search (RAG); Browse tab with file overlay: in-file content search; Browse tab without overlay: filename search; if already open, focuses the search input
 - **File Preview Overlay**: Click a file to open a preview overlay on top of the browse tab, no tab switching needed; supports navigation stack (multi-file switching + back), close to return to file list
 - **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
 

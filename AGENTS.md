@@ -55,6 +55,7 @@ npm test                             # Vitest 前端测试
 | `internal/proxy/` | HTTP 反向代理+端口转发 |
 | `internal/symbol/` | 基于 tree-sitter 的代码符号提取（纯 Go，无 CGO） |
 | `internal/summarize/` | 文本摘要 |
+| `internal/system/` | 系统资源监控：CPU、内存、磁盘、网络实时采集与推送 |
 | `internal/cli/` | AI Agent 自助命令：task、rag、migrate |
 | `internal/middleware/` | 鉴权、请求日志、panic 恢复、请求 ID |
 | `internal/platform/` | 跨平台路径解析、Shell 检测 |
@@ -63,7 +64,7 @@ npm test                             # Vitest 前端测试
 
 源码根：`web/src/`。无 Vue Router，基于抽屉的单页布局。单一 `reactive()` store (`stores/app.ts`)。
 
-Composable 按域分组：Chat、Session、Terminal、File、Navigation/Gesture、Settings、Agent、Task、Infrastructure。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
+Composable 按域分组：Chat、Session、Terminal、File、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
 
 组件按域分组：Chat、File、Terminal、Git、Session/Agent、Task、Settings、Common。
 
