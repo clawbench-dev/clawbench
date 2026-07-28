@@ -84,7 +84,7 @@ ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写
 - **ACP 模式切换**：ACP 后端支持多种工作模式（如 code、ask、architect），用户可在聊天中切换，切换即时生效并持久化。不同模式适合不同任务，用户按需选择
 - **ACP 权限审批**：ACP 后端请求工具调用审批时，系统推送通知提醒用户，避免因未审批而阻塞执行
 - **ACP 计划模式**：ACP 后端在执行前展示计划（步骤列表），用户可以跟踪进度。让用户理解 AI 将要做什么，而非只能看到结果
-- **@chatsearch / @task 命令注入**：用户消息以 `@chatsearch ` 或 `@task ` 开头时，后端 `processAtCommand()`（`internal/handler/at_command.go:64-96`）检测并替换为模板指令——`@chatsearch` 注入 `rag search` CLI 用法（模板含 `{{CLAWBENCH_BIN}}`、`{{PROJECT_PATH}}`、`{{SESSION_ID}}` 等占位符），`@task` 注入 `task` CLI 用法。前端 `extractAtCommand()`（`web/src/utils/contentBlocks.ts:200-217`）检测相同前缀，将命令部分渲染为紫色徽章（`<span class="at-command-badge">`，`ContentBlocks.vue:213-215`），`ChatInputBar.vue` 提供自动补全
+- **@chatsearch / @task 命令注入**：用户消息以 `@chatsearch ` 或 `@task ` 开头时，后端 `processAtCommand()`（`internal/handler/at_command.go`）检测并替换为模板指令——`@chatsearch` 注入 `rag search` CLI 用法（模板含 `{{CLAWBENCH_BIN}}`、`{{PROJECT_PATH}}`、`{{SESSION_ID}}` 等占位符），`@task` 注入 `task` CLI 用法。前端 `extractAtCommand()`（`web/src/utils/contentBlocks.ts`）检测相同前缀，将命令部分渲染为紫色徽章，`ChatInputBar.vue` 提供自动补全
 
 ### 设计要点
 
