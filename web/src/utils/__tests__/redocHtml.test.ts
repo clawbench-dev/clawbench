@@ -14,10 +14,11 @@ describe('buildRedocSrcdoc', () => {
     expect(result).toContain('</html>')
   })
 
-  it('includes ReDoc CDN script', () => {
+  it('includes inlined ReDoc script (no external CDN)', () => {
     const spec = '{"openapi":"3.0.0"}'
     const result = buildRedocSrcdoc(spec)
-    expect(result).toContain('cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js')
+    expect(result).not.toContain('<script src="https://cdn.redoc.ly')
+    expect(result).toContain('Redoc.init')
   })
 
   it('embeds spec data in Redoc.init call', () => {

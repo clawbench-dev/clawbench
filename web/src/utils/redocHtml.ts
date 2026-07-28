@@ -6,6 +6,8 @@
  * would confuse the Vue SFC compiler's HTML parser.
  */
 
+import redocStandalone from 'redoc/bundles/redoc.standalone.js?raw'
+
 /** Construct the full srcdoc HTML for ReDoc */
 export function buildRedocSrcdoc(specJson: string, scrollbarThumb: string = '#c1c1c1', scrollbarTrack: string = 'transparent'): string {
   if (!specJson) return ''
@@ -29,7 +31,7 @@ export function buildRedocSrcdoc(specJson: string, scrollbarThumb: string = '#c1
 </style>
 </head><body>
 <div id="redoc-container"><div class="redoc-loading">Loading API docs...</div></div>
-<script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+<script>${redocStandalone}</script>
 <script>
 try {
   Redoc.init(${specJson}, {
