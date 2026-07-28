@@ -18,6 +18,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import i18n from '@/i18n'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
+import { buildLocalFileUrl } from '@/utils/download.ts'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { MseAudioPlayer } from '@/composables/useMseAudio'
 import { appLog } from '@/utils/appLog'
@@ -258,7 +259,7 @@ export function useAutoSpeech() {
 
   // --- Internal: play audio from a path ---
   function playAudio(audioPath: string) {
-    const audioUrl = `/api/local-file/${encodeURIComponent(audioPath)}`
+    const audioUrl = buildLocalFileUrl(audioPath)
     const audio = new Audio(audioUrl)
     currentAudioEl = audio
     state.value = 'playing'

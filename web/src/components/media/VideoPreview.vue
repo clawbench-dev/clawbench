@@ -17,6 +17,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { buildLocalFileUrl } from '@/utils/download.ts'
 
 const { t } = useI18n()
 
@@ -29,8 +30,10 @@ const props = defineProps({
 // (Server-side Cache-Control: no-store handles browser caching; this handles Vue DOM reuse.)
 const mediaTimestamp = ref(Date.now())
 watch(() => props.file, () => { mediaTimestamp.value = Date.now() })
-const mediaUrl = computed(() =>
-    `/api/local-file/${encodeURIComponent(props.file.path)}?t=${mediaTimestamp.value}`
+const mediaUrl = computed(() => {
+    const base = buildLocalFileUrl(props.file.path)
+    return base + (base.includes('?') ? '&' : '?') + `t=${mediaTimestamp.value}`
+  }
 )
 
 const videoRef = ref(null)

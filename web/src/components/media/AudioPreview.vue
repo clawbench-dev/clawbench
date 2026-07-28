@@ -22,6 +22,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { Music } from 'lucide-vue-next'
+import { buildLocalFileUrl } from '@/utils/download.ts'
 
 const props = defineProps({
     file: Object,
@@ -32,8 +33,10 @@ const props = defineProps({
 // (Server-side Cache-Control: no-store handles browser caching; this handles Vue DOM reuse.)
 const mediaTimestamp = ref(Date.now())
 watch(() => props.file, () => { mediaTimestamp.value = Date.now() })
-const mediaUrl = computed(() =>
-    `/api/local-file/${encodeURIComponent(props.file.path)}?t=${mediaTimestamp.value}`
+const mediaUrl = computed(() => {
+    const base = buildLocalFileUrl(props.file.path)
+    return base + (base.includes('?') ? '&' : '?') + `t=${mediaTimestamp.value}`
+  }
 )
 
 const audioRef = ref(null)

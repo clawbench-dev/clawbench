@@ -133,7 +133,7 @@ const pageViewports = ref([])
 
 // Computed
 const mediaUrl = computed(() =>
-  `/api/local-file/${encodeURIComponent(props.file.path)}`
+  buildLocalFileUrl(props.file.path)
 )
 
 const pagesInnerStyle = computed(() => {

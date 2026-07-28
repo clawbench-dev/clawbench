@@ -93,9 +93,10 @@ const isPpt = computed(() => lower.value.endsWith('.pptx'))
 // forcing the office viewer to re-fetch the file.
 // (Server-side Cache-Control: no-store handles browser caching; this handles Vue DOM reuse.)
 const mediaTimestamp = ref(Date.now())
-const fileUrl = computed(() =>
-  `/api/local-file/${encodeURIComponent(props.file.path)}?t=${mediaTimestamp.value}`
-)
+const fileUrl = computed(() => {
+  const base = buildLocalFileUrl(props.file.path)
+  return base + (base.includes('?') ? '&' : '?') + `t=${mediaTimestamp.value}`
+})
 
 // --- PPT zoom: CSS transform on pptx-preview-wrapper ---
 function applyPptScale() {
