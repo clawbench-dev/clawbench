@@ -32,10 +32,10 @@
           :title="t('chat.acpSession.title')">
           <RotateCcw :size="14" />
         </button>
-        <button class="chat-action-btn chat-action-btn-delete" :class="{ disabled: !currentSessionId }"
+        <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
           @click="handleDelete"
           :title="currentSessionId ? t('chat.actions.deleteCurrentSession') : t('chat.actions.noSessionToDelete')">
-          <Trash2 :size="14" />
+          <Archive :size="14" />
         </button>
       </div>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
@@ -241,7 +241,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Search, Trash2, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, RotateCcw } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, RotateCcw } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
@@ -1170,24 +1170,24 @@ defineExpose({
   transform: scale(0.92);
 }
 
-.chat-action-btn-delete:not(.disabled) {
+.chat-action-btn-archive:not(.disabled) {
   color: var(--text-muted, #999);
 }
 
 @media (hover: hover) {
-  .chat-action-btn-delete:not(.disabled):hover {
-    color: var(--danger-color, #dc3545);
-    background: color-mix(in srgb, var(--danger-color, #dc3545) 10%, transparent);
+  .chat-action-btn-archive:not(.disabled):hover {
+    color: var(--color-warning, #e6a23c);
+    background: color-mix(in srgb, var(--color-warning, #e6a23c) 10%, transparent);
   }
 }
 
-.chat-action-btn-delete:not(.disabled):active {
-  color: var(--danger-color, #dc3545);
-  background: color-mix(in srgb, var(--danger-color, #dc3545) 18%, transparent);
+.chat-action-btn-archive:not(.disabled):active {
+  color: var(--color-warning, #e6a23c);
+  background: color-mix(in srgb, var(--color-warning, #e6a23c) 18%, transparent);
   transform: scale(0.92);
 }
 
-.chat-action-btn-delete.disabled {
+.chat-action-btn-archive.disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }

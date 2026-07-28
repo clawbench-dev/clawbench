@@ -1,9 +1,9 @@
 <template>
   <div v-if="deletable" class="swipe-to-delete">
-    <!-- Delete button background (revealed on swipe) -->
+    <!-- Archive button background (revealed on swipe) -->
     <div class="swipe-delete-bg" @click.stop="$emit('delete')">
-      <Trash2 :size="16" />
-      <span>{{ t('common.delete') }}</span>
+      <Archive :size="16" />
+      <span>{{ t('common.archive') }}</span>
     </div>
     <!-- Content layer (slides on swipe) -->
     <div
@@ -23,7 +23,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { Trash2 } from 'lucide-vue-next'
+import { Archive } from 'lucide-vue-next'
 import { useSwipeDelete } from '@/composables/useSwipeDelete'
 
 const { t } = useI18n()
@@ -61,7 +61,7 @@ function handleClick(e: MouseEvent) {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  background: var(--danger-color, #dc3545);
+  background: var(--color-warning, #e6a23c);
   color: #fff;
   font-size: 10px;
   font-weight: 600;

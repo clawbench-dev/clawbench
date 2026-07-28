@@ -459,8 +459,8 @@ defineExpose({ focusSearchInput })
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 3px;
-  background: rgba(239, 68, 68, 0.12);
-  color: var(--color-error, #e74c3c);
+  background: rgba(230, 162, 60, 0.12);
+  color: var(--color-warning, #e6a23c);
 }
 
 .session-search-item-backend {
@@ -508,8 +508,8 @@ defineExpose({ focusSearchInput })
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 3px;
-  background: rgba(239, 68, 68, 0.12);
-  color: var(--color-error, #e74c3c);
+  background: rgba(230, 162, 60, 0.12);
+  color: var(--color-warning, #e6a23c);
   font-weight: 500;
   flex-shrink: 0;
   margin-left: auto;
