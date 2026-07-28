@@ -7,7 +7,7 @@
       :title="t('chat.attach.openFile')">
       <img v-if="isImageFile(normalizeFileEntry(f).path) && isThumbableExt(normalizeFileEntry(f).path) && !thumbErrors.has(normalizeFileEntry(f).path)"
         class="attachment-thumb-img"
-        :src="thumbUrl(normalizeFileEntry(f).path)" loading="lazy"
+        :src="thumbUrl(normalizeFileEntry(f).path)"
         @error="onThumbError(normalizeFileEntry(f).path)" />
       <!-- Non-image: icon + filename -->
       <FileIcon v-if="!isImageFile(normalizeFileEntry(f).path)" :path="normalizeFileEntry(f).path" :is-dir="normalizeFileEntry(f).isDir" :size="22" class="attachment-file-icon" />
