@@ -2,6 +2,7 @@ package feishu
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"clawbench/internal/model"
@@ -264,4 +265,240 @@ func (m *mockSessionMessenger) ClearQueue(_ string) {}
 
 func (m *mockSessionMessenger) SendMessageToSession(_, _ string) error {
 	return nil
+}
+
+// ============================================================================
+// handleSessionList tests
+// ============================================================================
+
+func TestHandleSessionList_NilMessenger(t *testing.T) {
+	origSM := sessionMessenger
+	defer func() { sessionMessenger = origSM }()
+	sessionMessenger = nil
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	// Should not panic
+	mgr.handleSessionList(context.Background(), "ou_user1")
+}
+
+func TestHandleSessionList_EmptySessions(t *testing.T) {
+	origSM := sessionMessenger
+	defer func() { sessionMessenger = origSM }()
+	sessionMessenger = &mockSessionMessenger{sessions: []common.SessionInfo{}}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	// Should not panic — sends "暂无会话" message
+	mgr.handleSessionList(context.Background(), "ou_user1")
+}
+
+func TestHandleSessionList_WithSessions(t *testing.T) {
+	origSM := sessionMessenger
+	defer func() { sessionMessenger = origSM }()
+	sessionMessenger = &mockSessionMessenger{
+		sessions: []common.SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session", ProjectPath: "/project"},
+			{ID: "b2c3d4e5-2222-2222-2222-222222222222", Title: "", ProjectPath: "/other"},
+		},
+		running: map[string]bool{
+			"a1b2c3d4-1111-1111-1111-111111111111": true,
+		},
+	}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	// Should not panic — sends session list
+	mgr.handleSessionList(context.Background(), "ou_user1")
+}
+
+func TestHandleSessionList_ListError(t *testing.T) {
+	origSM := sessionMessenger
+	defer func() { sessionMessenger = origSM }()
+	sessionMessenger = &mockSessionMessengerListError{}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	// Should not panic — sends error message
+	mgr.handleSessionList(context.Background(), "ou_user1")
+}
+
+// mockSessionMessengerListError returns an error from ListRecentSessions.
+type mockSessionMessengerListError struct{}
+
+func (m *mockSessionMessengerListError) FindSessionsByPrefix(_ string, _ bool) ([]common.SessionInfo, error) {
+	return nil, nil
+}
+
+func (m *mockSessionMessengerListError) ListRecentSessions(_ int) ([]common.SessionInfo, error) {
+	return nil, fmt.Errorf("db error")
+}
+func (m *mockSessionMessengerListError) IsSessionRunning(_ string) bool { return false }
+func (m *mockSessionMessengerListError) EnqueueMessage(_, _ string) error {
+	return nil
+}
+func (m *mockSessionMessengerListError) ClearQueue(_ string) {}
+func (m *mockSessionMessengerListError) SendMessageToSession(_, _ string) error {
+	return nil
+}
+
+// ============================================================================
+// handleSessionCommand tests
+// ============================================================================
+
+func TestHandleSessionCommand_ResolveFails(t *testing.T) {
+	origSM := sessionMessenger
+	defer func() { sessionMessenger = origSM }()
+	sessionMessenger = &mockSessionMessenger{sessions: []common.SessionInfo{}}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	// Should not panic — sends error message
+	mgr.handleSessionCommand(context.Background(), "ou_user1", "deadbeef", "hello")
+}
+
+func TestHandleSessionCommand_NotRunning(t *testing.T) {
+	origSM := sessionMessenger
+	defer func() { sessionMessenger = origSM }()
+	sessionMessenger = &mockSessionMessenger{
+		sessions: []common.SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test", ProjectPath: "/proj"},
+		},
+		running: map[string]bool{},
+	}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	// Session not running → SendMessageToSession path
+	mgr.handleSessionCommand(context.Background(), "ou_user1", "a1b2c3d4", "hello")
+}
+
+func TestHandleSessionCommand_Running(t *testing.T) {
+	origSM := sessionMessenger
+	defer func() { sessionMessenger = origSM }()
+	sessionMessenger = &mockSessionMessenger{
+		sessions: []common.SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test", ProjectPath: "/proj"},
+		},
+		running: map[string]bool{
+			"a1b2c3d4-1111-1111-1111-111111111111": true,
+		},
+	}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	// Session running → EnqueueMessage path
+	mgr.handleSessionCommand(context.Background(), "ou_user1", "a1b2c3d4", "hello")
+}
+
+// ============================================================================
+// onMessageReceive edge cases
+// ============================================================================
+
+func TestOnMessageReceive_NilMessage(t *testing.T) {
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	senderType := "user"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: nil,
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: strPtr("ou_user1")},
+				SenderType: &senderType,
+			},
+		},
+	}
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Errorf("expected nil error for nil message, got %v", err)
+	}
+}
+
+func TestOnMessageReceive_NilSender(t *testing.T) {
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	chatType := "p2p"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				Content:     strPtr(`{"text":"hello"}`),
+				MessageType: strPtr("text"),
+			},
+			Sender: nil,
+		},
+	}
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Errorf("expected nil error for nil sender, got %v", err)
+	}
+}
+
+func TestOnMessageReceive_EmptyOpenID(t *testing.T) {
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	chatType := "p2p"
+	senderType := "user"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				Content:     strPtr(`{"text":"hello"}`),
+				MessageType: strPtr("text"),
+			},
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: strPtr("")},
+				SenderType: &senderType,
+			},
+		},
+	}
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Errorf("expected nil error for empty open_id, got %v", err)
+	}
+}
+
+func TestOnMessageReceive_NilSenderId(t *testing.T) {
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	chatType := "p2p"
+	senderType := "user"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				Content:     strPtr(`{"text":"hello"}`),
+				MessageType: strPtr("text"),
+			},
+			Sender: &larkim.EventSender{
+				SenderId:   nil,
+				SenderType: &senderType,
+			},
+		},
+	}
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
+		t.Errorf("expected nil error for nil sender id, got %v", err)
+	}
+}
+
+func TestOnMessageReceive_NoCommand_SessionList(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	origSM := sessionMessenger
+	defer func() { sessionMessenger = origSM }()
+	sessionMessenger = &mockSessionMessenger{
+		sessions: []common.SessionInfo{
+			{ID: "abc12345-1111-1111-1111-111111111111", Title: "Recent Session", ProjectPath: "/proj"},
+		},
+	}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+
+	chatType := "p2p"
+	senderType := "user"
+	event := &larkim.P2MessageReceiveV1{
+		Event: &larkim.P2MessageReceiveV1Data{
+			Message: &larkim.EventMessage{
+				ChatType:    &chatType,
+				ChatId:      strPtr("chat1"),
+				Content:     strPtr(`{"text":"just a message"}`),
+				MessageType: strPtr("text"),
+			},
+			Sender: &larkim.EventSender{
+				SenderId:   &larkim.UserId{OpenId: strPtr("ou_user1")},
+				SenderType: &senderType,
+			},
+		},
+	}
+
+	_ = mgr.onMessageReceive(context.TODO(), event)
+	// Should not panic; should call handleSessionList since no @ prefix
 }

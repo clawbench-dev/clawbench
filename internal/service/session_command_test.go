@@ -2307,3 +2307,87 @@ func TestExecuteStreamRunShared_StreamStartFails_CoversAbsErrAndReasonKeys(t *te
 	result := executeStreamRunShared(context.Background(), cfg)
 	assert.Contains(t, result.err, "start stream", "should fail at stream start")
 }
+
+// ============================================================================
+// SendMessageToSessionFromFeishu tests
+// ============================================================================
+
+func TestSendMessageToSessionFromFeishu_NotFound(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	err := SendMessageToSessionFromFeishu("nonexistent-session", "hello")
+	if err == nil {
+		t.Fatal("expected error for nonexistent session")
+	}
+}
+
+func TestSendMessageToSessionFromFeishu_AlreadyRunning_EnqueuesMessage(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	sessionID := "feishu-enqueue-1"
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, model, transport, auto_approve) VALUES (?, '/test', 'codebuddy', 'test', '', '', '', 0)", sessionID)
+	require.NoError(t, err)
+
+	// Mark session as running
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+	TrySetSessionRunning(sessionID)
+	defer func() {
+		SetSessionRunning(sessionID, false, true)
+		ClearQueue(sessionID)
+	}()
+
+	err = SendMessageToSessionFromFeishu(sessionID, "hello from feishu")
+	assert.NoError(t, err)
+
+	// Verify message is in the in-memory queue
+	queue := GetQueue(sessionID)
+	assert.Len(t, queue, 1)
+	assert.Equal(t, "hello from feishu", queue[0].Text)
+}
+
+func TestSendMessageToSessionFromFeishu_LaunchPath(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "feishu-launch-1"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Session is not running → TrySetSessionRunning should succeed
+	err = SendMessageToSessionFromFeishu(sessionID, "launch from feishu")
+	assert.NoError(t, err)
+
+	// Wait briefly for the goroutine to start, then clean up
+	time.Sleep(100 * time.Millisecond)
+	SetSessionRunning(sessionID, false, true)
+}
+
+func TestSendMessageToSessionFromFeishu_AddChatMessageFails(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "feishu-msg-fail"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Drop chat_history to cause AddChatMessage to fail
+	_, _ = db.Exec("DROP TABLE chat_history")
+
+	err = SendMessageToSessionFromFeishu(sessionID, "this will fail")
+	assert.Error(t, err, "should return error when AddChatMessage fails")
+	assert.Contains(t, err.Error(), "persist message")
+}

@@ -852,3 +852,95 @@ func TestTestSummarizeText_DefaultModel(t *testing.T) {
 	})
 	assert.True(t, result.Success)
 }
+
+// ── Feishu tests ──────────────────────────────────────────────────
+
+func TestTestFeishu_MissingFields(t *testing.T) {
+	result := testFeishu(context.Background(), map[string]any{
+		"feishu.app_id":     "",
+		"feishu.app_secret": "",
+	})
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "required")
+}
+
+func TestTestFeishu_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintln(w, `{"code":0,"msg":"ok","tenant_access_token":"t-test","expire":7200}`)
+	}))
+	defer srv.Close()
+
+	origURL := feishuTokenURL
+	feishuTokenURL = srv.URL
+	defer func() { feishuTokenURL = origURL }()
+
+	result := testFeishu(context.Background(), map[string]any{
+		"feishu.app_id":     "cli_test",
+		"feishu.app_secret": "test_secret",
+	})
+	assert.True(t, result.Success)
+	assert.Contains(t, result.Message, "successful")
+}
+
+func TestTestFeishu_AuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintln(w, `{"code":40014,"msg":"invalid app_id"}`)
+	}))
+	defer srv.Close()
+
+	origURL := feishuTokenURL
+	feishuTokenURL = srv.URL
+	defer func() { feishuTokenURL = origURL }()
+
+	result := testFeishu(context.Background(), map[string]any{
+		"feishu.app_id":     "bad_id",
+		"feishu.app_secret": "bad_secret",
+	})
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "authentication failed")
+}
+
+func TestTestFeishu_ConnectionError(t *testing.T) {
+	origURL := feishuTokenURL
+	feishuTokenURL = "http://127.0.0.1:19999"
+	defer func() { feishuTokenURL = origURL }()
+
+	result := testFeishu(context.Background(), map[string]any{
+		"feishu.app_id":     "test",
+		"feishu.app_secret": "test",
+	})
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "Failed to connect")
+}
+
+func TestTestFeishu_ParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = fmt.Fprint(w, "not json")
+	}))
+	defer srv.Close()
+
+	origURL := feishuTokenURL
+	feishuTokenURL = srv.URL
+	defer func() { feishuTokenURL = origURL }()
+
+	result := testFeishu(context.Background(), map[string]any{
+		"feishu.app_id":     "test",
+		"feishu.app_secret": "test",
+	})
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "parse Feishu response")
+}
+
+func TestServeConfigTest_FeishuCategory(t *testing.T) {
+	body := `{"category":"feishu","values":{"feishu.app_id":"","feishu.app_secret":""}}`
+	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	ServeConfigTest(w, r)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var result ConnectivityTestResult
+	_ = json.NewDecoder(w.Body).Decode(&result)
+	assert.False(t, result.Success)
+}

@@ -174,3 +174,16 @@ func TestServeFeishuSubscribers_MethodNotAllowed(t *testing.T) {
 		t.Fatalf("expected 405, got %d", w.Code)
 	}
 }
+
+func TestServeFeishuSubscribers_DeleteWithSubscribersPath(t *testing.T) {
+	setupFeishuHandlerTestDB(t)
+
+	// URL ending with "subscribers" should be rejected (no user_id)
+	req := httptest.NewRequest(http.MethodDelete, "/api/feishu/subscribers/subscribers", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeFeishuSubscribers(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for user_id=subscribers, got %d", w.Code)
+	}
+}

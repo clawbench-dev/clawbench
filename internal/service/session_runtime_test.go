@@ -14,6 +14,7 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/push/dingtalk"
+	"clawbench/internal/push/feishu"
 	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
@@ -2883,4 +2884,69 @@ func TestRespondPermission_Cancelled(t *testing.T) {
 
 	err = RespondPermission("session-perm-cancel", "perm_tool-2", "", true)
 	assert.NoError(t, err)
+}
+
+// --- EmitSessionEvent: Feishu push path (lines 95-97) ---
+
+func TestEmitSessionEvent_Completed_FeishuStarted(t *testing.T) {
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	// Create pending_events + chat_sessions tables
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS pending_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_id TEXT NOT NULL UNIQUE,
+			event_type TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_event_id ON pending_events(event_id);
+		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
+	`)
+	require.NoError(t, err)
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+		"session-feishu-1", "/home/user/project", "codebuddy", "Feishu Test")
+	require.NoError(t, err)
+
+	content := model.ContentBlock{Type: "text", Text: "AI response"}
+	blocks := map[string]any{"blocks": []model.ContentBlock{content}}
+	contentJSON, _ := json.Marshal(blocks)
+	insertTestMessage(t, db, "session-feishu-1", "user", "question")
+	insertTestMessage(t, db, "session-feishu-1", "assistant", string(contentJSON))
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	var writeMu sync.Mutex
+	_ = mgr.Subscribe(nil, &writeMu, "test-client-feishu", "")
+	mgr.DisconnectClient("test-client-feishu")
+
+	// Ensure DingTalk is NOT started so the feishu path is reached
+	origDTMgr := dingtalk.GetManager()
+	dingtalk.SetManager(nil)
+	defer dingtalk.SetManager(origDTMgr)
+
+	// Set Feishu manager as started to exercise lines 95-97
+	origFeishuMgr := feishu.GetManager()
+	feishuMgr := feishu.NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	feishuMgr.SetStartedForTest(true)
+	feishu.SetManager(feishuMgr)
+	defer func() {
+		feishuMgr.SetStartedForTest(false)
+		feishu.SetManager(origFeishuMgr)
+	}()
+
+	// Set push mode to "feishu" so sendToAllSubscribers doesn't short-circuit
+	origPushMode := model.ConfigInstance.PushMode
+	model.ConfigInstance.PushMode = "feishu"
+	defer func() { model.ConfigInstance.PushMode = origPushMode }()
+
+	// Should not panic — Feishu code path exercised
+	EmitSessionEvent("session-feishu-1", "completed", true)
 }

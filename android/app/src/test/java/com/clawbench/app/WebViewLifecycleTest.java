@@ -8,9 +8,13 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.mockito.Mockito.*;
 
+import android.content.SharedPreferences;
+import android.view.View;
+import android.widget.TextView;
 import androidx.fragment.app.FragmentController;
 
 /**
@@ -104,15 +108,36 @@ public class WebViewLifecycleTest {
     // =====================================================
 
     /**
-     * FragmentActivity.onNewIntent() calls mFragments.noteStateNotSaved().
-     * ComponentActivity.onNewIntent() iterates mOnNewIntentListeners.
-     * Since we use Unsafe.allocateInstance(), these are null. Initialize them.
+     * Initialize framework fields that onNewIntent() and waitForTunnelAndLoad()
+     * need but are null with Unsafe.allocateInstance():
+     * - FragmentController.mFragments, mOnNewIntentListeners (super.onNewIntent)
+     * - tunnelWaitingOverlay, tunnelWaitingText (waitForTunnelAndLoad)
+     * - tunnelWaitRunning AtomicBoolean (waitForTunnelAndLoad guard)
+     * - sessionCreds (onNewIntent reads credentials)
+     * - SharedPreferences stub (BrowserSessionCredentials.getAndClear)
      */
     private void initFragmentController() throws Exception {
         FragmentController mockController = mock(FragmentController.class);
         setField(browserActivity, "mFragments", mockController);
         // ComponentActivity.mOnNewIntentListeners — needed by super.onNewIntent()
         setField(browserActivity, "mOnNewIntentListeners", new CopyOnWriteArrayList<>());
+
+        // waitForTunnelAndLoad() accesses these views
+        View mockOverlay = mock(View.class);
+        TextView mockOverlayText = mock(TextView.class);
+        setField(browserActivity, "tunnelWaitingOverlay", mockOverlay);
+        setField(browserActivity, "tunnelWaitingText", mockOverlayText);
+
+        // AtomicBoolean guard for tunnel-wait thread
+        setField(browserActivity, "tunnelWaitRunning", new AtomicBoolean(false));
+
+        // onNewIntent calls BrowserSessionCredentials.getAndClear(this) which
+        // calls getSharedPreferences(). Since the Activity is Unsafe-allocated,
+        // context methods don't work. Use a spy to intercept the call.
+        browserActivity = spy(browserActivity);
+        SharedPreferences mockPrefs = mock(SharedPreferences.class);
+        when(mockPrefs.getString(anyString(), anyString())).thenReturn("");
+        doReturn(mockPrefs).when(browserActivity).getSharedPreferences(anyString(), anyInt());
     }
 
     @Test
@@ -120,7 +145,6 @@ public class WebViewLifecycleTest {
         initFragmentController();
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(browserActivity, "webView", mockWebView);
-        setField(browserActivity, "tunnelRetryCount", 5);
         // Set a pre-existing targetHost to verify it gets reset when host is empty
         setField(browserActivity, "targetHost", "old.host.com");
         // Ensure pendingUrl is null so the same-URL early-return doesn't trigger
@@ -138,9 +162,13 @@ public class WebViewLifecycleTest {
 
         invokeMethod(browserActivity, "onNewIntent", android.content.Intent.class, intent);
 
-        verify(mockWebView).loadUrl("http://localhost:8080/");
-        // tunnelRetryCount should be reset
-        assert getField(browserActivity.getClass(), "tunnelRetryCount").getInt(browserActivity) == 0;
+        // onNewIntent now calls waitForTunnelAndLoad() which spawns a background
+        // thread to poll the local port. When localPort > 0, it tests port reachability
+        // then calls showWebViewAndLoad(). Since testLocalPort() will succeed against
+        // a real port or fail fast in unit tests, we verify the URL fields directly.
+        // Verify pendingUrl and localPort were set correctly
+        assert "http://localhost:8080/".equals(getField(browserActivity.getClass(), "pendingUrl").get(browserActivity));
+        assert 8080 == getField(browserActivity.getClass(), "localPort").getInt(browserActivity);
         // targetHost should be reset to empty when host is empty
         assert "".equals(getField(browserActivity.getClass(), "targetHost").get(browserActivity));
     }
@@ -162,7 +190,8 @@ public class WebViewLifecycleTest {
 
         invokeMethod(browserActivity, "onNewIntent", android.content.Intent.class, intent);
 
-        verify(mockWebView).loadUrl("https://localhost:9090/");
+        // Verify pendingUrl was set and targetHost was computed
+        assert "https://localhost:9090/".equals(getField(browserActivity.getClass(), "pendingUrl").get(browserActivity));
         assert "192.168.1.1".equals(getField(browserActivity.getClass(), "targetHost").get(browserActivity));
     }
 

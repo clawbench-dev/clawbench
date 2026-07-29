@@ -2,6 +2,7 @@ package feishu
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -177,6 +178,61 @@ func TestFormatPermissionDetail(t *testing.T) {
 	}
 }
 
+func TestFormatPermissionDetail_FilePath(t *testing.T) {
+	// file_path field
+	got := formatPermissionDetail("Edit", `{"file_path":"/tmp/test.go"}`)
+	if got != "**操作**: Edit\n\n**文件**: `/tmp/test.go`\n\n" {
+		t.Errorf("unexpected output: %q", got)
+	}
+}
+
+func TestFormatPermissionDetail_PathFallback(t *testing.T) {
+	// "path" field as fallback when file_path is empty
+	got := formatPermissionDetail("Read", `{"path":"/tmp/other.go"}`)
+	if got != "**操作**: Read\n\n**文件**: `/tmp/other.go`\n\n" {
+		t.Errorf("unexpected output: %q", got)
+	}
+}
+
+func TestFormatPermissionDetail_FilePathPreferredOverPath(t *testing.T) {
+	// Both file_path and path present — file_path takes precedence
+	got := formatPermissionDetail("Write", `{"file_path":"/tmp/primary.go","path":"/tmp/secondary.go"}`)
+	if got != "**操作**: Write\n\n**文件**: `/tmp/primary.go`\n\n" {
+		t.Errorf("unexpected output: %q", got)
+	}
+}
+
+func TestFormatPermissionDetail_CommandAndFile(t *testing.T) {
+	got := formatPermissionDetail("Bash", `{"command":"cat file.go","file_path":"/tmp/file.go"}`)
+	if got != "**操作**: Bash\n\n**命令**: `cat file.go`\n\n**文件**: `/tmp/file.go`\n\n" {
+		t.Errorf("unexpected output: %q", got)
+	}
+}
+
+func TestFormatPermissionDetail_InvalidJSON(t *testing.T) {
+	// Invalid JSON input — toolInput is not parsed
+	got := formatPermissionDetail("Bash", "not json")
+	if got != "**操作**: Bash\n\n" {
+		t.Errorf("expected only toolName for invalid JSON, got %q", got)
+	}
+}
+
+func TestFormatPermissionDetail_EmptyCommandAndPath(t *testing.T) {
+	// Valid JSON but command and file_path/path are empty
+	got := formatPermissionDetail("Bash", `{"command":"","file_path":"","path":""}`)
+	if got != "**操作**: Bash\n\n" {
+		t.Errorf("expected only toolName when all fields empty, got %q", got)
+	}
+}
+
+func TestFormatPermissionDetail_OnlyToolInput(t *testing.T) {
+	// Only toolInput provided, no toolName
+	got := formatPermissionDetail("", `{"command":"ls"}`)
+	if got != "**命令**: `ls`\n\n" {
+		t.Errorf("expected only command, got %q", got)
+	}
+}
+
 func TestGetPushMode_Default(t *testing.T) {
 	orig := model.ConfigInstance.PushMode
 	defer func() { model.ConfigInstance.PushMode = orig }()
@@ -220,4 +276,256 @@ func testContext(t *testing.T) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 	return ctx
+}
+
+// ============================================================================
+// PushSessionEvent status-specific tests
+// ============================================================================
+
+func TestPushSessionEvent_Cancelled(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "ou_user1"}}}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	// Cancelled status should attempt to push (will fail since no real server)
+	PushSessionEvent("s1", "cancelled", "Test Session", "Preview", "/path", "", "")
+}
+
+func TestPushSessionEvent_PermissionPending(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "ou_user1"}}}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	PushSessionEvent("s1", "permission_pending", "Test Session", "", "/path", "Bash", `{"command":"rm -rf /"}`)
+}
+
+// ============================================================================
+// PushTaskEvent status-specific tests
+// ============================================================================
+
+func TestPushTaskEvent_Running(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "ou_user1"}}}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	PushTaskEvent("t1", "running", "Test Task", "", "/path")
+}
+
+func TestPushTaskEvent_Failed(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "ou_user1"}}}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	PushTaskEvent("t1", "failed", "Test Task", "Error preview", "/path")
+}
+
+func TestPushTaskEvent_Cancelled(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "ou_user1"}}}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	PushTaskEvent("t1", "cancelled", "Test Task", "", "/path")
+}
+
+// ============================================================================
+// sendToAllSubscribers edge cases
+// ============================================================================
+
+func TestSendToAllSubscribers_NoSubscribers(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{}} // empty
+
+	if sendToAllSubscribers("Title", "Content") {
+		t.Error("expected false when no subscribers")
+	}
+}
+
+func TestSendToAllSubscribers_GetSubscribersError(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDBWithCallback{
+		getFn: func() ([]common.SubscriberInfo, error) {
+			return nil, fmt.Errorf("db error")
+		},
+	}
+
+	if sendToAllSubscribers("Title", "Content") {
+		t.Error("expected false when GetSubscribers fails")
+	}
+}
+
+func TestSendToAllSubscribers_NilManager(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "ou_user1"}}}
+
+	SetManager(nil)
+
+	if sendToAllSubscribers("Title", "Content") {
+		t.Error("expected false when no manager")
+	}
+}
+
+func TestSendToAllSubscribers_DingtalkMode(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "ou_user1"}}}
+
+	if sendToAllSubscribers("Title", "Content") {
+		t.Error("expected false in dingtalk mode")
+	}
+}
+
+func TestSendToAllSubscribers_ClientConnected(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: true})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "ou_user1"}}}
+
+	if sendToAllSubscribers("Title", "Content") {
+		t.Error("expected false when client is connected")
+	}
+}
+
+// ============================================================================
+// truncateForFeishu additional edge cases
+// ============================================================================
+
+func TestTruncateForFeishu_ExactlyAtLimit(t *testing.T) {
+	text := string(make([]rune, feishuPreviewMaxRunes))
+	got := truncateForFeishu(text)
+	if got != text {
+		t.Error("text at exact limit should not be truncated")
+	}
+}
+
+func TestTruncateForFeishu_OneOverLimit(t *testing.T) {
+	text := string(make([]rune, feishuPreviewMaxRunes+1))
+	got := truncateForFeishu(text)
+	runes := []rune(got)
+	if len(runes) != feishuPreviewMaxRunes+1 {
+		t.Errorf("expected %d runes (truncated + ellipsis), got %d", feishuPreviewMaxRunes+1, len(runes))
+	}
+	if runes[len(runes)-1] != '…' {
+		t.Error("expected ellipsis as last rune")
+	}
+}
+
+// ============================================================================
+// PushSessionEvent with nil DB
+// ============================================================================
+
+func TestPushSessionEvent_NilDB(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = nil
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	if PushSessionEvent("s1", "completed", "Title", "Preview", "/path", "", "") {
+		t.Error("expected false when db is nil")
+	}
+}
+
+func TestPushTaskEvent_NilDB(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = nil
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	if PushTaskEvent("t1", "completed", "Task", "Preview", "/path") {
+		t.Error("expected false when db is nil")
+	}
 }

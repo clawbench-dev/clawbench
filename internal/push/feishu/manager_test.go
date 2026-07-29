@@ -2,6 +2,7 @@ package feishu
 
 import (
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/push/common"
@@ -223,4 +224,174 @@ func (m *mockDBWithCallback) DeleteSubscriber(userID string) error {
 		return m.deleteFn(userID)
 	}
 	return nil
+}
+
+// ============================================================================
+// GetManager / SetManager tests
+// ============================================================================
+
+func TestSetManagerAndGetManager(t *testing.T) {
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	if got := GetManager(); got != mgr {
+		t.Error("expected GetManager to return the same manager instance")
+	}
+}
+
+func TestIsStarted_WithManager(t *testing.T) {
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	if !IsStarted() {
+		t.Error("expected IsStarted=true when manager is started")
+	}
+}
+
+func TestIsStarted_ManagerNotStarted(t *testing.T) {
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	mgr.started = false
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	if IsStarted() {
+		t.Error("expected IsStarted=false when manager is not started")
+	}
+}
+
+// ============================================================================
+// Start lifecycle tests
+// ============================================================================
+
+func TestManager_Start_AlreadyStarted(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	mgr := NewManager(&model.FeishuConfig{Enabled: true, AppID: "cli_test", AppSecret: "secret"})
+	mgr.started = true
+
+	err := mgr.Start()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should remain started without re-initializing
+}
+
+func TestManager_Start_Success(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+
+	var mergedUsers []string
+	db = &mockDBWithCallback{
+		mergeFn: func(users []string) {
+			mergedUsers = users
+		},
+	}
+
+	mgr := NewManager(&model.FeishuConfig{
+		Enabled:   true,
+		AppID:     "cli_test",
+		AppSecret: "secret",
+		Users:     []string{"ou_user1"},
+	})
+
+	err := mgr.Start()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !mgr.started {
+		t.Error("expected manager to be started")
+	}
+	if len(mergedUsers) != 1 || mergedUsers[0] != "ou_user1" {
+		t.Errorf("expected merge with [ou_user1], got %v", mergedUsers)
+	}
+
+	// Clean up without using Stop() to avoid lark SDK goroutine race.
+	// Cancel context first, then close ws client, then clear state.
+	if mgr.cancel != nil {
+		mgr.cancel()
+	}
+	time.Sleep(50 * time.Millisecond)
+	if mgr.wsClient != nil {
+		mgr.wsClient.Close()
+	}
+	mgr.started = false
+}
+
+// ============================================================================
+// Stop lifecycle tests
+// ============================================================================
+
+func TestManager_Stop_Started(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	mgr := NewManager(&model.FeishuConfig{Enabled: true, AppID: "cli_test", AppSecret: "secret"})
+	_ = mgr.Start()
+
+	// Pre-cache a token to verify it's cleared on stop
+	mgr.cachedToken = "t-to-clear"
+	mgr.cachedExp = time.Now().Add(1 * time.Hour)
+
+	// Cancel context first to stop the goroutine before calling Stop
+	if mgr.cancel != nil {
+		mgr.cancel()
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	mgr.Stop()
+
+	if mgr.started {
+		t.Error("expected started=false after Stop")
+	}
+	if mgr.cachedToken != "" {
+		t.Error("expected cached token to be cleared on Stop")
+	}
+}
+
+// ============================================================================
+// RegisterClientChecker / RegisterSessionMessenger tests
+// ============================================================================
+
+func TestRegisterClientChecker(t *testing.T) {
+	orig := clientChecker
+	defer func() { clientChecker = orig }()
+
+	checker := &mockClientChecker{hasConnected: true}
+	RegisterClientChecker(checker)
+
+	if clientChecker == nil {
+		t.Error("expected clientChecker to be set")
+	}
+}
+
+func TestRegisterSessionMessenger(t *testing.T) {
+	orig := sessionMessenger
+	defer func() { sessionMessenger = orig }()
+
+	messenger := &mockSessionMessenger{}
+	RegisterSessionMessenger(messenger)
+
+	if sessionMessenger == nil {
+		t.Error("expected sessionMessenger to be set")
+	}
+}
+
+// ============================================================================
+// NewManager tests
+// ============================================================================
+
+func TestNewManager_HTTPClient(t *testing.T) {
+	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
+	if mgr.httpClient == nil {
+		t.Error("expected httpClient to be initialized")
+	}
+	if mgr.cfg == nil {
+		t.Error("expected cfg to be set")
+	}
 }
