@@ -29,4 +29,14 @@
     <color name="browser_url_text">#e6edf3</color>
     <color name="browser_url_hint_color">#484f58</color>
     <color name="browser_icon_tint">#8b949e</color>
+    <color name="browser_text_tertiary">#c9d1d9</color>
+    <color name="browser_log_error">#f85149</color>
+    <color name="browser_log_warn">#d29922</color>
+    <color name="browser_accent_blue">#58a6ff</color>
+    <color name="browser_divider">#21262d</color>
+    <!-- Session picker dialog: slightly lighter surface to contrast with toolbar bg -->
+    <color name="browser_dialog_bg">#252c35</color>
+    <color name="browser_dialog_border">#30363d</color>
+    <color name="browser_dialog_item_selected">#1F58a6ff</color>
+    <color name="browser_running_dot">#3fb950</color>
 </resources>

@@ -18,12 +18,12 @@
         android:background="@color/browser_toolbar_bg"
         android:elevation="2dp">
 
-        <!-- Back button -->
+        <!-- Home button (navigate back to main app) -->
         <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/btnBack"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:src="@drawable/ic_browser_back"
+            android:src="@drawable/ic_browser_home"
             android:background="@drawable/bg_toolbar_btn"
             android:contentDescription="@string/browser_back"
             android:padding="6dp"
@@ -52,14 +52,14 @@
             android:fontFamily="monospace"
             android:ellipsize="end" />
 
-        <!-- Refresh button -->
+        <!-- Log button -->
         <androidx.appcompat.widget.AppCompatImageButton
-            android:id="@+id/btnRefresh"
+            android:id="@+id/btnLog"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:src="@drawable/ic_browser_refresh"
+            android:src="@drawable/ic_browser_log"
             android:background="@drawable/bg_toolbar_btn"
-            android:contentDescription="@string/browser_refresh"
+            android:contentDescription="@string/browser_console_log"
             android:padding="6dp"
             android:scaleType="fitCenter"
             app:tint="@color/browser_icon_tint" />

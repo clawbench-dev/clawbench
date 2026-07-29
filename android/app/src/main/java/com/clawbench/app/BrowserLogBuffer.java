@@ -1,6 +1,7 @@
 package com.clawbench.app;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
@@ -9,6 +10,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * In-memory circular buffer for console log entries captured by BrowserActivity.
  * Independent from AppLog's static buffer to avoid cross-process conflicts
  * (BrowserActivity runs in :browser process).
+ *
+ * Uses ArrayDeque for O(1) head removal instead of ArrayList's O(n).
  */
 public class BrowserLogBuffer {
 
@@ -43,21 +46,21 @@ public class BrowserLogBuffer {
     }
 
     private final int capacity;
-    private final List<Entry> entries;
+    private final ArrayDeque<Entry> entries;
     private final Object lock = new Object();
     private final AtomicLong seqCounter = new AtomicLong(0);
 
     public BrowserLogBuffer(int capacity) {
         this.capacity = capacity;
-        this.entries = new ArrayList<>(capacity);
+        this.entries = new ArrayDeque<>(capacity);
     }
 
     public void add(char level, String tag, String msg) {
         synchronized (lock) {
             if (entries.size() >= capacity) {
-                entries.remove(0);
+                entries.removeFirst(); // O(1) vs ArrayList.remove(0) which is O(n)
             }
-            entries.add(new Entry(level, tag, msg, System.currentTimeMillis(), seqCounter.getAndIncrement()));
+            entries.addLast(new Entry(level, tag, msg, System.currentTimeMillis(), seqCounter.getAndIncrement()));
         }
     }
 

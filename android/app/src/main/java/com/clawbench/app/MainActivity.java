@@ -2220,31 +2220,17 @@ public class MainActivity extends AppCompatActivity {
 
                 // Pass session credentials securely via SharedPreferences (not Intent extras)
                 String sUrl = activity.prefs.getString(KEY_SERVER_URL, "");
-                String sessionCookie = null;
+                String allCookies = null;
                 if (!sUrl.isEmpty()) {
                     CookieManager.getInstance().flush();
-                    String cookies = CookieManager.getInstance().getCookie(sUrl);
-                    if (cookies != null) {
-                        for (String c : cookies.split(";")) {
-                            String trimmed = c.trim();
-                            int eqIdx = trimmed.indexOf('=');
-                            if (eqIdx > 0) {
-                                String name = trimmed.substring(0, eqIdx);
-                                if (name.equals("clawbench_session") ||
-                                        (name.startsWith("cb") && name.endsWith("_clawbench_session"))) {
-                                    sessionCookie = trimmed;
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    allCookies = CookieManager.getInstance().getCookie(sUrl);
                 }
 
                 // Write credentials to cross-process holder before launching
                 BrowserSessionCredentials.set(activity,
                         sessionId != null ? sessionId : "",
                         sUrl != null ? sUrl : "",
-                        sessionCookie != null ? sessionCookie : "");
+                        allCookies != null ? allCookies : "");
 
                 activity.startActivity(intent);
             });

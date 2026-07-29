@@ -10,6 +10,9 @@ import java.security.cert.X509Certificate;
 /**
  * Shared SSL trust helper for self-signed certificates.
  * Used by BrowserActivity's SandboxWebViewClient and LogBottomSheet.
+ *
+ * Security: Trust-all is restricted to localhost/127.0.0.1 only.
+ * Non-localhost connections are left with default SSL verification.
  */
 public class SSLHelper {
 
@@ -30,10 +33,22 @@ public class SSLHelper {
         trustAllContext = ctx;
     }
 
-    public static void setupTrustAll(HttpsURLConnection conn) {
-        if (trustAllContext != null) {
+    /**
+     * Setup trust-all SSL for localhost connections only.
+     * Non-localhost hosts are left with default SSL verification.
+     *
+     * @param conn The HTTPS connection to configure
+     * @param host The target hostname (will be checked against localhost/127.0.0.1)
+     */
+    public static void setupTrustAll(HttpsURLConnection conn, String host) {
+        if (trustAllContext != null && isLocalhost(host)) {
             conn.setSSLSocketFactory(trustAllContext.getSocketFactory());
             conn.setHostnameVerifier((hostname, session) -> true);
         }
+    }
+
+    /** Check if the host is a localhost address. */
+    public static boolean isLocalhost(String host) {
+        return "localhost".equals(host) || "127.0.0.1".equals(host) || "::1".equals(host);
     }
 }

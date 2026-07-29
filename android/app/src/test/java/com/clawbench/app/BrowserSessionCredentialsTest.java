@@ -12,10 +12,10 @@ public class BrowserSessionCredentialsTest {
     @Test
     public void credsDataClass() {
         BrowserSessionCredentials.Creds creds = new BrowserSessionCredentials.Creds(
-                "sid1", "http://localhost:20000", "clawbench_session=abc123");
+                "sid1", "http://localhost:20000", "clawbench_session=abc123; clawbench_project=%2Fhome%2Fuser%2Fproject");
         assertEquals("sid1", creds.sessionId);
         assertEquals("http://localhost:20000", creds.serverUrl);
-        assertEquals("clawbench_session=abc123", creds.sessionCookie);
+        assertEquals("clawbench_session=abc123; clawbench_project=%2Fhome%2Fuser%2Fproject", creds.allCookies);
     }
 
     @Test
@@ -23,6 +23,6 @@ public class BrowserSessionCredentialsTest {
         BrowserSessionCredentials.Creds creds = new BrowserSessionCredentials.Creds(null, null, null);
         assertNull(creds.sessionId);
         assertNull(creds.serverUrl);
-        assertNull(creds.sessionCookie);
+        assertNull(creds.allCookies);
     }
 }

@@ -73,8 +73,8 @@ public class BrowserActivity extends AppCompatActivity {
     private BrowserSessionCredentials.Creds sessionCreds;
 
     private int tunnelRetryCount = 0;
-    private static final int MAX_TUNNEL_RETRIES = 5;
-    private static final long TUNNEL_RETRY_DELAY_MS = 1000;
+    private static final int MAX_TUNNEL_RETRIES = 15;
+    private static final long TUNNEL_RETRY_DELAY_MS = 2000;
     private String pendingUrl = null;
 
     /** Target host:port for Host header rewriting (e.g. "192.168.100.1"). Empty if localhost. */
@@ -85,6 +85,10 @@ public class BrowserActivity extends AppCompatActivity {
 
     BrowserLogBuffer getLogBuffer() {
         return logBuffer;
+    }
+
+    BrowserSessionCredentials.Creds getSessionCredentials() {
+        return sessionCreds;
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -98,7 +102,7 @@ public class BrowserActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progressBar);
 
         logBuffer = new BrowserLogBuffer(500);
-        sessionCreds = BrowserSessionCredentials.get(this);
+        sessionCreds = BrowserSessionCredentials.getAndClear(this);
         setupWebView();
         setupToolbar();
         setupFindBar();
@@ -222,17 +226,11 @@ public class BrowserActivity extends AppCompatActivity {
     }
 
     private void setupToolbar() {
-        // Back button: WebView history back, or navigate back to main app
-        findViewById(R.id.btnBack).setOnClickListener(v -> {
-            if (webView.canGoBack()) {
-                webView.goBack();
-            } else {
-                navigateBackToMain();
-            }
-        });
+        // Home button: always navigate back to main app
+        findViewById(R.id.btnBack).setOnClickListener(v -> navigateBackToMain());
 
-        // Refresh button
-        findViewById(R.id.btnRefresh).setOnClickListener(v -> webView.reload());
+        // Log button: show console log bottom sheet
+        findViewById(R.id.btnLog).setOnClickListener(v -> showLogBottomSheet());
 
         // Overflow menu button
         findViewById(R.id.btnMore).setOnClickListener(v -> showOverflowMenu());
@@ -261,21 +259,48 @@ public class BrowserActivity extends AppCompatActivity {
     private void showOverflowMenu() {
         android.widget.PopupMenu popup = new android.widget.PopupMenu(this, findViewById(R.id.btnMore));
         popup.getMenuInflater().inflate(R.menu.browser_menu, popup.getMenu());
+
+        // Force icons to show in PopupMenu (hidden by default).
+        // Note: This reflection hack breaks on Android 14+ (API 34) due to
+        // restrictions on non-SDK interfaces. The try-catch ensures graceful
+        // fallback (icons simply won't show on those devices).
+        try {
+            java.lang.reflect.Field field = popup.getClass().getDeclaredField("mPopup");
+            field.setAccessible(true);
+            Object menuPopupHelper = field.get(popup);
+            Class<?> classPopupHelper = Class.forName(menuPopupHelper.getClass().getName());
+            java.lang.reflect.Method setForceShowIcon = classPopupHelper.getMethod("setForceShowIcon", boolean.class);
+            setForceShowIcon.invoke(menuPopupHelper, true);
+        } catch (Exception e) {
+            AppLog.w(TAG, "BrowserActivity: failed to force show menu icons", e);
+        }
+
         // Update desktop mode checkbox state
         popup.getMenu().findItem(R.id.action_desktop_mode).setChecked(desktopMode);
         popup.setOnMenuItemClickListener(item -> {
             int id = item.getItemId();
-            if (id == R.id.action_forward) {
-                if (webView.canGoForward()) webView.goForward();
+            if (id == R.id.action_page_back) {
+                if (webView.canGoBack()) {
+                    webView.goBack();
+                } else {
+                    Toast.makeText(this, R.string.browser_no_history, Toast.LENGTH_SHORT).show();
+                }
+                return true;
+            } else if (id == R.id.action_forward) {
+                if (webView.canGoForward()) {
+                    webView.goForward();
+                } else {
+                    Toast.makeText(this, R.string.browser_no_history, Toast.LENGTH_SHORT).show();
+                }
+                return true;
+            } else if (id == R.id.action_refresh) {
+                webView.reload();
                 return true;
             } else if (id == R.id.action_desktop_mode) {
                 toggleDesktopMode();
                 return true;
             } else if (id == R.id.action_find) {
                 showFindBar();
-                return true;
-            } else if (id == R.id.action_log) {
-                showLogBottomSheet();
                 return true;
             } else if (id == R.id.action_clear_data) {
                 showClearDataDialog();
@@ -454,11 +479,7 @@ public class BrowserActivity extends AppCompatActivity {
      */
     @Override
     public void onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            navigateBackToMain();
-        }
+        navigateBackToMain();
     }
 
     /**
@@ -468,19 +489,26 @@ public class BrowserActivity extends AppCompatActivity {
      * This preserves the exact UI state the user had before opening the sandbox.
      */
     private void navigateBackToMain() {
-        // Move this task (BrowserActivity) to background first
+        navigateBackToMain(null);
+    }
+
+    /**
+     * Navigate back to the main app, optionally jumping to a specific session.
+     * Uses an explicit intent with FLAG_ACTIVITY_SINGLE_TOP so onNewIntent()
+     * dispatches the session_id via handleNotificationIntent().
+     * BrowserActivity is moved to background (not finished) to preserve WebView state.
+     */
+    void navigateBackToMain(String sessionId) {
         moveTaskToBack(true);
-        // Bring the main app's task to the foreground
         try {
-            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
-            for (android.app.ActivityManager.AppTask appTask : am.getAppTasks()) {
-                android.content.ComponentName comp = appTask.getTaskInfo().topActivity;
-                if (comp != null && comp.getPackageName().equals(getPackageName())
-                        && !getClass().getName().equals(comp.getClassName())) {
-                    appTask.moveToFront();
-                    break;
-                }
+            Intent intent = new Intent(this, MainActivity.class);
+            intent.setAction(Intent.ACTION_MAIN);
+            intent.addCategory(Intent.CATEGORY_LAUNCHER);
+            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (sessionId != null && !sessionId.isEmpty()) {
+                intent.putExtra("session_id", sessionId);
             }
+            startActivity(intent);
         } catch (Exception e) {
             AppLog.w(TAG, "BrowserActivity: failed to bring main task to front", e);
         }
@@ -493,7 +521,7 @@ public class BrowserActivity extends AppCompatActivity {
 
         // Refresh session credentials if provided
         try {
-            BrowserSessionCredentials.Creds newCreds = BrowserSessionCredentials.get(this);
+            BrowserSessionCredentials.Creds newCreds = BrowserSessionCredentials.getAndClear(this);
             if (newCreds != null) {
                 sessionCreds = newCreds;
             }
@@ -606,8 +634,8 @@ public class BrowserActivity extends AppCompatActivity {
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 
                 // Trust all certs for localhost (SSH tunnel is plaintext, self-signed HTTPS)
-                if (conn instanceof HttpsURLConnection && ("localhost".equals(host) || "127.0.0.1".equals(host))) {
-                    SSLHelper.setupTrustAll((HttpsURLConnection) conn);
+                if (conn instanceof HttpsURLConnection) {
+                    SSLHelper.setupTrustAll((HttpsURLConnection) conn, host);
                 }
 
                 // Set method
@@ -637,16 +665,20 @@ public class BrowserActivity extends AppCompatActivity {
 
                 // Log error response body preview for diagnostics
                 if (statusCode >= 400) {
+                    InputStream errStream = null;
                     try {
-                        InputStream errStream = conn.getErrorStream();
+                        errStream = conn.getErrorStream();
                         if (errStream != null) {
                             byte[] preview = new byte[Math.min(256, errStream.available() > 0 ? errStream.available() : 256)];
                             int read = errStream.read(preview);
                             if (read > 0) {
                                 AppLog.w(TAG, "BrowserActivity: error response body: " + new String(preview, 0, read, "UTF-8"));
                             }
+                            errStream.close();
                         }
-                    } catch (Exception ignored) {}
+                    } catch (Exception ignored) {
+                        if (errStream != null) try { errStream.close(); } catch (Exception ignored2) {}
+                    }
                 }
 
                 // Collect response headers
@@ -657,9 +689,15 @@ public class BrowserActivity extends AppCompatActivity {
                     }
                 }
 
-                InputStream inputStream = conn.getErrorStream();
-                if (inputStream == null) {
-                    inputStream = conn.getInputStream();
+                InputStream inputStream;
+                try {
+                    inputStream = conn.getErrorStream();
+                    if (inputStream == null) {
+                        inputStream = conn.getInputStream();
+                    }
+                } catch (Exception e) {
+                    AppLog.w(TAG, "BrowserActivity: failed to get response stream for " + uri, e);
+                    return super.shouldInterceptRequest(view, request);
                 }
 
                 // Determine MIME type
