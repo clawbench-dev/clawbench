@@ -12,14 +12,21 @@ app.use(i18n)
 app.directive('long-press', LongPressDirective)
 
 // Capture Vue component errors (render, lifecycle, event handlers)
-app.config.errorHandler = (err, instance, info) => {
-  const msg = err instanceof Error ? (err.stack || err.message) : String(err)
-  appLog.e('Vue', `${msg} [${info}]`)
+app.config.errorHandler = (err, _instance, info) => {
+  try {
+    const msg = err instanceof Error ? (err.stack || err.message) : String(err)
+    appLog.e('Vue', `${msg} [${info}]`)
+  } catch {
+    console.error('[Vue] Failed to log error:', err)
+  }
 }
 
-// Capture uncaught JS errors (non-Vue)
+// Capture uncaught JS errors (non-Vue). Guard e.message to skip resource errors.
 window.addEventListener('error', (e) => {
-  appLog.e('JS.Uncaught', `${e.message} at ${e.filename}:${e.lineno}`)
+  if (e.message) {
+    const s = e.error?.stack ? e.error.stack : `${e.message} at ${e.filename}:${e.lineno}`
+    appLog.e('JS.Uncaught', s)
+  }
 })
 
 // Capture resource loading failures (img/script/link 404s, etc.)
@@ -28,19 +35,24 @@ window.addEventListener('error', (e) => {
   if (e.target && e.target !== window) {
     const el = e.target as HTMLElement
     const tag = el.tagName || '?'
-    const src = (el as HTMLImageElement).src || (el as HTMLLinkElement).href || ''
+    const src = el.getAttribute('src') || el.getAttribute('href') || ''
     if (src) {
       appLog.e('JS.Resource', `Failed to load <${tag}> src=${src}`)
     }
   }
 }, true)
 
-// Capture unhandled Promise rejections with improved serialization
+// Capture unhandled Promise rejections with safe serialization
 window.addEventListener('unhandledrejection', (e) => {
-  const r = e.reason
-  const msg = r instanceof Error ? (r.stack || r.message) :
-    (typeof r === 'object' && r ? JSON.stringify(r) : String(r))
-  appLog.e('JS.Promise', msg)
+  try {
+    const r = e.reason
+    const msg = r instanceof Error ? (r.stack || r.message) :
+      (typeof r === 'object' && r ? JSON.stringify(r) : String(r))
+    appLog.e('JS.Promise', msg)
+  } catch (err) {
+    // Prevent infinite loop — last-resort logging
+    console.error('[JS.Promise] Failed to serialize rejection:', err)
+  }
 })
 
 app.mount('#app')
