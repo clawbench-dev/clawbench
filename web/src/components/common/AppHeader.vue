@@ -472,7 +472,7 @@ onUnmounted(() => {
 }
 
 .server-toggle.status-dot-connected {
-    color: var(--color-green, #22c55e);
+    color: var(--accent-color);
 }
 
 .server-toggle.status-dot-reconnecting {
