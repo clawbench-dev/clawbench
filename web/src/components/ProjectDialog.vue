@@ -64,6 +64,7 @@ import ModalDialog from './common/ModalDialog.vue'
 import SearchInput from './common/SearchInput.vue'
 import DirBreadcrumb from './file/DirBreadcrumb.vue'
 import { useDialog } from '@/composables/useDialog.ts'
+import { store } from '@/stores/app.ts'
 
 const { t } = useI18n()
 const dialog = useDialog()
@@ -81,7 +82,9 @@ const searchQuery = ref('')
 const showHidden = ref(false)
 
 // Browse state
-const browsePath = ref('/')
+// Default to homeDir on non-Windows; on Windows (multi-root) stay at root level
+const isWindows = computed(() => store.state.rootPaths.length > 1)
+const browsePath = ref(isWindows.value ? '/' : (store.state.homeDir || '/'))
 const browseItems = ref([])
 const currentBrowseAbs = ref('')
 
@@ -97,16 +100,14 @@ function pathJoin(base, name) {
     return base.replace(/[/\\]$/, '') + sep + name
 }
 
-// Reload data when dialog opens (only first time)
-let initialized = false
-
+// Reload data when dialog opens
 watch(() => props.open, (isOpen) => {
     if (isOpen) {
         searchQuery.value = ''
-        if (!initialized) {
-            initialized = true
-            loadBrowse()
-        }
+        selectedPath.value = ''
+        // Default to homeDir on non-Windows; on Windows (multi-root) stay at root level
+        browsePath.value = isWindows.value ? '/' : (store.state.homeDir || '/')
+        loadBrowse()
     }
 })
 
