@@ -63,7 +63,7 @@ sequenceDiagram
   - 是否已检测到 CLI（来自 `agents` 表）
   - 安装命令（`BackendSpec.InstallCmd`，如 `"npm install -g @anthropic-ai/claude-code"`）
   - ACP 能力（是否支持 `Transport: "acp-stdio"`）
-- **手动刷新**：`POST /api/agents/rescan` 触发 `SyncDiscoverAgentsDB`（`cmd/server/main.go:708`）重新扫描 PATH 中的 CLI
+- **手动刷新**：`POST /api/agents/rescan` 触发 `SyncDiscoverAgentsDB`（`cmd/server/main.go`）重新扫描 PATH 中的 CLI
 - **安装对话框**：`AgentInstallDialog` 组件打开后显示安装命令和复制按钮，引导用户在终端执行
 - **持久化关闭状态**：用户关闭后写入 `localStorage['clawbench_welcome_dismissed']`，下次不再自动显示
 - **事件触发重显**：`clawbench-show-welcome` 自定义事件允许设置页主动重新打开欢迎面板
@@ -83,15 +83,3 @@ sequenceDiagram
 - **Agent 创建时机**：当前 Agent 创建有两种路径：
   1. 自动发现：`SyncDiscoverAgentsDB` 扫描 PATH 中的 CLI（启动时 + `rescan` 时）
   2. 手动安装：用户通过 `AgentInstallDialog` 在终端执行 `InstallCmd`，然后 `rescan` 触发发现
-
-## 关键代码引用
-
-| 文件 | 关键符号 |
-|------|----------|
-| `web/src/components/WelcomeOverlay.vue` | 首次访问欢迎遮罩组件 |
-| `web/src/components/settings/SettingsCategory.vue` | `clawbench-show-welcome` 事件触发 |
-| `web/src/components/AgentInstallDialog.vue` | 安装命令对话框 |
-| `internal/handler/handler.go` | `/api/backends`、`/api/agents`、`/api/agents/rescan` 路由 |
-| `internal/model/discovery.go` | `SyncDiscoverAgentsDB` 函数 |
-| `internal/model/agent.go` | `BackendSpec.InstallCmd` 字段 |
-| `cmd/server/main.go` | 启动时调用 `SyncDiscoverAgentsDB` |

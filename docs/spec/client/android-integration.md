@@ -44,7 +44,7 @@ flowchart LR
     A[build.sh --android] --> B[cd android && gradle assembleRelease]
     B --> C[APK 产物<br/>android/app/build/outputs/apk/release/clawbench-android.apk]
     C --> D[cp 到 internal/frontend/dist/assets/]
-    D --> E[go:embed all:dist<br/>internal/frontend/embed.go:10]
+    D --> E[go:embed all:dist<br/>internal/frontend/embed.go]
     E --> F[单二进制部署<br/>运行时 GET /api/apk]
 ```
 
@@ -52,13 +52,13 @@ flowchart LR
 
 ### 端点与日志通道（关键）
 
-| 端点 | 方法 | 用途 | 代码位置 |
-|------|------|------|----------|
-| `/api/apk` | GET | APK 下载（从 `go:embed` 读取，路径 `assets/clawbench-android.apk`） | `internal/handler/handler.go:309` |
-| `/api/client-log` | POST | Web 端统一日志（200 条/请求上限，源为 `js`） | `internal/handler/handler.go:303` |
-| `/api/android-log` | POST | Android 端日志（legacy alias，写入 `android.log`） | `internal/handler/android_log.go` |
-| `/api/ssh/info` | GET | SSH 隧道状态轮询（无需鉴权） | `internal/handler/handler.go:322-329` |
-| `/api/ai/events/pending` | GET | 离线期间漏发事件 | `internal/handler/handler.go:354` |
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/api/apk` | GET | APK 下载（从 `go:embed` 读取，路径 `assets/clawbench-android.apk`） |
+| `/api/client-log` | POST | Web 端统一日志（200 条/请求上限，源为 `js`） |
+| `/api/android-log` | POST | Android 端日志（legacy alias，写入 `android.log`） |
+| `/api/ssh/info` | GET | SSH 隧道状态轮询（无需鉴权） |
+| `/api/ai/events/pending` | GET | 离线期间漏发事件 |
 
 > Web 前端使用 `/api/client-log`；当前 Android `AppLog` 仍 POST 到 `/api/android-log`。服务端将两条路由都交给 `ServeClientLog`，因此旧 APK 与新 Web 客户端可以同时工作。
 
@@ -77,7 +77,7 @@ flowchart LR
 - **SSH 端口转发**：原生层建立 SSH 连接并维持端口转发，前端通过 `usePortForward` composable 控制
 - **硬件返回键代理**：Android `onBackPressed` 委托给 JS 层 `clawbench-back-press` 事件，JS 注册了处理器则拦截（不注册则退出 App）。处理器按显式优先级排序（overlay 级 1000 > page 级 100）
 - **自动登录**：Android 通过 `AndroidNative.getPassword()` Bridge 获取密码自动登录，配合 `setSSHPassword(savedPwd)` 设置 SSH 密码
-- **APK 单二进制部署**：`build.sh --android` → Gradle assembleRelease → APK 复制到 `internal/frontend/dist/assets/clawbench-android.apk`（`build.sh:96-99`）→ Go `//go:embed all:dist` 打包进二进制（`internal/frontend/embed.go:10`）→ 运行时 `GET /api/apk` 端点读取
+- **APK 单二进制部署**：`build.sh --android` → Gradle assembleRelease → APK 复制到 `internal/frontend/dist/assets/clawbench-android.apk`（`build.sh`）→ Go `//go:embed all:dist` 打包进二进制（`internal/frontend/embed.go`）→ 运行时 `GET /api/apk` 端点读取
 
 ### JS Bridge 关键方法（`AndroidNative`）
 
@@ -122,14 +122,3 @@ flowchart LR
 - **日志处理器统一、客户端端点兼容**：Web 的 `appLog.ts` 使用 `/api/client-log`，Android 的 `AppLog.java` 使用兼容路由 `/api/android-log`；两者都由服务端 `ServeClientLog` 处理，源字段区分 `js` 和 `android`
 - **屏幕常亮双通道**：`useWakeLock` 优先申请标准 Web Wake Lock，并同时调用 Android `setKeepScreenOn`。页面隐藏时浏览器可能释放锁，重新可见且业务仍需要常亮时自动申请；显式释放会同时关闭两条通道
 - **服务器列表由客户端持有**：Android Bridge 保存多个实例地址和密码，使当前服务器不可达时仍可切换到其他实例，完整流程见[多服务器管理](multi-server.md)
-
-## 关键代码引用
-
-| 文件 | 关键符号 |
-|------|----------|
-| `build.sh:96-99` | APK 复制到 `internal/frontend/dist/assets/` |
-| `internal/frontend/embed.go:10` | `//go:embed all:dist` |
-| `internal/handler/handler.go` | `/api/client-log`、`/api/android-log`、`/api/apk`、`/api/ssh/info` |
-| `internal/handler/android_log.go` | `ServeClientLog`（200 条/请求上限） |
-| `android/app/src/main/java/com/clawbench/app/` | 全部 Java 模块（9 个关键类） |
-| `web/src/composables/useBackHandler.ts` | 返回键注册表管理 |
