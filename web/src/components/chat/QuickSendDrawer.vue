@@ -115,7 +115,7 @@ async function doDelete(id: number) {
   deleteConfirmId.value = null
   const ok = await deleteItem(id)
   if (ok) {
-    toast.show(t('chat.quickSend.itemDeleted'), { type: 'success' })
+    toast.show(t('chat.quickSend.itemDeleted'), { icon: '✅', type: 'success' })
   }
 }
 
@@ -123,7 +123,7 @@ async function onDragEnd() {
   const ids = localItems.value.map(it => it.id)
   const ok = await reorderItems(ids)
   if (!ok) {
-    toast.show(t('chat.quickSend.reorderFailed'), { type: 'error' })
+    toast.show(t('chat.quickSend.reorderFailed'), { icon: '❌', type: 'error' })
     localItems.value = [...items.value] // Reset from source of truth
   }
 }

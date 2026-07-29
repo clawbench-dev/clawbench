@@ -31,7 +31,7 @@
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div v-for="(sKey, sIdx) in scheduledTaskKeys(bi)" :key="sIdx" class="scheduled-task-card" :class="{ deleted: blockTasks[sKey].deleted }" @click="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task && $emit('task-card-click', blockTasks[sKey].taskId)">
           <div class="stask-header">
-            <span v-if="blockTasks[sKey].deleted" class="stask-icon">🗑️</span>
+            <span v-if="blockTasks[sKey].deleted" class="stask-icon">📦</span>
             <span v-else class="stask-icon">⏰</span>
             <template v-if="blockTasks[sKey].deleted">{{ t('chat.contentBlocks.taskDeleted') }}</template>
             <template v-else-if="blockTasks[sKey].loading">{{ t('chat.contentBlocks.loading') }}</template>
@@ -159,7 +159,7 @@
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div v-for="(sKey, sIdx) in scheduledTaskKeys(bi)" :key="sIdx" class="scheduled-task-card" :class="{ deleted: blockTasks[sKey].deleted }" @click="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task && $emit('task-card-click', blockTasks[sKey].taskId)">
           <div class="stask-header">
-            <span v-if="blockTasks[sKey].deleted" class="stask-icon">🗑️</span>
+            <span v-if="blockTasks[sKey].deleted" class="stask-icon">📦</span>
             <span v-else class="stask-icon">⏰</span>
             <template v-if="blockTasks[sKey].deleted">{{ t('chat.contentBlocks.taskDeleted') }}</template>
             <template v-else-if="blockTasks[sKey].loading">{{ t('chat.contentBlocks.loading') }}</template>

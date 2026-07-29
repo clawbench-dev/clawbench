@@ -347,7 +347,7 @@ async function handleCopyConfirmed(newName: string) {
   copying.value = false
   try {
     await duplicateAgent(props.agentId, newName)
-    toast.show(t('settings.items.agentCopied'), { icon: '✓', type: 'success', duration: 3000 })
+    toast.show(t('settings.items.agentCopied'), { icon: '✅', type: 'success', duration: 3000 })
   } catch {
     toast.show(t('settings.items.agentCopyFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
@@ -367,7 +367,7 @@ async function handleDelete() {
   if (!confirmed) return
   try {
     await deleteAgent(a.id)
-    toast.show(t('settings.items.agentDeleted'), { icon: '✓', type: 'success', duration: 3000 })
+    toast.show(t('settings.items.agentDeleted'), { icon: '✅', type: 'success', duration: 3000 })
     emit('deleted')
   } catch {
     toast.show(t('settings.items.agentDeleteFailed'), { icon: '⚠️', type: 'error', duration: 3000 })

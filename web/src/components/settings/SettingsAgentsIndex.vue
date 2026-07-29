@@ -59,7 +59,7 @@ async function handleRescan() {
   rescanning.value = true
   try {
     await rescanAgents()
-    toast.show(t('settings.items.agentRescanSuccess'), { icon: '✓', type: 'success', duration: 3000 })
+    toast.show(t('settings.items.agentRescanSuccess'), { icon: '✅', type: 'success', duration: 3000 })
   } catch {
     toast.show(t('settings.items.agentRescanFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   } finally {

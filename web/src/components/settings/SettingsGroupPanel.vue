@@ -438,7 +438,7 @@ async function onSave() {
     emit('restartNeeded', result.changedColdFields)
   }
   if (!serverError.value) {
-    toast.show(t('settings.panel.saved'), { icon: '✓', type: 'success', duration: 3000 })
+    toast.show(t('settings.panel.saved'), { icon: '✅', type: 'success', duration: 3000 })
   }
 }
 

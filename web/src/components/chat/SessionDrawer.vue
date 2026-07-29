@@ -360,7 +360,7 @@ async function handleRefresh() {
     if (data?.models) {
       // Update agent models in memory
       updateAgentField(props.agentId, 'models', data.models)
-      toast.show(t('chat.sessionSetting.refreshSuccess'), { icon: '✓', type: 'success', duration: 2000 })
+      toast.show(t('chat.sessionSetting.refreshSuccess'), { icon: '✅', type: 'success', duration: 2000 })
     }
   } catch (err) {
     const msgKey = err?.msgKey

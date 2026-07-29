@@ -119,7 +119,7 @@ async function doDelete(id: number) {
   deleteConfirmId.value = null
   const ok = await deleteCommand(id)
   if (ok) {
-    toast.show(t('terminal.commandDeleted'), { type: 'success' })
+    toast.show(t('terminal.commandDeleted'), { icon: '✅', type: 'success' })
   }
 }
 
@@ -127,7 +127,7 @@ async function onDragEnd() {
   const ids = localCommands.value.map(c => c.id)
   const ok = await reorderCommands(ids)
   if (!ok) {
-    toast.show(t('terminal.reorderFailed'), { type: 'error' })
+    toast.show(t('terminal.reorderFailed'), { icon: '❌', type: 'error' })
     localCommands.value = [...commands.value] // Reset from source of truth
   }
 }

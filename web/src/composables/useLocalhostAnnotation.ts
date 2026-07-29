@@ -235,7 +235,7 @@ export function useLocalhostUrlClickHandler() {
     async function openLocalhostUrl(element: Element, port: number, protocol: string, path?: string): Promise<boolean> {
         if (urlOpening.value) return true
         if (sshInfo.value?.enabled === false) {
-            toast.show(gt('chat.localhost.sshDisabled'), { type: 'info' })
+            toast.show(gt('chat.localhost.sshDisabled'), { icon: 'ℹ️', type: 'info' })
             return false
         }
         urlOpening.value = true
@@ -246,7 +246,7 @@ export function useLocalhostUrlClickHandler() {
             openPort(localPort, protocol, undefined, path)
         } catch (e) {
             appLog.e('LocalhostUrl', 'openLocalhostUrl failed: port=' + port + ', err=' + (e instanceof Error ? e.message : String(e)))
-            toast.show(gt('chat.localhost.openFailed'), { type: 'error' })
+            toast.show(gt('chat.localhost.openFailed'), { icon: '❌', type: 'error' })
         } finally {
             urlOpening.value = false
             element.classList.remove('loading')

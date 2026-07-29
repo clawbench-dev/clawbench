@@ -295,7 +295,7 @@ async function handleRestartServer() {
 
 function handlePasswordChanged(needsRestart: boolean) {
   showPasswordDialog.value = false
-  toast.show(t('settings.passwordChanged'), { icon: '✓', type: 'success', duration: 3000 })
+  toast.show(t('settings.passwordChanged'), { icon: '✅', type: 'success', duration: 3000 })
   if (needsRestart) {
     emit('restartNeeded', ['password'])
   }

@@ -234,10 +234,10 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
         action: 'cancel',
         executionId: execId,
       })
-      toast.show(gt('task.exec.cancelled'), { type: 'success' })
+      toast.show(gt('task.exec.cancelled'), { icon: '✅', type: 'success' })
     } catch (err: unknown) {
       if (err instanceof Error && err.message.includes('404')) {
-        toast.show(gt('task.exec.alreadyFinished'), { type: 'info' })
+        toast.show(gt('task.exec.alreadyFinished'), { icon: 'ℹ️', type: 'info' })
       }
     }
     await loadRunningStatus()
@@ -251,9 +251,9 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
         action: 'deleteExecution',
         executionId: String(execId),
       })
-      toast.show(gt('task.exec.executionDeleted'), { type: 'success' })
+      toast.show(gt('task.exec.executionDeleted'), { icon: '✅', type: 'success' })
     } catch {
-      toast.show(gt('task.exec.actionFailed'), { type: 'error' })
+      toast.show(gt('task.exec.actionFailed'), { icon: '❌', type: 'error' })
       return
     }
     await reloadExecutions()
@@ -266,9 +266,9 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       await apiPut(`/api/tasks/${task.value.id}`, {
         action: 'deleteAllExecutions',
       })
-      toast.show(gt('task.exec.allExecutionsDeleted'), { type: 'success' })
+      toast.show(gt('task.exec.allExecutionsDeleted'), { icon: '✅', type: 'success' })
     } catch {
-      toast.show(gt('task.exec.actionFailed'), { type: 'error' })
+      toast.show(gt('task.exec.actionFailed'), { icon: '❌', type: 'error' })
       return
     }
     await reloadExecutions()

@@ -179,7 +179,7 @@ export function usePortForward() {
       loadPorts(true)
       if (!success) {
         const toast = useToast()
-        toast.show(gt('portForward.portUnreachable'), { type: 'error' })
+        toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
       }
     }
   }
@@ -541,12 +541,12 @@ export function usePortForward() {
       const reconnected = await reconnectTunnelAsync(native)
       const toast = useToast()
       if (reconnected && native.testPortReachable(localPort)) {
-        toast.show(gt('portForward.tunnelReconnected'), { type: 'success' })
+        toast.show(gt('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
         doOpen(native, localPort, protocol, hostArg, path)
         return
       }
 
-      toast.show(gt('portForward.portUnreachable'), { type: 'error' })
+      toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
       return
     }
 
@@ -570,7 +570,7 @@ export function usePortForward() {
       // Step 1: Test if the port is already reachable
       const reachable = native.testPortReachable(localPort)
       if (reachable) {
-        toast.show(gt('portForward.tunnelReconnected'), { type: 'success' })
+        toast.show(gt('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
         await loadPorts(true)
         return
       }
@@ -581,12 +581,12 @@ export function usePortForward() {
       if (reconnected) {
         const reachableAfter = native.testPortReachable(localPort)
         if (reachableAfter) {
-          toast.show(gt('portForward.tunnelReconnected'), { type: 'success' })
+          toast.show(gt('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
         } else {
-          toast.show(gt('portForward.portUnreachable'), { type: 'error' })
+          toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
         }
       } else {
-        toast.show(gt('portForward.portUnreachable'), { type: 'error' })
+        toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
       }
     }
 

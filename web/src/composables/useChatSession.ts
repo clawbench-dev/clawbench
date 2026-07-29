@@ -833,7 +833,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         }
         const maxCount = store.state.sessionMaxCount
         if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
-        toast.show(gt('chat.session.deleted', { count: data.sessionCount ?? '', max: maxCount }), { icon: '🗑️', type: 'success', duration: 2000 })
+        toast.show(gt('chat.session.deleted', { count: data.sessionCount ?? '', max: maxCount }), { icon: '📦', type: 'success', duration: 2000 })
       } else {
         toast.show(gt('chat.session.deleteFailed'), { icon: '⚠️', type: 'error' })
       }

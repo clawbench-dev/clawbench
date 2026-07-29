@@ -1064,7 +1064,7 @@ async function handleOverlayOpenFile(payload) {
         fileNav.openFile(path)
         if (lineStart) scrollToLine(lineStart, lineEnd)
         if (isExternal) {
-            toast.show(gt('file.toast.externalFile'), { type: 'info', duration: 2000 })
+            toast.show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
         }
     }
 }

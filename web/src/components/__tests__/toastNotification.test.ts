@@ -73,7 +73,7 @@ describe('ToastNotification', () => {
   })
 
   it('shows icon when icon value is truthy', () => {
-    const toast = createMockToast({ icon: '✓' })
+    const toast = createMockToast({ icon: '✅' })
     mountToast(toast)
 
     expect(document.querySelector('.toast-icon')).toBeTruthy()

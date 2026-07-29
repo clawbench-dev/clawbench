@@ -820,7 +820,7 @@ describe('SettingsGroupPanel', () => {
       const wrapper = mountPanel(makeSimpleConfig())
       await wrapper.find('.group-panel__save-btn').trigger('click')
       await nextTick()
-      expect(mockToastShow).toHaveBeenCalledWith('已保存', expect.objectContaining({ icon: '✓', type: 'success', duration: 3000 }))
+      expect(mockToastShow).toHaveBeenCalledWith('已保存', expect.objectContaining({ icon: '✅', type: 'success', duration: 3000 }))
     })
 
     it('emits restartNeeded when save returns needsRestart with changedColdFields', async () => {

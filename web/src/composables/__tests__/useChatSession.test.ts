@@ -2855,7 +2855,7 @@ describe('deleteSession', () => {
     // Success toast shown
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ icon: '🗑️', type: 'success' })
+      expect.objectContaining({ icon: '📦', type: 'success' })
     )
   })
 
@@ -2952,7 +2952,7 @@ describe('deleteSession', () => {
     // Success toast shown
     expect(mockToastFn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ icon: '🗑️', type: 'success' })
+      expect.objectContaining({ icon: '📦', type: 'success' })
     )
     // Two fetch calls: 1) delete API 2) loadSessionsOnce (refresh global state)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)

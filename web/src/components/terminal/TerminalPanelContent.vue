@@ -384,7 +384,7 @@ const tabManager = useTerminalTabs(getWsUrl, {
     fetch(`/api/terminal/close?session=${encodeURIComponent(sessionId)}`, { method: 'POST' }).catch(() => {})
   },
   onExit: (_tabId) => {
-    toast.show(t('terminal.ptyExited'), { type: 'info' })
+    toast.show(t('terminal.ptyExited'), { icon: 'ℹ️', type: 'info' })
   },
   onError: () => {
     // Error displayed via overlay
@@ -667,7 +667,7 @@ function handleCopyOutput() {
     lines.pop()
   }
   if (lines.length === 0) {
-    toast.show(t('terminal.noOutput'), { type: 'info', duration: 1500 })
+    toast.show(t('terminal.noOutput'), { icon: 'ℹ️', type: 'info', duration: 1500 })
     return
   }
   outputDrawerText.value = lines.join('\n')

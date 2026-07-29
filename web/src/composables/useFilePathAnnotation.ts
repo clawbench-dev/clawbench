@@ -717,7 +717,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
         window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: resolvedPath, lineStart, lineEnd } }))
         if (isExternal) {
             const { useToast } = await import('@/composables/useToast')
-            useToast().show(gt('file.toast.externalFile'), { type: 'info', duration: 2000 })
+            useToast().show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
         }
     }
     return ok
