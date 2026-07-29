@@ -263,7 +263,7 @@ public class BrowserActivity extends AppCompatActivity {
      */
     private void showOverflowMenu() {
         android.widget.PopupMenu popup = new android.widget.PopupMenu(this, findViewById(R.id.btnMore));
-        popup.getMenuInflater().inflate(R.menu.browser_overflow, popup.getMenu());
+        popup.getMenuInflater().inflate(R.menu.browser_menu, popup.getMenu());
         // Update desktop mode checkbox state
         popup.getMenu().findItem(R.id.action_desktop_mode).setChecked(desktopMode);
         popup.setOnMenuItemClickListener(item -> {
@@ -492,9 +492,14 @@ public class BrowserActivity extends AppCompatActivity {
         setIntent(intent);
 
         // Refresh session credentials if provided
-        BrowserSessionCredentials.Creds newCreds = BrowserSessionCredentials.getAndClear(this);
-        if (newCreds != null) {
-            sessionCreds = newCreds;
+        try {
+            BrowserSessionCredentials.Creds newCreds = BrowserSessionCredentials.getAndClear(this);
+            if (newCreds != null) {
+                sessionCreds = newCreds;
+            }
+        } catch (Exception e) {
+            // May fail in test environments with Unsafe-allocated Activities
+            AppLog.w(TAG, "BrowserActivity: failed to read session credentials", e);
         }
 
         int port = intent.getIntExtra("port", 0);
