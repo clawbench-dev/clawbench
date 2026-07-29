@@ -222,19 +222,19 @@ func (m *Manager) handleSessionCommand(ctx context.Context, openID, shortID, msg
 // handleSessionList lists recent sessions so the user can pick one to send a message to.
 func (m *Manager) handleSessionList(ctx context.Context, openID string) {
 	if sessionMessenger == nil {
-		_ = m.SendPostMessage(ctx, openID, "已订阅", "已订阅 ClawBench 通知。暂无可用会话。")
+		_ = m.SendPostMessage(ctx, openID, "已订阅", "ClawBench 通知已订阅。暂无可用会话。")
 		return
 	}
 
 	sessions, err := sessionMessenger.ListRecentSessions(10)
 	if err != nil {
 		slog.Warn("feishu: list sessions failed", "error", err)
-		_ = m.SendPostMessage(ctx, openID, "已订阅", "已订阅 ClawBench 通知。获取会话列表失败。")
+		_ = m.SendPostMessage(ctx, openID, "已订阅", "ClawBench 通知已订阅。获取会话列表失败。")
 		return
 	}
 
 	if len(sessions) == 0 {
-		_ = m.SendPostMessage(ctx, openID, "已订阅", "已订阅 ClawBench 通知。暂无会话。")
+		_ = m.SendPostMessage(ctx, openID, "已订阅", "ClawBench 通知已订阅。暂无会话。")
 		return
 	}
 
