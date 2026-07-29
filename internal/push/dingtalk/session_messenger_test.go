@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"clawbench/internal/push/common"
 )
 
 func TestResolveShortSessionID_NoMessenger(t *testing.T) {
@@ -11,7 +13,7 @@ func TestResolveShortSessionID_NoMessenger(t *testing.T) {
 	defer func() { sessionMessenger = orig }()
 	sessionMessenger = nil
 
-	_, _, err := resolveShortSessionID("a1b2c3d4")
+	_, _, err := common.ResolveShortSessionID(sessionMessenger, "a1b2c3d4")
 	if err == nil {
 		t.Error("expected error when no session messenger")
 	}
@@ -22,16 +24,16 @@ func TestResolveShortSessionID_RunningFirst(t *testing.T) {
 	defer func() { sessionMessenger = orig }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Running Session"},
 		},
-		allSessions: []SessionInfo{
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Running Session"},
 			{ID: "a1b2c3d4-2222-2222-2222-222222222222", Title: "Old Session"},
 		},
 	}
 
-	id, _, err := resolveShortSessionID("a1b2c3d4")
+	id, _, err := common.ResolveShortSessionID(sessionMessenger, "a1b2c3d4")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,13 +47,13 @@ func TestResolveShortSessionID_ConflictInRunning(t *testing.T) {
 	defer func() { sessionMessenger = orig }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111"},
 			{ID: "a1b2c3d4-2222-2222-2222-222222222222"},
 		},
 	}
 
-	_, _, err := resolveShortSessionID("a1b2c3d4")
+	_, _, err := common.ResolveShortSessionID(sessionMessenger, "a1b2c3d4")
 	if err == nil {
 		t.Error("expected error for conflicting short IDs in running sessions")
 	}
@@ -62,13 +64,13 @@ func TestResolveShortSessionID_FallbackToAll(t *testing.T) {
 	defer func() { sessionMessenger = orig }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{},
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-2222-2222-2222-222222222222", Title: "Old Session"},
 		},
 	}
 
-	id, _, err := resolveShortSessionID("a1b2c3d4")
+	id, _, err := common.ResolveShortSessionID(sessionMessenger, "a1b2c3d4")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,11 +84,11 @@ func TestResolveShortSessionID_NotFound(t *testing.T) {
 	defer func() { sessionMessenger = orig }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions:     []SessionInfo{},
+		runningSessions: []common.SessionInfo{},
+		allSessions:     []common.SessionInfo{},
 	}
 
-	_, _, err := resolveShortSessionID("deadbeef")
+	_, _, err := common.ResolveShortSessionID(sessionMessenger, "deadbeef")
 	if err == nil {
 		t.Error("expected error for not found session")
 	}
@@ -97,13 +99,13 @@ func TestResolveShortSessionID_CaseInsensitive(t *testing.T) {
 	defer func() { sessionMessenger = orig }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{},
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Session"},
 		},
 	}
 
-	id, _, err := resolveShortSessionID("A1B2C3D4")
+	id, _, err := common.ResolveShortSessionID(sessionMessenger, "A1B2C3D4")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,9 +135,9 @@ func TestParseSessionCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id, msg, ok := parseSessionCommand(tt.input)
+			id, msg, ok := common.ParseSessionCommand(tt.input)
 			if ok != tt.wantMatch {
-				t.Errorf("parseSessionCommand(%q) ok = %v, want %v", tt.input, ok, tt.wantMatch)
+				t.Errorf("ParseSessionCommand(%q) ok = %v, want %v", tt.input, ok, tt.wantMatch)
 			}
 			if ok {
 				if id != tt.wantID {
@@ -154,14 +156,14 @@ func TestResolveShortSessionID_ConflictInAllSessions(t *testing.T) {
 	defer func() { sessionMessenger = orig }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{},
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111"},
 			{ID: "a1b2c3d4-2222-2222-2222-222222222222"},
 		},
 	}
 
-	_, _, err := resolveShortSessionID("a1b2c3d4")
+	_, _, err := common.ResolveShortSessionID(sessionMessenger, "a1b2c3d4")
 	if err == nil {
 		t.Error("expected error for conflicting short IDs in all sessions")
 	}
@@ -175,7 +177,7 @@ func TestResolveShortSessionID_FindRunningError(t *testing.T) {
 		runningErr: fmt.Errorf("db error"),
 	}
 
-	_, _, err := resolveShortSessionID("a1b2c3d4")
+	_, _, err := common.ResolveShortSessionID(sessionMessenger, "a1b2c3d4")
 	if err == nil {
 		t.Error("expected error when FindSessionsByPrefix(running) fails")
 	}
@@ -192,7 +194,7 @@ func TestResolveShortSessionID_FindAllError(t *testing.T) {
 		allErr: fmt.Errorf("db error"),
 	}
 
-	_, _, err := resolveShortSessionID("a1b2c3d4")
+	_, _, err := common.ResolveShortSessionID(sessionMessenger, "a1b2c3d4")
 	if err == nil {
 		t.Error("expected error when FindSessionsByPrefix(all) fails")
 	}
@@ -202,14 +204,14 @@ func TestResolveShortSessionID_FindAllError(t *testing.T) {
 }
 
 func TestFormatSessionLabel_EmptyTitle(t *testing.T) {
-	label := formatSessionLabel("a1b2c3d4-1111-1111-1111-111111111111", "")
+	label := common.FormatSessionLabel("a1b2c3d4-1111-1111-1111-111111111111", "")
 	if label != "会话 a1b2c3d4" {
 		t.Errorf("expected '会话 a1b2c3d4', got %q", label)
 	}
 }
 
 func TestFormatSessionLabel_WithTitle(t *testing.T) {
-	label := formatSessionLabel("a1b2c3d4-1111-1111-1111-111111111111", "My Session")
+	label := common.FormatSessionLabel("a1b2c3d4-1111-1111-1111-111111111111", "My Session")
 	if label != "My Session" {
 		t.Errorf("expected 'My Session', got %q", label)
 	}
@@ -217,13 +219,13 @@ func TestFormatSessionLabel_WithTitle(t *testing.T) {
 
 // mockSessionMessengerWithErr supports error returns for FindSessionsByPrefix.
 type mockSessionMessengerWithErr struct {
-	runningSessions []SessionInfo
-	allSessions     []SessionInfo
+	runningSessions []common.SessionInfo
+	allSessions     []common.SessionInfo
 	runningErr      error
 	allErr          error
 }
 
-func (m *mockSessionMessengerWithErr) FindSessionsByPrefix(prefix string, runningOnly bool) ([]SessionInfo, error) {
+func (m *mockSessionMessengerWithErr) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
 	if runningOnly && m.runningErr != nil {
 		return nil, m.runningErr
 	}
@@ -235,7 +237,7 @@ func (m *mockSessionMessengerWithErr) FindSessionsByPrefix(prefix string, runnin
 		src = m.runningSessions
 	}
 	lowerPrefix := strings.ToLower(prefix)
-	var result []SessionInfo
+	var result []common.SessionInfo
 	for _, s := range src {
 		if len(s.ID) >= len(lowerPrefix) && strings.ToLower(s.ID[:len(lowerPrefix)]) == lowerPrefix {
 			result = append(result, s)
@@ -244,7 +246,7 @@ func (m *mockSessionMessengerWithErr) FindSessionsByPrefix(prefix string, runnin
 	return result, nil
 }
 
-func (m *mockSessionMessengerWithErr) ListRecentSessions(limit int) ([]SessionInfo, error) {
+func (m *mockSessionMessengerWithErr) ListRecentSessions(limit int) ([]common.SessionInfo, error) {
 	return m.allSessions, nil
 }
 
@@ -265,21 +267,21 @@ func (m *mockSessionMessengerWithErr) SendMessageToSession(sessionID, message st
 
 // mockSessionMessenger implements SessionMessenger for testing.
 type mockSessionMessenger struct {
-	runningSessions  []SessionInfo
-	allSessions      []SessionInfo
+	runningSessions  []common.SessionInfo
+	allSessions      []common.SessionInfo
 	sendErr          error
 	listErr          error
 	EnqueueMessageFn func(sid, msg string) error
 	SendMessageFn    func(sid, msg string) error
 }
 
-func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]SessionInfo, error) {
+func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
 	src := m.allSessions
 	if runningOnly {
 		src = m.runningSessions
 	}
 	lowerPrefix := strings.ToLower(prefix)
-	var result []SessionInfo
+	var result []common.SessionInfo
 	for _, s := range src {
 		if len(s.ID) >= len(lowerPrefix) && strings.ToLower(s.ID[:len(lowerPrefix)]) == lowerPrefix {
 			result = append(result, s)
@@ -288,7 +290,7 @@ func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly b
 	return result, nil
 }
 
-func (m *mockSessionMessenger) ListRecentSessions(limit int) ([]SessionInfo, error) {
+func (m *mockSessionMessenger) ListRecentSessions(limit int) ([]common.SessionInfo, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}

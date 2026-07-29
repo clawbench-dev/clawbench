@@ -341,6 +341,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/dingtalk/subscribers", middleware.Auth(ServeDingTalkSubscribers))
 	register("/api/dingtalk/subscribers/", middleware.Auth(ServeDingTalkSubscribers))
 
+	// Feishu push notification subscribers
+	register("/api/feishu/subscribers", middleware.Auth(ServeFeishuSubscribers))
+	register("/api/feishu/subscribers/", middleware.Auth(ServeFeishuSubscribers))
+
 	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
 	register("/api/terminal/ws", middleware.Auth(TerminalWebSocket))
 	register("/api/terminal/status", middleware.Auth(TerminalStatus))

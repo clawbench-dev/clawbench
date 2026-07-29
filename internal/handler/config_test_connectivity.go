@@ -75,6 +75,8 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 		result = testRAG(ctx, req.Values)
 	case "dingtalk":
 		result = testDingTalk(ctx, req.Values)
+	case "feishu":
+		result = testFeishu(ctx, req.Values)
 	case "port_forward":
 		result = testPortForward(ctx, req.Values)
 	case "tts":
@@ -448,6 +450,59 @@ func testDingTalk(ctx context.Context, values map[string]any) ConnectivityTestRe
 	return ConnectivityTestResult{
 		Success: false,
 		Message: fmt.Sprintf("DingTalk authentication failed: %s (code %d)", tokenResp.ErrMsg, tokenResp.ErrCode),
+	}
+}
+
+// feishuTokenURL is the Feishu API URL for getting a tenant access token.
+// Can be overridden in tests.
+//
+//nolint:gosec // G101: this is a public API endpoint, not a credential
+var feishuTokenURL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+
+// ── Feishu ───────────────────────────────────────────────────
+
+func testFeishu(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	appID := resolveStringValue(values, "feishu.app_id", model.ConfigInstance.Feishu.AppID)
+	appSecret := resolveStringValue(values, "feishu.app_secret", model.ConfigInstance.Feishu.AppSecret)
+
+	if appID == "" || appSecret == "" {
+		return ConnectivityTestResult{Success: false, Message: "App ID and App Secret are required"}
+	}
+
+	reqBody := map[string]string{
+		"app_id":     appID,
+		"app_secret": appSecret,
+	}
+	bodyJSON, _ := json.Marshal(reqBody)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, feishuTokenURL, strings.NewReader(string(bodyJSON)))
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to create request: %v", err)}
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to connect to Feishu: %v", err)}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var tokenResp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to parse Feishu response: %v", err)}
+	}
+
+	if tokenResp.Code == 0 {
+		return ConnectivityTestResult{Success: true, Message: "Feishu connection successful (token obtained)"}
+	}
+
+	return ConnectivityTestResult{
+		Success: false,
+		Message: fmt.Sprintf("Feishu authentication failed: %s (code %d)", tokenResp.Msg, tokenResp.Code),
 	}
 }
 

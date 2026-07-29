@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -27,29 +26,23 @@ type tokenResponse struct {
 	ExpiresIn   int    `json:"expires_in"` // seconds
 }
 
-var (
-	cachedToken string
-	cachedExp   time.Time
-	tokenMu     sync.RWMutex
-)
-
 // getAccessToken returns a valid DingTalk access token, refreshing if needed.
 func (m *Manager) getAccessToken(ctx context.Context) (string, error) {
-	tokenMu.RLock()
-	if cachedToken != "" && time.Now().Add(tokenRefreshBuffer).Before(cachedExp) {
-		token := cachedToken
-		tokenMu.RUnlock()
+	m.tokenMu.RLock()
+	if m.cachedToken != "" && time.Now().Add(tokenRefreshBuffer).Before(m.cachedExp) {
+		token := m.cachedToken
+		m.tokenMu.RUnlock()
 		return token, nil
 	}
-	tokenMu.RUnlock()
+	m.tokenMu.RUnlock()
 
 	// Need to refresh
-	tokenMu.Lock()
-	defer tokenMu.Unlock()
+	m.tokenMu.Lock()
+	defer m.tokenMu.Unlock()
 
 	// Double-check after acquiring write lock
-	if cachedToken != "" && time.Now().Add(tokenRefreshBuffer).Before(cachedExp) {
-		return cachedToken, nil
+	if m.cachedToken != "" && time.Now().Add(tokenRefreshBuffer).Before(m.cachedExp) {
+		return m.cachedToken, nil
 	}
 
 	url := fmt.Sprintf("%s?appkey=%s&appsecret=%s", dingtalkTokenURL, m.cfg.AppKey, m.cfg.AppSecret)
@@ -58,8 +51,7 @@ func (m *Manager) getAccessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("dingtalk: token request: %w", err)
 	}
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	resp, err := httpClient.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("dingtalk: token fetch: %w", err)
 	}
@@ -79,21 +71,30 @@ func (m *Manager) getAccessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("dingtalk: token error: %s (code %d)", tokenResp.ErrMsg, tokenResp.ErrCode)
 	}
 
-	cachedToken = tokenResp.AccessToken
+	m.cachedToken = tokenResp.AccessToken
 	if tokenResp.ExpiresIn > 0 {
-		cachedExp = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+		m.cachedExp = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	} else {
-		cachedExp = time.Now().Add(2 * time.Hour) // default 2h
+		m.cachedExp = time.Now().Add(2 * time.Hour) // default 2h
 	}
 
 	slog.Debug("dingtalk: token refreshed", "expires_in", tokenResp.ExpiresIn)
-	return cachedToken, nil
+	return m.cachedToken, nil
 }
 
-// InvalidateToken clears the cached token (e.g., on 401 errors).
+// invalidateToken clears the cached token (e.g., on 401 errors).
+func (m *Manager) invalidateToken() {
+	m.tokenMu.Lock()
+	defer m.tokenMu.Unlock()
+	m.cachedToken = ""
+	m.cachedExp = time.Time{}
+}
+
+// InvalidateToken clears the global token cache. Kept for backward compatibility.
+// Deprecated: use m.invalidateToken() instead.
 func InvalidateToken() {
-	tokenMu.Lock()
-	defer tokenMu.Unlock()
-	cachedToken = ""
-	cachedExp = time.Time{}
+	mgr := GetManager()
+	if mgr != nil {
+		mgr.invalidateToken()
+	}
 }

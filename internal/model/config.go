@@ -80,7 +80,8 @@ type Config struct {
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
 	DingTalk    DingTalkConfig    `yaml:"dingtalk"`     // DingTalk enterprise bot push notifications
-	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "disabled"
+	Feishu      FeishuConfig      `yaml:"feishu"`       // Feishu (飞书) enterprise bot push notifications
+	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
 }
 
@@ -106,6 +107,14 @@ type DingTalkConfig struct {
 	AppSecret string   `yaml:"app_secret"` // Enterprise app AppSecret (ClientSecret)
 	AgentID   int64    `yaml:"agent_id"`   // Enterprise application agent_id (numeric, from DingTalk developer console)
 	Users     []string `yaml:"users"`      // Static DingTalk userId list for single-chat push
+}
+
+// FeishuConfig holds configuration for Feishu (飞书) enterprise bot push notifications.
+type FeishuConfig struct {
+	Enabled   bool     `yaml:"enabled"`    // Enable Feishu push (default: false)
+	AppID     string   `yaml:"app_id"`     // Enterprise app App ID (from Feishu developer console)
+	AppSecret string   `yaml:"app_secret"` // Enterprise app App Secret, masked after save
+	Users     []string `yaml:"users"`      // Static Feishu open_id list for single-chat push
 }
 
 // SummarizeConfig holds summarization configuration for text and voice.

@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 	"unicode/utf8"
+
+	"clawbench/internal/push/common"
 )
 
 // dingtalkPreviewMaxRunes is the maximum number of runes for the response
@@ -36,7 +38,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 	}
 
 	var title, markdown string
-	shortID := shortSessionID(sessionID)
+	shortID := common.ShortSessionID(sessionID)
 
 	switch status {
 	case "completed":
@@ -193,13 +195,4 @@ func sendToAllSubscribers(title, markdown string) bool {
 
 	slog.Debug("dingtalk: sent notifications", "sent", sent, "total", len(subscribers), "title", title)
 	return sent > 0
-}
-
-// shortSessionID returns the first 8 characters of a session ID for display.
-// Session IDs are always ASCII hex (UUID format), so byte slicing is safe.
-func shortSessionID(id string) string {
-	if len(id) < 8 {
-		return id
-	}
-	return id[:8]
 }

@@ -101,6 +101,10 @@ var hotReloadFields = map[string]bool{
 	"dingtalk.app_secret":       true,
 	"dingtalk.agent_id":         true,
 	"dingtalk.users":            true,
+	"feishu.enabled":            true,
+	"feishu.app_id":             true,
+	"feishu.app_secret":         true,
+	"feishu.users":              true,
 	"push_mode":                 true,
 	"file_search.display_limit": true,
 }
@@ -182,6 +186,7 @@ type configResponse struct {
 	FRP                 configFRP            `json:"frp"`
 	Summarize           configSummarize      `json:"summarize"`
 	DingTalk            configDingTalk       `json:"dingtalk"`
+	Feishu              configFeishu         `json:"feishu"`
 	PushMode            string               `json:"push_mode"`
 	FileSearch          configFileSearch     `json:"file_search"`
 }
@@ -290,6 +295,13 @@ type configDingTalk struct {
 	Users     []string `json:"users"`
 }
 
+type configFeishu struct {
+	Enabled   bool     `json:"enabled"`
+	AppID     string   `json:"app_id"`
+	AppSecret string   `json:"app_secret"`
+	Users     []string `json:"users"`
+}
+
 type configFileSearch struct {
 	DisplayLimit int `json:"display_limit"`
 }
@@ -356,6 +368,10 @@ var PatchableConfigPaths = map[string]bool{
 	"dingtalk.app_secret":         true,
 	"dingtalk.agent_id":           true,
 	"dingtalk.users":              true,
+	"feishu.enabled":              true,
+	"feishu.app_id":               true,
+	"feishu.app_secret":           true,
+	"feishu.users":                true,
 	"push_mode":                   true,
 	"file_search.display_limit":   true,
 }
@@ -473,6 +489,12 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AppSecret: cfg.DingTalk.AppSecret,
 			AgentID:   cfg.DingTalk.AgentID,
 			Users:     cfg.DingTalk.Users,
+		},
+		Feishu: configFeishu{
+			Enabled:   cfg.Feishu.Enabled,
+			AppID:     cfg.Feishu.AppID,
+			AppSecret: cfg.Feishu.AppSecret,
+			Users:     cfg.Feishu.Users,
 		},
 		PushMode: cfg.PushMode,
 		FileSearch: configFileSearch{
@@ -839,8 +861,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 
 	// Validate push_mode value
 	if v, ok := patch["push_mode"].(string); ok {
-		if v != "native" && v != "dingtalk" && v != "disabled" {
-			return fmt.Errorf("push_mode must be one of: native, dingtalk, disabled")
+		if v != "native" && v != "dingtalk" && v != "feishu" && v != "disabled" {
+			return fmt.Errorf("push_mode must be one of: native, dingtalk, feishu, disabled")
 		}
 	}
 
@@ -895,6 +917,7 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if v, ok := patch["push_mode"].(string); ok {
 		cfg.PushMode = v
 		cfg.DingTalk.Enabled = (v == "dingtalk")
+		cfg.Feishu.Enabled = (v == "feishu")
 	}
 
 	if v, ok := patch["localhost_auth_exempt"].(bool); ok {
@@ -1123,6 +1146,27 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 				}
 			}
 			cfg.DingTalk.Users = users
+		}
+	}
+
+	if feishu, ok := patch["feishu"].(map[string]any); ok {
+		if v, ok := feishu["enabled"].(bool); ok {
+			cfg.Feishu.Enabled = v
+		}
+		if v, ok := feishu["app_id"].(string); ok {
+			cfg.Feishu.AppID = v
+		}
+		if v, ok := feishu["app_secret"].(string); ok {
+			cfg.Feishu.AppSecret = v
+		}
+		if v, ok := feishu["users"].([]any); ok {
+			users := make([]string, 0, len(v))
+			for _, u := range v {
+				if s, ok := u.(string); ok && s != "" {
+					users = append(users, s)
+				}
+			}
+			cfg.Feishu.Users = users
 		}
 	}
 

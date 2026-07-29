@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/push/common"
+
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 )
 
@@ -241,7 +243,7 @@ func TestOnChatBotMessage_ReplyFailure(t *testing.T) {
 // mockDBWithCallback is a mock DingtalkDB with optional callback functions.
 type mockDBWithCallback struct {
 	mergeFn  func(users []string)
-	getFn    func() ([]SubscriberInfo, error)
+	getFn    func() ([]common.SubscriberInfo, error)
 	upsertFn func(userID, conversationID, userName, source string) error
 	deleteFn func(userID string) error
 }
@@ -252,7 +254,7 @@ func (m *mockDBWithCallback) MergeConfigSubscribers(users []string) {
 	}
 }
 
-func (m *mockDBWithCallback) GetSubscribers() ([]SubscriberInfo, error) {
+func (m *mockDBWithCallback) GetSubscribers() ([]common.SubscriberInfo, error) {
 	if m.getFn != nil {
 		return m.getFn()
 	}
@@ -287,10 +289,10 @@ func TestOnChatBotMessage_SessionCommand_Enqueue(t *testing.T) {
 
 	var enqueuedSession, enqueuedMsg string
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
 		},
-		allSessions: []SessionInfo{
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
 		},
 		EnqueueMessageFn: func(sid, msg string) error {
@@ -344,8 +346,8 @@ func TestOnChatBotMessage_SessionCommand_NotFound(t *testing.T) {
 	defer func() { sessionMessenger = origMessenger }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions:     []SessionInfo{},
+		runningSessions: []common.SessionInfo{},
+		allSessions:     []common.SessionInfo{},
 	}
 
 	var replyBody []byte
@@ -392,8 +394,8 @@ func TestOnChatBotMessage_SessionCommand_AutoSubscribe(t *testing.T) {
 	defer func() { sessionMessenger = origMessenger }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions:     []SessionInfo{},
+		runningSessions: []common.SessionInfo{},
+		allSessions:     []common.SessionInfo{},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -437,8 +439,8 @@ func TestOnChatBotMessage_SessionCommand_EndedSession(t *testing.T) {
 
 	var sentID, sentMsg string
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{},
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Ended Session"},
 		},
 		SendMessageFn: func(sid, msg string) error {
@@ -492,10 +494,10 @@ func TestOnChatBotMessage_SessionList(t *testing.T) {
 	defer func() { sessionMessenger = origMessenger }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Running Session"},
 		},
-		allSessions: []SessionInfo{
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Running Session"},
 			{ID: "b2c3d4e5-2222-2222-2222-222222222222", Title: "Old Session"},
 		},
@@ -550,15 +552,15 @@ func TestOnChatBotMessage_SessionCommand_EnqueueThenSessionEnds(t *testing.T) {
 
 	var sentID, sentMsg string
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
 		},
-		allSessions: []SessionInfo{
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
 		},
 		EnqueueMessageFn: func(sid, msg string) error {
 			// Simulate session ending right after enqueue
-			sessionMessenger.(*mockSessionMessenger).runningSessions = []SessionInfo{}
+			sessionMessenger.(*mockSessionMessenger).runningSessions = []common.SessionInfo{}
 			return nil
 		},
 		SendMessageFn: func(sid, msg string) error {
@@ -608,10 +610,10 @@ func TestOnChatBotMessage_SessionCommand_EnqueueError(t *testing.T) {
 	defer func() { sessionMessenger = origMessenger }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Running Session"},
 		},
-		allSessions: []SessionInfo{
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Running Session"},
 		},
 		EnqueueMessageFn: func(sid, msg string) error {
@@ -658,14 +660,14 @@ func TestOnChatBotMessage_SessionCommand_EnqueueThenSessionEnds_SendFails(t *tes
 	defer func() { sessionMessenger = origMessenger }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
 		},
-		allSessions: []SessionInfo{
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
 		},
 		EnqueueMessageFn: func(sid, msg string) error {
-			sessionMessenger.(*mockSessionMessenger).runningSessions = []SessionInfo{}
+			sessionMessenger.(*mockSessionMessenger).runningSessions = []common.SessionInfo{}
 			return nil
 		},
 		SendMessageFn: func(sid, msg string) error {
@@ -712,8 +714,8 @@ func TestOnChatBotMessage_SessionCommand_SendToNotRunningSession_Fails(t *testin
 	defer func() { sessionMessenger = origMessenger }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{},
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Ended Session"},
 		},
 		SendMessageFn: func(sid, msg string) error {
@@ -841,8 +843,8 @@ func TestOnChatBotMessage_SessionList_EmptySessions(t *testing.T) {
 	defer func() { sessionMessenger = origMessenger }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions:     []SessionInfo{},
+		runningSessions: []common.SessionInfo{},
+		allSessions:     []common.SessionInfo{},
 	}
 
 	var replyBody []byte
@@ -884,8 +886,8 @@ func TestOnChatBotMessage_SessionList_NoProjectAndNoTitle(t *testing.T) {
 	defer func() { sessionMessenger = origMessenger }()
 
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{},
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "", ProjectPath: ""},
 			{ID: "b2c3d4e5-2222-2222-2222-222222222222", Title: "Has Title", ProjectPath: "/home/project"},
 		},
@@ -937,8 +939,8 @@ func TestOnChatBotMessage_SessionCommand_SendToNotRunningSession_Success(t *test
 
 	var sentID, sentMsg string
 	sessionMessenger = &mockSessionMessenger{
-		runningSessions: []SessionInfo{},
-		allSessions: []SessionInfo{
+		runningSessions: []common.SessionInfo{},
+		allSessions: []common.SessionInfo{
 			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Idle Session"},
 		},
 		SendMessageFn: func(sid, msg string) error {

@@ -406,6 +406,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_dingtalk_user ON dingtalk_subscribers(user_id);
+
+		-- Feishu subscriber management (added 2026-07)
+		CREATE TABLE IF NOT EXISTS feishu_subscribers (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id         TEXT NOT NULL UNIQUE,
+			chat_id         TEXT NOT NULL DEFAULT '',
+			user_name       TEXT NOT NULL DEFAULT '',
+			source          TEXT NOT NULL DEFAULT 'stream',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_user ON feishu_subscribers(user_id);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)

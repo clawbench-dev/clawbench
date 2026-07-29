@@ -266,12 +266,16 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.PushMode == "" {
 		if cfg.DingTalk.Enabled {
 			cfg.PushMode = "dingtalk"
+		} else if cfg.Feishu.Enabled {
+			cfg.PushMode = "feishu"
 		} else {
 			cfg.PushMode = "native"
 		}
 	}
 	// Keep DingTalk.Enabled in sync with PushMode
 	cfg.DingTalk.Enabled = cfg.PushMode == "dingtalk"
+	// Keep Feishu.Enabled in sync with PushMode
+	cfg.Feishu.Enabled = cfg.PushMode == "feishu"
 
 	return autoPassword
 }

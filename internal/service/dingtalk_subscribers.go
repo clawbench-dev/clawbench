@@ -53,7 +53,7 @@ func UpsertDingTalkSubscriber(userID, conversationID, userName, source string) e
 		 ON CONFLICT(user_id) DO UPDATE SET
 			conversation_id = excluded.conversation_id,
 			user_name = excluded.user_name,
-			source = excluded.source`,
+			source = CASE WHEN dingtalk_subscribers.source = 'manual' THEN 'manual' ELSE excluded.source END`,
 		userID, conversationID, userName, source,
 	)
 	if err != nil {

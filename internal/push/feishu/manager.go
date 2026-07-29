@@ -1,4 +1,4 @@
-package dingtalk
+package feishu
 
 import (
 	"context"
@@ -10,13 +10,13 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/push/common"
 
-	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
+	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
 var db common.PushDB
 
-// clientChecker is set once at startup via RegisterClientChecker before any
-// push events occur, then read-only. Safe for concurrent reads after initialization.
+// ConnectedClientChecker checks whether any client is currently connected.
+// Injected from cmd/server to avoid import cycles with the ws package.
 var clientChecker common.ConnectedClientChecker
 
 // RegisterClientChecker sets the client checker (called from main.go).
@@ -29,14 +29,10 @@ var sessionMessenger common.SessionMessenger
 // RegisterSessionMessenger sets the session messenger (called from main.go).
 func RegisterSessionMessenger(m common.SessionMessenger) { sessionMessenger = m }
 
-// SetDB sets the DB adapter (called from main.go after service.InitDB).
-// RegisterDBAdapter is the only way to set the DB adapter — see adapter.go.
-// Must be called before Manager.Start() (guaranteed by call order in main.go).
-
-// Manager manages the DingTalk Stream connection and token.
+// Manager manages the Feishu WebSocket connection and token.
 type Manager struct {
-	cfg        *model.DingTalkConfig
-	streamCli  *client.StreamClient
+	cfg        *model.FeishuConfig
+	wsClient   *larkws.Client
 	cancel     context.CancelFunc
 	started    bool
 	startMu    sync.Mutex
@@ -53,8 +49,8 @@ var (
 	mgrMu       sync.RWMutex
 )
 
-// NewManager creates a new DingTalk Manager.
-func NewManager(cfg *model.DingTalkConfig) *Manager {
+// NewManager creates a new Feishu Manager.
+func NewManager(cfg *model.FeishuConfig) *Manager {
 	return &Manager{
 		cfg: cfg,
 		httpClient: &http.Client{
@@ -83,14 +79,13 @@ func SetManager(m *Manager) {
 }
 
 // SetStartedForTest sets the started flag for testing purposes.
-// Production code must not use this.
 func (m *Manager) SetStartedForTest(started bool) {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 	m.started = started
 }
 
-// IsStarted returns whether the DingTalk manager is running.
+// IsStarted returns whether the Feishu manager is running.
 func IsStarted() bool {
 	mgrMu.RLock()
 	defer mgrMu.RUnlock()
@@ -98,7 +93,7 @@ func IsStarted() bool {
 }
 
 // GetPushMode returns the current push_mode from the global ConfigInstance.
-// Values: "native" (default), "dingtalk", "disabled".
+// Values: "native" (default), "dingtalk", "feishu", "disabled".
 func GetPushMode() string {
 	mode := model.ConfigInstance.PushMode
 	if mode == "" {
@@ -112,20 +107,18 @@ type ReconfigureResult struct {
 	NeedsRestart bool // true = caller must Stop this Manager + create new one
 }
 
-// Reconfigure updates in-place config fields (agent_id, users) or
+// Reconfigure updates in-place config fields (users) or
 // signals that a full restart is needed (enabled/credentials changed).
-// Thread-safe: acquires startMu.
-func (m *Manager) Reconfigure(cfg *model.DingTalkConfig) ReconfigureResult {
+func (m *Manager) Reconfigure(cfg *model.FeishuConfig) ReconfigureResult {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 
 	// Credentials or enabled changed — these require full restart
-	if m.cfg.AppKey != cfg.AppKey || m.cfg.AppSecret != cfg.AppSecret || m.cfg.Enabled != cfg.Enabled {
+	if m.cfg.AppID != cfg.AppID || m.cfg.AppSecret != cfg.AppSecret || m.cfg.Enabled != cfg.Enabled {
 		return ReconfigureResult{NeedsRestart: true}
 	}
 
-	// In-place update: agent_id, users
-	m.cfg.AgentID = cfg.AgentID
+	// In-place update: users
 	m.cfg.Users = cfg.Users
 
 	// Merge updated config users into DB
@@ -136,7 +129,7 @@ func (m *Manager) Reconfigure(cfg *model.DingTalkConfig) ReconfigureResult {
 	return ReconfigureResult{NeedsRestart: false}
 }
 
-// Start initializes the Stream connection.
+// Start initializes the WebSocket connection.
 func (m *Manager) Start() error {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
@@ -145,13 +138,13 @@ func (m *Manager) Start() error {
 		return nil
 	}
 
-	if m.cfg.AppKey == "" || m.cfg.AppSecret == "" {
-		slog.Warn("dingtalk: missing app_key or app_secret, skipping")
+	if m.cfg.AppID == "" || m.cfg.AppSecret == "" {
+		slog.Warn("feishu: missing app_id or app_secret, skipping")
 		return nil
 	}
 
 	if db == nil {
-		slog.Warn("dingtalk: DB adapter not set, skipping")
+		slog.Warn("feishu: DB adapter not set, skipping")
 		return nil
 	}
 
@@ -161,17 +154,17 @@ func (m *Manager) Start() error {
 	// Merge config users into DB
 	db.MergeConfigSubscribers(m.cfg.Users)
 
-	// Start Stream connection (non-blocking)
-	var streamErr error
-	if err := m.startStream(ctx); err != nil {
-		streamErr = err
-		slog.Warn("dingtalk: stream connection failed", "error", err)
-		// Stream failure is not fatal
+	// Start WebSocket connection (non-blocking)
+	var wsErr error
+	if err := m.startWebSocket(ctx); err != nil {
+		wsErr = err
+		slog.Warn("feishu: websocket connection failed", "error", err)
+		// WebSocket failure is not fatal
 	}
 
 	m.started = true
-	slog.Info("dingtalk: manager started")
-	return streamErr
+	slog.Info("feishu: manager started")
+	return wsErr
 }
 
 // Stop gracefully shuts down the manager.
@@ -186,9 +179,9 @@ func (m *Manager) Stop() {
 	if m.cancel != nil {
 		m.cancel()
 	}
-	if m.streamCli != nil {
-		m.streamCli.Close()
-		m.streamCli = nil
+	if m.wsClient != nil {
+		m.wsClient.Close()
+		m.wsClient = nil
 	}
 
 	// Invalidate cached token so a new Manager with different credentials
@@ -196,5 +189,5 @@ func (m *Manager) Stop() {
 	m.invalidateToken()
 
 	m.started = false
-	slog.Info("dingtalk: manager stopped")
+	slog.Info("feishu: manager stopped")
 }

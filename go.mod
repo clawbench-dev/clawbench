@@ -11,6 +11,7 @@ require (
 	github.com/go-ego/gse v1.0.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/larksuite/oapi-sdk-go/v3 v3.9.9
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/odvcencio/gotreesitter v0.20.0
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
@@ -33,6 +34,7 @@ require (
 	github.com/fatedier/golib v0.7.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/hashicorp/yamux v0.1.1 // indirect

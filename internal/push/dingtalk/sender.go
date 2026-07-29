@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 )
 
 var (
@@ -31,7 +30,32 @@ type robotSendResult struct {
 // SendMarkdownMessage sends a Markdown message to a DingTalk user via robot single-chat.
 // It uses the /v1.0/robot/oToMessages/batchSend API.
 // userID must be a real staffId, NOT the encrypted $:LWCP_v1:$ format.
+// On 401 (token expired), it invalidates the cached token and retries once.
 func (m *Manager) SendMarkdownMessage(ctx context.Context, userID, title, markdown string) error {
+	err := m.sendMarkdownMessageOnce(ctx, userID, title, markdown)
+	if err == nil {
+		return nil
+	}
+
+	// If the error is due to a 401 or InvalidAuthentication, invalidate token and retry once
+	if isDingTalkTokenError(err) {
+		slog.Info("dingtalk: token expired, retrying with fresh token")
+		m.invalidateToken()
+		return m.sendMarkdownMessageOnce(ctx, userID, title, markdown)
+	}
+
+	return err
+}
+
+// isDingTalkTokenError checks if the error was caused by a 401 response.
+func isDingTalkTokenError(err error) bool {
+	return err != nil && (err.Error() == "dingtalk: token expired (401)" ||
+		err.Error() == "dingtalk: invalid authentication")
+}
+
+// sendMarkdownMessageOnce attempts a single send. Returns a sentinel error
+// if the response status is 401, so the caller can retry.
+func (m *Manager) sendMarkdownMessageOnce(ctx context.Context, userID, title, markdown string) error {
 	token, err := m.getAccessToken(ctx)
 	if err != nil {
 		return fmt.Errorf("dingtalk: get token: %w", err)
@@ -65,8 +89,7 @@ func (m *Manager) SendMarkdownMessage(ctx context.Context, userID, title, markdo
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-acs-dingtalk-access-token", token)
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	resp, err := httpClient.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("dingtalk: send fetch: %w", err)
 	}
@@ -77,10 +100,9 @@ func (m *Manager) SendMarkdownMessage(ctx context.Context, userID, title, markdo
 		return fmt.Errorf("dingtalk: send read: %w", err)
 	}
 
-	// Handle token expiration
+	// Handle token expiration — return sentinel for retry
 	if resp.StatusCode == 401 {
-		InvalidateToken()
-		return fmt.Errorf("dingtalk: token expired (401), invalidated for retry")
+		return fmt.Errorf("dingtalk: token expired (401)")
 	}
 
 	var result robotSendResult
@@ -89,9 +111,9 @@ func (m *Manager) SendMarkdownMessage(ctx context.Context, userID, title, markdo
 	}
 
 	if result.Code != "" && result.Code != "0" {
-		// Token invalid — invalidate for retry
+		// Token invalid — return sentinel for retry
 		if result.Code == "InvalidAuthentication" {
-			InvalidateToken()
+			return fmt.Errorf("dingtalk: invalid authentication")
 		}
 		return fmt.Errorf("dingtalk: send error: %s (code %s)", result.Message, result.Code)
 	}

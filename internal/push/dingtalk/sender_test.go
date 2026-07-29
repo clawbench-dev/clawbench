@@ -38,13 +38,11 @@ func TestSendMarkdownMessage_Success(t *testing.T) {
 		dingtalkTokenURL = origTokenURL
 	}()
 
-	tokenMu.Lock()
-	cachedToken = "test-access-token"
-	cachedExp = time.Now().Add(2 * time.Hour)
-	tokenMu.Unlock()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "test-app-key"})
+	mgr.cachedToken = "test-access-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	defer resetTokenCache(mgr)
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "test-app-key"}}
 	err := mgr.SendMarkdownMessage(context.Background(), "staff123", "Test Title", "## Hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -77,22 +75,18 @@ func TestSendMarkdownMessage_TokenExpired401(t *testing.T) {
 		dingtalkTokenURL = origTokenURL
 	}()
 
-	tokenMu.Lock()
-	cachedToken = "expired-token"
-	cachedExp = time.Now().Add(2 * time.Hour)
-	tokenMu.Unlock()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "test-key"})
+	mgr.cachedToken = "expired-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	defer resetTokenCache(mgr)
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "test-key"}}
 	err := mgr.SendMarkdownMessage(context.Background(), "staff123", "Title", "Text")
 	if err == nil {
 		t.Fatal("expected error for 401, got nil")
 	}
 
-	tokenMu.RLock()
-	token := cachedToken
-	tokenMu.RUnlock()
-	if token != "" {
+	// After 401 + retry (which also 401s), token should be invalidated
+	if mgr.cachedToken != "" {
 		t.Error("expected token to be invalidated after 401")
 	}
 }
@@ -113,22 +107,17 @@ func TestSendMarkdownMessage_InvalidAuthentication(t *testing.T) {
 		dingtalkTokenURL = origTokenURL
 	}()
 
-	tokenMu.Lock()
-	cachedToken = "bad-token"
-	cachedExp = time.Now().Add(2 * time.Hour)
-	tokenMu.Unlock()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "test-key"})
+	mgr.cachedToken = "bad-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	defer resetTokenCache(mgr)
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "test-key"}}
 	err := mgr.SendMarkdownMessage(context.Background(), "staff123", "Title", "Text")
 	if err == nil {
 		t.Fatal("expected error for InvalidAuthentication, got nil")
 	}
 
-	tokenMu.RLock()
-	token := cachedToken
-	tokenMu.RUnlock()
-	if token != "" {
+	if mgr.cachedToken != "" {
 		t.Error("expected token to be invalidated after InvalidAuthentication")
 	}
 }
@@ -149,13 +138,11 @@ func TestSendMarkdownMessage_APIError(t *testing.T) {
 		dingtalkTokenURL = origTokenURL
 	}()
 
-	tokenMu.Lock()
-	cachedToken = "valid-token"
-	cachedExp = time.Now().Add(2 * time.Hour)
-	tokenMu.Unlock()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "test-key"})
+	mgr.cachedToken = "valid-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	defer resetTokenCache(mgr)
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "test-key"}}
 	err := mgr.SendMarkdownMessage(context.Background(), "staff123", "Title", "Text")
 	if err == nil {
 		t.Fatal("expected error for API error response, got nil")
@@ -178,13 +165,11 @@ func TestSendMarkdownMessage_InvalidJSONResponse(t *testing.T) {
 		dingtalkTokenURL = origTokenURL
 	}()
 
-	tokenMu.Lock()
-	cachedToken = "valid-token"
-	cachedExp = time.Now().Add(2 * time.Hour)
-	tokenMu.Unlock()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "test-key"})
+	mgr.cachedToken = "valid-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	defer resetTokenCache(mgr)
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "test-key"}}
 	err := mgr.SendMarkdownMessage(context.Background(), "staff123", "Title", "Text")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON response, got nil")
@@ -192,10 +177,9 @@ func TestSendMarkdownMessage_InvalidJSONResponse(t *testing.T) {
 }
 
 func TestSendMarkdownMessage_TokenFetchError(t *testing.T) {
-	InvalidateToken()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "key", AppSecret: "secret"})
+	defer resetTokenCache(mgr)
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "key", AppSecret: "secret"}}
 	err := mgr.SendMarkdownMessage(context.Background(), "staff123", "Title", "Text")
 	if err == nil {
 		t.Fatal("expected error when token fetch fails, got nil")

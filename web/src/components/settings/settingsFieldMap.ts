@@ -175,6 +175,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         options: [
           { labelKey: 'settings.items.pushModeNative', value: 'native' },
           { labelKey: 'settings.items.pushModeDingtalk', value: 'dingtalk' },
+          { labelKey: 'settings.items.pushModeFeishu', value: 'feishu' },
           { labelKey: 'settings.items.pushModeDisabled', value: 'disabled' },
         ],
         defaultValue: 'native',
@@ -186,13 +187,21 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
           { labelKey: 'settings.items.dingtalkAppSecret', descriptionKey: 'settings.items.dingtalkAppSecretDesc', key: 'dingtalk.app_secret', type: 'password', source: 'server' },
           { labelKey: 'settings.items.dingtalkAgentId', descriptionKey: 'settings.items.dingtalkAgentIdDesc', key: 'dingtalk.agent_id', type: 'number', source: 'server' },
         ]},
+        { when: 'feishu', fields: [
+          { labelKey: 'settings.items.feishuAppId', descriptionKey: 'settings.items.feishuAppIdDesc', key: 'feishu.app_id', type: 'text', source: 'server' },
+          { labelKey: 'settings.items.feishuAppSecret', descriptionKey: 'settings.items.feishuAppSecretDesc', key: 'feishu.app_secret', type: 'password', source: 'server' },
+        ]},
       ],
-      requiredFields: ['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'],
-      hasConnectivityTest: (values) => values.push_mode === 'dingtalk',
-      getTestCategories: (values) => values.push_mode === 'dingtalk' ? [{ category: 'dingtalk', values }] : [],
+      requiredFields: ['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id', 'feishu.app_id', 'feishu.app_secret'],
+      hasConnectivityTest: (values) => values.push_mode === 'dingtalk' || values.push_mode === 'feishu',
+      getTestCategories: (values) => {
+        if (values.push_mode === 'dingtalk') return [{ category: 'dingtalk', values }]
+        if (values.push_mode === 'feishu') return [{ category: 'feishu', values }]
+        return []
+      },
       afterSave(changedKeys, values) {
         if (changedKeys.includes('push_mode')) {
-          // Sync Android native push (backend derives dingtalk.enabled from push_mode automatically)
+          // Sync Android native push (backend derives dingtalk/feishu.enabled from push_mode automatically)
           try {
             const native = (window as unknown as { AndroidNative?: { setNativePushEnabled?: (v: boolean) => void } }).AndroidNative
             native?.setNativePushEnabled?.(values?.push_mode === 'native')

@@ -3,6 +3,7 @@ package dingtalk
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,44 +13,37 @@ import (
 	"clawbench/internal/model"
 )
 
-func resetTokenCache() {
-	tokenMu.Lock()
-	cachedToken = ""
-	cachedExp = time.Time{}
-	tokenMu.Unlock()
+func resetTokenCache(mgr *Manager) {
+	mgr.tokenMu.Lock()
+	mgr.cachedToken = ""
+	mgr.cachedExp = time.Time{}
+	mgr.tokenMu.Unlock()
 }
 
 func TestTokenInvalidate(t *testing.T) {
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+
 	// Set some cached values
-	tokenMu.Lock()
-	cachedToken = "test-token"
-	cachedExp = time.Now().Add(2 * time.Hour)
-	tokenMu.Unlock()
+	mgr.cachedToken = "test-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
 
 	// Invalidate
-	InvalidateToken()
+	mgr.invalidateToken()
 
-	tokenMu.RLock()
-	token := cachedToken
-	exp := cachedExp
-	tokenMu.RUnlock()
-
-	if token != "" {
-		t.Errorf("expected empty token after invalidation, got %q", token)
+	if mgr.cachedToken != "" {
+		t.Errorf("expected empty token after invalidation, got %q", mgr.cachedToken)
 	}
-	if !exp.IsZero() {
-		t.Errorf("expected zero expiry time, got %v", exp)
+	if !mgr.cachedExp.IsZero() {
+		t.Errorf("expected zero expiry time, got %v", mgr.cachedExp)
 	}
 }
 
 func TestGetAccessToken_Cached(t *testing.T) {
-	mgr := &Manager{}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 
-	tokenMu.Lock()
-	cachedToken = "cached-test-token"
-	cachedExp = time.Now().Add(2 * time.Hour)
-	tokenMu.Unlock()
-	defer resetTokenCache()
+	mgr.cachedToken = "cached-test-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
+	defer resetTokenCache(mgr)
 
 	token, err := mgr.getAccessToken(context.Background())
 	if err != nil {
@@ -63,25 +57,21 @@ func TestGetAccessToken_Cached(t *testing.T) {
 func TestGetAccessToken_DoubleCheckLock(t *testing.T) {
 	// Test the double-check pattern: token is valid when we enter
 	// the write-lock path, because another goroutine refreshed it.
-	// This exercises lines 51-53 (double-check after write lock).
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 
 	// Pre-populate with an about-to-expire token to force entering write lock
-	tokenMu.Lock()
-	cachedToken = "expiring-double-check"
-	cachedExp = time.Now().Add(3 * time.Minute) // Within refresh buffer
-	tokenMu.Unlock()
-	defer resetTokenCache()
+	mgr.cachedToken = "expiring-double-check"
+	mgr.cachedExp = time.Now().Add(3 * time.Minute) // Within refresh buffer
+	defer resetTokenCache(mgr)
 
 	// This enters the write lock path (near expiry), then tries to hit the real API.
 	// The real API will fail, but the double-check path is exercised differently.
-	// For a true double-check test, we need a concurrent scenario.
 	_, _ = mgr.getAccessToken(context.Background())
 }
 
 func TestGetAccessToken_RefreshSuccess(t *testing.T) {
-	resetTokenCache()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "test-key", AppSecret: "test-secret"})
+	defer resetTokenCache(mgr)
 
 	// Create a mock server that responds like the DingTalk token API
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -96,15 +86,14 @@ func TestGetAccessToken_RefreshSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Override http.DefaultTransport to redirect DingTalk API calls to our mock server
-	origTransport := http.DefaultTransport
-	http.DefaultTransport = &redirectTransport{
-		targetURL: server.URL,
-		transport: origTransport,
+	// Override the manager's httpClient to redirect to mock server
+	mgr.httpClient = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &redirectTransport{
+			targetURL: server.URL,
+			transport: http.DefaultTransport,
+		},
 	}
-	defer func() { http.DefaultTransport = origTransport }()
-
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "test-key", AppSecret: "test-secret"}}
 
 	token, err := mgr.getAccessToken(context.Background())
 	if err != nil {
@@ -115,17 +104,14 @@ func TestGetAccessToken_RefreshSuccess(t *testing.T) {
 	}
 
 	// Verify cache was set
-	tokenMu.RLock()
-	cached := cachedToken
-	tokenMu.RUnlock()
-	if cached != "mock-refreshed-token" {
-		t.Errorf("expected cached token to be set, got %q", cached)
+	if mgr.cachedToken != "mock-refreshed-token" {
+		t.Errorf("expected cached token to be set, got %q", mgr.cachedToken)
 	}
 }
 
 func TestGetAccessToken_RefreshDefaultExpiry(t *testing.T) {
-	resetTokenCache()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	defer resetTokenCache(mgr)
 
 	// Mock server that returns expires_in=0 (should use default 2h)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,14 +126,13 @@ func TestGetAccessToken_RefreshDefaultExpiry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	origTransport := http.DefaultTransport
-	http.DefaultTransport = &redirectTransport{
-		targetURL: server.URL,
-		transport: origTransport,
+	mgr.httpClient = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &redirectTransport{
+			targetURL: server.URL,
+			transport: http.DefaultTransport,
+		},
 	}
-	defer func() { http.DefaultTransport = origTransport }()
-
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
 
 	token, err := mgr.getAccessToken(context.Background())
 	if err != nil {
@@ -158,17 +143,14 @@ func TestGetAccessToken_RefreshDefaultExpiry(t *testing.T) {
 	}
 
 	// Verify the default expiry was set (approximately 2 hours from now)
-	tokenMu.RLock()
-	exp := cachedExp
-	tokenMu.RUnlock()
-	if time.Until(exp) < 1*time.Hour || time.Until(exp) > 3*time.Hour {
-		t.Errorf("expected default expiry ~2h, got %v", time.Until(exp))
+	if time.Until(mgr.cachedExp) < 1*time.Hour || time.Until(mgr.cachedExp) > 3*time.Hour {
+		t.Errorf("expected default expiry ~2h, got %v", time.Until(mgr.cachedExp))
 	}
 }
 
 func TestGetAccessToken_APIError(t *testing.T) {
-	resetTokenCache()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "bad-key", AppSecret: "bad-secret"})
+	defer resetTokenCache(mgr)
 
 	// Mock server that returns an API error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -181,14 +163,13 @@ func TestGetAccessToken_APIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	origTransport := http.DefaultTransport
-	http.DefaultTransport = &redirectTransport{
-		targetURL: server.URL,
-		transport: origTransport,
+	mgr.httpClient = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &redirectTransport{
+			targetURL: server.URL,
+			transport: http.DefaultTransport,
+		},
 	}
-	defer func() { http.DefaultTransport = origTransport }()
-
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "bad-key", AppSecret: "bad-secret"}}
 
 	_, err := mgr.getAccessToken(context.Background())
 	if err == nil {
@@ -197,10 +178,9 @@ func TestGetAccessToken_APIError(t *testing.T) {
 }
 
 func TestGetAccessToken_CancelledContext(t *testing.T) {
-	resetTokenCache()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	defer resetTokenCache(mgr)
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -211,8 +191,8 @@ func TestGetAccessToken_CancelledContext(t *testing.T) {
 }
 
 func TestGetAccessToken_InvalidJSONResponse(t *testing.T) {
-	resetTokenCache()
-	defer resetTokenCache()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	defer resetTokenCache(mgr)
 
 	// Mock server that returns invalid JSON
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -221,14 +201,13 @@ func TestGetAccessToken_InvalidJSONResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	origTransport := http.DefaultTransport
-	http.DefaultTransport = &redirectTransport{
-		targetURL: server.URL,
-		transport: origTransport,
+	mgr.httpClient = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &redirectTransport{
+			targetURL: server.URL,
+			transport: http.DefaultTransport,
+		},
 	}
-	defer func() { http.DefaultTransport = origTransport }()
-
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
 
 	_, err := mgr.getAccessToken(context.Background())
 	if err == nil {
@@ -237,13 +216,11 @@ func TestGetAccessToken_InvalidJSONResponse(t *testing.T) {
 }
 
 func TestGetAccessToken_NearExpiryCache(t *testing.T) {
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 
-	tokenMu.Lock()
-	cachedToken = "expiring-token"
-	cachedExp = time.Now().Add(3 * time.Minute) // Less than tokenRefreshBuffer (5 min)
-	tokenMu.Unlock()
-	defer resetTokenCache()
+	mgr.cachedToken = "expiring-token"
+	mgr.cachedExp = time.Now().Add(3 * time.Minute) // Less than tokenRefreshBuffer (5 min)
+	defer resetTokenCache(mgr)
 
 	// Will try to refresh but fail against real API (no mock server)
 	_, err := mgr.getAccessToken(context.Background())
@@ -253,23 +230,52 @@ func TestGetAccessToken_NearExpiryCache(t *testing.T) {
 }
 
 func TestInvalidateToken_ClearsBothFields(t *testing.T) {
-	tokenMu.Lock()
-	cachedToken = "token-to-clear"
-	cachedExp = time.Now().Add(1 * time.Hour)
-	tokenMu.Unlock()
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	mgr.cachedToken = "token-to-clear"
+	mgr.cachedExp = time.Now().Add(1 * time.Hour)
+
+	mgr.invalidateToken()
+
+	if mgr.cachedToken != "" {
+		t.Errorf("expected empty token, got %q", mgr.cachedToken)
+	}
+	if !mgr.cachedExp.IsZero() {
+		t.Errorf("expected zero expiry, got %v", mgr.cachedExp)
+	}
+}
+
+func TestInvalidateToken_GlobalFallback(t *testing.T) {
+	// When no manager is set, global InvalidateToken should not panic
+	SetManager(nil)
+	InvalidateToken() // should not panic
+
+	// When a manager is set, it should delegate to the instance
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	mgr.cachedToken = "t-fallback"
+	mgr.cachedExp = time.Now().Add(1 * time.Hour)
+	SetManager(mgr)
+	defer SetManager(nil)
 
 	InvalidateToken()
-
-	tokenMu.RLock()
-	tok := cachedToken
-	exp := cachedExp
-	tokenMu.RUnlock()
-
-	if tok != "" {
-		t.Errorf("expected empty token, got %q", tok)
+	if mgr.cachedToken != "" {
+		t.Error("expected token to be cleared via global InvalidateToken")
 	}
-	if !exp.IsZero() {
-		t.Errorf("expected zero expiry, got %v", exp)
+}
+
+func TestIsDingTalkTokenError(t *testing.T) {
+	tests := []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{fmt.Errorf("dingtalk: token expired (401)"), true},
+		{fmt.Errorf("dingtalk: invalid authentication"), true},
+		{fmt.Errorf("dingtalk: send fetch: connection refused"), false},
+	}
+	for _, tt := range tests {
+		if got := isDingTalkTokenError(tt.err); got != tt.want {
+			t.Errorf("isDingTalkTokenError(%v) = %v, want %v", tt.err, got, tt.want)
+		}
 	}
 }
 

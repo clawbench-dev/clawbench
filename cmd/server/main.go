@@ -40,7 +40,9 @@ import (
 	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/push/common"
 	"clawbench/internal/push/dingtalk"
+	"clawbench/internal/push/feishu"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
@@ -65,14 +67,14 @@ func (dingtalkDBAdapter) MergeConfigSubscribers(users []string) {
 	service.MergeDingTalkConfigSubscribers(users)
 }
 
-func (dingtalkDBAdapter) GetSubscribers() ([]dingtalk.SubscriberInfo, error) {
+func (dingtalkDBAdapter) GetSubscribers() ([]common.SubscriberInfo, error) {
 	subs, err := service.GetDingTalkSubscribers()
 	if err != nil {
 		return nil, err
 	}
-	result := make([]dingtalk.SubscriberInfo, len(subs))
+	result := make([]common.SubscriberInfo, len(subs))
 	for i, s := range subs {
-		result[i] = dingtalk.SubscriberInfo{
+		result[i] = common.SubscriberInfo{
 			UserID:         s.UserID,
 			ConversationID: s.ConversationID,
 			UserName:       s.UserName,
@@ -94,7 +96,7 @@ func (dingtalkDBAdapter) DeleteSubscriber(userID string) error {
 // to service package functions, avoiding import cycles (service → dingtalk → service).
 type dingtalkSessionMessenger struct{}
 
-func (dingtalkSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]dingtalk.SessionInfo, error) {
+func (dingtalkSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
 	var sessions []service.DingTalkSessionInfo
 	var err error
 	if runningOnly {
@@ -105,9 +107,9 @@ func (dingtalkSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly 
 	if err != nil {
 		return nil, err
 	}
-	result := make([]dingtalk.SessionInfo, len(sessions))
+	result := make([]common.SessionInfo, len(sessions))
 	for i, s := range sessions {
-		result[i] = dingtalk.SessionInfo{
+		result[i] = common.SessionInfo{
 			ID:          s.ID,
 			Title:       s.Title,
 			ProjectPath: s.ProjectPath,
@@ -119,14 +121,14 @@ func (dingtalkSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly 
 	return result, nil
 }
 
-func (dingtalkSessionMessenger) ListRecentSessions(limit int) ([]dingtalk.SessionInfo, error) {
+func (dingtalkSessionMessenger) ListRecentSessions(limit int) ([]common.SessionInfo, error) {
 	sessions, err := service.ListRecentSessions(limit)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]dingtalk.SessionInfo, len(sessions))
+	result := make([]common.SessionInfo, len(sessions))
 	for i, s := range sessions {
-		result[i] = dingtalk.SessionInfo{
+		result[i] = common.SessionInfo{
 			ID:          s.ID,
 			Title:       s.Title,
 			ProjectPath: s.ProjectPath,
@@ -158,6 +160,107 @@ func (dingtalkSessionMessenger) ClearQueue(sessionID string) {
 
 func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string) error {
 	return service.SendMessageToSessionFromDingTalk(sessionID, message)
+}
+
+// feishuDBAdapter bridges the feishu package's DB interface to service package
+// functions, avoiding import cycles between service → feishu → service.
+type feishuDBAdapter struct{}
+
+func (feishuDBAdapter) MergeConfigSubscribers(users []string) {
+	service.MergeFeishuConfigSubscribers(users)
+}
+
+func (feishuDBAdapter) GetSubscribers() ([]common.SubscriberInfo, error) {
+	subs, err := service.GetFeishuSubscribers()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]common.SubscriberInfo, len(subs))
+	for i, s := range subs {
+		result[i] = common.SubscriberInfo{
+			UserID:         s.UserID,
+			ConversationID: s.ChatID,
+			UserName:       s.UserName,
+			Source:         s.Source,
+		}
+	}
+	return result, nil
+}
+
+func (feishuDBAdapter) UpsertSubscriber(userID, conversationID, userName, source string) error {
+	return service.UpsertFeishuSubscriber(userID, conversationID, userName, source)
+}
+
+func (feishuDBAdapter) DeleteSubscriber(userID string) error {
+	return service.DeleteFeishuSubscriber(userID)
+}
+
+// feishuSessionMessenger bridges the feishu package's SessionMessenger interface
+// to service package functions, avoiding import cycles.
+type feishuSessionMessenger struct{}
+
+func (feishuSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
+	var sessions []service.DingTalkSessionInfo
+	var err error
+	if runningOnly {
+		sessions, err = service.FindRunningSessionsByPrefix(prefix)
+	} else {
+		sessions, err = service.FindSessionsByPrefix(prefix)
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := make([]common.SessionInfo, len(sessions))
+	for i, s := range sessions {
+		result[i] = common.SessionInfo{
+			ID:          s.ID,
+			Title:       s.Title,
+			ProjectPath: s.ProjectPath,
+			Backend:     s.Backend,
+			AgentID:     s.AgentID,
+			Model:       s.Model,
+		}
+	}
+	return result, nil
+}
+
+func (feishuSessionMessenger) ListRecentSessions(limit int) ([]common.SessionInfo, error) {
+	sessions, err := service.ListRecentSessions(limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]common.SessionInfo, len(sessions))
+	for i, s := range sessions {
+		result[i] = common.SessionInfo{
+			ID:          s.ID,
+			Title:       s.Title,
+			ProjectPath: s.ProjectPath,
+			Backend:     s.Backend,
+			AgentID:     s.AgentID,
+			Model:       s.Model,
+		}
+	}
+	return result, nil
+}
+
+func (feishuSessionMessenger) IsSessionRunning(sessionID string) bool {
+	return service.IsSessionRunning(sessionID)
+}
+
+func (feishuSessionMessenger) EnqueueMessage(sessionID, message string) error {
+	service.EnqueueMessage(sessionID, model.QueuedMessage{
+		Text:      message,
+		CreatedAt: time.Now().Format(time.RFC3339),
+	})
+	return nil
+}
+
+func (feishuSessionMessenger) ClearQueue(sessionID string) {
+	service.ClearQueue(sessionID)
+}
+
+func (feishuSessionMessenger) SendMessageToSession(sessionID, message string) error {
+	return service.SendMessageToSessionFromFeishu(sessionID, message)
 }
 
 // multiHandler sends log records to multiple handlers
@@ -898,15 +1001,34 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	dingtalk.RegisterSessionMessenger(&dingtalkSessionMessenger{})
 	if cfg.PushMode == "dingtalk" && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
 		dingtalkMgr := dingtalk.NewManager(&cfg.DingTalk)
+		dingtalk.SetManager(dingtalkMgr)
 		if err := dingtalkMgr.Start(); err != nil {
 			slog.Warn("DingTalk push failed to start", slog.String("err", err.Error()))
 		} else {
-			dingtalk.SetManager(dingtalkMgr)
 			slog.Info("DingTalk push enabled")
 		}
 	}
 	defer func() {
 		if mgr := dingtalk.GetManager(); mgr != nil {
+			mgr.Stop()
+		}
+	}()
+
+	// Initialize Feishu push notifications (enterprise internal bot via WebSocket).
+	// Feishu is disabled by default; requires app_id + app_secret configuration.
+	feishu.RegisterDBAdapter(&feishuDBAdapter{})
+	feishu.RegisterSessionMessenger(&feishuSessionMessenger{})
+	if cfg.PushMode == "feishu" && cfg.Feishu.AppID != "" && cfg.Feishu.AppSecret != "" {
+		feishuMgr := feishu.NewManager(&cfg.Feishu)
+		feishu.SetManager(feishuMgr)
+		if err := feishuMgr.Start(); err != nil {
+			slog.Warn("Feishu push failed to start", slog.String("err", err.Error()))
+		} else {
+			slog.Info("Feishu push enabled")
+		}
+	}
+	defer func() {
+		if mgr := feishu.GetManager(); mgr != nil {
 			mgr.Stop()
 		}
 	}()
@@ -941,6 +1063,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Initialize WS event manager
 	ws.InitManager()
 	dingtalk.RegisterClientChecker(ws.GetManager())
+	feishu.RegisterClientChecker(ws.GetManager())
 
 	// Register WS chat stream callbacks (breaks import cycle between ws and service)
 	ws.OnSubscribe = func(mgr *ws.Manager, clientID, sessionID string) {
@@ -1199,6 +1322,7 @@ func hotReloadReconfigure(port int) {
 
 	// --- DingTalk: reconfigure or toggle enabled ---
 	hotReloadDingTalk(cfg)
+	hotReloadFeishu(cfg)
 }
 
 // hotReloadDingTalk reconfigures or toggles the DingTalk push subsystem on hot-reload.
@@ -1241,6 +1365,50 @@ func hotReloadDingTalk(cfg model.Config) {
 			mgr.Stop()
 			dingtalk.SetManager(nil)
 			slog.Info("hot-reload: DingTalk disabled")
+		}
+	}
+}
+
+// hotReloadFeishu reconfigures or toggles the Feishu push subsystem on hot-reload.
+func hotReloadFeishu(cfg model.Config) {
+	mgr := feishu.GetManager()
+
+	if cfg.PushMode == "feishu" && cfg.Feishu.AppID != "" && cfg.Feishu.AppSecret != "" {
+		if mgr != nil {
+			// Manager is running — try in-place reconfigure
+			result := mgr.Reconfigure(&cfg.Feishu)
+			if result.NeedsRestart {
+				// Credentials or enabled changed — stop old + start new
+				mgr.Stop()
+				feishu.SetManager(nil)
+				newMgr := feishu.NewManager(&cfg.Feishu)
+				if err := newMgr.Start(); err != nil {
+					slog.Warn("hot-reload: Feishu restart failed", slog.String("err", err.Error()))
+					handler.AddHotReloadWarning(fmt.Sprintf("Feishu: %s", err.Error()))
+				} else {
+					feishu.SetManager(newMgr)
+					slog.Info("hot-reload: Feishu restarted (credentials changed)")
+				}
+			} else {
+				slog.Info("hot-reload: Feishu reconfigured (in-place update)")
+			}
+		} else {
+			// Feishu was disabled, now enabled — create new Manager
+			newMgr := feishu.NewManager(&cfg.Feishu)
+			if err := newMgr.Start(); err != nil {
+				slog.Warn("hot-reload: Feishu failed to start", slog.String("err", err.Error()))
+				handler.AddHotReloadWarning(fmt.Sprintf("Feishu: %s", err.Error()))
+			} else {
+				feishu.SetManager(newMgr)
+				slog.Info("hot-reload: Feishu enabled")
+			}
+		}
+	} else {
+		// Feishu should be disabled
+		if mgr != nil {
+			mgr.Stop()
+			feishu.SetManager(nil)
+			slog.Info("hot-reload: Feishu disabled")
 		}
 	}
 }

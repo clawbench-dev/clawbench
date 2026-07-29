@@ -26,6 +26,10 @@ type DingTalkSessionInfo struct {
 	Model       string
 }
 
+// FeishuSessionInfo carries session metadata for the Feishu session command feature.
+// It shares the same structure as DingTalkSessionInfo.
+type FeishuSessionInfo = DingTalkSessionInfo
+
 // FindSessionsByPrefix finds non-deleted chat sessions whose ID starts with the given prefix.
 // Case-insensitive matching.
 func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
@@ -133,6 +137,17 @@ func scanDingTalkSessionInfos(rows *sql.Rows) []DingTalkSessionInfo {
 
 // SendMessageToSessionFromDingTalk sends a message to a non-running session from DingTalk.
 func SendMessageToSessionFromDingTalk(sessionID, message string) error {
+	return sendMessageToSessionFromPush(sessionID, message)
+}
+
+// SendMessageToSessionFromFeishu sends a message to a non-running session from Feishu.
+func SendMessageToSessionFromFeishu(sessionID, message string) error {
+	return sendMessageToSessionFromPush(sessionID, message)
+}
+
+// sendMessageToSessionFromPush is the shared implementation for sending a message
+// to a non-running session from any push backend (DingTalk, Feishu, etc.).
+func sendMessageToSessionFromPush(sessionID, message string) error {
 	info := GetSessionFullInfo(sessionID)
 	if info == nil {
 		return fmt.Errorf("session %s not found", sessionID)

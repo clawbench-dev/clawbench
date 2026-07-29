@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"clawbench/internal/push/common"
+
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
 )
@@ -61,7 +63,7 @@ func (m *Manager) onChatBotMessage(ctx context.Context, data *chatbot.BotCallbac
 	}
 
 	// Try to parse as session command: "@{8hex} message"
-	if shortID, msg, ok := parseSessionCommand(data.Text.Content); ok {
+	if shortID, msg, ok := common.ParseSessionCommand(data.Text.Content); ok {
 		m.handleSessionCommand(ctx, data, shortID, msg)
 		return []byte(""), nil
 	}
@@ -75,14 +77,14 @@ func (m *Manager) onChatBotMessage(ctx context.Context, data *chatbot.BotCallbac
 func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCallbackDataModel, shortID, msg string) {
 	replier := chatbot.NewChatbotReplier()
 
-	sessionID, sessionTitle, err := resolveShortSessionID(shortID)
+	sessionID, sessionTitle, err := common.ResolveShortSessionID(sessionMessenger, shortID)
 	if err != nil {
 		slog.Warn("dingtalk: session command resolve failed", "error", err, "short_id", shortID)
 		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
 		return
 	}
 
-	sessionLabel := formatSessionLabel(sessionID, sessionTitle)
+	sessionLabel := common.FormatSessionLabel(sessionID, sessionTitle)
 
 	if sessionMessenger.IsSessionRunning(sessionID) {
 		if err := sessionMessenger.EnqueueMessage(sessionID, msg); err != nil {
@@ -148,7 +150,7 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 	// Group sessions by project path
 	type group struct {
 		project string
-		items   []SessionInfo
+		items   []common.SessionInfo
 	}
 	var groups []group
 	groupIdx := map[string]int{}
@@ -161,14 +163,14 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 			groups[idx].items = append(groups[idx].items, s)
 		} else {
 			groupIdx[project] = len(groups)
-			groups = append(groups, group{project: project, items: []SessionInfo{s}})
+			groups = append(groups, group{project: project, items: []common.SessionInfo{s}})
 		}
 	}
 
 	for _, g := range groups {
 		fmt.Fprintf(&sb, "**%s**\n", g.project)
 		for _, s := range g.items {
-			id := shortSessionID(s.ID)
+			id := common.ShortSessionID(s.ID)
 			title := s.Title
 			if title == "" {
 				title = "（无标题）"
@@ -182,12 +184,4 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 		sb.WriteString("\n")
 	}
 	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook, []byte("会话列表"), []byte(sb.String()))
-}
-
-// formatSessionLabel returns a human-readable label for a session.
-func formatSessionLabel(sessionID, sessionTitle string) string {
-	if sessionTitle != "" {
-		return sessionTitle
-	}
-	return "会话 " + shortSessionID(sessionID)
 }

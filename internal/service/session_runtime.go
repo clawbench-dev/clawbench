@@ -14,6 +14,7 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/push/dingtalk"
+	"clawbench/internal/push/feishu"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
 )
@@ -91,6 +92,8 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolNameAnd
 	// If push succeeds, remove from pending_events to avoid duplicate
 	// Android notification when the app comes back online.
 	if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath, data.ToolName, data.ToolInput) {
+		_ = DeletePendingEvent(msg.ID)
+	} else if feishu.IsStarted() && feishu.PushSessionEvent(sessionID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath, data.ToolName, data.ToolInput) {
 		_ = DeletePendingEvent(msg.ID)
 	}
 }

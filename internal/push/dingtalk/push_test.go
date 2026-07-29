@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	"clawbench/internal/push/common"
 )
 
 func TestShortSessionID(t *testing.T) {
@@ -19,9 +20,9 @@ func TestShortSessionID(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shortSessionID(tt.input)
+			got := common.ShortSessionID(tt.input)
 			if got != tt.expected {
-				t.Errorf("shortSessionID(%q) = %q, want %q", tt.input, got, tt.expected)
+				t.Errorf("ShortSessionID(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
 	}
@@ -62,9 +63,9 @@ func TestPushSuppressed_WhenClientOnline(t *testing.T) {
 
 	origDB := db
 	defer func() { db = origDB }()
-	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "user1"}}}
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -88,9 +89,9 @@ func TestPushNotSuppressed_WhenNoClientOnline(t *testing.T) {
 
 	origDB := db
 	defer func() { db = origDB }()
-	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "user1"}}}
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -108,9 +109,9 @@ func TestPushNotSuppressed_NilClientChecker(t *testing.T) {
 
 	origDB := db
 	defer func() { db = origDB }()
-	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "user1"}}}
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -124,9 +125,9 @@ func TestPushSuppressed_InNativeMode(t *testing.T) {
 
 	origDB := db
 	defer func() { db = origDB }()
-	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "user1"}}}
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -145,9 +146,9 @@ func TestPushSuppressed_InDisabledMode(t *testing.T) {
 
 	origDB := db
 	defer func() { db = origDB }()
-	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "user1"}}}
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -167,13 +168,13 @@ type mockClientChecker struct {
 
 func (m *mockClientChecker) HasConnectedClients() bool { return m.hasConnected }
 
-// mockDB implements DingtalkDB for testing.
+// mockDB implements common.PushDB for testing.
 type mockDB struct {
-	subscribers []SubscriberInfo
+	subscribers []common.SubscriberInfo
 }
 
 func (m *mockDB) MergeConfigSubscribers(_ []string)         {}
-func (m *mockDB) GetSubscribers() ([]SubscriberInfo, error) { return m.subscribers, nil }
+func (m *mockDB) GetSubscribers() ([]common.SubscriberInfo, error) { return m.subscribers, nil }
 func (m *mockDB) UpsertSubscriber(_, _, _, _ string) error  { return nil }
 func (m *mockDB) DeleteSubscriber(_ string) error           { return nil }
 
@@ -184,7 +185,7 @@ func TestPushSessionEvent_UnknownStatus(t *testing.T) {
 	defer func() { db = origDB }()
 	db = &mockDB{}
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -201,7 +202,7 @@ func TestPushTaskEvent_UnknownStatus(t *testing.T) {
 	defer func() { db = origDB }()
 	db = &mockDB{}
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -222,7 +223,7 @@ func TestPushSessionEvent_Cancelled(t *testing.T) {
 	defer func() { clientChecker = origChecker }()
 	RegisterClientChecker(&mockClientChecker{hasConnected: false})
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -241,7 +242,7 @@ func TestPushSessionEvent_PermissionPending(t *testing.T) {
 	defer func() { clientChecker = origChecker }()
 	RegisterClientChecker(&mockClientChecker{hasConnected: false})
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -260,7 +261,7 @@ func TestPushTaskEvent_Failed(t *testing.T) {
 	defer func() { clientChecker = origChecker }()
 	RegisterClientChecker(&mockClientChecker{hasConnected: false})
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -279,7 +280,7 @@ func TestPushTaskEvent_Cancelled(t *testing.T) {
 	defer func() { clientChecker = origChecker }()
 	RegisterClientChecker(&mockClientChecker{hasConnected: false})
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -298,7 +299,7 @@ func TestPushTaskEvent_Started(t *testing.T) {
 	defer func() { clientChecker = origChecker }()
 	RegisterClientChecker(&mockClientChecker{hasConnected: false})
 
-	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
 	mgr.started = true
 	SetManager(mgr)
 	defer SetManager(nil)
@@ -311,7 +312,7 @@ func TestSendToAllSubscribers_NoSubscribers(t *testing.T) {
 
 	origDB := db
 	defer func() { db = origDB }()
-	db = &mockDB{subscribers: []SubscriberInfo{}}
+	db = &mockDB{subscribers: []common.SubscriberInfo{}}
 
 	origChecker := clientChecker
 	defer func() { clientChecker = origChecker }()
@@ -327,7 +328,7 @@ func TestSendToAllSubscribers_NilManager(t *testing.T) {
 
 	origDB := db
 	defer func() { db = origDB }()
-	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "user1"}}}
 
 	origMgr := GetManager()
 	SetManager(nil)
@@ -347,7 +348,7 @@ func TestSendToAllSubscribers_NativeMode(t *testing.T) {
 
 	origDB := db
 	defer func() { db = origDB }()
-	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "user1"}}}
 
 	origChecker := clientChecker
 	defer func() { clientChecker = origChecker }()
@@ -363,7 +364,7 @@ func TestSendToAllSubscribers_DisabledMode(t *testing.T) {
 
 	origDB := db
 	defer func() { db = origDB }()
-	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "user1"}}}
 
 	if sendToAllSubscribers("Title", "Markdown") {
 		t.Error("expected false in disabled mode")
