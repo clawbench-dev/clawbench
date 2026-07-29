@@ -271,7 +271,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - 浏览器推送通知
 - **任务完成推送**：定时任务执行完成后推送包含响应预览摘要，点击跳转至执行详情
 - **钉钉/飞书机器人推送**：AI 会话完成、权限审批、定时任务状态变更时通过钉钉或飞书机器人即时推送；支持在 IM 中查看会话列表、向会话发送消息
-- 详见 [钉钉/飞书机器人推送配置](docs/PUSH_NOTIFICATION.md)
+- 详见 [钉钉推送配置](docs/DINGTALK_PUSH.md) | [飞书推送配置](docs/FEISHU_PUSH.md)
 
 
 ### 🎨 主题
