@@ -122,4 +122,3 @@ flowchart LR
 - **日志处理器统一、客户端端点兼容**：Web 的 `appLog.ts` 使用 `/api/client-log`，Android 的 `AppLog.java` 使用兼容路由 `/api/android-log`；两者都由服务端 `ServeClientLog` 处理，源字段区分 `js` 和 `android`
 - **屏幕常亮双通道**：`useWakeLock` 优先申请标准 Web Wake Lock，并同时调用 Android `setKeepScreenOn`。页面隐藏时浏览器可能释放锁，重新可见且业务仍需要常亮时自动申请；显式释放会同时关闭两条通道
 - **服务器列表由客户端持有**：Android Bridge 保存多个实例地址和密码，使当前服务器不可达时仍可切换到其他实例，完整流程见[多服务器管理](multi-server.md)
-md)
