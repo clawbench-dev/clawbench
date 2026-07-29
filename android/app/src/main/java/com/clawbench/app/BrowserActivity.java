@@ -28,12 +28,15 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URL;
 
 import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.net.ssl.HttpsURLConnection;
 
@@ -72,9 +75,18 @@ public class BrowserActivity extends AppCompatActivity {
     private boolean desktopMode = false;
     private BrowserSessionCredentials.Creds sessionCreds;
 
-    private int tunnelRetryCount = 0;
-    private static final int MAX_TUNNEL_RETRIES = 15;
-    private static final long TUNNEL_RETRY_DELAY_MS = 2000;
+    private View tunnelWaitingOverlay;
+    private TextView tunnelWaitingText;
+
+    /** Prevents multiple tunnel-wait threads from running simultaneously. */
+    private final AtomicBoolean tunnelWaitRunning = new AtomicBoolean(false);
+
+    /** Reference to the tunnel-wait thread so we can interrupt it on onNewIntent. */
+    private volatile Thread tunnelWaitThread = null;
+
+    private static final int MAX_TUNNEL_WAIT_MS = 30000;
+    private static final int TUNNEL_POLL_INTERVAL_MS = 500;
+    private static final int TUNNEL_CONNECT_TIMEOUT_MS = 300;
     private String pendingUrl = null;
 
     /** Target host:port for Host header rewriting (e.g. "192.168.100.1"). Empty if localhost. */
@@ -91,6 +103,94 @@ public class BrowserActivity extends AppCompatActivity {
         return sessionCreds;
     }
 
+    /**
+     * Wait for the SSH tunnel port to become reachable, then load the URL in WebView.
+     * Shows the tunnel waiting overlay with a spinner while polling.
+     * If the port doesn't become reachable within MAX_TUNNEL_WAIT_MS, shows an error.
+     *
+     * This replaces the old pattern of immediately calling webView.loadUrl() and
+     * retrying on error — instead we proactively wait for the tunnel to be ready.
+     */
+    private void waitForTunnelAndLoad(String url) {
+        if (localPort <= 0) {
+            // No tunnel needed (shouldn't happen), just load directly
+            showWebViewAndLoad(url);
+            return;
+        }
+
+        // Interrupt any previous tunnel-wait thread
+        Thread prev = tunnelWaitThread;
+        if (prev != null && prev.isAlive()) {
+            prev.interrupt();
+        }
+
+        // Show overlay, hide WebView
+        tunnelWaitingOverlay.setVisibility(View.VISIBLE);
+        tunnelWaitingText.setText(R.string.browser_tunnel_waiting);
+        webView.setVisibility(View.GONE);
+
+        // Force-set the guard — we already interrupted the old thread above,
+        // so we own the right to start a new one. The old thread's finally
+        // will set false, but tunnelWaitThread already points to the new thread.
+        tunnelWaitRunning.set(true);
+
+        Thread t = new Thread(() -> {
+            int elapsed = 0;
+            try {
+                while (elapsed < MAX_TUNNEL_WAIT_MS) {
+                    if (Thread.interrupted()) return;
+                    if (testLocalPort(localPort)) {
+                        AppLog.i(TAG, "BrowserActivity: tunnel ready after " + elapsed + "ms, loading " + url);
+                        runOnUiThread(() -> showWebViewAndLoad(url));
+                        return;
+                    }
+                    Thread.sleep(TUNNEL_POLL_INTERVAL_MS);
+                    elapsed += TUNNEL_POLL_INTERVAL_MS;
+                }
+                // Timeout
+                AppLog.w(TAG, "BrowserActivity: tunnel wait timed out after " + elapsed + "ms for port " + localPort);
+                runOnUiThread(() -> {
+                    tunnelWaitingText.setText(R.string.browser_tunnel_failed);
+                    // Allow user to tap overlay to retry
+                    tunnelWaitingOverlay.setOnClickListener(v -> {
+                        tunnelWaitingOverlay.setClickable(false);
+                        waitForTunnelAndLoad(url);
+                    });
+                    tunnelWaitingOverlay.setClickable(true);
+                });
+            } catch (InterruptedException e) {
+                AppLog.i(TAG, "BrowserActivity: tunnel wait interrupted");
+            } finally {
+                tunnelWaitRunning.set(false);
+            }
+        }, "tunnel-wait");
+        tunnelWaitThread = t;
+        t.start();
+    }
+
+    /**
+     * Hide the waiting overlay, show the WebView, and load the URL.
+     */
+    private void showWebViewAndLoad(String url) {
+        tunnelWaitingOverlay.setVisibility(View.GONE);
+        webView.setVisibility(View.VISIBLE);
+        webView.loadUrl(url);
+    }
+
+    /**
+     * Test whether a local port is reachable (TCP connect succeeds).
+     * Uses a short 300ms timeout — localhost connections should be near-instant.
+     */
+    private boolean testLocalPort(int port) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress("127.0.0.1", port), TUNNEL_CONNECT_TIMEOUT_MS);
+            return true;
+        } catch (Exception e) {
+            AppLog.d(TAG, "testLocalPort: port " + port + " not reachable: " + e.getMessage());
+            return false;
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -100,6 +200,8 @@ public class BrowserActivity extends AppCompatActivity {
         webView = findViewById(R.id.browserWebView);
         urlBar = findViewById(R.id.urlBar);
         progressBar = findViewById(R.id.progressBar);
+        tunnelWaitingOverlay = findViewById(R.id.tunnelWaitingOverlay);
+        tunnelWaitingText = findViewById(R.id.tunnelWaitingText);
 
         logBuffer = new BrowserLogBuffer(500);
         sessionCreds = BrowserSessionCredentials.getAndClear(this);
@@ -134,9 +236,9 @@ public class BrowserActivity extends AppCompatActivity {
             String urlPath = (path != null && !path.isEmpty()) ? path : "/";
             String initialUrl = protocol + "://localhost:" + port + urlPath;
             pendingUrl = initialUrl;
-            AppLog.i(TAG, "BrowserActivity: loading " + initialUrl + " (tunnel target: " + (host != null && !host.isEmpty() ? host : "localhost") + ":" + port + ")");
-            webView.loadUrl(initialUrl);
             urlBar.setText(initialUrl);
+            AppLog.i(TAG, "BrowserActivity: waiting for tunnel then loading " + initialUrl + " (tunnel target: " + (host != null && !host.isEmpty() ? host : "localhost") + ":" + port + ")");
+            waitForTunnelAndLoad(initialUrl);
         }
     }
 
@@ -401,7 +503,12 @@ public class BrowserActivity extends AppCompatActivity {
             String host = uri.getHost();
 
             if ("localhost".equals(host) || "127.0.0.1".equals(host)) {
-                webView.loadUrl(input);
+                // Update localPort if user navigated to a different port
+                int uriPort = uri.getPort();
+                if (uriPort > 0) {
+                    localPort = uriPort;
+                }
+                waitForTunnelAndLoad(input);
             } else {
                 // External URL: open in system browser, not in sandbox
                 startActivity(new Intent(Intent.ACTION_VIEW, uri));
@@ -540,9 +647,9 @@ public class BrowserActivity extends AppCompatActivity {
         String urlPath = (path != null && !path.isEmpty()) ? path : "/";
         String newUrl = protocol + "://localhost:" + port + urlPath;
 
-        // If reopening the same URL, just bring to foreground without reloading
-        if (newUrl.equals(pendingUrl)) {
-            AppLog.i(TAG, "BrowserActivity: onNewIntent same URL, skip reload: " + newUrl);
+        // If reopening the same URL and WebView is already visible, skip reload
+        if (newUrl.equals(pendingUrl) && webView.getVisibility() == View.VISIBLE) {
+            AppLog.i(TAG, "BrowserActivity: onNewIntent same URL and WebView visible, skip reload: " + newUrl);
             return;
         }
 
@@ -566,15 +673,19 @@ public class BrowserActivity extends AppCompatActivity {
             targetHost = hostPart;
         }
 
-        tunnelRetryCount = 0;
         pendingUrl = newUrl;
-        AppLog.i(TAG, "BrowserActivity: onNewIntent loading " + newUrl + " (tunnel target: " + (host != null && !host.isEmpty() ? host : "localhost") + ":" + port + ")");
-        webView.loadUrl(newUrl);
         urlBar.setText(newUrl);
+        AppLog.i(TAG, "BrowserActivity: onNewIntent waiting for tunnel then loading " + newUrl + " (tunnel target: " + (host != null && !host.isEmpty() ? host : "localhost") + ":" + port + ")");
+        waitForTunnelAndLoad(newUrl);
     }
 
     @Override
     protected void onDestroy() {
+        // Interrupt tunnel-wait thread to prevent leaks and post-after-destroy crashes
+        Thread t = tunnelWaitThread;
+        if (t != null && t.isAlive()) {
+            t.interrupt();
+        }
         // Do NOT clear browsing data here — it should persist across sessions.
         // Only release WebView resources and clear session credentials.
         BrowserSessionCredentials.clear(this);
@@ -760,13 +871,8 @@ public class BrowserActivity extends AppCompatActivity {
         public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
             super.onReceivedError(view, request, error);
             if (request.isForMainFrame()) {
-                if (tunnelRetryCount < MAX_TUNNEL_RETRIES && pendingUrl != null) {
-                    tunnelRetryCount++;
-                    AppLog.i(TAG, "BrowserActivity: page load failed (attempt " + tunnelRetryCount + "/" + MAX_TUNNEL_RETRIES + "), retrying in " + TUNNEL_RETRY_DELAY_MS + "ms");
-                    webView.postDelayed(() -> webView.loadUrl(pendingUrl), TUNNEL_RETRY_DELAY_MS);
-                } else {
-                    Toast.makeText(BrowserActivity.this, R.string.error_connection_failed, Toast.LENGTH_SHORT).show();
-                }
+                AppLog.w(TAG, "BrowserActivity: page load failed for " + request.getUrl());
+                Toast.makeText(BrowserActivity.this, R.string.error_connection_failed, Toast.LENGTH_SHORT).show();
             }
         }
     }

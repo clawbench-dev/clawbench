@@ -153,10 +153,12 @@ func (r *ProxyRegistry) RegisterPort(port int, host string, name string, protoco
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Check if this exact (port, host) is already registered
+	// Idempotent: if (port, host) already exists, returns existing localPort.
+	// Does NOT update name, protocol, or other fields of the existing entry.
 	for _, p := range r.ports {
 		if p.Port == port && p.Host == host {
-			return 0, fmt.Errorf("port %d → %s is already registered (local %d)", port, hostDisplayName(host), p.LocalPort)
+			slog.Debug("proxy port already registered, returning existing", slog.Int("local_port", p.LocalPort), slog.Int("port", port), slog.String("host", host))
+			return p.LocalPort, nil
 		}
 	}
 

@@ -214,7 +214,7 @@ export function usePortForward() {
     }
   }
 
-  async function registerPort(port: number, name?: string, protocol?: string, host?: string) {
+  async function registerPort(port: number, name?: string, protocol?: string, host?: string): Promise<number> {
     const result = await apiPost<{ localPort: number }>('/api/proxy/ports', { port, host: host || '', name: name || '', protocol: protocol || 'http' })
     // PRIVILEGED PORT POLICY: localPort may differ from port when the target port is
     // privileged (< 1024) — the backend remaps it to >= 1024 for Android/non-root.
@@ -234,8 +234,11 @@ export function usePortForward() {
       appLog.d(TAG, 'registerPort: localPort=' + localPort + ', targetPort=' + port + ', host=' + (host || ''))
       ;getAndroidNative()?.addForwardedPort?.(localPort, port, host || '')
     }
-    // Silent refresh: don't flicker the port list with loading state
-    await Promise.all([loadPorts(true), loadSSHInfo()])
+    // Fire-and-forget: refresh port list and SSH info in the background.
+    // Do NOT await — the caller needs localPort immediately to open the WebView.
+    loadPorts(true).catch(() => {})
+    loadSSHInfo().catch(() => {})
+    return localPort
   }
 
   async function updatePort(localPort: number, port: number, host: string, name: string, protocol: string) {
@@ -490,52 +493,65 @@ export function usePortForward() {
   }
 
   /** Open a forwarded port — in app mode opens sandbox browser, otherwise window.open.
-   *  In app mode: tests if the port is reachable, waits briefly if not,
-   *  then attempts SSH tunnel reconnect if still unreachable.
-   *  Shows toast on success or failure after reconnection attempt.
-   *  Uses reconnectTunnelAsync (non-blocking) to avoid ANR on Android. */
-  async function openPort(localPort: number, protocol?: string, host?: string, path?: string) {
-    appLog.d(TAG, 'openPort: localPort=' + localPort + ', protocol=' + protocol + ', host=' + (host || '') + ', path=' + (path || ''))
-
+   *  ALWAYS opens WebView immediately in app mode. BrowserActivity's tunnel-wait
+   *  mechanism (30s polling at 500ms intervals) handles waiting for the SSH tunnel
+   *  to become ready before loading the page.
+   *  Used by localhost URL click handler where the user expects immediate WebView. */
+  function openPort(localPort: number, protocol?: string, host?: string, path?: string) {
     if (isAppMode.value) {
       const native = getAndroidNative()
-      const hostArg = host || ''
-
-      if (native?.testPortReachable) {
-        // Test if the local port is reachable
-        const reachable = native.testPortReachable(localPort)
-        appLog.d(TAG, 'openPort: testPortReachable(' + localPort + ') = ' + reachable)
-        if (reachable) {
-          doOpen(native, localPort, protocol, hostArg, path)
-          return
-        }
-
-        // Port unreachable — attempt SSH tunnel reconnect.
-        appLog.d(TAG, 'openPort: port ' + localPort + ' unreachable, attempting tunnel reconnect')
-        const reconnected = await reconnectTunnelAsync(native)
-        appLog.d(TAG, 'openPort: reconnectTunnelAsync() = ' + reconnected)
-
-        const toast = useToast()
-        if (reconnected) {
-          const reachableAfter = native.testPortReachable(localPort)
-          appLog.d(TAG, 'openPort: after reconnect, testPortReachable(' + localPort + ') = ' + reachableAfter)
-          if (reachableAfter) {
-            toast.show(gt('portForward.tunnelReconnected'), { type: 'success' })
-            doOpen(native, localPort, protocol, hostArg, path)
-            return
-          }
-        }
-
-        // Still unreachable after reconnect — show error
-        toast.show(gt('portForward.portUnreachable'), { type: 'error' })
-        return
-      }
-
-      // Fallback: no testPortReachable available (old APK) — open directly
-      doOpen(native, localPort, protocol, hostArg, path)
+      doOpen(native, localPort, protocol, host || '', path)
     } else {
       window.open(buildPortUrl(localPort, protocol, path), '_blank')
     }
+  }
+
+  /** Open a forwarded port with reachability check and tunnel reconnect.
+   *  Used by the port forwarding panel where the user expects feedback about
+   *  whether the port is actually reachable before opening the WebView.
+   *
+   *  Flow:
+   *  1. If port is reachable → open immediately
+   *  2. If port is in connecting state → open directly (WebView will wait)
+   *  3. If port is unreachable → attempt tunnel reconnect, then open or show error
+   */
+  async function openPortWithCheck(localPort: number, protocol?: string, host?: string, path?: string) {
+    if (!isAppMode.value) {
+      window.open(buildPortUrl(localPort, protocol, path), '_blank')
+      return
+    }
+
+    const native = getAndroidNative()
+    const hostArg = host || ''
+
+    if (native?.testPortReachable) {
+      // Port is in connecting state — open directly, BrowserActivity will wait
+      if (connectingPorts.value.has(localPort)) {
+        doOpen(native, localPort, protocol, hostArg, path)
+        return
+      }
+
+      // Port is reachable — open immediately
+      if (native.testPortReachable(localPort)) {
+        doOpen(native, localPort, protocol, hostArg, path)
+        return
+      }
+
+      // Port unreachable — attempt tunnel reconnect
+      const reconnected = await reconnectTunnelAsync(native)
+      const toast = useToast()
+      if (reconnected && native.testPortReachable(localPort)) {
+        toast.show(gt('portForward.tunnelReconnected'), { type: 'success' })
+        doOpen(native, localPort, protocol, hostArg, path)
+        return
+      }
+
+      toast.show(gt('portForward.portUnreachable'), { type: 'error' })
+      return
+    }
+
+    // No testPortReachable (old APK) — open directly
+    doOpen(native, localPort, protocol, hostArg, path)
   }
 
   /** Reconnect a specific forwarded port: test reachability, reconnect tunnel if needed.
@@ -591,22 +607,15 @@ export function usePortForward() {
   }
 
   /**
-   * Ensure a port is registered for forwarding, registering it if needed,
-   * and wait for it to appear in the ports list (max 5s).
+   * Ensure a port is registered for forwarding, registering it if needed.
    * Returns the localPort that was assigned (may differ from target port).
-   * Used by localhost URL tag click handler to auto-setup port forwarding.
+   * Idempotent: if already registered with the same (port, host), returns existing localPort immediately.
+   * Used by localhost URL click handler to auto-setup port forwarding.
    */
-  async function ensurePortRegistered(port: number, protocol: string): Promise<number> {
-    const existing = ports.value.find(p => p.port === port)
+  async function ensurePortRegistered(port: number, protocol: string, host?: string): Promise<number> {
+    const existing = ports.value.find(p => p.port === port && p.host === (host || ''))
     if (existing) return existing.localPort
-    await registerPort(port, '', protocol)
-    // Wait for port to appear in the list (max 5s, poll every 200ms)
-    for (let i = 0; i < 25; i++) {
-      await new Promise(r => setTimeout(r, 200))
-      const found = ports.value.find(p => p.port === port)
-      if (found) return found.localPort
-    }
-    throw new Error(`Port ${port} did not appear in forwarding list after 5s`)
+    return registerPort(port, '', protocol, host)
   }
 
   return {
@@ -630,6 +639,7 @@ export function usePortForward() {
     loadSSHInfo,
     checkTunnelHealth,
     openPort,
+    openPortWithCheck,
     openInExternalBrowser,
     reconnectPort,
     ensurePortRegistered,

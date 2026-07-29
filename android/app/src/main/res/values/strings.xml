@@ -58,6 +58,8 @@
     <string name="browser_log_no_session">未连接会话，无法发送</string>
     <string name="browser_log_no_selection">请先选择日志条目</string>
     <string name="browser_log_auth_expired">会话已过期，请重新打开浏览器</string>
+    <string name="browser_tunnel_waiting">正在等待隧道连接…</string>
+    <string name="browser_tunnel_failed">隧道连接失败，请检查网络</string>
     <string name="press_again_to_exit">再按一次退出应用</string>
     <!-- Share feature -->
     <string name="share_file_failed">分享文件失败</string>

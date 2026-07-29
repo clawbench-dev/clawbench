@@ -4,6 +4,7 @@ import { useAppMode } from '@/composables/useAppMode.ts'
 import { usePortForward } from '@/composables/usePortForward.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
+import { appLog } from '@/utils/appLog'
 
 /**
  * Localhost URL annotation composable.
@@ -242,8 +243,9 @@ export function useLocalhostUrlClickHandler() {
 
         try {
             const localPort = await ensurePortRegistered(port, protocol)
-            await openPort(localPort, protocol, undefined, path)
-        } catch {
+            openPort(localPort, protocol, undefined, path)
+        } catch (e) {
+            appLog.e('LocalhostUrl', 'openLocalhostUrl failed: port=' + port + ', err=' + (e instanceof Error ? e.message : String(e)))
             toast.show(gt('chat.localhost.openFailed'), { type: 'error' })
         } finally {
             urlOpening.value = false

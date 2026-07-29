@@ -282,45 +282,128 @@ describe('usePortForward', () => {
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPort } = usePortForward()
 
-            await openPort(3000, 'http')
+            openPort(3000, 'http')
 
             expect(openSpy).toHaveBeenCalledWith('http://localhost:3000/', '_blank')
 
             openSpy.mockRestore()
         })
 
-        it('opens immediately in app mode when port is reachable', async () => {
+        it('opens WebView immediately in app mode (no testPortReachable)', async () => {
             mockIsAppMode.value = true
             const mockOpenInSandbox = vi.fn()
-            const mockTestPortReachable = vi.fn().mockReturnValue(true)
+            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { openPort } = usePortForward()
+
+            openPort(3000, 'http')
+
+            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
+
+            delete (window as any).AndroidNative
+            mockIsAppMode.value = false
+        })
+
+        it('opens WebView immediately even when testPortReachable returns false', async () => {
+            mockIsAppMode.value = true
+            const mockOpenInSandbox = vi.fn()
+            const mockTestPortReachable = vi.fn().mockReturnValue(false)
             ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPort } = usePortForward()
 
-            await openPort(3000, 'http')
+            openPort(3000, 'http')
 
-            expect(mockTestPortReachable).toHaveBeenCalledWith(3000)
+            // Should NOT call testPortReachable — just open WebView directly
+            expect(mockTestPortReachable).not.toHaveBeenCalled()
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
+
+            delete (window as any).AndroidNative
+            mockIsAppMode.value = false
         })
 
-        it('still opens when port is reachable even if in connecting state', async () => {
+        it('passes host parameter to native sandbox browser', async () => {
+            mockIsAppMode.value = true
+            const mockOpenInSandbox = vi.fn()
+            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { openPort } = usePortForward()
+
+            openPort(3000, 'http', '192.168.1.1')
+
+            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '192.168.1.1', '', 'test-session-id')
+
+            delete (window as any).AndroidNative
+            mockIsAppMode.value = false
+        })
+
+        it('falls back to openInBrowser when sandbox not available', async () => {
+            mockIsAppMode.value = true
+            const mockOpenInBrowser = vi.fn()
+            ;(window as any).AndroidNative = { openInBrowser: mockOpenInBrowser }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { openPort } = usePortForward()
+
+            openPort(3000, 'https')
+
+            expect(mockOpenInBrowser).toHaveBeenCalledWith(3000, 'https', '', '')
+
+            delete (window as any).AndroidNative
+            mockIsAppMode.value = false
+        })
+    })
+
+    describe('openPortWithCheck', () => {
+        it('calls window.open in web mode', async () => {
+            const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { openPortWithCheck } = usePortForward()
+
+            await openPortWithCheck(3000, 'http')
+
+            expect(openSpy).toHaveBeenCalledWith('http://localhost:3000/', '_blank')
+
+            openSpy.mockRestore()
+        })
+
+        it('opens immediately when port is reachable', async () => {
             mockIsAppMode.value = true
             const mockOpenInSandbox = vi.fn()
             const mockTestPortReachable = vi.fn().mockReturnValue(true)
             ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
 
             const { usePortForward } = await import('@/composables/usePortForward')
-            const { openPort, connectingPorts } = usePortForward()
+            const { openPortWithCheck } = usePortForward()
 
-            // Simulate port in connecting state — but it's reachable, so open it
+            await openPortWithCheck(3000, 'http')
+
+            expect(mockTestPortReachable).toHaveBeenCalledWith(3000)
+            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
+
+            delete (window as any).AndroidNative
+            mockIsAppMode.value = false
+        })
+
+        it('opens directly in connecting state without testing reachability', async () => {
+            mockIsAppMode.value = true
+            const mockOpenInSandbox = vi.fn()
+            const mockTestPortReachable = vi.fn().mockReturnValue(true)
+            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { openPortWithCheck, connectingPorts } = usePortForward()
+
             connectingPorts.value.add(3000)
             connectingPorts.value = new Set(connectingPorts.value)
 
-            await openPort(3000, 'http')
+            await openPortWithCheck(3000, 'http')
 
-            // Should test reachability and open since it's reachable
-            expect(mockTestPortReachable).toHaveBeenCalledWith(3000)
+            expect(mockTestPortReachable).not.toHaveBeenCalled()
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
 
             delete (window as any).AndroidNative
@@ -330,7 +413,6 @@ describe('usePortForward', () => {
         it('reconnects and opens when port unreachable then reachable after reconnect', async () => {
             mockIsAppMode.value = true
             const mockOpenInSandbox = vi.fn()
-            // First: unreachable, then reachable after reconnect
             const mockTestPortReachable = vi.fn()
                 .mockReturnValueOnce(false)  // initial check
                 .mockReturnValueOnce(true)   // after reconnect
@@ -338,13 +420,16 @@ describe('usePortForward', () => {
             ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
 
             const { usePortForward } = await import('@/composables/usePortForward')
-            const { openPort } = usePortForward()
+            const { openPortWithCheck } = usePortForward()
 
-            await openPort(3000, 'http')
+            await openPortWithCheck(3000, 'http')
 
             expect(mockReconnectTunnel).toHaveBeenCalled()
             expect(mockToastShow).toHaveBeenCalledWith('portForward.tunnelReconnected', expect.objectContaining({ type: 'success' }))
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
+
+            delete (window as any).AndroidNative
+            mockIsAppMode.value = false
         })
 
         it('shows error toast when port unreachable after reconnect', async () => {
@@ -354,11 +439,14 @@ describe('usePortForward', () => {
             ;(window as any).AndroidNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
 
             const { usePortForward } = await import('@/composables/usePortForward')
-            const { openPort } = usePortForward()
+            const { openPortWithCheck } = usePortForward()
 
-            await openPort(3000, 'http')
+            await openPortWithCheck(3000, 'http')
 
             expect(mockToastShow).toHaveBeenCalledWith('portForward.portUnreachable', expect.objectContaining({ type: 'error' }))
+
+            delete (window as any).AndroidNative
+            mockIsAppMode.value = false
         })
 
         it('shows error toast when reconnect fails', async () => {
@@ -368,11 +456,14 @@ describe('usePortForward', () => {
             ;(window as any).AndroidNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
 
             const { usePortForward } = await import('@/composables/usePortForward')
-            const { openPort } = usePortForward()
+            const { openPortWithCheck } = usePortForward()
 
-            await openPort(3000, 'http')
+            await openPortWithCheck(3000, 'http')
 
             expect(mockToastShow).toHaveBeenCalledWith('portForward.portUnreachable', expect.objectContaining({ type: 'error' }))
+
+            delete (window as any).AndroidNative
+            mockIsAppMode.value = false
         })
 
         it('falls back to direct open when testPortReachable not available (old APK)', async () => {
@@ -381,39 +472,14 @@ describe('usePortForward', () => {
             ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox }
 
             const { usePortForward } = await import('@/composables/usePortForward')
-            const { openPort } = usePortForward()
+            const { openPortWithCheck } = usePortForward()
 
-            await openPort(3000, 'http')
+            await openPortWithCheck(3000, 'http')
 
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
-        })
 
-        it('passes host parameter to native sandbox browser', async () => {
-            mockIsAppMode.value = true
-            const mockOpenInSandbox = vi.fn()
-            const mockTestPortReachable = vi.fn().mockReturnValue(true)
-            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
-
-            const { usePortForward } = await import('@/composables/usePortForward')
-            const { openPort } = usePortForward()
-
-            await openPort(3000, 'http', '192.168.1.1')
-
-            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '192.168.1.1', '', 'test-session-id')
-        })
-
-        it('falls back to openInBrowser when sandbox not available', async () => {
-            mockIsAppMode.value = true
-            const mockOpenInBrowser = vi.fn()
-            const mockTestPortReachable = vi.fn().mockReturnValue(true)
-            ;(window as any).AndroidNative = { openInBrowser: mockOpenInBrowser, testPortReachable: mockTestPortReachable }
-
-            const { usePortForward } = await import('@/composables/usePortForward')
-            const { openPort } = usePortForward()
-
-            await openPort(3000, 'https')
-
-            expect(mockOpenInBrowser).toHaveBeenCalledWith(3000, 'https', '', '')
+            delete (window as any).AndroidNative
+            mockIsAppMode.value = false
         })
     })
 
@@ -543,20 +609,34 @@ describe('usePortForward', () => {
     })
 
     describe('registerPort', () => {
-        it('posts port to API and refreshes', async () => {
+        it('posts port to API, refreshes, and returns localPort', async () => {
             mockApiPost.mockResolvedValue({ localPort: 3000 })
             mockApiGet.mockResolvedValue({ ports: [] })
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { registerPort, connectingPorts } = usePortForward()
 
-            await registerPort(3000, 'App', 'http')
+            const result = await registerPort(3000, 'App', 'http')
 
             expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports', {
                 port: 3000, host: '', name: 'App', protocol: 'http',
             })
             // Port should be in connecting state
             expect(connectingPorts.value.has(3000)).toBe(true)
+            // Should return the localPort from the API
+            expect(result).toBe(3000)
+        })
+
+        it('returns remapped localPort for privileged ports', async () => {
+            mockApiPost.mockResolvedValue({ localPort: 1024 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            const result = await registerPort(80, 'HTTP', 'http')
+
+            expect(result).toBe(1024)
         })
 
         it('passes host parameter to API and native layer in app mode', async () => {
@@ -569,12 +649,13 @@ describe('usePortForward', () => {
             const { usePortForward } = await import('@/composables/usePortForward')
             const { registerPort } = usePortForward()
 
-            await registerPort(3000, 'App', 'http', '192.168.1.1')
+            const result = await registerPort(3000, 'App', 'http', '192.168.1.1')
 
             expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports', {
                 port: 3000, host: '192.168.1.1', name: 'App', protocol: 'http',
             })
             expect(mockAddForwardedPort).toHaveBeenCalledWith(3000, 3000, '192.168.1.1')
+            expect(result).toBe(3000)
 
             delete (window as any).AndroidNative
             mockIsAppMode.value = false
@@ -587,11 +668,13 @@ describe('usePortForward', () => {
             const { usePortForward } = await import('@/composables/usePortForward')
             const { registerPort } = usePortForward()
 
-            await registerPort(3000)
+            const result = await registerPort(3000)
 
             expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports', {
                 port: 3000, host: '', name: '', protocol: 'http',
             })
+            // When API returns no localPort, falls back to port number
+            expect(result).toBe(3000)
         })
     })
 
@@ -663,7 +746,7 @@ describe('usePortForward', () => {
     })
 
     describe('ensurePortRegistered', () => {
-        it('returns immediately if port already exists', async () => {
+        it('returns existing localPort if port already exists', async () => {
             mockApiGet.mockResolvedValue({
                 ports: [{ port: 3000, name: 'App', protocol: 'http', active: true, localPort: 3000, host: '' }],
             })
@@ -675,9 +758,47 @@ describe('usePortForward', () => {
             await loadPorts()
 
             // Should not call registerPort
-            await ensurePortRegistered(3000, 'http')
+            const result = await ensurePortRegistered(3000, 'http')
 
             expect(mockApiPost).not.toHaveBeenCalled()
+            expect(result).toBe(3000)
+        })
+
+        it('registers and returns localPort if port not yet registered', async () => {
+            mockApiGet.mockResolvedValue({ ports: [] })
+            mockApiPost.mockResolvedValue({ localPort: 5173 })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { ensurePortRegistered } = usePortForward()
+
+            const result = await ensurePortRegistered(5173, 'http')
+
+            expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports', {
+                port: 5173, host: '', name: '', protocol: 'http',
+            })
+            expect(result).toBe(5173)
+        })
+
+        it('matches both port and host when finding existing entry', async () => {
+            mockApiGet.mockResolvedValue({
+                ports: [
+                    { port: 3000, localPort: 3000, host: '', name: 'Local', protocol: 'http', active: true },
+                    { port: 3000, localPort: 3001, host: '192.168.1.1', name: 'Remote', protocol: 'http', active: true },
+                ],
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { ensurePortRegistered, loadPorts } = usePortForward()
+
+            await loadPorts()
+
+            // Should find the entry with matching host
+            const result = await ensurePortRegistered(3000, 'http', '192.168.1.1')
+            expect(result).toBe(3001)
+
+            // Empty host should find the other entry
+            const result2 = await ensurePortRegistered(3000, 'http')
+            expect(result2).toBe(3000)
         })
     })
 

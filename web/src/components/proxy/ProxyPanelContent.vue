@@ -116,7 +116,7 @@
               :tunnel-disconnected="tunnelStatus === 'disconnected'"
               :reconnecting="reconnectingPorts.has(p.localPort)"
               :connecting="connectingPorts.has(p.localPort)"
-              @open="openPort"
+              @open="openPortWithCheck"
               @open-external="openInExternalBrowser"
               @reconnect="handleReconnect"
               @edit="handleEdit"
@@ -248,7 +248,7 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, registerPort, updatePort, unregisterPort, detectPorts, checkTunnelHealth, openPort, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, registerPort, updatePort, unregisterPort, detectPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
 const toast = useToast()
 
 const sshCopied = ref(false)

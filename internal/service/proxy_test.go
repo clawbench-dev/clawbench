@@ -82,12 +82,13 @@ func TestProxyRegistry_RegisterPort_Duplicate(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	_, err := r.RegisterPort(3000, "", "first", "")
+	localPort1, err := r.RegisterPort(3000, "", "first", "")
 	assert.NoError(t, err)
 
-	_, err = r.RegisterPort(3000, "", "second", "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "already registered")
+	// Duplicate (same port + same host) should be idempotent — return existing localPort
+	localPort2, err := r.RegisterPort(3000, "", "second", "")
+	assert.NoError(t, err)
+	assert.Equal(t, localPort1, localPort2, "duplicate registration should return same localPort")
 }
 
 func TestProxyRegistry_UnregisterPort(t *testing.T) {
@@ -577,25 +578,26 @@ func TestProxyRegistry_RegisterPort_SamePortSameHost_Duplicate(t *testing.T) {
 	defer r.Stop()
 
 	port := getFreePort(t)
-	_, err := r.RegisterPort(port, "192.168.1.100", "api", "http")
+	localPort1, err := r.RegisterPort(port, "192.168.1.100", "api", "http")
 	assert.NoError(t, err)
 
-	_, err = r.RegisterPort(port, "192.168.1.100", "api-2", "http")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "already registered")
+	// Duplicate (same port + same host) should be idempotent — return existing localPort
+	localPort2, err := r.RegisterPort(port, "192.168.1.100", "api-2", "http")
+	assert.NoError(t, err)
+	assert.Equal(t, localPort1, localPort2, "duplicate registration should return same localPort")
 }
 
 func TestProxyRegistry_RegisterPort_EmptyHostDuplicate(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	_, err := r.RegisterPort(3000, "", "app1", "http")
+	localPort1, err := r.RegisterPort(3000, "", "app1", "http")
 	assert.NoError(t, err)
 
-	// Same port + empty host should be a duplicate
-	_, err = r.RegisterPort(3000, "", "app2", "http")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "already registered")
+	// Same port + empty host should be idempotent — return existing localPort
+	localPort2, err := r.RegisterPort(3000, "", "app2", "http")
+	assert.NoError(t, err)
+	assert.Equal(t, localPort1, localPort2, "duplicate registration should return same localPort")
 }
 
 // ---------- allocateLocalPort ----------

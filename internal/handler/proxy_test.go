@@ -137,7 +137,7 @@ func TestRegisterPort_Duplicate(t *testing.T) {
 	teardown := setupProxyTest(t)
 	defer teardown()
 
-	_, _ = service.ProxyService.RegisterPort(3000, "", "first", "")
+	localPort1, _ := service.ProxyService.RegisterPort(3000, "", "first", "")
 
 	req := newRequest(t, http.MethodPost, "/api/proxy/ports", map[string]interface{}{
 		"port": 3000,
@@ -145,7 +145,10 @@ func TestRegisterPort_Duplicate(t *testing.T) {
 	})
 	w := callHandler(ServeProxyPortAction, req)
 
-	assertStatus(t, w, http.StatusForbidden)
+	// Duplicate registration is now idempotent — returns existing localPort
+	assertOK(t, w)
+	assertJSONField(t, w, "status", "ok")
+	assertJSONField(t, w, "localPort", float64(localPort1))
 }
 
 func TestRegisterPort_DisallowedRange(t *testing.T) {
