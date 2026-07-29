@@ -272,19 +272,20 @@ function handleCopyMessage() {
     width: 100%;
     padding: 6px 10px;
     margin-top: 6px;
-    border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent);
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
     color: var(--accent-color, #0066cc);
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .chat-file-changes-banner:hover {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
-    border-color: color-mix(in srgb, var(--accent-color, #0066cc) 50%, transparent);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 16%, transparent);
+    border-color: color-mix(in srgb, var(--accent-color, #0066cc) 55%, transparent);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
 }
 
 .chat-file-changes-banner svg {
@@ -295,8 +296,8 @@ function handleCopyMessage() {
     margin-left: auto;
     font-size: 11px;
     font-weight: 600;
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
-    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
+    border-radius: 2px;
     padding: 0 6px;
     min-width: 18px;
     text-align: center;
