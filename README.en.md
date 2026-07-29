@@ -267,6 +267,8 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - Notification sound + haptic feedback (alerts when AI completes)
 - Browser push notifications
 - **Task Completion Push**: Scheduled task completion notifications include response preview summary; tap to navigate to execution details
+- **DingTalk/Feishu Bot Push**: Instant push via DingTalk or Feishu bot on AI session completion, permission approval, and scheduled task status changes; view session list and send messages to sessions from IM
+- See [DingTalk Push Setup](docs/DINGTALK_PUSH.en.md) | [Feishu Push Setup](docs/FEISHU_PUSH.en.md)
 
 
 ### 🎨 Themes
