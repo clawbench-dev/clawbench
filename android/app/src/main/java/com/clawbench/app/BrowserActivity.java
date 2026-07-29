@@ -21,6 +21,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.ProgressBar;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -69,6 +70,10 @@ public class BrowserActivity extends AppCompatActivity {
     private WebView webView;
     private EditText urlBar;
     private ProgressBar progressBar;
+    private BrowserLogBuffer logBuffer;
+    private String mobileUserAgent;
+    private boolean desktopMode = false;
+    private BrowserSessionCredentials.Creds sessionCreds;
 
     private int tunnelRetryCount = 0;
     private static final int MAX_TUNNEL_RETRIES = 5;
@@ -81,6 +86,10 @@ public class BrowserActivity extends AppCompatActivity {
     /** The local port that the SSH tunnel listens on. */
     private int localPort = 0;
 
+    BrowserLogBuffer getLogBuffer() {
+        return logBuffer;
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -91,8 +100,11 @@ public class BrowserActivity extends AppCompatActivity {
         urlBar = findViewById(R.id.urlBar);
         progressBar = findViewById(R.id.progressBar);
 
+        logBuffer = new BrowserLogBuffer(500);
+        sessionCreds = BrowserSessionCredentials.getAndClear(this);
         setupWebView();
         setupToolbar();
+        setupFindBar();
 
         // Load initial URL from Intent
         int port = getIntent().getIntExtra("port", 0);
@@ -149,9 +161,11 @@ public class BrowserActivity extends AppCompatActivity {
 
         // Custom user agent to identify sandbox browser
         String ua = settings.getUserAgentString();
-        settings.setUserAgentString(ua + " ClawBench-Browser/1.0");
+        mobileUserAgent = ua + " ClawBench-Browser/1.0";
+        settings.setUserAgentString(mobileUserAgent);
 
-        // NO AndroidNative bridge — this is a clean browser environment
+        // Inject BrowserNative JS interface for error relay + log capture
+        webView.addJavascriptInterface(new BrowserJavascriptInterface(logBuffer), "BrowserNative");
 
         // WebView client with URL restriction and SSL handling
         webView.setWebViewClient(new SandboxWebViewClient());
@@ -162,17 +176,22 @@ public class BrowserActivity extends AppCompatActivity {
             public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
                 String tag = "WebView:" + consoleMessage.messageLevel();
                 String msg = consoleMessage.message() + " (" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + ")";
+                char level;
                 switch (consoleMessage.messageLevel()) {
                     case ERROR:
                         AppLog.e(tag, msg);
+                        level = 'E';
                         break;
                     case WARNING:
                         AppLog.w(tag, msg);
+                        level = 'W';
                         break;
                     default:
                         AppLog.d(tag, msg);
+                        level = 'D';
                         break;
                 }
+                logBuffer.add(level, tag, msg);
                 return true;
             }
 
@@ -189,6 +208,20 @@ public class BrowserActivity extends AppCompatActivity {
 
         // Accept third-party cookies
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+
+        // Find in page listener
+        webView.setFindListener((activeMatchOrdinal, numberOfMatches, isDoneCounting) -> {
+            TextView countView = findViewById(R.id.findResultCount);
+            if (isDoneCounting) {
+                if (numberOfMatches > 0) {
+                    countView.setText((activeMatchOrdinal + 1) + "/" + numberOfMatches);
+                    countView.setVisibility(View.VISIBLE);
+                } else {
+                    countView.setText(R.string.browser_find_no_results);
+                    countView.setVisibility(View.VISIBLE);
+                }
+            }
+        });
     }
 
     private void setupToolbar() {
@@ -201,14 +234,11 @@ public class BrowserActivity extends AppCompatActivity {
             }
         });
 
-        // Close button: truly finish the Activity (destroy WebView)
-        findViewById(R.id.btnClose).setOnClickListener(v -> finish());
-
         // Refresh button
         findViewById(R.id.btnRefresh).setOnClickListener(v -> webView.reload());
 
-        // Clear data button
-        findViewById(R.id.btnClearData).setOnClickListener(v -> showClearDataDialog());
+        // Overflow menu button
+        findViewById(R.id.btnMore).setOnClickListener(v -> showOverflowMenu());
 
         // URL bar: navigate on Enter/Go
         urlBar.setOnEditorActionListener((v, actionId, event) -> {
@@ -226,6 +256,105 @@ public class BrowserActivity extends AppCompatActivity {
                 // (prevents stale URL display after navigation)
             }
         });
+    }
+
+    /**
+     * Show overflow popup menu with browser actions.
+     */
+    private void showOverflowMenu() {
+        android.widget.PopupMenu popup = new android.widget.PopupMenu(this, findViewById(R.id.btnMore));
+        popup.getMenuInflater().inflate(R.menu.browser_overflow, popup.getMenu());
+        // Update desktop mode checkbox state
+        popup.getMenu().findItem(R.id.action_desktop_mode).setChecked(desktopMode);
+        popup.setOnMenuItemClickListener(item -> {
+            int id = item.getItemId();
+            if (id == R.id.action_clear_data) {
+                showClearDataDialog();
+                return true;
+            } else if (id == R.id.action_find) {
+                showFindBar();
+                return true;
+            } else if (id == R.id.action_desktop_mode) {
+                toggleDesktopMode();
+                return true;
+            } else if (id == R.id.action_log) {
+                showLogBottomSheet();
+                return true;
+            }
+            return false;
+        });
+        popup.show();
+    }
+
+    /**
+     * Show the find-in-page bar.
+     */
+    private void showFindBar() {
+        findViewById(R.id.findBar).setVisibility(View.VISIBLE);
+        EditText findInput = findViewById(R.id.findInput);
+        findInput.setText("");
+        findInput.requestFocus();
+        findViewById(R.id.findResultCount).setVisibility(View.GONE);
+    }
+
+    /**
+     * Set up the find-in-page bar listeners.
+     */
+    private void setupFindBar() {
+        EditText findInput = findViewById(R.id.findInput);
+        findInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                executeFind();
+                return true;
+            }
+            return false;
+        });
+
+        findViewById(R.id.btnFindNext).setOnClickListener(v -> webView.findNext(true));
+        findViewById(R.id.btnFindPrev).setOnClickListener(v -> webView.findNext(false));
+        findViewById(R.id.btnFindClose).setOnClickListener(v -> clearFind());
+    }
+
+    private void executeFind() {
+        String query = ((EditText) findViewById(R.id.findInput)).getText().toString();
+        webView.findAllAsync(query);
+    }
+
+    private void clearFind() {
+        webView.clearMatches();
+        findViewById(R.id.findBar).setVisibility(View.GONE);
+        findViewById(R.id.findResultCount).setVisibility(View.GONE);
+    }
+
+    /**
+     * Toggle desktop mode by switching user agent and viewport settings.
+     */
+    private void toggleDesktopMode() {
+        desktopMode = !desktopMode;
+        WebSettings settings = webView.getSettings();
+        if (desktopMode) {
+            // Desktop user agent
+            String desktopUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 ClawBench-Browser/1.0";
+            settings.setUserAgentString(desktopUA);
+            settings.setUseWideViewPort(true);
+            settings.setLoadWithOverviewMode(false);
+        } else {
+            settings.setUserAgentString(mobileUserAgent);
+            settings.setUseWideViewPort(true);
+            settings.setLoadWithOverviewMode(true);
+        }
+        webView.reload();
+    }
+
+    /**
+     * Show the console log bottom sheet dialog.
+     */
+    private void showLogBottomSheet() {
+        String sessionId = sessionCreds != null ? sessionCreds.sessionId : "";
+        String serverUrl = sessionCreds != null ? sessionCreds.serverUrl : "";
+        String sessionCookie = sessionCreds != null ? sessionCreds.sessionCookie : "";
+        LogBottomSheet sheet = LogBottomSheet.newInstance(sessionId, serverUrl, sessionCookie);
+        sheet.show(getSupportFragmentManager(), "log_bottom_sheet");
     }
 
     /**
@@ -362,6 +491,12 @@ public class BrowserActivity extends AppCompatActivity {
         super.onNewIntent(intent);
         setIntent(intent);
 
+        // Refresh session credentials if provided
+        BrowserSessionCredentials.Creds newCreds = BrowserSessionCredentials.getAndClear(this);
+        if (newCreds != null) {
+            sessionCreds = newCreds;
+        }
+
         int port = intent.getIntExtra("port", 0);
         String protocol = intent.getStringExtra("protocol");
         String host = intent.getStringExtra("host");
@@ -417,6 +552,28 @@ public class BrowserActivity extends AppCompatActivity {
     // --- WebView Client ---
 
     private class SandboxWebViewClient extends WebViewClient {
+
+        @Override
+        public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+            super.onPageStarted(view, url, favicon);
+            // Inject global error listeners for uncaught JS exceptions
+            view.evaluateJavascript(
+                "(function(){" +
+                "if(window.__clawbenchErrorInjected) return;" +
+                "window.__clawbenchErrorInjected=1;" +
+                "window.addEventListener('error',function(e){" +
+                "  if(typeof BrowserNative!=='undefined'){" +
+                "    BrowserNative.log('E','JS.Uncaught',e.message+' at '+e.filename+':'+e.lineno);" +
+                "  }" +
+                "});" +
+                "window.addEventListener('unhandledrejection',function(e){" +
+                "  if(typeof BrowserNative!=='undefined'){" +
+                "    BrowserNative.log('E','JS.Promise',String(e.reason));" +
+                "  }" +
+                "});" +
+                "})();",
+                null);
+        }
 
         /**
          * Intercept requests to localhost:localPort and rewrite the Host header

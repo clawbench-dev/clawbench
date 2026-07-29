@@ -1755,6 +1755,26 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
+
+            // Inject global error listeners to capture uncaught JS exceptions
+            // that may not appear in onConsoleMessage (e.g. unhandledrejection)
+            view.evaluateJavascript(
+                "(function(){" +
+                "if(window.__clawbenchErrorInjected) return;" +
+                "window.__clawbenchErrorInjected=1;" +
+                "window.addEventListener('error',function(e){" +
+                "  if(typeof AndroidNative!=='undefined'){" +
+                "    AndroidNative.log('E','JS.Uncaught',e.message+' at '+e.filename+':'+e.lineno);" +
+                "  }" +
+                "});" +
+                "window.addEventListener('unhandledrejection',function(e){" +
+                "  if(typeof AndroidNative!=='undefined'){" +
+                "    AndroidNative.log('E','JS.Promise',String(e.reason));" +
+                "  }" +
+                "});" +
+                "})();",
+                null);
+
             if (LOGIN_HTML_URL.equals(url)) {
                 // Navigating to the login page — show it immediately.
                 // The login page IS the UI, not a transitional state.
