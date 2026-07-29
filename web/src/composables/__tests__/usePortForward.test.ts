@@ -57,6 +57,10 @@ vi.mock('@/composables/useToast', () => ({
     useToast: () => ({ show: mockToastShow, dismiss: vi.fn(), visible: ref(false), message: ref(''), icon: ref(''), type: ref('success'), onClick: ref(null) }),
 }))
 
+vi.mock('@/composables/useSessionIdentity', () => ({
+    useSessionIdentity: () => ({ currentSessionId: ref('test-session-id') }),
+}))
+
 vi.mock('@/utils/portForwardUtils', () => ({
     tunnelStatusFromPorts: () => 'ok',
     buildPortUrl: (port: number, protocol?: string, path?: string) => {
@@ -297,7 +301,7 @@ describe('usePortForward', () => {
             await openPort(3000, 'http')
 
             expect(mockTestPortReachable).toHaveBeenCalledWith(3000)
-            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '')
+            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', expect.any(String))
         })
 
         it('still opens when port is reachable even if in connecting state', async () => {
@@ -317,7 +321,7 @@ describe('usePortForward', () => {
 
             // Should test reachability and open since it's reachable
             expect(mockTestPortReachable).toHaveBeenCalledWith(3000)
-            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '')
+            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', expect.any(String))
 
             delete (window as any).AndroidNative
             mockIsAppMode.value = false
@@ -340,7 +344,7 @@ describe('usePortForward', () => {
 
             expect(mockReconnectTunnel).toHaveBeenCalled()
             expect(mockToastShow).toHaveBeenCalledWith('portForward.tunnelReconnected', expect.objectContaining({ type: 'success' }))
-            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '')
+            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', expect.any(String))
         })
 
         it('shows error toast when port unreachable after reconnect', async () => {
@@ -381,7 +385,7 @@ describe('usePortForward', () => {
 
             await openPort(3000, 'http')
 
-            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '')
+            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', expect.any(String))
         })
 
         it('passes host parameter to native sandbox browser', async () => {
@@ -395,7 +399,7 @@ describe('usePortForward', () => {
 
             await openPort(3000, 'http', '192.168.1.1')
 
-            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '192.168.1.1', '')
+            expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '192.168.1.1', '', expect.any(String))
         })
 
         it('falls back to openInBrowser when sandbox not available', async () => {

@@ -2208,8 +2208,8 @@ public class MainActivity extends AppCompatActivity {
          * a new Activity (which would reload the WebView).
          */
         @JavascriptInterface
-        public void openInSandbox(int port, String protocol, String host, String path) {
-            AppLog.i(TAG, "openInSandbox: port=" + port + ", protocol=" + protocol + ", host=" + host + ", path=" + path);
+        public void openInSandbox(int port, String protocol, String host, String path, String sessionId) {
+            AppLog.i(TAG, "openInSandbox: port=" + port + ", protocol=" + protocol + ", host=" + host + ", path=" + path + ", sessionId=" + sessionId);
             activity.runOnUiThread(() -> {
                 String scheme = "https".equalsIgnoreCase(protocol) ? "https" : "http";
                 Intent intent = new Intent(activity, BrowserActivity.class);
@@ -2217,8 +2217,43 @@ public class MainActivity extends AppCompatActivity {
                 intent.putExtra("protocol", scheme);
                 intent.putExtra("host", host != null ? host : "");
                 intent.putExtra("path", path != null ? path : "");
+
+                // Pass session credentials securely via SharedPreferences (not Intent extras)
+                String sUrl = activity.prefs.getString(KEY_SERVER_URL, "");
+                String sessionCookie = null;
+                if (!sUrl.isEmpty()) {
+                    CookieManager.getInstance().flush();
+                    String cookies = CookieManager.getInstance().getCookie(sUrl);
+                    if (cookies != null) {
+                        for (String c : cookies.split(";")) {
+                            String trimmed = c.trim();
+                            int eqIdx = trimmed.indexOf('=');
+                            if (eqIdx > 0) {
+                                String name = trimmed.substring(0, eqIdx);
+                                if (name.equals("clawbench_session") ||
+                                        (name.startsWith("cb") && name.endsWith("_clawbench_session"))) {
+                                    sessionCookie = trimmed;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Write credentials to cross-process holder before launching
+                BrowserSessionCredentials.set(activity,
+                        sessionId != null ? sessionId : "",
+                        sUrl != null ? sUrl : "",
+                        sessionCookie != null ? sessionCookie : "");
+
                 activity.startActivity(intent);
             });
+        }
+
+        // Backward-compatible overload
+        @JavascriptInterface
+        public void openInSandbox(int port, String protocol, String host, String path) {
+            openInSandbox(port, protocol, host, path, null);
         }
 
         /**

@@ -6,6 +6,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { tunnelStatusFromPorts as tunnelStatusFromPortsUtil, buildPortUrl } from '@/utils/portForwardUtils.ts'
 import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
+import { useSessionIdentity } from './useSessionIdentity'
 
 const TAG = 'PortForward'
 
@@ -68,7 +69,7 @@ interface AndroidNativeBridge {
   getTunnelError?: () => string
   getTunnelErrorType?: () => string
   setVolumeKeyMode?: (enabled: boolean) => void
-  openInSandbox?: (localPort: number, protocol: string, host: string, path: string) => void
+  openInSandbox?: (localPort: number, protocol: string, host: string, path: string, sessionId?: string) => void
   openInBrowser?: (localPort: number, protocol: string, host: string, path: string) => void
   testPortReachable?: (localPort: number) => boolean
   reconnectTunnel?: () => boolean
@@ -165,6 +166,7 @@ function tunnelStatusFromPorts(_hasPorts: boolean): 'ok' | 'degraded' {
  */
 export function usePortForward() {
   const { isAppMode } = useAppMode()
+  const { currentSessionId } = useSessionIdentity()
 
   // Set up the callback for native port-forward-result events.
   // This needs to be inside usePortForward() because it calls loadPorts()
@@ -481,7 +483,7 @@ export function usePortForward() {
   /** Internal helper: actually open the port in sandbox or external browser */
   function doOpen(native: AndroidNativeBridge | undefined, localPort: number, protocol?: string, hostArg?: string, path?: string) {
     if (native?.openInSandbox) {
-      native.openInSandbox(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '', path || '')
+      native.openInSandbox(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '', path || '', currentSessionId.value || '')
     } else if (native?.openInBrowser) {
       native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '', path || '')
     }
