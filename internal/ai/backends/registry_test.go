@@ -37,8 +37,10 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected to find registered backend, got nil")
 	}
-	if got.ID != "test-backend" {
-		t.Errorf("expected ID 'test-backend', got %q", got.ID)
+	// Use got.ID after nil check; staticcheck SA5011 needs explicit guard.
+	id := got.ID
+	if id != "test-backend" {
+		t.Errorf("expected ID 'test-backend', got %q", id)
 	}
 	if got.CLI == nil {
 		t.Error("expected CLI plugin to be non-nil")
