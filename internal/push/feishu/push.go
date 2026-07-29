@@ -43,7 +43,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 	case "completed":
 		title = "会话已完成"
 		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
-		content = fmt.Sprintf("会话已完成\n会话: %s\n\n项目: %s\n\n%s%s",
+		content = fmt.Sprintf("会话: %s\n\n项目: %s\n\n%s%s",
 			sessionTitle,
 			projectPath,
 			truncateForFeishu(responsePreview),
@@ -51,7 +51,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 	case "cancelled":
 		title = "会话已取消"
 		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
-		content = fmt.Sprintf("会话已取消\n会话: %s\n\n项目: %s\n\n%s%s",
+		content = fmt.Sprintf("会话: %s\n\n项目: %s\n\n%s%s",
 			sessionTitle,
 			projectPath,
 			truncateForFeishu(responsePreview),
@@ -60,7 +60,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 		title = "操作需批准"
 		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 追加消息到队列", shortID)
 		detail := formatPermissionDetail(toolName, toolInput)
-		content = fmt.Sprintf("操作需批准\n会话: %s\n\n项目: %s\n\n%s%s",
+		content = fmt.Sprintf("会话: %s\n\n项目: %s\n\n%s%s",
 			sessionTitle,
 			projectPath,
 			detail,
@@ -107,24 +107,24 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 	switch status {
 	case "running":
 		title = "定时任务已启动"
-		content = fmt.Sprintf("定时任务已启动\n任务: %s\n\n项目: %s",
+		content = fmt.Sprintf("任务: %s\n\n项目: %s",
 			taskName,
 			projectPath)
 	case "completed":
 		title = "定时任务已完成"
-		content = fmt.Sprintf("定时任务已完成\n任务: %s\n\n项目: %s\n\n%s",
+		content = fmt.Sprintf("任务: %s\n\n项目: %s\n\n%s",
 			taskName,
 			projectPath,
 			truncateForFeishu(responsePreview))
 	case "failed":
 		title = "定时任务失败"
-		content = fmt.Sprintf("定时任务失败\n任务: %s\n\n项目: %s\n\n%s",
+		content = fmt.Sprintf("任务: %s\n\n项目: %s\n\n%s",
 			taskName,
 			projectPath,
 			truncateForFeishu(responsePreview))
 	case "cancelled":
 		title = "定时任务已取消"
-		content = fmt.Sprintf("定时任务已取消\n任务: %s\n\n项目: %s\n\n%s",
+		content = fmt.Sprintf("任务: %s\n\n项目: %s\n\n%s",
 			taskName,
 			projectPath,
 			truncateForFeishu(responsePreview))
