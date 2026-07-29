@@ -25,12 +25,12 @@ func TestGetBuildVersion_WithLdflagsDevVersion(t *testing.T) {
 	original := version.Version
 	defer func() { version.Version = original }()
 
-	// Simulate dev build: ldflags-injected version with build time
-	version.Version = "v0.30.0-33-ga636beb (2026-05-21 10:30:00)"
+	// Simulate dev build: ldflags-injected version with build time suffix
+	version.Version = "v0.30.0-33-ga636beb-05211030"
 	result := getBuildVersion()
 
 	// Should return the full string as-is
-	assert.Equal(t, "v0.30.0-33-ga636beb (2026-05-21 10:30:00)", result)
+	assert.Equal(t, "v0.30.0-33-ga636beb-05211030", result)
 }
 
 func TestGetBuildVersion_WithLdflagsShortSHA(t *testing.T) {
@@ -95,10 +95,10 @@ func TestGetBuildVersion_BuildTimeStringPreserved(t *testing.T) {
 	original := version.Version
 	defer func() { version.Version = original }()
 
-	// The build time is injected by build.sh in dev builds
+	// The build time suffix is injected by build.sh in dev builds
 	// and should be preserved exactly as-is
-	version.Version = "v0.30.0-33-ga636beb (2026-05-21 10:30:00)"
+	version.Version = "v0.30.0-33-ga636beb-05211030"
 	result := getBuildVersion()
-	assert.Contains(t, result, "2026-05-21 10:30:00")
-	assert.Equal(t, "v0.30.0-33-ga636beb (2026-05-21 10:30:00)", result)
+	assert.Contains(t, result, "05211030")
+	assert.Equal(t, "v0.30.0-33-ga636beb-05211030", result)
 }

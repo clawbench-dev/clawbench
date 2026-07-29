@@ -3,19 +3,15 @@ package version
 import "strings"
 
 // CompareVersions compares two semver-like version strings.
-// Strips optional "v" prefix and build-time suffix (e.g. " (2026-07-24)").
+// Strips optional "v" prefix and build-time suffix (e.g. "-07241030" mmddHHMM format).
 // Pre-release versions (with "-" suffix) are considered older than the same release version.
 // Returns -1 if a < b, 0 if a == b, 1 if a > b.
 func CompareVersions(a, b string) int {
 	a = strings.TrimPrefix(a, "v")
 	b = strings.TrimPrefix(b, "v")
-	// Strip build-time suffix like " (2026-07-24 10:30:00)"
-	if idx := strings.Index(a, " ("); idx >= 0 {
-		a = a[:idx]
-	}
-	if idx := strings.Index(b, " ("); idx >= 0 {
-		b = b[:idx]
-	}
+	// Strip build-time suffix like "-07241030" (mmddHHMM format, 8 digits after last '-')
+	a = stripBuildTimeSuffix(a)
+	b = stripBuildTimeSuffix(b)
 
 	// Split off pre-release suffix (after first '-')
 	aCore, aPre := splitPreRelease(a)
@@ -62,9 +58,8 @@ func CompareVersions(a, b string) int {
 // (has a pre-release suffix like "-5-gabc" or is a short git VCS hash / "dev").
 func IsDevBuild(v string) bool {
 	v = strings.TrimPrefix(v, "v")
-	if idx := strings.Index(v, " ("); idx >= 0 {
-		v = v[:idx]
-	}
+	// Strip mmddHHMM build-time suffix
+	v = stripBuildTimeSuffix(v)
 	if v == "dev" {
 		return true
 	}
@@ -74,6 +69,32 @@ func IsDevBuild(v string) bool {
 	}
 	_, pre := splitPreRelease(v)
 	return pre != ""
+}
+
+// stripBuildTimeSuffix removes a trailing "-MMDDHHMM" build-time suffix (8 digits after last '-').
+// e.g. "v0.70.0-5-g830bb6c-07291030" → "v0.70.0-5-g830bb6c"
+// "v1.0.0-07291030" → "v1.0.0"
+// "v0.70.0-5-g830bb6c" → "v0.70.0-5-g830bb6c" (no change, not a build-time suffix)
+func stripBuildTimeSuffix(v string) string {
+	idx := strings.LastIndex(v, "-")
+	if idx < 0 {
+		return v
+	}
+	suffix := v[idx+1:]
+	if len(suffix) == 8 && isAllDigits(suffix) {
+		return v[:idx]
+	}
+	return v
+}
+
+// isAllDigits checks if the string consists entirely of digits.
+func isAllDigits(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isGitHash checks if the string looks like a git VCS short hash

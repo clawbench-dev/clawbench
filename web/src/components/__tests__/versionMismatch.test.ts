@@ -4,11 +4,11 @@ import { normalizeVersion, isReleaseVersion, isVersionedBuild, extractBaseVersio
 describe('version utils', () => {
   describe('normalizeVersion', () => {
     it('strips build time suffix', () => {
-      expect(normalizeVersion('v1.0.0 (2026-05-21 10:30:00)')).toBe('v1.0.0')
+      expect(normalizeVersion('v1.0.0-05211030')).toBe('v1.0.0')
     })
 
     it('strips build time suffix with dev version', () => {
-      expect(normalizeVersion('v0.30.0-30-g830bb6c (2026-05-21 10:30:00)')).toBe('v0.30.0-30-g830bb6c')
+      expect(normalizeVersion('v0.30.0-30-g830bb6c-05211030')).toBe('v0.30.0-30-g830bb6c')
     })
 
     it('returns version unchanged when no suffix', () => {
@@ -21,6 +21,14 @@ describe('version utils', () => {
 
     it('handles empty string', () => {
       expect(normalizeVersion('')).toBe('')
+    })
+
+    it('handles short hash with mmddHHMM build-time suffix', () => {
+      expect(normalizeVersion('a0f87a96-07291030')).toBe('a0f87a96')
+    })
+
+    it('handles dev with mmddHHMM build-time suffix', () => {
+      expect(normalizeVersion('dev-07291030')).toBe('dev')
     })
   })
 
@@ -65,6 +73,10 @@ describe('version utils', () => {
       expect(isVersionedBuild('a0f87a96')).toBe(false)
     })
 
+    it('rejects short hash with build-time suffix', () => {
+      expect(isVersionedBuild('a0f87a96-07291030')).toBe(false)
+    })
+
     it('rejects plain dev', () => {
       expect(isVersionedBuild('dev')).toBe(false)
     })
@@ -81,8 +93,8 @@ describe('version utils', () => {
       expect(isVersionedBuild('v1.0.0garbage')).toBe(false)
     })
 
-    it('accepts version with build-time suffix', () => {
-      expect(isVersionedBuild('v0.66.0 (2026-07-24 10:30:00)')).toBe(true)
+    it('accepts version with mmddHHMM build-time suffix', () => {
+      expect(isVersionedBuild('v0.66.0-07241030')).toBe(true)
     })
   })
 
@@ -99,8 +111,8 @@ describe('version utils', () => {
       expect(extractBaseVersion('dev')).toBe('dev')
     })
 
-    it('extracts base from build with build-time suffix', () => {
-      expect(extractBaseVersion('v0.66.0-5-g7702c473 (2026-07-24)')).toBe('v0.66.0')
+    it('extracts base from build with mmddHHMM build-time suffix', () => {
+      expect(extractBaseVersion('v0.66.0-5-g7702c473-07241030')).toBe('v0.66.0')
     })
 
     it('rejects garbage after patch number', () => {
@@ -118,11 +130,11 @@ describe('version utils', () => {
     })
 
     it('returns false when server has build time suffix but release versions match', () => {
-      expect(shouldShowMismatch('v1.0.0', 'v1.0.0 (2026-05-21 10:30:00)')).toBe(false)
+      expect(shouldShowMismatch('v1.0.0', 'v1.0.0-05211030')).toBe(false)
     })
 
     it('returns true when server with build time is a different (newer) release', () => {
-      expect(shouldShowMismatch('v1.0.0', 'v2.0.0 (2026-05-21 10:30:00)')).toBe(true)
+      expect(shouldShowMismatch('v1.0.0', 'v2.0.0-05211030')).toBe(true)
     })
 
     it('returns false when APK is newer than server', () => {
@@ -152,7 +164,7 @@ describe('version utils', () => {
     })
 
     it('handles server version with build time suffix', () => {
-      expect(shouldShowMismatch('v0.65.0-10-gabc', 'v0.66.0-5-g7702c473 (2026-07-24 22:42:18)')).toBe(true)
+      expect(shouldShowMismatch('v0.65.0-10-gabc', 'v0.66.0-5-g7702c473-07242218')).toBe(true)
     })
 
     it('skips check for short hash server version', () => {
@@ -176,7 +188,7 @@ describe('version utils', () => {
     })
 
     it('handles APK version with build-time suffix', () => {
-      expect(shouldShowMismatch('v0.65.0-10-gabc (2026-07-24)', 'v0.66.0-5-g7702c473')).toBe(true)
+      expect(shouldShowMismatch('v0.65.0-10-gabc-07241030', 'v0.66.0-5-g7702c473')).toBe(true)
     })
   })
 })

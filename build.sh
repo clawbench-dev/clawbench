@@ -47,13 +47,13 @@ IS_RELEASE=false
 if git describe --tags --exact-match HEAD >/dev/null 2>&1; then
     IS_RELEASE=true
 fi
-# Build time (fixed at script start, shared by backend and APK)
-BUILD_TIME=$(date +"%Y-%m-%d %H:%M:%S")
-# Compose full version: dev builds include build time, release builds are clean
+# Build time suffix for dev builds: -mmddHHMM (e.g. -07291030)
+BUILD_TIME_SUFFIX=$(date +"%m%d%H%M")
+# Compose full version: dev builds append time suffix, release builds are clean
 if $IS_RELEASE; then
     FULL_VERSION="$VERSION"
 else
-    FULL_VERSION="$VERSION ($BUILD_TIME)"
+    FULL_VERSION="$VERSION-$BUILD_TIME_SUFFIX"
 fi
 LDFLAGS="-X 'clawbench/internal/version.Version=$FULL_VERSION'"
 # Derive versionCode from git commit count (monotonically increasing for Play Store)

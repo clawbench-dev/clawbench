@@ -39,15 +39,43 @@ func TestCompareVersions(t *testing.T) {
 		{"0.66.0-5-gabc", "0.66.0", 1},
 		{"0.66.0", "0.66.0-5-gabc", -1},
 
-		// Build time suffix stripped
-		{"v1.0.0 (2026-07-24 10:30:00)", "1.0.0", 0},
-		{"v1.0.1 (2026-07-24)", "1.0.0", 1},
+		// Build time suffix stripped (mmddHHMM format)
+		{"v1.0.0-07291030", "1.0.0", 0},
+		{"v1.0.1-07291030", "1.0.0", 1},
+		{"v0.70.0-5-g830bb6c-07291030", "0.70.0-5-g830bb6c", 0},
+		{"v0.70.0-5-g830bb6c-07291030", "0.70.0", 1},
+
+		// Edge cases: short hash / dev with build time suffix
+		{"a0f87a96-07291030", "a0f87a96", 0},
+		{"dev-07291030", "dev", 0},
 	}
 
 	for _, tt := range tests {
 		got := CompareVersions(tt.a, tt.b)
 		if got != tt.want {
 			t.Errorf("CompareVersions(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestStripBuildTimeSuffix(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"v1.0.0-07291030", "v1.0.0"},
+		{"v0.70.0-5-g830bb6c-07291030", "v0.70.0-5-g830bb6c"},
+		{"v0.70.0-5-g830bb6c", "v0.70.0-5-g830bb6c"},
+		{"a0f87a96-07291030", "a0f87a96"},
+		{"dev-07291030", "dev"},
+		{"v1.0.0", "v1.0.0"},
+		{"07291030", "07291030"}, // no dash, not a suffix
+		{"v1.0.0-5", "v1.0.0-5"}, // too short (not 8 digits)
+	}
+
+	for _, tt := range tests {
+		got := stripBuildTimeSuffix(tt.input)
+		if got != tt.want {
+			t.Errorf("stripBuildTimeSuffix(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -67,8 +95,10 @@ func TestIsDevBuild(t *testing.T) {
 		{"0", false},      // too short for git hash, no dots
 		{"123", false},    // too short
 		{"abc", false},    // too short
-		{"v0.66.0-5-gabc (2026-07-24 10:30:00)", true},
-		{"v1.0.0 (2026-07-24 10:30:00)", false},
+		{"v0.66.0-5-g7702c473-07291030", true},
+		{"v1.0.0-07291030", false},
+		{"a0f87a96-07291030", true}, // short hash + build time suffix
+		{"dev-07291030", true},      // dev + build time suffix
 		{"g7702c473def", true}, // 12 hex chars with g prefix
 		{"release-1.0", true},  // has pre-release suffix
 	}

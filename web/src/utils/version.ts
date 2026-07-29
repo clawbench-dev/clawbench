@@ -2,9 +2,13 @@
  * Version comparison utilities for APK vs server version mismatch detection.
  */
 
-/** Strip build time suffix for comparison (e.g. "v1.0.0 (2026-05-21 10:30:00)" → "v1.0.0") */
+/** Strip build time suffix for comparison (e.g. "v1.0.0-07291030" → "v1.0.0") */
 export function normalizeVersion(v: string): string {
-  return v.replace(/ *\([^)]*\)$/, '')
+  const idx = v.lastIndexOf('-')
+  if (idx >= 0 && /^\d{8}$/.test(v.slice(idx + 1))) {
+    v = v.slice(0, idx)
+  }
+  return v
 }
 
 /** Check if a version string is a formal release (e.g. "v1.0.0", "v2.3.1"), not dev/pre-release */
@@ -18,7 +22,7 @@ export function isReleaseVersion(v: string): boolean {
  * Rejects short hashes ("a0f87a96"), plain "dev", and empty strings.
  */
 export function isVersionedBuild(v: string): boolean {
-  return /^v\d+\.\d+\.\d+([- ]|$)/.test(v)
+  return /^v\d+\.\d+\.\d+(-|$)/.test(v)
 }
 
 /**
@@ -28,9 +32,9 @@ export function isVersionedBuild(v: string): boolean {
 export function extractBaseVersion(v: string): string {
   const match = v.match(/^(v\d+\.\d+\.\d+)/)
   if (!match) return v
-  // Ensure the match is followed by end-of-string, '-', or ' ' (reject "v1.0.0garbage")
+  // Ensure the match is followed by end-of-string or '-' (reject "v1.0.0garbage")
   const endIdx = match.index! + match[1].length
-  if (endIdx < v.length && v[endIdx] !== '-' && v[endIdx] !== ' ') return v
+  if (endIdx < v.length && v[endIdx] !== '-') return v
   return match[1]
 }
 
@@ -58,8 +62,14 @@ export function shouldShowMismatch(appVersion: string, serverVersion: string): b
  */
 export function compareVersions(a: string, b: string): number {
   const strip = (v: string) => v.replace(/^v/, '')
-  // Strip build-time suffix like " (2026-07-24 10:30:00)"
-  const stripBuildTime = (v: string) => v.replace(/ *\([^)]*\)$/, '')
+  // Strip build-time suffix "-MMDDHHMM" (8 digits after last '-')
+  const stripBuildTime = (v: string) => {
+    const idx = v.lastIndexOf('-')
+    if (idx >= 0 && /^\d{8}$/.test(v.slice(idx + 1))) {
+      v = v.slice(0, idx)
+    }
+    return v
+  }
 
   const aClean = stripBuildTime(strip(a))
   const bClean = stripBuildTime(strip(b))
