@@ -12,21 +12,36 @@ import (
 	_ "clawbench/internal/ai/backends/pi"
 )
 
+// mustLookup is a test helper that returns the plugin or fails immediately.
+// It avoids SA5011 nil-pointer warnings by returning a non-nil pointer.
+func mustLookup(t *testing.T, id string) *backends.BackendPlugin {
+	t.Helper()
+	p := backends.Lookup(id)
+	if p == nil {
+		t.Fatalf("expected %s plugin to be registered after init", id)
+	}
+	return p
+}
+
+// mustACP is a test helper that returns the ACP config or fails immediately.
+func mustACP(t *testing.T, p *backends.BackendPlugin) *backends.ACPPlugin {
+	t.Helper()
+	if p.ACP == nil {
+		t.Fatalf("expected %s ACP to be registered after init", p.ID)
+	}
+	return p.ACP
+}
+
 // TestACPInitRegistration verifies that each backend's init() correctly
 // registers ACP mapping data via backends.Register().
 // This test does NOT call ResetForTest() — it validates the real init state.
 func TestACPInitRegistration(t *testing.T) {
 	t.Run("kimi", func(t *testing.T) {
-		p := backends.Lookup("kimi")
-		if p == nil {
-			t.Fatal("expected kimi plugin to be registered after init")
-		}
-		if p.ACP == nil {
-			t.Fatal("expected kimi ACP to be registered after init")
-		}
+		p := mustLookup(t, "kimi")
+		ACP := mustACP(t, p)
 
 		// Verify ToolCallIDPrefixes
-		prefixes := p.ACP.ToolCallIDPrefixes
+		prefixes := ACP.ToolCallIDPrefixes
 		if prefixes == nil {
 			t.Fatal("expected kimi ToolCallIDPrefixes to be non-nil")
 		}
@@ -46,21 +61,16 @@ func TestACPInitRegistration(t *testing.T) {
 		}
 
 		// Kimi ACP has no InputRemaps
-		if len(p.ACP.InputRemaps) > 0 {
-			t.Errorf("expected empty InputRemaps for kimi ACP, got %v", p.ACP.InputRemaps)
+		if len(ACP.InputRemaps) > 0 {
+			t.Errorf("expected empty InputRemaps for kimi ACP, got %v", ACP.InputRemaps)
 		}
 	})
 
 	t.Run("opencode", func(t *testing.T) {
-		p := backends.Lookup("opencode")
-		if p == nil {
-			t.Fatal("expected opencode plugin to be registered after init")
-		}
-		if p.ACP == nil {
-			t.Fatal("expected opencode ACP to be registered after init")
-		}
+		p := mustLookup(t, "opencode")
+		ACP := mustACP(t, p)
 
-		remaps := p.ACP.InputRemaps
+		remaps := ACP.InputRemaps
 		if remaps == nil {
 			t.Fatal("expected opencode InputRemaps to be non-nil")
 		}
@@ -73,56 +83,45 @@ func TestACPInitRegistration(t *testing.T) {
 			}
 		}
 		// OpenCode has no ToolCallIDPrefixes
-		if p.ACP.ToolCallIDPrefixes != nil {
-			t.Errorf("expected nil ToolCallIDPrefixes for opencode, got %v", p.ACP.ToolCallIDPrefixes)
+		if ACP.ToolCallIDPrefixes != nil {
+			t.Errorf("expected nil ToolCallIDPrefixes for opencode, got %v", ACP.ToolCallIDPrefixes)
 		}
 	})
 
 	t.Run("claude", func(t *testing.T) {
-		p := backends.Lookup("claude")
-		if p == nil {
-			t.Fatal("expected claude plugin to be registered after init")
-		}
-		if p.ACP == nil {
-			t.Fatal("expected claude ACP to be registered after init")
-		}
+		p := mustLookup(t, "claude")
+		ACP := mustACP(t, p)
+
 		// Claude ACP has the generic 6-field normalization map
-		if len(p.ACP.InputRemaps) == 0 {
+		if len(ACP.InputRemaps) == 0 {
 			t.Error("expected non-empty InputRemaps for claude ACP (generic fields)")
 		}
-		if p.ACP.InputRemaps["filePath"] != "file_path" {
-			t.Errorf("expected generic filePath->file_path for claude, got %q", p.ACP.InputRemaps["filePath"])
+		if ACP.InputRemaps["filePath"] != "file_path" {
+			t.Errorf("expected generic filePath->file_path for claude, got %q", ACP.InputRemaps["filePath"])
 		}
-		if p.ACP.ToolCallIDPrefixes != nil {
-			t.Errorf("expected nil ToolCallIDPrefixes for claude, got %v", p.ACP.ToolCallIDPrefixes)
+		if ACP.ToolCallIDPrefixes != nil {
+			t.Errorf("expected nil ToolCallIDPrefixes for claude, got %v", ACP.ToolCallIDPrefixes)
 		}
 	})
 
 	t.Run("codebuddy", func(t *testing.T) {
-		p := backends.Lookup("codebuddy")
-		if p == nil {
-			t.Fatal("expected codebuddy plugin to be registered after init")
-		}
-		if p.ACP == nil {
-			t.Fatal("expected codebuddy ACP to be registered after init")
-		}
+		p := mustLookup(t, "codebuddy")
+		ACP := mustACP(t, p)
+
 		// Codebuddy ACP has the generic 6-field normalization map
-		if len(p.ACP.InputRemaps) == 0 {
+		if len(ACP.InputRemaps) == 0 {
 			t.Error("expected non-empty InputRemaps for codebuddy ACP (generic fields)")
 		}
-		if p.ACP.InputRemaps["filePath"] != "file_path" {
-			t.Errorf("expected generic filePath->file_path for codebuddy, got %q", p.ACP.InputRemaps["filePath"])
+		if ACP.InputRemaps["filePath"] != "file_path" {
+			t.Errorf("expected generic filePath->file_path for codebuddy, got %q", ACP.InputRemaps["filePath"])
 		}
-		if p.ACP.ToolCallIDPrefixes != nil {
-			t.Errorf("expected nil ToolCallIDPrefixes for codebuddy, got %v", p.ACP.ToolCallIDPrefixes)
+		if ACP.ToolCallIDPrefixes != nil {
+			t.Errorf("expected nil ToolCallIDPrefixes for codebuddy, got %v", ACP.ToolCallIDPrefixes)
 		}
 	})
 
 	t.Run("pi", func(t *testing.T) {
-		p := backends.Lookup("pi")
-		if p == nil {
-			t.Fatal("expected pi plugin to be registered after init")
-		}
+		p := mustLookup(t, "pi")
 		// Pi does not support ACP — ACP plugin should be nil
 		if p.ACP != nil {
 			t.Fatal("expected pi ACP to be nil (ACP support removed)")
@@ -130,22 +129,18 @@ func TestACPInitRegistration(t *testing.T) {
 	})
 
 	t.Run("deepseek", func(t *testing.T) {
-		p := backends.Lookup("deepseek")
-		if p == nil {
-			t.Fatal("expected deepseek plugin to be registered after init")
-		}
-		if p.ACP == nil {
-			t.Fatal("expected deepseek ACP to be registered after init")
-		}
+		p := mustLookup(t, "deepseek")
+		ACP := mustACP(t, p)
+
 		// DeepSeek (CodeWhale) ACP has both InputRemaps and ToolCallIDPrefixes
-		remaps := p.ACP.InputRemaps
+		remaps := ACP.InputRemaps
 		if len(remaps) == 0 {
 			t.Fatal("expected non-empty InputRemaps for deepseek ACP")
 		}
 		if remaps["path"] != "file_path" {
 			t.Errorf("expected path->file_path, got %q", remaps["path"])
 		}
-		prefixes := p.ACP.ToolCallIDPrefixes
+		prefixes := ACP.ToolCallIDPrefixes
 		if prefixes == nil {
 			t.Fatal("expected non-nil ToolCallIDPrefixes for deepseek ACP")
 		}
