@@ -41,7 +41,7 @@ public class BrowserSessionCredentials {
                 .putString(KEY_SESSION_ID, sessionId != null ? sessionId : "")
                 .putString(KEY_SERVER_URL, serverUrl != null ? serverUrl : "")
                 .putString(KEY_SESSION_COOKIE, sessionCookie != null ? sessionCookie : "")
-                .apply();
+                .commit();
     }
 
     /** Read credentials from the :browser process. Returns null if missing. */

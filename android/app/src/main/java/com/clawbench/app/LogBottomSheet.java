@@ -39,9 +39,6 @@ import java.util.concurrent.Executors;
 
 public class LogBottomSheet extends BottomSheetDialogFragment {
 
-    private static final String ARG_SESSION_ID = "session_id";
-    private static final String ARG_SERVER_URL = "server_url";
-    private static final String ARG_SESSION_COOKIE = "session_cookie";
 
     private RecyclerView recyclerView;
     private TextView emptyView;
@@ -57,30 +54,29 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
     private String serverUrl;
     private String sessionCookie;
 
-    // Selected log entry timestamps (use timestamp as identity since Entry.equals is value-based)
-    private final Set<Long> selectedTimestamps = new HashSet<>();
+    // Selected log entry sequence numbers (unique identity, unlike timestamps which can collide)
+    private final Set<Long> selectedSeqs = new HashSet<>();
 
+    private static final SimpleDateFormat SDF_FULL = new SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT);
+    private static final SimpleDateFormat SDF_SHORT = new SimpleDateFormat("HH:mm:ss", Locale.ROOT);
+    private static final int COLOR_SELECTION = 0x1F58a6ff;
     private Runnable refreshRunnable;
     private static final long REFRESH_INTERVAL_MS = 500;
 
-    public static LogBottomSheet newInstance(String sessionId, String serverUrl, String sessionCookie) {
-        LogBottomSheet sheet = new LogBottomSheet();
-        Bundle args = new Bundle();
-        args.putString(ARG_SESSION_ID, sessionId);
-        args.putString(ARG_SERVER_URL, serverUrl);
-        args.putString(ARG_SESSION_COOKIE, sessionCookie);
-        sheet.setArguments(args);
-        return sheet;
+    public static LogBottomSheet newInstance() {
+        return new LogBottomSheet();
     }
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Bundle args = getArguments();
-        if (args != null) {
-            sessionId = args.getString(ARG_SESSION_ID);
-            serverUrl = args.getString(ARG_SERVER_URL);
-            sessionCookie = args.getString(ARG_SESSION_COOKIE);
+        // Read credentials securely from BrowserSessionCredentials instead of Bundle args.
+        // This avoids exposing the session cookie in Fragment arguments (which can appear in logcat).
+        BrowserSessionCredentials.Creds creds = BrowserSessionCredentials.get(requireContext());
+        if (creds != null) {
+            sessionId = creds.sessionId;
+            serverUrl = creds.serverUrl;
+            sessionCookie = creds.sessionCookie;
         }
     }
 
@@ -122,7 +118,7 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         // Clear
         view.findViewById(R.id.btnClearLog).setOnClickListener(v -> {
             getLogBuffer().clear();
-            selectedTimestamps.clear();
+            selectedSeqs.clear();
             refreshList();
         });
 
@@ -176,7 +172,8 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         if (getActivity() instanceof BrowserActivity) {
             return ((BrowserActivity) getActivity()).getLogBuffer();
         }
-        return new BrowserLogBuffer(0);
+        // Should not happen — LogBottomSheet is only used within BrowserActivity
+        throw new IllegalStateException("LogBottomSheet requires BrowserActivity host");
     }
 
     private void sendMessage() {
@@ -202,13 +199,13 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         List<BrowserLogBuffer.Entry> filtered = getFilteredEntries();
         List<BrowserLogBuffer.Entry> selected = new ArrayList<>();
         for (BrowserLogBuffer.Entry e : filtered) {
-            if (selectedTimestamps.contains(e.ts)) selected.add(e);
+            if (selectedSeqs.contains(e.ts)) selected.add(e);
         }
         return selected;
     }
 
     private String formatEntries(List<BrowserLogBuffer.Entry> entries) {
-        SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT);
+        SimpleDateFormat sdf = SDF_FULL;
         StringBuilder sb = new StringBuilder();
         for (BrowserLogBuffer.Entry e : entries) {
             sb.append(String.format(Locale.ROOT, "%s %c/%s: %s\n",
@@ -250,21 +247,37 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
                     os.close();
 
                     int code = conn.getResponseCode();
+                    // Drain response body to avoid connection pool leaks
+                    try (java.io.InputStream is = code >= 400 ? conn.getErrorStream() : conn.getInputStream()) {
+                        if (is != null) { byte[] drain = new byte[1024]; while (is.read(drain) != -1) {} }
+                    } catch (java.io.IOException ignored) {}
                     if (code == 200) {
-                        uiHandler.post(() -> Toast.makeText(requireContext(), R.string.browser_log_send_success, Toast.LENGTH_SHORT).show());
+                        uiHandler.post(() -> {
+                            if (!isAdded()) return;
+                            Toast.makeText(requireContext(), R.string.browser_log_send_success, Toast.LENGTH_SHORT).show();
+                        });
                     } else if (code == 401 || code == 403) {
                         AppLog.w("LogBottomSheet", "Auth expired: HTTP " + code);
-                        uiHandler.post(() -> Toast.makeText(requireContext(), R.string.browser_log_auth_expired, Toast.LENGTH_SHORT).show());
+                        uiHandler.post(() -> {
+                            if (!isAdded()) return;
+                            Toast.makeText(requireContext(), R.string.browser_log_auth_expired, Toast.LENGTH_SHORT).show();
+                        });
                     } else {
                         AppLog.w("LogBottomSheet", "Send failed: HTTP " + code);
-                        uiHandler.post(() -> Toast.makeText(requireContext(), R.string.browser_log_send_failed, Toast.LENGTH_SHORT).show());
+                        uiHandler.post(() -> {
+                            if (!isAdded()) return;
+                            Toast.makeText(requireContext(), R.string.browser_log_send_failed, Toast.LENGTH_SHORT).show();
+                        });
                     }
                 } finally {
                     conn.disconnect();
                 }
             } catch (Exception e) {
                 AppLog.e("LogBottomSheet", "Send to session failed", e);
-                uiHandler.post(() -> Toast.makeText(requireContext(), R.string.browser_log_send_failed, Toast.LENGTH_SHORT).show());
+                uiHandler.post(() -> {
+                    if (!isAdded()) return;
+                    Toast.makeText(requireContext(), R.string.browser_log_send_failed, Toast.LENGTH_SHORT).show();
+                });
             }
         });
     }
@@ -283,6 +296,12 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         private List<BrowserLogBuffer.Entry> entries = Collections.emptyList();
 
         void setEntries(List<BrowserLogBuffer.Entry> entries) {
+            // Skip update if nothing changed (avoids unnecessary rebinds on 500ms auto-refresh)
+            if (this.entries.size() == entries.size() && !this.entries.isEmpty()) {
+                BrowserLogBuffer.Entry lastOld = this.entries.get(this.entries.size() - 1);
+                BrowserLogBuffer.Entry lastNew = entries.get(entries.size() - 1);
+                if (lastOld.seq == lastNew.seq) return;
+            }
             this.entries = entries;
             notifyDataSetChanged();
         }
@@ -305,15 +324,15 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         @Override
         public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
             BrowserLogBuffer.Entry entry = entries.get(position);
-            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.ROOT);
-            String time = sdf.format(new Date(entry.ts));
+            SimpleDateFormat sdf = SDF_SHORT;
+            String time = sdf.format(new Date(entry.seq));
             String text = time + " " + entry.level + "/" + entry.tag + ": " + entry.msg;
 
             TextView tv = (TextView) holder.itemView;
             tv.setText(text);
 
-            boolean isSelected = selectedTimestamps.contains(entry.ts);
-            tv.setBackgroundColor(isSelected ? 0x1F58a6ff : 0x00000000);
+            boolean isSelected = selectedSeqs.contains(entry.seq);
+            tv.setBackgroundColor(isSelected ? COLOR_SELECTION : 0x00000000);
 
             switch (entry.level) {
                 case 'E': tv.setTextColor(0xFFF85149); break;
@@ -322,10 +341,10 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
             }
 
             tv.setOnClickListener(v -> {
-                if (selectedTimestamps.contains(entry.ts)) {
-                    selectedTimestamps.remove(entry.ts);
+                if (selectedSeqs.contains(entry.seq)) {
+                    selectedSeqs.remove(entry.seq);
                 } else {
-                    selectedTimestamps.add(entry.ts);
+                    selectedSeqs.add(entry.seq);
                 }
                 notifyItemChanged(holder.getAdapterPosition());
             });

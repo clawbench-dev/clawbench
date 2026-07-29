@@ -114,63 +114,38 @@ public class BrowserLogBufferTest {
         assertTrue(buffer.getFiltered('E').isEmpty());
     }
 
-    // --- Entry equals/hashCode ---
+    // --- Entry equals/hashCode (based on seq) ---
 
     @Test
-    public void entry_equals_sameFields() {
-        long ts = System.currentTimeMillis();
-        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", ts);
-        BrowserLogBuffer.Entry b = new BrowserLogBuffer.Entry('E', "Tag", "msg", ts);
+    public void entry_equals_sameSeq() {
+        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000, 42);
+        BrowserLogBuffer.Entry b = new BrowserLogBuffer.Entry('W', "Other", "other", 2000, 42);
         assertEquals(a, b);
         assertEquals(a.hashCode(), b.hashCode());
     }
 
     @Test
-    public void entry_equals_differentLevel_notEqual() {
-        long ts = System.currentTimeMillis();
-        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", ts);
-        BrowserLogBuffer.Entry b = new BrowserLogBuffer.Entry('W', "Tag", "msg", ts);
-        assertNotEquals(a, b);
-    }
-
-    @Test
-    public void entry_equals_differentMsg_notEqual() {
-        long ts = System.currentTimeMillis();
-        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg1", ts);
-        BrowserLogBuffer.Entry b = new BrowserLogBuffer.Entry('E', "Tag", "msg2", ts);
-        assertNotEquals(a, b);
-    }
-
-    @Test
-    public void entry_equals_differentTs_notEqual() {
-        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000);
-        BrowserLogBuffer.Entry b = new BrowserLogBuffer.Entry('E', "Tag", "msg", 2000);
+    public void entry_equals_differentSeq_notEqual() {
+        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000, 1);
+        BrowserLogBuffer.Entry b = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000, 2);
         assertNotEquals(a, b);
     }
 
     @Test
     public void entry_equals_null_notEqual() {
-        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000);
+        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000, 1);
         assertNotEquals(a, null);
     }
 
     @Test
     public void entry_equals_differentType_notEqual() {
-        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000);
+        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000, 1);
         assertNotEquals(a, "string");
     }
 
     @Test
     public void entry_equals_self() {
-        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000);
+        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag", "msg", 1000, 1);
         assertEquals(a, a);
-    }
-
-    @Test
-    public void entry_equals_differentTag_notEqual() {
-        long ts = System.currentTimeMillis();
-        BrowserLogBuffer.Entry a = new BrowserLogBuffer.Entry('E', "Tag1", "msg", ts);
-        BrowserLogBuffer.Entry b = new BrowserLogBuffer.Entry('E', "Tag2", "msg", ts);
-        assertNotEquals(a, b);
     }
 }

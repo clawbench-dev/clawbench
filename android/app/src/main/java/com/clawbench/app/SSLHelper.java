@@ -25,7 +25,7 @@ public class SSLHelper {
                 public void checkServerTrusted(X509Certificate[] certs, String authType) {}
             }}, new SecureRandom());
         } catch (Exception e) {
-            // Should never happen
+            AppLog.e("SSLHelper", "Failed to initialize trust-all SSLContext", e);
         }
         trustAllContext = ctx;
     }

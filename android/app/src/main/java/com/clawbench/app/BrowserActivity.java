@@ -29,16 +29,13 @@ import androidx.appcompat.app.AppCompatActivity;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.security.SecureRandom;
+
 import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 
 /**
  * Sandbox browser Activity for testing forwarded ports.
@@ -101,7 +98,7 @@ public class BrowserActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progressBar);
 
         logBuffer = new BrowserLogBuffer(500);
-        sessionCreds = BrowserSessionCredentials.getAndClear(this);
+        sessionCreds = BrowserSessionCredentials.get(this);
         setupWebView();
         setupToolbar();
         setupFindBar();
@@ -268,17 +265,23 @@ public class BrowserActivity extends AppCompatActivity {
         popup.getMenu().findItem(R.id.action_desktop_mode).setChecked(desktopMode);
         popup.setOnMenuItemClickListener(item -> {
             int id = item.getItemId();
-            if (id == R.id.action_clear_data) {
-                showClearDataDialog();
-                return true;
-            } else if (id == R.id.action_find) {
-                showFindBar();
+            if (id == R.id.action_forward) {
+                if (webView.canGoForward()) webView.goForward();
                 return true;
             } else if (id == R.id.action_desktop_mode) {
                 toggleDesktopMode();
                 return true;
+            } else if (id == R.id.action_find) {
+                showFindBar();
+                return true;
             } else if (id == R.id.action_log) {
                 showLogBottomSheet();
+                return true;
+            } else if (id == R.id.action_clear_data) {
+                showClearDataDialog();
+                return true;
+            } else if (id == R.id.action_close) {
+                finish();
                 return true;
             }
             return false;
@@ -334,7 +337,7 @@ public class BrowserActivity extends AppCompatActivity {
         WebSettings settings = webView.getSettings();
         if (desktopMode) {
             // Desktop user agent
-            String desktopUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 ClawBench-Browser/1.0";
+            String desktopUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
             settings.setUserAgentString(desktopUA);
             settings.setUseWideViewPort(true);
             settings.setLoadWithOverviewMode(false);
@@ -350,10 +353,7 @@ public class BrowserActivity extends AppCompatActivity {
      * Show the console log bottom sheet dialog.
      */
     private void showLogBottomSheet() {
-        String sessionId = sessionCreds != null ? sessionCreds.sessionId : "";
-        String serverUrl = sessionCreds != null ? sessionCreds.serverUrl : "";
-        String sessionCookie = sessionCreds != null ? sessionCreds.sessionCookie : "";
-        LogBottomSheet sheet = LogBottomSheet.newInstance(sessionId, serverUrl, sessionCookie);
+        LogBottomSheet sheet = LogBottomSheet.newInstance();
         sheet.show(getSupportFragmentManager(), "log_bottom_sheet");
     }
 
@@ -493,7 +493,7 @@ public class BrowserActivity extends AppCompatActivity {
 
         // Refresh session credentials if provided
         try {
-            BrowserSessionCredentials.Creds newCreds = BrowserSessionCredentials.getAndClear(this);
+            BrowserSessionCredentials.Creds newCreds = BrowserSessionCredentials.get(this);
             if (newCreds != null) {
                 sessionCreds = newCreds;
             }
@@ -547,8 +547,9 @@ public class BrowserActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        // Do NOT clear data here — it should persist across sessions.
-        // Only release WebView resources.
+        // Do NOT clear browsing data here — it should persist across sessions.
+        // Only release WebView resources and clear session credentials.
+        BrowserSessionCredentials.clear(this);
         webView.loadUrl("about:blank");
         webView.destroy();
         super.onDestroy();
@@ -606,15 +607,7 @@ public class BrowserActivity extends AppCompatActivity {
 
                 // Trust all certs for localhost (SSH tunnel is plaintext, self-signed HTTPS)
                 if (conn instanceof HttpsURLConnection && ("localhost".equals(host) || "127.0.0.1".equals(host))) {
-                    HttpsURLConnection httpsConn = (HttpsURLConnection) conn;
-                    SSLContext sc = SSLContext.getInstance("TLS");
-                    sc.init(null, new TrustManager[]{new X509TrustManager() {
-                        public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-                        public void checkClientTrusted(X509Certificate[] certs, String authType) {}
-                        public void checkServerTrusted(X509Certificate[] certs, String authType) {}
-                    }}, new SecureRandom());
-                    httpsConn.setSSLSocketFactory(sc.getSocketFactory());
-                    httpsConn.setHostnameVerifier((hostname, session) -> true);
+                    SSLHelper.setupTrustAll((HttpsURLConnection) conn);
                 }
 
                 // Set method

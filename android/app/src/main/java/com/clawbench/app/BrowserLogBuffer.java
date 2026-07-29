@@ -3,6 +3,7 @@ package com.clawbench.app;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * In-memory circular buffer for console log entries captured by BrowserActivity.
@@ -16,12 +17,15 @@ public class BrowserLogBuffer {
         public final String tag;
         public final String msg;
         public final long ts;
+        /** Monotonically increasing sequence number for unique identity (unlike ts which can collide). */
+        public final long seq;
 
-        public Entry(char level, String tag, String msg, long ts) {
+        public Entry(char level, String tag, String msg, long ts, long seq) {
             this.level = level;
             this.tag = tag;
             this.msg = msg;
             this.ts = ts;
+            this.seq = seq;
         }
 
         @Override
@@ -29,20 +33,19 @@ public class BrowserLogBuffer {
             if (this == o) return true;
             if (!(o instanceof Entry)) return false;
             Entry entry = (Entry) o;
-            return level == entry.level && ts == entry.ts
-                    && Objects.equals(tag, entry.tag)
-                    && Objects.equals(msg, entry.msg);
+            return seq == entry.seq;
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(level, tag, msg, ts);
+            return Long.hashCode(seq);
         }
     }
 
     private final int capacity;
     private final List<Entry> entries;
     private final Object lock = new Object();
+    private final AtomicLong seqCounter = new AtomicLong(0);
 
     public BrowserLogBuffer(int capacity) {
         this.capacity = capacity;
@@ -54,7 +57,7 @@ public class BrowserLogBuffer {
             if (entries.size() >= capacity) {
                 entries.remove(0);
             }
-            entries.add(new Entry(level, tag, msg, System.currentTimeMillis()));
+            entries.add(new Entry(level, tag, msg, System.currentTimeMillis(), seqCounter.getAndIncrement()));
         }
     }
 
