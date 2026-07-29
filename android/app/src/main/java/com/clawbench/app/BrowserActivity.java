@@ -590,23 +590,8 @@ public class BrowserActivity extends AppCompatActivity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
-            // Inject global error listeners for uncaught JS exceptions
-            view.evaluateJavascript(
-                "(function(){" +
-                "if(window.__clawbenchErrorInjected) return;" +
-                "window.__clawbenchErrorInjected=1;" +
-                "window.addEventListener('error',function(e){" +
-                "  if(typeof BrowserNative!=='undefined'){" +
-                "    BrowserNative.log('E','JS.Uncaught',e.message+' at '+e.filename+':'+e.lineno);" +
-                "  }" +
-                "});" +
-                "window.addEventListener('unhandledrejection',function(e){" +
-                "  if(typeof BrowserNative!=='undefined'){" +
-                "    BrowserNative.log('E','JS.Promise',String(e.reason));" +
-                "  }" +
-                "});" +
-                "})();",
-                null);
+            // Inject global error listeners for uncaught JS exceptions and resource load failures
+            view.evaluateJavascript(JSErrorInjector.buildScript("BrowserNative"), null);
         }
 
         /**
