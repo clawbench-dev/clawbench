@@ -169,10 +169,10 @@ func TestFormatPermissionDetail(t *testing.T) {
 	if got := formatPermissionDetail("", ""); got != "" {
 		t.Errorf("expected empty, got %q", got)
 	}
-	if got := formatPermissionDetail("Bash", ""); got != "操作: Bash\n\n" {
-		t.Errorf("expected '操作: Bash', got %q", got)
+	if got := formatPermissionDetail("Bash", ""); got != "**操作**: Bash\n\n" {
+		t.Errorf("expected '**操作**: Bash', got %q", got)
 	}
-	if got := formatPermissionDetail("Bash", `{"command":"rm -rf /tmp"}`); got != "操作: Bash\n\n命令: rm -rf /tmp\n\n" {
+	if got := formatPermissionDetail("Bash", `{"command":"rm -rf /tmp"}`); got != "**操作**: Bash\n\n**命令**: `rm -rf /tmp`\n\n" {
 		t.Errorf("unexpected output: %q", got)
 	}
 }

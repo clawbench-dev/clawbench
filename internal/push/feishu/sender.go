@@ -22,8 +22,8 @@ type feishuMessageResponse struct {
 	Msg  string `json:"msg"`
 }
 
-// SendPostMessage sends a post (rich text) message to a Feishu user via bot single-chat.
-// Uses the /open-apis/im/v1/messages API with msg_type="post".
+// SendPostMessage sends an interactive card message with Markdown content to a Feishu user via bot single-chat.
+// Uses the /open-apis/im/v1/messages API with msg_type="interactive".
 // On 401 (token expired), it invalidates the cached token and retries once.
 func (m *Manager) SendPostMessage(ctx context.Context, openID, title, content string) error {
 	err := m.sendPostMessageOnce(ctx, openID, title, content)
@@ -47,22 +47,30 @@ func isTokenError(err error) bool {
 		bytes.Contains([]byte(err.Error()), []byte("401")))
 }
 
-// sendPostMessageOnce attempts a single send. Returns a 401 sentinel error
-// if the response status is 401, so the caller can retry.
+// sendPostMessageOnce attempts a single send using an interactive card with Markdown content.
+// Returns a 401 sentinel error if the response status is 401, so the caller can retry.
 func (m *Manager) sendPostMessageOnce(ctx context.Context, openID, title, content string) error {
 	token, err := m.getAccessToken(ctx)
 	if err != nil {
 		return fmt.Errorf("feishu: get token: %w", err)
 	}
 
-	// Build post content in Feishu's rich text format.
-	// Each content row is an array of content elements.
-	// We use a single text element per row for simplicity.
+	// Build interactive card with Markdown content.
+	// Interactive cards support Markdown rendering in Feishu.
 	contentJSON, err := json.Marshal(map[string]any{
-		"zh_cn": map[string]any{
-			"title":   title,
-			"content": [][]map[string]any{
-				{{"tag": "text", "text": content}},
+		"config": map[string]any{
+			"wide_screen_mode": true,
+		},
+		"header": map[string]any{
+			"title": map[string]any{
+				"tag":     "plain_text",
+				"content": title,
+			},
+		},
+		"elements": []map[string]any{
+			{
+				"tag": "markdown",
+				"content": content,
 			},
 		},
 	})
@@ -72,7 +80,7 @@ func (m *Manager) sendPostMessageOnce(ctx context.Context, openID, title, conten
 
 	reqBody := map[string]any{
 		"receive_id": openID,
-		"msg_type":   "post",
+		"msg_type":   "interactive",
 		"content":    string(contentJSON),
 	}
 

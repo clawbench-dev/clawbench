@@ -43,7 +43,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 	case "completed":
 		title = "会话已完成"
 		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
-		content = fmt.Sprintf("会话: %s\n\n项目: %s\n\n%s%s",
+		content = fmt.Sprintf("**会话**: %s\n**项目**: %s\n\n%s%s",
 			sessionTitle,
 			projectPath,
 			truncateForFeishu(responsePreview),
@@ -51,7 +51,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 	case "cancelled":
 		title = "会话已取消"
 		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
-		content = fmt.Sprintf("会话: %s\n\n项目: %s\n\n%s%s",
+		content = fmt.Sprintf("**会话**: %s\n**项目**: %s\n\n%s%s",
 			sessionTitle,
 			projectPath,
 			truncateForFeishu(responsePreview),
@@ -60,7 +60,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 		title = "操作需批准"
 		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 追加消息到队列", shortID)
 		detail := formatPermissionDetail(toolName, toolInput)
-		content = fmt.Sprintf("会话: %s\n\n项目: %s\n\n%s%s",
+		content = fmt.Sprintf("**会话**: %s\n**项目**: %s\n\n%s%s",
 			sessionTitle,
 			projectPath,
 			detail,
@@ -76,20 +76,20 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 func formatPermissionDetail(toolName, toolInput string) string {
 	var detail string
 	if toolName != "" {
-		detail += fmt.Sprintf("操作: %s\n\n", toolName)
+		detail += fmt.Sprintf("**操作**: %s\n\n", toolName)
 	}
 	if toolInput != "" {
 		var parsed map[string]any
 		if err := json.Unmarshal([]byte(toolInput), &parsed); err == nil {
 			if command, _ := parsed["command"].(string); command != "" {
-				detail += fmt.Sprintf("命令: %s\n\n", command)
+				detail += fmt.Sprintf("**命令**: `%s`\n\n", command)
 			}
 			filePath, _ := parsed["file_path"].(string)
 			if filePath == "" {
 				filePath, _ = parsed["path"].(string)
 			}
 			if filePath != "" {
-				detail += fmt.Sprintf("文件: %s\n\n", filePath)
+				detail += fmt.Sprintf("**文件**: `%s`\n\n", filePath)
 			}
 		}
 	}
@@ -107,24 +107,24 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 	switch status {
 	case "running":
 		title = "定时任务已启动"
-		content = fmt.Sprintf("任务: %s\n\n项目: %s",
+		content = fmt.Sprintf("**任务**: %s\n**项目**: %s",
 			taskName,
 			projectPath)
 	case "completed":
 		title = "定时任务已完成"
-		content = fmt.Sprintf("任务: %s\n\n项目: %s\n\n%s",
+		content = fmt.Sprintf("**任务**: %s\n**项目**: %s\n\n%s",
 			taskName,
 			projectPath,
 			truncateForFeishu(responsePreview))
 	case "failed":
 		title = "定时任务失败"
-		content = fmt.Sprintf("任务: %s\n\n项目: %s\n\n%s",
+		content = fmt.Sprintf("**任务**: %s\n**项目**: %s\n\n%s",
 			taskName,
 			projectPath,
 			truncateForFeishu(responsePreview))
 	case "cancelled":
 		title = "定时任务已取消"
-		content = fmt.Sprintf("任务: %s\n\n项目: %s\n\n%s",
+		content = fmt.Sprintf("**任务**: %s\n**项目**: %s\n\n%s",
 			taskName,
 			projectPath,
 			truncateForFeishu(responsePreview))
