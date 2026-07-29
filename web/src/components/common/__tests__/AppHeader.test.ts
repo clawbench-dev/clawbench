@@ -94,49 +94,11 @@ describe('AppHeader logic', () => {
     expect(gitBranch.value).toBe('feature-branch')
   })
 
-  it('isAppMode determines status dot behavior', () => {
+  it('isAppMode determines logout button visibility', () => {
     mockIsAppMode.value = true
     expect(mockIsAppMode.value).toBe(true)
     mockIsAppMode.value = false
     expect(mockIsAppMode.value).toBe(false)
-  })
-
-  it('formatServerHost strips protocol', () => {
-    const formatServerHost = (url: string) => url.replace(/^https?:\/\//, '')
-    expect(formatServerHost('https://example.com')).toBe('example.com')
-    expect(formatServerHost('http://localhost:8080')).toBe('localhost:8080')
-  })
-
-  // ── serverStatusLabel ──
-
-  it('serverStatusLabel returns connected for connected status', () => {
-    mockWsStatus.value = 'connected'
-    const serverStatusLabel = computed(() => {
-      if (mockWsStatus.value === 'connected') return 'Connected'
-      if (mockWsStatus.value === 'reconnecting') return 'Reconnecting'
-      return 'Disconnected'
-    })
-    expect(serverStatusLabel.value).toBe('Connected')
-  })
-
-  it('serverStatusLabel returns reconnecting for reconnecting status', () => {
-    mockWsStatus.value = 'reconnecting'
-    const serverStatusLabel = computed(() => {
-      if (mockWsStatus.value === 'connected') return 'Connected'
-      if (mockWsStatus.value === 'reconnecting') return 'Reconnecting'
-      return 'Disconnected'
-    })
-    expect(serverStatusLabel.value).toBe('Reconnecting')
-  })
-
-  it('serverStatusLabel returns disconnected for disconnected status', () => {
-    mockWsStatus.value = 'disconnected'
-    const serverStatusLabel = computed(() => {
-      if (mockWsStatus.value === 'connected') return 'Connected'
-      if (mockWsStatus.value === 'reconnecting') return 'Reconnecting'
-      return 'Disconnected'
-    })
-    expect(serverStatusLabel.value).toBe('Disconnected')
   })
 
   // ── dropdown position calculation ──

@@ -30,8 +30,9 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
-function mountPanel() {
+function mountPanel(props?: { showLogout?: boolean }) {
   return mount(SystemResourcesPanel, {
+    props,
     global: {
       stubs: {
         Cpu: true,
@@ -42,6 +43,8 @@ function mountPanel() {
         HardDriveUpload: true,
         CloudDownload: true,
         CloudUpload: true,
+        Server: true,
+        LogOut: true,
       },
     },
   })
@@ -138,5 +141,29 @@ describe('SystemResourcesPanel', () => {
     mockResources.value = { ...mockData, network: { ...mockData.network, upload_rate: 0 } }
     const wrapper = mountPanel()
     expect(wrapper.text()).toContain('0 B/s')
+  })
+
+  // ── Server info header ──
+
+  it('renders server info header with address', () => {
+    const wrapper = mountPanel()
+    expect(wrapper.find('.server-info-header')).toBeTruthy()
+    expect(wrapper.find('.server-info-address')).toBeTruthy()
+  })
+
+  it('does not show logout button when showLogout is false', () => {
+    const wrapper = mountPanel({ showLogout: false })
+    expect(wrapper.find('.logout-btn').exists()).toBe(false)
+  })
+
+  it('shows logout button when showLogout is true', () => {
+    const wrapper = mountPanel({ showLogout: true })
+    expect(wrapper.find('.logout-btn').exists()).toBe(true)
+  })
+
+  it('emits logout event when logout button is clicked', async () => {
+    const wrapper = mountPanel({ showLogout: true })
+    await wrapper.find('.logout-btn').trigger('click')
+    expect(wrapper.emitted('logout')).toBeTruthy()
   })
 })

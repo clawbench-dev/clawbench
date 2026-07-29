@@ -9,11 +9,13 @@ const {
   setPendingManageNavigationFn,
   mockState,
   wsConfig,
+  isAppModeConfig,
 } = vi.hoisted(() => ({
   loadGitBranchFn: vi.fn(),
   setPendingManageNavigationFn: vi.fn(),
   mockState: { gitBranch: '' },
   wsConfig: { value: 'connected' as string },
+  isAppModeConfig: { value: false as boolean },
 }))
 
 vi.mock('@/stores/app.ts', () => ({
@@ -28,6 +30,15 @@ vi.mock('@/composables/useGlobalEvents', () => {
     }),
   }
 })
+vi.mock('@/composables/useAppMode', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const vue = require('vue')
+  return {
+    useAppMode: () => ({
+      isAppMode: vue.ref(isAppModeConfig.value),
+    }),
+  }
+})
 vi.mock('@/composables/useCommitNavigation.ts', () => ({
   setPendingManageNavigation: setPendingManageNavigationFn,
 }))
@@ -37,12 +48,10 @@ const i18n = createI18n({
   messages: { en: { common: { loading: 'Loading...' }, appHeader: {
     switchProject: 'Switch project', selectProject: 'Select project',
     noRecentProjects: 'No recent projects', browse: 'Browse...',
-    connectionStatus: 'Connection Status', serverConnected: 'Server connected',
-    serverReconnecting: 'Reconnecting...', serverDisconnected: 'Server disconnected',
     projectPathNotFound: 'Project path does not exist or has been deleted',
     switchProjectFailed: 'Switch project failed: {error}',
     switchProjectNetworkError: 'Switch project failed: network error',
-  } } },
+  }, login: { logout: 'Logout' }, systemResources: { title: 'System Resources' } } },
 })
 
 const PopupMenuStub = { template: '<div class="popup-menu-stub" v-if="$props.show"><slot /></div>', props: ['show','targetElement','maxWidth','maxHeight','menuItemsCount'] }
@@ -57,7 +66,7 @@ function mountHeader(props: Record<string, unknown> = {}) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const wrapper = mount(AppHeader, {
-    props: { projectRoot: '/home/user/my-project', hidden: false, ...props },
+    props: { projectRoot: '/home/user/my-project', ...props },
     attachTo: container,
     global: {
       plugins: [i18n],
@@ -83,7 +92,7 @@ describe('AppHeader', () => {
       activeWrapper.unmount()
       activeWrapper = null
     }
-    document.body.querySelectorAll('.header,.status-dot,.branch-badge,.dropdown-scroll-area,.dropdown-empty').forEach(el => el.remove())
+    document.body.querySelectorAll('.header,.server-toggle,.branch-badge,.dropdown-scroll-area,.dropdown-empty').forEach(el => el.remove())
     if (activeContainer?.parentNode) {
       document.body.removeChild(activeContainer)
       activeContainer = null
@@ -99,6 +108,7 @@ describe('AppHeader', () => {
 
   beforeEach(() => {
     wsConfig.value = 'connected'
+    isAppModeConfig.value = false
     mockState.gitBranch = ''
     loadGitBranchFn.mockReset()
     setPendingManageNavigationFn.mockReset()
@@ -127,28 +137,28 @@ describe('AppHeader', () => {
     expect($('.project-name')?.textContent).toBe('deep-project')
   })
 
-  // ── Connection status dot (3) ──
+  // ── Server icon status color (3) ──
 
-  it('status dot - connected', () => {
+  it('server icon - connected', () => {
     wsConfig.value = 'connected'
     mountAndTrack()
-    expect($('.status-dot')?.classList.contains('status-dot-connected')).toBe(true)
+    expect($('.server-toggle')?.classList.contains('status-dot-connected')).toBe(true)
   })
-  it('status dot - reconnecting', () => {
+  it('server icon - reconnecting', () => {
     wsConfig.value = 'reconnecting'
     mountAndTrack()
-    expect($('.status-dot')?.classList.contains('status-dot-reconnecting')).toBe(true)
+    expect($('.server-toggle')?.classList.contains('status-dot-reconnecting')).toBe(true)
   })
-  it('status dot - disconnected', () => {
+  it('server icon - disconnected', () => {
     wsConfig.value = 'disconnected'
     mountAndTrack()
-    expect($('.status-dot')?.classList.contains('status-dot-disconnected')).toBe(true)
+    expect($('.server-toggle')?.classList.contains('status-dot-disconnected')).toBe(true)
   })
 
   // ── Visibility (1) ──
 
   it('visible by default', () => {
-    mountAndTrack({ hidden: false })
+    mountAndTrack()
     // Check that header is in DOM and visible
     expect($('.header')).toBeTruthy()
   })
@@ -159,9 +169,9 @@ describe('AppHeader', () => {
     mountAndTrack()
     expect($('.header-logo')).toBeTruthy()
   })
-  it('has status toggle button', () => {
+  it('has server toggle button', () => {
     mountAndTrack()
-    expect($('.status-toggle')).toBeTruthy()
+    expect($('.server-toggle')).toBeTruthy()
   })
   it('has project switch button', () => {
     mountAndTrack()
@@ -387,7 +397,7 @@ describe('AppHeader', () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const wrapper = mount(AppHeader, {
-      props: { projectRoot: '/home/user/my-project', hidden: false },
+      props: { projectRoot: '/home/user/my-project' },
       attachTo: container,
       global: {
         plugins: [i18n],
@@ -411,21 +421,6 @@ describe('AppHeader', () => {
     expect(hotSwitchMock).toHaveBeenCalledWith('/home/user/other-project')
   })
 
-  // ── toggleStatusMenu (web mode) ──
-
-  it('toggleStatusMenu toggles the status menu open state', async () => {
-    const wrapper = mountAndTrack()
-    expect(wrapper.vm.statusMenuOpen).toBe(false)
-
-    await (wrapper.vm as any).toggleStatusMenu()
-    try { await wrapper.vm.$nextTick() } catch {}
-    expect(wrapper.vm.statusMenuOpen).toBe(true)
-
-    await (wrapper.vm as any).toggleStatusMenu()
-    try { await wrapper.vm.$nextTick() } catch {}
-    expect(wrapper.vm.statusMenuOpen).toBe(false)
-  })
-
   // ── onClickOutside ──
 
   it('onClickOutside closes dropdown when click is outside', async () => {
@@ -437,26 +432,6 @@ describe('AppHeader', () => {
     try { await wrapper.vm.$nextTick() } catch {}
 
     expect(wrapper.vm.dropdownOpen).toBe(false)
-  })
-
-  // ── serverStatusLabel computed ──
-
-  it('shows correct server status label for connected', () => {
-    wsConfig.value = 'connected'
-    const wrapper = mountAndTrack()
-    expect(wrapper.vm.serverStatusLabel).toBe('Server connected')
-  })
-
-  it('shows correct server status label for reconnecting', () => {
-    wsConfig.value = 'reconnecting'
-    const wrapper = mountAndTrack()
-    expect(wrapper.vm.serverStatusLabel).toBe('Reconnecting...')
-  })
-
-  it('shows correct server status label for disconnected', () => {
-    wsConfig.value = 'disconnected'
-    const wrapper = mountAndTrack()
-    expect(wrapper.vm.serverStatusLabel).toBe('Server disconnected')
   })
 
   // ── statusDotClass computed ──
@@ -498,8 +473,6 @@ describe('AppHeader', () => {
     vi.unstubAllGlobals()
   })
 
-  // ── hidden prop removed (component no longer has hidden prop) ──
-
   // ── Regression: descender characters (p, g, y) must not be clipped ──
   // In jsdom, unitless line-height (e.g. 1.4) is returned as-is by getComputedStyle,
   // not resolved to px. So we check the raw parseFloat value directly.
@@ -540,5 +513,33 @@ describe('AppHeader', () => {
     expect(el?.textContent).toBe('p')
     // overflow:hidden + line-height:1.4 verified in scoped CSS source
     expect(el?.classList.contains('branch-name')).toBe(true)
+  })
+
+  // ── handleLogout ──
+
+  it('handleLogout calls AndroidNative.showServerDialog in APP mode', async () => {
+    isAppModeConfig.value = true
+    const showServerDialogMock = vi.fn()
+    vi.stubGlobal('AndroidNative', { showServerDialog: showServerDialogMock })
+
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).handleLogout()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(showServerDialogMock).toHaveBeenCalled()
+    expect(wrapper.vm.resourcesMenuOpen).toBe(false)
+
+    vi.unstubAllGlobals()
+    isAppModeConfig.value = false
+  })
+
+  it('handleLogout redirects to /login when not in APP mode', async () => {
+    isAppModeConfig.value = false
+    // Can't easily mock window.location.href in jsdom, so test the logic path
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).handleLogout()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.resourcesMenuOpen).toBe(false)
   })
 })

@@ -96,13 +96,7 @@ export default {
     switchProjectFailed: 'Switch project failed: {error}',
     switchProjectNetworkError: 'Switch project failed: network error',
     settings: 'Settings',
-    darkMode: 'Dark Mode',
-    lightMode: 'Light Mode',
     reconfigureServer: 'Reconfigure Server',
-    connectionStatus: 'Connection Status',
-    serverConnected: 'Server connected',
-    serverReconnecting: 'Reconnecting...',
-    serverDisconnected: 'Server disconnected',
     debugLog: 'Debug Log',
   },
   systemResources: {

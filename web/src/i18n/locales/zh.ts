@@ -96,13 +96,7 @@ export default {
     switchProjectFailed: '切换项目失败: {error}',
     switchProjectNetworkError: '切换项目失败: 网络错误',
     settings: '设置',
-    darkMode: '深色模式',
-    lightMode: '浅色模式',
     reconfigureServer: '重新配置服务器',
-    connectionStatus: '连接状态',
-    serverConnected: '服务器连接正常',
-    serverReconnecting: '重连中...',
-    serverDisconnected: '服务器连接异常',
     debugLog: '调试日志',
   },
   systemResources: {

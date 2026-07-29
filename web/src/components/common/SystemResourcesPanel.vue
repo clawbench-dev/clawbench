@@ -1,5 +1,14 @@
 <template>
   <div class="system-resources-panel">
+    <!-- Server info header -->
+    <div class="server-info-header">
+      <Server :size="13" class="server-info-icon" />
+      <span class="server-info-address">{{ serverAddress }}</span>
+      <button v-if="showLogout" class="logout-btn" @click="$emit('logout')" :title="t('login.logout')">
+        <LogOut :size="12" />
+      </button>
+    </div>
+    <div class="header-divider"></div>
     <!-- Load Average -->
     <div class="resource-row">
       <div class="resource-header">
@@ -80,13 +89,21 @@
 </template>
 
 <script setup>
-import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload } from 'lucide-vue-next'
+import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload, Server, LogOut } from 'lucide-vue-next'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSystemResources } from '@/composables/useSystemResources'
 
 const { t } = useI18n()
 const { resources, startPolling, stopPolling } = useSystemResources()
+
+defineProps({
+    showLogout: { type: Boolean, default: false },
+})
+
+defineEmits(['logout'])
+
+const serverAddress = window.location.host // e.g. "192.168.1.5:20000"
 
 const cpuPercent = computed(() => {
   const p = resources.value.cpu.percent
@@ -135,6 +152,52 @@ defineExpose({ startPolling, stopPolling })
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.server-info-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.server-info-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.server-info-address {
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.logout-btn {
+  margin-left: auto;
+  padding: 3px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.logout-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.header-divider {
+  height: 1px;
+  background: var(--border-color);
 }
 
 .resource-row {

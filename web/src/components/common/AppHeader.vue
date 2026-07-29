@@ -46,84 +46,35 @@
       </Transition>
     </Teleport>
 
-    <!-- System resources monitor -->
-    <button ref="gaugeBtnRef" class="gauge-toggle" @click="toggleResourcesMenu" :title="t('systemResources.title')">
-      <Gauge :size="15" />
+    <!-- Server button: merged gauge + status dot. Icon color reflects connection status -->
+    <button ref="serverBtnRef" class="server-toggle" :class="statusDotClass" @click="toggleResourcesMenu" :title="t('systemResources.title')">
+      <Server :size="15" />
     </button>
 
-    <!-- System resources popup (both Web and APP mode) -->
-    <PopupMenu v-model:show="resourcesMenuOpen" :target-element="gaugeBtnRef" :max-width="320" :max-height="400" :menu-items-count="5" anchor="right">
-      <SystemResourcesPanel ref="resourcesPanelRef" />
+    <!-- Server info + resources popup (both Web and APP mode) -->
+    <PopupMenu v-model:show="resourcesMenuOpen" :target-element="serverBtnRef" :max-width="320" :max-height="440" :menu-items-count="10" anchor="right">
+      <SystemResourcesPanel ref="resourcesPanelRef" :show-logout="isAppMode" @logout="handleLogout" />
     </PopupMenu>
-
-    <!-- Status dot: in APP mode it doubles as server switcher, in web mode it shows connection status -->
-    <button ref="statusBtnRef" class="status-toggle" @click="onStatusDotClick" :title="isAppMode ? t('login.switchServer') : t('appHeader.connectionStatus')">
-      <span class="status-dot" :class="statusDotClass"></span>
-    </button>
-
-    <!-- Web mode: simple connection status popup -->
-    <PopupMenu v-if="!isAppMode" v-model:show="statusMenuOpen" :target-element="statusBtnRef" :max-width="200" :max-height="120" :menu-items-count="2">
-      <div class="status-menu-item">
-        <span class="status-indicator" :class="statusDotClass"></span>
-        <span class="status-value">{{ serverStatusLabel }}</span>
-      </div>
-    </PopupMenu>
-
-    <!-- APP mode: server switcher dropdown from status dot -->
-    <Teleport to="body">
-      <Transition name="dropdown">
-        <div v-if="isAppMode && serverDropdownOpen" class="project-dropdown" :style="serverDropdownStyle" ref="serverDropdownPanelRef">
-          <!-- Current server (always first, not clickable) -->
-          <div class="dropdown-item current-server-item">
-            <Server :size="14" class="item-icon" />
-            <span class="item-label">{{ currentServerName }}</span>
-            <span class="status-indicator" :class="statusDotClass" style="margin-left:auto;"></span>
-          </div>
-          <div class="dropdown-divider"></div>
-          <!-- Server list (exclude current server) -->
-          <div v-if="otherServers.length > 0" class="dropdown-scroll-area">
-            <div
-              v-for="srv in otherServers"
-              :key="srv.url"
-              class="dropdown-item"
-              @click="switchServer(srv.url)"
-            >
-              <Server :size="14" class="item-icon" />
-              <span class="item-label">{{ formatServerHost(srv.url) }}</span>
-            </div>
-          </div>
-          <div class="dropdown-divider"></div>
-          <!-- Logout at bottom, like "Browse..." in project selector -->
-          <div class="dropdown-item other-item" @click="handleLogout">
-            <LogOut :size="14" class="item-icon" />
-            <span class="item-label">{{ t('login.logout') }}</span>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
   </header>
   </Teleport>
 </template>
 
 <script setup>
-import { Projector, Search, GitBranch, Server, LogOut, Gauge } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
-import { formatServerHost } from '@/utils/url'
 import { useAppMode } from '@/composables/useAppMode'
-import { useServerList } from '@/composables/useServerList'
 import { baseName } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
-import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
+import { toFixedCSS } from '@/composables/useSettingsConfig'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
 const { isAppMode } = useAppMode()
-const { servers: serverList, load: loadServerList } = useServerList()
 const switchTab = inject('switchTab')
 
 const props = defineProps({
@@ -135,22 +86,11 @@ const emit = defineEmits(['openProjectDialog'])
 const toast = inject('toast')
 const hotSwitchProject = inject('hotSwitchProject')
 
-// Connection status menu state (web mode only)
-const statusBtnRef = ref(null)
-const statusMenuOpen = ref(false)
-
-// Status dot class for the button indicator and popup
+// Status color class for the Server icon
 const statusDotClass = computed(() => {
     if (wsStatus.value === 'disconnected') return 'status-dot-disconnected'
     if (wsStatus.value === 'reconnecting') return 'status-dot-reconnecting'
     return 'status-dot-connected'
-})
-
-// Simplified server status label
-const serverStatusLabel = computed(() => {
-    if (wsStatus.value === 'connected') return t('appHeader.serverConnected')
-    if (wsStatus.value === 'reconnecting') return t('appHeader.serverReconnecting')
-    return t('appHeader.serverDisconnected')
 })
 
 const projectName = computed(() => {
@@ -320,69 +260,9 @@ function onPathClick(e) {
     // If not dragged, let the click bubble up to the parent .dropdown-item's selectRecent
 }
 
-// --- Status dot click handler (APP mode = server switcher, web mode = connection status) ---
-function onStatusDotClick() {
-    if (isAppMode.value) {
-        toggleServerDropdown()
-    } else {
-        toggleStatusMenu()
-    }
-}
-
-function toggleStatusMenu() {
-    statusMenuOpen.value = !statusMenuOpen.value
-}
-
-// --- Server dropdown (APP mode, triggered from status dot) ---
-const serverDropdownOpen = ref(false)
-const serverDropdownPanelRef = ref(null)
-const serverDropdownStyle = ref({})
-
-const currentServerUrl = computed(() => window.location.origin)
-
-const currentServerName = computed(() => formatServerHost(window.location.origin))
-
-const otherServers = computed(() => serverList.value.filter(s => s.url !== currentServerUrl.value))
-
-function toggleServerDropdown() {
-    if (serverDropdownOpen.value) {
-        serverDropdownOpen.value = false
-    } else {
-        loadServerList()
-        updateServerDropdownPosition()
-        serverDropdownOpen.value = true
-    }
-}
-
-function updateServerDropdownPosition() {
-    if (!statusBtnRef.value) return
-    const rect = statusBtnRef.value.getBoundingClientRect()
-    const vp = getZoomedViewport()
-    serverDropdownStyle.value = {
-        position: 'fixed',
-        top: `${toFixedCSS(rect.bottom + 4)}px`,
-        right: `${toFixedCSS(vp.width - rect.right)}px`,
-        left: 'auto',
-        minWidth: '200px',
-        maxWidth: '260px',
-    }
-}
-
-function switchServer(url) {
-    serverDropdownOpen.value = false
-    if (url === currentServerUrl.value) return
-    // Use native connectToServer for pre-auth, SSL handling, and error recovery
-    const srv = serverList.value.find(s => s.url === url)
-    if (window.AndroidNative?.connectToServer && srv) {
-        window.AndroidNative.connectToServer(url, srv.password)
-    } else {
-        window.location.href = url + '/'
-    }
-}
-
+// --- Logout (APP mode) ---
 function handleLogout() {
-    serverDropdownOpen.value = false
-    // Use native showServerDialog to return to the static login page
+    resourcesMenuOpen.value = false
     if (window.AndroidNative?.showServerDialog) {
         window.AndroidNative.showServerDialog()
     } else {
@@ -390,8 +270,8 @@ function handleLogout() {
     }
 }
 
-// --- System resources monitor (Gauge icon) ---
-const gaugeBtnRef = ref(null)
+// --- System resources monitor (Server icon button) ---
+const serverBtnRef = ref(null)
 const resourcesMenuOpen = ref(false)
 const resourcesPanelRef = ref(null)
 
@@ -411,21 +291,12 @@ watch(resourcesMenuOpen, (open) => {
     }
 })
 
-// --- Close server dropdown on outside click ---
-function onServerClickOutside(e) {
-    if (statusBtnRef.value && statusBtnRef.value.contains(e.target)) return
-    if (serverDropdownPanelRef.value && serverDropdownPanelRef.value.contains(e.target)) return
-    serverDropdownOpen.value = false
-}
-
 onMounted(() => {
     document.addEventListener('click', onClickOutside)
-    document.addEventListener('click', onServerClickOutside)
 })
 
 onUnmounted(() => {
     document.removeEventListener('click', onClickOutside)
-    document.removeEventListener('click', onServerClickOutside)
 })
 </script>
 
@@ -446,7 +317,7 @@ onUnmounted(() => {
     border-radius: 999px;
     flex: 0 1 auto;
     min-width: 0;
-    max-width: calc(100% - 74px); /* leave room for logo + gauge + status dot */
+    max-width: calc(100% - 50px); /* leave room for logo + server button */
     transition: background 0.15s, border-color 0.15s;
 }
 
@@ -579,66 +450,38 @@ onUnmounted(() => {
     line-height: 1.4;
 }
 
-/* Gauge icon button for system resources */
-.gauge-toggle {
+/* Server icon button — merged gauge + status dot */
+.server-toggle {
     padding: 6px;
     border: none;
     background: transparent;
     cursor: pointer;
     border-radius: var(--radius-sm);
-    transition: background 0.15s;
+    transition: background 0.15s, color 0.3s;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--accent-color);
     margin-left: auto;
 }
 
 @media (hover: hover) {
-    .gauge-toggle:hover {
+    .server-toggle:hover {
         background: var(--bg-tertiary);
     }
 }
 
-/* Connection status button / server switcher dot */
-.status-toggle {
-    padding: 6px;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    transition: background 0.15s;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+.server-toggle.status-dot-connected {
+    color: var(--color-green, #22c55e);
 }
 
-@media (hover: hover) {
-    .status-toggle:hover {
-        background: var(--bg-tertiary);
-    }
-}
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    transition: background-color 0.3s;
-}
-
-.status-dot-connected {
-    background: var(--color-green, #22c55e);
-}
-
-.status-dot-reconnecting {
-    background: var(--color-yellow, #eab308);
+.server-toggle.status-dot-reconnecting {
+    color: var(--color-yellow, #eab308);
     animation: status-pulse 1.2s ease-in-out infinite;
 }
 
-.status-dot-disconnected {
-    background: var(--color-red, #ef4444);
+.server-toggle.status-dot-disconnected {
+    color: var(--color-red, #ef4444);
 }
 
 @keyframes status-pulse {
@@ -647,56 +490,8 @@ onUnmounted(() => {
 }
 </style>
 
-<!-- Unscoped styles for teleported status menu content (PopupMenu uses Teleport to body, scoped styles won't reach it) -->
+<!-- Unscoped styles for teleported dropdown content (scoped styles won't reach it) -->
 <style>
-/* Connection status menu (teleported to body, needs unscoped styles) */
-.status-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    font-size: 12px;
-    white-space: nowrap;
-}
-
-/* Status header in server dropdown (APP mode) */
-.status-menu-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    font-size: 12px;
-    white-space: nowrap;
-    color: var(--text-muted);
-}
-
-.status-dot-connected,
-.status-indicator.status-dot-connected {
-    background: var(--color-green, #22c55e);
-}
-
-.status-dot-reconnecting,
-.status-indicator.status-dot-reconnecting {
-    background: var(--color-yellow, #eab308);
-    animation: status-pulse 1.2s ease-in-out infinite;
-}
-
-.status-dot-disconnected,
-.status-indicator.status-dot-disconnected {
-    background: var(--color-red, #ef4444);
-}
-
-.status-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-.status-value {
-    color: var(--text-primary, #333);
-}
-
 /* Project dropdown (teleported to body, positioned via JS) */
 .project-dropdown {
     background: var(--bg-primary);
@@ -736,14 +531,6 @@ onUnmounted(() => {
 
 .project-dropdown .dropdown-item:hover {
     background: var(--bg-tertiary);
-}
-
-.project-dropdown .dropdown-item.current-server-item {
-    cursor: default;
-}
-
-.project-dropdown .dropdown-item.current-server-item:hover {
-    background: transparent;
 }
 
 .project-dropdown .dropdown-item.active {
