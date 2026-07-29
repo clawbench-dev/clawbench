@@ -200,12 +200,12 @@ func (m *Manager) handleSessionCommand(ctx context.Context, openID, shortID, msg
 				return
 			}
 			_ = m.SendPostMessage(ctx, openID, "消息已发送",
-				fmt.Sprintf("消息已发送到会话 %s，AI 正在处理", sessionLabel))
+				fmt.Sprintf("已发送到会话 %s，AI 正在处理", sessionLabel))
 			return
 		}
 		slog.Info("feishu: message enqueued to running session", "session_id", sessionID, "msg", msg)
 		_ = m.SendPostMessage(ctx, openID, "消息已发送",
-			fmt.Sprintf("消息已发送到运行中的会话 %s", sessionLabel))
+			fmt.Sprintf("已发送到运行中的会话 %s", sessionLabel))
 		return
 	}
 
@@ -216,7 +216,7 @@ func (m *Manager) handleSessionCommand(ctx context.Context, openID, shortID, msg
 	}
 	slog.Info("feishu: message sent to session", "session_id", sessionID, "msg", msg)
 	_ = m.SendPostMessage(ctx, openID, "消息已发送",
-		fmt.Sprintf("消息已发送到会话 %s，AI 正在处理", sessionLabel))
+		fmt.Sprintf("已发送到会话 %s，AI 正在处理", sessionLabel))
 }
 
 // handleSessionList lists recent sessions so the user can pick one to send a message to.
@@ -239,7 +239,7 @@ func (m *Manager) handleSessionList(ctx context.Context, openID string) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("会话列表\n发送 @会话ID <消息> 向会话发送消息：\n\n")
+	sb.WriteString("发送 **@会话ID** <消息> 向会话发送消息：\n\n")
 
 	// Group sessions by project path
 	type group struct {
@@ -262,7 +262,7 @@ func (m *Manager) handleSessionList(ctx context.Context, openID string) {
 	}
 
 	for _, g := range groups {
-		sb.WriteString(fmt.Sprintf("%s\n", g.project))
+		sb.WriteString(fmt.Sprintf("**%s**\n", g.project))
 		for _, s := range g.items {
 			id := common.ShortSessionID(s.ID)
 			title := s.Title
@@ -273,7 +273,7 @@ func (m *Manager) handleSessionList(ctx context.Context, openID string) {
 			if sessionMessenger.IsSessionRunning(s.ID) {
 				running = " *"
 			}
-			sb.WriteString(fmt.Sprintf("- @%s %s%s\n", id, title, running))
+			sb.WriteString(fmt.Sprintf("- **@%s** %s%s\n", id, title, running))
 		}
 		sb.WriteString("\n")
 	}
