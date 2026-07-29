@@ -28,6 +28,33 @@
     <string name="browser_ssl_message">该站点使用了不受信任的证书，连接可能不安全。\n\n仅当您信任该站点时才继续。</string>
     <string name="browser_ssl_positive">信任并继续</string>
     <string name="browser_ssl_negative">取消连接</string>
+    <!-- Browser sandbox - new features -->
+    <string name="browser_forward">前进</string>
+    <string name="browser_desktop_mode">桌面模式</string>
+    <string name="browser_mobile_mode">移动模式</string>
+    <string name="browser_find_in_page">查找</string>
+    <string name="browser_console_log">日志</string>
+    <string name="browser_more">更多</string>
+    <string name="browser_find_hint">搜索页面内容</string>
+    <string name="browser_find_no_results">未找到</string>
+    <string name="browser_log_title">控制台日志</string>
+    <string name="browser_log_filter_all">全部</string>
+    <string name="browser_log_filter_error">错误</string>
+    <string name="browser_log_filter_warn">警告</string>
+    <string name="browser_log_filter_log">日志</string>
+    <string name="browser_log_search_hint">搜索日志</string>
+    <string name="browser_log_empty">暂无日志</string>
+    <string name="browser_log_copied">已复制到剪贴板</string>
+    <string name="browser_log_send_selected">发送选中日志到会话</string>
+    <string name="browser_log_send_all">发送所有日志到会话</string>
+    <string name="browser_log_clear">清空日志</string>
+    <string name="browser_log_send_message_hint">输入消息发送到会话…</string>
+    <string name="browser_log_send">发送</string>
+    <string name="browser_log_send_success">已发送到会话</string>
+    <string name="browser_log_send_failed">发送失败</string>
+    <string name="browser_log_no_session">未连接会话，无法发送</string>
+    <string name="browser_log_no_selection">请先选择日志条目</string>
+    <string name="browser_log_auth_expired">会话已过期，请重新打开浏览器</string>
     <string name="press_again_to_exit">再按一次退出应用</string>
     <!-- Share feature -->
     <string name="share_file_failed">分享文件失败</string>

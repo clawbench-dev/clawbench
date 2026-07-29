@@ -64,26 +64,14 @@
             android:scaleType="fitCenter"
             app:tint="@color/browser_icon_tint" />
 
-        <!-- Clear data button -->
+        <!-- Overflow menu button -->
         <androidx.appcompat.widget.AppCompatImageButton
-            android:id="@+id/btnClearData"
+            android:id="@+id/btnMore"
             android:layout_width="36dp"
             android:layout_height="36dp"
-            android:src="@drawable/ic_browser_clear"
+            android:src="@drawable/ic_browser_more"
             android:background="@drawable/bg_toolbar_btn"
-            android:contentDescription="@string/browser_clear_data"
-            android:padding="6dp"
-            android:scaleType="fitCenter"
-            app:tint="@color/browser_icon_tint" />
-
-        <!-- Close button (truly destroys the Activity) -->
-        <androidx.appcompat.widget.AppCompatImageButton
-            android:id="@+id/btnClose"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:src="@drawable/ic_browser_close"
-            android:background="@drawable/bg_toolbar_btn"
-            android:contentDescription="@string/browser_close"
+            android:contentDescription="@string/browser_more"
             android:padding="6dp"
             android:scaleType="fitCenter"
             app:tint="@color/browser_icon_tint" />
@@ -99,6 +87,80 @@
         android:max="100"
         android:progressDrawable="@drawable/bg_progress_bar"
         android:visibility="gone" />
+
+    <!-- Find in page bar (hidden by default) -->
+    <LinearLayout
+        android:id="@+id/findBar"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="4dp"
+        android:background="@color/browser_toolbar_bg"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/findInput"
+            android:layout_width="0dp"
+            android:layout_height="30dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_url_bar"
+            android:hint="@string/browser_find_hint"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:singleLine="true"
+            android:textColor="@color/browser_url_text"
+            android:textColorHint="@color/browser_url_hint_color"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/findResultCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="@color/browser_url_hint_color"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/btnFindPrev"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_browser_back"
+            android:background="@drawable/bg_toolbar_btn"
+            android:contentDescription="Previous"
+            android:padding="4dp"
+            android:scaleType="fitCenter"
+            android:rotation="90"
+            app:tint="@color/browser_icon_tint" />
+
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/btnFindNext"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_browser_forward"
+            android:background="@drawable/bg_toolbar_btn"
+            android:contentDescription="Next"
+            android:padding="4dp"
+            android:scaleType="fitCenter"
+            android:rotation="90"
+            app:tint="@color/browser_icon_tint" />
+
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/btnFindClose"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_browser_close"
+            android:background="@drawable/bg_toolbar_btn"
+            android:contentDescription="Close find"
+            android:padding="4dp"
+            android:scaleType="fitCenter"
+            app:tint="@color/browser_icon_tint" />
+
+    </LinearLayout>
 
     <!-- WebView -->
     <WebView

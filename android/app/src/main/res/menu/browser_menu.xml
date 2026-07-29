@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/action_forward"
+        android:title="@string/browser_forward"
+        android:icon="@drawable/ic_browser_forward"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_desktop_mode"
+        android:title="@string/browser_desktop_mode"
+        android:checkable="true"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_find"
+        android:title="@string/browser_find_in_page"
+        android:icon="@drawable/ic_browser_find"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_log"
+        android:title="@string/browser_console_log"
+        android:icon="@drawable/ic_browser_log"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_clear_data"
+        android:title="@string/browser_clear_data"
+        android:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_close"
+        android:title="@string/browser_close"
+        android:showAsAction="never" />
+</menu>
