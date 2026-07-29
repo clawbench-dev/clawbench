@@ -1,6 +1,7 @@
 package feishu
 
 import (
+	"context"
 	"testing"
 
 	"clawbench/internal/model"
@@ -85,7 +86,7 @@ func TestPtrStr(t *testing.T) {
 func TestOnMessageReceive_NilEvent(t *testing.T) {
 	mgr := NewManager(&model.FeishuConfig{AppID: "test", AppSecret: "test"})
 	event := &larkim.P2MessageReceiveV1{Event: nil}
-	if err := mgr.onMessageReceive(nil, event); err != nil {
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
 		t.Errorf("expected nil error for nil event data, got %v", err)
 	}
 }
@@ -108,7 +109,7 @@ func TestOnMessageReceive_NonP2P(t *testing.T) {
 			},
 		},
 	}
-	if err := mgr.onMessageReceive(nil, event); err != nil {
+	if err := mgr.onMessageReceive(context.TODO(), event); err != nil {
 		t.Errorf("expected nil error for non-p2p, got %v", err)
 	}
 }
@@ -145,7 +146,7 @@ func TestOnMessageReceive_AutoSubscribe(t *testing.T) {
 		},
 	}
 
-	_ = mgr.onMessageReceive(nil, event)
+	_ = mgr.onMessageReceive(context.TODO(), event)
 	if upsertedUser != "ou_user1" {
 		t.Errorf("expected upsert for ou_user1, got %q", upsertedUser)
 	}
@@ -189,7 +190,7 @@ func TestOnMessageReceive_SessionCommand(t *testing.T) {
 		},
 	}
 
-	_ = mgr.onMessageReceive(nil, event)
+	_ = mgr.onMessageReceive(context.TODO(), event)
 	// Should not panic; actual send will fail (no server), but the flow completes
 }
 
@@ -212,9 +213,9 @@ func TestOnMessageReceive_PostMessage(t *testing.T) {
 	event := &larkim.P2MessageReceiveV1{
 		Event: &larkim.P2MessageReceiveV1Data{
 			Message: &larkim.EventMessage{
-				ChatType: &chatType,
-				ChatId:   strPtr("chat1"),
-				Content:  strPtr(`{"zh_cn":{"title":"Hello","content":[[{"tag":"text","text":"world"}]]}}`),
+				ChatType:    &chatType,
+				ChatId:      strPtr("chat1"),
+				Content:     strPtr(`{"zh_cn":{"title":"Hello","content":[[{"tag":"text","text":"world"}]]}}`),
 				MessageType: strPtr("post"),
 			},
 			Sender: &larkim.EventSender{
@@ -224,7 +225,7 @@ func TestOnMessageReceive_PostMessage(t *testing.T) {
 		},
 	}
 
-	_ = mgr.onMessageReceive(nil, event)
+	_ = mgr.onMessageReceive(context.TODO(), event)
 	if upsertedUser != "ou_user2" {
 		t.Errorf("expected auto-subscribe for ou_user2, got %q", upsertedUser)
 	}

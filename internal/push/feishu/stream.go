@@ -16,11 +16,12 @@ import (
 
 // startWebSocket establishes the Feishu WebSocket connection for receiving events.
 // This is non-blocking — the SDK manages reconnection internally.
-func (m *Manager) startWebSocket(ctx context.Context) error {
+func (m *Manager) startWebSocket(ctx context.Context) {
 	dispatcher := larkdispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(m.onMessageReceive)
 
-	m.wsClient = larkws.NewClient(m.cfg.AppID, m.cfg.AppSecret,
+	m.wsClient = larkws.NewClient(
+		m.cfg.AppID, m.cfg.AppSecret,
 		larkws.WithEventHandler(dispatcher),
 		larkws.WithOnReady(func() {
 			slog.Info("feishu: websocket ready, receiving events")
@@ -43,7 +44,6 @@ func (m *Manager) startWebSocket(ctx context.Context) error {
 	}()
 
 	slog.Info("feishu: websocket connecting")
-	return nil
 }
 
 // onMessageReceive handles incoming messages from Feishu users.
@@ -91,7 +91,8 @@ func (m *Manager) onMessageReceive(ctx context.Context, event *larkim.P2MessageR
 	// Extract text content from the message JSON
 	text := extractTextContent(msgContent, ptrStr(msg.MessageType))
 
-	slog.Info("feishu: received message",
+	slog.Info(
+		"feishu: received message",
 		"open_id", openID,
 		"chat_id", chatID,
 		"chat_type", chatType,
@@ -139,8 +140,8 @@ func extractTextContent(content, msgType string) string {
 	if msgType == "post" {
 		var postMsg struct {
 			ZhCn struct {
-				Title   string           `json:"title"`
-				Content [][]postElement  `json:"content"`
+				Title   string          `json:"title"`
+				Content [][]postElement `json:"content"`
 			} `json:"zh_cn"`
 		}
 		if err := json.Unmarshal([]byte(content), &postMsg); err == nil {
@@ -262,7 +263,7 @@ func (m *Manager) handleSessionList(ctx context.Context, openID string) {
 	}
 
 	for _, g := range groups {
-		sb.WriteString(fmt.Sprintf("**%s**\n", g.project))
+		fmt.Fprintf(&sb, "**%s**\n", g.project)
 		for _, s := range g.items {
 			id := common.ShortSessionID(s.ID)
 			title := s.Title
@@ -273,7 +274,7 @@ func (m *Manager) handleSessionList(ctx context.Context, openID string) {
 			if sessionMessenger.IsSessionRunning(s.ID) {
 				running = " *"
 			}
-			sb.WriteString(fmt.Sprintf("- **@%s** %s%s\n", id, title, running))
+			fmt.Fprintf(&sb, "- **@%s** %s%s\n", id, title, running)
 		}
 		sb.WriteString("\n")
 	}

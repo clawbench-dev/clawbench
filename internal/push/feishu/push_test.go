@@ -209,10 +209,10 @@ type mockDB struct {
 	subscribers []common.SubscriberInfo
 }
 
-func (m *mockDB) MergeConfigSubscribers(_ []string)                      {}
-func (m *mockDB) GetSubscribers() ([]common.SubscriberInfo, error)       { return m.subscribers, nil }
-func (m *mockDB) UpsertSubscriber(_, _, _, _ string) error               { return nil }
-func (m *mockDB) DeleteSubscriber(_ string) error                        { return nil }
+func (m *mockDB) MergeConfigSubscribers(_ []string)                {}
+func (m *mockDB) GetSubscribers() ([]common.SubscriberInfo, error) { return m.subscribers, nil }
+func (m *mockDB) UpsertSubscriber(_, _, _, _ string) error         { return nil }
+func (m *mockDB) DeleteSubscriber(_ string) error                  { return nil }
 
 // testContext returns a context with a short timeout for tests.
 func testContext(t *testing.T) context.Context {

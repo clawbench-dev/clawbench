@@ -56,9 +56,9 @@ func NewManager(cfg *model.FeishuConfig) *Manager {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				MaxIdleConns:        10,
-				IdleConnTimeout:     90 * time.Second,
-				DisableCompression:  false,
+				MaxIdleConns:       10,
+				IdleConnTimeout:    90 * time.Second,
+				DisableCompression: false,
 			},
 		},
 	}
@@ -155,16 +155,11 @@ func (m *Manager) Start() error {
 	db.MergeConfigSubscribers(m.cfg.Users)
 
 	// Start WebSocket connection (non-blocking)
-	var wsErr error
-	if err := m.startWebSocket(ctx); err != nil {
-		wsErr = err
-		slog.Warn("feishu: websocket connection failed", "error", err)
-		// WebSocket failure is not fatal
-	}
+	m.startWebSocket(ctx)
 
 	m.started = true
 	slog.Info("feishu: manager started")
-	return wsErr
+	return nil
 }
 
 // Stop gracefully shuts down the manager.

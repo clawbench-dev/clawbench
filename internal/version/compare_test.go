@@ -99,8 +99,8 @@ func TestIsDevBuild(t *testing.T) {
 		{"v1.0.0-07291030", false},
 		{"a0f87a96-07291030", true}, // short hash + build time suffix
 		{"dev-07291030", true},      // dev + build time suffix
-		{"g7702c473def", true}, // 12 hex chars with g prefix
-		{"release-1.0", true},  // has pre-release suffix
+		{"g7702c473def", true},      // 12 hex chars with g prefix
+		{"release-1.0", true},       // has pre-release suffix
 	}
 
 	for _, tt := range tests {

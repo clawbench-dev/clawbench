@@ -10,11 +10,9 @@ import (
 	"net/http"
 )
 
-var (
-	// feishuMessageURL is the Feishu API for sending messages.
-	// receive_id_type=open_id means receive_id is an open_id.
-	feishuMessageURL = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
-)
+// feishuMessageURL is the Feishu API for sending messages.
+// receive_id_type=open_id means receive_id is an open_id.
+var feishuMessageURL = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
 
 // feishuMessageResponse is the Feishu send message API response.
 type feishuMessageResponse struct {
@@ -69,7 +67,7 @@ func (m *Manager) sendPostMessageOnce(ctx context.Context, openID, title, conten
 		},
 		"elements": []map[string]any{
 			{
-				"tag": "markdown",
+				"tag":     "markdown",
 				"content": content,
 			},
 		},

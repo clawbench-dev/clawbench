@@ -17,7 +17,7 @@ app.config.errorHandler = (err, _instance, info) => {
     const msg = err instanceof Error ? (err.stack || err.message) : String(err)
     appLog.e('Vue', `${msg} [${info}]`)
   } catch {
-    console.error('[Vue] Failed to log error:', err)
+    appLog.e('Vue', 'Failed to log error:', err)
   }
 }
 
@@ -51,7 +51,7 @@ window.addEventListener('unhandledrejection', (e) => {
     appLog.e('JS.Promise', msg)
   } catch (err) {
     // Prevent infinite loop — last-resort logging
-    console.error('[JS.Promise] Failed to serialize rejection:', err)
+    appLog.e('JS.Promise', 'Failed to serialize rejection:', err)
   }
 })
 

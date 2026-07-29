@@ -49,8 +49,8 @@ func TestParseSessionCommand(t *testing.T) {
 		{"@a1b2c3d4", "a1b2c3d4", "", true},
 		{"@a1b2c3d4e5f6 some msg", "a1b2c3d4e5f6", "some msg", true},
 		{"hello", "", "", false},
-		{"@short no", "", "", false}, // less than 8 hex chars
-		{"@A1B2C3D4 hello", "A1B2C3D4", "hello", true}, // uppercase
+		{"@short no", "", "", false},                     // less than 8 hex chars
+		{"@A1B2C3D4 hello", "A1B2C3D4", "hello", true},   // uppercase
 		{" @a1b2c3d4 hello ", "a1b2c3d4", "hello", true}, // leading/trailing space
 	}
 	for _, tt := range tests {
@@ -144,7 +144,7 @@ func (m *mockMessenger) ListRecentSessions(limit int) ([]SessionInfo, error) {
 	return m.sessions[:limit], nil
 }
 
-func (m *mockMessenger) IsSessionRunning(sessionID string) bool { return m.running[sessionID] }
-func (m *mockMessenger) EnqueueMessage(string, string) error    { return nil }
-func (m *mockMessenger) ClearQueue(string)                      {}
+func (m *mockMessenger) IsSessionRunning(sessionID string) bool    { return m.running[sessionID] }
+func (m *mockMessenger) EnqueueMessage(string, string) error       { return nil }
+func (m *mockMessenger) ClearQueue(string)                         {}
 func (m *mockMessenger) SendMessageToSession(string, string) error { return nil }

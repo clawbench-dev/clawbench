@@ -91,6 +91,7 @@ func (m *Manager) invalidateToken() {
 }
 
 // InvalidateToken clears the global token cache. Kept for backward compatibility.
+//
 // Deprecated: use m.invalidateToken() instead.
 func InvalidateToken() {
 	mgr := GetManager()
