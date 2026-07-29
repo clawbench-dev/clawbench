@@ -4,17 +4,15 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@drawable/bg_session_dialog"
-    android:paddingTop="4dp"
-    android:paddingBottom="8dp">
+    android:background="@drawable/bg_session_dialog">
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
-        android:paddingTop="16dp"
-        android:paddingBottom="14dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="8dp"
         android:text="@string/browser_log_pick_session"
         android:textColor="@color/browser_url_text"
         android:textSize="15sp"
@@ -23,8 +21,6 @@
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:layout_marginStart="20dp"
-        android:layout_marginEnd="20dp"
         android:background="@color/browser_dialog_border" />
 
     <androidx.recyclerview.widget.RecyclerView
@@ -33,15 +29,12 @@
         android:layout_height="wrap_content"
         android:scrollbars="vertical"
         android:clipToPadding="false"
-        android:paddingTop="6dp"
-        android:paddingBottom="6dp" />
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp" />
 
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:layout_marginStart="20dp"
-        android:layout_marginEnd="20dp"
-        android:layout_marginTop="4dp"
         android:background="@color/browser_dialog_border" />
 
     <LinearLayout
@@ -51,8 +44,8 @@
         android:gravity="end|center_vertical"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
-        android:paddingTop="10dp"
-        android:paddingBottom="4dp">
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
 
         <TextView
             android:id="@+id/btnCancel"

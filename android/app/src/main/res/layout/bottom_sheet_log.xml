@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -12,9 +13,9 @@
         android:layout_gravity="center_horizontal"
         android:layout_marginTop="8dp"
         android:layout_marginBottom="4dp"
-        android:background="@color/browser_url_hint_color" />
+        android:background="@color/browser_divider" />
 
-    <!-- Header row: title + clear -->
+    <!-- Header row: title + select all + clear -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="36dp"
@@ -22,6 +23,14 @@
         android:gravity="center_vertical"
         android:paddingStart="12dp"
         android:paddingEnd="8dp">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_browser_log"
+            android:layout_marginEnd="6dp"
+            android:scaleType="fitCenter"
+            app:tint="@color/browser_icon_tint" />
 
         <TextView
             android:layout_width="0dp"
@@ -33,12 +42,31 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/btnSelectAll"
+            android:layout_width="wrap_content"
+            android:layout_height="28dp"
+            android:gravity="center"
+            android:paddingStart="6dp"
+            android:paddingEnd="10dp"
+            android:layout_marginEnd="6dp"
+            android:drawableStart="@drawable/ic_select_all"
+            android:drawablePadding="4dp"
+            android:text="@string/browser_log_select_all"
+            android:textColor="@color/browser_accent_blue"
+            android:textSize="13sp"
+            android:background="@drawable/bg_toolbar_btn"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <TextView
             android:id="@+id/btnClearLog"
             android:layout_width="wrap_content"
             android:layout_height="28dp"
             android:gravity="center"
-            android:paddingStart="10dp"
+            android:paddingStart="6dp"
             android:paddingEnd="10dp"
+            android:drawableStart="@drawable/ic_browser_clear"
+            android:drawablePadding="4dp"
             android:text="@string/browser_log_clear"
             android:textColor="@color/browser_icon_tint"
             android:textSize="13sp"
@@ -47,83 +75,67 @@
             android:focusable="true" />
     </LinearLayout>
 
-    <!-- Filter chips row -->
+    <!-- Filter tabs row -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="32dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingBottom="4dp">
+        android:paddingStart="0dp"
+        android:paddingEnd="0dp">
 
         <TextView
             android:id="@+id/filterAll"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
             android:gravity="center"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
             android:text="@string/browser_log_filter_all"
             android:textColor="@color/browser_text_tertiary"
             android:textSize="13sp"
-            android:background="@drawable/bg_filter_chip"
+            android:background="@drawable/bg_filter_tab"
             android:clickable="true"
             android:focusable="true" />
 
         <TextView
             android:id="@+id/filterError"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
             android:gravity="center"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:layout_marginStart="4dp"
             android:text="@string/browser_log_filter_error"
             android:textColor="@color/browser_log_error"
             android:textSize="13sp"
-            android:background="@drawable/bg_filter_chip"
+            android:background="@drawable/bg_filter_tab"
             android:clickable="true"
             android:focusable="true" />
 
         <TextView
             android:id="@+id/filterWarn"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
             android:gravity="center"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:layout_marginStart="4dp"
             android:text="@string/browser_log_filter_warn"
             android:textColor="@color/browser_log_warn"
             android:textSize="13sp"
-            android:background="@drawable/bg_filter_chip"
+            android:background="@drawable/bg_filter_tab"
             android:clickable="true"
             android:focusable="true" />
 
         <TextView
             android:id="@+id/filterLog"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
             android:gravity="center"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:layout_marginStart="4dp"
             android:text="@string/browser_log_filter_log"
             android:textColor="@color/browser_icon_tint"
             android:textSize="13sp"
-            android:background="@drawable/bg_filter_chip"
+            android:background="@drawable/bg_filter_tab"
             android:clickable="true"
             android:focusable="true" />
     </LinearLayout>
-
-    <!-- Divider -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="8dp"
-        android:background="@color/browser_divider" />
 
     <!-- Log list -->
     <androidx.recyclerview.widget.RecyclerView
@@ -158,7 +170,7 @@
         android:layout_marginEnd="8dp"
         android:background="@color/browser_divider" />
 
-    <!-- Action bar: send selected / send all -->
+    <!-- Message input bar with send button -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -167,74 +179,56 @@
         android:paddingStart="8dp"
         android:paddingEnd="8dp"
         android:paddingTop="4dp"
-        android:paddingBottom="4dp">
-
-        <TextView
-            android:id="@+id/btnSendSelected"
-            android:layout_width="0dp"
-            android:layout_height="32dp"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="@string/browser_log_send_selected"
-            android:textColor="@color/browser_text_tertiary"
-            android:textSize="13sp"
-            android:background="@drawable/bg_action_btn"
-            android:clickable="true"
-            android:focusable="true" />
-
-        <TextView
-            android:id="@+id/btnSendAll"
-            android:layout_width="0dp"
-            android:layout_height="32dp"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:layout_marginStart="4dp"
-            android:text="@string/browser_log_send_all"
-            android:textColor="@color/browser_accent_blue"
-            android:textSize="13sp"
-            android:background="@drawable/bg_action_btn"
-            android:clickable="true"
-            android:focusable="true" />
-    </LinearLayout>
-
-    <!-- Message input bar -->
-    <RelativeLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
         android:paddingBottom="6dp">
 
-        <EditText
-            android:id="@+id/messageInput"
-            android:layout_width="match_parent"
+        <RelativeLayout
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:minHeight="32dp"
-            android:maxHeight="72dp"
-            android:background="@drawable/bg_url_bar"
-            android:hint="@string/browser_log_send_message_hint"
-            android:inputType="textMultiLine"
-            android:maxLines="3"
-            android:paddingStart="8dp"
-            android:paddingEnd="28dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:textColor="@color/browser_url_text"
-            android:textColorHint="@color/browser_url_hint_color"
-            android:textSize="14sp"
-            android:gravity="center_vertical"
-            android:scrollbars="vertical" />
+            android:layout_weight="1">
 
-        <ImageView
-            android:id="@+id/btnClearInput"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:layout_alignEnd="@id/messageInput"
-            android:layout_centerVertical="true"
-            android:layout_marginEnd="4dp"
-            android:src="@drawable/ic_clear_text"
-            android:contentDescription="@string/browser_log_clear"
-            android:visibility="gone" />
-    </RelativeLayout>
+            <EditText
+                android:id="@+id/messageInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="32dp"
+                android:maxHeight="72dp"
+                android:background="@drawable/bg_url_bar"
+                android:hint="@string/browser_log_send_message_hint"
+                android:inputType="textMultiLine"
+                android:maxLines="3"
+                android:paddingStart="8dp"
+                android:paddingEnd="28dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:textColor="@color/browser_url_text"
+                android:textColorHint="@color/browser_url_hint_color"
+                android:textSize="14sp"
+                android:gravity="center_vertical"
+                android:scrollbars="vertical" />
+
+            <ImageView
+                android:id="@+id/btnClearInput"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_alignEnd="@id/messageInput"
+                android:layout_centerVertical="true"
+                android:layout_marginEnd="4dp"
+                android:src="@drawable/ic_clear_text"
+                android:contentDescription="@string/browser_log_clear"
+                android:visibility="gone" />
+        </RelativeLayout>
+
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/btnSendToSession"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="6dp"
+            android:src="@drawable/ic_send"
+            android:background="@drawable/bg_toolbar_btn"
+            android:contentDescription="@string/browser_log_send_to_session"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            app:tint="@color/browser_accent_blue" />
+    </LinearLayout>
 
 </LinearLayout>

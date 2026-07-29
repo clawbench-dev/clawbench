@@ -47,6 +47,7 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
     private RecyclerView recyclerView;
     private TextView emptyView;
     private EditText messageInput;
+    private View btnSend;
     private LogAdapter adapter;
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
@@ -117,11 +118,13 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         // Clear input button
         ImageView btnClearInput = view.findViewById(R.id.btnClearInput);
         btnClearInput.setOnClickListener(v -> messageInput.setText(""));
+        btnSend = view.findViewById(R.id.btnSendToSession);
         messageInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(Editable s) {
                 btnClearInput.setVisibility(s.length() > 0 ? View.VISIBLE : View.GONE);
+                updateSendButton();
             }
         });
 
@@ -154,24 +157,29 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
             refreshList();
         });
 
-        // Send selected
-        view.findViewById(R.id.btnSendSelected).setOnClickListener(v -> {
-            List<BrowserLogBuffer.Entry> selected = getSelectedEntries();
-            if (selected.isEmpty()) {
-                Toast.makeText(requireContext(), R.string.browser_log_no_selection, Toast.LENGTH_SHORT).show();
-                return;
+        // Select all / deselect all toggle
+        TextView btnSelectAll = view.findViewById(R.id.btnSelectAll);
+        btnSelectAll.setOnClickListener(v -> {
+            List<BrowserLogBuffer.Entry> filtered = getFilteredEntries();
+            if (isAllSelected(filtered)) {
+                // Deselect all
+                selectedSeqs.clear();
+            } else {
+                // Select all visible entries
+                for (BrowserLogBuffer.Entry e : filtered) {
+                    selectedSeqs.add(e.seq);
+                }
             }
-            String desc = messageInput.getText().toString().trim();
-            String content = formatEntriesWithDescription(desc, selected);
-            showSessionPicker(content);
+            refreshList(true); // force refresh to update selection styles
         });
 
-        // Send all
-        view.findViewById(R.id.btnSendAll).setOnClickListener(v -> {
-            List<BrowserLogBuffer.Entry> all = getFilteredEntries();
-            if (all.isEmpty()) return;
+        // Send to session: send selected if any, otherwise send all
+        btnSend.setOnClickListener(v -> {
+            List<BrowserLogBuffer.Entry> selected = getSelectedEntries();
+            List<BrowserLogBuffer.Entry> toSend = selected.isEmpty() ? getFilteredEntries() : selected;
+            if (toSend.isEmpty()) return;
             String desc = messageInput.getText().toString().trim();
-            String content = formatEntriesWithDescription(desc, all);
+            String content = formatEntriesWithDescription(desc, toSend);
             showSessionPicker(content);
         });
 
@@ -188,7 +196,8 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
     @Override
     public void onStart() {
         super.onStart();
-        // Expand bottom sheet to full screen
+        // Expand bottom sheet to full screen, but use MATCH_PARENT so ADJUST_RESIZE can shrink it
+        // when the keyboard appears
         if (getDialog() != null) {
             com.google.android.material.bottomsheet.BottomSheetDialog dialog =
                     (com.google.android.material.bottomsheet.BottomSheetDialog) getDialog();
@@ -196,10 +205,10 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
             if (bottomSheet != null) {
                 com.google.android.material.bottomsheet.BottomSheetBehavior<?> behavior =
                         com.google.android.material.bottomsheet.BottomSheetBehavior.from(bottomSheet);
-                behavior.setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
                 behavior.setSkipCollapsed(true);
-                // Make bottom sheet full screen: expanded offset = 0 means top aligns with parent top
                 behavior.setExpandedOffset(0);
+                bottomSheet.getLayoutParams().height = ViewGroup.LayoutParams.MATCH_PARENT;
+                behavior.setState(com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED);
             }
         }
     }
@@ -223,6 +232,11 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         error.setActivated(currentFilter == 'E');
         warn.setActivated(currentFilter == 'W');
         log.setActivated(currentFilter == 'D');
+        // Dim unselected tabs
+        all.setAlpha(currentFilter == '\0' ? 1.0f : 0.5f);
+        error.setAlpha(currentFilter == 'E' ? 1.0f : 0.5f);
+        warn.setAlpha(currentFilter == 'W' ? 1.0f : 0.5f);
+        log.setAlpha(currentFilter == 'D' ? 1.0f : 0.5f);
     }
 
     private BrowserLogBuffer getLogBuffer() {
@@ -241,6 +255,14 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
             filtered.add(e);
         }
         return filtered;
+    }
+
+    private boolean isAllSelected(List<BrowserLogBuffer.Entry> filtered) {
+        if (filtered.isEmpty()) return false;
+        for (BrowserLogBuffer.Entry e : filtered) {
+            if (!selectedSeqs.contains(e.seq)) return false;
+        }
+        return true;
     }
 
     private List<BrowserLogBuffer.Entry> getSelectedEntries() {
@@ -410,9 +432,10 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         builder.setView(dialogView);
 
         android.app.AlertDialog dialog = builder.create();
-        // Set a dim background behind the dialog to separate it from the BottomSheet
+        // Set a dim rounded-corner background behind the dialog to separate it from the BottomSheet
+        // Must match the content's corner radius (12dp + 1dp border = 13dp) to avoid black bleed-through
         if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xCC000000));
+            dialog.getWindow().setBackgroundDrawableResource(R.drawable.bg_dialog_window);
         }
 
         int[] selectedIdx = {defaultIndex};
@@ -420,6 +443,31 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         RecyclerView sessionList = dialogView.findViewById(R.id.sessionList);
         sessionList.setLayoutManager(new LinearLayoutManager(ctx));
         sessionList.setAdapter(new SessionAdapter(ids, titles, running, defaultIndex, idx -> selectedIdx[0] = idx));
+
+        // Add dividers between session items
+        int dividerColor = ContextCompat.getColor(ctx, R.color.browser_dialog_border);
+        sessionList.addItemDecoration(new RecyclerView.ItemDecoration() {
+            private final android.graphics.Paint paint = new android.graphics.Paint();
+
+            {
+                paint.setColor(dividerColor);
+                paint.setStyle(android.graphics.Paint.Style.FILL);
+            }
+
+            @Override
+            public void onDrawOver(@NonNull android.graphics.Canvas c, @NonNull RecyclerView parent, @NonNull RecyclerView.State state) {
+                int left = parent.getPaddingLeft();
+                int right = parent.getWidth() - parent.getPaddingRight();
+                for (int i = 0; i < parent.getChildCount(); i++) {
+                    View child = parent.getChildAt(i);
+                    int pos = parent.getChildAdapterPosition(child);
+                    if (pos != RecyclerView.NO_POSITION && pos < parent.getAdapter().getItemCount() - 1) {
+                        float y = child.getBottom();
+                        c.drawRect(left, y, right, y + 1, paint);
+                    }
+                }
+            }
+        });
 
         // Constrain RecyclerView height to prevent dialog from growing too tall
         int maxListHeight = (int) (ctx.getResources().getDisplayMetrics().heightPixels * 0.4);
@@ -541,11 +589,27 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
     }
 
     private void refreshList() {
+        refreshList(false);
+    }
+
+    private void refreshList(boolean forceRefresh) {
         List<BrowserLogBuffer.Entry> filtered = getFilteredEntries();
         int oldCount = adapter.getItemCount();
-        adapter.setEntries(filtered);
+        adapter.setEntries(filtered, forceRefresh);
         recyclerView.setVisibility(filtered.isEmpty() ? View.GONE : View.VISIBLE);
         emptyView.setVisibility(filtered.isEmpty() ? View.VISIBLE : View.GONE);
+
+        // Update select all button text based on current selection state
+        if (getView() != null) {
+            TextView btnSelectAll = getView().findViewById(R.id.btnSelectAll);
+            if (btnSelectAll != null) {
+                btnSelectAll.setText(isAllSelected(filtered)
+                        ? R.string.browser_log_deselect_all
+                        : R.string.browser_log_select_all);
+            }
+        }
+
+        updateSendButton();
 
         // Auto-scroll to bottom when new entries arrive and user is already at the bottom
         if (filtered.size() > oldCount && recyclerView.getLayoutManager() instanceof LinearLayoutManager) {
@@ -557,26 +621,37 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
         }
     }
 
+    /**
+     * Update send button enabled state: gray out when no message AND no selected logs.
+     */
+    private void updateSendButton() {
+        if (btnSend == null) return;
+        boolean hasMessage = messageInput.getText().length() > 0;
+        boolean hasSelected = !selectedSeqs.isEmpty();
+        boolean enabled = hasMessage || hasSelected;
+        btnSend.setEnabled(enabled);
+        btnSend.setAlpha(enabled ? 1.0f : 0.3f);
+    }
+
     // --- RecyclerView Adapter ---
 
     private class LogAdapter extends RecyclerView.Adapter<LogAdapter.ViewHolder> {
 
         private List<BrowserLogBuffer.Entry> entries = Collections.emptyList();
 
-        void setEntries(List<BrowserLogBuffer.Entry> entries) {
+        void setEntries(List<BrowserLogBuffer.Entry> entries, boolean forceRefresh) {
             int oldSize = this.entries.size();
             int newSize = entries.size();
             // Skip update if nothing changed (avoids unnecessary rebinds on 500ms auto-refresh)
             // Check both first and last entry seq to catch circular buffer head eviction
-            if (oldSize == newSize && !entries.isEmpty() && !this.entries.isEmpty()) {
+            if (!forceRefresh && oldSize == newSize && !entries.isEmpty() && !this.entries.isEmpty()) {
                 if (this.entries.get(0).seq == entries.get(0).seq
                         && this.entries.get(oldSize - 1).seq == entries.get(newSize - 1).seq) return;
             }
             this.entries = entries;
-            if (oldSize == 0) {
+            if (forceRefresh || oldSize == 0 || newSize != oldSize) {
                 notifyDataSetChanged();
             } else if (newSize > oldSize && newSize <= oldSize + 20) {
-                // Incremental insert for typical streaming case
                 notifyItemRangeInserted(oldSize, newSize - oldSize);
             } else {
                 notifyDataSetChanged();
@@ -661,14 +736,12 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
 
         private final List<String> ids;
         private final List<String> titles;
-        private final List<Boolean> running;
         private int selectedPos;
         private final java.util.function.IntConsumer onSelect;
 
         SessionAdapter(List<String> ids, List<String> titles, List<Boolean> running, int defaultPos, java.util.function.IntConsumer onSelect) {
             this.ids = ids;
             this.titles = titles;
-            this.running = running;
             this.selectedPos = defaultPos;
             this.onSelect = onSelect;
         }
@@ -679,19 +752,18 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
             android.widget.LinearLayout row = new android.widget.LinearLayout(parent.getContext());
             row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
             row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            row.setPadding(24, 16, 24, 16);
+            row.setPadding(20, 18, 20, 18);
 
-            // Running indicator: proper circle with GradientDrawable
-            View dot = new View(parent.getContext());
-            int dotSize = (int) (10 * parent.getContext().getResources().getDisplayMetrics().density);
-            android.widget.LinearLayout.LayoutParams dotLp = new android.widget.LinearLayout.LayoutParams(dotSize, dotSize);
-            dotLp.setMarginEnd(14);
-            dot.setLayoutParams(dotLp);
-            // Make dot circular via shape drawable
-            android.graphics.drawable.GradientDrawable dotShape = new android.graphics.drawable.GradientDrawable();
-            dotShape.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-            dotShape.setColor(ContextCompat.getColor(parent.getContext(), R.color.browser_running_dot));
-            dot.setBackground(dotShape);
+            // Session icon
+            android.widget.ImageView icon = new android.widget.ImageView(parent.getContext());
+            int iconSize = (int) (20 * parent.getContext().getResources().getDisplayMetrics().density);
+            android.widget.LinearLayout.LayoutParams iconLp = new android.widget.LinearLayout.LayoutParams(iconSize, iconSize);
+            iconLp.setMarginEnd(12);
+            icon.setLayoutParams(iconLp);
+            icon.setImageResource(R.drawable.ic_chat);
+            icon.setImageTintList(android.content.res.ColorStateList.valueOf(
+                    ContextCompat.getColor(parent.getContext(), R.color.browser_icon_tint)));
+            icon.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
 
             // Title text
             TextView tv = new TextView(parent.getContext());
@@ -699,49 +771,28 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
             tv.setTextColor(ContextCompat.getColor(parent.getContext(), R.color.browser_url_text));
             tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
             tv.setSingleLine(true);
-            android.widget.LinearLayout.LayoutParams tvLp = new android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            android.widget.LinearLayout.LayoutParams tvLp = new android.widget.LinearLayout.LayoutParams(
+                    0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
             tv.setLayoutParams(tvLp);
 
-            // Selected indicator: radio-style circle instead of text checkmark
-            View radio = new View(parent.getContext());
-            int radioOuter = (int) (18 * parent.getContext().getResources().getDisplayMetrics().density);
-            android.widget.LinearLayout.LayoutParams radioLp = new android.widget.LinearLayout.LayoutParams(radioOuter, radioOuter);
-            radioLp.setMarginStart(12);
-            radio.setLayoutParams(radioLp);
-
-            row.addView(dot);
+            row.addView(icon);
             row.addView(tv);
-            row.addView(radio);
 
             RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(
                     RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT);
             row.setLayoutParams(lp);
 
-            return new ViewHolder(row, dot, tv, radio);
+            return new ViewHolder(row, tv);
         }
 
         @Override
         public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
             holder.title.setText(titles.get(position));
-            boolean isRunning = running.get(position);
 
-            // Running dot: green circle for active, invisible for inactive (preserves spacing)
-            holder.dot.setVisibility(isRunning ? View.VISIBLE : View.INVISIBLE);
-
-            // Selection indicator: filled circle for selected, empty ring for unselected
+            // Selection: background color only, no radio dot
             boolean isSelected = position == selectedPos;
-            android.graphics.drawable.GradientDrawable radioDrawable = new android.graphics.drawable.GradientDrawable();
-            radioDrawable.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-            if (isSelected) {
-                radioDrawable.setColor(ContextCompat.getColor(holder.row.getContext(), R.color.browser_accent_blue));
-            } else {
-                radioDrawable.setColor(0x00000000);
-                radioDrawable.setStroke(2, ContextCompat.getColor(holder.row.getContext(), R.color.browser_icon_tint));
-            }
-            holder.radio.setBackground(radioDrawable);
-
-            // Selection background: subtle highlight
-            holder.row.setBackgroundColor(isSelected ? ContextCompat.getColor(holder.row.getContext(), R.color.browser_dialog_item_selected) : 0x00000000);
+            holder.row.setBackgroundColor(isSelected ?
+                    ContextCompat.getColor(holder.row.getContext(), R.color.browser_dialog_item_selected) : 0x00000000);
 
             holder.row.setOnClickListener(v -> {
                 int pos = holder.getAdapterPosition();
@@ -761,16 +812,12 @@ public class LogBottomSheet extends BottomSheetDialogFragment {
 
         class ViewHolder extends RecyclerView.ViewHolder {
             final android.widget.LinearLayout row;
-            final View dot;
             final TextView title;
-            final View radio;
 
-            ViewHolder(android.widget.LinearLayout row, View dot, TextView title, View radio) {
+            ViewHolder(android.widget.LinearLayout row, TextView title) {
                 super(row);
                 this.row = row;
-                this.dot = dot;
                 this.title = title;
-                this.radio = radio;
             }
         }
     }

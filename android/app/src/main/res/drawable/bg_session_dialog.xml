@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Session picker dialog background with rounded corners and border -->
+<!-- Session picker dialog background: flat sharp style, no rounded corners -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="@color/browser_dialog_bg" />
     <stroke android:width="1dp" android:color="@color/browser_dialog_border" />
-    <corners android:radius="12dp" />
 </shape>

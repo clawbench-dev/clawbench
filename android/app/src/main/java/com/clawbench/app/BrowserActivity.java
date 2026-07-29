@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Bundle;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.webkit.CookieManager;
@@ -25,6 +27,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -94,6 +98,18 @@ public class BrowserActivity extends AppCompatActivity {
 
     /** The local port that the SSH tunnel listens on. */
     private int localPort = 0;
+
+    /** Edge swipe threshold: 15% of screen width from either edge. */
+    private int edgeSwipeZonePx;
+
+    /** Minimum swipe distance in pixels to trigger navigation. */
+    private static final int MIN_SWIPE_DP = 80;
+
+    /** GestureDetector for edge swipe navigation. */
+    private GestureDetector edgeSwipeDetector;
+
+    /** SwipeRefreshLayout for pull-to-refresh. */
+    private SwipeRefreshLayout swipeRefreshLayout;
 
     BrowserLogBuffer getLogBuffer() {
         return logBuffer;
@@ -202,12 +218,15 @@ public class BrowserActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progressBar);
         tunnelWaitingOverlay = findViewById(R.id.tunnelWaitingOverlay);
         tunnelWaitingText = findViewById(R.id.tunnelWaitingText);
+        swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout);
 
         logBuffer = new BrowserLogBuffer(500);
         sessionCreds = BrowserSessionCredentials.getAndClear(this);
         setupWebView();
         setupToolbar();
         setupFindBar();
+        setupSwipeRefresh();
+        setupEdgeSwipe();
 
         // Load initial URL from Intent
         int port = getIntent().getIntExtra("port", 0);
@@ -261,6 +280,10 @@ public class BrowserActivity extends AppCompatActivity {
 
         // Smooth scrolling
         webView.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
+
+        // Pinch zoom enabled but without on-screen zoom buttons
+        settings.setBuiltInZoomControls(true);
+        settings.setDisplayZoomControls(false);
 
         // Custom user agent to identify sandbox browser
         String ua = settings.getUserAgentString();
@@ -331,8 +354,8 @@ public class BrowserActivity extends AppCompatActivity {
         // Home button: always navigate back to main app
         findViewById(R.id.btnBack).setOnClickListener(v -> navigateBackToMain());
 
-        // Log button: show console log bottom sheet
-        findViewById(R.id.btnLog).setOnClickListener(v -> showLogBottomSheet());
+        // Refresh button
+        findViewById(R.id.btnRefresh).setOnClickListener(v -> webView.reload());
 
         // Overflow menu button
         findViewById(R.id.btnMore).setOnClickListener(v -> showOverflowMenu());
@@ -381,7 +404,10 @@ public class BrowserActivity extends AppCompatActivity {
         popup.getMenu().findItem(R.id.action_desktop_mode).setChecked(desktopMode);
         popup.setOnMenuItemClickListener(item -> {
             int id = item.getItemId();
-            if (id == R.id.action_page_back) {
+            if (id == R.id.action_log) {
+                showLogBottomSheet();
+                return true;
+            } else if (id == R.id.action_page_back) {
                 if (webView.canGoBack()) {
                     webView.goBack();
                 } else {
@@ -394,9 +420,6 @@ public class BrowserActivity extends AppCompatActivity {
                 } else {
                     Toast.makeText(this, R.string.browser_no_history, Toast.LENGTH_SHORT).show();
                 }
-                return true;
-            } else if (id == R.id.action_refresh) {
-                webView.reload();
                 return true;
             } else if (id == R.id.action_desktop_mode) {
                 toggleDesktopMode();
@@ -454,6 +477,81 @@ public class BrowserActivity extends AppCompatActivity {
         webView.clearMatches();
         findViewById(R.id.findBar).setVisibility(View.GONE);
         findViewById(R.id.findResultCount).setVisibility(View.GONE);
+    }
+
+    /**
+     * Set up SwipeRefreshLayout for pull-to-refresh.
+     * Only enable when WebView is scrolled to the top.
+     */
+    private void setupSwipeRefresh() {
+        // Flat sharp style: no rounded corners on refresh indicator
+        swipeRefreshLayout.setProgressBackgroundColorSchemeColor(
+                ContextCompat.getColor(this, R.color.browser_toolbar_bg));
+        swipeRefreshLayout.setColorSchemeColors(
+                ContextCompat.getColor(this, R.color.browser_icon_tint));
+        swipeRefreshLayout.setOnRefreshListener(() -> webView.reload());
+
+        // Only allow pull-to-refresh when WebView is at the top
+        webView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) ->
+                swipeRefreshLayout.setEnabled(scrollY == 0));
+    }
+
+    /**
+     * Set up edge swipe gesture detection for back/forward navigation.
+     * Left edge right-swipe → goBack, right edge left-swipe → goForward.
+     */
+    private void setupEdgeSwipe() {
+        float density = getResources().getDisplayMetrics().density;
+        edgeSwipeZonePx = (int) (getResources().getDisplayMetrics().widthPixels * 0.15);
+        int minSwipePx = (int) (MIN_SWIPE_DP * density);
+
+        int finalMinSwipePx = minSwipePx;
+        edgeSwipeDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+                if (e1 == null || e2 == null) return false;
+                float startX = e1.getX();
+                float dx = e2.getX() - e1.getX();
+                float dy = Math.abs(e2.getY() - e1.getY());
+
+                // Horizontal swipe must be dominant
+                if (Math.abs(dx) < finalMinSwipePx || Math.abs(dx) < dy * 1.5f) return false;
+
+                // Left edge: swipe right → go back
+                if (startX < edgeSwipeZonePx && dx > 0) {
+                    if (webView.canGoBack()) {
+                        webView.goBack();
+                        return true;
+                    }
+                }
+                // Right edge: swipe left → go forward
+                else if (startX > (getResources().getDisplayMetrics().widthPixels - edgeSwipeZonePx) && dx < 0) {
+                    if (webView.canGoForward()) {
+                        webView.goForward();
+                        return true;
+                    }
+                }
+                return false;
+            }
+        });
+    }
+
+    /**
+     * Intercept touch events on WebView for edge swipe gestures.
+     * SwipeRefreshLayout handles vertical pull-to-refresh automatically.
+     */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        // Only check edge swipe if touch starts in edge zone
+        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+            float x = ev.getX();
+            if (x < edgeSwipeZonePx || x > (getResources().getDisplayMetrics().widthPixels - edgeSwipeZonePx)) {
+                edgeSwipeDetector.onTouchEvent(ev);
+            }
+        } else {
+            edgeSwipeDetector.onTouchEvent(ev);
+        }
+        return super.dispatchTouchEvent(ev);
     }
 
     /**
@@ -578,15 +676,16 @@ public class BrowserActivity extends AppCompatActivity {
     }
 
     /**
-     * Navigate back to MainActivity instead of destroying this Activity.
-     * Since BrowserActivity runs in a separate task (taskAffinity="" + :browser process),
-     * moveTaskToBack would push the whole task to background with no way back.
-     * Starting MainActivity brings the main app to the foreground while this
-     * Activity stays alive in the background, preserving the WebView state.
+     * Handle hardware back button: first go back in WebView history,
+     * then navigate back to the main app when no more history.
      */
     @Override
     public void onBackPressed() {
-        navigateBackToMain();
+        if (webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            navigateBackToMain();
+        }
     }
 
     /**
@@ -841,6 +940,8 @@ public class BrowserActivity extends AppCompatActivity {
         public void onPageFinished(WebView view, String url) {
             // Update URL bar to reflect actual page URL
             urlBar.setText(url);
+            // Stop pull-to-refresh spinner
+            swipeRefreshLayout.setRefreshing(false);
         }
 
         @Override
@@ -870,6 +971,7 @@ public class BrowserActivity extends AppCompatActivity {
         @Override
         public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
             super.onReceivedError(view, request, error);
+            swipeRefreshLayout.setRefreshing(false);
             if (request.isForMainFrame()) {
                 AppLog.w(TAG, "BrowserActivity: page load failed for " + request.getUrl());
                 Toast.makeText(BrowserActivity.this, R.string.error_connection_failed, Toast.LENGTH_SHORT).show();

@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item
+        android:id="@+id/action_log"
+        android:title="@string/browser_console_log"
+        android:icon="@drawable/ic_browser_log"
+        android:showAsAction="never" />
+
+    <item
         android:id="@+id/action_page_back"
         android:title="@string/browser_page_back"
         android:icon="@drawable/ic_browser_page_back"
@@ -10,12 +16,6 @@
         android:id="@+id/action_forward"
         android:title="@string/browser_forward"
         android:icon="@drawable/ic_browser_forward"
-        android:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_refresh"
-        android:title="@string/browser_refresh"
-        android:icon="@drawable/ic_browser_refresh"
         android:showAsAction="never" />
 
     <item
