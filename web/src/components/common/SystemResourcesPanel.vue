@@ -163,7 +163,7 @@ defineExpose({ startPolling, stopPolling })
 
 .server-info-icon {
   flex-shrink: 0;
-  color: var(--text-secondary);
+  color: var(--accent-color);
 }
 
 .server-info-address {
