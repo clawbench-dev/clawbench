@@ -959,7 +959,7 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
   border: 1px solid color-mix(in srgb, var(--tool-accent) 15%, var(--border-color));
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: 999px;
   cursor: pointer;
   width: 100%;
   margin-top: 4px;
