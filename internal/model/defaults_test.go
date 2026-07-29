@@ -735,3 +735,41 @@ func TestApplyDefaults_PushMode_DisabledSyncsEnabled(t *testing.T) {
 		t.Error("expected DingTalk.Enabled=false when PushMode=disabled")
 	}
 }
+
+func TestApplyDefaults_PushMode_MigrationFromFeishuEnabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.Feishu.Enabled = true
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "feishu" {
+		t.Errorf("expected PushMode=feishu when Feishu.Enabled=true, got %q", cfg.PushMode)
+	}
+	if !cfg.Feishu.Enabled {
+		t.Error("expected Feishu.Enabled=true when PushMode=feishu")
+	}
+	if cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=false when PushMode=feishu")
+	}
+}
+
+func TestApplyDefaults_PushMode_ExplicitFeishuSyncsEnabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.PushMode = "feishu"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "feishu" {
+		t.Errorf("expected PushMode=feishu, got %q", cfg.PushMode)
+	}
+	if !cfg.Feishu.Enabled {
+		t.Error("expected Feishu.Enabled=true when PushMode=feishu")
+	}
+	if cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=false when PushMode=feishu")
+	}
+}
