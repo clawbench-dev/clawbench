@@ -1,5 +1,5 @@
 <template>
-  <div class="file-manager-content">
+  <div class="file-manager-content" @paste="onPaste">
     <!-- Dir nav -->
     <div id="dirNav" class="dir-nav">
       <div ref="dirToolbarRef" class="dir-toolbar">
@@ -155,7 +155,21 @@
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
       v-long-press="onContainerLongPress"
+      @dragenter.prevent="onDragEnter"
+      @dragover.prevent
+      @dragleave="onDragLeave"
+      @drop.prevent="onDrop"
     >
+      <div v-if="isDragOver" class="drop-overlay">
+        <Upload :size="32" :stroke-width="1.5" />
+        <span>{{ t('file.dropToUpload') }}</span>
+      </div>
+      <Transition name="paste-fade">
+        <div v-if="isPasteOver" class="paste-overlay">
+          <ClipboardPaste :size="32" :stroke-width="1.5" />
+          <span>{{ t('file.pasteToUpload') }}</span>
+        </div>
+      </Transition>
       <Transition name="loading-fade">
         <div v-if="dirLoading" class="loading-mask">
           <div class="loading-mask-spinner"></div>
@@ -202,7 +216,21 @@
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
       v-long-press="onContainerLongPress"
+      @dragenter.prevent="onDragEnter"
+      @dragover.prevent
+      @dragleave="onDragLeave"
+      @drop.prevent="onDrop"
     >
+      <div v-if="isDragOver" class="drop-overlay">
+        <Upload :size="32" :stroke-width="1.5" />
+        <span>{{ t('file.dropToUpload') }}</span>
+      </div>
+      <Transition name="paste-fade">
+        <div v-if="isPasteOver" class="paste-overlay">
+          <ClipboardPaste :size="32" :stroke-width="1.5" />
+          <span>{{ t('file.pasteToUpload') }}</span>
+        </div>
+      </Transition>
       <Transition name="loading-fade">
         <div v-if="dirLoading" class="loading-mask">
           <div class="loading-mask-spinner"></div>
@@ -382,8 +410,16 @@ const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
 // File upload to current directory
-const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, handleFileSelectToDir } = useFileUpload()
+const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, handleFileSelectToDir, handleFileDropToDir } = useFileUpload()
 const uploadInputRef = ref(null)
+
+// Drag-and-drop state (shared between file-list and file-grid)
+const isDragOver = ref(false)
+const dragCounter = ref(0)
+
+// Paste overlay feedback
+const isPasteOver = ref(false)
+let pasteOverlayTimer = null
 
 function triggerUpload() {
   uploadInputRef.value?.click()
@@ -393,6 +429,73 @@ async function onUploadFileSelect(e) {
   await handleFileSelectToDir(e, props.currentDir || '.')
   // Refresh directory listing after uploads complete
   emit('refresh')
+}
+
+// ── Drag-and-drop handlers (file-list / file-grid) ──
+
+function onDragEnter() {
+  dragCounter.value++
+  isDragOver.value = true
+}
+
+function onDragLeave() {
+  dragCounter.value--
+  if (dragCounter.value <= 0) {
+    dragCounter.value = 0
+    isDragOver.value = false
+  }
+}
+
+async function onDrop(e) {
+  dragCounter.value = 0
+  isDragOver.value = false
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (files.length === 0) return
+  await handleFileDropToDir(files, props.currentDir || '.')
+  emit('refresh')
+}
+
+// ── Clipboard paste handler ──
+
+function onPaste(e) {
+  // Only handle paste when browse tab is active
+  if (activeTab.value !== 'browse') return
+  // Skip if a dialog/prompt is open or focus is in an input field
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+
+  const items = e.clipboardData?.items
+  if (!items) return
+
+  const files = []
+  for (const item of items) {
+    if (item.kind === 'file') {
+      const file = item.getAsFile()
+      if (!file) continue
+      // Clipboard images (e.g. screenshots) may have no name or empty name.
+      // Backend requires non-empty extension, so give a default name with extension.
+      if (!file.name || file.name === '' || !file.name.includes('.')) {
+        const ext = file.type === 'image/png' ? '.png'
+          : file.type === 'image/jpeg' ? '.jpg'
+          : file.type === 'image/webp' ? '.webp'
+          : file.type === 'image/gif' ? '.gif'
+          : file.type === 'image/bmp' ? '.bmp'
+          : '.png' // fallback
+        const namedFile = new File([file], `clipboard_${Date.now()}${ext}`, { type: file.type })
+        files.push(namedFile)
+      } else {
+        files.push(file)
+      }
+    }
+  }
+
+  if (files.length > 0) {
+    e.preventDefault()
+    handleFileDropToDir(files, props.currentDir || '.').then(() => emit('refresh'))
+    // Show brief paste overlay feedback
+    clearTimeout(pasteOverlayTimer)
+    isPasteOver.value = true
+    pasteOverlayTimer = setTimeout(() => { isPasteOver.value = false }, 1500)
+  }
 }
 const dialog = useDialog()
 const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
@@ -566,6 +669,7 @@ onUnmounted(() => {
   stopToolbarResize()
   window.removeEventListener('highlight-file-item', handleHighlightFileItem)
   if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
+  if (pasteOverlayTimer) { clearTimeout(pasteOverlayTimer); pasteOverlayTimer = null }
 })
 
 // Helper: build item path from entry name

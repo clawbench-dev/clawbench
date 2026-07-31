@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="visible" auto :title="t('chat.messageClusters.title')" @close="visible = false">
+  <BottomSheet :open="drawer.effectiveOpen.value" auto :title="t('chat.messageClusters.title')" @close="drawer.close()">
     <template #header>
       <SparklesIcon :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('chat.messageClusters.title') }}</span>
@@ -55,13 +55,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Sparkles as SparklesIcon } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { useMessageClusters, type MessageCluster } from '@/composables/useMessageClusters'
 import { useQuickSend } from '@/composables/useQuickSend'
 import { useToast } from '@/composables/useToast'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'MsgClusterDrawer'
@@ -71,7 +72,7 @@ const toast = useToast()
 const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute } = useMessageClusters()
 const { addItem } = useQuickSend()
 
-const visible = ref(false)
+const drawer = useTabDrawer('chat', { autoRestore: false })
 
 const progressPercent = computed(() => {
   const phase = progress.value.phase
@@ -99,7 +100,7 @@ function formatElapsed(ms: number): string {
 }
 
 async function open() {
-  visible.value = true
+  drawer.open()
   await fetchClusters()
 }
 
