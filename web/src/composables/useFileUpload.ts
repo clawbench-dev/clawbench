@@ -33,7 +33,7 @@ export function useFileUpload() {
   // (file preview, chat input, quote-question) can read/write it.
   const { attachedFiles, addAttachedFile, removeAttachedFile } = useChatContext()
 
-  function uploadOneFile(file: File, dir?: string) {
+  function uploadOneFile(file: File, dir?: string, autoAttach?: boolean) {
     return new Promise((resolve) => {
       // Pre-flight size check: prevent sending a request that will be
       // rejected by the server's MaxBytesReader (which causes onerror
@@ -88,6 +88,7 @@ export function useFileUpload() {
               entry.uploading = false
               entry.progress = 100
               entry.path = data.path
+              if (autoAttach) addAttachedFile(entry.path)
             }
             resolve(true)
           } else {
@@ -197,6 +198,30 @@ export function useFileUpload() {
     await uploadFiles(files)
   }
 
+  /** Upload files and auto-attach each one after it succeeds (for drag-drop / clipboard paste). */
+  async function uploadAndAttach(files: File[]) {
+    if (files.length === 0) return
+    const maxFiles = store.state.uploadMaxFiles
+    const currentCount = pendingFiles.value.filter(f => !f.uploading).length
+    const remaining = maxFiles - currentCount
+    if (remaining <= 0) {
+      toast.show(gt('upload.maxFiles', { max: maxFiles }), { icon: '⚠️', type: 'error' })
+      return
+    }
+    const toUpload = files.slice(0, remaining)
+    if (files.length > remaining) {
+      toast.show(gt('upload.tooManyFiles', { total: files.length, remaining }), { icon: '⚠️', type: 'error' })
+    }
+    const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
+    for (const file of toUpload) {
+      if (file.size > maxSizeBytes) {
+        toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: '⚠️', type: 'error' })
+        continue
+      }
+      await uploadOneFile(file, undefined, true)
+    }
+  }
+
   async function handleFileSelectToDir(e: Event, dir: string) {
     const files = Array.from((e.target as HTMLInputElement).files || [])
     ;(e.target as HTMLInputElement).value = ''
@@ -233,6 +258,7 @@ export function useFileUpload() {
     attachedFiles,
     handleFileSelect,
     handleFileDrop,
+    uploadAndAttach,
     removeFile,
     addAttachedFile,
     removeAttachedFile,

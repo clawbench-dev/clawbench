@@ -56,6 +56,13 @@
         <Upload :size="24" :stroke-width="1.5" />
         <span>{{ t('chat.attach.dropToUpload') }}</span>
       </div>
+      <!-- Paste overlay (brief feedback when pasting files from clipboard) -->
+      <Transition name="paste-fade">
+        <div v-if="isPasteOver" class="paste-overlay">
+          <ClipboardPaste :size="24" :stroke-width="1.5" />
+          <span>{{ t('chat.attach.pasteToUpload') }}</span>
+        </div>
+      </Transition>
       <!-- Attachment tags (horizontal scrollable cards — only quote + attached file refs) -->
       <div v-if="quoteData || attachedFiles.length > 0" class="chat-attachment-tags">
         <!-- Quote selection card -->
@@ -85,6 +92,7 @@
           :placeholder="dynamicPlaceholder"
           rows="1"
           @keydown="onTextareaKeydown"
+          @paste="onPaste"
           @focus="onTextareaFocus"
           @blur="onTextareaBlur"
           ></textarea>
@@ -229,7 +237,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, Minimize2 } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, ClipboardPaste, Minimize2 } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -246,11 +254,13 @@ import { useChatKeyboard } from '@/composables/useChatKeyboard'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
+import { useFileUpload } from '@/composables/useFileUpload'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
 const { supportsDualTransport, hasPreferredMode, agentCanResume } = useAgents()
 const toast = useToast()
+const { uploadAndAttach } = useFileUpload()
 
 // isACP: true when the current agent supports ACP (has acpCommand).
 // Used for mode chips — these are ACP features
@@ -419,6 +429,8 @@ const rootRef = ref(null)
 const textareaRef = ref(null)
 const isDragOver = ref(false)
 const dragCounter = ref(0)
+const isPasteOver = ref(false)
+let pasteOverlayTimer = 0
 const attachDrawer = useTabDrawer('chat')
 const attachDrawerRef = ref(null)
 const attachMenuRef = ref(null) // kept for ref stability, no longer used for PopupMenu
@@ -720,18 +732,29 @@ function onDrop(e) {
   isDragOver.value = false
   const files = Array.from(e.dataTransfer?.files || [])
   if (files.length > 0) {
-    // Open the drawer and delegate upload to it.
-    // Retry until the drawer ref is available (may take a few ticks
-    // if the BottomSheet enter transition hasn't mounted yet).
-    if (!attachDrawer.isOpen.value) attachDrawer.open()
-    const tryDrop = () => {
-      if (attachDrawerRef.value?.handleFileDrop) {
-        attachDrawerRef.value.handleFileDrop(files)
-      } else {
-        nextTick(tryDrop)
-      }
+    uploadAndAttach(files)
+  }
+}
+
+function onPaste(e) {
+  const items = e.clipboardData?.items
+  if (!items) return
+
+  const files = []
+  for (const item of items) {
+    if (item.kind === 'file') {
+      const file = item.getAsFile()
+      if (file) files.push(file)
     }
-    nextTick(tryDrop)
+  }
+
+  if (files.length > 0) {
+    e.preventDefault()
+    uploadAndAttach(files)
+    // Show brief paste overlay feedback
+    clearTimeout(pasteOverlayTimer)
+    isPasteOver.value = true
+    pasteOverlayTimer = setTimeout(() => { isPasteOver.value = false }, 1500)
   }
 }
 
@@ -911,6 +934,7 @@ onBeforeUnmount(() => {
     clearTimeout(quickSendPressTimer)
     quickSendPressTimer = null
   }
+  clearTimeout(pasteOverlayTimer)
 
   stopPlaceholderRotation()
 })
@@ -1293,6 +1317,31 @@ defineExpose({
   font-weight: 500;
   border-radius: 20px;
   pointer-events: none;
+}
+
+.paste-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--success-color, #22c55e) 8%, var(--bg-primary, #fff));
+  color: var(--success-color, #22c55e);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 20px;
+  pointer-events: none;
+}
+
+.paste-fade-enter-active,
+.paste-fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.paste-fade-enter-from,
+.paste-fade-leave-to {
+  opacity: 0;
 }
 
 /* Attach button (inside input row) */

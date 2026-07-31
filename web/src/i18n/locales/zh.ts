@@ -244,6 +244,7 @@ export default {
       emptyShares: '暂无最近分享文件',
       emptyUploads: '暂无最近上传文件',
       dropToUpload: '松开上传文件',
+      pasteToUpload: '粘贴上传文件...',
       uploading: '上传中...',
       openFile: '打开文件',
       openCommit: '打开 Commit 详情',

@@ -103,6 +103,7 @@
       @create-session="() => manager.createSession()"
       @show-agent-selector="handleShowAgentSelector"
       @delete-session="() => manager.deleteCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
+      @destroy-session="() => manager.destroyCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @open-user-msg-index="handleOpenUserMsgIndex"
       @open-acp-sessions="$emit('open-acp-sessions')"
       @switch-model="handleSwitchModel"
@@ -446,6 +447,7 @@ const manager = useSessionManager({
   switchSessionCore: session.switchSession,
   createSessionCore: session.createSession,
   deleteSessionCore: session.deleteSession,
+  destroySessionCore: session.destroySession,
   continueFromExecutionCore: session.continueFromExecution,
   forkSessionCore: session.forkSession,
   checkContinueSessionCore: session.checkContinueSession,
@@ -625,6 +627,24 @@ function persistSessionUpdate(fields) {
   }).catch(() => { /* best effort — next POST /api/ai/chat will also persist */ })
 }
 
+/** Deduplicate file entries by path, preferring entries with richer metadata (line ranges). */
+function dedupeFiles(files) {
+  const result = []
+  const byPath = new Map()
+  for (const f of files) {
+    const existing = byPath.get(f.path)
+    if (!existing) {
+      byPath.set(f.path, f)
+      result.push(f)
+    } else if (f.startLine !== undefined && existing.startLine === undefined) {
+      // Replace with the entry that has line-range metadata
+      result[result.indexOf(existing)] = f
+      byPath.set(f.path, f)
+    }
+  }
+  return result
+}
+
 async function sendMessage(text) {
     const inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
     const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quoteData.value
@@ -638,7 +658,7 @@ async function sendMessage(text) {
       const capturedPending = pendingFiles.value.map(f => ({ path: f.path, isDir: false }))
       // Build file paths and entries from attachedFiles (unified channel)
       const mergedPaths = capturedAttached.map(f => f.path)
-      const allFiles = [...capturedPending, ...capturedAttached]
+      const allFiles = dedupeFiles([...capturedPending, ...capturedAttached])
       // Generate unique queueId for precise matching in queue_drain/queue_cancel
       const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       // Clear input state synchronously so user sees immediate feedback
@@ -675,7 +695,7 @@ async function sendMessage(text) {
     const filePaths = attachedFiles.value.map(f => f.path)
     const uploadedFiles = pendingFiles.value.map(f => ({ path: f.path, isDir: false }))
     const projectFiles = attachedFiles.value.map(f => ({ path: f.path, isDir: f.isDir ?? false, startLine: f.startLine, endLine: f.endLine }))
-    const allFiles = [...uploadedFiles, ...projectFiles]
+    const allFiles = dedupeFiles([...uploadedFiles, ...projectFiles])
 
     // Clear input state before async request
     clearAll()

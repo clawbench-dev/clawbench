@@ -244,6 +244,7 @@ export default {
       emptyShares: 'No recently shared files',
       emptyUploads: 'No recently uploaded files',
       dropToUpload: 'Drop to upload',
+      pasteToUpload: 'Pasting files...',
       uploading: 'Uploading...',
       openFile: 'Open file',
       openCommit: 'Open commit details',

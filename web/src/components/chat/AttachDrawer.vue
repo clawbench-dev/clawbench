@@ -203,7 +203,7 @@ const { recentShares, fetchRecentShares } = useShareIn()
 const { recentUploads, fetchRecentUploads } = useUploadRecent()
 
 // ── Upload logic (now lives inside the drawer) ──
-const { pendingFiles, handleFileSelect, handleFileDrop } = useFileUpload()
+const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop } = useFileUpload()
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -265,8 +265,11 @@ let wasUploading = false
 let uploadRefreshScheduled = false
 watch(uploadingFiles, (now) => {
   if (wasUploading && now.length === 0) {
-    // Remove finished (non-uploading) entries from pendingFiles
-    pendingFiles.value = pendingFiles.value.filter(f => f.uploading)
+    // Remove finished (non-uploading) entries from pendingFiles,
+    // but preserve auto-attached ones (path also in attachedFiles)
+    // so they survive until sendMessage processes them.
+    const attachedPaths = new Set(attachedFiles.value.map(a => a.path))
+    pendingFiles.value = pendingFiles.value.filter(f => f.uploading || attachedPaths.has(f.path))
     // Refresh recent uploads so completed files appear
     if (!uploadRefreshScheduled) {
       uploadRefreshScheduled = true

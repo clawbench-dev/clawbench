@@ -112,6 +112,7 @@ describe('useFileUpload', () => {
       expect(upload.dirUploadDone).toBeDefined()
       expect(typeof upload.handleFileSelect).toBe('function')
       expect(typeof upload.handleFileDrop).toBe('function')
+      expect(typeof upload.uploadAndAttach).toBe('function')
       expect(typeof upload.handleFileSelectToDir).toBe('function')
       expect(typeof upload.handleFileDropToDir).toBe('function')
       expect(typeof upload.removeFile).toBe('function')
@@ -447,6 +448,88 @@ describe('useFileUpload', () => {
       upload.cleanupPreviewUrls()
       expect(revokeSpy).toHaveBeenCalledTimes(2)
       revokeSpy.mockRestore()
+    })
+  })
+
+  describe('uploadAndAttach', () => {
+    it('does nothing when empty', async () => {
+      const upload = useFileUpload()
+      await upload.uploadAndAttach([])
+      expect(upload.pendingFiles.value).toHaveLength(0)
+      expect(upload.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('uploads and auto-attaches each file on success', async () => {
+      xhrSendHandler = (xhr) => respondSuccess(xhr, '.clawbench/uploads/test.txt')
+
+      const upload = useFileUpload()
+      await upload.uploadAndAttach([makeFile('test.txt')])
+
+      expect(upload.pendingFiles.value).toHaveLength(1)
+      expect(upload.pendingFiles.value[0].path).toBe('.clawbench/uploads/test.txt')
+      expect(upload.pendingFiles.value[0].uploading).toBe(false)
+      expect(upload.attachedFiles.value).toHaveLength(1)
+      expect(upload.attachedFiles.value[0].path).toBe('.clawbench/uploads/test.txt')
+    })
+
+    it('does not auto-attach on upload failure', async () => {
+      xhrSendHandler = (xhr) => respondError(xhr, 'UploadFailed')
+
+      const upload = useFileUpload()
+      await upload.uploadAndAttach([makeFile('fail.txt')])
+
+      // Failed entries are removed from pendingFiles
+      expect(upload.pendingFiles.value).toHaveLength(0)
+      expect(upload.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('handles multiple files with mixed success', async () => {
+      let callIndex = 0
+      xhrSendHandler = (xhr) => {
+        callIndex++
+        if (callIndex === 1) {
+          respondSuccess(xhr, '.clawbench/uploads/ok.txt')
+        } else {
+          respondError(xhr, 'Failed')
+        }
+      }
+
+      const upload = useFileUpload()
+      await upload.uploadAndAttach([makeFile('ok.txt'), makeFile('fail.txt')])
+
+      // One succeeded, one failed
+      expect(upload.pendingFiles.value).toHaveLength(1)
+      expect(upload.pendingFiles.value[0].path).toBe('.clawbench/uploads/ok.txt')
+      expect(upload.attachedFiles.value).toHaveLength(1)
+      expect(upload.attachedFiles.value[0].path).toBe('.clawbench/uploads/ok.txt')
+    })
+
+    it('shows toast when max files reached', async () => {
+      const upload = useFileUpload()
+      // Pre-fill pendingFiles to max (5)
+      for (let i = 0; i < 5; i++) {
+        upload.pendingFiles.value.push({ path: `f${i}.txt`, previewUrl: null, isImage: false, uploading: false, progress: 0, size: 0 })
+      }
+
+      await upload.uploadAndAttach([makeFile('extra.txt')])
+
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.stringContaining('upload.maxFiles'),
+        expect.any(Object)
+      )
+    })
+
+    it('skips oversized files and shows toast', async () => {
+      const upload = useFileUpload()
+      // max size is 2MB
+      await upload.uploadAndAttach([makeFile('big.txt', 3 * 1024 * 1024)])
+
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.stringContaining('upload.fileTooLarge'),
+        expect.any(Object)
+      )
+      expect(upload.pendingFiles.value).toHaveLength(0)
+      expect(upload.attachedFiles.value).toHaveLength(0)
     })
   })
 })
