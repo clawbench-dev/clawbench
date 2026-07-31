@@ -57,6 +57,7 @@ const i18n = createI18n({
           inputTokens: 'Input',
           outputTokens: 'Output',
           contextCost: 'Cost',
+          compact: 'Compact context',
         },
         autoApprove: {
           enabled: 'Auto-approve enabled',
@@ -322,6 +323,7 @@ const stubs = {
   Cpu: true,
   Compass: true,
   Activity: true,
+  Minimize2: true,
 }
 
 describe('ChatInputBar', () => {
@@ -1013,6 +1015,78 @@ describe('ChatInputBar', () => {
       await modeChip.trigger('mouseup')
       expect(mockToggleAutoApprove).toHaveBeenCalledWith(false)
       vi.useRealTimers()
+    })
+  })
+
+  describe('compact button', () => {
+    afterEach(() => {
+      mockContextUsed.value = 0
+      mockContextSize.value = 0
+      mockAvailableCommands.value = []
+      mockSessionTransport.value = ''
+    })
+
+    it('shows compact button when usage >= 75% and /compact command available in ACP transport', async () => {
+      mockContextUsed.value = 80000
+      mockContextSize.value = 100000
+      mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
+      mockSessionTransport.value = 'acp-stdio'
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.session-info-compact').exists()).toBe(true)
+    })
+
+    it('hides compact button when usage < 75%', async () => {
+      mockContextUsed.value = 50000
+      mockContextSize.value = 100000
+      mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
+      mockSessionTransport.value = 'acp-stdio'
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.session-info-compact').exists()).toBe(false)
+    })
+
+    it('hides compact button when /compact command not available', async () => {
+      mockContextUsed.value = 80000
+      mockContextSize.value = 100000
+      mockAvailableCommands.value = [{ name: '/help', description: 'Show help' }]
+      mockSessionTransport.value = 'acp-stdio'
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.session-info-compact').exists()).toBe(false)
+    })
+
+    it('shows compact button with command name without slash prefix', async () => {
+      mockContextUsed.value = 80000
+      mockContextSize.value = 100000
+      mockAvailableCommands.value = [{ name: 'compact', description: 'Compact conversation' }]
+      mockSessionTransport.value = 'acp-stdio'
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.session-info-compact').exists()).toBe(true)
+    })
+
+    it('hides compact button when not ACP transport', async () => {
+      mockContextUsed.value = 80000
+      mockContextSize.value = 100000
+      mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
+      mockSessionTransport.value = 'cli'
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.session-info-compact').exists()).toBe(false)
+    })
+
+    it('clicking compact button emits send with /compact', async () => {
+      mockContextUsed.value = 80000
+      mockContextSize.value = 100000
+      mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
+      mockSessionTransport.value = 'acp-stdio'
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.vm.$nextTick()
+      const compactBtn = wrapper.find('.session-info-compact')
+      await compactBtn.trigger('click')
+      expect(wrapper.emitted('send')).toBeTruthy()
+      expect(wrapper.emitted('send')![0]).toEqual(['/compact'])
     })
   })
 

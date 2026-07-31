@@ -218,6 +218,9 @@
             <span class="usage-bar-fill" :style="{ width: Math.min(usagePct, 100) + '%', background: usageColor }"></span>
           </span>
         </span>
+        <button v-if="showCompactBtn" class="session-info-compact" :disabled="inputDisabled" @click.stop="handleCompact" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
+          <Minimize2 :size="11" />
+        </button>
       </template>
     </div>
   </div>
@@ -226,7 +229,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, Minimize2 } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -313,6 +316,8 @@ const usageColor = computed(() => {
   if (pct >= 75) return '#eab308'
   return '#22c55e'
 })
+const hasCompactCommand = computed(() => availableCommands.value.some(cmd => cmd.name === '/compact' || cmd.name === 'compact'))
+const showCompactBtn = computed(() => usagePct.value >= 75 && hasCompactCommand.value && isACPTransport.value)
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
@@ -868,6 +873,10 @@ function toggleQuickMenu() {
   showQuickMenu.value = !showQuickMenu.value
 }
 
+function handleCompact() {
+  emit('send', '/compact')
+}
+
 function handleSwitchModel(model) {
   emit('switch-model', model)
 }
@@ -1010,6 +1019,38 @@ defineExpose({
   gap: 3px;
   flex-shrink: 0;
   cursor: pointer;
+}
+
+.session-info-compact {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--text-muted, #999);
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.session-info-compact:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.session-info-compact:active:not(:disabled) {
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
+  transform: scale(0.92);
+}
+
+@media (hover: hover) {
+  .session-info-compact:hover:not(:disabled) {
+    color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
+  }
 }
 
 .usage-bar {

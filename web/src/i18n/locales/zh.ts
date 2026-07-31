@@ -181,6 +181,7 @@ export default {
       remaining: '剩余',
       inputTokens: '输入',
       outputTokens: '输出',
+      compact: '压缩上下文',
     },
     create: {
       selectAgentOrLongPress: '选择智能体（长按直接新建）',

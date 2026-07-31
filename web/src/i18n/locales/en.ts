@@ -181,6 +181,7 @@ export default {
       remaining: 'Remaining',
       inputTokens: 'Input',
       outputTokens: 'Output',
+      compact: 'Compact context',
     },
     create: {
       selectAgentOrLongPress: 'Select agent (long press to create new)',
