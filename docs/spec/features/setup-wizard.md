@@ -23,7 +23,7 @@ sequenceDiagram
     F->>H: GET /api/backends
     H-->>F: 12 个后端规格 (含 install_cmd)
     F->>H: GET /api/agents
-    H->>DB: SELECT * FROM agents
+    H->>DB: 查询 agents 表
     DB-->>H: 已注册 Agent 列表
     H-->>F: agents 列表
     F->>F: 渲染后端列表<br/>已安装项高亮 + 安装入口
