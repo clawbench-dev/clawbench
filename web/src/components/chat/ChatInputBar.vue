@@ -326,7 +326,7 @@ function doToggleAutoApprove() {
     type: next ? 'success' : 'info',
   })
 }
-const showUsageInfo = computed(() => contextSize.value > 0)
+const showUsageInfo = computed(() => isACPTransport.value || contextSize.value > 0)
 const usagePct = computed(() => contextSize.value > 0 ? Math.round((contextUsed.value / contextSize.value) * 100) : 0)
 const usageColor = computed(() => {
   const pct = usagePct.value
