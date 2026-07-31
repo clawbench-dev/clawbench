@@ -99,9 +99,8 @@
           'thinking-collapsing': !!collapsingThinking[stableBlockKey(bi, block)],
           'thinking-expanding': !!expandingThinking[stableBlockKey(bi, block)],
         }"
-        @click.stop="handleThinkingClick(block, bi)"
       >
-        <div class="thinking-header">
+        <div class="thinking-header" @click.stop="handleThinkingClick(block, bi)">
           <Brain :size="12" class="thinking-icon" />
           <span class="thinking-label">{{ t('chat.message.deepThinking') }}</span>
           <!-- Status indicators: right-aligned, same pattern as tool_use -->
@@ -775,11 +774,14 @@ onUnmounted(() => {
 
 /* Collapsed state: pill-shaped clickable chip */
 .chat-thinking.thinking-collapsed {
-  cursor: pointer;
   border-radius: 12px;
   border-left: none;
   border: 1px solid color-mix(in srgb, var(--thinking-accent) 20%, var(--border-color));
   background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
+}
+
+.chat-thinking.thinking-collapsed .thinking-header {
+  cursor: pointer;
 }
 
 .chat-thinking.thinking-collapsed:hover {
@@ -787,8 +789,8 @@ onUnmounted(() => {
   border-color: color-mix(in srgb, var(--thinking-accent) 35%, var(--border-color));
 }
 
-/* Expanded-done state: callout style, clickable to collapse */
-.chat-thinking.thinking-expanded-done {
+/* Expanded-done state: callout style, header is clickable to collapse */
+.chat-thinking.thinking-expanded-done .thinking-header {
   cursor: pointer;
 }
 
@@ -804,11 +806,14 @@ onUnmounted(() => {
 
 /* Collapse animation state: transitioning border from callout to pill */
 .chat-thinking.thinking-collapsing {
-  cursor: pointer;
   border-radius: 12px;
   border-left: none;
   border: 1px solid color-mix(in srgb, var(--thinking-accent) 20%, var(--border-color));
   background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
+}
+
+.chat-thinking.thinking-collapsing .thinking-header {
+  cursor: pointer;
 }
 
 /* Expand animation state: transitioning border from pill to callout */

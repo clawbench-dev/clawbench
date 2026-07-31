@@ -250,12 +250,12 @@ describe('ContentBlocks', () => {
       // Thinking block starts collapsed
       expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-collapsed')
 
-      // Click should trigger handleThinkingClick which sets thinkingExpanded.
+      // Click header should trigger handleThinkingClick which sets thinkingExpanded.
       // In jsdom, Vue's template re-evaluation for :class bindings that call
       // plain functions (isThinkingExpandedDone/isThinkingCollapsed) may not
       // re-render after ref({}) deep property assignment. This works correctly
       // in the real browser. Verify that clicking does not throw.
-      await wrapper.find('.chat-thinking').trigger('click')
+      await wrapper.find('.thinking-header').trigger('click')
     })
 
     it('does not emit show-thinking-detail on thinking click', async () => {
@@ -264,7 +264,7 @@ describe('ContentBlocks', () => {
         streaming: false,
       })
 
-      await wrapper.find('.chat-thinking').trigger('click')
+      await wrapper.find('.thinking-header').trigger('click')
 
       expect(wrapper.emitted('show-thinking-detail')).toBeFalsy()
     })
