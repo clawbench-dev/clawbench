@@ -127,6 +127,8 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server' } },
+    { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true } } },
     { type: 'item', spec: { labelKey: 'settings.items.summarizeTextSection', descriptionKey: 'settings.items.summarizeTextBackendDesc', key: 'navigateSummarizeText', type: 'action', source: 'local', navigateTo: 'chat:summarization_text' } },
   ],
   projectFiles: [

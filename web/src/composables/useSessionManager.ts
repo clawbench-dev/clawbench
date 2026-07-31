@@ -26,6 +26,7 @@ export interface UseSessionManagerOptions {
   switchSessionCore: (sessionId: string) => Promise<void>
   createSessionCore: (agentId?: string) => Promise<void>
   deleteSessionCore: (sessionId: string, backend?: string) => Promise<void>
+  destroySessionCore: (sessionId: string) => Promise<void>
   continueFromExecutionCore: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   forkSessionCore: (sessionId: string, beforeMessageId?: number) => Promise<boolean>
   checkContinueSessionCore: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
@@ -50,6 +51,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     switchSessionCore,
     createSessionCore,
     deleteSessionCore,
+    destroySessionCore,
     continueFromExecutionCore,
     forkSessionCore,
     checkContinueSessionCore,
@@ -234,6 +236,35 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     deleteDraft(deletedId)
   }
 
+  /** Hard-delete (physically destroy) a specific session — irreversible. */
+  async function destroySession(sessionId: string) {
+    cleanupActiveStream()
+    if (runningSessions.value.has(sessionId)) {
+      try { await cancelChat(sessionId) } catch {}
+    }
+    try {
+      await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+    } catch {}
+    clearPendingMessages()
+    await destroySessionCore(sessionId)
+  }
+
+  /** Hard-delete (physically destroy) the current session — irreversible. */
+  async function destroyCurrentSession(deleteDraft: (id: string) => void) {
+    const destroyedId = identity.currentSessionId.value
+    if (!destroyedId) return
+    cleanupActiveStream()
+    if (runningSessions.value.has(destroyedId)) {
+      try { await cancelChat(destroyedId) } catch {}
+    }
+    try {
+      await fetch(`/api/ai/queue?session_id=${encodeURIComponent(destroyedId)}`, { method: 'DELETE' })
+    } catch {}
+    clearPendingMessages()
+    await destroySessionCore(destroyedId)
+    deleteDraft(destroyedId)
+  }
+
   /** Continue a task execution as a new chat session. */
   async function continueFromExecution(taskId: number, execId: number, switchTabFn: (tab: string) => void): Promise<boolean> {
     cleanupActiveStream()
@@ -282,6 +313,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     createSession,
     deleteSession,
     deleteCurrentSession,
+    destroySession,
+    destroyCurrentSession,
     continueFromExecution,
     forkSession,
     checkContinueSession,

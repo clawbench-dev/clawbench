@@ -301,6 +301,8 @@ const serverDefaults: Record<string, unknown> = {
   'chat.page_size': 20,
   'chat.system_prompt_interval': 10,
   'session.max_count': 10,
+  'session.archive_retention_enabled': false,
+  'session.archive_retention_days': 30,
   'recent_projects.max_count': 10,
   'upload.max_size_mb': 100,
   'upload.max_files': 20,

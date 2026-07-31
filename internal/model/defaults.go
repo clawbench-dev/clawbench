@@ -129,6 +129,16 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Session.MaxCount <= 0 {
 		cfg.Session.MaxCount = 10
 	}
+	// ArchiveRetentionEnabled: bool zero-value (false) is intentional default.
+	// Use presence map to distinguish "user wrote false" from "user omitted the field".
+	if p, ok := presence["session.archive_retention_enabled"]; ok && p {
+		// User explicitly set archive_retention_enabled, keep their value
+	} else {
+		cfg.Session.ArchiveRetentionEnabled = false
+	}
+	if cfg.Session.ArchiveRetentionDays <= 0 {
+		cfg.Session.ArchiveRetentionDays = 30
+	}
 
 	// --- Recent Projects ---
 	if cfg.RecentProjects.MaxCount <= 0 {

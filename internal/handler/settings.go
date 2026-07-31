@@ -39,7 +39,9 @@ var hotReloadFields = map[string]bool{
 	"chat.initial_messages":       true,
 	"chat.page_size":              true,
 	"chat.system_prompt_interval": true,
-	"session.max_count":           true,
+	"session.max_count":                  true,
+	"session.archive_retention_enabled":  true,
+	"session.archive_retention_days":     true,
 	"recent_projects.max_count":   true,
 	"upload.max_size_mb":          true,
 	"upload.max_files":            true,
@@ -198,7 +200,9 @@ type configChat struct {
 }
 
 type configSession struct {
-	MaxCount int `json:"max_count"`
+	MaxCount               int  `json:"max_count"`
+	ArchiveRetentionEnabled bool `json:"archive_retention_enabled"`
+	ArchiveRetentionDays    int  `json:"archive_retention_days"`
 }
 
 type configRecentProjects struct {
@@ -313,7 +317,9 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.initial_messages":       true,
 	"chat.page_size":              true,
 	"chat.system_prompt_interval": true,
-	"session.max_count":           true,
+	"session.max_count":                  true,
+	"session.archive_retention_enabled":  true,
+	"session.archive_retention_days":     true,
 	"recent_projects.max_count":   true,
 	"upload.max_size_mb":          true,
 	"upload.max_files":            true,
@@ -431,7 +437,9 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			SystemPromptInterval: cfg.Chat.SystemPromptInterval,
 		},
 		Session: configSession{
-			MaxCount: cfg.Session.MaxCount,
+			MaxCount:               cfg.Session.MaxCount,
+			ArchiveRetentionEnabled: cfg.Session.ArchiveRetentionEnabled,
+			ArchiveRetentionDays:    cfg.Session.ArchiveRetentionDays,
 		},
 		RecentProjects: configRecentProjects{
 			MaxCount: cfg.RecentProjects.MaxCount,
@@ -840,6 +848,9 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if v, ok := session["max_count"].(float64); ok && v < 0 {
 			return fmt.Errorf("session.max_count must be non-negative")
 		}
+		if v, ok := session["archive_retention_days"].(float64); ok && v < 0 {
+			return fmt.Errorf("session.archive_retention_days must be non-negative")
+		}
 	}
 	recentProjects, ok := patch["recent_projects"].(map[string]any)
 	if ok {
@@ -939,6 +950,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if session, ok := patch["session"].(map[string]any); ok {
 		if v, ok := session["max_count"].(float64); ok {
 			cfg.Session.MaxCount = int(v)
+		}
+		if v, ok := session["archive_retention_enabled"].(bool); ok {
+			cfg.Session.ArchiveRetentionEnabled = v
+		}
+		if v, ok := session["archive_retention_days"].(float64); ok {
+			cfg.Session.ArchiveRetentionDays = int(v)
 		}
 	}
 

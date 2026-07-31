@@ -845,6 +845,43 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
+  // Hard-delete (physically destroy) a session and all its associated data.
+  // Unlike deleteSession (soft-delete/archive), this is irreversible.
+  async function destroySession(sessionId: string) {
+    if (deletingSessionIds.value.has(sessionId)) return
+    deletingSessionIds.value.add(sessionId)
+    try {
+      const resp = await fetch(`/api/ai/session/destroy?session_id=${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+      })
+      const data = await resp.json()
+      if (data.ok) {
+        clearUsageStateById(sessionId)
+        // After destroying current session, switch to another or create new
+        if (sessionId === currentSessionId.value) {
+          const sessionsResp = await fetch('/api/ai/sessions')
+          const sessionsData = await sessionsResp.json()
+          if (sessionsData.sessions && sessionsData.sessions.length > 0) {
+            await switchSession(sessionsData.sessions[0].id)
+          } else {
+            await createSession('')
+          }
+        } else {
+          await loadSessionsOnce()
+        }
+        if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
+        toast.show(gt('chat.session.destroyed'), { icon: '🗑️', type: 'success', duration: 2000 })
+      } else {
+        toast.show(gt('chat.session.destroyFailed'), { icon: '⚠️', type: 'error' })
+      }
+    } catch (err: unknown) {
+      appLog.e(TAG, 'Failed to destroy session:', err)
+      toast.show(gt('chat.session.destroyFailed'), { icon: '⚠️', type: 'error' })
+    } finally {
+      deletingSessionIds.value.delete(sessionId)
+    }
+  }
+
   // Debounce timers for loadSessionsOnce after session events.
   // Separate timers for permission and completion events to prevent them from
   // cancelling each other (permission needs faster 300ms, completion needs 500ms).
@@ -1071,6 +1108,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     switchSession,
     createSession,
     deleteSession,
+    destroySession,
     onSessionEvent,
     loadSessionsOnce: loadSessionsOnceInner,
     handleVisibilityChange,

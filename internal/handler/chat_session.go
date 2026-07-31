@@ -197,6 +197,57 @@ func DeleteSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionCount": sessionCount})
 }
 
+// DestroySession handles DELETE for physically removing a session and all its data.
+// Unlike DeleteSession (soft-delete/archive), this irreversibly removes the session
+// from the database — chat_history, tool_calls, raw_responses, task_executions, and
+// the session record itself.
+func DestroySession(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	if !requireMethod(w, r, http.MethodDelete) {
+		return
+	}
+
+	sessionID, ok := requireSessionID(w, r)
+	if !ok {
+		return
+	}
+
+	// Cancel the running session before destroying to kill the CLI process.
+	if service.IsSessionRunning(sessionID) {
+		slog.Info("cancelling running session before destroy", "session_id", sessionID)
+		service.CancelSession(sessionID)
+	}
+
+	// Close the ACP connection for this session before destroying
+	agentID := service.GetSessionAgentID(sessionID)
+	if agentID != "" {
+		if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
+			slog.Info("acp: closing connection for destroyed session", "session_id", sessionID, "agent_id", agentID)
+			go ai.GetACPConnManager().CloseConn(sessionID)
+		}
+	}
+
+	// Delete RAG chunks for this session before hard-deleting session data.
+	// Best-effort — if RAG is not initialized, this is a no-op.
+	if chunksDeleted, err := service.PurgeRAGChunksBySessionIDs([]string{sessionID}); err != nil {
+		slog.Warn("failed to delete RAG chunks for destroyed session", "session_id", sessionID, "err", err)
+	} else if chunksDeleted > 0 {
+		slog.Info("deleted RAG chunks for destroyed session", "session_id", sessionID, "chunks", chunksDeleted)
+	}
+
+	if err := service.HardDeleteSession(sessionID); err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to destroy session")))
+		return
+	}
+
+	sessionCount, _ := service.GetSessionCount(projectPath)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionCount": sessionCount})
+}
+
 // getSessionID retrieves session ID from query param or cookie.
 func getSessionID(r *http.Request) string {
 	if sessionID := r.URL.Query().Get("session_id"); sessionID != "" {

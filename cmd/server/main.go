@@ -780,6 +780,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Warn("failed to initialize RAG system, search will be limited", slog.String("err", err.Error()))
 	}
 	defer rag.Shutdown()
+	defer service.StopSessionCleanupWorker()
 
 	// Determine port before loading skills/agents (skills and agents need {{PORT}})
 	port := cfg.Port
@@ -936,6 +937,17 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Start cleanup worker for soft-deleted data
 	rag.StartCleanupWorker(cfg.RAG)
+
+	// Set RAG chunk purge callback for session cleanup worker
+	service.SetPurgeRAGChunksFn(func(sessionIDs []string) (int64, error) {
+		if rag.GlobalStore == nil {
+			return 0, nil
+		}
+		return rag.GlobalStore.DeleteChunksBySessionIDs(sessionIDs)
+	})
+
+	// Start session archive cleanup worker
+	service.StartSessionCleanupWorker(cfg)
 
 	// Initialize proxy service (port forwarding) and SSH tunnel server.
 	// ProxyRegistry is only created when SSH tunnel is enabled — it has no
@@ -1316,6 +1328,9 @@ func hotReloadReconfigure(port int) {
 
 	// --- RAG: reconfigure embedder, indexer, cleanup worker ---
 	rag.Reconfigure(cfg.RAG)
+
+	// --- Session cleanup: reconfigure archive retention worker ---
+	service.ReconfigureSessionCleanup(cfg)
 
 	// --- FRP: reconfigure or toggle enabled ---
 	hotReloadFRP(cfg, port)

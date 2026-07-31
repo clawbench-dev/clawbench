@@ -1210,7 +1210,8 @@ func GetExpiredDeletedSessions(cutoff time.Time) ([]string, error) {
 }
 
 // PurgeDeletedData hard-deletes soft-deleted sessions and their associated data.
-// Deletes in order: ai_raw_responses → chat_history → chat_sessions.
+// Deletes in order: ai_raw_responses → chat_tool_calls → summaries →
+// tts_summaries → chat_history → task_executions → chat_sessions.
 // Returns counts of purged sessions and messages.
 func PurgeDeletedData(sessionIDs []string) (sessionsPurged int64, messagesPurged int64, err error) {
 	if len(sessionIDs) == 0 {
@@ -1241,6 +1242,10 @@ func PurgeDeletedData(sessionIDs []string) (sessionsPurged int64, messagesPurged
 	// Delete chat_tool_calls for these sessions
 	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id IN ("+placeholders+")", args...)
 
+	// Delete summaries and tts_summaries before chat_history (they reference chat_history.id)
+	_, _ = tx.Exec("DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE session_id IN ("+placeholders+"))", args...)
+	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id IN ("+placeholders+"))", args...)
+
 	// Delete chat_history for these sessions (includes deleted messages)
 	result, err := tx.Exec("DELETE FROM chat_history WHERE session_id IN ("+placeholders+")", args...)
 	if err != nil {
@@ -1266,8 +1271,10 @@ func PurgeDeletedData(sessionIDs []string) (sessionsPurged int64, messagesPurged
 
 // HardDeleteSession removes a session and all its associated data regardless
 // of deletion status. Used by ACP LoadSession to clean up existing sessions
-// before recreating them with fresh replay data.
-// Deletes in order: ai_raw_responses → chat_history → task_executions → chat_sessions.
+// before recreating them with fresh replay data, and by DestroySession for
+// user-initiated permanent deletion.
+// Deletes in order: ai_raw_responses → chat_tool_calls → summaries →
+// tts_summaries → chat_history → task_executions → chat_sessions.
 func HardDeleteSession(sessionID string) error {
 	tx, err := WriteBegin()
 	if err != nil {
@@ -1278,6 +1285,9 @@ func HardDeleteSession(sessionID string) error {
 
 	_, _ = tx.Exec("DELETE FROM ai_raw_responses WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id = ?", sessionID)
+	// Delete summaries and tts_summaries before chat_history (they reference chat_history.id)
+	_, _ = tx.Exec("DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
+	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_history WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM task_executions WHERE session_id = ?", sessionID)
 	_, err = tx.Exec("DELETE FROM chat_sessions WHERE id = ?", sessionID)
