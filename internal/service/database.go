@@ -1151,6 +1151,49 @@ func migrateToolCallsForRow(msgID int64, sessionID, content string) error {
 	return err
 }
 
+// UserMessageStat represents a distinct user message text and its occurrence count.
+type UserMessageStat struct {
+	Text  string `json:"text"`
+	Count int    `json:"count"`
+}
+
+// GetUserMessageStats returns distinct non-empty user messages across all sessions
+// (including archived), grouped by content and ordered by count descending.
+// Messages are filtered to exclude: streaming messages, empty content, long content
+// (>200 chars), file-attached messages, and slash/@-prefixed commands.
+// limit caps the number of results (default 5000 when limit <= 0).
+func GetUserMessageStats(limit int) ([]UserMessageStat, error) {
+	if limit <= 0 {
+		limit = 5000
+	}
+	rows, err := dbRead.Query(`
+		SELECT content, COUNT(*) AS cnt
+		FROM chat_history
+		WHERE role = 'user'
+		  AND streaming = 0
+		  AND content != ''
+		  AND LENGTH(content) <= 200
+		  AND (files IS NULL OR files = '')
+		  AND NOT (content LIKE '/%' OR content LIKE '@%')
+		GROUP BY content
+		ORDER BY cnt DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var stats []UserMessageStat
+	for rows.Next() {
+		var s UserMessageStat
+		if err := rows.Scan(&s.Text, &s.Count); err != nil {
+			return nil, err
+		}
+		stats = append(stats, s)
+	}
+	return stats, nil
+}
+
 // CloseDB closes both write and read database connections.
 func CloseDB() {
 	if db != nil {

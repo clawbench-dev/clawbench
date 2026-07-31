@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -2430,6 +2431,200 @@ func TestMigrateToolCallsFromContent_NoToolUseBlocks(t *testing.T) {
 	var count int
 	db.QueryRow("SELECT COUNT(*) FROM chat_tool_calls").Scan(&count)
 	assert.Equal(t, 0, count, "messages without tool_use should not create tool call records")
+}
+
+// ---------- GetUserMessageStats: user message frequency analysis ----------
+
+// setupTestDBForMessageStats creates an in-memory SQLite database with chat_history
+// and chat_sessions tables for testing GetUserMessageStats.
+func setupTestDBForMessageStats(t *testing.T) func() {
+	t.Helper()
+
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open in-memory db: %v", err)
+	}
+	testDB.SetMaxOpenConns(1)
+	testDB.Exec("PRAGMA journal_mode=WAL")
+	testDB.Exec("PRAGMA busy_timeout=5000")
+
+	_, err = testDB.Exec(`
+		CREATE TABLE IF NOT EXISTS chat_sessions (
+			id TEXT PRIMARY KEY,
+			project_path TEXT NOT NULL,
+			backend TEXT NOT NULL,
+			title TEXT NOT NULL,
+			agent_id TEXT DEFAULT '',
+			agent_source TEXT DEFAULT 'default',
+			model TEXT DEFAULT '',
+			session_type TEXT NOT NULL DEFAULT 'chat',
+			external_session_id TEXT DEFAULT '',
+			source_session_id TEXT DEFAULT NULL,
+			transport TEXT DEFAULT '',
+			auto_approve INTEGER NOT NULL DEFAULT 0,
+			context_state TEXT DEFAULT '',
+			archived INTEGER NOT NULL DEFAULT 0,
+			last_read_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(project_path, backend, id)
+		);
+		CREATE TABLE IF NOT EXISTS chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_path TEXT NOT NULL,
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			content TEXT NOT NULL,
+			files TEXT,
+			session_id TEXT,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			streaming INTEGER NOT NULL DEFAULT 0,
+			indexed INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		t.Fatalf("failed to create tables: %v", err)
+	}
+
+	cleanup := SetDBForTest(testDB, testDB)
+	teardown := func() {
+		cleanup()
+		_ = testDB.Close()
+	}
+	return teardown
+}
+
+// insertUserMessage is a helper to insert a user message directly into chat_history
+// for testing GetUserMessageStats. It bypasses AddChatMessage to avoid the
+// archived-session guard and file-serialization logic.
+func insertUserMessage(t *testing.T, projectPath, sessionID, content string, files string, streaming int) {
+	t.Helper()
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', ?, ?, ?, 'claude', ?)",
+		projectPath, content, files, sessionID, streaming,
+	)
+	assert.NoError(t, err)
+}
+
+func TestGetUserMessageStats_TopN(t *testing.T) {
+	teardown := setupTestDBForMessageStats(t)
+	defer teardown()
+
+	// Insert messages with varying frequency
+	insertUserMessage(t, "/proj", "sess-1", "hello", "", 0)
+	insertUserMessage(t, "/proj", "sess-1", "hello", "", 0) // duplicate
+	insertUserMessage(t, "/proj", "sess-2", "hello", "", 0) // duplicate across session
+	insertUserMessage(t, "/proj", "sess-1", "fix the bug", "", 0)
+	insertUserMessage(t, "/proj", "sess-2", "fix the bug", "", 0) // duplicate across session
+	insertUserMessage(t, "/proj", "sess-1", "continue", "", 0)
+
+	stats, err := GetUserMessageStats(100)
+	assert.NoError(t, err)
+	assert.Len(t, stats, 3)
+
+	// Ordered by count DESC
+	assert.Equal(t, "hello", stats[0].Text)
+	assert.Equal(t, 3, stats[0].Count)
+	assert.Equal(t, "fix the bug", stats[1].Text)
+	assert.Equal(t, 2, stats[1].Count)
+	assert.Equal(t, "continue", stats[2].Text)
+	assert.Equal(t, 1, stats[2].Count)
+}
+
+func TestGetUserMessageStats_ExcludesStreaming(t *testing.T) {
+	teardown := setupTestDBForMessageStats(t)
+	defer teardown()
+
+	// streaming=0 message should be included
+	insertUserMessage(t, "/proj", "sess-1", "visible message", "", 0)
+	// streaming=1 message should be excluded
+	insertUserMessage(t, "/proj", "sess-1", "in-progress message", "", 1)
+
+	stats, err := GetUserMessageStats(100)
+	assert.NoError(t, err)
+	assert.Len(t, stats, 1)
+	assert.Equal(t, "visible message", stats[0].Text)
+	assert.Equal(t, 1, stats[0].Count)
+}
+
+func TestGetUserMessageStats_ExcludesEmptyAndLong(t *testing.T) {
+	teardown := setupTestDBForMessageStats(t)
+	defer teardown()
+
+	// Empty content should be excluded — but content has NOT NULL constraint,
+	// so we insert a single space to test the "empty-like" filter.
+	// The SQL uses content != '' so only truly empty strings are excluded.
+	// Since NOT NULL prevents empty content, we test the LENGTH(content) <= 200 filter.
+	insertUserMessage(t, "/proj", "sess-1", "short message", "", 0)
+
+	// 201-char message should be excluded
+	longContent := strings.Repeat("a", 201)
+	insertUserMessage(t, "/proj", "sess-1", longContent, "", 0)
+
+	// 200-char message should be included
+	maxContent := strings.Repeat("b", 200)
+	insertUserMessage(t, "/proj", "sess-1", maxContent, "", 0)
+
+	stats, err := GetUserMessageStats(100)
+	assert.NoError(t, err)
+	assert.Len(t, stats, 2)
+	assert.Equal(t, "short message", stats[0].Text)
+	assert.Equal(t, maxContent, stats[1].Text)
+}
+
+func TestGetUserMessageStats_ExcludesSlashCommands(t *testing.T) {
+	teardown := setupTestDBForMessageStats(t)
+	defer teardown()
+
+	// Normal messages should be included
+	insertUserMessage(t, "/proj", "sess-1", "hello", "", 0)
+	insertUserMessage(t, "/proj", "sess-1", "please help", "", 0)
+
+	// Slash commands should be excluded
+	insertUserMessage(t, "/proj", "sess-1", "/commit", "", 0)
+	insertUserMessage(t, "/proj", "sess-1", "/help me", "", 0)
+
+	// @-prefixed messages should be excluded
+	insertUserMessage(t, "/proj", "sess-1", "@agent do this", "", 0)
+	insertUserMessage(t, "/proj", "sess-1", "@file read this", "", 0)
+
+	stats, err := GetUserMessageStats(100)
+	assert.NoError(t, err)
+	assert.Len(t, stats, 2)
+	// Only "hello" and "please help" should appear
+	for _, s := range stats {
+		assert.NotEqual(t, "/commit", s.Text)
+		assert.NotEqual(t, "/help me", s.Text)
+		assert.NotEqual(t, "@agent do this", s.Text)
+		assert.NotEqual(t, "@file read this", s.Text)
+	}
+}
+
+func TestGetUserMessageStats_ExcludesFileAttachments(t *testing.T) {
+	teardown := setupTestDBForMessageStats(t)
+	defer teardown()
+
+	// Message without files (empty string) should be included
+	insertUserMessage(t, "/proj", "sess-1", "hello", "", 0)
+	// Message with NULL files should be included
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', ?, NULL, ?, 'claude', 0)",
+		"/proj", "null files message", "sess-1",
+	)
+	assert.NoError(t, err)
+	// Message with non-empty files should be excluded
+	insertUserMessage(t, "/proj", "sess-1", "check this file", `[{"path":"/src/main.go"}]`, 0)
+
+	stats, err := GetUserMessageStats(100)
+	assert.NoError(t, err)
+	assert.Len(t, stats, 2)
+	// Both messages have count=1, order between equal counts is nondeterministic
+	texts := []string{stats[0].Text, stats[1].Text}
+	assert.Contains(t, texts, "hello")
+	assert.Contains(t, texts, "null files message")
+	for _, s := range stats {
+		assert.NotEqual(t, "check this file", s.Text)
+	}
 }
 
 func TestReorderChatQuickSend_DBNotInitialized(t *testing.T) {
