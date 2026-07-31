@@ -80,6 +80,7 @@ export default {
     serverPasswordPlaceholder: '输入密码',
     addServerSubmit: '添加并登录',
     deleteServer: '删除此服务端',
+    savedServers: '已保存服务器',
     switchServer: '切换服务端',
     logout: '登出',
   },

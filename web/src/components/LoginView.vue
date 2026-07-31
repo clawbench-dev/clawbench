@@ -19,22 +19,27 @@
       <!-- Form section -->
       <div class="login-form-card">
         <!-- Server selector (APP mode, >=2 servers) -->
-        <div v-if="isAppMode && showServerSelector" class="server-selector">
-          <div
-            v-for="srv in servers"
-            :key="srv.url"
-            class="server-item"
-            :class="{ active: srv.url === selectedServerUrl }"
-            @click="selectServer(srv)"
-          >
-            <div class="server-info">
-              <Server :size="14" class="server-icon" />
-              <span class="server-url">{{ formatServerHost(srv.url) }}</span>
+        <div v-if="isAppMode && showServerSelector" class="server-selector-wrapper">
+          <div class="server-list-header">{{ t('login.savedServers') }}</div>
+          <div class="server-selector">
+            <div
+              v-for="srv in servers"
+              :key="srv.url"
+              class="server-item"
+              :class="{ active: srv.url === selectedServerUrl }"
+              @click="selectServer(srv)"
+            >
+              <div class="server-info">
+                <span class="server-indicator"></span>
+                <Server :size="14" class="server-icon" />
+                <span class="server-url">{{ formatServerHost(srv.url) }}</span>
+              </div>
+              <button class="server-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
+                <X :size="12" />
+              </button>
             </div>
-            <button class="server-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
-              <X :size="12" />
-            </button>
           </div>
+          <hr class="server-list-divider">
         </div>
 
         <!-- Login form (existing server) -->
@@ -434,14 +439,32 @@ onMounted(() => {
 }
 
 /* Server selector */
+.server-selector-wrapper {
+    margin-bottom: 0;
+}
+
 .server-selector {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    margin-bottom: 16px;
+    margin-bottom: 0;
     max-height: 160px;
     overflow-y: auto;
     scrollbar-width: thin;
+}
+
+.server-list-header {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    letter-spacing: 0.02em;
+    font-weight: 500;
+}
+
+.server-list-divider {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 0 0 16px 0;
 }
 
 .server-item {
@@ -450,31 +473,35 @@ onMounted(() => {
     justify-content: space-between;
     padding: 8px 10px;
     border-radius: 8px;
+    border: 1.5px solid var(--border-color);
     cursor: pointer;
-    transition: background 0.1s;
+    transition: background 0.1s, border-color 0.1s;
     font-size: 13px;
+    background: transparent;
 }
 
 .server-item:hover {
     background: var(--bg-tertiary);
+    border-color: #484f58;
 }
 
 .server-item.active {
-    background: var(--accent-color);
-    color: #fff;
+    background: color-mix(in srgb, var(--accent-color) 6%, var(--bg-primary));
+    border: 1.5px solid var(--accent-color);
+    color: var(--text-primary);
 }
 
 .server-item.active .server-icon {
-    color: #fff;
+    color: var(--accent-color);
 }
 
 .server-item.active .server-delete {
-    color: rgba(255,255,255,0.6);
+    color: var(--text-secondary);
 }
 
 .server-item.active .server-delete:hover {
-    color: #fff;
-    background: rgba(255,255,255,0.15);
+    color: var(--color-red, #ef4444);
+    background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
 }
 
 .server-info {
@@ -485,9 +512,25 @@ onMounted(() => {
     flex: 1;
 }
 
+.server-indicator {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-color);
+    background: transparent;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.server-item.active .server-indicator {
+    border-color: var(--accent-color);
+    background: var(--accent-color);
+}
+
 .server-icon {
     flex-shrink: 0;
-    color: var(--accent-color);
+    color: var(--text-secondary);
+    transition: color 0.15s;
 }
 
 .server-url {
@@ -501,7 +544,7 @@ onMounted(() => {
     flex-shrink: 0;
     border: none;
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     cursor: pointer;
     padding: 2px;
     border-radius: 4px;
@@ -512,7 +555,7 @@ onMounted(() => {
 }
 
 .server-delete:hover {
-    background: var(--bg-tertiary);
+    background: color-mix(in srgb, var(--color-red, #ef4444) 10%, transparent);
     color: var(--color-red, #ef4444);
 }
 
@@ -661,14 +704,14 @@ input:focus {
     border: 1px dashed var(--border-color);
     border-radius: 10px;
     background: transparent;
-    color: var(--text-muted);
+    color: color-mix(in srgb, var(--accent-color) 70%, var(--text-secondary));
     font-size: 13px;
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .add-server-btn:hover {
-    background: var(--bg-tertiary);
+    background: color-mix(in srgb, var(--accent-color) 6%, transparent);
     color: var(--accent-color);
     border-color: var(--accent-color);
 }

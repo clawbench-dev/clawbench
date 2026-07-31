@@ -22,6 +22,7 @@
       delete: 'Delete',
       delete_server_title: 'Delete Server',
       delete_server_msg: 'Delete this server?',
+      saved_servers: 'Saved Servers',
       authenticating: 'Authenticating...',
       enter_password: 'Please enter password',
       enter_address: 'Please enter server address',
@@ -45,6 +46,7 @@
       delete: '删除',
       delete_server_title: '删除服务器',
       delete_server_msg: '删除此服务器？',
+      saved_servers: '已保存服务器',
       authenticating: '认证中...',
       enter_password: '请输入密码',
       enter_address: '请输入服务器地址',
@@ -73,6 +75,7 @@
     --accent-hover: #79b8ff;
     --border-color: #30363d;
     --color-red: #dc2626;
+    --server-indicator-size: 8px;
   }
 
   body {
@@ -195,14 +198,28 @@
   }
 
   /* Server list */
+  .server-list-header {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.02em;
+    font-weight: 500;
+  }
+
   .server-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    margin-bottom: 16px;
+    margin-bottom: 0;
     max-height: 160px;
     overflow-y: auto;
     scrollbar-width: thin;
+  }
+
+  .server-list-divider {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 0 0 16px 0;
   }
 
   .server-item {
@@ -211,22 +228,27 @@
     justify-content: space-between;
     padding: 8px 10px;
     border-radius: 8px;
+    border: 1.5px solid var(--border-color);
     cursor: pointer;
-    transition: background 0.1s;
+    transition: background 0.1s, border-color 0.1s;
     font-size: 13px;
+    background: transparent;
   }
 
   .server-item:hover {
     background: var(--bg-tertiary);
+    border-color: #484f58;
   }
 
   .server-item:active {
     background: var(--bg-tertiary);
+    border-color: #484f58;
   }
 
   .server-item.active {
-    background: var(--accent-color);
-    color: #fff;
+    background: rgba(88, 166, 255, 0.06);
+    border: 1.5px solid var(--accent-color);
+    color: var(--text-primary);
   }
 
   .server-item-info {
@@ -237,15 +259,35 @@
     flex: 1;
   }
 
+  /* Radio-dot indicator for server selection */
+  .server-indicator {
+    flex-shrink: 0;
+    width: var(--server-indicator-size);
+    height: var(--server-indicator-size);
+    border-radius: 50%;
+    border: 1.5px solid var(--border-color);
+    background: transparent;
+    transition: background 0.15s, border-color 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .server-item.active .server-indicator {
+    border-color: var(--accent-color);
+    background: var(--accent-color);
+  }
+
   .server-item-icon {
     flex-shrink: 0;
     width: 14px;
     height: 14px;
-    color: var(--accent-color);
+    color: var(--text-muted);
+    transition: color 0.15s;
   }
 
   .server-item.active .server-item-icon {
-    color: #fff;
+    color: var(--accent-color);
   }
 
   .server-item-url {
@@ -270,17 +312,17 @@
   }
 
   .server-delete-btn:hover {
-    background: var(--bg-tertiary);
+    background: rgba(220, 38, 38, 0.1);
     color: var(--color-red);
   }
 
   .server-item.active .server-delete-btn {
-    color: rgba(255,255,255,0.6);
+    color: var(--text-muted);
   }
 
   .server-item.active .server-delete-btn:hover {
-    color: #fff;
-    background: rgba(255,255,255,0.15);
+    color: var(--color-red);
+    background: rgba(220, 38, 38, 0.12);
   }
 
   .field-group {
@@ -364,6 +406,22 @@
   }
 
   /* Input fields — matches LoginView.vue input style */
+  .input-with-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .input-icon {
+    position: absolute;
+    left: 12px;
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+    pointer-events: none;
+    flex-shrink: 0;
+  }
+
   input[type="text"],
   input[type="number"],
   input[type="password"],
@@ -378,6 +436,10 @@
     color: var(--text-primary);
     outline: none;
     transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .input-with-icon input {
+    padding-left: 36px;
   }
 
   input::placeholder {
@@ -490,14 +552,14 @@
     border: 1px dashed var(--border-color);
     border-radius: 10px;
     background: transparent;
-    color: var(--text-muted);
+    color: rgba(88, 166, 255, 0.7);
     font-size: 13px;
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
 
   .add-server-btn:hover {
-    background: var(--bg-tertiary);
+    background: rgba(88, 166, 255, 0.06);
     color: var(--accent-color);
     border-color: var(--accent-color);
   }
@@ -615,13 +677,23 @@
     <!-- Form -->
     <div class="form-card">
       <!-- Saved server list (shown when servers exist) -->
-      <div id="serverListSection" class="server-list" style="display:none;"></div>
+      <div id="serverListSection" style="display:none;">
+        <div class="server-list-header" id="serverListHeader" data-i18n="saved_servers">已保存服务器</div>
+        <div id="serverListContainer" class="server-list"></div>
+        <hr class="server-list-divider" id="serverListDivider">
+      </div>
 
       <!-- Login form for existing / current server -->
       <form id="connectForm" onsubmit="return false;" style="display:none;">
         <div id="passwordGroup" class="field-group">
           <span class="field-label" data-i18n="password_label">登录密码</span>
-          <input type="password" id="password" data-i18n-placeholder="password_placeholder" placeholder="密码">
+          <div class="input-with-icon">
+            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <input type="password" id="password" data-i18n-placeholder="password_placeholder" placeholder="密码">
+          </div>
         </div>
 
         <button type="submit" class="connect-btn" id="connectBtn">
@@ -668,7 +740,13 @@
         <!-- Password -->
         <div class="field-group">
           <span class="field-label" data-i18n="password_label">登录密码</span>
-          <input type="password" id="addPassword" data-i18n-placeholder="password_placeholder" placeholder="密码">
+          <div class="input-with-icon">
+            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <input type="password" id="addPassword" data-i18n-placeholder="password_placeholder" placeholder="密码">
+          </div>
         </div>
 
         <button type="submit" class="connect-btn" id="addConnectBtn">
@@ -826,13 +904,14 @@
   }
 
   function renderServerList() {
-    var container = document.getElementById('serverListSection');
+    var container = document.getElementById('serverListContainer');
+    var section = document.getElementById('serverListSection');
     var connectForm = document.getElementById('connectForm');
     var addBtn = document.getElementById('addServerBtn');
 
     if (savedServers.length === 0) {
       // No saved servers — show the add form directly
-      container.style.display = 'none';
+      section.style.display = 'none';
       connectForm.style.display = 'none';
       addBtn.style.display = 'none';
       showAddForm();
@@ -845,6 +924,7 @@
       var isActive = (idx === 0);
       html += '<div class="server-item' + (isActive ? ' active' : '') + '" data-url="' + escHtml(srv.url) + '" onclick="selectServer(\'' + escJs(srv.url) + '\')">';
       html += '  <div class="server-item-info">';
+      html += '    <span class="server-indicator"></span>';
       html += '    ' + SVG_SERVER;
       html += '    <span class="server-item-url">' + escHtml(formatHost(srv.url)) + '</span>';
       html += '  </div>';
@@ -855,7 +935,7 @@
     });
 
     container.innerHTML = html;
-    container.style.display = 'flex';
+    section.style.display = 'block';
 
     // Show connect form and add button
     connectForm.style.display = 'block';

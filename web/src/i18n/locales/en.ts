@@ -80,6 +80,7 @@ export default {
     serverPasswordPlaceholder: 'Enter password',
     addServerSubmit: 'Add & Login',
     deleteServer: 'Remove this server',
+    savedServers: 'Saved Servers',
     switchServer: 'Switch server',
     logout: 'Logout',
   },
