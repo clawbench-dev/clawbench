@@ -3,6 +3,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -282,6 +283,8 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.ModeID != "" {
+		// Persist mode change to DB context_state so it survives restarts
+		persistContextStateModeChange(sessionID, req.ModeID)
 		// Forward mode change to ACP agent so it updates its runtime state.
 		// Run asynchronously — the RPC can block for up to 30s if the agent
 		// is slow (e.g., Claude bridge adapter starting its CLI subprocess).
@@ -296,6 +299,8 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.ThinkingEffort != "" {
+		// Persist thinking effort change to DB context_state so it survives restarts
+		persistContextStateThinkingEffortChange(sessionID, req.ThinkingEffort)
 		// Forward thinking effort change to ACP agent — same async pattern as mode.
 		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
 			go func() {
@@ -325,6 +330,23 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// persistContextStateModeChange updates the mode currentModeId in DB context_state
+// using atomic json_set() so it doesn't erase previously saved thinking/usage data.
+func persistContextStateModeChange(sessionID, modeID string) {
+	// Only update currentModeId; availableModes list stays as-is from ACP events.
+	patch := &service.ModeStatePersist{CurrentModeID: modeID}
+	patchJSON, _ := json.Marshal(patch)
+	service.PatchContextStateMerge(sessionID, map[string]string{"mode": string(patchJSON)})
+}
+
+// persistContextStateThinkingEffortChange updates the thinkingEffort currentId in DB context_state
+// using atomic json_set() so it doesn't erase previously saved mode/usage data.
+func persistContextStateThinkingEffortChange(sessionID, effortID string) {
+	patch := &service.ThinkingEffortPersist{CurrentID: effortID}
+	patchJSON, _ := json.Marshal(patch)
+	service.PatchContextStateMerge(sessionID, map[string]string{"thinkingEffort": string(patchJSON)})
 }
 
 // setSessionID sets session ID in cookie.

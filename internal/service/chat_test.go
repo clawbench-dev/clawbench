@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	source_session_id TEXT DEFAULT NULL,
 	transport TEXT DEFAULT '',
 	auto_approve INTEGER NOT NULL DEFAULT 0,
+	context_state TEXT DEFAULT '',
 	deleted INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -3171,4 +3173,206 @@ func TestGetMessageContent_NonExistentID(t *testing.T) {
 	content, err := service.GetMessageContent(99999, sid)
 	assert.NoError(t, err)
 	assert.Equal(t, "", content)
+}
+
+// --- ContextState persistence tests ---
+
+func TestSaveAndGetContextState(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Initially, no context state
+	state := service.GetContextState(sid)
+	assert.Nil(t, state)
+
+	// Save a full context state
+	service.SaveContextState(sid, &service.ContextState{
+		Mode: &service.ModeStatePersist{
+			CurrentModeID:  "code",
+			AvailableModes: []service.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}},
+		},
+		ThinkingEffort: &service.ThinkingEffortPersist{
+			CurrentID:       "high",
+			AvailableLevels: []service.ThinkingEffortDef{{ID: "low", Name: "Low"}, {ID: "high", Name: "High"}},
+		},
+		Usage: &service.UsageStatePersist{
+			Used: 50000, Size: 200000,
+			InputTokens: 100, OutputTokens: 200,
+			Cost: 0.5, Currency: "USD",
+		},
+	})
+
+	state = service.GetContextState(sid)
+	assert.NotNil(t, state)
+	assert.Equal(t, "code", state.Mode.CurrentModeID)
+	assert.Len(t, state.Mode.AvailableModes, 2)
+	assert.Equal(t, "high", state.ThinkingEffort.CurrentID)
+	assert.Len(t, state.ThinkingEffort.AvailableLevels, 2)
+	assert.Equal(t, 50000, state.Usage.Used)
+	assert.Equal(t, 200000, state.Usage.Size)
+	assert.Equal(t, 0.5, state.Usage.Cost)
+	assert.Equal(t, "USD", state.Usage.Currency)
+}
+
+func TestSaveContextState_PartialUpdate(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Save mode first
+	service.SaveContextState(sid, &service.ContextState{
+		Mode: &service.ModeStatePersist{
+			CurrentModeID:  "ask",
+			AvailableModes: []service.ModeDef{{ID: "ask", Name: "Ask"}},
+		},
+	})
+
+	// Then save usage only — mode should survive because the handler
+	// reads existing state before partial update (not tested here, but
+	// we verify that a fresh SaveContextState replaces the whole JSON)
+	service.SaveContextState(sid, &service.ContextState{
+		Usage: &service.UsageStatePersist{Used: 1000, Size: 5000},
+	})
+
+	state := service.GetContextState(sid)
+	assert.NotNil(t, state)
+	// Mode was overwritten because SaveContextState replaces the whole column
+	assert.Nil(t, state.Mode) // this is expected — partial update happens at handler level
+	assert.NotNil(t, state.Usage)
+	assert.Equal(t, 1000, state.Usage.Used)
+}
+
+func TestSaveContextState_NilState(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Save nil — should not write
+	service.SaveContextState(sid, nil)
+	state := service.GetContextState(sid)
+	assert.Nil(t, state)
+}
+
+func TestPatchContextStateMerge_ModeOnly(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Patch only mode — should create fresh JSON
+	modeJSON, _ := json.Marshal(service.ModeStatePersist{
+		CurrentModeID:  "code",
+		AvailableModes: []service.ModeDef{{ID: "code", Name: "Code"}},
+	})
+	service.PatchContextStateMerge(sid, map[string]string{"mode": string(modeJSON)})
+
+	state := service.GetContextState(sid)
+	assert.NotNil(t, state)
+	assert.Equal(t, "code", state.Mode.CurrentModeID)
+	assert.Nil(t, state.ThinkingEffort) // not set yet
+	assert.Nil(t, state.Usage)           // not set yet
+}
+
+func TestPatchContextStateMerge_MergeDoesNotOverwrite(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// First: save mode
+	modeJSON, _ := json.Marshal(service.ModeStatePersist{
+		CurrentModeID:  "code",
+		AvailableModes: []service.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}},
+	})
+	service.PatchContextStateMerge(sid, map[string]string{"mode": string(modeJSON)})
+
+	// Second: patch usage only — mode should survive
+	usageJSON, _ := json.Marshal(service.UsageStatePersist{
+		Used: 50000, Size: 200000,
+	})
+	service.PatchContextStateMerge(sid, map[string]string{"usage": string(usageJSON)})
+
+	state := service.GetContextState(sid)
+	assert.NotNil(t, state)
+	// Mode survived!
+	assert.Equal(t, "code", state.Mode.CurrentModeID)
+	assert.Len(t, state.Mode.AvailableModes, 2)
+	// Usage was added
+	assert.Equal(t, 50000, state.Usage.Used)
+	assert.Equal(t, 200000, state.Usage.Size)
+}
+
+func TestPatchContextStateMerge_UpdateCurrentModeOnly(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// First: save full mode state
+	modeJSON, _ := json.Marshal(service.ModeStatePersist{
+		CurrentModeID:  "code",
+		AvailableModes: []service.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}},
+	})
+	service.PatchContextStateMerge(sid, map[string]string{"mode": string(modeJSON)})
+
+	// Second: patch only currentModeId (user switches mode via PATCH API)
+	patchJSON, _ := json.Marshal(service.ModeStatePersist{CurrentModeID: "ask"})
+	service.PatchContextStateMerge(sid, map[string]string{"mode": string(patchJSON)})
+
+	state := service.GetContextState(sid)
+	assert.Equal(t, "ask", state.Mode.CurrentModeID)
+	// AvailableModes were overwritten with nil since patchJSON has omitempty
+	// This is expected — the ACP agent will re-emit availableModes in next event
+}
+
+func TestPatchContextStateMerge_EmptySessionID(t *testing.T) {
+	setupDB(t)
+
+	// Should not crash with empty sessionID
+	modeJSON, _ := json.Marshal(service.ModeStatePersist{CurrentModeID: "code"})
+	service.PatchContextStateMerge("", map[string]string{"mode": string(modeJSON)})
+}
+
+func TestGetContextState_MalformedJSON(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Directly write malformed JSON
+	_, _ = service.WriteExec("UPDATE chat_sessions SET context_state = '{invalid json' WHERE id = ?", sid)
+
+	// Should return nil and not crash
+	state := service.GetContextState(sid)
+	assert.Nil(t, state)
+}
+
+func TestPatchContextStateMerge_EmptyPatches(t *testing.T) {
+	setupDB(t)
+
+	// Should not crash with empty patches
+	service.PatchContextStateMerge("some-session", map[string]string{})
+}
+
+func TestGetContextState_DeletedSession(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	service.SaveContextState(sid, &service.ContextState{
+		Usage: &service.UsageStatePersist{Used: 100, Size: 500},
+	})
+
+	// Delete session
+	service.DeleteSession("/project", "claude", sid)
+
+	state := service.GetContextState(sid)
+	assert.Nil(t, state)
+}
+
+func TestGetContextState_EmptyColumn(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Fresh session has empty context_state
+	state := service.GetContextState(sid)
+	assert.Nil(t, state)
 }

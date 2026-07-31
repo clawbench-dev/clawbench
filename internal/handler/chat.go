@@ -231,6 +231,22 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					usageState = ou
 				}
 			}
+
+			// DB fallback: if any state is still nil after in-memory lookups,
+			// try to restore from persisted context_state (survives server restart).
+			if modeState == nil || thinkingEffortState == nil || usageState == nil {
+				if ctxState := service.GetContextState(sessionID); ctxState != nil {
+					if modeState == nil && ctxState.Mode != nil {
+						modeState = ctxState.Mode
+					}
+					if thinkingEffortState == nil && ctxState.ThinkingEffort != nil {
+						thinkingEffortState = ctxState.ThinkingEffort
+					}
+					if usageState == nil && ctxState.Usage != nil {
+						usageState = ctxState.Usage
+					}
+				}
+			}
 		}
 
 		// Include the in-memory queue so the frontend can show pending messages
@@ -603,8 +619,75 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 }
 
 // emitStreamEvent emits a stream event to WS clients via StreamHub.
+// It also persists ACP context state (mode, thinking effort, usage) to DB
+// so that SessionInfoBar data survives server restarts.
 func emitStreamEvent(sessionID string, event ai.StreamEvent) {
 	ws.EmitToSession(sessionID, event)
+	persistContextStateFromEvent(sessionID, event)
+}
+
+// persistContextStateFromEvent extracts context state from a StreamEvent
+// and persists it to DB using atomic json_set() partial updates.
+// This avoids the read-merge-write race condition where concurrent
+// mode+usage updates could overwrite each other.
+func persistContextStateFromEvent(sessionID string, event ai.StreamEvent) {
+	switch event.Type {
+	case "mode_update":
+		if event.Mode == nil {
+			return
+		}
+		modeJSON, _ := json.Marshal(service.ModeStatePersist{
+			CurrentModeID:  event.Mode.CurrentModeID,
+			AvailableModes: convertModeDefs(event.Mode.AvailableModes),
+		})
+		service.PatchContextStateMerge(sessionID, map[string]string{"mode": string(modeJSON)})
+
+	case "thinking_effort_update":
+		if event.ThinkingEffort == nil {
+			return
+		}
+		effortJSON, _ := json.Marshal(service.ThinkingEffortPersist{
+			CurrentID:       event.ThinkingEffort.CurrentID,
+			AvailableLevels: convertThinkingEffortDefs(event.ThinkingEffort.AvailableLevels),
+		})
+		service.PatchContextStateMerge(sessionID, map[string]string{"thinkingEffort": string(effortJSON)})
+
+	case "usage_update":
+		if event.Usage == nil {
+			return
+		}
+		usageJSON, _ := json.Marshal(service.UsageStatePersist{
+			Used:         event.Usage.Used,
+			Size:         event.Usage.Size,
+			InputTokens:  event.Usage.InputTokens,
+			OutputTokens: event.Usage.OutputTokens,
+			Cost:         event.Usage.Cost,
+			Currency:     event.Usage.Currency,
+		})
+		service.PatchContextStateMerge(sessionID, map[string]string{"usage": string(usageJSON)})
+	}
+}
+
+func convertModeDefs(modes []ai.ModeDef) []service.ModeDef {
+	if len(modes) == 0 {
+		return nil
+	}
+	result := make([]service.ModeDef, len(modes))
+	for i, m := range modes {
+		result[i] = service.ModeDef{ID: m.ID, Name: m.Name}
+	}
+	return result
+}
+
+func convertThinkingEffortDefs(levels []ai.ThinkingEffortDef) []service.ThinkingEffortDef {
+	if len(levels) == 0 {
+		return nil
+	}
+	result := make([]service.ThinkingEffortDef, len(levels))
+	for i, l := range levels {
+		result[i] = service.ThinkingEffortDef{ID: l.ID, Name: l.Name}
+	}
+	return result
 }
 
 // streamRunResult captures the outcome of a single AI stream execution.

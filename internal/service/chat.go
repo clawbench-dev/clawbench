@@ -915,6 +915,105 @@ type SessionInfo struct {
 	ProjectPath string // populated by GetSessionFullInfo only
 }
 
+// ContextState holds persisted session context info (mode, thinking effort, usage)
+// for restoring display after server restart. Stored as JSON in chat_sessions.context_state.
+type ContextState struct {
+	Mode             *ModeStatePersist     `json:"mode,omitempty"`
+	ThinkingEffort   *ThinkingEffortPersist `json:"thinkingEffort,omitempty"`
+	Usage            *UsageStatePersist    `json:"usage,omitempty"`
+}
+
+// ModeStatePersist is the DB-persisted form of ai.ModeState.
+type ModeStatePersist struct {
+	CurrentModeID  string   `json:"currentModeId"`
+	AvailableModes []ModeDef `json:"availableModes,omitempty"`
+}
+
+// ModeDef is a lightweight mode descriptor for DB persistence.
+type ModeDef struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// ThinkingEffortPersist is the DB-persisted form of ai.ThinkingEffortState.
+type ThinkingEffortPersist struct {
+	CurrentID       string              `json:"currentId"`
+	AvailableLevels []ThinkingEffortDef `json:"availableLevels,omitempty"`
+}
+
+// ThinkingEffortDef is a lightweight thinking effort descriptor for DB persistence.
+type ThinkingEffortDef struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// UsageStatePersist is the DB-persisted form of ai.UsageState.
+type UsageStatePersist struct {
+	Used         int     `json:"used"`
+	Size         int     `json:"size"`
+	InputTokens  int     `json:"inputTokens,omitempty"`
+	OutputTokens int     `json:"outputTokens,omitempty"`
+	Cost         float64 `json:"cost,omitempty"`
+	Currency     string  `json:"currency,omitempty"`
+}
+
+// SaveContextState persists the context_state JSON for a session.
+// Best-effort: errors are logged but not returned, since losing context state
+// is non-critical (the display will be restored once the ACP agent reconnects).
+func SaveContextState(sessionID string, state *ContextState) {
+	if state == nil || sessionID == "" {
+		return
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		slog.Warn("saveContextState: marshal failed", "err", err)
+		return
+	}
+	if _, err := WriteExec("UPDATE chat_sessions SET context_state = ? WHERE id = ?", string(data), sessionID); err != nil {
+		slog.Warn("saveContextState: write failed", "err", err, "sid", sessionID)
+	}
+}
+
+// PatchContextStateMerge updates specific fields of the context_state JSON using
+// SQLite json_set() for atomic partial updates. This avoids the read-merge-write
+// race condition where concurrent mode+usage updates could overwrite each other.
+// Each call only modifies the fields provided; other fields in the JSON remain intact.
+// If the column is empty/NULL, json_set operates on a fresh '{}' object.
+// Best-effort: errors are logged but not returned.
+func PatchContextStateMerge(sessionID string, patches map[string]string) {
+	if sessionID == "" || len(patches) == 0 {
+		return
+	}
+	// Build json_set chain: json_set(context_state, '$.mode', json('...'), '$.usage', json('...'))
+	// Start from '{}' if column is empty, so json_set works on a valid JSON object.
+	query := "UPDATE chat_sessions SET context_state = json_set(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END"
+	args := []any{}
+	for key, val := range patches {
+		query += fmt.Sprintf(", '$.%s', json(?)", key)
+		args = append(args, val)
+	}
+	query += ") WHERE id = ?"
+	args = append(args, sessionID)
+	if _, err := WriteExec(query, args...); err != nil {
+		slog.Warn("patchContextStateMerge: write failed", "err", err, "sid", sessionID)
+	}
+}
+
+// GetContextState reads and parses the context_state JSON for a session.
+// Returns nil if the column is empty or parsing fails.
+func GetContextState(sessionID string) *ContextState {
+	var raw string
+	if err := dbRead.QueryRow("SELECT COALESCE(context_state, '') FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&raw); err != nil || raw == "" {
+		return nil
+	}
+	var state ContextState
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		slog.Warn("getContextState: unmarshal failed", "err", err, "sid", sessionID)
+		return nil
+	}
+	return &state
+}
+
 // GetSessionInfo fetches session metadata (title, backend, agent_id, model, transport)
 // in a single query instead of separate queries.
 func GetSessionInfo(sessionID string) (*SessionInfo, error) {

@@ -478,6 +478,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add context_state column for persisting session context info (mode, thinking, usage)
+	var hasContextState int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='context_state'").Scan(&hasContextState)
+	if hasContextState == 0 {
+		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN context_state TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add context_state column: %w", err)
+		}
+	}
+
 	// Migrate: add host column to forwarded_ports for custom target host
 	var hasForwardedPortHost int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='host'").Scan(&hasForwardedPortHost)
