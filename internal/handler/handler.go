@@ -367,6 +367,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/chat/quick-send", middleware.Auth(ServeChatQuickSend))
 	register("/api/chat/quick-send/", middleware.Auth(ServeChatQuickSendByID))
 
+	// Message clusters (cached cluster suggestions + on-demand computation)
+	register("/api/chat/message-clusters", middleware.Auth(ServeMessageClusters))
+	register("/api/chat/message-clusters/compute", middleware.Auth(ServeMessageClustersCompute))
+	register("/api/chat/message-clusters/compute/status", middleware.Auth(ServeMessageClustersComputeStatus))
+
 	// Self-upgrade
 	register("/api/upgrade/check", middleware.Auth(ServeUpgradeCheck))
 	register("/api/upgrade/start", middleware.Auth(ServeUpgradeStart))

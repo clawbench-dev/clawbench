@@ -230,6 +230,26 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		);
 		CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON chat_tool_calls(message_id);
 		CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON chat_tool_calls(session_id, created_at DESC);
+		CREATE TABLE IF NOT EXISTS message_clusters_cache (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			representative TEXT NOT NULL,
+			variants TEXT NOT NULL,
+			total_count INTEGER NOT NULL,
+			representative_count INTEGER NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS message_clusters_meta (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			mode TEXT NOT NULL DEFAULT '',
+			progress TEXT NOT NULL DEFAULT 'idle',
+			phase TEXT NOT NULL DEFAULT '',
+			msg_count INTEGER NOT NULL DEFAULT 0,
+			cluster_count INTEGER NOT NULL DEFAULT 0,
+			elapsed_ms INTEGER NOT NULL DEFAULT 0,
+			error_msg TEXT NOT NULL DEFAULT '',
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	if err != nil {
 		t.Fatalf("failed to create tables: %v", err)
