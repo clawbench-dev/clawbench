@@ -231,8 +231,12 @@
             <span class="usage-bar-fill" :style="{ width: Math.min(usagePct, 100) + '%', background: usageColor }"></span>
           </span>
         </span>
-        <button v-if="showCompactBtn" class="session-info-compact" :disabled="inputDisabled" @click.stop="handleCompact" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
+      </template>
+      <template v-if="showCompactBtn">
+        <span class="session-info-divider"></span>
+        <button class="session-info-compact" :disabled="inputDisabled" @click.stop="handleCompact" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
           <Minimize2 :size="11" />
+          {{ t('chat.sessionInfo.compact') }}
         </button>
       </template>
     </div>
@@ -1061,15 +1065,19 @@ defineExpose({
 .session-info-compact {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 3px;
+  flex-shrink: 0;
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px;
+  padding: 0;
   border-radius: 4px;
   color: var(--text-muted, #999);
-  transition: color 0.15s, background 0.15s;
-  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  transition: color 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .session-info-compact:disabled {
@@ -1079,14 +1087,11 @@ defineExpose({
 
 .session-info-compact:active:not(:disabled) {
   color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
-  transform: scale(0.92);
 }
 
 @media (hover: hover) {
   .session-info-compact:hover:not(:disabled) {
     color: var(--accent-color, #0066cc);
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
   }
 }
 

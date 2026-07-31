@@ -33,7 +33,6 @@ const i18n = createI18n({
         },
         attach: {
           dropToUpload: 'Drop to upload',
-          pasteToUpload: 'Pasting files...',
           openFile: 'Open',
           uploadFile: 'Upload',
           currentFile: 'Current file',
@@ -107,7 +106,6 @@ vi.mock('@/composables/useFileUpload.ts', () => ({
     pendingFiles: { value: [] },
     uploadingFiles: { value: [] },
     isDragOver: { value: false },
-    uploadAndAttach: vi.fn(),
     onDragEnter: vi.fn(),
     onDragOver: vi.fn(),
     onDragLeave: vi.fn(),
@@ -305,7 +303,6 @@ const stubs = {
   QuickSendDrawer: true,
   List: true,
   Plus: true,
-  Trash2: true,
   Archive: true,
   Search: true,
   Volume2: true,
@@ -325,7 +322,6 @@ const stubs = {
   Cpu: true,
   Compass: true,
   Activity: true,
-  ClipboardPaste: true,
   Minimize2: true,
 }
 
@@ -1036,7 +1032,9 @@ describe('ChatInputBar', () => {
       mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.session-info-compact').exists()).toBe(true)
+      const btn = wrapper.find('.session-info-compact')
+      expect(btn.exists()).toBe(true)
+      expect(btn.text()).toContain('Compact context')
     })
 
     it('hides compact button when usage < 75%', async () => {
@@ -1143,84 +1141,6 @@ describe('ChatInputBar', () => {
       expect(resumeBtn).toBeTruthy()
       await resumeBtn!.trigger('click')
       expect(wrapper.emitted('open-acp-sessions')).toBeTruthy()
-    })
-  })
-
-  describe('drag-and-drop auto-attach', () => {
-    it('calls uploadAndAttach on drop event with files', async () => {
-      const wrapper = mountBar()
-      const mockFile = new File(['content'], 'test.txt', { type: 'text/plain' })
-      const container = wrapper.find('.chat-input-container')
-      await container.trigger('drop', {
-        dataTransfer: { files: [mockFile] },
-      })
-      expect(wrapper.vm.uploadAndAttach).toHaveBeenCalledWith([mockFile])
-    })
-
-    it('does not call uploadAndAttach when drop has no files', async () => {
-      const wrapper = mountBar()
-      const container = wrapper.find('.chat-input-container')
-      await container.trigger('drop', {
-        dataTransfer: { files: [] },
-      })
-      expect(wrapper.vm.uploadAndAttach).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('clipboard paste auto-attach', () => {
-    it('calls uploadAndAttach when pasting image files', async () => {
-      const wrapper = mountBar()
-      const mockFile = new File(['image data'], 'screenshot.png', { type: 'image/png' })
-      const textarea = wrapper.find('.chat-textarea')
-      await textarea.trigger('paste', {
-        clipboardData: {
-          items: [{ kind: 'file', type: 'image/png', getAsFile: () => mockFile }],
-        },
-      })
-      expect(wrapper.vm.uploadAndAttach).toHaveBeenCalledWith([mockFile])
-    })
-
-    it('prevents default when clipboard has files', async () => {
-      const wrapper = mountBar()
-      const mockFile = new File(['data'], 'file.txt', { type: 'text/plain' })
-      const preventDefault = vi.fn()
-      const textarea = wrapper.find('.chat-textarea')
-      await textarea.trigger('paste', {
-        clipboardData: {
-          items: [{ kind: 'file', type: 'text/plain', getAsFile: () => mockFile }],
-        },
-        preventDefault,
-      })
-      // uploadAndAttach should be called (preventDefault was called in the handler)
-      expect(wrapper.vm.uploadAndAttach).toHaveBeenCalled()
-    })
-
-    it('does not call uploadAndAttach when clipboard has no files', async () => {
-      const wrapper = mountBar()
-      const textarea = wrapper.find('.chat-textarea')
-      await textarea.trigger('paste', {
-        clipboardData: {
-          items: [{ kind: 'string', type: 'text/plain', getAsString: () => 'hello' }],
-        },
-      })
-      expect(wrapper.vm.uploadAndAttach).not.toHaveBeenCalled()
-    })
-
-    it('shows paste overlay briefly when pasting files', async () => {
-      vi.useFakeTimers()
-      const wrapper = mountBar()
-      const mockFile = new File(['data'], 'img.png', { type: 'image/png' })
-      const textarea = wrapper.find('.chat-textarea')
-      await textarea.trigger('paste', {
-        clipboardData: {
-          items: [{ kind: 'file', type: 'image/png', getAsFile: () => mockFile }],
-        },
-      })
-      expect(wrapper.vm.isPasteOver).toBe(true)
-      vi.advanceTimersByTime(1500)
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.isPasteOver).toBe(false)
-      vi.useRealTimers()
     })
   })
 })
