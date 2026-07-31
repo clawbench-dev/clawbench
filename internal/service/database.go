@@ -1496,7 +1496,7 @@ func ReorderChatQuickSend(ids []int64) error {
 type ClusterCacheEntry struct {
 	ID                  int64  `json:"id"`
 	Representative      string `json:"representative"`
-	Variants            string `json:"variants"` // comma-separated
+	Variants            string `json:"variants"` // JSON array stored as string
 	TotalCount          int    `json:"total_count"`
 	RepresentativeCount int    `json:"representative_count"`
 	SortOrder           int    `json:"sort_order"`

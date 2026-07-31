@@ -23,8 +23,8 @@ func TestServeMessageClusters_CachedResults(t *testing.T) {
 
 	// Pre-populate cluster cache
 	entries := []service.ClusterCacheEntry{
-		{Representative: "继续", Variants: "继续,请继续", TotalCount: 5, RepresentativeCount: 3, SortOrder: 0},
-		{Representative: "提交代码", Variants: "提交代码,commit", TotalCount: 3, RepresentativeCount: 2, SortOrder: 1},
+		{Representative: "继续", Variants: "[\"继续\",\"请继续\"]", TotalCount: 5, RepresentativeCount: 3, SortOrder: 0},
+		{Representative: "提交代码", Variants: "[\"提交代码\",\"commit\"]", TotalCount: 3, RepresentativeCount: 2, SortOrder: 1},
 	}
 	err := service.SaveClusterCache(entries, "embedding")
 	require.NoError(t, err)
@@ -60,11 +60,11 @@ func TestServeMessageClusters_FiltersQuickSend(t *testing.T) {
 	// Pre-populate cluster cache
 	entries := []service.ClusterCacheEntry{
 		// Cluster 1: ALL variants match quick-send → entire cluster filtered out
-		{Representative: "继续", Variants: "继续,请继续", TotalCount: 5, RepresentativeCount: 3, SortOrder: 0},
+		{Representative: "继续", Variants: "[\"继续\",\"请继续\"]", TotalCount: 5, RepresentativeCount: 3, SortOrder: 0},
 		// Cluster 2: partial match → "提交代码" filtered from variants, "commit" kept
-		{Representative: "提交代码", Variants: "提交代码,commit", TotalCount: 3, RepresentativeCount: 2, SortOrder: 1},
+		{Representative: "提交代码", Variants: "[\"提交代码\",\"commit\"]", TotalCount: 3, RepresentativeCount: 2, SortOrder: 1},
 		// Cluster 3: no match → kept entirely
-		{Representative: "帮我写个函数", Variants: "帮我写个函数,写一个函数", TotalCount: 4, RepresentativeCount: 2, SortOrder: 2},
+		{Representative: "帮我写个函数", Variants: "[\"帮我写个函数\",\"写一个函数\"]", TotalCount: 4, RepresentativeCount: 2, SortOrder: 2},
 	}
 	err := service.SaveClusterCache(entries, "embedding")
 	require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestServeMessageClusters_QuickSendFiltersAllVariantsButRepresentativeStillS
 
 	// Cluster where representative matches quick-send but has no other unmatched variants
 	entries := []service.ClusterCacheEntry{
-		{Representative: "继续", Variants: "继续", TotalCount: 5, RepresentativeCount: 5, SortOrder: 0},
+		{Representative: "继续", Variants: "[\"继续\"]", TotalCount: 5, RepresentativeCount: 5, SortOrder: 0},
 	}
 	err := service.SaveClusterCache(entries, "embedding")
 	require.NoError(t, err)
@@ -317,14 +317,16 @@ func quickSendCommandSet(commands []string) map[string]bool {
 func filterClusters(entries []service.ClusterCacheEntry, quickSendSet map[string]bool) []ClusterItem {
 	var items []ClusterItem
 	for _, e := range entries {
-		variants := strings.Split(e.Variants, ",")
+		var variants []string
+		if err := json.Unmarshal([]byte(e.Variants), &variants); err != nil {
+			variants = []string{e.Representative}
+		}
 		var unmatched []string
 		for _, v := range variants {
 			if !quickSendSet[v] {
 				unmatched = append(unmatched, v)
 			}
 		}
-		// If ALL variants match quick-send → skip entire cluster
 		if len(unmatched) == 0 {
 			continue
 		}
@@ -342,9 +344,9 @@ func filterClusters(entries []service.ClusterCacheEntry, quickSendSet map[string
 // Pure logic test for filterClusters (no HTTP, no DB)
 func TestFilterClusters_PureLogic(t *testing.T) {
 	entries := []service.ClusterCacheEntry{
-		{ID: 1, Representative: "继续", Variants: "继续,请继续", TotalCount: 5, RepresentativeCount: 3},
-		{ID: 2, Representative: "提交", Variants: "提交,commit", TotalCount: 3, RepresentativeCount: 2},
-		{ID: 3, Representative: "帮我写", Variants: "帮我写,写一个函数", TotalCount: 4, RepresentativeCount: 2},
+		{ID: 1, Representative: "继续", Variants: "[\"继续\",\"请继续\"]", TotalCount: 5, RepresentativeCount: 3},
+		{ID: 2, Representative: "提交", Variants: "[\"提交\",\"commit\"]", TotalCount: 3, RepresentativeCount: 2},
+		{ID: 3, Representative: "帮我写", Variants: "[\"帮我写\",\"写一个函数\"]", TotalCount: 4, RepresentativeCount: 2},
 	}
 
 	// All variants of cluster 1 match quick-send → filtered out entirely

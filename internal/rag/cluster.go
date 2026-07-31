@@ -2,6 +2,7 @@ package rag
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"sort"
@@ -188,6 +189,17 @@ func sorensenDiceWithLengthPenalty(minLengthRatio float64) SimilarityFunc {
 // cosine similarity lookup function. Returns (lookupFn, error).
 func VectorSimilarityMatrix(ctx context.Context, embedder *EmbeddingClient, texts []string) (func(i, j int) float64, error) {
 	embeddings := embedInSubBatches(ctx, embedder, texts)
+
+	// Count how many embeddings actually succeeded
+	successCount := 0
+	for _, emb := range embeddings {
+		if emb != nil {
+			successCount++
+		}
+	}
+	if successCount == 0 {
+		return nil, fmt.Errorf("all %d embedding sub-batches failed", len(texts))
+	}
 
 	// Normalize all vectors — allocate inner slices (C3 fix: nil-slice bug)
 	normalized := make([][]float64, len(embeddings))

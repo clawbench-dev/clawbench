@@ -316,6 +316,24 @@ func TestVectorSimilarityMatrix_NilEmbeddingSkipped(t *testing.T) {
 	}
 }
 
+func TestVectorSimilarityMatrix_AllEmbeddingsFailed(t *testing.T) {
+	// When ALL embeddings fail, VectorSimilarityMatrix should return an error
+	// so the caller falls back to FTS mode instead of misleadingly reporting "vector".
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "server error"}`))
+	}))
+	defer server.Close()
+
+	embedder := NewEmbeddingClient(server.URL, "test-model", "")
+	ctx := context.Background()
+
+	_, err := VectorSimilarityMatrix(ctx, embedder, []string{"a", "b", "c"})
+	if err == nil {
+		t.Error("expected error when all embeddings fail, got nil")
+	}
+}
+
 func TestClusterMessagesWithEmbeddings_ExactOnly(t *testing.T) {
 	// nil embedder → mode="exact", each stat its own cluster
 	stats := []MessageStat{

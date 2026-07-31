@@ -2,6 +2,7 @@ package rag
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"time"
@@ -25,10 +26,11 @@ type ClusterProgress struct {
 // It runs a goroutine triggered by the user (not a cron job) and broadcasts
 // progress updates via the WebSocket StreamHub.
 type ClusterWorker struct {
-	mu       sync.Mutex
-	running  bool
-	cancelFn context.CancelFunc
-	hub      *ws.StreamHub
+	mu        sync.Mutex
+	running   bool
+	cancelFn  context.CancelFunc
+	generation uint64 // incremented on each ComputeOnce, goroutine defer only clears if still same gen
+	hub       *ws.StreamHub
 }
 
 // NewClusterWorker creates a ClusterWorker associated with the given StreamHub.
@@ -53,9 +55,14 @@ func (cw *ClusterWorker) ComputeOnce() {
 	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
 	cw.cancelFn = cancel
 	cw.running = true
+	cw.generation++
+	myGen := cw.generation
 	cw.mu.Unlock()
 
-	go cw.compute(ctx)
+	// Write initial meta state immediately so /compute/status is consistent
+	service.SaveClusterMeta("computing", "", 0, 0, 0)
+
+	go cw.compute(ctx, myGen)
 }
 
 // IsRunning returns whether a computation is currently active.
@@ -88,6 +95,7 @@ func (cw *ClusterWorker) Stop() {
 	}
 	cw.running = false
 	cw.cancelFn = nil
+	cw.generation++ // bump generation so stale goroutine defer won't clear new state
 	cw.mu.Unlock()
 }
 
@@ -95,13 +103,17 @@ func (cw *ClusterWorker) Stop() {
 // 1. extracting: fetch user message stats
 // 2. clustering: cluster messages using best available method
 // 3. saving: save cluster cache and final meta
-func (cw *ClusterWorker) compute(ctx context.Context) {
+func (cw *ClusterWorker) compute(ctx context.Context, myGen uint64) {
 	start := time.Now()
 
 	defer func() {
 		cw.mu.Lock()
-		cw.running = false
-		cw.cancelFn = nil
+		// Only clear state if this goroutine is still the "current" generation.
+		// If Stop() or a new ComputeOnce() bumped generation, don't overwrite.
+		if cw.generation == myGen {
+			cw.running = false
+			cw.cancelFn = nil
+		}
 		cw.mu.Unlock()
 	}()
 
@@ -146,9 +158,14 @@ func (cw *ClusterWorker) compute(ctx context.Context) {
 	// Phase 3: saving
 	cacheEntries := make([]service.ClusterCacheEntry, len(clusters))
 	for i, c := range clusters {
+		variantsJSON, err := json.Marshal(c.Variants)
+		if err != nil {
+			slog.Error("cluster worker: failed to marshal variants", slog.String("err", err.Error()))
+			variantsJSON = []byte("[]")
+		}
 		cacheEntries[i] = service.ClusterCacheEntry{
 			Representative:      c.Representative,
-			Variants:             stringsJoin(c.Variants),
+			Variants:             string(variantsJSON),
 			TotalCount:           c.TotalCount,
 			RepresentativeCount:  c.RepresentativeCount,
 			SortOrder:            i,
@@ -200,14 +217,4 @@ func (cw *ClusterWorker) broadcastProgress(status, phase string, msgCount, clust
 	})
 }
 
-// stringsJoin joins a slice of strings with commas.
-func stringsJoin(ss []string) string {
-	result := ""
-	for i, s := range ss {
-		if i > 0 {
-			result += ","
-		}
-		result += s
-	}
-	return result
-}
+

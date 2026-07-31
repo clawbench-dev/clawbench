@@ -2,9 +2,9 @@
 package handler
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"clawbench/internal/rag"
@@ -62,7 +62,11 @@ func ServeMessageClusters(w http.ResponseWriter, r *http.Request) {
 	// 4. Build filtered cluster items
 	var items []ClusterItem
 	for _, e := range entries {
-		variants := strings.Split(e.Variants, ",")
+		var variants []string
+		if err := json.Unmarshal([]byte(e.Variants), &variants); err != nil {
+			slog.Warn("failed to unmarshal variants", slog.String("err", err.Error()), slog.Int64("id", e.ID))
+			variants = []string{e.Representative} // fallback
+		}
 		var unmatched []string
 		for _, v := range variants {
 			if !qsSet[v] {

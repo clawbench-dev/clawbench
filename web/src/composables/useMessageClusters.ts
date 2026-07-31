@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 
@@ -38,6 +38,7 @@ export function useMessageClusters() {
   })
   const mode = ref<string>('')
   const updatedAt = ref<string>('')
+  let fetchingGuard = false
 
   // ── WebSocket cluster_progress listener ──
   const { onEvent } = useGlobalEvents()
@@ -58,8 +59,16 @@ export function useMessageClusters() {
     }
   })
 
+  // Auto-cleanup WS listener on component unmount
+  onUnmounted(() => {
+    unsubscribeWs()
+    stopPolling()
+  })
+
   // Read cached results (instant)
   async function fetchClusters() {
+    if (fetchingGuard) return // prevent double-fetch from WS + poll
+    fetchingGuard = true
     loading.value = true
     try {
       const resp = await fetch('/api/chat/message-clusters')
@@ -74,6 +83,7 @@ export function useMessageClusters() {
       appLog.e('MsgCluster', `Failed to fetch clusters: ${e}`)
     } finally {
       loading.value = false
+      fetchingGuard = false
     }
   }
 
@@ -123,5 +133,5 @@ export function useMessageClusters() {
     }
   }
 
-  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, stopPolling, unsubscribeWs }
+  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, stopPolling }
 }
