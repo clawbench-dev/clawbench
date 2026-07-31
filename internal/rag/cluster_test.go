@@ -1,7 +1,10 @@
 package rag
 
 import (
+	"context"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 )
@@ -185,5 +188,215 @@ func TestSorensenDiceWithLengthPenalty_NoOverlap(t *testing.T) {
 	score := simFn("你好世界", "abcdefg")
 	if score > 0.01 {
 		t.Errorf("expected score ≈ 0 for no overlap, got %.4f", score)
+	}
+}
+
+func TestVectorSimilarityMatrix_Basic(t *testing.T) {
+	// Test normalization and cosine similarity computation with known embeddings.
+	// Use a mock HTTP server that returns pre-set embedding vectors.
+	//
+	// Vectors:
+	//   [1,0] → normalized: [1,0]
+	//   [1,1] → normalized: [0.7071, 0.7071]
+	//   [0,1] → normalized: [0,1]
+	//
+	// Cosine similarities:
+	//   [1,0] vs [1,1] = 0.7071
+	//   [1,0] vs [0,1] = 0
+	//   [1,1] vs [0,1] = 0.7071
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Return fixed embeddings for any input
+		w.Write([]byte(`{
+			"data": [
+				{"embedding": [1.0, 0.0], "index": 0},
+				{"embedding": [1.0, 1.0], "index": 1},
+				{"embedding": [0.0, 1.0], "index": 2}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	embedder := NewEmbeddingClient(server.URL, "test-model", "")
+	ctx := context.Background()
+
+	lookup, err := VectorSimilarityMatrix(ctx, embedder, []string{"a", "b", "c"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// [1,0] vs [1,1] = dot(normalized) = 0.7071
+	sim01 := lookup(0, 1)
+	if math.Abs(sim01-0.7071) > 0.01 {
+		t.Errorf("sim(0,1) expected ~0.7071, got %.4f", sim01)
+	}
+
+	// [1,0] vs [0,1] = 0
+	sim02 := lookup(0, 2)
+	if math.Abs(sim02) > 0.01 {
+		t.Errorf("sim(0,2) expected 0, got %.4f", sim02)
+	}
+
+	// [1,1] vs [0,1] = 0.7071
+	sim12 := lookup(1, 2)
+	if math.Abs(sim12-0.7071) > 0.01 {
+		t.Errorf("sim(1,2) expected ~0.7071, got %.4f", sim12)
+	}
+
+	// Self-similarity should be 1.0
+	sim00 := lookup(0, 0)
+	if math.Abs(sim00-1.0) > 0.001 {
+		t.Errorf("sim(0,0) expected 1.0, got %.4f", sim00)
+	}
+}
+
+func TestVectorSimilarityMatrix_NilEmbeddingSkipped(t *testing.T) {
+	// When a sub-batch fails, that embedding is nil.
+	// The C3 fix ensures inner slices are allocated only for non-nil embeddings.
+	// Nil entries should produce similarity 0 (dot product of zero-length vectors).
+	//
+	// We'll use a server that returns empty data for the second batch (3 texts, batch size 5)
+	// Actually, easier: test with a server that fails on second request,
+	// but since batch size = 5 and we have 3 texts, they all go in one batch.
+	// Instead, let's test with 7 texts (2 batches) where the second batch fails.
+
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			// First batch (5 texts) succeeds
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{
+				"data": [
+					{"embedding": [1.0, 0.0], "index": 0},
+					{"embedding": [1.0, 0.0], "index": 1},
+					{"embedding": [1.0, 0.0], "index": 2},
+					{"embedding": [1.0, 0.0], "index": 3},
+					{"embedding": [1.0, 0.0], "index": 4}
+				]
+			}`))
+		} else {
+			// Second batch (2 texts) fails → nil embeddings for indices 5,6
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error": "server error"}`))
+		}
+	}))
+	defer server.Close()
+
+	embedder := NewEmbeddingClient(server.URL, "test-model", "")
+	ctx := context.Background()
+
+	texts := make([]string, 7)
+	for i := range texts {
+		texts[i] = "text"
+	}
+
+	lookup, err := VectorSimilarityMatrix(ctx, embedder, texts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Indices 0-4 should have similarity 1.0 with each other
+	sim00 := lookup(0, 0)
+	if math.Abs(sim00-1.0) > 0.001 {
+		t.Errorf("sim(0,0) expected 1.0, got %.4f", sim00)
+	}
+
+	// Indices 5 and 6 have nil embeddings → similarity should be 0
+	sim56 := lookup(5, 6)
+	if sim56 != 0 {
+		t.Errorf("sim(5,6) expected 0 (nil embeddings), got %.4f", sim56)
+	}
+
+	// 0 vs 5 also should be 0 (one side nil)
+	sim05 := lookup(0, 5)
+	if sim05 != 0 {
+		t.Errorf("sim(0,5) expected 0 (one nil embedding), got %.4f", sim05)
+	}
+}
+
+func TestClusterMessagesWithEmbeddings_ExactOnly(t *testing.T) {
+	// nil embedder → mode="exact", each stat its own cluster
+	stats := []MessageStat{
+		{Text: "你好", Count: 3},
+		{Text: "hello", Count: 2},
+	}
+
+	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, nil, 0.65)
+
+	if mode != "exact" {
+		t.Errorf("expected mode 'exact', got %q", mode)
+	}
+	if len(clusters) != 2 {
+		t.Fatalf("expected 2 clusters, got %d", len(clusters))
+	}
+	for _, c := range clusters {
+		if len(c.Variants) != 1 {
+			t.Errorf("expected 1 variant per cluster in exact mode, got %d", len(c.Variants))
+		}
+	}
+}
+
+func TestClusterMessagesWithEmbeddings_FTSFallback(t *testing.T) {
+	// embedder != nil but EmbedderHealthy() = false → falls back to FTS
+	stats := []MessageStat{
+		{Text: "你好", Count: 3},
+		{Text: "你好啊", Count: 2},
+	}
+
+	// Make embedder unhealthy
+	SetEmbedderHealthy(false)
+
+	// Use a real embedder struct but it won't be called since healthy=false
+	embedder := &EmbeddingClient{}
+
+	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65)
+
+	if mode != "fts" {
+		t.Errorf("expected mode 'fts', got %q", mode)
+	}
+	// With sorensenDiceWithLengthPenalty(0.5), "你好" and "你好啊" should cluster
+	// (they are similar enough and length ratio passes)
+	if len(clusters) < 1 {
+		t.Fatalf("expected at least 1 cluster, got %d", len(clusters))
+	}
+}
+
+func TestClusterMessagesWithEmbeddings_VectorMode(t *testing.T) {
+	// embedder != nil and EmbedderHealthy() = true → uses vector mode
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// All texts get the same embedding → all cluster together
+		w.Write([]byte(`{
+			"data": [
+				{"embedding": [1.0, 1.0], "index": 0},
+				{"embedding": [1.0, 1.0], "index": 1},
+				{"embedding": [1.0, 1.0], "index": 2}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	embedder := NewEmbeddingClient(server.URL, "test-model", "")
+	SetEmbedderHealthy(true)
+
+	stats := []MessageStat{
+		{Text: "你好", Count: 3},
+		{Text: "你好啊", Count: 2},
+		{Text: "hello", Count: 1},
+	}
+
+	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65)
+
+	if mode != "vector" {
+		t.Errorf("expected mode 'vector', got %q", mode)
+	}
+	// All have identical normalized vectors → cosine similarity = 1.0 → all in one cluster
+	if len(clusters) != 1 {
+		t.Fatalf("expected 1 cluster (all identical embeddings), got %d", len(clusters))
+	}
+	if clusters[0].TotalCount != 6 {
+		t.Errorf("expected TotalCount=6, got %d", clusters[0].TotalCount)
 	}
 }

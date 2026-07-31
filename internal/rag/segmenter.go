@@ -30,3 +30,17 @@ func SegmentText(text string) string {
 	tokens := segmenter.CutSearch(text, true)
 	return strings.Join(tokens, " ")
 }
+
+// SegmentTokens segments text and returns the raw token slice.
+// Unlike SegmentText which returns a space-joined string, this returns []string
+// for use in set-based similarity computations.
+func SegmentTokens(text string) []string {
+	if text == "" {
+		return nil
+	}
+	if segmenter == nil {
+		// No segmenter — fall back to whitespace splitting
+		return strings.Fields(text)
+	}
+	return segmenter.Cut(text, true)
+}

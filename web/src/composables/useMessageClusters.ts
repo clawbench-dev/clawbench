@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { appLog } from '@/utils/appLog'
+import { useGlobalEvents } from '@/composables/useGlobalEvents'
 
 export interface MessageCluster {
   id: number
@@ -37,6 +38,25 @@ export function useMessageClusters() {
   })
   const mode = ref<string>('')
   const updatedAt = ref<string>('')
+
+  // ── WebSocket cluster_progress listener ──
+  const { onEvent } = useGlobalEvents()
+  const unsubscribeWs = onEvent((event: string, data: unknown) => {
+    if (event !== 'cluster_progress') return
+    const d = data as ClusterProgress
+    if (!d?.status) return
+    progress.value = d
+    if (d.status === 'done') {
+      computing.value = false
+      stopPolling()
+      fetchClusters()
+    } else if (d.status === 'error') {
+      computing.value = false
+      stopPolling()
+    } else if (d.status === 'computing') {
+      computing.value = true
+    }
+  })
 
   // Read cached results (instant)
   async function fetchClusters() {
@@ -103,5 +123,5 @@ export function useMessageClusters() {
     }
   }
 
-  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, stopPolling }
+  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, stopPolling, unsubscribeWs }
 }

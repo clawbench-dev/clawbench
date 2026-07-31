@@ -431,6 +431,30 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_user ON feishu_subscribers(user_id);
+
+		-- Cluster cache: stores precomputed cluster results for quick-send suggestions
+		CREATE TABLE IF NOT EXISTS message_clusters_cache (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			representative TEXT NOT NULL,
+			variants TEXT NOT NULL,
+			total_count INTEGER NOT NULL,
+			representative_count INTEGER NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		-- Cluster meta: single-row (id=1) tracking computation state
+		CREATE TABLE IF NOT EXISTS message_clusters_meta (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			mode TEXT NOT NULL DEFAULT '',
+			progress TEXT NOT NULL DEFAULT 'idle',
+			phase TEXT NOT NULL DEFAULT '',
+			msg_count INTEGER NOT NULL DEFAULT 0,
+			cluster_count INTEGER NOT NULL DEFAULT 0,
+			elapsed_ms INTEGER NOT NULL DEFAULT 0,
+			error_msg TEXT NOT NULL DEFAULT '',
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
@@ -1466,6 +1490,132 @@ func DeleteChatQuickSend(id int64) error {
 // ReorderChatQuickSend updates sort_order for all items based on the given ID order.
 func ReorderChatQuickSend(ids []int64) error {
 	return ChatQuickSendHelpers.reorder(ids)
+}
+
+// ClusterCacheEntry represents a row in message_clusters_cache.
+type ClusterCacheEntry struct {
+	ID                  int64  `json:"id"`
+	Representative      string `json:"representative"`
+	Variants            string `json:"variants"` // comma-separated
+	TotalCount          int    `json:"total_count"`
+	RepresentativeCount int    `json:"representative_count"`
+	SortOrder           int    `json:"sort_order"`
+}
+
+// SaveClusterCache deletes old cache and meta rows, inserts new entries,
+// and writes a meta row with progress="done". Uses WriteLock + transaction.
+func SaveClusterCache(entries []ClusterCacheEntry, mode string) error {
+	tx, err := WriteBegin()
+	if err != nil {
+		return err
+	}
+	defer writeMu.Unlock()
+
+	if _, err := tx.Exec("DELETE FROM message_clusters_cache"); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM message_clusters_meta"); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for _, e := range entries {
+		if _, err := tx.Exec(
+			"INSERT INTO message_clusters_cache (representative, variants, total_count, representative_count, sort_order) VALUES (?, ?, ?, ?, ?)",
+			e.Representative, e.Variants, e.TotalCount, e.RepresentativeCount, e.SortOrder,
+		); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	if _, err := tx.Exec(
+		"INSERT INTO message_clusters_meta (id, mode, progress, msg_count, cluster_count, elapsed_ms) VALUES (1, ?, 'done', ?, ?, 0)",
+		mode, 0, len(entries),
+	); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// GetClusterCache returns all cache entries ordered by sort_order,
+// along with the mode and updated_at from the meta row.
+func GetClusterCache() ([]ClusterCacheEntry, string, time.Time, error) {
+	rows, err := dbRead.Query("SELECT id, representative, variants, total_count, representative_count, sort_order FROM message_clusters_cache ORDER BY sort_order")
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var entries []ClusterCacheEntry
+	for rows.Next() {
+		var e ClusterCacheEntry
+		if err := rows.Scan(&e.ID, &e.Representative, &e.Variants, &e.TotalCount, &e.RepresentativeCount, &e.SortOrder); err != nil {
+			return nil, "", time.Time{}, err
+		}
+		entries = append(entries, e)
+	}
+
+	var mode string
+	var updatedAt time.Time
+	err = dbRead.QueryRow("SELECT mode, updated_at FROM message_clusters_meta WHERE id = 1").Scan(&mode, &updatedAt)
+	if err != nil {
+		// No meta row → return empty mode and zero time
+		return entries, "", time.Time{}, nil
+	}
+	return entries, mode, updatedAt, nil
+}
+
+// SaveClusterMeta inserts or replaces the meta row with computation progress info.
+func SaveClusterMeta(progress, mode string, msgCount, clusterCount, elapsedMs int) error {
+	_, err := WriteExec(
+		"INSERT OR REPLACE INTO message_clusters_meta (id, mode, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg, updated_at) VALUES (1, ?, ?, '', ?, ?, ?, '', CURRENT_TIMESTAMP)",
+		mode, progress, msgCount, clusterCount, elapsedMs,
+	)
+	return err
+}
+
+// SaveClusterMetaError inserts or replaces the meta row with error info.
+func SaveClusterMetaError(progress, phase, errMsg string) error {
+	// Preserve existing mode from the meta row
+	var mode string
+	_ = dbRead.QueryRow("SELECT mode FROM message_clusters_meta WHERE id = 1").Scan(&mode)
+
+	_, err := WriteExec(
+		"INSERT OR REPLACE INTO message_clusters_meta (id, mode, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg, updated_at) VALUES (1, ?, ?, ?, 0, 0, 0, ?, CURRENT_TIMESTAMP)",
+		mode, progress, phase, errMsg,
+	)
+	return err
+}
+
+// GetClusterMeta returns the meta row values. If no row exists, returns defaults.
+func GetClusterMeta() (mode string, updatedAt time.Time, progress, phase string, msgCount, clusterCount, elapsedMs int, errMsg string) {
+	err := dbRead.QueryRow(
+		"SELECT mode, updated_at, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg FROM message_clusters_meta WHERE id = 1",
+	).Scan(&mode, &updatedAt, &progress, &phase, &msgCount, &clusterCount, &elapsedMs, &errMsg)
+	if err != nil {
+		return "", time.Time{}, "idle", "", 0, 0, 0, ""
+	}
+	return mode, updatedAt, progress, phase, msgCount, clusterCount, elapsedMs, errMsg
+}
+
+// GetQuickSendCommands returns all command strings from chat_quick_send ordered by sort_order.
+func GetQuickSendCommands() []string {
+	rows, err := dbRead.Query("SELECT command FROM chat_quick_send ORDER BY sort_order")
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	var commands []string
+	for rows.Next() {
+		var cmd string
+		if err := rows.Scan(&cmd); err != nil {
+			return nil
+		}
+		commands = append(commands, cmd)
+	}
+	return commands
 }
 
 // KeyConfigItem represents a terminal key/symbol configuration entry.

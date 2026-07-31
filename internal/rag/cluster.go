@@ -1,9 +1,10 @@
 package rag
 
 import (
+	"context"
+	"log/slog"
 	"math"
 	"sort"
-	"strings"
 )
 
 // MessageStat is a unique user message with its occurrence count.
@@ -152,9 +153,9 @@ func sorensenDiceWithLengthPenalty(minLengthRatio float64) SimilarityFunc {
 			return 0
 		}
 
-		// Tokenize using SegmentText (will be replaced with SegmentTokens in Task 4)
-		tokensA := strings.Fields(SegmentText(textA))
-		tokensB := strings.Fields(SegmentText(textB))
+		// Tokenize using SegmentTokens (raw token slice for set-based similarity)
+		tokensA := SegmentTokens(textA)
+		tokensB := SegmentTokens(textB)
 
 		if len(tokensA) == 0 || len(tokensB) == 0 {
 			return 0
@@ -181,4 +182,129 @@ func sorensenDiceWithLengthPenalty(minLengthRatio float64) SimilarityFunc {
 		// Sørensen-Dice: 2|intersection| / (|A| + |B|)
 		return float64(2*intersection) / float64(len(setA)+len(setB))
 	}
+}
+
+// VectorSimilarityMatrix batch-embeds texts and returns a pairwise
+// cosine similarity lookup function. Returns (lookupFn, error).
+func VectorSimilarityMatrix(ctx context.Context, embedder *EmbeddingClient, texts []string) (func(i, j int) float64, error) {
+	embeddings := embedInSubBatches(ctx, embedder, texts)
+
+	// Normalize all vectors — allocate inner slices (C3 fix: nil-slice bug)
+	normalized := make([][]float64, len(embeddings))
+	for i, emb := range embeddings {
+		if emb == nil {
+			continue // skip failed embeddings
+		}
+		// C3 FIX: allocate inner slice!
+		normalized[i] = make([]float64, len(emb))
+
+		// Compute L2 norm
+		var norm float64
+		for _, v := range emb {
+			norm += v * v
+		}
+		norm = math.Sqrt(norm)
+		if norm == 0 {
+			continue // zero vector → skip
+		}
+		for j, v := range emb {
+			normalized[i][j] = v / norm
+		}
+	}
+
+	// Lookup function: dot product of normalized vectors = cosine similarity
+	lookup := func(i, j int) float64 {
+		a := normalized[i]
+		b := normalized[j]
+		if a == nil || b == nil {
+			return 0 // one or both embeddings failed
+		}
+		var dot float64
+		for k := 0; k < len(a); k++ {
+			dot += a[k] * b[k]
+		}
+		return dot
+	}
+
+	return lookup, nil
+}
+
+// embedInSubBatches calls EmbedBatch in smaller sub-batches to avoid timeouts.
+// Uses embedSubBatchSize (= 5, same as RAG indexer).
+// Failed sub-batches leave nil entries in results (graceful degradation).
+// Returns all embeddings in the same order as input texts.
+func embedInSubBatches(ctx context.Context, embedder *EmbeddingClient, texts []string) [][]float64 {
+	results := make([][]float64, len(texts))
+	for i := 0; i < len(texts); i += embedSubBatchSize {
+		end := i + embedSubBatchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+		subBatch := texts[i:end]
+		embeddings, err := embedder.EmbedBatch(ctx, subBatch)
+		if err != nil {
+			slog.Warn("rag: cluster sub-batch embedding failed",
+				slog.Int("from", i), slog.Int("to", end),
+				slog.String("err", err.Error()))
+			// nil entries left in results — caller treats as no embedding
+			continue
+		}
+		for j, emb := range embeddings {
+			results[i+j] = emb
+		}
+		// Check context cancellation between sub-batches
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return results
+}
+
+// ClusterMessagesWithEmbeddings clusters messages using best available method.
+// Returns (clusters, mode) where mode is "vector" | "fts" | "exact".
+func ClusterMessagesWithEmbeddings(ctx context.Context, stats []MessageStat, embedder *EmbeddingClient, threshold float64) ([]MessageCluster, string) {
+	// Try vector mode: if embedder != nil and EmbedderHealthy()
+	if embedder != nil && EmbedderHealthy() {
+		lookup, err := VectorSimilarityMatrix(ctx, embedder, extractTexts(stats))
+		if err == nil {
+			// Build text→index map for SimilarityFunc
+			textToIdx := make(map[string]int, len(stats))
+			for i, s := range stats {
+				textToIdx[s.Text] = i
+			}
+			simFn := func(textA, textB string) float64 {
+				iA, okA := textToIdx[textA]
+				iB, okB := textToIdx[textB]
+				if !okA || !okB {
+					return 0
+				}
+				return lookup(iA, iB)
+			}
+			clusters := ClusterMessages(stats, simFn, threshold)
+			return clusters, "vector"
+		}
+		// Vector failed → fall back to FTS
+		slog.Warn("rag: vector similarity failed, falling back to FTS",
+			slog.String("err", err.Error()))
+	}
+
+	// FTS fallback (embedder present but unhealthy, or vector failed)
+	if embedder != nil {
+		simFn := sorensenDiceWithLengthPenalty(0.5)
+		clusters := ClusterMessages(stats, simFn, threshold)
+		return clusters, "fts"
+	}
+
+	// No embedder → exact only
+	clusters := ClusterMessages(stats, nil, threshold)
+	return clusters, "exact"
+}
+
+// extractTexts returns just the Text field from each MessageStat.
+func extractTexts(stats []MessageStat) []string {
+	texts := make([]string, len(stats))
+	for i, s := range stats {
+		texts[i] = s.Text
+	}
+	return texts
 }

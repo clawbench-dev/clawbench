@@ -2638,3 +2638,183 @@ func TestReorderChatQuickSend_DBNotInitialized(t *testing.T) {
 	err = ReorderChatQuickSend([]int64{1, 2})
 	assert.Error(t, err, "reorder should fail when DB is closed")
 }
+
+// ---------- Cluster cache + meta CRUD ----------
+
+// setupTestDBForClusters creates an in-memory SQLite database with
+// message_clusters_cache, message_clusters_meta, and chat_quick_send tables
+// for testing cluster CRUD functions.
+func setupTestDBForClusters(t *testing.T) func() {
+	t.Helper()
+
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open in-memory db: %v", err)
+	}
+	testDB.SetMaxOpenConns(1)
+	testDB.Exec("PRAGMA journal_mode=WAL")
+	testDB.Exec("PRAGMA busy_timeout=5000")
+
+	_, err = testDB.Exec(`
+		CREATE TABLE IF NOT EXISTS message_clusters_cache (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			representative TEXT NOT NULL,
+			variants TEXT NOT NULL,
+			total_count INTEGER NOT NULL,
+			representative_count INTEGER NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS message_clusters_meta (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			mode TEXT NOT NULL DEFAULT '',
+			progress TEXT NOT NULL DEFAULT 'idle',
+			phase TEXT NOT NULL DEFAULT '',
+			msg_count INTEGER NOT NULL DEFAULT 0,
+			cluster_count INTEGER NOT NULL DEFAULT 0,
+			elapsed_ms INTEGER NOT NULL DEFAULT 0,
+			error_msg TEXT NOT NULL DEFAULT '',
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS chat_quick_send (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			label TEXT NOT NULL,
+			command TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		t.Fatalf("failed to create tables: %v", err)
+	}
+
+	cleanup := SetDBForTest(testDB, testDB)
+	teardown := func() {
+		cleanup()
+		_ = testDB.Close()
+	}
+	return teardown
+}
+
+func TestSaveAndGetClusterCache(t *testing.T) {
+	teardown := setupTestDBForClusters(t)
+	defer teardown()
+
+	entries := []ClusterCacheEntry{
+		{Representative: "hello", Variants: "hello,hi,hey", TotalCount: 10, RepresentativeCount: 5, SortOrder: 0},
+		{Representative: "fix bug", Variants: "fix bug,fix the bug", TotalCount: 8, RepresentativeCount: 4, SortOrder: 1},
+		{Representative: "continue", Variants: "continue,继续", TotalCount: 3, RepresentativeCount: 2, SortOrder: 2},
+	}
+
+	err := SaveClusterCache(entries, "semantic")
+	assert.NoError(t, err)
+
+	result, mode, updatedAt, err := GetClusterCache()
+	assert.NoError(t, err)
+	assert.Equal(t, "semantic", mode)
+	assert.Len(t, result, 3)
+	assert.False(t, updatedAt.IsZero())
+
+	// Verify order by sort_order
+	assert.Equal(t, "hello", result[0].Representative)
+	assert.Equal(t, "hello,hi,hey", result[0].Variants)
+	assert.Equal(t, 10, result[0].TotalCount)
+	assert.Equal(t, 5, result[0].RepresentativeCount)
+	assert.Equal(t, 0, result[0].SortOrder)
+
+	assert.Equal(t, "fix bug", result[1].Representative)
+	assert.Equal(t, 1, result[1].SortOrder)
+
+	assert.Equal(t, "continue", result[2].Representative)
+	assert.Equal(t, 2, result[2].SortOrder)
+}
+
+func TestGetClusterCache_Empty(t *testing.T) {
+	teardown := setupTestDBForClusters(t)
+	defer teardown()
+
+	result, mode, updatedAt, err := GetClusterCache()
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, "", mode)
+	assert.True(t, updatedAt.IsZero())
+}
+
+func TestSaveClusterMeta(t *testing.T) {
+	teardown := setupTestDBForClusters(t)
+	defer teardown()
+
+	// Save progress during computation
+	err := SaveClusterMeta("clustering", "semantic", 100, 15, 5000)
+	assert.NoError(t, err)
+
+	mode, updatedAt, progress, phase, msgCount, clusterCount, elapsedMs, errMsg := GetClusterMeta()
+	assert.Equal(t, "semantic", mode)
+	assert.Equal(t, "clustering", progress)
+	assert.Equal(t, "", phase)
+	assert.Equal(t, 100, msgCount)
+	assert.Equal(t, 15, clusterCount)
+	assert.Equal(t, 5000, elapsedMs)
+	assert.Equal(t, "", errMsg)
+	assert.False(t, updatedAt.IsZero())
+}
+
+func TestSaveClusterMetaError(t *testing.T) {
+	teardown := setupTestDBForClusters(t)
+	defer teardown()
+
+	// First save some progress
+	err := SaveClusterMeta("clustering", "semantic", 100, 15, 5000)
+	assert.NoError(t, err)
+
+	// Then save error state
+	err = SaveClusterMetaError("error", "embedding", "API rate limit exceeded")
+	assert.NoError(t, err)
+
+	mode, _, progress, phase, _, _, _, errMsg := GetClusterMeta()
+	assert.Equal(t, "semantic", mode) // mode preserved from initial save
+	assert.Equal(t, "error", progress)
+	assert.Equal(t, "embedding", phase)
+	assert.Equal(t, "API rate limit exceeded", errMsg)
+}
+
+func TestGetClusterMeta_Initial(t *testing.T) {
+	teardown := setupTestDBForClusters(t)
+	defer teardown()
+
+	// No meta row inserted yet — should return defaults
+	mode, updatedAt, progress, phase, msgCount, clusterCount, elapsedMs, errMsg := GetClusterMeta()
+	assert.Equal(t, "", mode)
+	assert.Equal(t, "idle", progress)
+	assert.Equal(t, "", phase)
+	assert.Equal(t, 0, msgCount)
+	assert.Equal(t, 0, clusterCount)
+	assert.Equal(t, 0, elapsedMs)
+	assert.Equal(t, "", errMsg)
+	assert.True(t, updatedAt.IsZero())
+}
+
+func TestGetQuickSendCommands(t *testing.T) {
+	teardown := setupTestDBForClusters(t)
+	defer teardown()
+
+	// Insert some quick-send commands directly
+	_, err := db.Exec("INSERT INTO chat_quick_send (label, command, sort_order) VALUES ('继续', '继续', 0)")
+	assert.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_quick_send (label, command, sort_order) VALUES ('提交', '提交', 1)")
+	assert.NoError(t, err)
+
+	commands := GetQuickSendCommands()
+	assert.Len(t, commands, 2)
+	assert.Equal(t, "继续", commands[0])
+	assert.Equal(t, "提交", commands[1])
+}
+
+func TestGetQuickSendCommands_Empty(t *testing.T) {
+	teardown := setupTestDBForClusters(t)
+	defer teardown()
+
+	commands := GetQuickSendCommands()
+	assert.Nil(t, commands)
+}
