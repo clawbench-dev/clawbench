@@ -26,6 +26,11 @@ func NewStreamHub(mgr *Manager) *StreamHub {
 	}
 }
 
+// Manager returns the Manager associated with this StreamHub.
+func (h *StreamHub) Manager() *Manager {
+	return h.mgr
+}
+
 // Subscribe adds a client as a subscriber to a session's streaming events.
 func (h *StreamHub) Subscribe(clientID, sessionID string) {
 	h.mu.Lock()

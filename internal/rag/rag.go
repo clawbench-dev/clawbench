@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	// Blank import registers the sqlite-vec virtual table extension so vec0
 	// vector search is available on every RAG store connection.
@@ -24,8 +25,10 @@ var (
 	GlobalStore    *Store
 	GlobalEmbedder *EmbeddingClient
 
-	globalIndexer *Indexer
-	globalCleanup *CleanupWorker
+	globalIndexer      *Indexer
+	globalCleanup      *CleanupWorker
+	globalClusterWorker *ClusterWorker
+	GlobalClusterWorker *ClusterWorker // exposed for handler access
 )
 
 var embedderHealthyFlag atomic.Bool
@@ -95,10 +98,36 @@ func StartCleanupWorker(cfg model.RAGConfig) {
 	mu.Unlock()
 }
 
-// Shutdown closes the RAG store, indexer, and cleanup worker.
+// StartClusterWorker initializes the on-demand cluster worker (no cron).
+// The worker only computes when explicitly triggered via ComputeOnce().
+func StartClusterWorker(hub *ws.StreamHub) {
+	mu.Lock()
+	globalClusterWorker = NewClusterWorker(hub)
+	GlobalClusterWorker = globalClusterWorker
+	mu.Unlock()
+	slog.Info("cluster worker initialized (on-demand, no cron)")
+}
+
+// StopClusterWorker cancels any running cluster computation and clears the worker.
+func StopClusterWorker() {
+	mu.Lock()
+	if globalClusterWorker != nil {
+		globalClusterWorker.Stop()
+	}
+	globalClusterWorker = nil
+	GlobalClusterWorker = nil
+	mu.Unlock()
+}
+
+// Shutdown closes the RAG store, indexer, cleanup worker, and cluster worker.
 func Shutdown() {
 	mu.Lock()
-	defer mu.Unlock()
+
+	if globalClusterWorker != nil {
+		globalClusterWorker.Stop()
+	}
+	globalClusterWorker = nil
+	GlobalClusterWorker = nil
 
 	if globalIndexer != nil {
 		globalIndexer.Stop()
@@ -113,6 +142,7 @@ func Shutdown() {
 		GlobalStore = nil
 	}
 	GlobalEmbedder = nil
+	mu.Unlock()
 }
 
 // Reconfigure applies new RAG config at runtime (hot-reload).

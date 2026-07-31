@@ -938,6 +938,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Start cleanup worker for archived data
 	rag.StartCleanupWorker(cfg.RAG)
 
+	// Initialize cluster worker (on-demand, no cron)
+	mgr := ws.GetManager()
+	if mgr != nil {
+		rag.StartClusterWorker(mgr.StreamHub())
+	}
+
 	// Set RAG chunk purge callback for session cleanup worker
 	service.SetPurgeRAGChunksFn(func(sessionIDs []string) (int64, error) {
 		if rag.GlobalStore == nil {
