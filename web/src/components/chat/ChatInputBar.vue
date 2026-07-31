@@ -65,15 +65,8 @@
           <span v-if="quoteData.startLine" class="attachment-filesize">L{{ quoteData.startLine }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-quote')" :title="t('common.remove')">×</button>
         </span>
-        <!-- Attached file reference cards -->
-        <span v-for="(fileEntry, idx) in attachedFiles" :key="'att-' + fileEntry.path" class="chat-file-attachment attachment-ref" :class="{ 'attachment-image-only': isImageFile(fileEntry.path) && (isThumbableExt(fileEntry.path) || thumbErrors.has(fileEntry.path)) }" @click="$emit('file-tag-click', fileEntry.path)" :title="t('chat.attach.openFile')">
-          <img v-if="isImageFile(fileEntry.path) && isThumbableExt(fileEntry.path) && !thumbErrors.has(fileEntry.path)"
-            class="attachment-thumb-img"
-            :src="attachmentThumbUrl(fileEntry.path)" loading="lazy" @error="onThumbError(fileEntry.path)" />
-          <FileIcon v-if="!isImageFile(fileEntry.path)" :path="fileEntry.path" :is-dir="fileEntry.isDir" :size="22" class="attachment-file-icon" />
-          <span v-if="!isImageFile(fileEntry.path)" class="attachment-filename">{{ getFileName(fileEntry.path) }}</span>
-          <button class="attachment-close-btn" @click.stop="$emit('remove-attached', idx)" :title="t('common.remove')">×</button>
-        </span>
+        <!-- Attached file reference cards (shared component) -->
+        <AttachmentTags :files="attachedFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" />
       </div>
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
@@ -234,16 +227,12 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageSquare, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw } from 'lucide-vue-next'
-import { baseName } from '@/utils/path.ts'
 import { highlightText } from '@/utils/searchUtils.ts'
-import { isThumbableExt } from '@/utils/fileManager.ts'
-import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
-import { buildPathThumbUrl } from '@/utils/fileIcon.ts'
-import FileIcon from '@/components/common/FileIcon.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
+import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 const QuickSendDrawer = defineAsyncComponent(() => import('@/components/chat/QuickSendDrawer.vue'))
 import SessionDrawer from '@/components/chat/SessionDrawer.vue'
@@ -655,34 +644,11 @@ async function handleDelete() {
   }
 }
 
-function getFileName(path) {
-  return baseName(path)
-}
-
 function truncateQuoteText(text, maxLen) {
   if (!text) return ''
   const oneLine = text.replace(/\n/g, ' ')
   return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '...' : oneLine
 }
-
-/** Alias for the shared thumb URL builder. */
-const attachmentThumbUrl = buildPathThumbUrl
-
-// Track thumbnail load errors so fallback icon is shown
-// Must replace the Set (not mutate in-place) to trigger Vue reactivity
-const thumbErrors = ref(new Set())
-function onThumbError(path) {
-  const next = new Set(thumbErrors.value)
-  next.add(path)
-  thumbErrors.value = next
-}
-
-// Clear thumb errors when all attachments are removed
-watch(() => props.attachedFiles.length, (attLen) => {
-  if (attLen === 0 && thumbErrors.value.size > 0) {
-    thumbErrors.value = new Set()
-  }
-})
 
 function autoResizeTextarea() {
   const el = textareaRef.value

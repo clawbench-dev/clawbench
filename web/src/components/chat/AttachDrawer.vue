@@ -146,6 +146,11 @@
       </template>
     </div>
 
+    <!-- Selected files footer (reuses AttachmentTags component) -->
+    <template v-if="attachedFiles.length > 0" #footer>
+      <AttachmentTags :files="attachedFiles" @file-click="emit('file-open', $event)" @remove="emit('remove-attached', $event)" />
+    </template>
+
     <!-- Hidden file input (owned by drawer) -->
     <input type="file" ref="fileInputRef" @change="onFileSelect" @blur="onFileInputBlur" style="display:none" multiple />
   </BottomSheet>
@@ -157,6 +162,7 @@ import { Paperclip, Upload, Check, ExternalLink } from 'lucide-vue-next'
 import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import { useI18n } from 'vue-i18n'
 import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
@@ -286,6 +292,7 @@ function toggleAttached(path: string, isDir: boolean = false) {
     emit('add-attached', path, isDir)
   }
 }
+
 
 // Effective current dir: always show something (even at project root)
 const effectiveCurrentDir = computed(() => props.currentDir || '.')
@@ -544,5 +551,9 @@ defineExpose({ activeTab, handleFileDrop })
   font-weight: 700;
   color: var(--accent-color);
   letter-spacing: -0.3px;
+}
+/* Override BottomSheet footer's flex-end alignment to left-align tags */
+.bs-panel > .bs-footer:has(.chat-attachment-tags) {
+  justify-content: flex-start;
 }
 </style>
