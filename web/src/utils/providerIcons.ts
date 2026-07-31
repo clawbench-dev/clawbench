@@ -203,30 +203,34 @@ const modelPatterns: [RegExp, string][] = [
     // Azure
     [/^azure/, 'azure'],
 
-    // Provider prefix in Pi model IDs (e.g. "anthropic/claude-sonnet-4-6")
-    [/^anthropic\//, 'anthropic'],
-    [/^openai\//, 'openai'],
-    [/^google\//, 'gemini'],
-    [/^deepseek\//, 'deepseek'],
-    [/^mistral\//, 'mistral'],
-    [/^meta\//, 'meta'],
-    [/^qwen\//, 'qwen'],
-    [/^xai\//, 'xai'],
-    [/^groq\//, 'groq'],
-    [/^huggingface\//, 'huggingface'],
-    [/^cerebras\//, 'cerebras'],
-    [/^openrouter\//, 'openrouter'],
-    [/^fireworks\//, 'fireworks'],
-    [/^zhipu\//, 'zhipu'],
 ]
 
 /**
  * Detect the provider ID from a model name using string pattern matching.
+ * For "provider/model-name" format (e.g. "azure/gpt-4o"), the provider prefix
+ * is stripped and the model-name part is matched first. If the model-name
+ * yields no match, the provider prefix is used as a fallback.
  * Returns null for unrecognized model names.
  */
 export function getModelProvider(modelName: string): string | null {
     if (!modelName) return null
     const lower = modelName.toLowerCase()
+
+    // Handle "provider/model-name" format: strip provider prefix,
+    // match the model-name part first, fall back to provider prefix.
+    const slashIdx = lower.indexOf('/')
+    if (slashIdx > 0) {
+        const modelPart = lower.slice(slashIdx + 1)
+        const providerPart = lower.slice(0, slashIdx)
+
+        // Try matching the model-name part (e.g. "azure/gpt-4o" -> "gpt-4o" -> "openai")
+        for (const [pattern, providerId] of modelPatterns) {
+            if (pattern.test(modelPart)) return providerId
+        }
+
+        // Fall back to provider prefix (e.g. "openrouter/auto" -> "openrouter")
+        if (providerIconMap[providerPart]) return providerPart
+    }
 
     for (const [pattern, providerId] of modelPatterns) {
         if (pattern.test(lower)) return providerId
