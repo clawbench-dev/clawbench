@@ -11,23 +11,23 @@ import (
 	"clawbench/internal/model"
 )
 
-// restoreDeletedSession restores a soft-deleted session by setting deleted=0.
+// restoreArchivedSession restores an archived session by setting archived=0.
 // Messages in chat_history are not affected — only the session record needs restoring
-// since session-level soft-delete controls visibility.
-func restoreDeletedSession(sessionID string) error {
+// since session-level archival controls visibility.
+func restoreArchivedSession(sessionID string) error {
 	_, err := WriteExec(
-		"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		"UPDATE chat_sessions SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		sessionID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to restore deleted session %s: %w", sessionID, err)
+		return fmt.Errorf("failed to restore archived session %s: %w", sessionID, err)
 	}
 	return nil
 }
 
 // CheckContinueSession checks whether a continued chat session already exists
-// for the given task execution (including soft-deleted ones that can be restored).
-// If a soft-deleted continued session is found, it is automatically restored
+// for the given task execution (including archived ones that can be restored).
+// If an archived continued session is found, it is automatically restored
 // (both the session record and its messages).
 // Returns (exists, sessionID, error).
 func CheckContinueSession(execID int64) (bool, string, error) {
@@ -41,11 +41,11 @@ func CheckContinueSession(execID int64) (bool, string, error) {
 	}
 
 	var existingID string
-	var existingDeleted int
+	var existingArchived int
 	err = dbRead.QueryRow(
-		"SELECT id, deleted FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY deleted ASC, updated_at DESC LIMIT 1",
+		"SELECT id, archived FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY archived ASC, updated_at DESC LIMIT 1",
 		sourceSessionID,
-	).Scan(&existingID, &existingDeleted)
+	).Scan(&existingID, &existingArchived)
 	if err == sql.ErrNoRows {
 		return false, "", nil
 	}
@@ -53,9 +53,9 @@ func CheckContinueSession(execID int64) (bool, string, error) {
 		return false, "", err
 	}
 
-	// Auto-restore soft-deleted session so subsequent GET requests can find it
-	if existingDeleted == 1 {
-		if err := restoreDeletedSession(existingID); err != nil {
+	// Auto-restore archived session so subsequent GET requests can find it
+	if existingArchived == 1 {
+		if err := restoreArchivedSession(existingID); err != nil {
 			return false, "", err
 		}
 	}
@@ -65,7 +65,7 @@ func CheckContinueSession(execID int64) (bool, string, error) {
 
 // ContinueFromExecution creates a new chat session from a scheduled task execution,
 // copying the original session's chat_history and summaries. If a continued session
-// already exists (and is not deleted), it returns the existing session ID with
+// already exists (and is not archived), it returns the existing session ID with
 // alreadyExists=true.
 //
 // In production, DB has MaxOpenConns=1 so all writes are serialized through a single
@@ -112,7 +112,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		return "", false, fmt.Errorf("execution %d does not belong to project %q", execID, projectPath)
 	}
 
-	// 5. Get source session metadata (without deleted=0 — soft-deleted sessions still have valid metadata)
+	// 5. Get source session metadata (without archived=0 — archived sessions still have valid metadata)
 	var backend, agentID, agentSource, modelName, sessProjectPath, externalSessionID string
 	err = dbRead.QueryRow(
 		"SELECT backend, agent_id, agent_source, model, project_path, external_session_id FROM chat_sessions WHERE id = ?",
@@ -125,17 +125,17 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		return "", false, err
 	}
 
-	// 6. Dedup check — if a continued session already exists (even soft-deleted), restore it
+	// 6. Dedup check — if a continued session already exists (even archived), restore it
 	var existingID string
-	var existingDeleted int
+	var existingArchived int
 	err = dbRead.QueryRow(
-		"SELECT id, deleted FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY deleted ASC, updated_at DESC LIMIT 1",
+		"SELECT id, archived FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY archived ASC, updated_at DESC LIMIT 1",
 		sourceSessionID,
-	).Scan(&existingID, &existingDeleted)
+	).Scan(&existingID, &existingArchived)
 	if err == nil {
-		if existingDeleted == 1 {
-			// Restore soft-deleted session and its messages
-			if err := restoreDeletedSession(existingID); err != nil {
+		if existingArchived == 1 {
+			// Restore archived session and its messages
+			if err := restoreArchivedSession(existingID); err != nil {
 				return "", false, err
 			}
 		}
@@ -149,7 +149,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	if model.SessionMaxCount > 0 {
 		var count int
 		err = dbRead.QueryRow(
-			"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'",
+			"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'",
 			sessProjectPath,
 		).Scan(&count)
 		if err != nil {
@@ -266,7 +266,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	// 1. Get source session metadata
 	var backend, agentID, agentSource, modelName, sessProjectPath string
 	err := dbRead.QueryRow(
-		"SELECT backend, agent_id, agent_source, model, project_path FROM chat_sessions WHERE id = ? AND deleted = 0",
+		"SELECT backend, agent_id, agent_source, model, project_path FROM chat_sessions WHERE id = ? AND archived = 0",
 		sourceSessionID,
 	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectPath)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -360,7 +360,7 @@ func checkSessionLimit(projectPath string) error {
 	}
 	var count int
 	err := dbRead.QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'",
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'",
 		projectPath,
 	).Scan(&count)
 	if err != nil {

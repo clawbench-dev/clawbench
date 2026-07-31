@@ -40,7 +40,7 @@ func defaultGetOrCreateConnForLoad(ctx context.Context, agent *model.Agent, claw
 	return ai.GetACPConnManager().GetOrCreateConnForLoad(ctx, agent, clawbenchSID, acpSessionID, cwd)
 }
 
-// ServeSessionResume handles POST /api/ai/session/resume — restores a soft-deleted
+// ServeSessionResume handles POST /api/ai/session/resume — restores an archived
 // session and returns the session ID. Validates project ownership and session count limits.
 func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
@@ -66,12 +66,12 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 
 	// Check session exists and belongs to project
 	var sessionProjectPath string
-	var deleted int
+	var archived int
 	err := service.ReadDB().QueryRowContext(
 		r.Context(),
-		"SELECT project_path, deleted FROM chat_sessions WHERE id = ?",
+		"SELECT project_path, archived FROM chat_sessions WHERE id = ?",
 		req.SessionID,
-	).Scan(&sessionProjectPath, &deleted)
+	).Scan(&sessionProjectPath, &archived)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		return
@@ -87,20 +87,20 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If soft-deleted, check session count limit before restoring
-	if deleted == 1 {
+	// If archived, check session count limit before restoring
+	if archived == 1 {
 		if model.SessionMaxCount > 0 {
 			var count int
 			err = service.ReadDB().QueryRowContext(
 				r.Context(),
-				"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'",
+				"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'",
 				sessionProjectPath,
 			).Scan(&count)
 			if err != nil {
 				model.WriteError(w, model.Internal(err))
 				return
 			}
-			// Restoring a soft-deleted session would increase active count by 1
+			// Restoring an archived session would increase active count by 1
 			if count+1 > model.SessionMaxCount {
 				writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{
 					"Count": count,
@@ -113,14 +113,14 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 		// Restore the session
 		_, err = service.WriteExecContext(
 			r.Context(),
-			"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+			"UPDATE chat_sessions SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			req.SessionID,
 		)
 		if err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to restore session %s: %w", req.SessionID, err)))
 			return
 		}
-		slog.Info("session restored from soft-delete",
+		slog.Info("session restored from archive",
 			slog.String("session", req.SessionID),
 			slog.String("project", sessionProjectPath))
 	} else {
@@ -192,11 +192,11 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 	// source_session_id = "acp:{acpSessionId}" tracks the ACP session origin.
 	sourceID := "acp:" + req.AcpSessionID
 	var existingID string
-	var existingDeleted int
+	var existingArchived int
 	err := service.ReadDB().QueryRow( // r.Context() not easily propagated through ServeACPLoadSession
-		"SELECT id, deleted FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY deleted ASC, updated_at DESC LIMIT 1",
+		"SELECT id, archived FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY archived ASC, updated_at DESC LIMIT 1",
 		sourceID,
-	).Scan(&existingID, &existingDeleted)
+	).Scan(&existingID, &existingArchived)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		slog.Error("handler: failed to check existing ACP session", "error", err)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
@@ -210,7 +210,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 		slog.Info("handler: hard-deleting existing session for ACP reload",
 			"old_session", existingID,
 			"acp_sid", req.AcpSessionID,
-			"was_deleted", existingDeleted == 1)
+			"was_archived", existingArchived == 1)
 		if errHardDel := service.HardDeleteSession(existingID); errHardDel != nil {
 			slog.Error("handler: failed to hard-delete existing ACP session", "error", errHardDel)
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
@@ -241,7 +241,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("handler: LoadSession failed", "agent", req.AgentID, "acp_sid", req.AcpSessionID, "error", err)
 		// Clean up the session we just created
-		_ = service.DeleteSession(projectPath, agent.Backend, sessionID)
+		_ = service.ArchiveSession(projectPath, agent.Backend, sessionID)
 		// Clean up the dead connection from the pool
 		ai.GetACPConnManager().CloseConn(sessionID)
 		// Detect "Resource not found" from ACP agent — session no longer exists

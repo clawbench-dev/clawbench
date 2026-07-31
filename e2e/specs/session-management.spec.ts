@@ -28,8 +28,8 @@ test.describe.serial('Session Management', () => {
   // Session Resume (4 tests)
   // ───────────────────────────────────────────────────────
 
-  test('should resume a soft-deleted session via API', async ({ page }) => {
-    // First soft-delete an existing session to free up a slot (session limit is 10)
+  test('should resume an archived session via API', async ({ page }) => {
+    // First archive an existing session to free up a slot (session limit is 10)
     const existingSessions = await page.evaluate(async () => {
       const resp = await fetch('/api/ai/sessions')
       const data = await resp.json()
@@ -40,7 +40,7 @@ test.describe.serial('Session Management', () => {
       const toDelete = existingSessions[0]
       if (toDelete?.id) {
         await page.evaluate(async (id) => {
-          await fetch(`/api/ai/session/delete?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
+          await fetch(`/api/ai/session/archive?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
         }, toDelete.id)
       }
     }
@@ -57,9 +57,9 @@ test.describe.serial('Session Management', () => {
     })
     expect(sessionId).toBeTruthy()
 
-    // Soft-delete the session
+    // Archive the session
     const deleteOk = await page.evaluate(async (id) => {
-      const resp = await fetch(`/api/ai/session/delete?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
+      const resp = await fetch(`/api/ai/session/archive?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
       return resp.ok
     }, sessionId)
     expect(deleteOk).toBe(true)
@@ -112,9 +112,9 @@ test.describe.serial('Session Management', () => {
     })
     expect(sessionId).toBeTruthy()
 
-    // Soft-delete the session via API
+    // Archive the session via API
     await page.evaluate(async (id) => {
-      await fetch(`/api/ai/session/delete?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
+      await fetch(`/api/ai/session/archive?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
     }, sessionId)
 
     // Resume the session via API
@@ -149,9 +149,9 @@ test.describe.serial('Session Management', () => {
     expect(sessionId).toBeTruthy()
     expect(backend).toBeTruthy()
 
-    // Soft-delete and resume
+    // Archive and resume
     await page.evaluate(async (id) => {
-      await fetch(`/api/ai/session/delete?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
+      await fetch(`/api/ai/session/archive?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
       await fetch('/api/ai/session/resume', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

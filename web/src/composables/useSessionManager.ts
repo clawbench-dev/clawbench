@@ -25,7 +25,7 @@ export interface UseSessionManagerOptions {
   // Session operations (from useChatSession)
   switchSessionCore: (sessionId: string) => Promise<void>
   createSessionCore: (agentId?: string) => Promise<void>
-  deleteSessionCore: (sessionId: string, backend?: string) => Promise<void>
+  archiveSessionCore: (sessionId: string, backend?: string) => Promise<void>
   destroySessionCore: (sessionId: string) => Promise<void>
   continueFromExecutionCore: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   forkSessionCore: (sessionId: string, beforeMessageId?: number) => Promise<boolean>
@@ -50,7 +50,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     loading,
     switchSessionCore,
     createSessionCore,
-    deleteSessionCore,
+    archiveSessionCore,
     destroySessionCore,
     continueFromExecutionCore,
     forkSessionCore,
@@ -205,35 +205,35 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     await createSessionCore(agentId)
   }
 
-  async function deleteSession(sessionId: string, backend?: string) {
+  async function archiveSession(sessionId: string, backend?: string) {
     cleanupActiveStream()
-    // Cancel running session before deleting to kill the CLI process
+    // Cancel running session before archiving to kill the CLI process
     if (runningSessions.value.has(sessionId)) {
       try { await cancelChat(sessionId) } catch {}
     }
-    // Clear backend queue for deleted session
+    // Clear backend queue for archived session
     try {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
     } catch {}
     clearPendingMessages()
-    await deleteSessionCore(sessionId, backend)
+    await archiveSessionCore(sessionId, backend)
   }
 
-  /** Delete the current session (convenience for ChatInputBar button). */
-  async function deleteCurrentSession(deleteDraft: (id: string) => void) {
-    const deletedId = identity.currentSessionId.value
-    if (!deletedId) return
+  /** Archive the current session (convenience for ChatInputBar button). */
+  async function archiveCurrentSession(deleteDraft: (id: string) => void) {
+    const archivedId = identity.currentSessionId.value
+    if (!archivedId) return
     cleanupActiveStream()
-    // Cancel running session before deleting to kill the CLI process
-    if (runningSessions.value.has(deletedId)) {
-      try { await cancelChat(deletedId) } catch {}
+    // Cancel running session before archiving to kill the CLI process
+    if (runningSessions.value.has(archivedId)) {
+      try { await cancelChat(archivedId) } catch {}
     }
     try {
-      await fetch(`/api/ai/queue?session_id=${encodeURIComponent(deletedId)}`, { method: 'DELETE' })
+      await fetch(`/api/ai/queue?session_id=${encodeURIComponent(archivedId)}`, { method: 'DELETE' })
     } catch {}
     clearPendingMessages()
-    await deleteSessionCore(deletedId, identity.currentBackend.value)
-    deleteDraft(deletedId)
+    await archiveSessionCore(archivedId, identity.currentBackend.value)
+    deleteDraft(archivedId)
   }
 
   /** Hard-delete (physically destroy) a specific session — irreversible. */
@@ -295,7 +295,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     identity.registerSessionActions({
       switchSession,
       createSession,
-      deleteSession,
+      archiveSession,
       sendMessage: extra.sendMessage,
       openChatPanel: extra.openChatPanel,
       continueFromExecution,
@@ -311,8 +311,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     // Unified session operations
     switchSession,
     createSession,
-    deleteSession,
-    deleteCurrentSession,
+    archiveSession,
+    archiveCurrentSession,
     destroySession,
     destroyCurrentSession,
     continueFromExecution,

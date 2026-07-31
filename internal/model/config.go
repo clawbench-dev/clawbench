@@ -154,7 +154,7 @@ type RAGConfig struct {
 	BatchSize      int    `yaml:"batch_size"`       // Messages per indexer batch (default: 50)
 	SearchLimit    int    `yaml:"search_limit"`     // Default search result limit (default: 20)
 	SearchPoolSize int    `yaml:"search_pool_size"` // Candidates per search source before RRF fusion (default: 20)
-	RetentionDays  int    `yaml:"retention_days"`   // Soft-deleted data retention days (0=keep forever, default: 90)
+	RetentionDays  int    `yaml:"retention_days"`   // Archived data retention days (0=keep forever, default: 90)
 }
 
 // PiperConfig holds configuration for the Piper TTS engine.

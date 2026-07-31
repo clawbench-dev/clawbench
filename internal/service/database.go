@@ -194,6 +194,20 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Pre-migration: rename chat_sessions.deleted to archived.
+	// Session "delete" is actually an archive; the column name
+	// should reflect that. Must run before createTables because its indexes
+	// reference the archived column. SQLite RENAME COLUMN also rewrites any
+	// index definitions referencing the old column name.
+	var hasSessionDeleted int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='deleted'").Scan(&hasSessionDeleted)
+	if hasSessionDeleted > 0 {
+		if _, err := WriteExec("ALTER TABLE chat_sessions RENAME COLUMN deleted TO archived"); err != nil {
+			return fmt.Errorf("failed to rename chat_sessions.deleted to archived: %w", err)
+		}
+		slog.Info("renamed chat_sessions.deleted column to archived")
+	}
+
 	// Create tables with latest schema
 	_, err = WriteExec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
@@ -218,7 +232,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			model TEXT DEFAULT '',
 			external_session_id TEXT DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
-			deleted INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -274,7 +288,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE INDEX IF NOT EXISTS idx_raw_responses_session ON ai_raw_responses(session_id, created_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_raw_responses_message ON ai_raw_responses(message_id);
 		CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
-		CREATE INDEX IF NOT EXISTS idx_sessions_type ON chat_sessions(session_type, project_path, deleted);
+		CREATE INDEX IF NOT EXISTS idx_sessions_type ON chat_sessions(session_type, project_path, archived);
 
 		-- Covering index for session-based queries (GetChatMessageCount, GetAssistantMessageCount,
 		-- unread subquery, GetChatHistoryPaged) — avoids full table scan through large content rows.
@@ -308,9 +322,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON chat_tool_calls(message_id);
 		CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON chat_tool_calls(session_id, created_at DESC);
 		-- Covering index for session list ORDER BY + cursor pagination:
-		-- WHERE session_type = 'chat' AND project_path = ? AND deleted = 0 ORDER BY updated_at DESC, id DESC
+		-- WHERE session_type = 'chat' AND project_path = ? AND archived = 0 ORDER BY updated_at DESC, id DESC
 		-- Without this, idx_sessions_type covers WHERE but requires a filesort for ORDER BY.
-		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, deleted, updated_at DESC, id DESC);
+		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, updated_at DESC, id DESC);
 
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -520,7 +534,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 
 	// Migrate: drop deleted column from chat_history.
-	// Soft-delete is handled at the session level (chat_sessions.deleted),
+	// Archival is handled at the session level (chat_sessions.archived),
 	// so chat_history.deleted is redundant. Removing it simplifies queries
 	// and eliminates the need to restore messages when restoring a session.
 	var hasHistoryDeleted int

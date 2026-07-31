@@ -166,17 +166,17 @@ export async function createSession(
 }
 
 /**
- * Soft-delete a chat session via API.
+ * Archive a chat session via API.
  */
-export async function deleteSession(baseURL: string, sessionId: string, backend = 'acp-mock'): Promise<void> {
-  const resp = await fetch(`${baseURL}/api/ai/session/delete?session_id=${sessionId}&backend=${backend}`, {
+export async function archiveSession(baseURL: string, sessionId: string, backend = 'acp-mock'): Promise<void> {
+  const resp = await fetch(`${baseURL}/api/ai/session/archive?session_id=${sessionId}&backend=${backend}`, {
     method: 'DELETE',
   })
-  if (!resp.ok) throw new Error(`Failed to delete session ${sessionId}: ${resp.status}`)
+  if (!resp.ok) throw new Error(`Failed to archive session ${sessionId}: ${resp.status}`)
 }
 
 /**
- * Resume a soft-deleted chat session via API.
+ * Resume an archived chat session via API.
  */
 export async function resumeSession(baseURL: string, sessionId: string): Promise<{ ok: boolean }> {
   const resp = await fetch(`${baseURL}/api/ai/session/resume`, {

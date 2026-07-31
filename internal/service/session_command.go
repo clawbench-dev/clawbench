@@ -30,7 +30,7 @@ type DingTalkSessionInfo struct {
 // It shares the same structure as DingTalkSessionInfo.
 type FeishuSessionInfo = DingTalkSessionInfo
 
-// FindSessionsByPrefix finds non-deleted chat sessions whose ID starts with the given prefix.
+// FindSessionsByPrefix finds non-archived chat sessions whose ID starts with the given prefix.
 // Case-insensitive matching.
 func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 	if dbRead == nil {
@@ -39,7 +39,7 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 	rows, err := dbRead.QueryContext(context.Background(),
 		`SELECT id, title, project_path, backend, agent_id, model
 		 FROM chat_sessions
-		 WHERE LOWER(id) LIKE LOWER(?) AND deleted = 0 AND session_type = 'chat'
+		 WHERE LOWER(id) LIKE LOWER(?) AND archived = 0 AND session_type = 'chat'
 		 ORDER BY updated_at DESC
 		 LIMIT 10`,
 		prefix+"%",
@@ -51,7 +51,7 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 	return scanDingTalkSessionInfos(rows), nil
 }
 
-// ListRecentSessions returns the most recently updated non-deleted chat sessions.
+// ListRecentSessions returns the most recently updated non-archived chat sessions.
 func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 	if dbRead == nil {
 		return nil, fmt.Errorf("database not initialized")
@@ -62,7 +62,7 @@ func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 	rows, err := dbRead.QueryContext(context.Background(),
 		`SELECT id, title, project_path, backend, agent_id, model
 		 FROM chat_sessions
-		 WHERE deleted = 0 AND session_type = 'chat'
+		 WHERE archived = 0 AND session_type = 'chat'
 		 ORDER BY updated_at DESC
 		 LIMIT ?`,
 		limit,
@@ -110,7 +110,7 @@ func FindRunningSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 		fmt.Sprintf(
 			`SELECT id, title, project_path, backend, agent_id, model
 			 FROM chat_sessions
-			 WHERE id IN (%s) AND deleted = 0`,
+			 WHERE id IN (%s) AND archived = 0`,
 			sb.String(),
 		),
 		args...,

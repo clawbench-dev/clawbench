@@ -33,8 +33,8 @@
           <RotateCcw :size="14" />
         </button>
         <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
-          @click="handleDelete"
-          :title="currentSessionId ? t('chat.actions.deleteCurrentSession') : t('chat.actions.noSessionToDelete')">
+          @click="handleArchive"
+          :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
           <Archive :size="14" />
         </button>
         <button class="chat-action-btn chat-action-btn-destroy" :class="{ disabled: !currentSessionId }"
@@ -424,7 +424,7 @@ const emit = defineEmits([
   'toggle-auto-speech',
   'create-session',
   'show-agent-selector',
-  'delete-session',
+  'archive-session',
   'destroy-session',
   'open-user-msg-index',
   'open-acp-sessions',
@@ -664,16 +664,16 @@ function handleCreateClick(e) {
   emit('show-agent-selector')
 }
 
-async function handleDelete() {
+async function handleArchive() {
   if (!props.currentSessionId) return
-  if (await dialog.confirm(t('chat.delete.confirm'), { dangerous: true })) {
-    emit('delete-session')
+  if (await dialog.confirm(t('chat.archive.confirm'), { dangerous: true })) {
+    emit('archive-session')
   }
 }
 
 async function handleDestroy() {
   if (!props.currentSessionId) return
-  if (await dialog.confirm(t('chat.delete.destroyConfirm'), { dangerous: true })) {
+  if (await dialog.confirm(t('chat.archive.destroyConfirm'), { dangerous: true })) {
     emit('destroy-session')
   }
 }
@@ -980,7 +980,7 @@ defineExpose({
   onQuickSendTouchEnd,
   cancelQuickSendPress,
   quickSendPressingId,
-  handleDelete,
+  handleArchive,
 })
 </script>
 

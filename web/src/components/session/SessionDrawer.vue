@@ -24,7 +24,7 @@
         <SwipeToDeleteRow
           v-for="session in sessionsWithStatus"
           :key="session.id"
-          @delete="deleteSession(session.id)"
+          @delete="archiveSession(session.id)"
         >
           <div
             class="session-item"
@@ -90,7 +90,7 @@ const props = defineProps({
   currentAgentId: String,
 })
 
-const emit = defineEmits(['close', 'select', 'create', 'delete', 'open-session-search'])
+const emit = defineEmits(['close', 'select', 'create', 'archive', 'open-session-search'])
 
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
@@ -222,16 +222,16 @@ function createSession(agentId) {
   bottomSheetRef.value?.close()
 }
 
-async function deleteSession(sessionId) {
+async function archiveSession(sessionId) {
   const isRunning = props.runningSessionIds.has(sessionId)
-  const confirmMsg = isRunning ? t('session.confirmDeleteRunning') : t('session.confirmDelete')
+  const confirmMsg = isRunning ? t('session.confirmArchiveRunning') : t('session.confirmArchive')
   if (!await dialog.confirm(confirmMsg, { dangerous: true })) return
   const session = sessions.value.find(s => s.id === sessionId)
-  emit('delete', sessionId, session?.backend)
-  // No optimistic removal — the delete is async (cancel + API call) and emit
+  emit('archive', sessionId, session?.backend)
+  // No optimistic removal — the archive is async (cancel + API call) and emit
   // doesn't await the parent handler. If the API fails, an optimistic removal
   // would make the session vanish then reappear on next load. Instead, rely on
-  // useChatSession.deleteSession to refresh state via loadSessionsOnce/switchSession
+  // useChatSession.archiveSession to refresh state via loadSessionsOnce/switchSession
   // on success, and leave the list unchanged on failure.
 }
 
@@ -243,7 +243,7 @@ function addSessionLocally(session) {
 }
 
 // Load from API when the drawer opens. Also reload when sessionCount changes
-// while the drawer is open (e.g. after a successful delete).
+// while the drawer is open (e.g. after a successful archive).
 watch(() => props.open, async (val) => {
   if (val) {
     await Promise.all([loadSessions(), loadAgents()])

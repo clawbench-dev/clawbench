@@ -1,7 +1,7 @@
 SessionNotRunning: Session is not running
 SessionStreamNotFound: Session stream not found
 SessionStreamBusy: Session stream is being viewed on another device
-SessionLimitReached: Session limit reached ({{.MaxCount}}), please delete old sessions
+SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
 NewSession: New Session
 NewSessionN: New Session {{.N}}

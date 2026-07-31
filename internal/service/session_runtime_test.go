@@ -918,7 +918,7 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	insertTestMessage(t, db, "session-emit-1", "assistant", string(contentJSON))
 
 	// Insert a session row so GetSessionProjectPath can look it up
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
 		"session-emit-1", "/home/user/test-project", "codebuddy", "Test Session")
@@ -1109,7 +1109,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	model TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	external_session_id TEXT DEFAULT '',
-	deleted INTEGER NOT NULL DEFAULT 0,
+	archived INTEGER NOT NULL DEFAULT 0,
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1557,7 +1557,7 @@ func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 	defer cleanup()
 
 	// Insert a session row so GetSessionProjectPath can look it up
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
 		"session-pp-1", "/home/user/project", "codebuddy", "Test Session")
@@ -2360,7 +2360,7 @@ func TestRespondPermission_SessionNotRunning(t *testing.T) {
 	defer cleanup()
 
 	// Create a session with an agent_id
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-1")
 	require.NoError(t, err)
@@ -2381,7 +2381,7 @@ func TestRespondPermission_PermPrefixStripped(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-prefix")
 	require.NoError(t, err)
@@ -2402,7 +2402,7 @@ func TestEmitSessionEvent_CancelledWithSessionTitle(t *testing.T) {
 	defer cleanup()
 
 	// Create a session with a title
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
 		"session-cancelled-1", "/home/user/project", "codebuddy", "Cancelled Session")
@@ -2561,7 +2561,7 @@ func TestEmitSessionEvent_Completed_DingTalkStarted(t *testing.T) {
 		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
 	`)
 	require.NoError(t, err)
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
 		"session-dt-1", "/home/user/project", "codebuddy", "DT Test")
@@ -2721,7 +2721,7 @@ func TestRespondPermission_NilClient(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-nil-client")
 	require.NoError(t, err)
@@ -2743,7 +2743,7 @@ func TestRespondPermission_EmptyAcpSID(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-no-acpsid")
 	require.NoError(t, err)
@@ -2767,7 +2767,7 @@ func TestRespondPermission_NoPendingPermission(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-no-pending")
 	require.NoError(t, err)
@@ -2791,7 +2791,7 @@ func TestRespondPermission_ShortToolCallID_NoPrefixStrip(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-short-id")
 	require.NoError(t, err)
@@ -2815,7 +2815,7 @@ func TestRespondPermission_PermPrefixStrippedThenNoPending(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-strip")
 	require.NoError(t, err)
@@ -2839,7 +2839,7 @@ func TestRespondPermission_Success(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-ok")
 	require.NoError(t, err)
@@ -2865,7 +2865,7 @@ func TestRespondPermission_Cancelled(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-cancel")
 	require.NoError(t, err)
@@ -2907,7 +2907,7 @@ func TestEmitSessionEvent_Completed_FeishuStarted(t *testing.T) {
 		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
 	`)
 	require.NoError(t, err)
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
 		"session-feishu-1", "/home/user/project", "codebuddy", "Feishu Test")

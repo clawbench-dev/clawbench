@@ -11,24 +11,24 @@ import (
 // sessionCleanupSvc defines the interface for session cleanup operations.
 // This allows testing without a real database connection.
 type sessionCleanupSvc interface {
-	GetExpiredDeletedSessions(cutoff time.Time) ([]string, error)
-	PurgeDeletedData(sessionIDs []string) (sessionsPurged, messagesPurged int64, err error)
+	GetExpiredArchivedSessions(cutoff time.Time) ([]string, error)
+	PurgeArchivedData(sessionIDs []string) (sessionsPurged, messagesPurged int64, err error)
 }
 
 // realSessionCleanupSvc implements sessionCleanupSvc using the real service package.
 type realSessionCleanupSvc struct{}
 
-func (r *realSessionCleanupSvc) GetExpiredDeletedSessions(cutoff time.Time) ([]string, error) {
-	return GetExpiredDeletedSessions(cutoff)
+func (r *realSessionCleanupSvc) GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
+	return GetExpiredArchivedSessions(cutoff)
 }
 
-func (r *realSessionCleanupSvc) PurgeDeletedData(sessionIDs []string) (int64, int64, error) {
-	return PurgeDeletedData(sessionIDs)
+func (r *realSessionCleanupSvc) PurgeArchivedData(sessionIDs []string) (int64, int64, error) {
+	return PurgeArchivedData(sessionIDs)
 }
 
 // SessionCleanupWorker periodically purges archived sessions that have exceeded
 // the configured retention period. When ArchiveRetentionEnabled is true and
-// ArchiveRetentionDays > 0, it finds all soft-deleted sessions whose updated_at
+// ArchiveRetentionDays > 0, it finds all archived sessions whose updated_at
 // (set to archive time) is older than the cutoff and hard-deletes them along
 // with all associated data (messages, tool calls, raw responses, task executions).
 type SessionCleanupWorker struct {
@@ -144,7 +144,7 @@ func (w *SessionCleanupWorker) cleanup() {
 
 	cutoff := time.Now().AddDate(0, 0, -w.cfg.Session.ArchiveRetentionDays)
 
-	sessionIDs, err := w.svc.GetExpiredDeletedSessions(cutoff)
+	sessionIDs, err := w.svc.GetExpiredArchivedSessions(cutoff)
 	if err != nil {
 		slog.Error("session cleanup: failed to query expired sessions", slog.String("err", err.Error()))
 		return
@@ -162,7 +162,7 @@ func (w *SessionCleanupWorker) cleanup() {
 	}
 
 	// Purge session data (ai_raw_responses, chat_tool_calls, chat_history, task_executions, chat_sessions)
-	sessionsPurged, messagesPurged, err := w.svc.PurgeDeletedData(sessionIDs)
+	sessionsPurged, messagesPurged, err := w.svc.PurgeArchivedData(sessionIDs)
 	if err != nil {
 		slog.Error("session cleanup: failed to purge session data", slog.String("err", err.Error()))
 		return

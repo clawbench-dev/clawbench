@@ -240,7 +240,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session", middleware.Auth(ServeAISession))
 	register("/api/ai/session/update", middleware.Auth(ServeAISessionUpdate))
 	register("/api/ai/sessions", middleware.Auth(ServeSessions))
-	register("/api/ai/session/delete", middleware.Auth(DeleteSession))
+	register("/api/ai/session/archive", middleware.Auth(ArchiveSession))
 	register("/api/ai/session/destroy", middleware.Auth(DestroySession))
 	register("/api/ai/session/resume", middleware.Auth(ServeSessionResume))
 	register("/api/ai/session/acp-load", middleware.Auth(ServeACPLoadSession))

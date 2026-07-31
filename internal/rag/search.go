@@ -177,7 +177,7 @@ func getSessionTitles(sessionIDs map[string]bool) map[string]string {
 	for id := range sessionIDs {
 		ids = append(ids, id)
 	}
-	titles, err := service.GetSessionTitlesBatchIncludeDeleted(ids)
+	titles, err := service.GetSessionTitlesBatchIncludeArchived(ids)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -195,7 +195,7 @@ type SessionSearchResult struct {
 	Score        float64    `json:"score"`
 	Backend      string     `json:"backend"`
 	ProjectPath  string     `json:"project_path"`
-	Deleted      bool       `json:"deleted"`
+	Archived     bool       `json:"archived"`
 	CreatedAt    time.Time  `json:"created_at"`
 	MatchCount   int        `json:"match_count"`
 	Chunks       []ChunkHit `json:"chunks"`
@@ -297,13 +297,13 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 		sessions = sessions[:searchLimit]
 	}
 
-	// Enrich with session titles and deleted status
+	// Enrich with session titles and archived status
 	sessionIDs := make(map[string]bool)
 	for _, s := range sessions {
 		sessionIDs[s.SessionID] = true
 	}
 	titles := getSessionTitles(sessionIDs)
-	deletedMap := getSessionDeletedStatus(sessionIDs)
+	archivedMap := getSessionArchivedStatus(sessionIDs)
 
 	// Build response
 	out := make([]SessionSearchResult, len(sessions))
@@ -312,8 +312,8 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 		if title, ok := titles[s.SessionID]; ok {
 			out[i].SessionTitle = title
 		}
-		if del, ok := deletedMap[s.SessionID]; ok {
-			out[i].Deleted = del
+		if arch, ok := archivedMap[s.SessionID]; ok {
+			out[i].Archived = arch
 		}
 	}
 
@@ -332,11 +332,11 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 	}, nil
 }
 
-// getSessionDeletedStatus fetches the deleted status for a set of session IDs.
-func getSessionDeletedStatus(sessionIDs map[string]bool) map[string]bool {
-	deletedMap := make(map[string]bool, len(sessionIDs))
+// getSessionArchivedStatus fetches the archived status for a set of session IDs.
+func getSessionArchivedStatus(sessionIDs map[string]bool) map[string]bool {
+	archivedMap := make(map[string]bool, len(sessionIDs))
 	if !service.DBReady() || len(sessionIDs) == 0 {
-		return deletedMap
+		return archivedMap
 	}
 	ids := make([]string, 0, len(sessionIDs))
 	for id := range sessionIDs {
@@ -348,17 +348,17 @@ func getSessionDeletedStatus(sessionIDs map[string]bool) map[string]bool {
 		args[i] = id
 	}
 	rows, err := service.ReadDB().Query(
-		"SELECT id, deleted FROM chat_sessions WHERE id IN ("+placeholders+")", args...)
+		"SELECT id, archived FROM chat_sessions WHERE id IN ("+placeholders+")", args...)
 	if err != nil {
-		return deletedMap
+		return archivedMap
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id string
-		var deleted int
-		if err := rows.Scan(&id, &deleted); err == nil {
-			deletedMap[id] = deleted == 1
+		var archived int
+		if err := rows.Scan(&id, &archived); err == nil {
+			archivedMap[id] = archived == 1
 		}
 	}
-	return deletedMap
+	return archivedMap
 }

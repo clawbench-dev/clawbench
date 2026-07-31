@@ -112,7 +112,7 @@ exempt_files = {
     "internal/service/database.go",          # InitDB: file system + PRAGMA + DDL; reorder: tx error paths
     "internal/service/testutil.go",          # new file: InitInMemoryDB sql.Open error path
     "internal/service/chat.go",              # new diff: session model/paged history error paths
-    "internal/service/continue_conversation.go", # new diff: restoreDeletedSession/continue error paths
+    "internal/service/continue_conversation.go", # new diff: restoreArchivedSession/continue error paths
     "internal/service/upgrade.go",             # upgrade: performUpgrade kills own process, exec.Command for subprocess replacement
     "internal/cli/upgrade.go",                 # upgrade-replace: kills parent process, binary replacement, untestable in unit tests
     "internal/platform/network.go",            # China detection: real TCP/HTTP probes to external services

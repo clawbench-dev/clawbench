@@ -140,20 +140,20 @@ func TestContinueFromExecution_DeletedThenRecontinue(t *testing.T) {
 	assert.False(t, alreadyExists1)
 
 	// Delete the continued session
-	err = service.DeleteSession("/project", "claude", newSessID1)
+	err = service.ArchiveSession("/project", "claude", newSessID1)
 	assert.NoError(t, err)
 
-	// Should restore the deleted session, not create a new one
+	// Should restore the archived session, not create a new one
 	newSessID2, alreadyExists2, err := service.ContinueFromExecution(execID, "/project")
 	assert.NoError(t, err)
 	assert.Equal(t, newSessID1, newSessID2) // Same session ID (restored)
 	assert.True(t, alreadyExists2)
 
-	// Session should no longer be deleted
-	var deleted int
-	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", newSessID2).Scan(&deleted)
+	// Session should no longer be archived
+	var archived int
+	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", newSessID2).Scan(&archived)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, deleted)
+	assert.Equal(t, 0, archived)
 }
 
 // ---------- ContinueFromExecution: session count limit ----------
@@ -258,9 +258,9 @@ func TestContinueFromExecution_CopiesChatMessageSummaries(t *testing.T) {
 	assert.Equal(t, "AI replied with details", summary)
 }
 
-// ---------- ContinueFromExecution: soft-deleted source session ----------
+// ---------- ContinueFromExecution: archived source session ----------
 
-func TestContinueFromExecution_SoftDeletedSource(t *testing.T) {
+func TestContinueFromExecution_ArchivedSource(t *testing.T) {
 	setupDB(t)
 
 	taskID := helperCreateScheduledTask(t, "/project", "Task", "claude")
@@ -271,8 +271,8 @@ func TestContinueFromExecution_SoftDeletedSource(t *testing.T) {
 	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "prompt", nil, false, "")
 	assert.NoError(t, err)
 
-	// Soft-delete the source session
-	err = service.DeleteSession("/project", "claude", sessID)
+	// Archive the source session
+	err = service.ArchiveSession("/project", "claude", sessID)
 	assert.NoError(t, err)
 
 	// Should still be able to continue (source metadata still readable)
@@ -480,45 +480,45 @@ func TestContinueFromExecution_CopiesChatMessageSummary(t *testing.T) {
 	assert.Equal(t, "Scheduled task summary", copiedSummary)
 }
 
-// ========== restoreDeletedSession (tested via DB) ==========
+// ========== restoreArchivedSession (tested via DB) ==========
 
 // TestRestoreDeletedSession_NonExistent verifies that restoring a non-existent
 // session does not error (UPDATE on non-existent row is a no-op).
 func TestRestoreDeletedSession_NonExistent(t *testing.T) {
 	setupDB(t)
 
-	// Directly call the equivalent of restoreDeletedSession via DB
+	// Directly call the equivalent of restoreArchivedSession via DB
 	_, err := service.UnsafeDBForTest().Exec(
-		"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		"UPDATE chat_sessions SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		"non-existent-session-id",
 	)
 	assert.NoError(t, err)
 }
 
 // TestRestoreDeletedSession_AlreadyRestored verifies that restoring an
-// already-active session (deleted=0) is idempotent — no error, no side effect.
+// already-active session (archived=0) is idempotent — no error, no side effect.
 func TestRestoreDeletedSession_AlreadyRestored(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Active")
-	// Session is already active (deleted=0)
+	// Session is already active (archived=0)
 	_, err := service.UnsafeDBForTest().Exec(
-		"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		"UPDATE chat_sessions SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		sid,
 	)
 	assert.NoError(t, err)
 
-	var deleted int
-	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sid).Scan(&deleted)
+	var archived int
+	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sid).Scan(&archived)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, deleted, "session should still be active")
+	assert.Equal(t, 0, archived, "session should still be active")
 }
 
-// ========== CheckContinueSession: soft-deleted session auto-restore ==========
+// ========== CheckContinueSession: archived session auto-restore ==========
 
 // TestCheckContinueSession_AutoRestoresDeletedSession verifies that
-// CheckContinueSession finds a soft-deleted continued session and
-// auto-restores it (sets deleted=0), returning exists=true.
+// CheckContinueSession finds a archived continued session and
+// auto-restores it (sets archived=0), returning exists=true.
 func TestCheckContinueSession_AutoRestoresDeletedSession(t *testing.T) {
 	setupDB(t)
 
@@ -530,28 +530,28 @@ func TestCheckContinueSession_AutoRestoresDeletedSession(t *testing.T) {
 	newSessID, _, err := service.ContinueFromExecution(execID, "/project")
 	assert.NoError(t, err)
 
-	// Soft-delete the continued session
-	err = service.DeleteSession("/project", "claude", newSessID)
+	// Archive the continued session
+	err = service.ArchiveSession("/project", "claude", newSessID)
 	assert.NoError(t, err)
 
-	// CheckContinueSession should find and auto-restore the deleted session
+	// CheckContinueSession should find and auto-restore the archived session
 	exists, foundID, err := service.CheckContinueSession(execID)
 	assert.NoError(t, err)
 	assert.True(t, exists)
 	assert.Equal(t, newSessID, foundID)
 
-	// Verify the session is restored (deleted=0)
-	var deleted int
-	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", newSessID).Scan(&deleted)
+	// Verify the session is restored (archived=0)
+	var archived int
+	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", newSessID).Scan(&archived)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, deleted, "session should be restored (deleted=0)")
+	assert.Equal(t, 0, archived, "session should be restored (archived=0)")
 }
 
-// ========== Dedup query: ORDER BY with both active and deleted sessions ==========
+// ========== Dedup query: ORDER BY with both active and archived sessions ==========
 
 // TestContinueFromExecution_DedupPrefersActiveOverDeleted verifies that
-// when both an active and a soft-deleted continued session exist for the same
-// source_session_id, the dedup query (ORDER BY deleted ASC, updated_at DESC LIMIT 1)
+// when both an active and a archived continued session exist for the same
+// source_session_id, the dedup query (ORDER BY archived ASC, updated_at DESC LIMIT 1)
 // returns the active one, so no unnecessary restore happens.
 func TestContinueFromExecution_DedupPrefersActiveOverDeleted(t *testing.T) {
 	setupDB(t)
@@ -564,8 +564,8 @@ func TestContinueFromExecution_DedupPrefersActiveOverDeleted(t *testing.T) {
 	sessA, _, err := service.ContinueFromExecution(execID, "/project")
 	assert.NoError(t, err)
 
-	// Soft-delete session A
-	err = service.DeleteSession("/project", "claude", sessA)
+	// Archive session A
+	err = service.ArchiveSession("/project", "claude", sessA)
 	assert.NoError(t, err)
 
 	// Manually create session B (simulating a second continued session)
@@ -579,11 +579,11 @@ func TestContinueFromExecution_DedupPrefersActiveOverDeleted(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
-	// Now dedup: ORDER BY deleted ASC should prefer sessB (deleted=0) over sessA (deleted=1)
+	// Now dedup: ORDER BY archived ASC should prefer sessB (archived=0) over sessA (archived=1)
 	exists, foundID, err := service.CheckContinueSession(execID)
 	assert.NoError(t, err)
 	assert.True(t, exists)
-	assert.Equal(t, sessB, foundID, "active session B should be preferred over deleted session A")
+	assert.Equal(t, sessB, foundID, "active session B should be preferred over archived session A")
 }
 
 // ========== ContinueFromExecution with empty external_session_id ==========
@@ -615,9 +615,9 @@ func TestContinueFromExecution_EmptyExternalSessionID(t *testing.T) {
 // ========== Restored session preserves all chat history ==========
 
 // TestContinueFromExecution_RestoredSessionPreservesHistory verifies that
-// when a continued session is deleted and then restored, all chat history
-// is still present. This was a key bug: the old code soft-deleted
-// chat_history rows, but now only the session record is soft-deleted.
+// when a continued session is archived and then restored, all chat history
+// is still present. This was a key bug: the old code archived
+// chat_history rows, but now only the session record is archived.
 func TestContinueFromExecution_RestoredSessionPreservesHistory(t *testing.T) {
 	setupDB(t)
 
@@ -644,8 +644,8 @@ func TestContinueFromExecution_RestoredSessionPreservesHistory(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "Tell me more", nil, false, "")
 	assert.NoError(t, err)
 
-	// Soft-delete the continued session
-	err = service.DeleteSession("/project", "claude", newSessID)
+	// Archive the continued session
+	err = service.ArchiveSession("/project", "claude", newSessID)
 	assert.NoError(t, err)
 
 	// Restore via ContinueFromExecution
@@ -655,7 +655,7 @@ func TestContinueFromExecution_RestoredSessionPreservesHistory(t *testing.T) {
 	assert.True(t, alreadyExists)
 
 	// Verify chat history is intact after restore
-	// GetChatHistory works even for deleted sessions since chat_history has no deleted column
+	// GetChatHistory works even for archived sessions since chat_history has no deleted column
 	msgs, err = service.GetChatHistory("/project", "claude", restoredID)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 3, "restored session should have all 3 messages (2 copied + 1 added)")
@@ -667,12 +667,12 @@ func TestContinueFromExecution_RestoredSessionPreservesHistory(t *testing.T) {
 	assert.Equal(t, "Tell me more", msgs[2].Content)
 }
 
-// ========== Soft-deleted source session external_session_id read ==========
+// ========== Archived source session external_session_id read ==========
 
-// TestContinueFromExecution_SoftDeletedSourceReadsExternalSessionID verifies
-// that ContinueFromExecution can read external_session_id from a soft-deleted
-// source session (the query does not filter by deleted=0).
-func TestContinueFromExecution_SoftDeletedSourceReadsExternalSessionID(t *testing.T) {
+// TestContinueFromExecution_ArchivedSourceReadsExternalSessionID verifies
+// that ContinueFromExecution can read external_session_id from a archived
+// source session (the query does not filter by archived=0).
+func TestContinueFromExecution_ArchivedSourceReadsExternalSessionID(t *testing.T) {
 	setupDB(t)
 
 	taskID := helperCreateScheduledTask(t, "/project", "Task", "opencode")
@@ -683,15 +683,15 @@ func TestContinueFromExecution_SoftDeletedSourceReadsExternalSessionID(t *testin
 	err := service.UpdateExternalSessionID(sessID, "opencode-sess-xyz")
 	assert.NoError(t, err)
 
-	// Soft-delete the source session
-	err = service.DeleteSession("/project", "opencode", sessID)
+	// Archive the source session
+	err = service.ArchiveSession("/project", "opencode", sessID)
 	assert.NoError(t, err)
 
-	// Continue should still be able to read external_session_id from the soft-deleted source
+	// Continue should still be able to read external_session_id from the archived source
 	newSessID, _, err := service.ContinueFromExecution(execID, "/project")
 	assert.NoError(t, err)
 	assert.Equal(t, "opencode-sess-xyz", service.GetExternalSessionID(newSessID),
-		"continued session should inherit external_session_id from soft-deleted source")
+		"continued session should inherit external_session_id from archived source")
 }
 
 // ========== Title format edge cases ==========
@@ -821,7 +821,7 @@ func TestCheckContinueSession_ClosedDB(t *testing.T) {
 	assert.Empty(t, sessionID)
 }
 
-// ========== restoreDeletedSession: DB error path ==========
+// ========== restoreArchivedSession: DB error path ==========
 
 func TestRestoreDeletedSession_DBError(t *testing.T) {
 	setupDB(t)
@@ -833,9 +833,9 @@ func TestRestoreDeletedSession_DBError(t *testing.T) {
 	cleanup := service.SetDBForTest(closedDB, closedDB)
 	t.Cleanup(cleanup)
 
-	// restoreDeletedSession is private, but we can test the equivalent DB call
+	// restoreArchivedSession is private, but we can test the equivalent DB call
 	_, err = service.UnsafeDBForTest().Exec(
-		"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		"UPDATE chat_sessions SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		"some-session-id",
 	)
 	assert.Error(t, err, "should fail with closed DB")

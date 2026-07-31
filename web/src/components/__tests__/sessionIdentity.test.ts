@@ -24,7 +24,7 @@ beforeEach(() => {
   registerSessionActions({
     switchSession: vi.fn(),
     createSession: vi.fn(),
-    deleteSession: vi.fn(),
+    archiveSession: vi.fn(),
     sendMessage: vi.fn(),
     openChatPanel: vi.fn(),
     continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -36,20 +36,20 @@ describe('registerSessionActions', () => {
   it('registers action callbacks that are callable through the composable', async () => {
     const mockSwitch = vi.fn().mockResolvedValue(undefined)
     const mockCreate = vi.fn().mockResolvedValue(undefined)
-    const mockDelete = vi.fn().mockResolvedValue(undefined)
+    const mockArchive = vi.fn().mockResolvedValue(undefined)
     const mockSend = vi.fn().mockResolvedValue(undefined)
     const mockOpen = vi.fn()
 
     registerSessionActions({
       switchSession: mockSwitch,
       createSession: mockCreate,
-      deleteSession: mockDelete,
+      archiveSession: mockArchive,
       sendMessage: mockSend,
       openChatPanel: mockOpen,
     })
 
     // Verify delegation works by calling through the composable
-    const { switchSession, createSession, deleteSession, sendMessage, openChatPanel } = useSessionIdentity()
+    const { switchSession, createSession, archiveSession, sendMessage, openChatPanel } = useSessionIdentity()
 
     await switchSession('s1')
     expect(mockSwitch).toHaveBeenCalledWith('s1')
@@ -57,8 +57,8 @@ describe('registerSessionActions', () => {
     await createSession('agent-1')
     expect(mockCreate).toHaveBeenCalledWith('agent-1')
 
-    await deleteSession('s2', 'claude')
-    expect(mockDelete).toHaveBeenCalledWith('s2', 'claude')
+    await archiveSession('s2', 'claude')
+    expect(mockArchive).toHaveBeenCalledWith('s2', 'claude')
 
     await sendMessage('hello')
     expect(mockSend).toHaveBeenCalledWith('hello')
@@ -74,7 +74,7 @@ describe('registerSessionActions', () => {
     registerSessionActions({
       switchSession: firstSwitch,
       createSession: vi.fn(),
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
       sendMessage: vi.fn(),
       openChatPanel: vi.fn(),
       continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -84,7 +84,7 @@ describe('registerSessionActions', () => {
     registerSessionActions({
       switchSession: secondSwitch,
       createSession: vi.fn(),
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
       sendMessage: vi.fn(),
       openChatPanel: vi.fn(),
       continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -104,7 +104,7 @@ describe('action delegation', () => {
     registerSessionActions({
       switchSession: mockSwitch,
       createSession: vi.fn(),
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
       sendMessage: vi.fn(),
       openChatPanel: vi.fn(),
       continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -121,7 +121,7 @@ describe('action delegation', () => {
     registerSessionActions({
       switchSession: async () => {},
       createSession: vi.fn(),
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
       sendMessage: vi.fn(),
       openChatPanel: vi.fn(),
       continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -137,7 +137,7 @@ describe('action delegation', () => {
     registerSessionActions({
       switchSession: vi.fn(),
       createSession: mockCreate,
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
       sendMessage: vi.fn(),
       openChatPanel: vi.fn(),
       continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -149,21 +149,21 @@ describe('action delegation', () => {
     expect(mockCreate).toHaveBeenCalledWith('agent-1')
   })
 
-  it('delegates deleteSession with backend', async () => {
-    const mockDelete = vi.fn()
+  it('it delegates', async () => {
+    const mockArchive = vi.fn()
     registerSessionActions({
       switchSession: vi.fn(),
       createSession: vi.fn(),
-      deleteSession: mockDelete,
+      archiveSession: mockArchive,
       sendMessage: vi.fn(),
       openChatPanel: vi.fn(),
       continueFromExecution: vi.fn().mockResolvedValue(true),
       checkContinueSession: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
     })
 
-    const { deleteSession } = useSessionIdentity()
-    await deleteSession('session-1', 'claude')
-    expect(mockDelete).toHaveBeenCalledWith('session-1', 'claude')
+    const { archiveSession } = useSessionIdentity()
+    await archiveSession('session-1', 'claude')
+    expect(mockArchive).toHaveBeenCalledWith('session-1', 'claude')
   })
 
   it('delegates sendMessage', async () => {
@@ -171,7 +171,7 @@ describe('action delegation', () => {
     registerSessionActions({
       switchSession: vi.fn(),
       createSession: vi.fn(),
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
       sendMessage: mockSend,
       openChatPanel: vi.fn(),
       continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -188,7 +188,7 @@ describe('action delegation', () => {
     registerSessionActions({
       switchSession: vi.fn(),
       createSession: vi.fn(),
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
       sendMessage: vi.fn(),
       openChatPanel: mockOpen,
       continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -206,7 +206,7 @@ describe('action delegation', () => {
     registerSessionActions({
       switchSession: vi.fn(),
       createSession: vi.fn(),
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
       sendMessage: vi.fn(),
       openChatPanel: vi.fn(),
       continueFromExecution: mockContinue,
@@ -224,7 +224,7 @@ describe('action delegation', () => {
     registerSessionActions({
       switchSession: vi.fn(),
       createSession: vi.fn(),
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
       sendMessage: vi.fn(),
       openChatPanel: vi.fn(),
       continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -665,14 +665,14 @@ describe('resetIdentity', () => {
     ;(window as any).__clawbench = {
       createSession: vi.fn(),
       switchSession: vi.fn(),
-      deleteSession: vi.fn(),
+      archiveSession: vi.fn(),
     }
 
     resetIdentity()
 
     expect((window as any).__clawbench.createSession).toBeNull()
     expect((window as any).__clawbench.switchSession).toBeNull()
-    expect((window as any).__clawbench.deleteSession).toBeNull()
+    expect((window as any).__clawbench.archiveSession).toBeNull()
 
     delete (window as any).__clawbench
   })

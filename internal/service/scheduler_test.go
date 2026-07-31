@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	model TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	external_session_id TEXT DEFAULT '',
-	deleted INTEGER NOT NULL DEFAULT 0,
+	archived INTEGER NOT NULL DEFAULT 0,
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -899,18 +899,18 @@ func TestRemoveTask_CascadeDeletesSessions(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify the session exists
-	var sessionDeleted int
-	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionDeleted)
+	var sessionArchived int
+	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, sessionDeleted, "session should not be deleted before RemoveTask")
+	assert.Equal(t, 0, sessionArchived, "session should not be archived before RemoveTask")
 
 	// Remove the task — should cascade-delete sessions
 	s.RemoveTask(task.ID)
 
-	// Verify session is soft-deleted
-	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionDeleted)
+	// Verify session is archived
+	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
 	assert.NoError(t, err)
-	assert.Equal(t, 1, sessionDeleted, "session should be soft-deleted after RemoveTask")
+	assert.Equal(t, 1, sessionArchived, "session should be archived after RemoveTask")
 
 	// Verify task_executions rows are deleted
 	var execCount int
@@ -923,9 +923,9 @@ func TestRemoveTask_CascadeDeletesSessions(t *testing.T) {
 	assert.Error(t, err, "hard-deleted task should not be found")
 }
 
-// ---------- PurgeDeletedData cleans task_executions (Task 8) ----------
+// ---------- PurgeArchivedData cleans task_executions (Task 8) ----------
 
-func TestPurgeDeletedData_CleansTaskExecutions(t *testing.T) {
+func TestPurgeArchivedData_CleansTaskExecutions(t *testing.T) {
 	_, cleanup := setupScheduler(t)
 	defer cleanup()
 
@@ -954,18 +954,18 @@ func TestPurgeDeletedData_CleansTaskExecutions(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 1, execCount)
 
-	// Soft-delete the session and set updated_at to old date
-	service.DeleteSession("/purge-proj", "claude", sessionID)
+	// Archive the session and set updated_at to old date
+	service.ArchiveSession("/purge-proj", "claude", sessionID)
 	oldTime := time.Now().Add(-100 * 24 * time.Hour) // 100 days ago
 	_, _ = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", oldTime, sessionID)
 
 	// Get expired sessions and purge
 	cutoff := time.Now().Add(-90 * 24 * time.Hour)
-	expiredIDs, err := service.GetExpiredDeletedSessions(cutoff)
+	expiredIDs, err := service.GetExpiredArchivedSessions(cutoff)
 	assert.NoError(t, err)
 	assert.Contains(t, expiredIDs, sessionID)
 
-	sessionsPurged, messagesPurged, err := service.PurgeDeletedData(expiredIDs)
+	sessionsPurged, messagesPurged, err := service.PurgeArchivedData(expiredIDs)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), sessionsPurged)
 	assert.True(t, messagesPurged >= 1)
@@ -1021,11 +1021,11 @@ func TestDeleteTaskExecution(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 0, execCount, "execution should be hard-deleted")
 
-	// Verify session is soft-deleted
-	var sessionDeleted int
-	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionDeleted)
+	// Verify session is archived
+	var sessionArchived int
+	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
 	assert.NoError(t, err)
-	assert.Equal(t, 1, sessionDeleted, "session should be soft-deleted")
+	assert.Equal(t, 1, sessionArchived, "session should be archived")
 
 	// Verify run_count was decremented
 	task, err := service.GetTaskByID(taskID)
@@ -1080,12 +1080,12 @@ func TestDeleteTaskExecution_RunningExecution(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 1, execCount, "running execution should not be deleted")
 
-	// Verify session is NOT soft-deleted (operation order fix: DELETE runs first,
+	// Verify session is NOT archived (operation order fix: DELETE runs first,
 	// so if DELETE fails, session must remain intact)
-	var sessionDeleted int
-	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionDeleted)
+	var sessionArchived int
+	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, sessionDeleted, "session should NOT be soft-deleted when execution deletion is rejected")
+	assert.Equal(t, 0, sessionArchived, "session should NOT be archived when execution deletion is rejected")
 
 	// Verify run_count is NOT decremented
 	task, err := service.GetTaskByID(taskID)

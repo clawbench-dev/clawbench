@@ -361,7 +361,7 @@ func setupTestDBForAutoApprove(t *testing.T) (*sql.DB, func()) {
 			transport TEXT DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
-			deleted INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

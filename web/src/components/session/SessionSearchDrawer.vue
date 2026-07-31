@@ -12,7 +12,7 @@
           <ChevronLeft :size="18" />
         </button>
         <span class="bs-header-title detail-header-title">{{ selectedSession.session_title || t('sessionSearch.untitledSession') }}</span>
-        <span v-if="selectedSession.deleted" class="detail-deleted-badge">{{ t('sessionSearch.deleted') }}</span>
+        <span v-if="selectedSession.archived" class="detail-archived-badge">{{ t('sessionSearch.archived') }}</span>
       </template>
     </template>
 
@@ -43,7 +43,7 @@
             </div>
             <div v-if="session.chunks.length > 0" class="session-search-item-preview" v-html="getPreviewHtml(session)" />
             <div class="session-search-item-footer">
-              <span v-if="session.deleted" class="session-search-item-deleted">{{ t('sessionSearch.deleted') }}</span>
+              <span v-if="session.archived" class="session-search-item-archived">{{ t('sessionSearch.archived') }}</span>
               <span v-if="session.backend" class="session-search-item-backend">{{ session.backend }}</span>
               <span class="session-search-item-chunks">{{ t('sessionSearch.chunks', { count: session.match_count }) }}</span>
             </div>
@@ -78,7 +78,7 @@
 
     <!-- Detail view footer (uses BottomSheet's footer slot — fixed at bottom) -->
     <template v-if="selectedSession" #footer>
-      <button v-if="selectedSession.deleted" class="detail-resume-btn" @click="emit('resume', selectedSession)">
+      <button v-if="selectedSession.archived" class="detail-resume-btn" @click="emit('resume', selectedSession)">
         <RotateCcw :size="14" />
         {{ t('sessionSearch.resume') }}
       </button>
@@ -455,7 +455,7 @@ defineExpose({ focusSearchInput })
   color: var(--text-muted, #999);
 }
 
-.session-search-item-deleted {
+.session-search-item-archived {
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 3px;
@@ -504,7 +504,7 @@ defineExpose({ focusSearchInput })
   min-width: 0;
 }
 
-.detail-deleted-badge {
+.detail-archived-badge {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 3px;

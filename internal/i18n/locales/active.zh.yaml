@@ -1,7 +1,7 @@
 SessionNotRunning: 会话未在运行
 SessionStreamNotFound: 未找到会话流
 SessionStreamBusy: 会话流正在其他设备上查看
-SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先删除旧会话
+SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档旧会话
 SessionIdRequired: session_id 为必填项
 NewSession: 新会话
 NewSessionN: 新会话 {{.N}}

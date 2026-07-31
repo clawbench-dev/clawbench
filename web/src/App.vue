@@ -168,7 +168,7 @@
         @close="sessionIdentity.sessionDrawer.close()"
         @select="handleSessionSelect"
         @create="handleSessionCreate"
-        @delete="handleSessionDelete"
+        @archive="handleSessionArchive"
         @open-session-search="sessionSearchDrawer.open()"
       />
 
@@ -748,8 +748,8 @@ async function handleSessionCreate(agentId) {
   sessionIdentity.sessionDrawer.close()
 }
 
-function handleSessionDelete(sessionId, backend) {
-  sessionIdentity.deleteSession(sessionId, backend)
+function handleSessionArchive(sessionId, backend) {
+  sessionIdentity.archiveSession(sessionId, backend)
 }
 
 // ── ACP Session Resume ──

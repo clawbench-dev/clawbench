@@ -65,13 +65,13 @@ func TestServeSessionResume_SessionNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestServeSessionResume_RestoresSoftDeletedSession(t *testing.T) {
+func TestServeSessionResume_RestoresArchivedSession(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	sessionID := "test-resume-session"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES (?, ?, 'claude', 'Test Session', 1)",
+		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Test Session', 1)",
 		sessionID, env.ProjectDir,
 	)
 	assert.NoError(t, err)
@@ -85,10 +85,10 @@ func TestServeSessionResume_RestoresSoftDeletedSession(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var deleted int
-	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sessionID).Scan(&deleted)
+	var archived int
+	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&archived)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, deleted, "session should be restored (deleted=0)")
+	assert.Equal(t, 0, archived, "session should be restored (archived=0)")
 }
 
 func TestServeSessionResume_ActiveSessionPassthrough(t *testing.T) {
@@ -97,7 +97,7 @@ func TestServeSessionResume_ActiveSessionPassthrough(t *testing.T) {
 
 	sessionID := "test-active-session"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES (?, ?, 'claude', 'Active Session', 0)",
+		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Active Session', 0)",
 		sessionID, env.ProjectDir,
 	)
 	assert.NoError(t, err)
@@ -133,10 +133,10 @@ func TestServeSessionResume_SessionCountBelowLimit(t *testing.T) {
 	model.SessionMaxCount = 10
 	defer func() { model.SessionMaxCount = origMax }()
 
-	// Create a soft-deleted session to resume
+	// Create a archived session to resume
 	sessionID := "test-resume-below-limit"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES (?, ?, 'claude', 'Deleted Session', 1)",
+		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Archived Session', 1)",
 		sessionID, env.ProjectDir,
 	)
 	assert.NoError(t, err)
@@ -150,10 +150,10 @@ func TestServeSessionResume_SessionCountBelowLimit(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var deleted int
-	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sessionID).Scan(&deleted)
+	var archived int
+	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&archived)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, deleted, "session should be restored (deleted=0)")
+	assert.Equal(t, 0, archived, "session should be restored (archived=0)")
 }
 
 func TestServeSessionResume_CrossProjectDenied(t *testing.T) {
@@ -162,7 +162,7 @@ func TestServeSessionResume_CrossProjectDenied(t *testing.T) {
 
 	sessionID := "test-other-project-session"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES (?, '/other/project', 'claude', 'Other Session', 0)",
+		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, '/other/project', 'claude', 'Other Session', 0)",
 		sessionID,
 	)
 	assert.NoError(t, err)
@@ -187,20 +187,20 @@ func TestServeSessionResume_SessionCountLimit(t *testing.T) {
 
 	// Create an active session (fills the 1-slot limit)
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES (?, ?, 'claude', 'Active', 0)",
+		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Active', 0)",
 		"existing-session", env.ProjectDir,
 	)
 	assert.NoError(t, err)
 
-	// Create a soft-deleted session to resume
+	// Create a archived session to resume
 	_, err = service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES (?, ?, 'claude', 'Deleted', 1)",
-		"deleted-session", env.ProjectDir,
+		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Archived', 1)",
+		"archived-session", env.ProjectDir,
 	)
 	assert.NoError(t, err)
 
-	// Restoring the deleted session would make total active = 2, exceeding limit 1
-	body := `{"session_id": "deleted-session"}`
+	// Restoring the archived session would make total active = 2, exceeding limit 1
+	body := `{"session_id": "archived-session"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/ai/session/resume", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withProjectCookie(req, env.ProjectDir)
@@ -228,19 +228,19 @@ func TestFindExistingACPSessions_FindsActiveSession(t *testing.T) {
 	assert.False(t, result["acp:test-acp-456"], "should not find session for test-acp-456")
 }
 
-func TestFindExistingACPSessions_FindsSoftDeletedSession(t *testing.T) {
+func TestFindExistingACPSessions_FindsArchivedSession(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Insert a soft-deleted session
+	// Insert a archived session
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, source_session_id, deleted) VALUES (?, ?, 'claude', 'Deleted', ?, 1)",
-		"cb-session-deleted", env.ProjectDir, "acp:deleted-acp-123",
+		"INSERT INTO chat_sessions (id, project_path, backend, title, source_session_id, archived) VALUES (?, ?, 'claude', 'Archived', ?, 1)",
+		"cb-session-archived", env.ProjectDir, "acp:archived-acp-123",
 	)
 	require.NoError(t, err)
 
-	result := findExistingACPSessions([]string{"deleted-acp-123"})
-	assert.True(t, result["acp:deleted-acp-123"], "should find soft-deleted session")
+	result := findExistingACPSessions([]string{"archived-acp-123"})
+	assert.True(t, result["acp:archived-acp-123"], "should find archived session")
 }
 
 func TestFindExistingACPSessions_EmptyInput(t *testing.T) {
@@ -409,7 +409,7 @@ func TestServeACPLoadSession_LoadSessionFails_GenericError(t *testing.T) {
 	// Verify the session created before LoadSession was cleaned up
 	var count int
 	err := service.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND deleted = 0", agentID,
+		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND archived = 0", agentID,
 	).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count, "session should be cleaned up after LoadSession failure")
@@ -450,7 +450,7 @@ func TestServeACPLoadSession_ResourceNotFoundDetection(t *testing.T) {
 // --- ServeACPLoadSession: session metadata set before LoadSession ---
 // This test verifies that source_session_id and transport are set correctly
 // on the session even when LoadSession fails, since these are set BEFORE
-// the GetOrCreateConnForLoad call. The handler soft-deletes the session on
+// the GetOrCreateConnForLoad call. The handler archives the session on
 // failure, but the metadata is still queryable.
 
 func TestServeACPLoadSession_SessionMetadataBeforeLoad(t *testing.T) {
@@ -478,8 +478,8 @@ func TestServeACPLoadSession_SessionMetadataBeforeLoad(t *testing.T) {
 	// LoadSession will fail, but the session was already created with metadata
 	assert.NotEqual(t, http.StatusOK, w.Code)
 
-	// Find the session that was created (soft-deleted by cleanup on failure).
-	// Query without filtering on deleted to find it.
+	// Find the session that was created (archived by cleanup on failure).
+	// Query without filtering on archived to find it.
 	var sourceID, transport string
 	err := service.UnsafeDBForTest().QueryRow(
 		"SELECT source_session_id, transport FROM chat_sessions WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1",

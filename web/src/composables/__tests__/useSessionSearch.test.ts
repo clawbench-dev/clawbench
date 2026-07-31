@@ -49,7 +49,7 @@ describe('useSessionSearch', () => {
         score: 0.95,
         backend: 'claude',
         project_path: '/home/user/project',
-        deleted: false,
+        archived: false,
         created_at: '2025-01-01T00:00:00Z',
         match_count: 2,
         chunks: [],

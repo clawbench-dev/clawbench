@@ -39,7 +39,7 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			transport TEXT DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
-			deleted INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			last_read_at DATETIME,
@@ -101,12 +101,12 @@ func TestBuildChatRequest_NewSession(t *testing.T) {
 	}
 }
 
-func TestFindSessionsByPrefix_DeletedExcluded(t *testing.T) {
+func TestFindSessionsByPrefix_ArchivedExcluded(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, deleted) VALUES (?, '/proj', 'codebuddy', 'Deleted', 'agent1', 'default', '', 'chat', 1)",
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, '/proj', 'codebuddy', 'Archived', 'agent1', 'default', '', 'chat', 1)",
 		"a1b2c3d4-1111-1111-1111-111111111111",
 	)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestFindSessionsByPrefix_DeletedExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(results) != 0 {
-		t.Errorf("expected 0 results for deleted session, got %d", len(results))
+		t.Errorf("expected 0 results for archived session, got %d", len(results))
 	}
 }
 
@@ -1803,41 +1803,41 @@ func TestPruneRawResponses_Prune(t *testing.T) {
 }
 
 // ============================================================================
-// GetExpiredDeletedSessions and PurgeDeletedData tests
+// GetExpiredArchivedSessions and PurgeArchivedData tests
 // ============================================================================
 
-func TestGetExpiredDeletedSessions_Empty(t *testing.T) {
+func TestGetExpiredArchivedSessions_Empty(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	ids, err := GetExpiredDeletedSessions(time.Now())
+	ids, err := GetExpiredArchivedSessions(time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, ids)
 }
 
-func TestGetExpiredDeletedSessions_WithExpired(t *testing.T) {
+func TestGetExpiredArchivedSessions_WithExpired(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	// Insert a deleted session with an old timestamp
+	// Insert a archived session with an old timestamp
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, deleted, updated_at) VALUES (?, '/proj', 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived, updated_at) VALUES (?, '/proj', 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
 		"expired-sess",
 	)
 	require.NoError(t, err)
 
-	ids, err := GetExpiredDeletedSessions(time.Now())
+	ids, err := GetExpiredArchivedSessions(time.Now())
 	require.NoError(t, err)
 	assert.Contains(t, ids, "expired-sess")
 }
 
-func TestPurgeDeletedData(t *testing.T) {
+func TestPurgeArchivedData(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	// Insert a deleted session with old timestamp
+	// Insert a archived session with old timestamp
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, deleted, updated_at) VALUES (?, '/proj', 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived, updated_at) VALUES (?, '/proj', 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
 		"purge-sess",
 	)
 	require.NoError(t, err)
@@ -1848,7 +1848,7 @@ func TestPurgeDeletedData(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	sessionsPurged, _, err := PurgeDeletedData([]string{"purge-sess"})
+	sessionsPurged, _, err := PurgeArchivedData([]string{"purge-sess"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), sessionsPurged)
 

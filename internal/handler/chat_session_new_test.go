@@ -84,13 +84,13 @@ func TestServeSessions_Get_NoPendingApprovalsReturnsFalse(t *testing.T) {
 	assert.False(t, result.Sessions[0].PendingApproval)
 }
 
-// ── DeleteSession: ACP connection close on ACP-transport sessions ──────────
+// ── ArchiveSession: ACP connection close on ACP-transport sessions ──────────
 
-func TestDeleteSession_ClosesACPConnForACPTransport(t *testing.T) {
+func TestArchiveSession_ClosesACPConnForACPTransport(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Register an ACP-capable agent so DeleteSession's model.Agents lookup hits the
+	// Register an ACP-capable agent so ArchiveSession's model.Agents lookup hits the
 	// "acp-stdio" branch.
 	origAgents := model.Agents
 	t.Cleanup(func() { model.Agents = origAgents })
@@ -113,27 +113,27 @@ func TestDeleteSession_ClosesACPConnForACPTransport(t *testing.T) {
 	conn.SetClientForTest(client)
 	conn.SetSessionMappingForTest(sessionID, "acp-session-mapped")
 	mgr.SetConnForTest(sessionID, conn)
-	// Don't defer cleanup — DeleteSession should close it.
+	// Don't defer cleanup — ArchiveSession should close it.
 
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete?session_id="+sessionID, nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID, nil)
 	withProjectCookie(req, env.ProjectDir)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertOK(t, w)
 
-	// After delete, the ACP connection for this session should be gone.
+	// After archiving, the ACP connection for this session should be gone.
 	// CloseConn runs in a goroutine, so wait briefly for it to complete.
-	assert.Eventually(t, func() bool { return mgr.GetConn(sessionID) == nil }, 2*time.Second, 10*time.Millisecond, "ACP connection should be closed by DeleteSession")
+	assert.Eventually(t, func() bool { return mgr.GetConn(sessionID) == nil }, 2*time.Second, 10*time.Millisecond, "ACP connection should be closed by ArchiveSession")
 }
 
-func TestDeleteSession_SkipsACPCloseForCLITransport(t *testing.T) {
+func TestArchiveSession_SkipsACPCloseForCLITransport(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	origAgents := model.Agents
 	t.Cleanup(func() { model.Agents = origAgents })
 
-	// CLI-transport agent — DeleteSession should NOT attempt CloseConn
+	// CLI-transport agent — ArchiveSession should NOT attempt CloseConn
 	model.Agents = map[string]*model.Agent{
 		"cli-agent": {
 			ID:        "cli-agent",
@@ -153,15 +153,15 @@ func TestDeleteSession_SkipsACPCloseForCLITransport(t *testing.T) {
 	mgr.SetConnForTest(sessionID, conn)
 	t.Cleanup(func() { mgr.CloseConn(sessionID) })
 
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete?session_id="+sessionID, nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID, nil)
 	withProjectCookie(req, env.ProjectDir)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertOK(t, w)
 	// Connection may still exist since transport=cli skips the close path
 }
 
-func TestDeleteSession_UnknownAgentSkipsACPClose(t *testing.T) {
+func TestArchiveSession_UnknownAgentSkipsACPClose(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -174,10 +174,10 @@ func TestDeleteSession_UnknownAgentSkipsACPClose(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "unknown-agent-session", "unknown-agent-id", "", "default", "chat")
 	require.NoError(t, err)
 
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete?session_id="+sessionID, nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID, nil)
 	withProjectCookie(req, env.ProjectDir)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertOK(t, w)
 }
 

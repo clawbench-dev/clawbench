@@ -178,7 +178,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   // "loading" which means "AI is generating"). Used to show a fade/placeholder
   // transition so the user sees immediate feedback instead of a frozen UI.
   const switching = ref(false)
-  const deletingSessionIds = ref(new Set<string>())
+  const pendingSessionOps = ref(new Set<string>())
 
   // Fallback polling timer for WS disconnect
 
@@ -627,7 +627,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       ])
       if (!resp.ok) {
         // If the session was deleted, clear stale currentSessionId and recover
-        // by falling back to the latest available session (same as deleteSession).
+        // by falling back to the latest available session (same as archiveSession).
         const errData = await resp.json().catch(() => ({}))
         if (resp.status === 404 && errData.msgKey === 'SessionNotFound') {
           appLog.w(TAG, 'switchSession: session not found, recovering to latest session')
@@ -805,12 +805,12 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  async function deleteSession(sessionId: string, backend: string) {
+  async function archiveSession(sessionId: string, backend: string) {
     // Prevent concurrent deletes for the same session
-    if (deletingSessionIds.value.has(sessionId)) return
-    deletingSessionIds.value.add(sessionId)
+    if (pendingSessionOps.value.has(sessionId)) return
+    pendingSessionOps.value.add(sessionId)
     try {
-      const resp = await fetch(`/api/ai/session/delete?session_id=${encodeURIComponent(sessionId)}&backend=${encodeURIComponent(backend || '')}`, {
+      const resp = await fetch(`/api/ai/session/archive?session_id=${encodeURIComponent(sessionId)}&backend=${encodeURIComponent(backend || '')}`, {
         method: 'DELETE',
       })
       const data = await resp.json()
@@ -833,23 +833,23 @@ export function useChatSession(options: UseChatSessionOptions) {
         }
         const maxCount = store.state.sessionMaxCount
         if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
-        toast.show(gt('chat.session.deleted', { count: data.sessionCount ?? '', max: maxCount }), { icon: '📦', type: 'success', duration: 2000 })
+        toast.show(gt('chat.session.archived', { count: data.sessionCount ?? '', max: maxCount }), { icon: '📦', type: 'success', duration: 2000 })
       } else {
-        toast.show(gt('chat.session.deleteFailed'), { icon: '⚠️', type: 'error' })
+        toast.show(gt('chat.session.archiveFailed'), { icon: '⚠️', type: 'error' })
       }
     } catch (err: unknown) {
-      appLog.e(TAG, 'Failed to delete session:', err)
-      toast.show(gt('chat.session.deleteFailed'), { icon: '⚠️', type: 'error' })
+      appLog.e(TAG, 'Failed to archive session:', err)
+      toast.show(gt('chat.session.archiveFailed'), { icon: '⚠️', type: 'error' })
     } finally {
-      deletingSessionIds.value.delete(sessionId)
+      pendingSessionOps.value.delete(sessionId)
     }
   }
 
   // Hard-delete (physically destroy) a session and all its associated data.
-  // Unlike deleteSession (soft-delete/archive), this is irreversible.
+  // Unlike ArchiveSession, this is irreversible.
   async function destroySession(sessionId: string) {
-    if (deletingSessionIds.value.has(sessionId)) return
-    deletingSessionIds.value.add(sessionId)
+    if (pendingSessionOps.value.has(sessionId)) return
+    pendingSessionOps.value.add(sessionId)
     try {
       const resp = await fetch(`/api/ai/session/destroy?session_id=${encodeURIComponent(sessionId)}`, {
         method: 'DELETE',
@@ -878,7 +878,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       appLog.e(TAG, 'Failed to destroy session:', err)
       toast.show(gt('chat.session.destroyFailed'), { icon: '⚠️', type: 'error' })
     } finally {
-      deletingSessionIds.value.delete(sessionId)
+      pendingSessionOps.value.delete(sessionId)
     }
   }
 
@@ -1107,7 +1107,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     loadMoreMessages,
     switchSession,
     createSession,
-    deleteSession,
+    archiveSession,
     destroySession,
     onSessionEvent,
     loadSessionsOnce: loadSessionsOnceInner,

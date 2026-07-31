@@ -13,7 +13,7 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.noResults': 'No results',
       'sessionSearch.resultCount': `${params?.count ?? 0} results`,
       'sessionSearch.untitledSession': 'Untitled',
-      'sessionSearch.deleted': 'Deleted',
+      'sessionSearch.archived': 'Archived',
       'sessionSearch.chunks': `${params?.count ?? 0} chunks`,
       'sessionSearch.roleUser': 'User',
       'sessionSearch.roleAssistant': 'Assistant',
@@ -101,7 +101,7 @@ const sampleResult = {
   score: 0.9,
   backend: 'cli',
   project_path: '/tmp',
-  deleted: false,
+  archived: false,
   created_at: '2025-01-01',
   match_count: 3,
   chunks: [{
@@ -179,7 +179,7 @@ describe('SessionSearchDrawer', () => {
         score: 0.5,
         backend: '',
         project_path: '',
-        deleted: false,
+        archived: false,
         created_at: '2025-01-01',
         match_count: 1,
         chunks: [],
@@ -190,16 +190,16 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.session-search-item-title').text()).toBe('Untitled')
   })
 
-  it('shows deleted badge', () => {
+  it('shows archived badge', () => {
     mockSearchState.mockReturnValue(createState({
       query: 'test',
       results: [{
         session_id: 's3',
-        session_title: 'Deleted Session',
+        session_title: 'Archived Session',
         score: 0.5,
         backend: 'cli',
         project_path: '',
-        deleted: true,
+        archived: true,
         created_at: '2025-01-01',
         match_count: 1,
         chunks: [],
@@ -207,8 +207,8 @@ describe('SessionSearchDrawer', () => {
     }))
 
     const wrapper = mountDrawer()
-    expect(wrapper.find('.session-search-item-deleted').exists()).toBe(true)
-    expect(wrapper.find('.session-search-item-deleted').text()).toBe('Deleted')
+    expect(wrapper.find('.session-search-item-archived').exists()).toBe(true)
+    expect(wrapper.find('.session-search-item-archived').text()).toBe('Archived')
   })
 
   it('drills down to detail view when clicking a result', async () => {
@@ -254,7 +254,7 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.detail-page').exists()).toBe(false)
   })
 
-  it('emits open for non-deleted session from detail view', async () => {
+  it('emits open for non-archived session from detail view', async () => {
     mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
 
     const wrapper = mountDrawer()
@@ -264,24 +264,24 @@ describe('SessionSearchDrawer', () => {
     instance.update()
     await flushPromises()
 
-    // Click open button (non-deleted session)
+    // Click open button (non-archived session)
     await wrapper.find('.detail-resume-btn').trigger('click')
     expect(wrapper.emitted('open')).toBeTruthy()
     expect(wrapper.emitted('resume')).toBeFalsy()
   })
 
-  it('emits resume for deleted session from detail view', async () => {
-    const deletedResult = { ...sampleResult, deleted: true }
-    mockSearchState.mockReturnValue(createState({ query: 'test', results: [deletedResult] }))
+  it('emits resume for archived session from detail view', async () => {
+    const archivedResult = { ...sampleResult, archived: true }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [archivedResult] }))
 
     const wrapper = mountDrawer()
     // Drill down via internal ref
     const instance = (wrapper.vm as any).$
-    instance.setupState.selectedSession = deletedResult
+    instance.setupState.selectedSession = archivedResult
     instance.update()
     await flushPromises()
 
-    // Click resume button (deleted session)
+    // Click resume button (archived session)
     await wrapper.find('.detail-resume-btn').trigger('click')
     expect(wrapper.emitted('resume')).toBeTruthy()
     expect(wrapper.emitted('open')).toBeFalsy()

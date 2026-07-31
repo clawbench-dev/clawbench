@@ -22,7 +22,7 @@ type mockSessionCleanupSvc struct {
 	calledPurge     atomic.Int32
 }
 
-func (m *mockSessionCleanupSvc) GetExpiredDeletedSessions(cutoff time.Time) ([]string, error) {
+func (m *mockSessionCleanupSvc) GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
 	m.calledGet.Add(1)
 	if m.expiredErr != nil {
 		return nil, m.expiredErr
@@ -30,7 +30,7 @@ func (m *mockSessionCleanupSvc) GetExpiredDeletedSessions(cutoff time.Time) ([]s
 	return m.expiredSessions, nil
 }
 
-func (m *mockSessionCleanupSvc) PurgeDeletedData(sessionIDs []string) (int64, int64, error) {
+func (m *mockSessionCleanupSvc) PurgeArchivedData(sessionIDs []string) (int64, int64, error) {
 	m.calledPurge.Add(1)
 	if m.purgeErr != nil {
 		return 0, 0, m.purgeErr

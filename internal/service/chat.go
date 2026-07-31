@@ -262,10 +262,10 @@ func ExtractPlainText(content string) string {
 
 // AddChatMessage adds a message to the chat history for a given project path, backend, and session.
 func AddChatMessage(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle string) (int64, error) {
-	// Guard: reject messages to soft-deleted sessions
-	var isDeleted int
-	if err := dbRead.QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sessionID).Scan(&isDeleted); err == nil && isDeleted == 1 {
-		return 0, fmt.Errorf("cannot add message to deleted session %s", sessionID)
+	// Guard: reject messages to archived sessions
+	var isArchived int
+	if err := dbRead.QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
+		return 0, fmt.Errorf("cannot add message to archived session %s", sessionID)
 	}
 
 	var filesJSON string
@@ -500,7 +500,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
 			GROUP BY h.session_id
 		) unread ON unread.session_id = s.id
-		WHERE s.project_path = ? AND s.deleted = 0 AND s.session_type = 'chat'`
+		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
 	args := []interface{}{projectPath, projectPath}
 	if backend != "" {
 		query += " AND s.backend = ?"
@@ -562,7 +562,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
 			GROUP BY h.session_id
 		) unread ON unread.session_id = s.id
-		WHERE s.project_path = ? AND s.deleted = 0 AND s.session_type = 'chat'`
+		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
 	args := []interface{}{projectPath, projectPath}
 	if backend != "" {
 		query += " AND s.backend = ?"
@@ -615,10 +615,10 @@ func UpdateLastRead(sessionID string) {
 	go WriteExec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
 }
 
-// GetSessionBackend returns the backend of a session, or empty string if not found or deleted.
+// GetSessionBackend returns the backend of a session, or empty string if not found or archived.
 func GetSessionBackend(sessionID string) string {
 	var backend string
-	err := dbRead.QueryRow("SELECT backend FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&backend)
+	err := dbRead.QueryRow("SELECT backend FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&backend)
 	if err != nil {
 		return ""
 	}
@@ -628,7 +628,7 @@ func GetSessionBackend(sessionID string) string {
 // GetSessionProjectPath returns the project path of a session, or empty string if not found.
 func GetSessionProjectPath(sessionID string) string {
 	var projectPath string
-	err := dbRead.QueryRow("SELECT project_path FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&projectPath)
+	err := dbRead.QueryRow("SELECT project_path FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&projectPath)
 	if err != nil {
 		return ""
 	}
@@ -640,7 +640,7 @@ func GetSessionProjectPath(sessionID string) string {
 func GetLatestSessionID(projectPath string) (sessionID, backend string, err error) {
 	err = dbRead.QueryRow(
 		`SELECT id, backend FROM chat_sessions
-		 WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'
+		 WHERE project_path = ? AND archived = 0 AND session_type = 'chat'
 		 ORDER BY updated_at DESC, id DESC LIMIT 1`,
 		projectPath,
 	).Scan(&sessionID, &backend)
@@ -665,10 +665,10 @@ func GetMessageIDBeforeTime(projectPath, backend, sessionID, beforeTime string) 
 	return int(id.Int64), nil
 }
 
-// GetSessionModel returns the model ID of a session, or empty string if not found or deleted.
+// GetSessionModel returns the model ID of a session, or empty string if not found or archived.
 func GetSessionModel(sessionID string) string {
 	var modelID string
-	err := dbRead.QueryRow("SELECT model FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&modelID)
+	err := dbRead.QueryRow("SELECT model FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&modelID)
 	if err != nil {
 		return ""
 	}
@@ -692,7 +692,7 @@ func UpdateSessionTransport(sessionID, transport string) error {
 // GetSessionTransport returns the transport for a session, or empty string if not set.
 func GetSessionTransport(sessionID string) string {
 	var transport string
-	err := dbRead.QueryRow("SELECT COALESCE(transport, '') FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&transport)
+	err := dbRead.QueryRow("SELECT COALESCE(transport, '') FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&transport)
 	if err != nil {
 		return ""
 	}
@@ -702,7 +702,7 @@ func GetSessionTransport(sessionID string) string {
 // GetSessionAutoApprove returns whether auto-approve mode is enabled for a session.
 func GetSessionAutoApprove(sessionID string) bool {
 	var val int
-	err := dbRead.QueryRow("SELECT auto_approve FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&val)
+	err := dbRead.QueryRow("SELECT auto_approve FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&val)
 	if err != nil {
 		return false
 	}
@@ -751,7 +751,7 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 func GetLatestUserModel(agentID, projectPath string) string {
 	var modelID string
 	err := dbRead.QueryRow(
-		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_path = ? AND deleted = 0 AND model != '' ORDER BY updated_at DESC LIMIT 1",
+		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_path = ? AND archived = 0 AND model != '' ORDER BY updated_at DESC LIMIT 1",
 		agentID, projectPath,
 	).Scan(&modelID)
 	if err != nil {
@@ -800,17 +800,17 @@ func UpdateSessionTitle(sessionID, title string) error {
 	return err
 }
 
-// DeleteSession soft-deletes a chat session.
-// Sets deleted=1 on the session record and updates updated_at so it serves as the deletion timestamp.
-// Messages in chat_history are NOT soft-deleted — session-level soft-delete is sufficient
-// since all message queries are scoped to sessions, and deleted sessions are excluded.
+// ArchiveSession archives a chat session.
+// Sets archived=1 on the session record and updates updated_at so it serves as the archive timestamp.
+// Messages in chat_history are NOT archived — session-level archiving is sufficient
+// since all message queries are scoped to sessions, and archived sessions are excluded.
 // Data remains for RAG search but is hidden from UI; purged by cleanup worker after retention period.
-func DeleteSession(projectPath, backend, sessionID string) error {
-	// Soft-delete the session record, update timestamp to mark deletion time.
+func ArchiveSession(projectPath, backend, sessionID string) error {
+	// Archive the session record, update timestamp to mark archive time.
 	// backend param kept for API compatibility but not used in WHERE —
 	// session ID (UUID) is already unique; filtering by backend could cause
 	// silent no-op when the client sends a wrong/empty backend value.
-	_, err := WriteExec("UPDATE chat_sessions SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE project_path = ? AND id = ?", projectPath, sessionID)
+	_, err := WriteExec("UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE project_path = ? AND id = ?", projectPath, sessionID)
 	return err
 }
 
@@ -818,14 +818,14 @@ func DeleteSession(projectPath, backend, sessionID string) error {
 // Only counts sessions with session_type='chat' (excludes scheduled sessions).
 func GetSessionCount(projectPath string) (int, error) {
 	var count int
-	err := dbRead.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'", projectPath).Scan(&count)
+	err := dbRead.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'", projectPath).Scan(&count)
 	return count, err
 }
 
-// GetSessionTitle returns the title of an active (non-deleted) session.
+// GetSessionTitle returns the title of an active (non-archived) session.
 func GetSessionTitle(sessionID string) (string, error) {
 	var title string
-	err := dbRead.QueryRow("SELECT title FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&title)
+	err := dbRead.QueryRow("SELECT title FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&title)
 	if err != nil {
 		return "", err
 	}
@@ -848,7 +848,7 @@ func GetSessionTitlesBatch(sessionIDs []string) (map[string]string, error) {
 		args[i] = id
 	}
 
-	rows, err := dbRead.Query("SELECT id, title FROM chat_sessions WHERE id IN ("+placeholders+") AND deleted = 0", args...)
+	rows, err := dbRead.Query("SELECT id, title FROM chat_sessions WHERE id IN ("+placeholders+") AND archived = 0", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -867,10 +867,10 @@ func GetSessionTitlesBatch(sessionIDs []string) (map[string]string, error) {
 	return titles, rows.Err()
 }
 
-// GetSessionTitlesBatchIncludeDeleted fetches titles for multiple sessions
-// including soft-deleted ones. Used by RAG search to show titles even for
-// deleted sessions whose chunks are still indexed.
-func GetSessionTitlesBatchIncludeDeleted(sessionIDs []string) (map[string]string, error) {
+// GetSessionTitlesBatchIncludeArchived fetches titles for multiple sessions
+// including archived ones. Used by RAG search to show titles even for
+// archived sessions whose chunks are still indexed.
+func GetSessionTitlesBatchIncludeArchived(sessionIDs []string) (map[string]string, error) {
 	if len(sessionIDs) == 0 {
 		return map[string]string{}, nil
 	}
@@ -1003,7 +1003,7 @@ func PatchContextStateMerge(sessionID string, patches map[string]string) {
 // Returns nil if the column is empty or parsing fails.
 func GetContextState(sessionID string) *ContextState {
 	var raw string
-	if err := dbRead.QueryRow("SELECT COALESCE(context_state, '') FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&raw); err != nil || raw == "" {
+	if err := dbRead.QueryRow("SELECT COALESCE(context_state, '') FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&raw); err != nil || raw == "" {
 		return nil
 	}
 	var state ContextState
@@ -1020,7 +1020,7 @@ func GetSessionInfo(sessionID string) (*SessionInfo, error) {
 	info := &SessionInfo{}
 	err := dbRead.QueryRow(
 		`SELECT title, backend, agent_id, model, COALESCE(transport, '')
-		 FROM chat_sessions WHERE id = ? AND deleted = 0`,
+		 FROM chat_sessions WHERE id = ? AND archived = 0`,
 		sessionID,
 	).Scan(&info.Title, &info.Backend, &info.AgentID, &info.Model, &info.Transport)
 	if err != nil {
@@ -1032,12 +1032,12 @@ func GetSessionInfo(sessionID string) (*SessionInfo, error) {
 // GetSessionFullInfo fetches all session metadata including project_path in a single query.
 // This replaces the common pattern of calling GetSessionBackend + GetSessionProjectPath +
 // GetSessionInfo (3 separate PK lookups on the same row) with a single query.
-// Returns nil if the session is not found or soft-deleted.
+// Returns nil if the session is not found or archived.
 func GetSessionFullInfo(sessionID string) *SessionInfo {
 	info := &SessionInfo{}
 	err := dbRead.QueryRow(
 		`SELECT backend, project_path, title, agent_id, model, COALESCE(transport, ''), auto_approve
-		 FROM chat_sessions WHERE id = ? AND deleted = 0`,
+		 FROM chat_sessions WHERE id = ? AND archived = 0`,
 		sessionID,
 	).Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove)
 	if err != nil {
@@ -1046,10 +1046,10 @@ func GetSessionFullInfo(sessionID string) *SessionInfo {
 	return info
 }
 
-// GetSessionAgentID returns the agent_id of an active (non-deleted) session.
+// GetSessionAgentID returns the agent_id of an active (non-archived) session.
 func GetSessionAgentID(sessionID string) string {
 	var agentID string
-	dbRead.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&agentID)
+	dbRead.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&agentID)
 	return agentID
 }
 
@@ -1288,10 +1288,10 @@ func MessageIndexCounts() (total int, indexed int, err error) {
 	return
 }
 
-// GetExpiredDeletedSessions returns session IDs of soft-deleted sessions
-// whose updated_at (set to deletion time) is older than the cutoff.
-func GetExpiredDeletedSessions(cutoff time.Time) ([]string, error) {
-	rows, err := dbRead.Query("SELECT id FROM chat_sessions WHERE deleted = 1 AND updated_at < ?", cutoff)
+// GetExpiredArchivedSessions returns session IDs of archived sessions
+// whose updated_at (set to archive time) is older than the cutoff.
+func GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
+	rows, err := dbRead.Query("SELECT id FROM chat_sessions WHERE archived = 1 AND updated_at < ?", cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -1308,11 +1308,11 @@ func GetExpiredDeletedSessions(cutoff time.Time) ([]string, error) {
 	return ids, rows.Err()
 }
 
-// PurgeDeletedData hard-deletes soft-deleted sessions and their associated data.
+// PurgeArchivedData hard-deletes archived sessions and their associated data.
 // Deletes in order: ai_raw_responses → chat_tool_calls → summaries →
 // tts_summaries → chat_history → task_executions → chat_sessions.
 // Returns counts of purged sessions and messages.
-func PurgeDeletedData(sessionIDs []string) (sessionsPurged int64, messagesPurged int64, err error) {
+func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurged int64, err error) {
 	if len(sessionIDs) == 0 {
 		return 0, 0, nil
 	}
@@ -1345,7 +1345,7 @@ func PurgeDeletedData(sessionIDs []string) (sessionsPurged int64, messagesPurged
 	_, _ = tx.Exec("DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE session_id IN ("+placeholders+"))", args...)
 	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id IN ("+placeholders+"))", args...)
 
-	// Delete chat_history for these sessions (includes deleted messages)
+	// Delete chat_history for these sessions (includes archived sessions' messages)
 	result, err := tx.Exec("DELETE FROM chat_history WHERE session_id IN ("+placeholders+")", args...)
 	if err != nil {
 		return 0, 0, err
@@ -1356,7 +1356,7 @@ func PurgeDeletedData(sessionIDs []string) (sessionsPurged int64, messagesPurged
 	_, _ = tx.Exec("DELETE FROM task_executions WHERE session_id IN ("+placeholders+")", args...)
 
 	// Delete the session records
-	result, err = tx.Exec("DELETE FROM chat_sessions WHERE id IN ("+placeholders+") AND deleted = 1", args...)
+	result, err = tx.Exec("DELETE FROM chat_sessions WHERE id IN ("+placeholders+") AND archived = 1", args...)
 	if err != nil {
 		return 0, 0, err
 	}

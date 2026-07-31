@@ -12,11 +12,11 @@ import (
 // cleanupService defines the interface for session cleanup operations.
 // This allows testing without a real database connection.
 type cleanupService interface {
-	GetExpiredDeletedSessions(cutoff time.Time) ([]string, error)
-	PurgeDeletedData(sessionIDs []string) (sessionsPurged, messagesPurged int64, err error)
+	GetExpiredArchivedSessions(cutoff time.Time) ([]string, error)
+	PurgeArchivedData(sessionIDs []string) (sessionsPurged, messagesPurged int64, err error)
 }
 
-// CleanupWorker periodically purges soft-deleted data that has exceeded
+// CleanupWorker periodically purges archived data that has exceeded
 // the configured retention period. It deletes from both SQLite (chunks)
 // and SQLite (messages, sessions, raw responses).
 type CleanupWorker struct {
@@ -106,12 +106,12 @@ func (w *CleanupWorker) run() {
 	}
 }
 
-// cleanup performs one purge cycle: find expired soft-deleted sessions,
+// cleanup performs one purge cycle: find expired archived sessions,
 // then delete chunks and SQLite data.
 func (w *CleanupWorker) cleanup() {
 	cutoff := time.Now().AddDate(0, 0, -w.cfg.RetentionDays)
 
-	sessionIDs, err := w.svc.GetExpiredDeletedSessions(cutoff)
+	sessionIDs, err := w.svc.GetExpiredArchivedSessions(cutoff)
 	if err != nil {
 		slog.Error("rag cleanup: failed to query expired sessions", slog.String("err", err.Error()))
 		return
@@ -131,7 +131,7 @@ func (w *CleanupWorker) cleanup() {
 	}
 
 	// 2. Delete SQLite data (ai_raw_responses → chat_history → chat_sessions)
-	sessionsPurged, messagesPurged, err := w.svc.PurgeDeletedData(sessionIDs)
+	sessionsPurged, messagesPurged, err := w.svc.PurgeArchivedData(sessionIDs)
 	if err != nil {
 		slog.Error("rag cleanup: failed to purge data", slog.String("err", err.Error()))
 		return
@@ -149,10 +149,10 @@ func (w *CleanupWorker) cleanup() {
 // realCleanupService implements cleanupService using the real service package.
 type realCleanupService struct{}
 
-func (r *realCleanupService) GetExpiredDeletedSessions(cutoff time.Time) ([]string, error) {
-	return service.GetExpiredDeletedSessions(cutoff)
+func (r *realCleanupService) GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
+	return service.GetExpiredArchivedSessions(cutoff)
 }
 
-func (r *realCleanupService) PurgeDeletedData(sessionIDs []string) (int64, int64, error) {
-	return service.PurgeDeletedData(sessionIDs)
+func (r *realCleanupService) PurgeArchivedData(sessionIDs []string) (int64, int64, error) {
+	return service.PurgeArchivedData(sessionIDs)
 }

@@ -216,7 +216,7 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     closeSessionDrawer: vi.fn(),
     switchSession: vi.fn(),
     createSession: vi.fn(),
-    deleteSession: vi.fn(),
+    archiveSession: vi.fn(),
     sendMessage: vi.fn(),
     openChatPanel: vi.fn(),
     openSessionTab: vi.fn(),
@@ -2746,7 +2746,7 @@ describe('createSession', () => {
     )
   })
 
-  it('on POST failure after pre-check passes: restores currentSessionId to prevent stuck delete button', async () => {
+  it('on POST failure after pre-check passes: restores currentSessionId to prevent stuck archive button', async () => {
     mockState.sessionMaxCount = 5
     mockState.sessionCount = 3 // Pre-check passes
     // But backend returns 409 (TOCTOU race — another client created a session)
@@ -2786,10 +2786,10 @@ describe('createSession', () => {
 })
 
 // ───────────────────────────────────────────────────────────
-// deleteSession
+// archiveSession
 // ───────────────────────────────────────────────────────────
 
-describe('deleteSession', () => {
+describe('archiveSession', () => {
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(() => {
@@ -2804,7 +2804,7 @@ describe('deleteSession', () => {
   })
 
   it('successful deletion of current session: switches to another session', async () => {
-    // 1. DELETE /api/ai/session/delete → { ok: true }
+    // 1. DELETE /api/ai/session/archive → { ok: true }
     // 2. GET /api/ai/sessions → { sessions: [{ id: 's2', backend: 'claude' }] }
     // 3. switchSession('s2') → GET /api/ai/chat?session_id=s2 → session data
     // 4. loadSessionsOnce inside switchSession → GET /api/ai/sessions → sessions
@@ -2848,7 +2848,7 @@ describe('deleteSession', () => {
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
-    await session.deleteSession('s1', 'claude')
+    await session.archiveSession('s1', 'claude')
 
     // Should have switched to s2
     expect(currentSessionId.value).toBe('s2')
@@ -2860,7 +2860,7 @@ describe('deleteSession', () => {
   })
 
   it('deletion of current session with no remaining sessions: creates a new one', async () => {
-    // 1. DELETE /api/ai/session/delete → { ok: true }
+    // 1. DELETE /api/ai/session/archive → { ok: true }
     // 2. GET /api/ai/sessions → { sessions: [] }
     // 3. createSession() → POST /api/ai/sessions → new session
     // 4. switchSession() → GET /api/ai/chat?session_id=s-new → session data
@@ -2911,7 +2911,7 @@ describe('deleteSession', () => {
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
-    await session.deleteSession('s1', 'claude')
+    await session.archiveSession('s1', 'claude')
 
     // Should have created a new session
     expect(currentSessionId.value).toBe('s-new')
@@ -2943,7 +2943,7 @@ describe('deleteSession', () => {
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
-    await session.deleteSession('s2', 'claude')
+    await session.archiveSession('s2', 'claude')
 
     // Should NOT switch — still on s1
     expect(currentSessionId.value).toBe('s1')
@@ -2965,7 +2965,7 @@ describe('deleteSession', () => {
     })
 
     const session = createSession()
-    await session.deleteSession('s1', 'claude')
+    await session.archiveSession('s1', 'claude')
 
     // Error toast shown when data.ok is false
     expect(mockToastFn).toHaveBeenCalledWith(

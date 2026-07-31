@@ -73,8 +73,8 @@ func TestServeUserMessageIndex_DeletedSession(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Test", "claude", "", "default", "chat")
 	require.NoError(t, err)
 
-	// Soft-delete the session
-	_, err = service.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET deleted = 1 WHERE id = ?`, sessionID)
+	// Archive the session
+	_, err = service.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET archived = 1 WHERE id = ?`, sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/user-messages?session_id="+sessionID, nil)
@@ -152,7 +152,7 @@ func TestServeUserMessageIndex_NoProject(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-// --- ServeChatCount deleted session (GetSessionBackend guard) ---
+// --- ServeChatCount archived session (GetSessionBackend guard) ---
 
 func TestServeChatCount_DeletedSession(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -161,8 +161,8 @@ func TestServeChatCount_DeletedSession(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Test", "claude", "", "default", "chat")
 	require.NoError(t, err)
 
-	// Soft-delete the session
-	_, err = service.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET deleted = 1 WHERE id = ?`, sessionID)
+	// Archive the session
+	_, err = service.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET archived = 1 WHERE id = ?`, sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/count?session_id="+sessionID, nil)

@@ -13,8 +13,8 @@ const i18n = createI18n({
         actions: {
           session: 'Sessions',
           userMsgIndex: 'Index',
-          deleteCurrentSession: 'Delete',
-          noSessionToDelete: 'No session',
+          archiveCurrentSession: 'Archive',
+          noSessionToArchive: 'No session',
           autoSpeech: 'Auto speech',
           attachment: 'Attach',
         },
@@ -45,7 +45,7 @@ const i18n = createI18n({
           title: 'Quick send',
           edit: 'Edit',
         },
-        delete: { confirm: 'Delete session?' },
+        archive: { confirm: 'Archive current session? You can restore archived sessions via session search.' },
         atCommand: { title: 'At', chatsearchDesc: 'Search', taskDesc: 'Task' },
         slashCommand: { title: 'Slash' },
         acpSession: { title: 'ACP Sessions' },
@@ -499,16 +499,16 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('send')![0]).toEqual(['hello'])
   })
 
-  it('delete button is disabled when no currentSessionId', () => {
+  it('archive button is disabled when no currentSessionId', () => {
     const wrapper = mountBar({ currentSessionId: '' })
-    const deleteBtn = wrapper.find('.chat-action-btn-archive')
-    expect(deleteBtn.classes()).toContain('disabled')
+    const archiveBtn = wrapper.find('.chat-action-btn-archive')
+    expect(archiveBtn.classes()).toContain('disabled')
   })
 
-  it('delete button is enabled when currentSessionId exists', () => {
+  it('archive button is enabled when currentSessionId exists', () => {
     const wrapper = mountBar({ currentSessionId: 'session-1' })
-    const deleteBtn = wrapper.find('.chat-action-btn-archive')
-    expect(deleteBtn.classes()).not.toContain('disabled')
+    const archiveBtn = wrapper.find('.chat-action-btn-archive')
+    expect(archiveBtn.classes()).not.toContain('disabled')
   })
 
   it('exposes quick send touch handlers', () => {
@@ -624,30 +624,30 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('toggle-auto-speech')).toBeTruthy()
   })
 
-  it('delete button does nothing when no currentSessionId', async () => {
+  it('archive button does nothing when no currentSessionId', async () => {
     const wrapper = mountBar({ currentSessionId: '' })
-    const deleteBtn = wrapper.find('.chat-action-btn-archive')
-    await deleteBtn.trigger('click')
-    // Should not call dialog.confirm or emit delete-session
+    const archiveBtn = wrapper.find('.chat-action-btn-archive')
+    await archiveBtn.trigger('click')
+    // Should not call dialog.confirm or emit archive-session
     expect(mockDialogConfirm).not.toHaveBeenCalled()
-    expect(wrapper.emitted('delete-session')).toBeFalsy()
+    expect(wrapper.emitted('archive-session')).toBeFalsy()
   })
 
-  it('delete button calls dialog.confirm when session exists', async () => {
+  it('archive button calls dialog.confirm when session exists', async () => {
     mockDialogConfirm.mockResolvedValueOnce(false)
     const wrapper = mountBar({ currentSessionId: 'sess-1' })
-    const deleteBtn = wrapper.find('.chat-action-btn-archive')
-    await deleteBtn.trigger('click')
+    const archiveBtn = wrapper.find('.chat-action-btn-archive')
+    await archiveBtn.trigger('click')
     expect(mockDialogConfirm).toHaveBeenCalled()
   })
 
-  it('delete button emits delete-session on confirm', async () => {
+  it('archive button emits archive-session on confirm', async () => {
     mockDialogConfirm.mockResolvedValueOnce(true)
     const wrapper = mountBar({ currentSessionId: 'sess-1' })
-    const deleteBtn = wrapper.find('.chat-action-btn-archive')
-    await deleteBtn.trigger('click')
+    const archiveBtn = wrapper.find('.chat-action-btn-archive')
+    await archiveBtn.trigger('click')
     await wrapper.vm.$nextTick()
-    expect(wrapper.emitted('delete-session')).toBeTruthy()
+    expect(wrapper.emitted('archive-session')).toBeTruthy()
   })
 
   it('create button contextmenu emits create-session', async () => {

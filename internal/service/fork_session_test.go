@@ -141,18 +141,18 @@ func TestForkSession_SkipsStreamingMessages(t *testing.T) {
 	assert.Equal(t, "final", msgs[1].Content)
 }
 
-// ---------- ForkSession: soft-deleted source ----------
+// ---------- ForkSession: archived source ----------
 
-func TestForkSession_SoftDeletedSource(t *testing.T) {
+func TestForkSession_ArchivedSource(t *testing.T) {
 	setupDB(t)
 
 	sessID := helperCreateSession(t, "/project", "claude", "Original")
 
-	// Soft-delete the source session
-	err := service.DeleteSession("/project", "claude", sessID)
+	// Archive the source session
+	err := service.ArchiveSession("/project", "claude", sessID)
 	assert.NoError(t, err)
 
-	// Should fail because deleted=0 filter
+	// Should fail because archived=0 filter
 	_, err = service.ForkSession(sessID, "/project", "[Fork] Original", 0)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")

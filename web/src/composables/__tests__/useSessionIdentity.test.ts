@@ -178,7 +178,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: mockSwitch,
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -196,7 +196,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -223,7 +223,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: mockCreate,
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -241,7 +241,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: mockCreate,
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -255,15 +255,15 @@ describe('useSessionIdentity', () => {
         })
     })
 
-    // ── deleteSession ──
+    // ── archiveSession ──
 
-    describe('deleteSession', () => {
+    describe('archiveSession', () => {
         it('delegates to registered callback when available', async () => {
-            const mockDelete = vi.fn()
+            const mockArchive = vi.fn()
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: mockDelete,
+                archiveSession: mockArchive,
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -271,16 +271,16 @@ describe('useSessionIdentity', () => {
             })
 
             const identity = useSessionIdentity()
-            await identity.deleteSession('session-1', 'claude')
+            await identity.archiveSession('session-1', 'claude')
 
-            expect(mockDelete).toHaveBeenCalledWith('session-1', 'claude')
+            expect(mockArchive).toHaveBeenCalledWith('session-1', 'claude')
         })
 
         it('does not throw when callback is no-op', async () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -288,7 +288,7 @@ describe('useSessionIdentity', () => {
             })
 
             const identity = useSessionIdentity()
-            await expect(identity.deleteSession('session-1')).resolves.toBeUndefined()
+            await expect(identity.archiveSession('session-1')).resolves.toBeUndefined()
         })
     })
 
@@ -302,7 +302,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: mockSend,
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -322,7 +322,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: mockSend,
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -344,7 +344,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: mockOpen,
             })
@@ -359,7 +359,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -553,7 +553,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: mockSwitch,
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),
@@ -574,7 +574,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: mockOpen,
             })
@@ -1327,7 +1327,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: mockContinue,
@@ -1357,7 +1357,7 @@ describe('useSessionIdentity', () => {
             registerSessionActions({
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(false),
@@ -1442,7 +1442,7 @@ describe('useSessionIdentity', () => {
             const actions = {
                 switchSession: vi.fn(),
                 createSession: vi.fn(),
-                deleteSession: vi.fn(),
+                archiveSession: vi.fn(),
                 sendMessage: vi.fn(),
                 openChatPanel: vi.fn(),
                 continueFromExecution: vi.fn().mockResolvedValue(true),

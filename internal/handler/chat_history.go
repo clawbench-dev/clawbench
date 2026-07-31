@@ -47,7 +47,7 @@ func ServeChatHistory(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				setSessionID(w, r, sessionID)
 			}
 		}
-		// ISS-077: Verify session exists and is not soft-deleted, then check project ownership
+		// ISS-077: Verify session exists and is not archived, then check project ownership
 		backend := service.GetSessionBackend(sessionID)
 		if backend == "" {
 			writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
@@ -84,7 +84,7 @@ func ServeChatHistory(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		if sessionID == "" {
 			sessionID = getSessionID(r)
 		}
-		// ISS-077: Verify session exists and is not soft-deleted, then check project ownership
+		// ISS-077: Verify session exists and is not archived, then check project ownership
 		backend := service.GetSessionBackend(sessionID)
 		if backend == "" {
 			writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
@@ -118,7 +118,7 @@ func ServeChatCount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Verify session is not soft-deleted (GetSessionBackend filters deleted=0)
+	// Verify session is not archived (GetSessionBackend filters archived=0)
 	if service.GetSessionBackend(sessionID) == "" {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		return
@@ -146,7 +146,7 @@ func ServeUserMessageIndex(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Verify session is not soft-deleted (GetSessionBackend filters deleted=0)
+	// Verify session is not archived (GetSessionBackend filters archived=0)
 	if service.GetSessionBackend(sessionID) == "" {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		return
@@ -190,7 +190,7 @@ func ServeChatMessageUpdate(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedError(w, r, model.NotFound(nil, "MessageNotFound"))
 		return
 	}
-	// Check session is not soft-deleted, then verify project ownership
+	// Check session is not archived, then verify project ownership
 	if service.GetSessionBackend(msg.SessionID) == "" {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		return
@@ -249,7 +249,7 @@ func ServeToolCallDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Verify session is not soft-deleted, then check project ownership
+	// Verify session is not archived, then check project ownership
 	if service.GetSessionBackend(record.SessionID) == "" {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		return

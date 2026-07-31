@@ -306,7 +306,7 @@ func (s *Scheduler) AddTask(task *model.ScheduledTask) error {
 }
 
 // RemoveTask removes a task from cron and hard-deletes it from the database.
-// Also soft-deletes associated chat sessions and removes task_executions rows.
+// Also archives associated chat sessions and removes task_executions rows.
 func (s *Scheduler) RemoveTask(id int64) {
 	s.mu.Lock()
 	if entryID, ok := s.entries[id]; ok {
@@ -315,7 +315,7 @@ func (s *Scheduler) RemoveTask(id int64) {
 	}
 	s.mu.Unlock()
 
-	// Cascade: soft-delete associated chat sessions
+	// Cascade: archive associated chat sessions
 	rows, err := dbRead.Query(`
 		SELECT te.session_id, cs.project_path, cs.backend
 		FROM task_executions te
@@ -342,11 +342,11 @@ func (s *Scheduler) RemoveTask(id int64) {
 				sessions = append(sessions, si)
 			}
 		}
-		// Now soft-delete each session
+		// Now archive each session
 		for _, si := range sessions {
-			if err := DeleteSession(si.projectPath, si.backend, si.sessionID); err != nil {
+			if err := ArchiveSession(si.projectPath, si.backend, si.sessionID); err != nil {
 				slog.Error(
-					"failed to soft-delete session during task removal",
+					"failed to archive session during task removal",
 					slog.String("session_id", si.sessionID),
 					slog.String("err", err.Error()),
 				)
@@ -1056,7 +1056,7 @@ func MarkExecutionRead(executionID string) error {
 	return err
 }
 
-// DeleteTaskExecution deletes a single task execution and soft-deletes the
+// DeleteTaskExecution deletes a single task execution and archives the
 // associated chat session. Running executions cannot be deleted.
 func DeleteTaskExecution(executionID int64) error {
 	// Fetch execution details
@@ -1076,7 +1076,7 @@ func DeleteTaskExecution(executionID int64) error {
 	}
 
 	// Hard-delete the execution row first (conditional on status to prevent TOCTOU race).
-	// This must happen BEFORE soft-deleting the session: if the conditional DELETE fails
+	// This must happen BEFORE archiving the session: if the conditional DELETE fails
 	// (execution became running between the dbRead check and this DELETE), the session
 	// must remain intact to avoid inconsistent state.
 	result, err := WriteExec("DELETE FROM task_executions WHERE id = ? AND status != 'running'", executionID)
@@ -1087,16 +1087,16 @@ func DeleteTaskExecution(executionID int64) error {
 		return fmt.Errorf("cannot delete a running execution")
 	}
 
-	// Only soft-delete the associated chat session AFTER successful execution deletion.
+	// Only archive the associated chat session AFTER successful execution deletion.
 	var projectPath, backend string
 	err = dbRead.QueryRow(
 		"SELECT project_path, backend FROM chat_sessions WHERE id = ?",
 		sessionID,
 	).Scan(&projectPath, &backend)
 	if err == nil {
-		if err := DeleteSession(projectPath, backend, sessionID); err != nil {
+		if err := ArchiveSession(projectPath, backend, sessionID); err != nil {
 			slog.Error(
-				"failed to soft-delete session during execution deletion",
+				"failed to archive session during execution deletion",
 				slog.String("session_id", sessionID),
 				slog.String("err", err.Error()),
 			)
@@ -1110,7 +1110,7 @@ func DeleteTaskExecution(executionID int64) error {
 }
 
 // DeleteAllTaskExecutions deletes all non-running executions for a task
-// and soft-deletes the associated chat sessions.
+// and archives the associated chat sessions.
 func DeleteAllTaskExecutions(taskID int64) error {
 	// Collect all non-running executions with their session info
 	rows, err := dbRead.Query(`
@@ -1137,11 +1137,11 @@ func DeleteAllTaskExecutions(taskID int64) error {
 		}
 	}
 
-	// Soft-delete chat sessions
+	// Archive chat sessions
 	for _, ei := range execs {
-		if err := DeleteSession(ei.projectPath, ei.backend, ei.sessionID); err != nil {
+		if err := ArchiveSession(ei.projectPath, ei.backend, ei.sessionID); err != nil {
 			slog.Error(
-				"failed to soft-delete session during bulk execution deletion",
+				"failed to archive session during bulk execution deletion",
 				slog.String("session_id", ei.sessionID),
 				slog.String("err", err.Error()),
 			)

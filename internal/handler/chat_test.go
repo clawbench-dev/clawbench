@@ -680,19 +680,19 @@ func TestServeSessions_NoProjectCookie(t *testing.T) {
 	assertStatus(t, w, http.StatusForbidden)
 }
 
-// --- DeleteSession ---
+// --- ArchiveSession ---
 
-func TestDeleteSession_ExistingSession(t *testing.T) {
+func TestArchiveSession_ExistingSession(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "to delete", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete?session_id="+sessionID, nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID, nil)
 	withProjectCookie(req, env.ProjectDir)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertOK(t, w)
 
 	var result map[string]interface{}
@@ -700,39 +700,39 @@ func TestDeleteSession_ExistingSession(t *testing.T) {
 	assert.Equal(t, true, result["ok"])
 }
 
-func TestDeleteSession_MissingSessionID(t *testing.T) {
+func TestArchiveSession_MissingSessionID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete", nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive", nil)
 	withProjectCookie(req, env.ProjectDir)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
-func TestDeleteSession_NoProjectCookie(t *testing.T) {
+func TestArchiveSession_NoProjectCookie(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete?session_id=abc", nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id=abc", nil)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
-func TestDeleteSession_WrongMethod(t *testing.T) {
+func TestArchiveSession_WrongMethod(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodPost, "/api/ai/session/delete?session_id=abc", nil)
+	req := newRequest(t, http.MethodPost, "/api/ai/session/archive?session_id=abc", nil)
 	withProjectCookie(req, env.ProjectDir)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertStatus(t, w, http.StatusMethodNotAllowed)
 }
 
-func TestDeleteSession_ClosesACPConn(t *testing.T) {
+func TestArchiveSession_ClosesACPConn(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -756,26 +756,26 @@ func TestDeleteSession_ClosesACPConn(t *testing.T) {
 	mgr.SetConnForTest(sessionID, conn)
 
 	// Delete the session — should close the ACP connection
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete?session_id="+sessionID, nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertOK(t, w)
 
 	// Verify the connection was closed (CloseConn runs in goroutine, wait briefly)
 	assert.Eventually(t, func() bool { return mgr.GetConn(sessionID) == nil }, 2*time.Second, 10*time.Millisecond, "ACP connection should be closed after session delete")
 }
 
-func TestDeleteSession_NonACPAgentNoCrash(t *testing.T) {
+func TestArchiveSession_NonACPAgentNoCrash(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// codebuddy agent is not ACP — DeleteSession should still work
+	// codebuddy agent is not ACP — ArchiveSession should still work
 	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "Non-ACP session", "codebuddy", "", "default", "chat")
 	assert.NoError(t, err)
 
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete?session_id="+sessionID, nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertOK(t, w)
 }
 
@@ -2990,7 +2990,7 @@ func TestAIChat_POST_NoSessionID_Returns400(t *testing.T) {
 
 	// Count sessions before the request
 	countBefore := 0
-	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE deleted = 0 AND session_type = 'chat'").Scan(&countBefore)
+	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE archived = 0 AND session_type = 'chat'").Scan(&countBefore)
 
 	// POST without session_id (no cookie, no query param)
 	body := map[string]string{"message": "hello"}
@@ -3008,7 +3008,7 @@ func TestAIChat_POST_NoSessionID_Returns400(t *testing.T) {
 
 	// Verify no new session was created
 	countAfter := 0
-	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE deleted = 0 AND session_type = 'chat'").Scan(&countAfter)
+	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE archived = 0 AND session_type = 'chat'").Scan(&countAfter)
 	assert.Equal(t, countBefore, countAfter, "POST without session_id should NOT auto-create a session")
 }
 

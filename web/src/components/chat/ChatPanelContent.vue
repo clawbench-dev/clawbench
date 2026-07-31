@@ -102,7 +102,7 @@
       @toggle-auto-speech="autoSpeech.toggle"
       @create-session="() => manager.createSession()"
       @show-agent-selector="handleShowAgentSelector"
-      @delete-session="() => manager.deleteCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
+      @archive-session="() => manager.archiveCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @destroy-session="() => manager.destroyCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @open-user-msg-index="handleOpenUserMsgIndex"
       @open-acp-sessions="$emit('open-acp-sessions')"
@@ -447,7 +447,7 @@ const manager = useSessionManager({
   loading,
   switchSessionCore: session.switchSession,
   createSessionCore: session.createSession,
-  deleteSessionCore: session.deleteSession,
+  archiveSessionCore: session.archiveSession,
   destroySessionCore: session.destroySession,
   continueFromExecutionCore: session.continueFromExecution,
   forkSessionCore: session.forkSession,

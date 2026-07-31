@@ -640,41 +640,41 @@ func TestServeSessions_Post_NoAgents(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-// --- DeleteSession ---
+// --- ArchiveSession ---
 
-func TestDeleteSession_OK(t *testing.T) {
+func TestArchiveSession_OK(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "To Delete", "claude", "", "default", "chat")
 	require.NoError(t, err)
 
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete?session_id="+sessionID, nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assertOK(t, w)
 }
 
-func TestDeleteSession_NoSessionID(t *testing.T) {
+func TestArchiveSession_NoSessionID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/delete", nil)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive", nil)
 	req = withProjectCookie(req, env.ProjectDir)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestDeleteSession_BadMethod(t *testing.T) {
+func TestArchiveSession_BadMethod(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodPost, "/api/ai/session/delete", nil)
+	req := newRequest(t, http.MethodPost, "/api/ai/session/archive", nil)
 	req = withProjectCookie(req, env.ProjectDir)
 
-	w := callHandler(DeleteSession, req)
+	w := callHandler(ArchiveSession, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 

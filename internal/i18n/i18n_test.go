@@ -81,7 +81,7 @@ func TestT_TemplateData(t *testing.T) {
 	loc := Localizer(r)
 
 	msg := T(loc, "SessionLimitReached", map[string]interface{}{"MaxCount": 50})
-	assert.Equal(t, "Session limit reached (50), please delete old sessions", msg)
+	assert.Equal(t, "Session limit reached (50), please archive old sessions", msg)
 }
 
 func TestT_TemplateDataChinese(t *testing.T) {
@@ -90,7 +90,7 @@ func TestT_TemplateDataChinese(t *testing.T) {
 	loc := Localizer(r)
 
 	msg := T(loc, "SessionLimitReached", map[string]interface{}{"MaxCount": 50})
-	assert.Equal(t, "已达会话数量上限（50），请先删除旧会话", msg)
+	assert.Equal(t, "已达会话数量上限（50），请先归档旧会话", msg)
 }
 
 func TestT_AllKeysPresentInBothLanguages(t *testing.T) {

@@ -68,7 +68,7 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 			transport TEXT DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
-			deleted INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1068,7 +1068,7 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			title TEXT NOT NULL,
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			external_session_id TEXT DEFAULT '',
-			deleted INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(project_path, backend, id)
@@ -1607,6 +1607,84 @@ func TestSchema_DropHistoryDeletedColumn_Idempotent(t *testing.T) {
 	assert.NotContains(t, columns, "deleted", "deleted column should still not exist after second InitDB")
 }
 
+// TestSchema_RenameSessionDeletedToArchived verifies that when a database has
+// the old chat_sessions.deleted column, InitDB renames it to archived and
+// preserves existing data and indexes.
+func TestSchema_RenameSessionDeletedToArchived(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Step 1: Create DB with old schema where chat_sessions uses `deleted`
+	dbDir := filepath.Join(tmpDir, ".clawbench")
+	assert.NoError(t, os.MkdirAll(dbDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(dbDir, "ClawBench.db"))
+	assert.NoError(t, err)
+	oldDB.SetMaxOpenConns(1)
+	oldDB.Exec("PRAGMA journal_mode=WAL")
+	oldDB.Exec("PRAGMA busy_timeout=5000")
+
+	_, err = oldDB.Exec(`
+		CREATE TABLE IF NOT EXISTS chat_sessions (
+			id TEXT PRIMARY KEY,
+			project_path TEXT NOT NULL,
+			backend TEXT NOT NULL,
+			title TEXT NOT NULL,
+			session_type TEXT NOT NULL DEFAULT 'chat',
+			deleted INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(project_path, backend, id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, deleted, updated_at DESC, id DESC);
+	`)
+	assert.NoError(t, err)
+
+	_, err = oldDB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES ('active-sess', '/proj', 'claude', 'Active', 0)")
+	assert.NoError(t, err)
+	_, err = oldDB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES ('archived-sess', '/proj', 'claude', 'Archived', 1)")
+	assert.NoError(t, err)
+
+	// Verify deleted column exists before migration
+	columns := getTableColumns(t, oldDB, "chat_sessions")
+	assert.Contains(t, columns, "deleted", "deleted column should exist before migration")
+	assert.NotContains(t, columns, "archived")
+
+	oldDB.Close()
+
+	// Step 2: Run InitDB — should rename deleted to archived
+	err = InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	// Step 3: Verify archived column exists and deleted is gone
+	columns = getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "archived", "archived column should exist after migration")
+	assert.NotContains(t, columns, "deleted", "deleted column should be renamed after migration")
+
+	// Step 4: Verify data preserved and flag values intact
+	var archived int
+	err = db.QueryRow("SELECT archived FROM chat_sessions WHERE id = 'archived-sess'").Scan(&archived)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, archived, "archived session should retain archived=1")
+	err = db.QueryRow("SELECT archived FROM chat_sessions WHERE id = 'active-sess'").Scan(&archived)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, archived, "active session should retain archived=0")
+
+	// Step 5: Verify index still functions after rename
+	var activeCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_path = '/proj' AND archived = 0 AND session_type = 'chat'").Scan(&activeCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, activeCount)
+}
+
 // ---------- QuickCommand CRUD ----------
 
 // setupTestDBForQuickCommands creates an in-memory SQLite database with the terminal_quick_commands table
@@ -2070,7 +2148,7 @@ func setupTestDBForToolCallMigration(t *testing.T) func() {
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			session_type TEXT NOT NULL DEFAULT 'chat',
-			deleted INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(project_path, backend, id)

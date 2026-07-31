@@ -148,8 +148,8 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 	}
 }
 
-// DeleteSession handles DELETE for a single session.
-func DeleteSession(w http.ResponseWriter, r *http.Request) {
+// ArchiveSession handles DELETE for archiving a single session.
+func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return
@@ -169,28 +169,28 @@ func DeleteSession(w http.ResponseWriter, r *http.Request) {
 		backend = "codebuddy"
 	}
 
-	// Cancel the running session before deleting to kill the CLI process.
-	// This ensures no orphan CLI processes remain after soft-delete.
+	// Cancel the running session before archiving to kill the CLI process.
+	// This ensures no orphan CLI processes remain after archive.
 	if service.IsSessionRunning(sessionID) {
-		slog.Info("cancelling running session before delete", "session_id", sessionID)
+		slog.Info("cancelling running session before archive", "session_id", sessionID)
 		service.CancelSession(sessionID)
 	}
 
-	// Close the ACP connection for this session before soft-delete
-	// (GetSessionAgentID queries WHERE deleted=0, so we must read it first)
+	// Close the ACP connection for this session before archive
+	// (GetSessionAgentID queries WHERE archived=0, so we must read it first)
 	// Run in a goroutine because CloseConn calls cmd.Wait() which can
 	// block indefinitely if the agent subprocess doesn't exit cleanly,
 	// preventing the HTTP response from being sent.
 	agentID := service.GetSessionAgentID(sessionID)
 	if agentID != "" {
 		if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
-			slog.Info("acp: closing connection for deleted session", "session_id", sessionID, "agent_id", agentID)
+			slog.Info("acp: closing connection for archived session", "session_id", sessionID, "agent_id", agentID)
 			go ai.GetACPConnManager().CloseConn(sessionID)
 		}
 	}
 
-	if err := service.DeleteSession(projectPath, backend, sessionID); err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("failed to delete session")))
+	if err := service.ArchiveSession(projectPath, backend, sessionID); err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to archive session")))
 		return
 	}
 
@@ -199,7 +199,7 @@ func DeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // DestroySession handles DELETE for physically removing a session and all its data.
-// Unlike DeleteSession (soft-delete/archive), this irreversibly removes the session
+// Unlike ArchiveSession, this irreversibly removes the session
 // from the database — chat_history, tool_calls, raw_responses, task_executions, and
 // the session record itself.
 func DestroySession(w http.ResponseWriter, r *http.Request) {

@@ -286,8 +286,8 @@ describe('SessionDrawer', () => {
     })
   })
 
-  describe('deleteSession', () => {
-    it('emits delete after confirmation', async () => {
+  describe('archiveSession', () => {
+    it('emits archive after confirmation', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({
@@ -300,9 +300,9 @@ describe('SessionDrawer', () => {
       const wrapper = mountDrawer()
       await flushPromises()
 
-      await wrapper.vm.deleteSession('s1')
+      await wrapper.vm.archiveSession('s1')
 
-      expect(wrapper.emitted('delete')).toBeTruthy()
+      expect(wrapper.emitted('archive')).toBeTruthy()
     })
   })
 

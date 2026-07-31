@@ -22,7 +22,7 @@ export interface SessionSearchResult {
   score: number
   backend: string
   project_path: string
-  deleted: boolean
+  archived: boolean
   created_at: string
   match_count: number
   chunks: ChunkHit[]

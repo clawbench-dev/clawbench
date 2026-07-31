@@ -935,7 +935,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		rag.StartIndexer(cfg.RAG)
 	}
 
-	// Start cleanup worker for soft-deleted data
+	// Start cleanup worker for archived data
 	rag.StartCleanupWorker(cfg.RAG)
 
 	// Set RAG chunk purge callback for session cleanup worker

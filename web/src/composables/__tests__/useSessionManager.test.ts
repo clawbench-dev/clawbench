@@ -44,14 +44,14 @@ function createMockOptions() {
     const loading = ref(false)
     const switchSessionCore = vi.fn()
     const createSessionCore = vi.fn()
-    const deleteSessionCore = vi.fn()
+    const archiveSessionCore = vi.fn()
     const disconnectStream = vi.fn()
     const updateRenderedContents = vi.fn()
     const clearInputState = vi.fn()
     const scrollBottom = vi.fn()
     return {
         messages, loading,
-        switchSessionCore, createSessionCore, deleteSessionCore,
+        switchSessionCore, createSessionCore, archiveSessionCore,
         continueFromExecutionCore: vi.fn().mockResolvedValue(true),
         forkSessionCore: vi.fn().mockResolvedValue(true),
         checkContinueSessionCore: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
@@ -227,23 +227,23 @@ describe('useSessionManager', () => {
         })
     })
 
-    // ── deleteSession ──
+    // ── archiveSession ──
 
-    describe('deleteSession', () => {
+    describe('archiveSession', () => {
         it('calls cleanup then clears queue then deletes', async () => {
             const opts = createMockOptions()
             opts.loading.value = true
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.deleteSession('session-2', 'claude')
+            await mgr.archiveSession('session-2', 'claude')
 
             expect(opts.disconnectStream).toHaveBeenCalled()
             expect(fetchSpy).toHaveBeenCalledWith(
                 expect.stringContaining('/api/ai/queue?session_id=session-2'),
                 { method: 'DELETE' },
             )
-            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-2', 'claude')
+            expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-2', 'claude')
 
             fetchSpy.mockRestore()
         })
@@ -253,9 +253,9 @@ describe('useSessionManager', () => {
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'))
             const mgr = useSessionManager(opts)
 
-            await mgr.deleteSession('session-2')
+            await mgr.archiveSession('session-2')
 
-            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-2', undefined)
+            expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-2', undefined)
 
             fetchSpy.mockRestore()
         })
@@ -266,10 +266,10 @@ describe('useSessionManager', () => {
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.deleteSession('session-2', 'claude')
+            await mgr.archiveSession('session-2', 'claude')
 
             expect(mockCancelChat).toHaveBeenCalledWith('session-2')
-            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-2', 'claude')
+            expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-2', 'claude')
 
             fetchSpy.mockRestore()
         })
@@ -279,10 +279,10 @@ describe('useSessionManager', () => {
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.deleteSession('session-2', 'claude')
+            await mgr.archiveSession('session-2', 'claude')
 
             expect(mockCancelChat).not.toHaveBeenCalled()
-            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-2', 'claude')
+            expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-2', 'claude')
 
             fetchSpy.mockRestore()
         })
@@ -294,26 +294,26 @@ describe('useSessionManager', () => {
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
             const mgr = useSessionManager(opts)
 
-            await mgr.deleteSession('session-2', 'claude')
+            await mgr.archiveSession('session-2', 'claude')
 
-            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-2', 'claude')
+            expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-2', 'claude')
 
             fetchSpy.mockRestore()
         })
     })
 
-    // ── deleteCurrentSession ──
+    // ── archiveCurrentSession ──
 
-    describe('deleteCurrentSession', () => {
+    describe('archiveCurrentSession', () => {
         it('returns early if no current session', async () => {
             const opts = createMockOptions()
             mockCurrentSessionId.value = ''
             const mgr = useSessionManager(opts)
 
             const deleteDraft = vi.fn()
-            await mgr.deleteCurrentSession(deleteDraft)
+            await mgr.archiveCurrentSession(deleteDraft)
 
-            expect(opts.deleteSessionCore).not.toHaveBeenCalled()
+            expect(opts.archiveSessionCore).not.toHaveBeenCalled()
             expect(deleteDraft).not.toHaveBeenCalled()
         })
 
@@ -326,10 +326,10 @@ describe('useSessionManager', () => {
             const mgr = useSessionManager(opts)
             const deleteDraft = vi.fn()
 
-            await mgr.deleteCurrentSession(deleteDraft)
+            await mgr.archiveCurrentSession(deleteDraft)
 
             expect(opts.messages.value.some((m: any) => m.pending)).toBe(false)
-            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-1', 'claude')
+            expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-1', 'claude')
             expect(deleteDraft).toHaveBeenCalledWith('session-1')
 
             fetchSpy.mockRestore()
@@ -342,10 +342,10 @@ describe('useSessionManager', () => {
             const mgr = useSessionManager(opts)
             const deleteDraft = vi.fn()
 
-            await mgr.deleteCurrentSession(deleteDraft)
+            await mgr.archiveCurrentSession(deleteDraft)
 
             expect(mockCancelChat).toHaveBeenCalledWith('session-1')
-            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-1', 'claude')
+            expect(opts.archiveSessionCore).toHaveBeenCalledWith('session-1', 'claude')
 
             fetchSpy.mockRestore()
         })
