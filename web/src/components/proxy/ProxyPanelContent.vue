@@ -126,6 +126,7 @@
 
           <!-- Empty state -->
           <div v-else class="proxy-empty">
+            <NetworkIcon :size="40" class="proxy-empty-icon" />
             <div class="proxy-empty-text">{{ t('proxy.noPorts') }}</div>
             <div class="proxy-empty-hint">{{ t('proxy.emptyHint') }}</div>
           </div>
@@ -209,7 +210,7 @@
 </template>
 
 <script setup>
-import { XCircle, RotateCcw, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown } from 'lucide-vue-next'
+import { XCircle, RotateCcw, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, Network as NetworkIcon } from 'lucide-vue-next'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
@@ -609,6 +610,16 @@ async function handleRetryTunnel() {
   text-align: center;
   color: var(--text-muted, #999);
   font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.proxy-empty-icon {
+  color: var(--text-muted, #999);
+  opacity: 0.5;
 }
 
 .proxy-empty-hint {
