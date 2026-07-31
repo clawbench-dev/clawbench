@@ -242,7 +242,7 @@ defineExpose({
 .bs-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 3px;
   padding: 0 6px;
   height: 36px;
   border-bottom: none;
