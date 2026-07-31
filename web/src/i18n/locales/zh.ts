@@ -627,6 +627,8 @@ export default {
     hideHiddenFiles: '隐藏隐藏文件',
     showHiddenFiles: '显示隐藏文件',
     uploadHere: '上传文件',
+    dropToUpload: '松开上传到当前目录',
+    pasteToUpload: '粘贴上传文件...',
     truncateHint: '仅展示前 {max} 项（共 {total} 项），请使用搜索精确定位',
     emptyDir: '此目录为空',
     noFiles: '未找到支持的文件',

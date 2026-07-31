@@ -1994,6 +1994,58 @@ function currentFileForClipboard() {
     white-space: nowrap;
 }
 
+/* ── Drop overlay ── */
+.drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 10%, var(--bg-primary, #fff));
+    color: var(--accent-color, #4a90d9);
+    font-size: 14px;
+    font-weight: 500;
+    pointer-events: none;
+    border-radius: 4px;
+}
+
+[data-theme="dark"] .drop-overlay {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, var(--bg-primary, #1a1a1a));
+}
+
+/* ── Paste overlay ── */
+.paste-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: color-mix(in srgb, var(--success-color, #22c55e) 10%, var(--bg-primary, #fff));
+    color: var(--success-color, #22c55e);
+    font-size: 14px;
+    font-weight: 500;
+    pointer-events: none;
+    border-radius: 4px;
+}
+
+[data-theme="dark"] .paste-overlay {
+    background: color-mix(in srgb, var(--success-color, #22c55e) 12%, var(--bg-primary, #1a1a1a));
+}
+
+.paste-fade-enter-active,
+.paste-fade-leave-active {
+    transition: opacity 0.3s ease;
+}
+
+.paste-fade-enter-from,
+.paste-fade-leave-to {
+    opacity: 0;
+}
+
 </style>
 
 <!-- Unscoped styles for Teleported dropdown (rendered in body, outside scoped context) -->

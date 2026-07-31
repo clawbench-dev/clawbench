@@ -72,6 +72,15 @@ const toast = useToast()
 const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute } = useMessageClusters()
 const { addItem } = useQuickSend()
 
+// ── Tab binding (useTabDrawer) ──
+// BottomSheet is teleported to <body>, so it survives v-show tab-panel hiding
+// and would remain visible when switching to other tabs (file manager, etc.).
+// useTabDrawer('chat', { autoRestore: false }) ensures:
+//   1. effectiveOpen = false when activeTab !== 'chat' (drawer auto-hides)
+//   2. autoRestore: false — won't auto-reopen when switching back to chat tab
+//      (it's a recommendation picker, not a persistent panel)
+// IMPORTANT: All BottomSheet-based drawers on the chat tab MUST use useTabDrawer
+// to stay hidden on non-chat tabs. See useTabDrawer.ts for details.
 const drawer = useTabDrawer('chat', { autoRestore: false })
 
 const progressPercent = computed(() => {
