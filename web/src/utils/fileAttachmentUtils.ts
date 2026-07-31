@@ -31,3 +31,21 @@ export function isImageFile(path: string | null | undefined): boolean {
   const lower = path.toLowerCase()
   return IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext))
 }
+
+/** Deduplicate file entries by path, preferring entries with richer metadata (line ranges).
+ *  When two entries share the same path, the one with startLine/endLine is kept. */
+export function dedupeFiles(files: FileEntry[]): FileEntry[] {
+  const result: FileEntry[] = []
+  const byPath = new Map<string, FileEntry>()
+  for (const f of files) {
+    const existing = byPath.get(f.path)
+    if (!existing) {
+      byPath.set(f.path, f)
+      result.push(f)
+    } else if (f.startLine !== undefined && existing.startLine === undefined) {
+      result[result.indexOf(existing)] = f
+      byPath.set(f.path, f)
+    }
+  }
+  return result
+}

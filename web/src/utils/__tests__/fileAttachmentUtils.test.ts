@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFileEntry, isUploadPath, isImageFile } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles } from '@/utils/fileAttachmentUtils.ts'
 
 describe('normalizeFileEntry', () => {
   it('normalizes string to { path, isDir: false } object', () => {
@@ -71,4 +71,81 @@ describe('isImageFile', () => {
   it('handles .ico', () => { expect(isImageFile('favicon.ico')).toBe(true) })
   it('handles .tiff', () => { expect(isImageFile('scan.tiff')).toBe(true) })
   it('handles .tif', () => { expect(isImageFile('scan.tif')).toBe(true) })
+})
+
+describe('dedupeFiles', () => {
+  it('returns empty array for empty input', () => {
+    expect(dedupeFiles([])).toEqual([])
+  })
+
+  it('returns same array when no duplicates', () => {
+    const files = [
+      { path: '/a.go', isDir: false },
+      { path: '/b.go', isDir: false },
+    ]
+    expect(dedupeFiles(files)).toEqual(files)
+  })
+
+  it('removes duplicate paths keeping first occurrence', () => {
+    const files = [
+      { path: '/a.go', isDir: false },
+      { path: '/b.go', isDir: false },
+      { path: '/a.go', isDir: false },
+    ]
+    expect(dedupeFiles(files)).toEqual([
+      { path: '/a.go', isDir: false },
+      { path: '/b.go', isDir: false },
+    ])
+  })
+
+  it('prefers entry with line-range metadata over simpler entry', () => {
+    const files = [
+      { path: '/a.go', isDir: false },                                    // simple (no line info)
+      { path: '/b.go', isDir: false },
+      { path: '/a.go', isDir: false, startLine: 10, endLine: 20 },       // richer (has line info)
+    ]
+    expect(dedupeFiles(files)).toEqual([
+      { path: '/a.go', isDir: false, startLine: 10, endLine: 20 },
+      { path: '/b.go', isDir: false },
+    ])
+  })
+
+  it('keeps simpler entry when richer entry comes first', () => {
+    // If the first occurrence already has line info, keep it
+    const files = [
+      { path: '/a.go', isDir: false, startLine: 5, endLine: 15 },
+      { path: '/a.go', isDir: false },  // simpler, later — not replaced
+    ]
+    expect(dedupeFiles(files)).toEqual([
+      { path: '/a.go', isDir: false, startLine: 5, endLine: 15 },
+    ])
+  })
+
+  it('does not replace when both entries have line info', () => {
+    const files = [
+      { path: '/a.go', isDir: false, startLine: 1, endLine: 10 },
+      { path: '/a.go', isDir: false, startLine: 20, endLine: 30 },
+    ]
+    // Keeps the first entry (already has line info)
+    expect(dedupeFiles(files)).toEqual([
+      { path: '/a.go', isDir: false, startLine: 1, endLine: 10 },
+    ])
+  })
+
+  it('handles mixed uploaded + project files dedup', () => {
+    // Simulates sendMessage merge: uploaded file (no line info) + project file (with line info)
+    const uploaded = [{ path: '.clawbench/uploads/img.png', isDir: false }]
+    const project = [{ path: '/src/main.go', isDir: false, startLine: 42, endLine: 50 }]
+    // No overlap — both kept
+    expect(dedupeFiles([...uploaded, ...project])).toEqual([...uploaded, ...project])
+  })
+
+  it('dedupes auto-attached upload path that also appears as project reference', () => {
+    // A file auto-attached from upload AND manually attached as project reference
+    const uploaded = [{ path: '/src/main.go', isDir: false }]                          // from pendingFiles (no line info)
+    const project = [{ path: '/src/main.go', isDir: false, startLine: 10, endLine: 20 }] // from attachedFiles (has line info)
+    expect(dedupeFiles([...uploaded, ...project])).toEqual([
+      { path: '/src/main.go', isDir: false, startLine: 10, endLine: 20 },
+    ])
+  })
 })

@@ -177,6 +177,7 @@ import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate } from '@/utils/chatSessionUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
+import { dedupeFiles } from '@/utils/fileAttachmentUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
 import { playNotificationSound } from '@/composables/useNotificationSound.ts'
 import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -625,24 +626,6 @@ function persistSessionUpdate(fields) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
   }).catch(() => { /* best effort — next POST /api/ai/chat will also persist */ })
-}
-
-/** Deduplicate file entries by path, preferring entries with richer metadata (line ranges). */
-function dedupeFiles(files) {
-  const result = []
-  const byPath = new Map()
-  for (const f of files) {
-    const existing = byPath.get(f.path)
-    if (!existing) {
-      byPath.set(f.path, f)
-      result.push(f)
-    } else if (f.startLine !== undefined && existing.startLine === undefined) {
-      // Replace with the entry that has line-range metadata
-      result[result.indexOf(existing)] = f
-      byPath.set(f.path, f)
-    }
-  }
-  return result
 }
 
 async function sendMessage(text) {
