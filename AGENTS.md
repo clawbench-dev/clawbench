@@ -44,11 +44,11 @@ npm test                             # Vitest 前端测试
 | 包 | 职责 |
 |---|------|
 | `internal/handler/` | HTTP 端点，所有 `/api/` 路由经 `middleware.Auth` 鉴权，聊天通过 WebSocket 流式传输 |
-| `internal/service/` | 业务逻辑：聊天持久化、自动摘要、调度器、SQLite、Schema 迁移、Agent 存储、API 密钥加密 |
+| `internal/service/` | 业务逻辑：聊天持久化、自动摘要、调度器、SQLite、Schema 迁移、Agent 存储、API 密钥加密、会话归档留存期自动清理（SessionCleanupWorker） |
 | `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）→ `AutoResumeBackend`（计划模式自动续行）→ `ACPBackend`（JSON-RPC over stdio）。12 个后端子包通过 `ai.RegisterBackend()` 注册 |
 | `internal/model/` | 数据模型、后端注册表、模型发现、28 个 LLM Provider |
 | `internal/speech/` | TTS：Edge TTS、Piper、Kokoro、MOSS-TTS-Nano |
-| `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API |
+| `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类分析（ClusterWorker：Union-Find + Sørensen-Dice） |
 | `internal/terminal/` | Web 终端：PTY 会话、环形缓冲回放、多标签 |
 | `internal/ws/` | WebSocket 事件通道，StreamHub 会话级扇出，Manager 广播+重连缓冲回放 |
 | `internal/ssh/` | SSH 隧道服务器 |
