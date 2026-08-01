@@ -29,13 +29,15 @@ ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（Code
 | [会话导航与分叉](features/session-navigation.md) | 用户消息索引、跨分页定位、从指定消息创建对话分支 |
 | [快捷操作](features/quick-actions.md) | 聊天 Quick Send、终端 Quick Commands、CRUD 与排序 |
 | [RAG 检索](features/rag.md) | 文档分块、向量化（可独立开关）、SQLite vec0 向量索引、混合检索、会话聚合搜索、索引进度跟踪 |
-| [推送通知](features/push-notifications.md) | WebSocket 实时推送、权限待审推送、事件缓冲回放、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊） |
+| [推送通知](features/push-notifications.md) | WebSocket 实时推送、离线事件持久化与拉取、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊） |
+| [系统资源监控](features/system-resources.md) | gopsutil 采集 CPU/内存/磁盘/网络/负载、500ms 采样缓存、可见性感知轮询、WS 断线时显示连接状态 |
 
 ### infra/ — 基础设施
 
 | 模块 | 说明 |
 |------|------|
 | [认证与中间件](infra/auth-and-middleware.md) | SHA-256 密码认证、可配置 localhost 旁路、按路由认证、API 密钥加密、请求链（含 NoCache）、panic 恢复 |
+| [国际化](infra/i18n.md) | go-i18n bundle、嵌入式 YAML 翻译、X-Locale/Cookie/Accept-Language 优先级链、推送通知独立 Localizer |
 | [SSH 隧道](infra/ssh-tunnel.md) | direct-tcpip 端口转发、密码认证、自动 host key、暴力破解防护、端口白名单默认 1024-65535（ISS-186 修复）、状态查询走 `/api/ssh/info` |
 | [FRP 隧道](infra/frp-tunnel.md) | 进程内 FRP 客户端、状态机生命周期、代理配置热重载 vs 通用配置重启、自动端口分配、WS 事件广播、双认证级别 API |
 | [Proxy 注册表](infra/proxy.md) | 反向代理、Host 头重写、特权端口映射、前端端口展示 |
@@ -51,7 +53,7 @@ ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（Code
 
 | 模块 | 说明 |
 |------|------|
-| [前端架构](client/frontend-architecture.md) | 单页布局、reactive store、composable 模式、统一 WebSocket 单通道、ACP 会话管理、标注管道（文件路径 + localhost URL + commit hash + Worktree）、appLog 强制日志规范、FileHeader 三层弹性布局、系统资源面板、边缘滑动返回、文件/Agent 图标、会话搜索抽屉 |
+| [前端架构](client/frontend-architecture.md) | 单页布局、reactive store、composable 模式、统一 WebSocket 单通道、ACP 会话管理、标注管道、appLog 强制日志规范、FileHeader 三层弹性布局、系统资源面板、边缘滑动返回、文件/Agent/Provider 图标、会话搜索抽屉、WS 断线连接状态 |
 | [Android 集成](client/android-integration.md) | JS Bridge（25+ 方法）、9 个 Java 类模块（BackgroundService / PendingEventsWorker / BootCompletedReceiver 等）、APK 嵌入（`build.sh --android` → `go:embed` → `/api/apk`）、AppLog 兼容日志端点、推送感知生命周期 |
 | [多服务器管理](client/multi-server.md) | 服务器列表、凭据保存、登录页选择、应用内快速切换 |
 | [客户端安装与 App 模式](client/install-and-app-mode.md) | PWA 安装、iOS 手动安装、APK 下载与原生模式识别 |
@@ -60,8 +62,8 @@ ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（Code
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Go 1.25+、SQLite（WAL + vec0 向量索引）、robfig/cron、gotreesitter（符号提取）、gopsutil（系统资源）、fatedier/frp（进程内 FRP 客户端） |
-| 前端 | Vue 3 + TypeScript、Vite、xterm.js、marked + hljs |
+| 后端 | Go 1.25+、SQLite（WAL + vec0 向量索引）、robfig/cron、gotreesitter（符号提取）、gopsutil（系统资源）、fatedier/frp（进程内 FRP 客户端）、go-i18n/v2（国际化） |
+| 前端 | Vue 3 + TypeScript、Vite、xterm.js、marked + hljs（选择性语言注册） |
 | AI 集成 | Shell-out 到 CLI 工具、ACP JSON-RPC over stdio、stream-json 解析 |
 | 实时通信 | WebSocket `/api/ai/events/ws`（统一推送：聊天 + 系统事件 + 摘要 + 权限待审 + replay_done，`StreamHub` 会话级扇出）、旁注小通道（`/api/file/watch`、`/api/dir/search` SSE；`/api/tts/audio/ws` WS）、SSH（端口转发） |
 | 安全 | SHA-256 密码存储、AES-256-GCM API 密钥加密、HKDF-SHA256 密钥派生 |

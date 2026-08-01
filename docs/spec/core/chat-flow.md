@@ -91,6 +91,6 @@ ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写
 - **消息排队在内存中**：排队消息存储在内存中，重启丢失——这是有意为之的权衡，排队消息本质是待执行的瞬时指令，不需要跨重启持久化
 - **归档保留 RAG 可搜索性**：归档的会话和消息标记 `deleted=1` 而非物理删除，RAG 索引仍可检索到，用户可通过会话搜索恢复归档的会话——历史知识不应因用户整理而丢失
 - **单 WS 通道统一推送**：聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）和系统事件（`session_update`/`task_update`/`summary_update`/`permission_pending`）共用 `/api/ai/events/ws`，由 `StreamHub`（`internal/ws/stream_hub.go`）做会话级扇出。同一 session 可被多客户端同时订阅；客户端通过 `subscribe` 消息加入，`unsubscribe` 退出
-- **前端 Block 合并**：连续的 text/thinking 事件合并为同一个 Block 渲染，tool_use 作为 Block 边界——减少 DOM 更新频率，提升渲染性能
+- **前端 Block 合并**：连续的 text/thinking 事件在 `AccumulateBlock` 中向后搜索同类型块进行合并，tool_use 作为自然边界——减少 DOM 更新频率，提升渲染性能。ACP 子代理完整重放产生的重复文本块通过前缀匹配去重，避免子代理回放时在 UI 中出现重复内容
 - **自动摘要有三种模式**：`simple` 模式从消息 Block 中直接提取最后回答文本（同步、无 AI 调用），`ai` 模式在 session_complete 事件后异步调用 `AsyncSummarize`，空字符串禁用摘要。短文本跳过摘要。摘要结果存入统一的 `summaries` 表，通过 WS `summary_update` 事件推送——摘要生成与聊天流解耦，不影响流式体验
 - **SessionExecutor 统一执行引擎**：交互式聊天和定时任务执行共用 `SessionExecutor`，差异化行为通过 `RunConfig.Mode` 控制（ModeInteractive / ModeScheduled）。消除了 handler 和 scheduler 中的重复执行逻辑
