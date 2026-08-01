@@ -92,16 +92,17 @@ async function startCompute() {
     const resp = await fetch('/api/chat/message-clusters/compute', { method: 'POST' })
     if (resp.status === 409) {
       appLog.i('MsgCluster', 'Computation already running')
-      return
+      return 'already_running'
     }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     computing.value = true
     progress.value.status = 'computing'
     progress.value.phase = 'extracting'
     progress.value.elapsed_ms = 0
-    pollProgress()
+    return 'started'
   } catch (e) {
     appLog.e('MsgCluster', `Failed to start computation: ${e}`)
+    return 'error'
   }
 }
 

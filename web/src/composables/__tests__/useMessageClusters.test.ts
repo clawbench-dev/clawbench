@@ -105,35 +105,37 @@ describe('useMessageClusters', () => {
   })
 
   describe('startCompute', () => {
-    it('starts computation and begins polling', async () => {
+    it('starts computation and returns started', async () => {
       vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse({}, 200))
 
       const { computing, progress, startCompute } = useMessageClusters()
-      await startCompute()
+      const result = await startCompute()
 
       expect(fetch).toHaveBeenCalledWith(COMPUTE_URL, { method: 'POST' })
       expect(computing.value).toBe(true)
       expect(progress.value.status).toBe('computing')
+      expect(result).toBe('started')
     })
 
-    it('handles 409 already running', async () => {
+    it('handles 409 already running and returns already_running', async () => {
       vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse({}, 409))
 
       const { computing, startCompute } = useMessageClusters()
-      await startCompute()
+      const result = await startCompute()
 
       expect(computing.value).toBe(false)
-      // No polling should start — no status URL calls
       expect(fetch).toHaveBeenCalledTimes(1)
+      expect(result).toBe('already_running')
     })
 
-    it('handles POST error gracefully', async () => {
+    it('handles POST error gracefully and returns error', async () => {
       vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse({}, 500))
 
       const { computing, startCompute } = useMessageClusters()
-      await startCompute()
+      const result = await startCompute()
 
       expect(computing.value).toBe(false)
+      expect(result).toBe('error')
     })
   })
 
@@ -142,8 +144,9 @@ describe('useMessageClusters', () => {
       // Mock compute POST
       vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse({}, 200))
 
-      const { computing, progress, clusters, loaded, startCompute, stopPolling } = useMessageClusters()
+      const { computing, progress, clusters, loaded, startCompute, stopPolling, pollProgress } = useMessageClusters()
       await startCompute()
+      pollProgress() // start polling manually (drawer would call this)
 
       // First poll: still computing
       const computingProgress = {
@@ -195,8 +198,9 @@ describe('useMessageClusters', () => {
       // Mock compute POST
       vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse({}, 200))
 
-      const { computing, progress, startCompute } = useMessageClusters()
+      const { computing, progress, startCompute, pollProgress } = useMessageClusters()
       await startCompute()
+      pollProgress()
 
       // First poll returns error status
       const errorProgress = {
@@ -227,8 +231,9 @@ describe('useMessageClusters', () => {
       // Mock compute POST
       vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse({}, 200))
 
-      const { startCompute, stopPolling, computing } = useMessageClusters()
+      const { startCompute, stopPolling, computing, pollProgress } = useMessageClusters()
       await startCompute()
+      pollProgress()
 
       // Poll 1: computing
       vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse({
@@ -259,8 +264,9 @@ describe('useMessageClusters', () => {
       // Mock compute POST
       vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse({}, 200))
 
-      const { startCompute, stopPolling } = useMessageClusters()
+      const { startCompute, stopPolling, pollProgress } = useMessageClusters()
       await startCompute()
+      pollProgress()
 
       // Let first poll happen
       vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse({

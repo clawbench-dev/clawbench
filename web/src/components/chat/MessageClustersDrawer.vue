@@ -55,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Sparkles as SparklesIcon } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -69,7 +69,7 @@ const TAG = 'MsgClusterDrawer'
 
 const { t } = useI18n()
 const toast = useToast()
-const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute: rawStartCompute, pollProgress } = useMessageClusters()
+const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute: rawStartCompute, pollProgress, stopPolling } = useMessageClusters()
 const { addItem } = useQuickSend()
 
 // ── Tab binding (useTabDrawer) ──
@@ -82,6 +82,11 @@ const { addItem } = useQuickSend()
 // IMPORTANT: All BottomSheet-based drawers on the chat tab MUST use useTabDrawer
 // to stay hidden on non-chat tabs. See useTabDrawer.ts for details.
 const drawer = useTabDrawer('chat', { autoRestore: false })
+
+// Stop polling when drawer closes — WS events provide progress in background
+watch(() => drawer.effectiveOpen.value, (isOpen) => {
+  if (!isOpen) stopPolling()
+})
 
 const progressPercent = computed(() => {
   const phase = progress.value.phase
@@ -116,14 +121,16 @@ async function open() {
 }
 
 async function handleStartCompute() {
-  await rawStartCompute()
-  // If computation didn't start (error/409), show feedback
-  if (!computing.value && progress.value.status !== 'computing') {
-    if (progress.value.status === 'error') {
-      toast.show(t('chat.messageClusters.error'), { type: 'error' })
-    } else {
-      toast.show(t('chat.messageClusters.computing'), { type: 'info' })
-    }
+  const result = await rawStartCompute()
+  if (result === 'started') {
+    // Start polling since drawer is open and user clicked the button
+    pollProgress()
+  } else if (result === 'already_running') {
+    toast.show(t('chat.messageClusters.computing'), { type: 'info' })
+    // Ensure polling is running for WS fallback
+    pollProgress()
+  } else if (result === 'error') {
+    toast.show(t('chat.messageClusters.error'), { type: 'error' })
   }
 }
 
