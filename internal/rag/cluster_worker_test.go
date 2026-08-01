@@ -207,13 +207,13 @@ func TestClusterWorker_ComputeOnce(t *testing.T) {
 	// Verify cache populated
 	cache, mode, _, err := service.GetClusterCache()
 	require.NoError(t, err)
-	assert.Equal(t, "exact", mode) // no embedder → exact mode
+	assert.Equal(t, "fts", mode) // no embedder → FTS mode (always available)
 	assert.Len(t, cache, 3, "should have 3 clusters")
 
 	// Verify meta shows "done"
 	progress := cw.GetProgress()
 	assert.Equal(t, "done", progress.Status)
-	assert.Equal(t, "exact", progress.Mode)
+	assert.Equal(t, "fts", progress.Mode)
 	assert.Equal(t, 3, progress.MsgCount)
 	assert.Equal(t, 3, progress.ClusterCount)
 	assert.True(t, progress.ElapsedMs >= 0, "elapsed time should be non-negative")
@@ -263,7 +263,7 @@ func TestClusterWorker_GetProgress_AfterCompute(t *testing.T) {
 
 	progress := cw.GetProgress()
 	assert.Equal(t, "done", progress.Status)
-	assert.Equal(t, "exact", progress.Mode)
+	assert.Equal(t, "fts", progress.Mode)
 	assert.Equal(t, 2, progress.MsgCount)
 	assert.Equal(t, 2, progress.ClusterCount)
 	assert.True(t, progress.ElapsedMs >= 0)

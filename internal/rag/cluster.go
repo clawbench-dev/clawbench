@@ -300,16 +300,11 @@ func ClusterMessagesWithEmbeddings(ctx context.Context, stats []MessageStat, emb
 			slog.String("err", err.Error()))
 	}
 
-	// FTS fallback (embedder present but unhealthy, or vector failed)
-	if embedder != nil {
-		simFn := sorensenDiceWithLengthPenalty(0.5)
-		clusters := ClusterMessages(stats, simFn, threshold)
-		return clusters, "fts"
-	}
-
-	// No embedder → exact only
-	clusters := ClusterMessages(stats, nil, threshold)
-	return clusters, "exact"
+	// FTS fallback — always available (token-based Sørensen-Dice, no embedding needed)
+	// Used when: no embedder, embedder unhealthy, or vector failed
+	simFn := sorensenDiceWithLengthPenalty(0.5)
+	clusters := ClusterMessages(stats, simFn, threshold)
+	return clusters, "fts"
 }
 
 // extractTexts returns just the Text field from each MessageStat.

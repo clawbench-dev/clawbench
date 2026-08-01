@@ -334,8 +334,8 @@ func TestVectorSimilarityMatrix_AllEmbeddingsFailed(t *testing.T) {
 	}
 }
 
-func TestClusterMessagesWithEmbeddings_ExactOnly(t *testing.T) {
-	// nil embedder → mode="exact", each stat its own cluster
+func TestClusterMessagesWithEmbeddings_FTSFallbackNoEmbedder(t *testing.T) {
+	// nil embedder → mode="fts" (FTS is always available, no embedding needed)
 	stats := []MessageStat{
 		{Text: "你好", Count: 3},
 		{Text: "hello", Count: 2},
@@ -343,16 +343,12 @@ func TestClusterMessagesWithEmbeddings_ExactOnly(t *testing.T) {
 
 	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, nil, 0.65)
 
-	if mode != "exact" {
-		t.Errorf("expected mode 'exact', got %q", mode)
+	if mode != "fts" {
+		t.Errorf("expected mode 'fts', got %q", mode)
 	}
+	// "你好" and "hello" have no shared tokens → each in own cluster
 	if len(clusters) != 2 {
 		t.Fatalf("expected 2 clusters, got %d", len(clusters))
-	}
-	for _, c := range clusters {
-		if len(c.Variants) != 1 {
-			t.Errorf("expected 1 variant per cluster in exact mode, got %d", len(c.Variants))
-		}
 	}
 }
 
