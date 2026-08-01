@@ -19,7 +19,7 @@ ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（Code
 | 模块 | 说明 |
 |------|------|
 | [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；27 个 LLM 供应商规格 |
-| [定时任务](features/scheduled-tasks.md) | cron 谑度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话 |
+| [定时任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话 |
 | [语音合成](features/tts.md) | 多引擎 TTS（云/本地），文本清理，缓存策略 |
 | [Web 终端](features/terminal.md) | PTY 多标签会话、WebSocket 双向通信、手势与虚拟键盘、键位/符号配置、TUI 应用支持 |
 | [Git 管理](features/git-management.md) | 历史浏览、Worktree 隔离、分支/标签 CRUD、滑动手势删除 |
@@ -52,7 +52,7 @@ ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（Code
 
 | 模块 | 说明 |
 |------|------|
-| [前端架构](client/frontend-architecture.md) | 单页布局、reactive store、composable 模式、统一 WebSocket 单通道、ACP 会话管理（含 context_state 持久化恢复）、标注管道、appLog 强制日志规范、FileHeader 三层弹性布局、键盘交互（DialogOverlay/BottomSheet Esc/Enter）、会话搜索抽屉、消息聚类抽屉、系统资源面板 |
+| [前端架构](client/frontend-architecture.md) | 单页布局、reactive store、composable 模式、统一 WebSocket 单通道、ACP 会话管理（含 context_state 持久化恢复）、标注管道（文件路径 + localhost URL + commit hash + Worktree）、appLog 强制日志规范、FileHeader 三层弹性布局、键盘交互（DialogOverlay/BottomSheet Esc/Enter）、会话搜索抽屉、消息聚类抽屉、系统资源面板 |
 | [Android 集成](client/android-integration.md) | JS Bridge（25+ 方法）、9 个 Java 类模块（BackgroundService / PendingEventsWorker / BootCompletedReceiver 等）、APK 嵌入（`build.sh --android` → `go:embed` → `/api/apk`）、AppLog 兼容日志端点、推送感知生命周期、版本不匹配 Overlay |
 | [多服务器管理](client/multi-server.md) | 服务器列表、凭据保存、登录页选择、应用内快速切换 |
 | [客户端安装与 App 模式](client/install-and-app-mode.md) | PWA 安装、iOS 手动安装、APK 下载与原生模式识别 |
