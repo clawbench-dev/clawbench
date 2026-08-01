@@ -98,6 +98,8 @@ export function useMessageClusters() {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       computing.value = true
       progress.value.status = 'computing'
+      progress.value.phase = 'extracting'
+      progress.value.elapsed_ms = 0
       pollProgress()
     } catch (e) {
       appLog.e('MsgCluster', `Failed to start computation: ${e}`)
