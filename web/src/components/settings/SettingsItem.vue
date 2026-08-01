@@ -54,22 +54,21 @@
     </div>
     <!-- Inline description (always visible below label row) -->
     <div v-if="description" class="settings-item__desc">{{ description }}</div>
-    <!-- Info-type: show value as a full-width detail line below the label/desc -->
-    <div v-if="type === 'info' && displayValue" class="settings-item__info-detail">{{ displayValue }}</div>
-    <!-- Progress bar for info-type items (only when data exists) -->
-    <div v-if="type === 'info' && progress && progress.max > 0" class="settings-item__progress">
-      <div class="settings-item__progress-track">
-        <div class="settings-item__progress-bar" :class="{ 'settings-item__progress-bar--active': !disabled && progress.value < progress.max }" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
-      </div>
-    </div>
-    <!-- Action icons row (always visible when refreshable/rebuildable) -->
-    <div v-if="type === 'info' && (refreshable || rebuildable)" class="settings-item__progress-icons">
+    <!-- Info-type: detail line with action icons (quantity on left, icons on right) -->
+    <div v-if="type === 'info' && displayValue" class="settings-item__info-row">
+      <span class="settings-item__info-detail">{{ displayValue }}</span>
       <span v-if="refreshable" class="settings-item__refresh" :class="{ 'settings-item__refresh--active': refreshing }" @click.stop="emit('refresh')">
         <RefreshCw :size="12" />
       </span>
       <span v-if="rebuildable" class="settings-item__rebuild" :class="{ 'settings-item__rebuild--active': rebuilding }" :title="rebuildTitle" @click.stop="emit('rebuild')">
         <RotateCcw :size="12" />
       </span>
+    </div>
+    <!-- Progress bar for info-type items (only when data exists) -->
+    <div v-if="type === 'info' && progress && progress.max > 0" class="settings-item__progress">
+      <div class="settings-item__progress-track">
+        <div class="settings-item__progress-bar" :class="{ 'settings-item__progress-bar--active': !disabled && progress.value < progress.max }" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
+      </div>
     </div>
   </div>
   <!-- Inline editor (non-select types) -->
@@ -458,17 +457,24 @@ function confirmEdit() {
   white-space: nowrap;
 }
 
-/* Info-type: full-width detail line below the label row */
-.settings-item__info-detail {
+/* Info-type: detail row with quantity text and action icons */
+.settings-item__info-row {
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-item__info-detail {
+  flex: 1;
+  min-width: 0;
   font-size: 14px;
   color: var(--text-secondary);
   word-break: break-all;
   line-height: 1.4;
-  margin-top: 0;
 }
 
-/* Progress bar for info-type items */
+/* Progress bar for info-type items (rendered via parent, not in info-row) */
 .settings-item__progress {
   width: 100%;
   margin-top: 8px;
@@ -508,16 +514,7 @@ function confirmEdit() {
   100% { background-position: 12px 0; }
 }
 
-/* Action icons row for info-type items */
-.settings-item__progress-icons {
-  width: 100%;
-  margin-top: 4px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* Refresh icon beside progress bar */
+/* Refresh icon in info row */
 .settings-item__refresh {
   display: flex;
   align-items: center;
