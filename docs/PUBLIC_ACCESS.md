@@ -1,6 +1,15 @@
 # 公网访问 ClawBench
 
-本文介绍两种在公网访问 ClawBench 的方式：**IPv6** 和 **FRP 内网穿透**。
+本文介绍三种在公网访问 ClawBench 的方式：**IPv6**、**FRP 内网穿透** 和 **EasyTier 去中心化组网**。
+
+```mermaid
+flowchart TD
+    Q1{有公网 IPv6?}
+    Q1 -- 是 --> IPv6[IPv6 直连]
+    Q1 -- 否 --> Q2{有公网 IP VPS?}
+    Q2 -- 是 --> FRP[FRP 穿透]
+    Q2 -- 否 --> ET[EasyTier 组网]
+```
 
 ---
 
@@ -164,11 +173,162 @@ http://你的FRP服务器IP:映射端口
 
 ---
 
+## 方式三：EasyTier 去中心化组网
+
+EasyTier 是一款简单、安全、去中心化的内网穿透与异地组网方案，使用 Rust 语言和 Tokio 框架实现。与 FRP 需要公网服务器中转不同，EasyTier 通过 P2P 打洞实现节点直连，无需公网 IP 即可组网。
+
+### 特点
+
+- **去中心化**：无需中心服务器，节点平等独立，可互相转发
+- **无需公网 IP**：支持社区提供的免费公共节点辅助打洞，打洞成功后 P2P 直连
+- **WireGuard 加密**：所有通信流量自动加密，保障安全
+- **NAT 穿透**：支持 UDP/TCP 多协议打洞，应对复杂网络环境
+- **子网代理**：可将可访问的网段暴露给虚拟网络，其他节点通过该节点访问局域网
+- **智能路由**：多路径支持，自动切换健康链路，高丢包时自动降级
+- **跨平台**：支持 Linux、macOS、Windows、Android
+- **IPv6 支持**：支持 IPv6 组网
+
+### 架构说明
+
+```
+Android 手机 (EasyTier App, 虚拟IP 10.10.10.2) ←→ 公共节点 (辅助打洞) ←→ ClawBench 服务器 (EasyTier 节点, 虚拟IP 10.10.10.1)
+                                  ↑ P2P 打洞成功后直连，无需中转
+```
+
+### 步骤一：安装 EasyTier
+
+前往 [EasyTier 官网](https://easytier.cn/guide/download.html) 或 [GitHub Releases](https://github.com/EasyTier/EasyTier/releases) 下载对应平台的命令行程序（CLI）。
+
+**Linux（x86_64）**：
+
+```bash
+wget https://github.com/EasyTier/EasyTier/releases/latest/download/easytier-linux-x86_64.zip
+unzip easytier-linux-x86_64.zip
+chmod +x easytier-core easytier-cli
+```
+
+**Windows**：下载 `easytier-windows-x86_64.zip`，解压后获得 `easytier-core.exe` 和 `easytier-cli.exe`。
+
+**macOS**：下载 `easytier-darwin-aarch64.zip`，解压后赋予执行权限。
+
+> EasyTier 也提供 GUI 图形界面程序，适合不熟悉命令行的用户。
+
+### 步骤二：在 ClawBench 服务器上启动 EasyTier
+
+在运行 ClawBench 的服务器上，以管理员/root 权限执行：
+
+```bash
+easytier-core --network-name my-clawbench --network-secret my-secret-password --ipv4 10.10.10.1 -p tcp://public.easytier.top:11010
+```
+
+参数说明：
+
+| 参数 | 说明 |
+|------|------|
+| `--network-name` | 虚拟网络名称，所有节点必须相同才能互相发现和通信 |
+| `--network-secret` | 网络密码，用于身份认证和通信加密，所有节点必须相同 |
+| `--ipv4` | 本节点的虚拟 IPv4 地址，每个节点必须不同（如 10.10.10.1、10.10.10.2 等） |
+| `-p tcp://public.easytier.top:11010` | 公共节点地址，辅助 NAT 打洞和节点发现（官方免费提供） |
+
+> `-p` 可指定多个公共节点以提高连接稳定性，也可以用自建节点地址替代。
+
+如需开机自启，可创建 systemd 服务（Linux）：
+
+```bash
+# 创建服务文件
+cat > /etc/systemd/system/easytier.service << 'EOF'
+[Unit]
+Description=EasyTier Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/path/to/easytier-core --network-name my-clawbench --network-secret my-secret-password --ipv4 10.10.10.1 -p tcp://public.easytier.top:11010
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 启用并启动
+systemctl daemon-reload
+systemctl enable easytier --now
+```
+
+### 步骤三：在 Android 手机上启动 EasyTier
+
+1. 从 [EasyTier 官网下载页](https://easytier.cn/guide/download.html) 或 [GitHub Releases](https://github.com/EasyTier/EasyTier/releases) 下载 Android APK（`app-universal-release.apk`），安装到手机上
+
+2. 打开 EasyTier App，填写组网信息：
+
+| 设置项 | 填写内容 |
+|--------|----------|
+| **虚拟 IPv4 地址** | `10.10.10.2`（每个节点不同，如手机用 10.10.10.2） |
+| **网络名称** | 与服务端一致，如 `my-clawbench` |
+| **网络密码** | 与服务端一致，如 `my-secret-password` |
+| **公共服务器** | 选择默认的官方公共节点 `tcp://public.easytier.top:11010` |
+
+3. 点击 **运行网络**，等待连接成功
+
+> **注意**：`--network-name` 和 `--network-secret` 必须与服务端完全一致；虚拟 IPv4 地址不能与服务端重复。
+
+> 如果手机同时使用 VPN（如 Clash），请在 EasyTier App 中开启 **无 TUN 模式**，并将 Socks5 端口设置为非冲突端口（如 `15555`），然后在 VPN 中将虚拟网段（`10.0.0.0/8`）路由到 EasyTier 的 Socks5 代理。
+
+### 步骤四：验证组网状态
+
+启动后，可使用 `easytier-cli` 查看组网状态：
+
+```bash
+easytier-cli peer list    # 查看已连接的对等节点
+easytier-cli route list   # 查看虚拟网络路由
+easytier-cli node list    # 查看节点信息
+```
+
+### 步骤五：访问 ClawBench
+
+组网成功后，通过 ClawBench 服务器的虚拟 IP 地址访问：
+
+```
+http://10.10.10.1:20000
+```
+
+无需记忆地址，虚拟 IP 是固定的（只要配置不变）。
+
+### 子网代理（可选）
+
+如果你的 ClawBench 服务器在局域网中，想让远程设备也能访问局域网其他服务，可在启动 EasyTier 时添加子网代理：
+
+```bash
+easytier-core --network-name my-clawbench --network-secret my-secret-password \
+  --ipv4 10.10.10.1 -p tcp://public.easytier.top:11010 \
+  -n 192.168.1.0/24
+```
+
+`-n` 参数指定要代理的局域网网段，其他节点即可通过虚拟网络访问该局域网中的设备（如 NAS、打印机等）。
+
+### 配置文件方式（推荐长期使用）
+
+命令行参数适合调试，长期使用建议配置文件方式。先用命令行方式启动，然后导出配置文件：
+
+```bash
+easytier-cli node config > config.toml
+```
+
+后续使用配置文件启动：
+
+```bash
+easytier-core -c config.toml
+```
+
+---
+
 ## 总结
 
 | 方式 | 优点 | 缺点 | 推荐场景 |
 |------|------|------|---------|
 | **IPv6 直连** | 无中转、低延迟、零成本 | 需要 IPv6 网络环境、需配置防火墙 | 家庭宽带支持 IPv6 时首选 |
-| **FRP 穿透** | 不依赖 IPv6、稳定可靠 | 需一台 VPS 或依赖免费服务 | NAT 内网、无公网 IPv6 的环境 |
+| **FRP 穿透** | 不依赖 IPv6、稳定可靠 | 需一台 VPS 或依赖免费服务、流量经中转 | NAT 内网、无公网 IPv6 的环境 |
+| **EasyTier 组网** | 无需公网 IP、P2P 直连低延迟、去中心化、加密安全 | 依赖公共节点辅助打洞、严格对称型 NAT 可能无法直连 | 多设备异地互联、无需 VPS 的场景 |
 
-两种方式可同时部署互为备份，根据实际网络环境灵活切换。
+三种方式可同时部署互为备份，根据实际网络环境灵活切换。

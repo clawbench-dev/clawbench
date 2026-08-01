@@ -135,7 +135,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 
 部署完成后，使用手机 App 或手机浏览器访问 `http://服务器IP:20000` 即可开始使用。
 
-> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/PUBLIC_ACCESS.md)** ，支持 IPv6 直连和 FRP 内网穿透两种方式。
+> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/PUBLIC_ACCESS.md)** ，支持 IPv6 直连、FRP 内网穿透和 EasyTier 去中心化组网三种方式。
 
 ---
 
