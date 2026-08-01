@@ -1055,8 +1055,7 @@ onUnmounted(() => {
 .scheduled-task-card {
   margin: 8px 0;
   border: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 30%, var(--border-color, #dee2e6));
-  border-radius: 8px;
-  overflow: hidden;
+  border-radius: 0;
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 6%, var(--bg-primary, #fff));
 }
 

@@ -277,7 +277,7 @@ onUnmounted(() => {
 .execution-item {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 10px;
+  border-radius: 0;
   overflow: hidden;
   transition: all 0.2s ease;
 }

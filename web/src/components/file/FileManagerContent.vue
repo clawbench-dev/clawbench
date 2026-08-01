@@ -462,6 +462,8 @@ function onPaste(e) {
   if (activeTab.value !== 'browse') return
   // Skip if a dialog/prompt is open or focus is in an input field
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+  // Skip if context menu or modal dialog is open
+  if (ctxMenu.visible) return
 
   const items = e.clipboardData?.items
   if (!items) return
@@ -686,6 +688,7 @@ defineExpose({
     viewMode,
     _setViewMode(val) { viewMode.value = val },
     _getFilteredEntries() { return filteredEntries.value },
+    _setIsDragOver(val) { isDragOver.value = val },
     focusSearchInput() { fileSearchDrawerRef.value?.focusSearchInput() },
 })
 
@@ -2019,7 +2022,7 @@ function currentFileForClipboard() {
 .paste-overlay {
     position: absolute;
     inset: 0;
-    z-index: 10;
+    z-index: 11;
     display: flex;
     align-items: center;
     justify-content: center;

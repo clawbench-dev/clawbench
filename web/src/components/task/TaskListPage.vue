@@ -255,7 +255,7 @@ onMounted(refresh)
   padding: 10px;
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 10px;
+  border-radius: 0;
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;

@@ -760,8 +760,21 @@ function onPaste(e) {
   const files = []
   for (const item of items) {
     if (item.kind === 'file') {
-      const file = item.getAsFile()
-      if (file) files.push(file)
+      const raw = item.getAsFile()
+      if (!raw) continue
+      // Clipboard images (e.g. screenshots) may have no name or empty name.
+      // Backend requires non-empty extension, so give a default name with extension.
+      if (!raw.name || raw.name === '' || !raw.name.includes('.')) {
+        const ext = raw.type === 'image/png' ? '.png'
+          : raw.type === 'image/jpeg' ? '.jpg'
+          : raw.type === 'image/webp' ? '.webp'
+          : raw.type === 'image/gif' ? '.gif'
+          : raw.type === 'image/bmp' ? '.bmp'
+          : '.png'
+        files.push(new File([raw], `clipboard_${Date.now()}${ext}`, { type: raw.type }))
+      } else {
+        files.push(raw)
+      }
     }
   }
 
@@ -1362,7 +1375,7 @@ defineExpose({
 .paste-overlay {
   position: absolute;
   inset: 0;
-  z-index: 10;
+  z-index: 11;
   display: flex;
   align-items: center;
   justify-content: center;

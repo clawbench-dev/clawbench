@@ -63,17 +63,19 @@
         <History :size="14" />
         <span class="action-text">{{ t('task.history') }}</span>
       </button>
-      <span class="actions-spacer"></span>
+
       <template v-if="taskStatus === 'active'">
         <button class="action-btn accent" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
-        <button class="action-btn warn icon-only" :disabled="actionLoading" @click="pauseTask" :title="t('task.pause')">
+        <button class="action-btn warn" :disabled="actionLoading" @click="pauseTask" :title="t('task.pause')">
           <Pause :size="14" />
+          <span class="action-text">{{ t('task.pause') }}</span>
         </button>
-        <button class="action-btn danger icon-only" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
+        <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
           <Trash2 :size="14" />
+          <span class="action-text">{{ t('task.delete') }}</span>
         </button>
       </template>
       <template v-else-if="taskStatus === 'paused'">
@@ -81,16 +83,19 @@
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
-        <button class="action-btn success icon-only" :disabled="actionLoading" @click="resumeTask" :title="t('task.resume')">
+        <button class="action-btn success" :disabled="actionLoading" @click="resumeTask" :title="t('task.resume')">
           <Play :size="14" />
+          <span class="action-text">{{ t('task.resume') }}</span>
         </button>
-        <button class="action-btn danger icon-only" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
+        <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
           <Trash2 :size="14" />
+          <span class="action-text">{{ t('task.delete') }}</span>
         </button>
       </template>
       <template v-else-if="taskStatus === 'completed'">
-        <button class="action-btn danger icon-only" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
+        <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
           <Trash2 :size="14" />
+          <span class="action-text">{{ t('task.delete') }}</span>
         </button>
       </template>
     </div>
@@ -385,7 +390,7 @@ function handlePromptClick(event: MouseEvent) {
 .overview-card {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -478,11 +483,10 @@ function handlePromptClick(event: MouseEvent) {
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
+  overflow-x: auto;
 }
 
-.actions-spacer {
-  flex: 1;
-}
+
 
 .action-btn {
   height: 28px;
@@ -503,11 +507,7 @@ function handlePromptClick(event: MouseEvent) {
   white-space: nowrap;
 }
 
-/* Icon-only buttons */
-.action-btn.icon-only {
-  width: 28px;
-  padding: 0;
-}
+
 
 .action-text {
   line-height: 1;
@@ -530,46 +530,47 @@ function handlePromptClick(event: MouseEvent) {
 }
 
 .action-btn.accent {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 20%, var(--bg-secondary, #f1f3f5));
+  color: var(--accent-color, #0066cc);
 }
 
 @media (hover: hover) {
   .action-btn.accent:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 35%, var(--bg-secondary, #f1f3f5));
+    color: #fff;
   }
 }
 
 .action-btn.warn {
-  background: rgba(234, 179, 8, 0.15);
-  color: #b47d00;
+  background: color-mix(in srgb, #ca8a04 15%, var(--bg-secondary, #f1f3f5));
+  color: #ca8a04;
 }
 
 @media (hover: hover) {
   .action-btn.warn:hover:not(:disabled) {
-    background: rgba(234, 179, 8, 0.25);
+    background: color-mix(in srgb, #ca8a04 30%, var(--bg-secondary, #f1f3f5));
   }
 }
 
 .action-btn.success {
-  background: rgba(34, 197, 94, 0.15);
-  color: #15803d;
+  background: color-mix(in srgb, #16a34a 15%, var(--bg-secondary, #f1f3f5));
+  color: #16a34a;
 }
 
 @media (hover: hover) {
   .action-btn.success:hover:not(:disabled) {
-    background: rgba(34, 197, 94, 0.25);
+    background: color-mix(in srgb, #16a34a 30%, var(--bg-secondary, #f1f3f5));
   }
 }
 
 .action-btn.danger {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, #ef4444 10%, var(--bg-secondary, #f1f3f5));
   color: #b91c1c;
 }
 
 @media (hover: hover) {
   .action-btn.danger:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.2);
+    background: color-mix(in srgb, #ef4444 25%, var(--bg-secondary, #f1f3f5));
   }
 }
 
