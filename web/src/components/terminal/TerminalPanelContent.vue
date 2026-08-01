@@ -1,7 +1,13 @@
 <template>
   <div class="terminal-panel" :style="panelStyle">
+    <!-- Platform unsupported state (top priority) -->
+    <div v-if="platformUnsupported" class="terminal-empty-state terminal-platform-unsupported">
+      <TerminalIcon :size="40" class="terminal-empty-icon" />
+      <p class="terminal-empty-text">{{ t('terminal.platformUnsupported') }}</p>
+    </div>
+
     <!-- Empty state when all tabs are closed -->
-    <div v-if="tabs.length === 0" class="terminal-empty-state">
+    <div v-else-if="tabs.length === 0" class="terminal-empty-state">
       <TerminalIcon :size="40" class="terminal-empty-icon" />
       <p class="terminal-empty-text">{{ t('terminal.noSessions') }}</p>
       <button class="terminal-empty-create-btn" @click="handleCreateTab">
@@ -198,6 +204,7 @@ import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, M
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
+  platformUnsupported?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -590,6 +597,7 @@ function handleTabClick(tabId: string) {
 }
 
 function handleCreateTab() {
+  if (props.platformUnsupported) return
   if (!canCreateMore.value) return
   // Default new tab uses project root (empty cwd), not current directory
   const tab = tabManager.createTab()
@@ -741,6 +749,7 @@ const isMounted = ref(false)
 // Lifecycle
 watch(() => props.active, async (isActive) => {
   if (!isMounted.value) return // Defer to onMounted for initial activation
+  if (props.platformUnsupported) return // No session management on unsupported platforms
   if (isActive) {
     emit('open')
     enableVolumeKeys()
@@ -826,7 +835,7 @@ onMounted(async () => {
   })
 
   // Mount and connect the active tab (only if terminal panel is active)
-  if (props.active) {
+  if (props.active && !props.platformUnsupported) {
     emit('open')
     enableVolumeKeys()
     // Wait for v-for :ref callbacks to populate tabContainerRefs

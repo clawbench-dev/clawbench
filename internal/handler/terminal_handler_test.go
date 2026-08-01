@@ -127,6 +127,7 @@ func TestTerminalStatus_NilManager(t *testing.T) {
 	var result map[string]any
 	decodeRespJSON(t, w.Body, &result)
 	assert.Equal(t, false, result["enabled"])
+	assert.Equal(t, false, result["platform_supported"])
 }
 
 func TestTerminalStatus_AllSessions(t *testing.T) {
@@ -154,6 +155,8 @@ func TestTerminalStatus_AllSessions(t *testing.T) {
 	var result map[string]any
 	decodeRespJSON(t, w.Body, &result)
 	assert.Equal(t, true, result["enabled"])
+	// platform_supported mirrors runtimeGOOS != "windows" — on Linux test machines it's true
+	assert.Contains(t, result, "platform_supported")
 	// No active sessions — AllSessionStatus returns nil slice which marshals to null
 	_, ok := result["sessions"]
 	assert.True(t, ok, "sessions field should be present")

@@ -94,7 +94,8 @@ func TerminalStatus(w http.ResponseWriter, r *http.Request) {
 	mgr := GetTerminalManager()
 	if mgr == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled": false,
+			"enabled":            false,
+			"platform_supported": false,
 		})
 		return
 	}
@@ -103,11 +104,12 @@ func TerminalStatus(w http.ResponseWriter, r *http.Request) {
 	if sessionID := r.URL.Query().Get("session"); sessionID != "" {
 		found, cwd, running := mgr.SessionStatus(sessionID)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled":    mgr.IsEnabled(),
-			"hasSession": found,
-			"sessionId":  sessionID,
-			"cwd":        cwd,
-			"running":    running,
+			"enabled":            mgr.IsEnabled(),
+			"platform_supported": mgr.IsPlatformSupported(),
+			"hasSession":         found,
+			"sessionId":          sessionID,
+			"cwd":                cwd,
+			"running":            running,
 		})
 		return
 	}
@@ -115,9 +117,10 @@ func TerminalStatus(w http.ResponseWriter, r *http.Request) {
 	// No session ID — return all sessions
 	sessions := mgr.AllSessionStatus()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":       mgr.IsEnabled(),
-		"sessions":      sessions,
-		"session_count": mgr.SessionCount(),
+		"enabled":            mgr.IsEnabled(),
+		"platform_supported": mgr.IsPlatformSupported(),
+		"sessions":           sessions,
+		"session_count":      mgr.SessionCount(),
 	})
 }
 

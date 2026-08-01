@@ -52,4 +52,32 @@ describe('useTerminalStatus', () => {
     expect(ref1.value).toBe(true)
     expect(ref2.value).toBe(true)
   })
+
+  it('sets platformSupported to true when API returns platform_supported: true', async () => {
+    mockApiGet.mockResolvedValue({ enabled: true, platform_supported: true })
+    const { platformSupported, loadTerminalStatus } = useTerminalStatus()
+    await loadTerminalStatus()
+    expect(platformSupported.value).toBe(true)
+  })
+
+  it('sets platformSupported to false when API returns platform_supported: false', async () => {
+    mockApiGet.mockResolvedValue({ enabled: true, platform_supported: false })
+    const { platformSupported, loadTerminalStatus } = useTerminalStatus()
+    await loadTerminalStatus()
+    expect(platformSupported.value).toBe(false)
+  })
+
+  it('defaults platformSupported to true when API omits field', async () => {
+    mockApiGet.mockResolvedValue({ enabled: true })
+    const { platformSupported, loadTerminalStatus } = useTerminalStatus()
+    await loadTerminalStatus()
+    expect(platformSupported.value).toBe(true)
+  })
+
+  it('sets platformSupported to false when API throws', async () => {
+    mockApiGet.mockRejectedValue(new Error('network error'))
+    const { platformSupported, loadTerminalStatus } = useTerminalStatus()
+    await loadTerminalStatus()
+    expect(platformSupported.value).toBe(false)
+  })
 })

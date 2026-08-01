@@ -41,7 +41,7 @@ vi.mock('@/composables/useDialog', () => ({
 }))
 
 vi.mock('@/composables/useTerminalStatus', () => ({
-  useTerminalStatus: () => ({ terminalRuntimeEnabled: { value: false } }),
+  useTerminalStatus: () => ({ terminalRuntimeEnabled: { value: false }, platformSupported: { value: true } }),
 }))
 
 vi.mock('@/composables/useEdgeSwipeBack', () => ({

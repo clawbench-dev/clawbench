@@ -3,8 +3,9 @@ import { nextTick, ref, computed } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 
-// Mutable ref that tests can flip to control terminal runtime status
+// Mutable refs that tests can flip to control terminal runtime status
 const mockTerminalRuntimeEnabled = ref<boolean | null>(true)
+const mockPlatformSupported = ref<boolean | null>(true)
 
 vi.mock('@/composables/useAppMode.ts', () => ({
   useAppMode: () => ({ isAppMode: { value: false } }),
@@ -42,6 +43,7 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 vi.mock('@/composables/useTerminalStatus.ts', () => ({
   useTerminalStatus: () => ({
     terminalRuntimeEnabled: mockTerminalRuntimeEnabled,
+    platformSupported: mockPlatformSupported,
     loadTerminalStatus: vi.fn(),
   }),
 }))
@@ -101,6 +103,7 @@ import FileManagerContent from '@/components/file/FileManagerContent.vue'
 describe('FileManagerContent — terminal context menu visibility', () => {
   beforeEach(() => {
     mockTerminalRuntimeEnabled.value = true
+    mockPlatformSupported.value = true
     // Clean up any leftover teleported context menus from previous tests
     document.querySelectorAll('.context-menu').forEach(el => el.remove())
     document.querySelectorAll('.ctx-overlay').forEach(el => el.remove())
@@ -225,14 +228,14 @@ describe('overflowTabs — terminal exclusion logic', () => {
 // Part 3: isTerminalDisabled computed logic (runtime-based)
 // ============================================================
 
-describe('isTerminalDisabled — computed from terminalRuntimeEnabled', () => {
-  it('returns false when terminalRuntimeEnabled is true', () => {
+describe('isTerminalDisabled — computed from terminalRuntimeEnabled and platformSupported', () => {
+  it('returns false when terminalRuntimeEnabled is true and platform is supported', () => {
     const terminalRuntimeEnabled = ref<boolean | null>(true)
     const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
     expect(isTerminalDisabled.value).toBe(false)
   })
 
-  it('returns true when terminalRuntimeEnabled is false', () => {
+  it('returns true when terminalRuntimeEnabled is false and platform is supported', () => {
     const terminalRuntimeEnabled = ref<boolean | null>(false)
     const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
     expect(isTerminalDisabled.value).toBe(true)
@@ -242,6 +245,24 @@ describe('isTerminalDisabled — computed from terminalRuntimeEnabled', () => {
     // Before the runtime status API responds, treat terminal as disabled
     // to avoid flashing the terminal button during mount.
     const terminalRuntimeEnabled = ref<boolean | null>(null)
+    const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
+    expect(isTerminalDisabled.value).toBe(true)
+  })
+
+  it('returns false when terminalRuntimeEnabled is true but platform is unsupported', () => {
+    // On Windows: config enabled=true but PTY unsupported.
+    // isTerminalDisabled is still false — the tab shows, just with a dedicated empty state.
+    const terminalRuntimeEnabled = ref<boolean | null>(true)
+    const platformSupported = ref<boolean | null>(false)
+    const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
+    expect(isTerminalDisabled.value).toBe(false)
+    // But isPlatformUnsupported is true → TerminalPanelContent shows empty state
+    expect(platformSupported.value).toBe(false)
+  })
+
+  it('returns true when both terminalRuntimeEnabled is false and platform is unsupported', () => {
+    // Config disabled AND platform unsupported — hide the tab entirely.
+    const terminalRuntimeEnabled = ref<boolean | null>(false)
     const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
     expect(isTerminalDisabled.value).toBe(true)
   })

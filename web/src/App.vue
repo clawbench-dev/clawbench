@@ -112,6 +112,7 @@
             <TerminalPanelContent
               :requested-cwd="terminalRequestedCwd"
               :active="activeTab === 'terminal'"
+              :platform-unsupported="isPlatformUnsupported"
               @cwd-handled="terminalRequestedCwd = null"
             />
           </TabPanel>
@@ -609,8 +610,11 @@ function closeOverlayAndSync() {
 
 const { isAppMode } = useAppMode()
 const { syncToNative, sshInfo, loadSSHInfo } = usePortForward()
-const { terminalRuntimeEnabled, loadTerminalStatus } = useTerminalStatus()
+const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
 const isSSHDisabled = computed(() => sshInfo.value?.enabled === false)
+// Platform unsupported: PTY cannot run on this OS (e.g. Windows lacks ConPTY).
+// The terminal tab is still shown so users see a clear "unsupported" empty state.
+const isPlatformUnsupported = computed(() => platformSupported.value === false)
 // Use runtime status (actual server state) not config value — mirrors SSH pattern.
 // Config may say enabled=true before restart; the runtime API returns false until
 // the terminal manager actually exists.  `null` means "not yet loaded" → treat as
@@ -622,7 +626,9 @@ watch(isSSHDisabled, (disabled) => {
   }
 })
 watch(isTerminalDisabled, (disabled) => {
-  if (disabled && activeTab.value === 'terminal') {
+  // Only force-switch when terminal is config-disabled (not platform unsupported).
+  // Platform unsupported shows a dedicated empty state — user can stay on the tab.
+  if (disabled && !isPlatformUnsupported.value && activeTab.value === 'terminal') {
     switchTab('chat')
   }
 })

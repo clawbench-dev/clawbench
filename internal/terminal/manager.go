@@ -328,6 +328,13 @@ func (m *Manager) IsEnabled() bool {
 	return m.cfg.Enabled
 }
 
+// IsPlatformSupported returns whether the current OS supports PTY sessions.
+// Mirrors the check in startPTY() — creack/pty does not implement ConPTY,
+// so Windows always returns false.
+func (m *Manager) IsPlatformSupported() bool {
+	return runtimeGOOS != "windows"
+}
+
 // Reconfigure updates the terminal configuration at runtime.
 // Existing sessions keep their original config; only new sessions
 // will use the updated settings.
