@@ -5,7 +5,7 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
-import { useMessageClusters } from '@/composables/useMessageClusters'
+import { useMessageClusters, resetMessageClustersState } from '@/composables/useMessageClusters'
 
 // ── Helpers ──
 
@@ -50,6 +50,7 @@ describe('useMessageClusters', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.restoreAllMocks()
+    resetMessageClustersState()
     globalThis.fetch = vi.fn()
   })
 
