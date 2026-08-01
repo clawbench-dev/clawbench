@@ -207,6 +207,10 @@ const entryPicker = useTabDrawer('settings', { autoRestore: false })
 onMounted(() => {
   initSnapshot()
   registerGuard(`panel-${props.config.panelId}`, () => !hasChanges.value && !hasFailedSave.value)
+  // Fetch RAG status on mount so progress counts are visible immediately
+  if (props.config.panelId === 'rag') {
+    refreshRagStatus()
+  }
 })
 
 onUnmounted(() => {
