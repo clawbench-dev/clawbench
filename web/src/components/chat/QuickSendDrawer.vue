@@ -3,12 +3,14 @@
     <template #header>
       <SendIcon :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('chat.quickSend.title') }}</span>
-      <button class="create-btn" @click.stop="clustersDrawerRef?.open()" :title="t('chat.messageClusters.title')">
-        <SparklesIcon :size="16" />
-      </button>
-      <button class="create-btn" @click.stop="addNewItem" :title="t('chat.quickSend.addItem')">
-        <PlusIcon :size="16" />
-      </button>
+      <span class="bs-header-actions">
+        <button class="create-btn" @click.stop="clustersDrawerRef?.open()" :title="t('chat.messageClusters.title')">
+          <SparklesIcon :size="16" />
+        </button>
+        <button class="create-btn" @click.stop="addNewItem" :title="t('chat.quickSend.addItem')">
+          <PlusIcon :size="16" />
+        </button>
+      </span>
     </template>
 
     <div class="qs-content">
@@ -254,8 +256,14 @@ async function onDragEnd() {
   color: var(--text-muted, #999);
 }
 
-.create-btn {
+.bs-header-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.create-btn {
   width: 24px;
   height: 24px;
   border: none;
