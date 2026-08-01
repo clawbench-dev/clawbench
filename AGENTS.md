@@ -31,6 +31,9 @@ npm test                             # Vitest 前端测试
 ./scripts/pre-push-checks.sh              # 推送前全量检查（lint + test + build + typecheck + 覆盖率）
 ./scripts/pre-push-checks.sh --skip-coverage  # 跳过覆盖率门槛
 ./scripts/pre-push-checks.sh --skip-android   # 跳过 Android 覆盖率
+
+./build-and-restart.sh              # 编译 + 后台重启 ClawBench（可在 Web 终端内执行）
+./build-and-restart.sh --skip-build # 跳过编译，仅重启
 ```
 
 ## 架构
