@@ -38,7 +38,10 @@ type ClusterItem struct {
 }
 
 // ServeMessageClusters handles GET /api/chat/message-clusters — reads cached
-// cluster results, applies quick-send filtering, and returns progress info.
+// cluster results and returns progress info.
+// Quick-send filtering is already done at the SQL level (GetUserMessageStats
+// excludes messages matching quick-send labels/commands), so no further
+// quick-send filtering is needed here.
 func ServeMessageClusters(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -53,21 +56,13 @@ func ServeMessageClusters(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Get progress — read from meta table directly for consistency
-	//    (GlobalClusterWorker.GetProgress also reads from meta, but is nil when not initialized)
 	progress := "idle"
 	_, _, metaProgress, _, _, _, _, _ := service.GetClusterMeta()
 	if metaProgress != "" {
 		progress = metaProgress
 	}
 
-	// 3. Quick-send filtering: build a set of existing quick-send commands
-	quickSendCommands := service.GetQuickSendCommands()
-	qsSet := make(map[string]bool, len(quickSendCommands))
-	for _, cmd := range quickSendCommands {
-		qsSet[cmd] = true
-	}
-
-	// 4. Build filtered cluster items (only show clusters with total_count ≥ 3)
+	// 3. Build filtered cluster items (only show clusters with total_count ≥ 3)
 	var items []ClusterItem
 	for _, e := range entries {
 		if e.TotalCount < MinClusterTotalCount {
@@ -81,25 +76,10 @@ func ServeMessageClusters(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("failed to unmarshal variants", slog.String("err", err.Error()), slog.Int64("id", e.ID))
 			variants = []string{e.Representative} // fallback
 		}
-		var unmatched []string
-		for _, v := range variants {
-			if !qsSet[v] {
-				unmatched = append(unmatched, v)
-			}
-		}
-		// If representative itself is in quick-send → skip entire cluster
-		// (user already has this as a shortcut, no need to recommend it)
-		if qsSet[e.Representative] {
-			continue
-		}
-		// If ALL variants match quick-send → skip entire cluster
-		if len(unmatched) == 0 {
-			continue
-		}
 		items = append(items, ClusterItem{
 			ID:                  e.ID,
 			Representative:      e.Representative,
-			Variants:            unmatched,
+			Variants:            variants,
 			TotalCount:          e.TotalCount,
 			RepresentativeCount: e.RepresentativeCount,
 		})
@@ -161,7 +141,9 @@ func ServeMessageClustersComputeCancel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rag.GlobalClusterWorker.Stop()
-	service.SaveClusterMetaError("cancelled", "", "user cancelled")
+	// Preserve current phase in cancelled meta so frontend shows which phase was interrupted
+	_, _, _, currentPhase, _, _, _, _ := service.GetClusterMeta()
+	service.SaveClusterMetaError("cancelled", currentPhase, "user cancelled")
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "cancelled",

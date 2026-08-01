@@ -39,6 +39,7 @@ import { validateQuickSendForm } from '@/utils/quickSendValidation.ts'
 const props = defineProps<{
   open: boolean
   editingItem: QuickSendItem | null
+  initialValues?: { label: string; command: string }
 }>()
 
 const emit = defineEmits<{
@@ -59,6 +60,8 @@ watch(() => props.open, (isOpen) => {
   if (isOpen) {
     if (props.editingItem) {
       form.value = { label: props.editingItem.label, command: props.editingItem.command }
+    } else if (props.initialValues) {
+      form.value = { label: props.initialValues.label, command: props.initialValues.command }
     } else {
       form.value = { label: '', command: '' }
     }

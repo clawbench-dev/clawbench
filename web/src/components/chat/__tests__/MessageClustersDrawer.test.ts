@@ -22,11 +22,11 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
   },
 }))
 
-// Mock ModalDialog
+// Mock ModalDialog — simple passthrough mock (slot rendering issues in VTU)
 vi.mock('@/components/common/ModalDialog.vue', () => ({
   default: {
     name: 'ModalDialog',
-    template: '<div v-if="open"><slot /></div>',
+    template: '<div class="modal-dialog-mock"><slot name="header" /><slot /></div>',
     props: ['open', 'title', 'zIndex', 'fullHeight', 'maxWidth'],
     emits: ['close'],
   },
@@ -37,12 +37,11 @@ const mockClusters = ref<any[]>([])
 const mockLoaded = ref(false)
 const mockLoading = ref(false)
 const mockComputing = ref(false)
-const mockProgress = ref<any>({ status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '' })
+const mockProgress = ref<any>({ status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0 })
 const mockMode = ref('')
 const mockUpdatedAt = ref('')
 const mockFetchClusters = vi.fn()
 const mockStartCompute = vi.fn()
-const mockStopPolling = vi.fn()
 
 vi.mock('@/composables/useMessageClusters', () => ({
   useMessageClusters: () => ({
@@ -55,19 +54,19 @@ vi.mock('@/composables/useMessageClusters', () => ({
     updatedAt: mockUpdatedAt,
     fetchClusters: mockFetchClusters,
     startCompute: mockStartCompute,
-    cancelCompute: vi.fn(),
-    pollProgress: vi.fn(),
-    stopPolling: mockStopPolling,
+    syncProgressOnce: vi.fn(),
   }),
   MessageCluster: {},
 }))
 
-// Mock useQuickSend
-const mockAddItem = vi.fn()
-vi.mock('@/composables/useQuickSend', () => ({
-  useQuickSend: () => ({
-    addItem: mockAddItem,
-  }),
+// Mock QuickSendEditModal
+vi.mock('@/components/chat/QuickSendEditModal.vue', () => ({
+  default: {
+    name: 'QuickSendEditModal',
+    template: '<div class="qs-edit-modal-mock"></div>',
+    props: ['open', 'editingItem', 'initialValues'],
+    emits: ['close', 'saved'],
+  },
 }))
 
 // Mock useToast
@@ -90,11 +89,6 @@ vi.mock('@/composables/useTabDrawer', () => ({
   }),
 }))
 
-// Mock appLog
-vi.mock('@/utils/appLog', () => ({
-  appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
-}))
-
 import MessageClustersDrawer from '@/components/chat/MessageClustersDrawer.vue'
 
 const i18n = createI18n({
@@ -112,17 +106,15 @@ const i18n = createI18n({
           reanalyze: 'Re-analyze',
           add: 'Add',
           variantsTitle: 'Message Variants',
-          cancel: 'Cancel',
-          cancelled: 'Cancelled',
           mode_fts: 'Full-text Search',
           mode_vector: 'Semantic Vector',
           mode_exact: 'Exact Match',
           cacheStatus: 'Mode: {mode} | Updated: {updatedAt}',
           error: 'Analysis failed',
           retry: 'Retry',
-          phase_extracting: 'Extracting messages ({msgCount} found, {elapsed})',
-          phase_clustering: 'Clustering messages ({elapsed})',
-          phase_saving: 'Saving results ({elapsed})',
+          phase_extracting: 'Extracting messages ({msgCount} found)',
+          phase_clustering: 'Clustering messages',
+          phase_saving: 'Saving results',
           recommendations: 'Recommendations',
         },
         quickSend: {
@@ -146,7 +138,7 @@ describe('MessageClustersDrawer', () => {
     mockLoaded.value = false
     mockLoading.value = false
     mockComputing.value = false
-    mockProgress.value = { status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '' }
+    mockProgress.value = { status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0 }
     mockMode.value = ''
     mockUpdatedAt.value = ''
   })
@@ -160,14 +152,14 @@ describe('MessageClustersDrawer', () => {
 
   it('renders computing state with progress bar', () => {
     mockComputing.value = true
-    mockProgress.value = { status: 'computing', phase: 'extracting', msg_count: 10, elapsed_ms: 500, mode: 'auto' }
+    mockProgress.value = { status: 'computing', phase: 'extracting', msg_count: 10, elapsed_ms: 500, mode: 'auto', progress_pct: 10 }
     const wrapper = mountDrawer()
     expect(wrapper.find('.mc-computing').exists()).toBe(true)
     expect(wrapper.find('.mc-progress-bar').exists()).toBe(true)
   })
 
   it('renders error state', () => {
-    mockProgress.value = { status: 'error', phase: '', msg_count: 0, elapsed_ms: 0, mode: '' }
+    mockProgress.value = { status: 'error', phase: '', msg_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0 }
     const wrapper = mountDrawer()
     expect(wrapper.find('.mc-error').exists()).toBe(true)
     expect(wrapper.find('.mc-error').text()).toContain('Analysis failed')
@@ -179,20 +171,51 @@ describe('MessageClustersDrawer', () => {
     expect(wrapper.find('.mc-loading').exists()).toBe(true)
   })
 
-  it('renders cached results with clusters', () => {
+  it('renders cached results with clusters and header reanalyze button', () => {
     mockLoaded.value = true
     mockClusters.value = [
       { id: 1, representative: 'Fix the bug', variants: ['fix bug', 'bug fix'], total_count: 5, representative_count: 3 },
     ]
     mockMode.value = 'auto'
     mockUpdatedAt.value = '2026-08-01'
-    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto' }
+    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto', progress_pct: 100 }
     const wrapper = mountDrawer()
     expect(wrapper.find('.mc-results').exists()).toBe(true)
     expect(wrapper.find('.mc-cluster-item').exists()).toBe(true)
     expect(wrapper.find('.mc-cluster-representative').text()).toContain('Fix the bug')
-    // No add button in the cluster list
-    expect(wrapper.find('.mc-cluster-list .mc-btn.add').exists()).toBe(false)
+    // Reanalyze button is in header, icon-only
+    expect(wrapper.find('.mc-header-btn').exists()).toBe(true)
+    // No reanalyze button in results area
+    expect(wrapper.find('.mc-results-header .mc-btn').exists()).toBe(false)
+  })
+
+  it('header reanalyze button is hidden when computing', () => {
+    mockComputing.value = true
+    mockProgress.value = { status: 'computing', phase: 'extracting', msg_count: 10, elapsed_ms: 500, mode: 'auto', progress_pct: 10 }
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.mc-header-btn').exists()).toBe(false)
+  })
+
+  it('header reanalyze button is hidden in error state', () => {
+    mockProgress.value = { status: 'error', phase: '', msg_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0 }
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.mc-header-btn').exists()).toBe(false)
+  })
+
+  it('header reanalyze button is hidden when no cache', () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.mc-header-btn').exists()).toBe(false)
+  })
+
+  it('clicking header reanalyze button calls startCompute', async () => {
+    mockLoaded.value = true
+    mockClusters.value = [
+      { id: 1, representative: 'Fix the bug', variants: ['fix bug', 'bug fix'], total_count: 5, representative_count: 3 },
+    ]
+    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto', progress_pct: 100 }
+    const wrapper = mountDrawer()
+    await wrapper.find('.mc-header-btn').trigger('click')
+    expect(mockStartCompute).toHaveBeenCalledOnce()
   })
 
   it('calls startCompute when "Start Analysis" button is clicked', async () => {
@@ -202,28 +225,28 @@ describe('MessageClustersDrawer', () => {
   })
 
   it('calls startCompute when "Retry" button is clicked', async () => {
-    mockProgress.value = { status: 'error', phase: '', msg_count: 0, elapsed_ms: 0, mode: '' }
+    mockProgress.value = { status: 'error', phase: '', msg_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0 }
     const wrapper = mountDrawer()
     await wrapper.find('.mc-btn').trigger('click')
     expect(mockStartCompute).toHaveBeenCalledOnce()
   })
 
-  it('add button in dialog calls addItem with label=representative, command=variant', async () => {
+  it('addVariantToQuickSend opens QuickSendEditModal with pre-filled values', async () => {
     mockLoaded.value = true
     mockClusters.value = [
       { id: 1, representative: 'Fix the bug', variants: ['fix bug', 'bug fix'], total_count: 5, representative_count: 3 },
     ]
-    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto' }
-    mockAddItem.mockResolvedValue(true)
+    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto', progress_pct: 100 }
     const wrapper = mountDrawer()
-    // Open dialog
+    // Click cluster item to open dialog and set representative/items
     await wrapper.find('.mc-cluster-item').trigger('click')
     expect(wrapper.vm.variantsDialogOpen).toBe(true)
-    // Click add button on the first variant
-    const addBtns = wrapper.findAll('.mc-variant-item .mc-btn.add')
-    expect(addBtns.length).toBe(2)
-    await addBtns[0].trigger('click')
-    expect(mockAddItem).toHaveBeenCalledWith({ label: 'Fix the bug', command: 'fix bug' })
+    expect(wrapper.vm.variantsDialogRepresentative).toBe('Fix the bug')
+    // Call addVariantToQuickSend directly (ModalDialog slot rendering is unreliable in VTU)
+    wrapper.vm.addVariantToQuickSend('fix bug')
+    // Should open edit modal with pre-filled values instead of directly adding
+    expect(wrapper.vm.quickSendEditOpen).toBe(true)
+    expect(wrapper.vm.quickSendInitialValues).toEqual({ label: 'Fix the bug', command: 'fix bug' })
   })
 
   it('open() sets visible and calls fetchClusters', async () => {
@@ -238,7 +261,7 @@ describe('MessageClustersDrawer', () => {
     mockClusters.value = [
       { id: 1, representative: 'Fix the bug', variants: ['fix bug', 'bug fix', 'fix it'], total_count: 5, representative_count: 3 },
     ]
-    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto' }
+    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto', progress_pct: 100 }
     const wrapper = mountDrawer()
     await wrapper.find('.mc-cluster-item').trigger('click')
     expect(wrapper.vm.variantsDialogOpen).toBe(true)
@@ -251,7 +274,7 @@ describe('MessageClustersDrawer', () => {
     mockClusters.value = [
       { id: 1, representative: 'Fix the bug', variants: [], total_count: 3, representative_count: 2 },
     ]
-    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto' }
+    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto', progress_pct: 100 }
     const wrapper = mountDrawer()
     await wrapper.find('.mc-cluster-item').trigger('click')
     expect(wrapper.vm.variantsDialogOpen).toBe(false)

@@ -303,8 +303,10 @@ func embedInSubBatches(ctx context.Context, embedder *EmbeddingClient, texts []s
 
 // ClusterMessagesWithEmbeddings clusters messages using best available method.
 // Returns (clusters, mode) where mode is "vector" | "fts" | "exact".
+// vectorThreshold is used when embeddings are available (semantic similarity).
+// ftsThreshold is used for FTS fallback (token-based, needs higher threshold for short texts).
 // progressCb reports fine-grained progress during embedding and comparison phases.
-func ClusterMessagesWithEmbeddings(ctx context.Context, stats []MessageStat, embedder *EmbeddingClient, threshold float64, progressCb ClusterProgressCallback) ([]MessageCluster, string) {
+func ClusterMessagesWithEmbeddings(ctx context.Context, stats []MessageStat, embedder *EmbeddingClient, vectorThreshold, ftsThreshold float64, progressCb ClusterProgressCallback) ([]MessageCluster, string) {
 	// Try vector mode: if embedder != nil and EmbedderHealthy()
 	// Embedding phase: pct 0-30, Comparison phase: pct 30-100 (of overall clustering)
 	if embedder != nil && EmbedderHealthy() {
@@ -330,7 +332,7 @@ func ClusterMessagesWithEmbeddings(ctx context.Context, stats []MessageStat, emb
 					progressCb(subPct, 100)
 				}
 			}
-			clusters := ClusterMessages(stats, simFnFromLookup(lookup, stats), threshold, compCb)
+			clusters := ClusterMessages(stats, simFnFromLookup(lookup, stats), vectorThreshold, compCb)
 			return clusters, "vector"
 		}
 		// Vector failed → fall back to FTS
@@ -341,7 +343,7 @@ func ClusterMessagesWithEmbeddings(ctx context.Context, stats []MessageStat, emb
 	// FTS fallback — always available (token-based Sørensen-Dice, no embedding needed)
 	// Used when: no embedder, embedder unhealthy, or vector failed
 	simFn := sorensenDiceWithLengthPenalty(0.5)
-	clusters := ClusterMessages(stats, simFn, threshold, progressCb)
+	clusters := ClusterMessages(stats, simFn, ftsThreshold, progressCb)
 	return clusters, "fts"
 }
 

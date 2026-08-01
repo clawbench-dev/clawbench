@@ -1172,13 +1172,17 @@ type UserMessageStat struct {
 }
 
 // GetUserMessageStats returns distinct non-empty user messages across all sessions
-// (including archived), grouped by content and ordered by count descending.
+// (including archived), grouped by content and ordered by recency + frequency.
 // Messages are filtered to exclude: streaming messages, empty content, long content
-// (>200 chars), file-attached messages, and slash/@-prefixed commands.
-// limit caps the number of results (default 5000 when limit <= 0).
+// (>200 chars), file-attached messages, slash/@-prefixed commands, and messages
+// already in quick-send (matched by label OR command).
+// limit caps the number of distinct message types returned (default 500 when limit <= 0).
+// Results are ordered by the latest occurrence timestamp descending (recent first),
+// so clustering prioritizes recent data. The O(n²) comparison in clustering makes
+// large limits impractical — 500 types ≈ 125K comparisons, completes in seconds.
 func GetUserMessageStats(limit int) ([]UserMessageStat, error) {
 	if limit <= 0 {
-		limit = 5000
+		limit = 500
 	}
 	rows, err := dbRead.Query(`
 		SELECT content, COUNT(*) AS cnt
@@ -1189,8 +1193,9 @@ func GetUserMessageStats(limit int) ([]UserMessageStat, error) {
 		  AND LENGTH(content) <= 200
 		  AND (files IS NULL OR files = '')
 		  AND NOT (content LIKE '/%' OR content LIKE '@%')
+		  AND content NOT IN (SELECT label FROM chat_quick_send UNION SELECT command FROM chat_quick_send)
 		GROUP BY content
-		ORDER BY cnt DESC
+		ORDER BY MAX(created_at) DESC, cnt DESC
 		LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -1559,11 +1564,16 @@ func GetClusterCache() ([]ClusterCacheEntry, string, time.Time, error) {
 // SaveClusterMeta inserts or replaces the meta row with computation progress info.
 // If mode is empty string, the previous mode value is preserved (useful during
 // computing phases when the final mode is not yet known).
-func SaveClusterMeta(progress, mode string, msgCount, clusterCount, elapsedMs int) error {
+// If phase is empty string, the previous phase value is preserved.
+func SaveClusterMeta(progress, mode string, msgCount, clusterCount, elapsedMs int, phase ...string) error {
+	p := ""
+	if len(phase) > 0 {
+		p = phase[0]
+	}
 	_, err := WriteExec(
 		"INSERT OR REPLACE INTO message_clusters_meta (id, mode, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg, updated_at) "+
-			"VALUES (1, COALESCE(NULLIF(?, ''), (SELECT mode FROM message_clusters_meta WHERE id = 1), ''), ?, '', ?, ?, ?, '', CURRENT_TIMESTAMP)",
-		mode, progress, msgCount, clusterCount, elapsedMs,
+			"VALUES (1, COALESCE(NULLIF(?, ''), (SELECT mode FROM message_clusters_meta WHERE id = 1), ''), ?, COALESCE(NULLIF(?, ''), (SELECT phase FROM message_clusters_meta WHERE id = 1), ''), ?, ?, ?, '', CURRENT_TIMESTAMP)",
+		mode, progress, p, msgCount, clusterCount, elapsedMs,
 	)
 	return err
 }

@@ -3,6 +3,11 @@
     <template #header>
       <SparklesIcon :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('chat.messageClusters.title') }}</span>
+      <span class="bs-header-actions">
+        <button v-if="loaded && clusters.length > 0 && !computing && progress.status !== 'error'" class="mc-header-btn" @click.stop="handleStartCompute" :title="t('chat.messageClusters.reanalyze')">
+          <RefreshCwIcon :size="16" />
+        </button>
+      </span>
     </template>
 
     <div class="mc-content">
@@ -13,13 +18,13 @@
         </div>
         <div class="mc-computing-info">
           <span class="mc-phase-text">{{ phaseText }}</span>
-          <button class="mc-btn cancel" @click="cancelCompute">{{ t('chat.messageClusters.cancel') }}</button>
+          <span class="mc-progress-detail">{{ Math.round(progressPercent) }}% · {{ elapsedText }}</span>
         </div>
       </div>
 
-      <!-- Error/Cancelled state -->
-      <div v-else-if="progress.status === 'error' || progress.status === 'cancelled'" class="mc-error">
-        <span>{{ progress.status === 'cancelled' ? t('chat.messageClusters.cancelled') : t('chat.messageClusters.error') }}</span>
+      <!-- Error state -->
+      <div v-else-if="progress.status === 'error'" class="mc-error">
+        <span>{{ t('chat.messageClusters.error') }}</span>
         <button class="mc-btn" @click="handleStartCompute">{{ t('chat.messageClusters.retry') }}</button>
       </div>
 
@@ -39,7 +44,6 @@
       <div v-else class="mc-results">
         <div class="mc-results-header">
           <span class="mc-cache-status">{{ t('chat.messageClusters.cacheStatus', { mode: localizedMode, updatedAt: updatedAt }) }}</span>
-          <button class="mc-btn" @click="handleStartCompute"><RefreshCwIcon :size="14" />{{ t('chat.messageClusters.reanalyze') }}</button>
         </div>
         <div class="mc-cluster-list">
           <div v-for="cluster in clusters" :key="cluster.id" class="mc-cluster-item" @click="showVariants(cluster)">
@@ -66,6 +70,15 @@
         </div>
       </div>
     </ModalDialog>
+
+    <!-- QuickSend edit modal (pre-filled add mode) -->
+    <QuickSendEditModal
+      :open="quickSendEditOpen"
+      :editing-item="null"
+      :initial-values="quickSendInitialValues"
+      @close="quickSendEditOpen = false; quickSendInitialValues = undefined"
+      @saved="onQuickSendSaved"
+    />
   </BottomSheet>
 </template>
 
@@ -75,18 +88,19 @@ import { useI18n } from 'vue-i18n'
 import { Sparkles as SparklesIcon, Plus as PlusIcon, List as ListIcon, Play as PlayIcon, RefreshCw as RefreshCwIcon } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import QuickSendEditModal from '@/components/chat/QuickSendEditModal.vue'
 import { useMessageClusters, type MessageCluster } from '@/composables/useMessageClusters'
-import { useQuickSend } from '@/composables/useQuickSend'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import { appLog } from '@/utils/appLog'
-
-const TAG = 'MsgClusterDrawer'
+import { formatDuration } from '@/utils/format'
 
 const { t } = useI18n()
 const toast = useToast()
-const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute: rawStartCompute, cancelCompute, pollProgress, stopPolling } = useMessageClusters()
-const { addItem } = useQuickSend()
+const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute: rawStartCompute, syncProgressOnce } = useMessageClusters()
+
+// ── QuickSend edit modal ──
+const quickSendEditOpen = ref(false)
+const quickSendInitialValues = ref<{ label: string; command: string } | undefined>(undefined)
 
 // ── Variants detail dialog ──
 const variantsDialogOpen = ref(false)
@@ -111,10 +125,9 @@ function showVariants(cluster: MessageCluster) {
 // to stay hidden on non-chat tabs. See useTabDrawer.ts for details.
 const drawer = useTabDrawer('chat', { autoRestore: false })
 
-// Stop polling when drawer closes — WS events provide progress in background
+// No polling stop needed — drawer close just closes dialog
 watch(() => drawer.effectiveOpen.value, (isOpen) => {
   if (!isOpen) {
-    stopPolling()
     variantsDialogOpen.value = false
   }
 })
@@ -151,47 +164,41 @@ const localizedMode = computed(() => {
 const phaseText = computed(() => {
   const p = progress.value
   const phase = p.phase
-  const elapsed = formatElapsed(p.elapsed_ms)
-  if (phase === 'extracting') return t('chat.messageClusters.phase_extracting', { msgCount: p.msg_count, elapsed })
-  if (phase === 'clustering') return t('chat.messageClusters.phase_clustering', { elapsed })
-  if (phase === 'saving') return t('chat.messageClusters.phase_saving', { elapsed })
+  if (phase === 'extracting') return t('chat.messageClusters.phase_extracting', { msgCount: p.msg_count })
+  if (phase === 'clustering') return t('chat.messageClusters.phase_clustering')
+  if (phase === 'saving') return t('chat.messageClusters.phase_saving')
   return t('chat.messageClusters.computing')
 })
 
-function formatElapsed(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
-}
+const elapsedText = computed(() => {
+  return formatDuration(progress.value.elapsed_ms)
+})
 
 async function open() {
   drawer.open()
   await fetchClusters()
-  // If computation is running but not polling, start polling as WS fallback
-  if (computing.value) pollProgress()
+  // Sync with server state once to detect ongoing computation
+  await syncProgressOnce()
 }
 
 async function handleStartCompute() {
   const result = await rawStartCompute()
-  if (result === 'started') {
-    // Start polling since drawer is open and user clicked the button
-    pollProgress()
-  } else if (result === 'already_running') {
+  if (result === 'already_running') {
     toast.show(t('chat.messageClusters.computing'), { type: 'info' })
-    // Ensure polling is running for WS fallback
-    pollProgress()
   } else if (result === 'error') {
     toast.show(t('chat.messageClusters.error'), { type: 'error' })
   }
 }
 
-async function addVariantToQuickSend(variant: string) {
-  const ok = await addItem({ label: variantsDialogRepresentative.value, command: variant })
-  if (ok) {
-    toast.show(t('chat.quickSend.itemSaved'), { icon: '✅', type: 'success' })
-    await fetchClusters()
-  } else {
-    appLog.e(TAG, `Failed to add variant "${variant}" to quick send`)
-  }
+function addVariantToQuickSend(variant: string) {
+  quickSendInitialValues.value = { label: variantsDialogRepresentative.value, command: variant }
+  quickSendEditOpen.value = true
+}
+
+async function onQuickSendSaved() {
+  quickSendEditOpen.value = false
+  quickSendInitialValues.value = undefined
+  await fetchClusters()
 }
 
 defineExpose({ open })
@@ -219,18 +226,6 @@ defineExpose({ open })
   justify-content: space-between;
 }
 
-.mc-btn.cancel {
-  color: var(--text-secondary, #666);
-  border-color: var(--border-color, #ddd);
-  background: none;
-  font-size: 11px;
-  padding: 2px 8px;
-}
-
-.mc-btn.cancel:hover {
-  background: var(--bg-tertiary, #f0f0f0);
-}
-
 .mc-progress-bar {
   height: 6px;
   background: var(--bg-tertiary, #e5e5e5);
@@ -248,6 +243,17 @@ defineExpose({ open })
 .mc-phase-text {
   font-size: 13px;
   color: var(--text-secondary, #666);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-progress-detail {
+  font-size: 11px;
+  color: var(--text-muted, #999);
+  flex-shrink: 0;
 }
 
 .mc-error {
@@ -422,5 +428,30 @@ defineExpose({ open })
 .mc-variant-text {
   flex: 1;
   min-width: 0;
+}
+
+.bs-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mc-header-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  color: var(--accent-color, #0066cc);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.mc-header-btn:hover {
+  background: rgba(0, 102, 204, 0.1);
 }
 </style>

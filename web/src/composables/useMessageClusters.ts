@@ -31,9 +31,6 @@ interface MessageClustersResponse {
 
 // ── Module-level singleton state ──
 // Computing/progress must persist across drawer open/close cycles.
-// If state were per-instance, closing the drawer (component unmount)
-// would lose the computing state, and reopening would show "idle"
-// instead of the ongoing analysis progress.
 
 const clusters = ref<MessageCluster[]>([])
 const loaded = ref(false)
@@ -46,20 +43,44 @@ const mode = ref<string>('')
 const updatedAt = ref<string>('')
 let fetchingGuard = false
 
+// ── Cancel guard ──
+// After user cancels, stale goroutine may still send WS events with status="computing".
+// This flag blocks those stale events from re-setting computing=true.
+// It is cleared when a terminal event (done/error/cancelled) arrives or
+// when the user explicitly starts a new computation.
+let cancelledGuard = false
+
 // ── WebSocket cluster_progress listener (module-level, never unregistered) ──
+// WS is the sole authoritative data source during computing.
+// No polling — drawer open does a single /compute/status query to sync initial state,
+// then WS drives all subsequent progress updates.
 const { onEvent } = useGlobalEvents()
 onEvent((event: string, data: unknown) => {
   if (event !== 'cluster_progress') return
   const d = data as ClusterProgress
   if (!d?.status) return
+
+  // After cancel, block stale "computing" events from the dying goroutine.
+  // Only terminal events (done/error/cancelled) can clear the guard.
+  if (cancelledGuard && d.status === 'computing') {
+    appLog.d('MsgCluster', 'Blocked stale computing WS event after cancel')
+    return
+  }
+
   progress.value = d
+
   if (d.status === 'done') {
     computing.value = false
-    stopPolling()
+    cancelledGuard = false
     fetchClusters()
-  } else if (d.status === 'error' || d.status === 'cancelled') {
+  } else if (d.status === 'error') {
     computing.value = false
-    stopPolling()
+    cancelledGuard = false
+  } else if (d.status === 'cancelled') {
+    // Cancelled → return to idle (user can re-trigger)
+    computing.value = false
+    cancelledGuard = false
+    progress.value = { status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0 }
   } else if (d.status === 'computing') {
     computing.value = true
   }
@@ -87,6 +108,40 @@ async function fetchClusters() {
   }
 }
 
+// ── Single query: sync progress state from server ──
+// Called once when drawer opens to detect ongoing computation.
+// After this, WS events drive all further updates.
+async function syncProgressOnce() {
+  try {
+    const resp = await fetch('/api/chat/message-clusters/compute/status')
+    if (!resp.ok) return
+    const data: ClusterProgress = await resp.json()
+    // Only sync coarse fields; phase and progress_pct are WS-only.
+    // If computation is done, error, or cancelled, update fully.
+    if (data.status === 'done' || data.status === 'error') {
+      progress.value = data
+      computing.value = false
+      cancelledGuard = false
+      if (data.status === 'done') {
+        await fetchClusters()
+      }
+    } else if (data.status === 'cancelled') {
+      // Cancelled → return to idle
+      progress.value = { status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0 }
+      computing.value = false
+      cancelledGuard = false
+    } else if (data.status === 'computing') {
+      computing.value = true
+      // Update coarse fields only; WS will fill in phase and progress_pct
+      progress.value.status = data.status
+      progress.value.msg_count = data.msg_count
+      progress.value.elapsed_ms = data.elapsed_ms
+    }
+  } catch (e) {
+    appLog.e('MsgCluster', `Progress sync error: ${e}`)
+  }
+}
+
 // ── Trigger on-demand computation ──
 async function startCompute() {
   try {
@@ -97,9 +152,14 @@ async function startCompute() {
     }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     computing.value = true
-    progress.value.status = 'computing'
-    progress.value.phase = 'extracting'
-    progress.value.elapsed_ms = 0
+    cancelledGuard = false // new computation clears cancel guard
+    progress.value = {
+      ...progress.value,
+      status: 'computing',
+      phase: 'extracting',
+      elapsed_ms: 0,
+      progress_pct: 0,
+    }
     return 'started'
   } catch (e) {
     appLog.e('MsgCluster', `Failed to start computation: ${e}`)
@@ -109,66 +169,32 @@ async function startCompute() {
 
 // ── Cancel in-progress computation ──
 async function cancelCompute() {
+  cancelledGuard = true
+  computing.value = false
+  // Immediately return to idle state
+  progress.value = { status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0 }
   try {
     const resp = await fetch('/api/chat/message-clusters/compute/cancel', { method: 'POST' })
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-    computing.value = false
-    stopPolling()
   } catch (e) {
     appLog.e('MsgCluster', `Failed to cancel computation: ${e}`)
   }
 }
 
-// ── Poll progress every 2 seconds (module-level timer) ──
-let pollTimer: ReturnType<typeof setInterval> | null = null
-function pollProgress() {
-  if (pollTimer) return // already polling
-  pollTimer = setInterval(async () => {
-    try {
-      const resp = await fetch('/api/chat/message-clusters/compute/status')
-      if (!resp.ok) return
-      const data: ClusterProgress = await resp.json()
-      progress.value = data
-      if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
-        stopPolling()
-        computing.value = false
-        if (data.status === 'done') {
-          await fetchClusters()
-        }
-      }
-    } catch (e) {
-      appLog.e('MsgCluster', `Progress poll error: ${e}`)
-    }
-  }, 2000)
-}
-
-function stopPolling() {
-  if (pollTimer !== null) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
 // ── Composable returns module-level refs (singleton pattern) ──
-// The drawer component mounts/unmounts on open/close, but
-// computing state must persist. Returning module-level refs
-// ensures reopening the drawer shows the ongoing progress.
 export function useMessageClusters() {
-  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, cancelCompute, stopPolling, pollProgress }
+  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, cancelCompute, syncProgressOnce }
 }
 
 // ── Reset for tests only ──
-// Module-level state persists across component mount/unmount cycles
-// (by design), but tests need a clean slate. This function is NOT
-// used in production code — only in test beforeEach hooks.
 export function resetMessageClustersState() {
   clusters.value = []
   loaded.value = false
   loading.value = false
   computing.value = false
-  progress.value = { status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '' }
+  cancelledGuard = false
+  progress.value = { status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0 }
   mode.value = ''
   updatedAt.value = ''
   fetchingGuard = false
-  stopPolling()
 }

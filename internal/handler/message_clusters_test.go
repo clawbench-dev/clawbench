@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
@@ -48,45 +47,6 @@ func TestServeMessageClusters_CachedResults(t *testing.T) {
 	assert.Equal(t, "继续写代码", resp.Clusters[0].Representative)
 	assert.Equal(t, []string{"继续写代码", "请继续写"}, resp.Clusters[0].Variants)
 	assert.Equal(t, 5, resp.Clusters[0].TotalCount)
-}
-
-func TestServeMessageClusters_FiltersQuickSend(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Add quick-send items whose commands match cluster variants/representatives
-	_, _ = service.AddChatQuickSend("Continue", "继续")
-	_, _ = service.AddChatQuickSend("Please Continue", "请继续")
-	_, _ = service.AddChatQuickSend("Commit", "提交代码")
-
-	// Pre-populate cluster cache
-	entries := []service.ClusterCacheEntry{
-		// Cluster 1: representative "继续" in quick-send → entire cluster filtered out
-		{Representative: "继续", Variants: "[\"继续\",\"请继续\"]", TotalCount: 5, RepresentativeCount: 3, SortOrder: 0},
-		// Cluster 2: representative "提交代码" in quick-send → entire cluster filtered out
-		{Representative: "提交代码", Variants: "[\"提交代码\",\"commit\"]", TotalCount: 3, RepresentativeCount: 2, SortOrder: 1},
-		// Cluster 3: no match → kept entirely
-		{Representative: "帮我写个函数", Variants: "[\"帮我写个函数\",\"写一个函数\"]", TotalCount: 4, RepresentativeCount: 2, SortOrder: 2},
-	}
-	err := service.SaveClusterCache(entries, "embedding")
-	require.NoError(t, err)
-
-	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters", nil)
-	w := callHandlerWithAuth(ServeMessageClusters, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp MessageClustersResponse
-	err = json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	// Clusters 1 and 2 filtered (representatives in quick-send), Cluster 3 untouched
-	assert.Equal(t, 1, resp.Total)
-	if len(resp.Clusters) != 1 {
-		t.Fatalf("expected 1 cluster after filtering, got %d", len(resp.Clusters))
-	}
-	// Cluster 3: untouched
-	assert.Equal(t, "帮我写个函数", resp.Clusters[0].Representative)
-	assert.Equal(t, []string{"帮我写个函数", "写一个函数"}, resp.Clusters[0].Variants)
 }
 
 func TestServeMessageClusters_EmptyCache(t *testing.T) {
@@ -362,131 +322,4 @@ func TestMessageClustersRouteRequiresAuth(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected message clusters to require auth, got status %d body %s", w.Code, w.Body.String())
 	}
-}
-
-// ---------- Test quick-send filtering logic edge cases ----------
-
-func TestServeMessageClusters_QuickSendFiltersAllVariantsButRepresentativeStillShown(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Add quick-send where command matches the representative text exactly
-	_, _ = service.AddChatQuickSend("Continue", "继续")
-
-	// Cluster where representative matches quick-send but has no other unmatched variants
-	entries := []service.ClusterCacheEntry{
-		{Representative: "继续", Variants: "[\"继续\"]", TotalCount: 5, RepresentativeCount: 5, SortOrder: 0},
-	}
-	err := service.SaveClusterCache(entries, "embedding")
-	require.NoError(t, err)
-
-	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters", nil)
-	w := callHandlerWithAuth(ServeMessageClusters, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp MessageClustersResponse
-	err = json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	// All variants (just "继续") match quick-send → entire cluster filtered out
-	// AND representative itself is in quick-send → would also be filtered
-	assert.Equal(t, 0, resp.Total)
-	assert.Empty(t, resp.Clusters)
-}
-
-func TestServeMessageClusters_RepresentativeInQuickSendFiltersEntireCluster(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Add quick-send matching the representative text
-	_, _ = service.AddChatQuickSend("Continue", "继续")
-
-	// Cluster where representative matches quick-send but variants have unmatched items
-	entries := []service.ClusterCacheEntry{
-		{Representative: "继续", Variants: "[\"继续\",\"请继续\",\"go on\"]", TotalCount: 10, RepresentativeCount: 5, SortOrder:0},
-	}
-	err := service.SaveClusterCache(entries, "fts")
-	require.NoError(t, err)
-
-	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters", nil)
-	w := callHandlerWithAuth(ServeMessageClusters, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp MessageClustersResponse
-	err = json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	// Even though variants "请继续" and "go on" are not in quick-send,
-	// representative "继续" is → entire cluster filtered out
-	assert.Equal(t, 0, resp.Total)
-	assert.Empty(t, resp.Clusters)
-}
-
-// ---------- Helper: build quick-send command set from service ----------
-
-// quickSendCommandSet builds a set of quick-send commands for filtering.
-func quickSendCommandSet(commands []string) map[string]bool {
-	set := make(map[string]bool, len(commands))
-	for _, cmd := range commands {
-		set[cmd] = true
-	}
-	return set
-}
-
-// filterClusters applies quick-send filtering to cluster cache entries.
-func filterClusters(entries []service.ClusterCacheEntry, quickSendSet map[string]bool) []ClusterItem {
-	var items []ClusterItem
-	for _, e := range entries {
-		if e.TotalCount < MinClusterTotalCount {
-			continue
-		}
-		if utf8.RuneCountInString(e.Representative) < MinClusterTextLen {
-			continue
-		}
-		var variants []string
-		if err := json.Unmarshal([]byte(e.Variants), &variants); err != nil {
-			variants = []string{e.Representative}
-		}
-		var unmatched []string
-		for _, v := range variants {
-			if !quickSendSet[v] {
-				unmatched = append(unmatched, v)
-			}
-		}
-		// If representative itself is in quick-send → skip entire cluster
-		if quickSendSet[e.Representative] {
-			continue
-		}
-		if len(unmatched) == 0 {
-			continue
-		}
-		items = append(items, ClusterItem{
-			ID:                  e.ID,
-			Representative:      e.Representative,
-			Variants:            unmatched,
-			TotalCount:          e.TotalCount,
-			RepresentativeCount: e.RepresentativeCount,
-		})
-	}
-	return items
-}
-
-// Pure logic test for filterClusters (no HTTP, no DB)
-func TestFilterClusters_PureLogic(t *testing.T) {
-	entries := []service.ClusterCacheEntry{
-		{ID: 1, Representative: "继续", Variants: "[\"继续\",\"请继续\"]", TotalCount: 5, RepresentativeCount: 3},
-		{ID: 2, Representative: "提交", Variants: "[\"提交\",\"commit\"]", TotalCount: 3, RepresentativeCount: 2},
-		{ID: 3, Representative: "帮我写", Variants: "[\"帮我写\",\"写一个函数\"]", TotalCount: 4, RepresentativeCount: 2},
-	}
-
-	// "继续" and "提交" in quick-send → clusters 1 and 2 filtered entirely
-	qsSet := quickSendCommandSet([]string{"继续", "请继续", "提交"})
-
-	items := filterClusters(entries, qsSet)
-
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item after filtering, got %d", len(items))
-	}
-	// Cluster 3: no match → kept entirely
-	assert.Equal(t, []string{"帮我写", "写一个函数"}, items[0].Variants)
 }

@@ -335,7 +335,8 @@ func TestClusterWorker_Stop(t *testing.T) {
 	insertTestUserMessages(t, "/proj", "sess-1", longContents)
 
 	cw.ComputeOnce()
-	time.Sleep(50 * time.Millisecond)
+	// Give goroutine time to start and enter extracting/clustering
+	time.Sleep(100 * time.Millisecond)
 
 	// Stop should cancel the goroutine
 	cw.Stop()
@@ -343,6 +344,11 @@ func TestClusterWorker_Stop(t *testing.T) {
 	// After stop, IsRunning should eventually be false
 	// (the goroutine's defer sets running=false)
 	assert.Eventually(t, func() bool { return !cw.IsRunning() }, 5*time.Second, 100*time.Millisecond)
+	// Wait for goroutine to fully finish (including any DB writes after Stop)
+	// Stop() sets running=false immediately but the goroutine may still be
+	// executing SaveClusterMetaError or other cleanup. Without this extra wait,
+	// the goroutine could write to the next test's DB.
+	time.Sleep(200 * time.Millisecond)
 }
 
 // ---------- Integration: StartClusterWorker / StopClusterWorker ----------

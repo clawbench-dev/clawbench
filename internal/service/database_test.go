@@ -2481,6 +2481,14 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 			indexed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+		CREATE TABLE IF NOT EXISTS chat_quick_send (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			label TEXT NOT NULL,
+			command TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	if err != nil {
 		t.Fatalf("failed to create tables: %v", err)
@@ -2568,8 +2576,10 @@ func TestGetUserMessageStats_ExcludesEmptyAndLong(t *testing.T) {
 	stats, err := GetUserMessageStats(100)
 	assert.NoError(t, err)
 	assert.Len(t, stats, 2)
-	assert.Equal(t, "short message", stats[0].Text)
-	assert.Equal(t, maxContent, stats[1].Text)
+	// Order depends on SQLite internal sort when timestamps and counts are equal
+	texts := []string{stats[0].Text, stats[1].Text}
+	assert.Contains(t, texts, "short message")
+	assert.Contains(t, texts, maxContent)
 }
 
 func TestGetUserMessageStats_ExcludesSlashCommands(t *testing.T) {

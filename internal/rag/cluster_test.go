@@ -341,7 +341,7 @@ func TestClusterMessagesWithEmbeddings_FTSFallbackNoEmbedder(t *testing.T) {
 		{Text: "hello", Count: 2},
 	}
 
-	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, nil, 0.65, nil)
+	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, nil, 0.65, 0.85, nil)
 
 	if mode != "fts" {
 		t.Errorf("expected mode 'fts', got %q", mode)
@@ -365,7 +365,7 @@ func TestClusterMessagesWithEmbeddings_FTSFallback(t *testing.T) {
 	// Use a real embedder struct but it won't be called since healthy=false
 	embedder := &EmbeddingClient{}
 
-	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65, nil)
+	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65, 0.85, nil)
 
 	if mode != "fts" {
 		t.Errorf("expected mode 'fts', got %q", mode)
@@ -401,7 +401,7 @@ func TestClusterMessagesWithEmbeddings_VectorMode(t *testing.T) {
 		{Text: "hello", Count: 1},
 	}
 
-	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65, nil)
+	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65, 0.85, nil)
 
 	if mode != "vector" {
 		t.Errorf("expected mode 'vector', got %q", mode)
