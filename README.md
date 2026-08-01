@@ -188,6 +188,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **图片上传**：支持上传图片与 AI 对话（多模态）
 - **断连保护**：消息立即落库，网络断开不丢失，15 秒心跳保活 + 30 秒超时自动重连（降级轮询时实时更新内容）
 - **自动恢复**：Claude / CodeBuddy / Qoder / CodeWhale / MiMo / Pi / Cline / Copilot / Kimi 退出 Plan Mode 后自动发送"继续"
+- **消息队列**：AI 忙碌时消息排队，依次发送
 - **消息聚类分析**：自动分析聊天历史消息模式，将语义相似的用户消息聚类分组，一键添加到快捷发送；Union-Find + Sørensen-Dice 相似度算法，按需计算带进度追踪
 - **自动摘要**：会话完成后自动生成最后一条助手消息的摘要，底部横幅一键切换摘要/原文；TTS 朗读也使用摘要
 - **@ 命令**：输入 `@chatsearch` 搜索历史对话、`@task` 管理定时任务，自动补全弹出菜单，用户消息显示紫色命令徽章
