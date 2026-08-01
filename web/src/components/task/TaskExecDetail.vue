@@ -570,13 +570,14 @@ onUnmounted(() => {
 }
 
 .action-btn.accent {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 20%, var(--bg-secondary, #f1f3f5));
+  color: var(--accent-color, #0066cc);
 }
 
 @media (hover: hover) {
   .action-btn.accent:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 35%, var(--bg-secondary, #f1f3f5));
+    color: #fff;
   }
 }
 

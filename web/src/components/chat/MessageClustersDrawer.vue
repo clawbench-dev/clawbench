@@ -17,7 +17,7 @@
       <!-- Error state -->
       <div v-else-if="progress.status === 'error'" class="mc-error">
         <span>{{ t('chat.messageClusters.error') }}</span>
-        <button class="mc-btn" @click="startCompute">{{ t('chat.messageClusters.retry') }}</button>
+        <button class="mc-btn" @click="handleStartCompute">{{ t('chat.messageClusters.retry') }}</button>
       </div>
 
       <!-- Loading state -->
@@ -28,14 +28,14 @@
       <!-- No cache (idle) -->
       <div v-else-if="!loaded || clusters.length === 0 && progress.status === 'idle'" class="mc-empty">
         <span>{{ t('chat.messageClusters.noCache') }}</span>
-        <button class="mc-btn primary" @click="startCompute">{{ t('chat.messageClusters.firstAnalyze') }}</button>
+        <button class="mc-btn primary" @click="handleStartCompute">{{ t('chat.messageClusters.firstAnalyze') }}</button>
       </div>
 
       <!-- Has cached results -->
       <div v-else class="mc-results">
         <div class="mc-results-header">
           <span class="mc-cache-status">{{ t('chat.messageClusters.cacheStatus', { mode: mode, updatedAt: updatedAt }) }}</span>
-          <button class="mc-btn" @click="startCompute">{{ t('chat.messageClusters.reanalyze') }}</button>
+          <button class="mc-btn" @click="handleStartCompute">{{ t('chat.messageClusters.reanalyze') }}</button>
         </div>
         <div class="mc-cluster-list">
           <div v-for="cluster in clusters" :key="cluster.id" class="mc-cluster-item">
@@ -69,7 +69,7 @@ const TAG = 'MsgClusterDrawer'
 
 const { t } = useI18n()
 const toast = useToast()
-const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute } = useMessageClusters()
+const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute: rawStartCompute } = useMessageClusters()
 const { addItem } = useQuickSend()
 
 // ── Tab binding (useTabDrawer) ──
@@ -111,6 +111,18 @@ function formatElapsed(ms: number): string {
 async function open() {
   drawer.open()
   await fetchClusters()
+}
+
+async function handleStartCompute() {
+  await rawStartCompute()
+  // If computation didn't start (error/409), show feedback
+  if (!computing.value && progress.value.status !== 'computing') {
+    if (progress.value.status === 'error') {
+      toast.show(t('chat.messageClusters.error'), { type: 'error' })
+    } else {
+      toast.show(t('chat.messageClusters.computing'), { type: 'info' })
+    }
+  }
 }
 
 async function addToQuickSend(cluster: MessageCluster) {

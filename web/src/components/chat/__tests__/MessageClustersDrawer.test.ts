@@ -28,6 +28,7 @@ const mockMode = ref('')
 const mockUpdatedAt = ref('')
 const mockFetchClusters = vi.fn()
 const mockStartCompute = vi.fn()
+const mockStopPolling = vi.fn()
 
 vi.mock('@/composables/useMessageClusters', () => ({
   useMessageClusters: () => ({
@@ -40,6 +41,7 @@ vi.mock('@/composables/useMessageClusters', () => ({
     updatedAt: mockUpdatedAt,
     fetchClusters: mockFetchClusters,
     startCompute: mockStartCompute,
+    stopPolling: mockStopPolling,
   }),
   MessageCluster: {},
 }))
@@ -56,6 +58,19 @@ vi.mock('@/composables/useQuickSend', () => ({
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({
     show: vi.fn(),
+  }),
+}))
+
+// Mock useTabDrawer
+const mockDrawerOpen = vi.fn()
+const mockDrawerClose = vi.fn()
+vi.mock('@/composables/useTabDrawer', () => ({
+  useTabDrawer: () => ({
+    effectiveOpen: ref(true),
+    isOpen: ref(false),
+    open: mockDrawerOpen,
+    close: mockDrawerClose,
+    toggle: vi.fn(),
   }),
 }))
 
