@@ -1349,6 +1349,19 @@ func MarkMessagesIndexed(ids []int64) error {
 	return err
 }
 
+// ResetAllIndexed resets all chat messages' indexed flag back to 0,
+// so the RAG indexer will re-index them from scratch.
+// Streaming (in-progress) messages are intentionally excluded because
+// FinalizeStreamingMessage always sets indexed=0 upon completion,
+// so they will be picked up by the indexer naturally.
+func ResetAllIndexed() (int64, error) {
+	result, err := WriteExec("UPDATE chat_history SET indexed = 0 WHERE streaming = 0")
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 // UnindexedCount returns the number of messages waiting to be indexed by RAG.
 func UnindexedCount() (int, error) {
 	var count int

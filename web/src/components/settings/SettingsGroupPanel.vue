@@ -55,11 +55,18 @@
         :display-format="entry.field.displayFormat"
         :display-transform="entry.field.displayTransform"
         :progress="resolveProgress(entry.field)"
-        :speed-label="resolveSpeedLabel(entry.field)"
+        :refreshable="isRagProgressField(entry.field)"
+        :refreshing="ragRefreshing"
+        :rebuildable="isRagRebuildField(entry.field)"
+        :rebuilding="isVectorRebuildField(entry.field) ? ragVectorRebuilding : ragFtsRebuilding"
+        :rebuild-title="getRebuildTitle(entry.field)"
         :no-divider="false"
         @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
         @desc-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
+        @click="handleFieldClick(entry.field)"
+        @refresh="handleRagRefresh"
+        @rebuild="handleRagRebuildFromProgress(entry.field)"
       />
       <!-- FRP auto_port info injection -->
       <template v-if="entry.type === 'field' && entry.field.key === 'frp.auto_port' && isFrpAutoPortActive">
@@ -141,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, inject, onMounted, onUnmounted, type Ref } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
@@ -155,6 +162,8 @@ import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useFrp } from '@/composables/useFrp'
 import { useRagStatus } from '@/composables/useRagStatus'
+import { useDialog } from '@/composables/useDialog'
+import { apiPost } from '@/utils/api'
 
 // ── Props & Emits ──
 
@@ -172,7 +181,8 @@ const toast = useToast()
 const { registerGuard, unregisterGuard } = useSettingsNavigation()
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
 const { frpState } = useFrp()
-const { status: ragStatus, startPolling: startRagPolling, stopPolling: stopRagPolling } = useRagStatus()
+const { status: ragStatus, refresh: refreshRagStatus } = useRagStatus()
+const dialog = useDialog()
 
 // ── Panel snapshot ──
 
@@ -199,27 +209,8 @@ onMounted(() => {
   registerGuard(`panel-${props.config.panelId}`, () => !hasChanges.value && !hasFailedSave.value)
 })
 
-// Start RAG status polling only when the RAG panel is both the active category
-// AND the settings tab is visible. Stop when either condition is false.
-const activeTab = inject<Ref<string>>('activeTab', ref('settings'))
-
-watch(
-  () => props.config.panelId === 'rag' && activeTab?.value === 'settings',
-  (shouldPoll: boolean) => {
-    if (shouldPoll) {
-      startRagPolling()
-    } else {
-      stopRagPolling()
-    }
-  },
-  { immediate: true },
-)
-
 onUnmounted(() => {
   unregisterGuard(`panel-${props.config.panelId}`)
-  if (props.config.panelId === 'rag') {
-    stopRagPolling()
-  }
 })
 
 // ── Enable toggle ──
@@ -373,16 +364,8 @@ function resolveProgress(field: ItemSpec): { value: number; max: number } | unde
   }
 }
 
-function resolveSpeedLabel(field: ItemSpec): string | undefined {
-  const s = ragStatus.value
-  switch (field.key) {
-    case 'rag.status.index_progress':
-      return s.index_speed > 0 ? t('settings.items.ragSpeedFormat', { speed: s.index_speed.toFixed(2) }) : undefined
-    case 'rag.status.embed_progress':
-      return s.embed_speed > 0 ? t('settings.items.ragSpeedFormat', { speed: s.embed_speed.toFixed(2) }) : undefined
-    default:
-      return undefined
-  }
+function isRagProgressField(field: ItemSpec): boolean {
+  return field.key === 'rag.status.index_progress' || field.key === 'rag.status.embed_progress'
 }
 
 function setLocalValue(key: string, value: unknown) {
@@ -440,6 +423,64 @@ async function onSave() {
   if (!serverError.value) {
     toast.show(t('settings.panel.saved'), { icon: '✅', type: 'success', duration: 3000 })
   }
+}
+
+// ── Custom field actions (RAG progress) ──
+
+const ragVectorRebuilding = ref(false)
+const ragFtsRebuilding = ref(false)
+const ragRefreshing = ref(false)
+
+function isRagRebuildField(field: ItemSpec): boolean {
+  return field.key === 'rag.status.index_progress' || field.key === 'rag.status.embed_progress'
+}
+
+function isVectorRebuildField(field: ItemSpec): boolean {
+  return field.key === 'rag.status.embed_progress'
+}
+
+function getRebuildTitle(field: ItemSpec): string {
+  return isVectorRebuildField(field) ? t('settings.items.ragVectorRebuild') : t('settings.items.ragFtsRebuild')
+}
+
+async function handleRagRefresh() {
+  ragRefreshing.value = true
+  try {
+    await refreshRagStatus()
+  } finally {
+    ragRefreshing.value = false
+  }
+}
+
+async function handleRagRebuildFromProgress(field: ItemSpec) {
+  const isVector = field.key === 'rag.status.embed_progress'
+  const rebuildingRef = isVector ? ragVectorRebuilding : ragFtsRebuilding
+  if (rebuildingRef.value) return
+  const confirmKey = isVector ? 'settings.items.ragVectorRebuildConfirm' : 'settings.items.ragFtsRebuildConfirm'
+  const titleKey = isVector ? 'settings.items.ragVectorRebuild' : 'settings.items.ragFtsRebuild'
+  const successKey = isVector ? 'settings.items.ragVectorRebuildSuccess' : 'settings.items.ragFtsRebuildSuccess'
+
+  const confirmed = await dialog.confirm(
+    t(confirmKey),
+    { title: t(titleKey), dangerous: true },
+  )
+  if (!confirmed) return
+
+  rebuildingRef.value = true
+  try {
+    const endpoint = isVector ? '/api/rag/reset-vector' : '/api/rag/reset'
+    await apiPost(endpoint, {})
+    toast.show(t(successKey), { icon: '✅', type: 'success', duration: 3000 })
+    refreshRagStatus()
+  } catch {
+    toast.show(t('settings.items.ragRebuildFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  } finally {
+    rebuildingRef.value = false
+  }
+}
+
+async function handleFieldClick(_field: ItemSpec) {
+  // No action items in RAG panel now — rebuilds are triggered via progress bar icons
 }
 
 // ── Connectivity test ──

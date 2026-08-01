@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 
@@ -495,8 +496,7 @@ func TestServeRAGStatus_VectorDisabled(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// RAG.VectorEnabled defaults to false in test ConfigInstance (vector disabled)
-	// FTS should still be reported as available when store has data
+	// With nil GlobalStore (RAG not initialized), mode should be "none"
 	req := newRequest(t, http.MethodGet, "/api/rag/status", nil)
 	w := callHandlerWithAuth(ServeRAGStatus, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -504,7 +504,8 @@ func TestServeRAGStatus_VectorDisabled(t *testing.T) {
 	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	require.NoError(t, err)
-	// No FTS data in empty test store, but vec should also be false
+	// Nil store: mode="none" (config-based — RAG not initialized)
+	assert.Equal(t, "none", result["mode"])
 	assert.Equal(t, false, result["has_vec_data"])
 	assert.Equal(t, false, result["embedder_healthy"])
 }
@@ -562,14 +563,18 @@ func TestServeRAGStatus_WithStore_HybridMode(t *testing.T) {
 
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
+	origVectorEnabled := model.ConfigInstance.RAG.VectorEnabled
 	t.Cleanup(func() {
 		rag.GlobalStore = origStore
 		rag.GlobalEmbedder = origEmbedder
+		model.ConfigInstance.RAG.VectorEnabled = origVectorEnabled
 	})
 
 	store := setupRAGStore(t)
 	rag.GlobalStore = store
 	rag.GlobalEmbedder = setupWorkingMockEmbedder(t)
+	model.ConfigInstance.RAG.VectorEnabled = true
+	rag.SetEmbedderHealthy(true)
 
 	req := newRequest(t, http.MethodGet, "/api/rag/status", nil)
 	w := callHandlerWithAuth(ServeRAGStatus, req)
@@ -578,9 +583,42 @@ func TestServeRAGStatus_WithStore_HybridMode(t *testing.T) {
 	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	require.NoError(t, err)
-	// With embedder healthy but no data, mode should be "none" (no vec data)
-	assert.Contains(t, result, "mode")
+	// Config-based mode: store + VectorEnabled + embedder healthy → "hybrid"
+	assert.Equal(t, "hybrid", result["mode"])
 	assert.Contains(t, result, "embedded_messages")
+}
+
+func TestServeRAGStatus_WithStore_FtsOnlyMode(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	origVectorEnabled := model.ConfigInstance.RAG.VectorEnabled
+	origEmbedderHealthy := rag.EmbedderHealthy()
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+		model.ConfigInstance.RAG.VectorEnabled = origVectorEnabled
+		rag.SetEmbedderHealthy(origEmbedderHealthy)
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	rag.GlobalEmbedder = nil
+	model.ConfigInstance.RAG.VectorEnabled = false
+	rag.SetEmbedderHealthy(false)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/status", nil)
+	w := callHandlerWithAuth(ServeRAGStatus, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	// Config-based mode: store + !VectorEnabled → "fts"
+	assert.Equal(t, "fts", result["mode"])
+	assert.Equal(t, false, result["embedder_healthy"])
 }
 
 // ---------- ServeRAGSessionSearch ----------
@@ -682,6 +720,179 @@ func TestServeRAGSessionSearch_LocalhostGlobalSearch(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:12345"
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ---------- ServeRAGReset ----------
+
+func TestServeRAGReset_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/reset", nil)
+	w := callHandlerWithAuth(ServeRAGReset, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeRAGReset_NilStoreReturns503(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	t.Cleanup(func() { rag.GlobalStore = origStore })
+	rag.GlobalStore = nil
+
+	req := newRequest(t, http.MethodPost, "/api/rag/reset", nil)
+	w := callHandlerWithAuth(ServeRAGReset, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestServeRAGReset_Success(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	embedder := setupWorkingMockEmbedder(t)
+	rag.GlobalEmbedder = embedder
+
+	// Insert a message and mark it as indexed
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
+	require.NoError(t, err)
+	err = service.MarkMessageIndexed(msgID)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/reset", nil)
+	w := callHandlerWithAuth(ServeRAGReset, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result["status"])
+	assert.Equal(t, float64(1), result["messages_reset"])
+
+	// Verify the message's indexed flag was reset
+	unindexed, err := service.UnindexedCount()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, unindexed, 1)
+}
+
+func TestServeRAGReset_ConcurrencyConflict(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+		ragResetting.Store(false)
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	rag.GlobalEmbedder = setupWorkingMockEmbedder(t)
+
+	// Simulate an in-progress reset by setting the flag
+	ragResetting.Store(true)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/reset", nil)
+	w := callHandlerWithAuth(ServeRAGReset, req)
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// ---------- ServeRAGResetVector ----------
+
+func TestServeRAGResetVector_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/reset-vector", nil)
+	w := callHandlerWithAuth(ServeRAGResetVector, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeRAGResetVector_NilStoreReturns503(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	t.Cleanup(func() { rag.GlobalStore = origStore })
+	rag.GlobalStore = nil
+
+	req := newRequest(t, http.MethodPost, "/api/rag/reset-vector", nil)
+	w := callHandlerWithAuth(ServeRAGResetVector, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestServeRAGResetVector_Success(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	embedder := setupWorkingMockEmbedder(t)
+	rag.GlobalEmbedder = embedder
+
+	// Insert a message, index it, and embed it
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
+	require.NoError(t, err)
+	err = service.MarkMessageIndexed(msgID)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/reset-vector", nil)
+	w := callHandlerWithAuth(ServeRAGResetVector, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result["status"])
+	assert.Contains(t, result, "chunks_reset")
+
+	// Verify the message's indexed flag was NOT reset (vector-only reset keeps FTS)
+	var indexed int
+	err = service.UnsafeDBForTest().QueryRow("SELECT indexed FROM chat_history WHERE id = ?", msgID).Scan(&indexed)
+	require.NoError(t, err)
+	assert.Equal(t, 1, indexed)
+}
+
+func TestServeRAGResetVector_ConcurrencyConflict(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+		ragResetting.Store(false)
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	rag.GlobalEmbedder = setupWorkingMockEmbedder(t)
+
+	// Simulate an in-progress reset by setting the flag
+	ragResetting.Store(true)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/reset-vector", nil)
+	w := callHandlerWithAuth(ServeRAGResetVector, req)
+	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
 // setupRAGStore creates a temporary SQLite store for handler tests.

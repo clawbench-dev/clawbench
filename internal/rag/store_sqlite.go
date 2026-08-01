@@ -980,6 +980,52 @@ func (s *Store) ResetForDimensionMismatch(newDim int) error {
 	return nil
 }
 
+// ResetVectorOnly clears vector embedding data only, keeping FTS and chunk text intact.
+// Drops the rag_vec table and resets has_embedding flags so the indexer will re-embed
+// all chunks with the current model. Chunk text, FTS index, and indexed message flags
+// are preserved — only the vector layer is rebuilt.
+func (s *Store) ResetVectorOnly(newDim int) (int64, error) {
+	s.writeMu.Lock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("begin vector reset transaction: %w", err)
+	}
+
+	// Drop vec0 table (dimension is fixed at CREATE time)
+	_, err = tx.Exec("DROP TABLE IF EXISTS rag_vec")
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("drop rag_vec: %w", err)
+	}
+
+	// Reset has_embedding flags so indexer will re-embed existing chunks
+	result, err := tx.Exec("UPDATE rag_chunks SET has_embedding = 0, embedding = NULL, embedding_dim = 0")
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("reset has_embedding flags: %w", err)
+	}
+	chunksReset, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("count reset chunks: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("commit vector reset: %w", err)
+	}
+	s.writeMu.Unlock()
+
+	s.embDim = newDim
+	s.vecTableReady = false
+	slog.Info("rag: vector reset complete, will re-embed with new dimension", slog.Int("dim", newDim), slog.Int64("chunks_reset", chunksReset))
+	return chunksReset, nil
+}
+
 // ChunkCount returns the total number of chunks in the store.
 func (s *Store) ChunkCount() (int, error) {
 	var count int

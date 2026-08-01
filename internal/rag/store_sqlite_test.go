@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -493,6 +494,63 @@ func TestSQLiteStore_ResetForDimensionMismatch(t *testing.T) {
 
 	// New dimension should be set
 	assert.Equal(t, 768, store.embDim)
+}
+
+func TestSQLiteStore_ResetVectorOnly(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	// Set embedding dimension and insert chunks with embeddings
+	store.SetEmbeddingDim(1024)
+	chunks := make([]Chunk, 3)
+	emb := makeTestEmbedding()
+	for i := range chunks {
+		chunks[i] = Chunk{
+			SessionID: testSession1, MessageID: 1, ChunkText: "text " + strconv.Itoa(i),
+			ChunkTextSegmented: "text " + strconv.Itoa(i), ChunkIndex: i,
+			TokenCount: 3, Embedding: emb, HasEmbedding: true,
+			ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+			CreatedAt: time.Now().Truncate(time.Millisecond),
+		}
+	}
+	err := store.InsertChunks(chunks)
+	require.NoError(t, err)
+
+	// Verify initial state: 3 chunks with embeddings
+	count, _ := store.ChunkCount()
+	assert.Equal(t, 3, count)
+	embCount, _ := store.EmbeddedChunkCount()
+	assert.Equal(t, 3, embCount)
+
+	// Reset vector only
+	chunksReset, err := store.ResetVectorOnly(768)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(3), chunksReset, "all 3 chunks should have embeddings reset")
+
+	// Chunks should be preserved (FTS + chunk text intact)
+	count, _ = store.ChunkCount()
+	assert.Equal(t, 3, count, "chunks should be preserved after vector-only reset")
+
+	// Embeddings should be cleared
+	embCount, _ = store.EmbeddedChunkCount()
+	assert.Equal(t, 0, embCount, "no chunks should have embeddings after vector-only reset")
+
+	// rag_vec table should no longer exist
+	assert.False(t, store.vecTableExists())
+
+	// vecTableReady should be false
+	assert.False(t, store.vecTableReady)
+
+	// New dimension should be set
+	assert.Equal(t, 768, store.embDim)
+
+	// has_embedding flags should all be 0
+	var hasEmbCount int
+	err = store.db.QueryRow("SELECT COUNT(*) FROM rag_chunks WHERE has_embedding = 1").Scan(&hasEmbCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, hasEmbCount)
+
+	// FTS should still be functional
+	assert.True(t, store.HasFTSData())
 }
 
 // ---------- UpdateEmbedding ----------

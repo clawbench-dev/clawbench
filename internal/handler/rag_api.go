@@ -5,12 +5,16 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 )
+
+// ragResetting prevents concurrent reset requests.
+var ragResetting atomic.Bool
 
 // ServeRAGSearch handles POST /api/rag/search — hybrid/FTS/vector search.
 // Auth: localhost bypasses auth (CLI); remote requires cookie.
@@ -215,14 +219,122 @@ func ServeRAGSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ServeRAGReset handles POST /api/rag/reset — full rebuild: clears all RAG
+// index data (chunks, FTS, vectors) and resets message indexed flags so the
+// indexer will rebuild from scratch. Requires auth.
+//
+// No project-scoping: Unlike other RAG endpoints that isolate by project cookie,
+// this reset intentionally operates globally because the RAG store (rag_chunks,
+// rag_chunks_fts, rag_vec) is shared across all projects, and ResetAllIndexed
+// must reset every message's indexed flag for consistency — a partial reset
+// would leave orphaned vectors from other projects.
+func ServeRAGReset(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	if rag.GlobalStore == nil {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotAvailable")
+		return
+	}
+
+	// Prevent concurrent resets
+	if ragResetting.Swap(true) {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "RAGResetInProgress")
+		return
+	}
+	defer ragResetting.Store(false)
+
+	// Determine new embedding dimension (if embedder is available)
+	newDim := 0
+	if rag.GlobalEmbedder != nil {
+		newDim = rag.GlobalEmbedder.Dim()
+	}
+
+	// Clear all RAG data (chunks, FTS, vec0) and reset embedding dimension
+	if err := rag.GlobalStore.ResetForDimensionMismatch(newDim); err != nil {
+		slog.Error("rag: full reset failed", slog.String("err", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
+		return
+	}
+
+	// Reset all messages' indexed flag so indexer will re-process them
+	affected, err := service.ResetAllIndexed()
+	if err != nil {
+		slog.Error("rag: reset indexed flags failed", slog.String("err", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
+		return
+	}
+
+	slog.Info("rag: full rebuild triggered", slog.Int64("messages_reset", affected))
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":           "ok",
+		"messages_reset":   affected,
+	})
+}
+
+// ServeRAGResetVector handles POST /api/rag/reset-vector — vector-only rebuild:
+// drops rag_vec and resets has_embedding flags, keeping chunk text and FTS intact.
+// The indexer will re-embed existing chunks with the current model.
+func ServeRAGResetVector(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	if rag.GlobalStore == nil {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotAvailable")
+		return
+	}
+
+	// Prevent concurrent resets
+	if ragResetting.Swap(true) {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "RAGResetInProgress")
+		return
+	}
+	defer ragResetting.Store(false)
+
+	// Determine new embedding dimension (if embedder is available)
+	newDim := 0
+	if rag.GlobalEmbedder != nil {
+		newDim = rag.GlobalEmbedder.Dim()
+	}
+
+	// Clear vector data only (keep chunks and FTS intact)
+	chunksReset, err := rag.GlobalStore.ResetVectorOnly(newDim)
+	if err != nil {
+		slog.Error("rag: vector reset failed", slog.String("err", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
+		return
+	}
+
+	slog.Info("rag: vector rebuild triggered", slog.Int64("chunks_reset", chunksReset))
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":        "ok",
+		"chunks_reset":  chunksReset,
+	})
+}
+
 // ServeRAGStatus handles GET /api/rag/status — returns RAG availability status and indexing progress.
 func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
-	// When vector embedding is disabled, report FTS-only mode
+	// Mode determination: config-based, not data-based.
+	// FTS is always enabled when store exists; VectorEnabled controls vector mode.
+	// Empty data (e.g. after rebuild) doesn't change mode — indexer will fill data.
 	vectorEnabled := model.ConfigInstance.RAG.VectorEnabled
+
+	mode := "none"
+	if rag.GlobalStore != nil {
+		if vectorEnabled && rag.EmbedderHealthy() {
+			mode = "hybrid"
+		} else {
+			mode = "fts"
+		}
+	}
 
 	hasFTSData := rag.GlobalStore != nil && rag.GlobalStore.HasFTSData()
 	embedderHealthy := rag.EmbedderHealthy()
@@ -240,13 +352,6 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	hasVecData := embeddedMessages > 0 && vectorEnabled
-
-	mode := "none"
-	if vectorEnabled && embedderHealthy && hasVecData {
-		mode = "hybrid"
-	} else if hasFTSData {
-		mode = "fts"
-	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"available":         hasFTSData || hasVecData,

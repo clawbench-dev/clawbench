@@ -99,6 +99,31 @@ vi.mock('@/composables/useFrp', () => ({
   useFrp: () => ({ frpState: mockFrpState }),
 }))
 
+// RAG status mock — shared reactive state accessed via module-level variable
+const _ragMockState = {
+  status: { available: false, mode: 'none', has_fts_data: false, has_vec_data: false, embedder_healthy: false, total_messages: 0, indexed_messages: 0, embedded_messages: 0 },
+  refresh: vi.fn().mockResolvedValue(undefined),
+}
+
+vi.mock('@/composables/useRagStatus', () => ({
+  useRagStatus: () => ({
+    status: { value: _ragMockState.status },
+    refresh: _ragMockState.refresh,
+  }),
+}))
+
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
+}))
+
+vi.mock('@/utils/api', () => ({
+  apiPost: vi.fn().mockResolvedValue(undefined),
+}))
+
+// Accessible references for test manipulation
+const mockRagStatus = _ragMockState.status
+const mockRagRefresh = _ragMockState.refresh
+
 // ── Mock engineVoiceOptions ──
 
 vi.mock('@/components/settings/settingsFieldMap', async () => {
@@ -167,6 +192,19 @@ const i18n = createI18n({
           summarizeDisabled: '禁用',
           apiBaseUrl: 'API地址',
           ragBaseUrl: 'RAG地址',
+          ragIndexProgress: '全文索引进度',
+          ragEmbedProgress: '向量嵌入进度',
+          ragProgressFormat: '{done}/{total}',
+          ragEmbedderStatus: '嵌入模型状态',
+          ragMode_hybrid: '混合（向量+全文）',
+          ragMode_fts: '仅全文',
+          ragMode_none: '未启用',
+          ragEmbedderHealthy: '可用',
+          ragEmbedderUnhealthy: '不可用',
+          ragRebuild: '重建',
+          ragRebuildConfirm: '重建将清空所有向量索引数据',
+          ragRebuildSuccess: '向量索引已清空，正在重新构建',
+          ragRebuildFailed: '重建向量索引失败',
         },
       },
     },
@@ -271,6 +309,19 @@ function makeDynamicTestConfig(): GroupPanelConfig {
   }
 }
 
+function makeRagConfig(): GroupPanelConfig {
+  return {
+    panelId: 'rag',
+    commonFields: [
+      { labelKey: 'settings.items.ragEmbedderStatus', key: 'rag.status.embedder_healthy', type: 'info', source: 'server' },
+      { labelKey: 'settings.items.ragMode_none', key: 'rag.status.mode', type: 'info', source: 'server' },
+      { labelKey: 'settings.items.ragIndexProgress', key: 'rag.status.index_progress', type: 'info', source: 'server' },
+      { labelKey: 'settings.items.ragEmbedProgress', key: 'rag.status.embed_progress', type: 'info', source: 'server' },
+      { labelKey: 'settings.items.ragRebuild', key: 'rag.rebuild', type: 'action', source: 'local' },
+    ],
+  }
+}
+
 // ── Mount helper ──
 
 function mountPanel(config: GroupPanelConfig, showTitle = true) {
@@ -281,9 +332,9 @@ function mountPanel(config: GroupPanelConfig, showTitle = true) {
       stubs: {
         SettingsItem: {
           name: 'SettingsItem',
-          props: ['label', 'description', 'type', 'modelValue', 'options', 'min', 'max', 'step', 'needsRestart', 'disabled', 'forceClose', 'defaultValue', 'displayFormat', 'displayTransform', 'noDivider'],
-          template: '<div class="mock-settings-item" :data-key="label" :data-type="type" :data-value="modelValue" :data-disabled="disabled" @update:model-value="$emit(\'update:modelValue\', $event)" @edit-toggle="$emit(\'editToggle\', $event)" @desc-toggle="$emit(\'descToggle\', $event)" />',
-          emits: ['update:modelValue', 'editToggle', 'descToggle'],
+          props: ['label', 'description', 'type', 'modelValue', 'options', 'min', 'max', 'step', 'needsRestart', 'disabled', 'forceClose', 'defaultValue', 'displayFormat', 'displayTransform', 'noDivider', 'progress'],
+          template: '<div class="mock-settings-item" :data-key="label" :data-type="type" :data-value="modelValue" :data-disabled="disabled" @update:model-value="$emit(\'update:modelValue\', $event)" @edit-toggle="$emit(\'editToggle\', $event)" @desc-toggle="$emit(\'descToggle\', $event)" @click="$emit(\'click\')" />',
+          emits: ['update:modelValue', 'editToggle', 'descToggle', 'click'],
         },
         BottomSheet: {
           name: 'BottomSheet',
@@ -291,6 +342,7 @@ function mountPanel(config: GroupPanelConfig, showTitle = true) {
           template: '<div class="mock-bottom-sheet" v-if="open"><slot /></div>',
         },
         ChevronRight: { template: '<span>></span>' },
+        RefreshCw: { template: '<span class="mock-refresh-cw">↻</span>' },
       },
     },
   })
@@ -318,6 +370,12 @@ describe('SettingsGroupPanel', () => {
     Object.assign(mockFrpState, { enabled: false, running: false, state: 'disabled', serverAddr: '', remotePort: 0, sshRemotePort: 0, remoteUrl: '' })
     // Default getServerValueWithDefault
     mockGetServerValueWithDefault.mockReturnValue(undefined)
+    // Reset RAG mocks
+    Object.assign(mockRagStatus, {
+      available: false, mode: 'none', has_fts_data: false, has_vec_data: false,
+      embedder_healthy: false, total_messages: 0, indexed_messages: 0, embedded_messages: 0,
+    })
+    mockRagRefresh.mockResolvedValue(undefined)
   })
 
   // ─── Lifecycle ──────────────────────────────
@@ -1215,6 +1273,103 @@ describe('SettingsGroupPanel', () => {
       localValues['tts.engine'] = undefined
       const wrapper = mountPanel(makeTtsConfig())
       expect(wrapper.find('.group-panel__entry-value').text()).toBe('')
+    })
+  })
+
+  // ─── RAG progress refresh ──────────────────────────────
+
+  describe('RAG progress refresh button', () => {
+    it('renders refresh button for RAG progress fields', () => {
+      const wrapper = mountPanel(makeRagConfig())
+      const refreshButtons = wrapper.findAll('.group-panel__refresh-btn')
+      expect(refreshButtons).toHaveLength(2) // index_progress + embed_progress
+    })
+
+    it('does not render refresh button for non-progress RAG fields', () => {
+      const wrapper = mountPanel(makeRagConfig())
+      // Only progress fields should have refresh buttons
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isRagProgressField({ key: 'rag.status.embedder_healthy' })).toBe(false)
+      expect(vm.$.setupState.isRagProgressField({ key: 'rag.status.mode' })).toBe(false)
+      expect(vm.$.setupState.isRagProgressField({ key: 'rag.rebuild' })).toBe(false)
+    })
+
+    it('does not render refresh button for non-RAG panels', () => {
+      const wrapper = mountPanel(makeSimpleConfig())
+      const refreshButtons = wrapper.findAll('.group-panel__refresh-btn')
+      expect(refreshButtons).toHaveLength(0)
+    })
+
+    it('calls refreshRagStatus when refresh button is clicked', async () => {
+      const wrapper = mountPanel(makeRagConfig())
+      const refreshBtn = wrapper.find('.group-panel__refresh-btn')
+      await refreshBtn.trigger('click')
+      expect(mockRagRefresh).toHaveBeenCalledOnce()
+    })
+
+    it('resolves RAG status values for progress fields', () => {
+      Object.assign(mockRagStatus, {
+        available: true, mode: 'hybrid', has_fts_data: true, has_vec_data: true,
+        embedder_healthy: true, total_messages: 100, indexed_messages: 80, embedded_messages: 60,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      const indexProgress = vm.$.setupState.getRagStatusValue('rag.status.index_progress')
+      expect(indexProgress).toBe('80/100')
+
+      const embedProgress = vm.$.setupState.getRagStatusValue('rag.status.embed_progress')
+      expect(embedProgress).toBe('60/100')
+    })
+
+    it('shows dash when total_messages is 0', () => {
+      Object.assign(mockRagStatus, {
+        available: false, mode: 'none', has_fts_data: false, has_vec_data: false,
+        embedder_healthy: false, total_messages: 0, indexed_messages: 0, embedded_messages: 0,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      expect(vm.$.setupState.getRagStatusValue('rag.status.index_progress')).toBe('—')
+      expect(vm.$.setupState.getRagStatusValue('rag.status.embed_progress')).toBe('—')
+    })
+
+    it('resolves progress bar data for progress fields', () => {
+      Object.assign(mockRagStatus, {
+        available: true, mode: 'hybrid', has_fts_data: true, has_vec_data: true,
+        embedder_healthy: true, total_messages: 100, indexed_messages: 80, embedded_messages: 60,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      const indexProgress = vm.$.setupState.resolveProgress({ key: 'rag.status.index_progress' })
+      expect(indexProgress).toEqual({ value: 80, max: 100 })
+
+      const embedProgress = vm.$.setupState.resolveProgress({ key: 'rag.status.embed_progress' })
+      expect(embedProgress).toEqual({ value: 60, max: 100 })
+    })
+
+    it('returns undefined progress when total_messages is 0', () => {
+      Object.assign(mockRagStatus, {
+        available: false, mode: 'none', has_fts_data: false, has_vec_data: false,
+        embedder_healthy: false, total_messages: 0, indexed_messages: 0, embedded_messages: 0,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      expect(vm.$.setupState.resolveProgress({ key: 'rag.status.index_progress' })).toBeUndefined()
+      expect(vm.$.setupState.resolveProgress({ key: 'rag.status.embed_progress' })).toBeUndefined()
+    })
+
+    it('isRagProgressField returns true only for progress fields', () => {
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      expect(vm.$.setupState.isRagProgressField({ key: 'rag.status.index_progress' })).toBe(true)
+      expect(vm.$.setupState.isRagProgressField({ key: 'rag.status.embed_progress' })).toBe(true)
+      expect(vm.$.setupState.isRagProgressField({ key: 'rag.status.mode' })).toBe(false)
+      expect(vm.$.setupState.isRagProgressField({ key: 'rag.status.embedder_healthy' })).toBe(false)
+      expect(vm.$.setupState.isRagProgressField({ key: 'rag.rebuild' })).toBe(false)
     })
   })
 })

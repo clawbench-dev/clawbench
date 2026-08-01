@@ -299,6 +299,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/message-index-status", middleware.Auth(ServeRAGMessageIndexStatus))
 	register("/api/rag/session", middleware.Auth(ServeRAGSession))
 	register("/api/rag/status", middleware.Auth(ServeRAGStatus))
+	register("/api/rag/reset", middleware.Auth(ServeRAGReset))
+	register("/api/rag/reset-vector", middleware.Auth(ServeRAGResetVector))
 	register("/api/rag/session-search", middleware.Auth(ServeRAGSessionSearch))
 
 	// Client log collection — intentionally unauthenticated:

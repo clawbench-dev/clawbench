@@ -2839,6 +2839,35 @@ func TestMarkMessagesIndexed(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestResetAllIndexed(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Reset Index Test")
+	msg1, _ := service.AddChatMessage("/project", "claude", sid, "user", "hello", nil, false, "")
+	msg2, _ := service.AddChatMessage("/project", "claude", sid, "user", "world", nil, false, "")
+
+	// Mark both as indexed
+	err := service.MarkMessagesIndexed([]int64{msg1, msg2})
+	assert.NoError(t, err)
+
+	// Verify both are indexed
+	var indexedCount int
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE id IN (?, ?) AND indexed = 1", msg1, msg2).Scan(&indexedCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, indexedCount)
+
+	// Reset all indexed flags
+	affected, err := service.ResetAllIndexed()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), affected)
+
+	// Verify both are now unindexed
+	var unindexedCount int
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE id IN (?, ?) AND indexed = 0", msg1, msg2).Scan(&unindexedCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, unindexedCount)
+}
+
 func TestUnindexedCount(t *testing.T) {
 	setupDB(t)
 
