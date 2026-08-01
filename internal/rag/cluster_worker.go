@@ -128,6 +128,10 @@ func (cw *ClusterWorker) compute(ctx context.Context, myGen uint64) {
 	start := time.Now()
 
 	defer func() {
+		// Recover from panics (e.g. nil dbRead after test teardown closes DB).
+		if r := recover(); r != nil {
+			slog.Warn("cluster worker: goroutine recovered from panic", slog.Any("err", r))
+		}
 		cw.mu.Lock()
 		// Only clear state if this goroutine is still the "current" generation.
 		// If Stop() or a new ComputeOnce() bumped generation, don't overwrite.

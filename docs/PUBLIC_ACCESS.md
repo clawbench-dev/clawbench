@@ -2,6 +2,11 @@
 
 本文介绍三种在公网访问 ClawBench 的方式：**IPv6**、**FRP 内网穿透** 和 **EasyTier 去中心化组网**。
 
+> **English Summary**: This guide covers three ways to access ClawBench from the public internet:
+> 1. **IPv6 Direct Connection** — If your ISP provides public IPv6, connect directly with no relay. Fastest and simplest.
+> 2. **FRP Tunnel** — If you have a VPS with a public IP, use FRP to tunnel ClawBench's port through it.
+> 3. **EasyTier Decentralized Networking** — No VPS required. Install EasyTier on both server and phone, join the same network, and connect via virtual IP. Best for users without IPv6 or VPS.
+
 ```mermaid
 flowchart TD
     Q1{有公网 IPv6?}

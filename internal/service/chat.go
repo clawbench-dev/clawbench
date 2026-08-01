@@ -956,15 +956,9 @@ type ThinkingEffortDef struct {
 }
 
 // UsageStatePersist is the DB-persisted form of ai.UsageState.
-// Fields must match ws.ContextStateUsage — both structs map the same DB column.
-type UsageStatePersist struct {
-	Used         int     `json:"used"`
-	Size         int     `json:"size"`
-	InputTokens  int     `json:"inputTokens,omitempty"`
-	OutputTokens int     `json:"outputTokens,omitempty"`
-	Cost         float64 `json:"cost,omitempty"`
-	Currency     string  `json:"currency,omitempty"`
-}
+// Type alias ensures compile-time parity with ws.ContextStateUsage (also ai.UsageState)
+// — both must serialize identical JSON shapes for DB/WS consistency.
+type UsageStatePersist = ai.UsageState
 
 // PersistContextStateFromEvent extracts context state from a StreamEvent
 // and persists it to DB using atomic json_set() partial updates.

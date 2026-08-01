@@ -11,15 +11,9 @@ import (
 
 // ContextStateUsage represents the persisted usage state for a session,
 // used as a DB fallback when no live ACP connection is available.
-// Fields must match service.UsageStatePersist — both structs map the same DB column.
-type ContextStateUsage struct {
-	Used         int     `json:"used"`
-	Size         int     `json:"size"`
-	InputTokens  int     `json:"inputTokens,omitempty"`
-	OutputTokens int     `json:"outputTokens,omitempty"`
-	Cost         float64 `json:"cost,omitempty"`
-	Currency     string  `json:"currency,omitempty"`
-}
+// Embeds ai.UsageState for compile-time parity with service.UsageStatePersist
+// — both must serialize identical JSON shapes for DB/WS consistency.
+type ContextStateUsage = ai.UsageState
 
 // GetContextStateUsageFunc is a function that retrieves persisted usage state
 // for a session. Injected by the service layer to avoid circular imports.
