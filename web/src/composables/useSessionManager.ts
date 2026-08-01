@@ -296,6 +296,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       switchSession,
       createSession,
       archiveSession,
+      destroySession,
       sendMessage: extra.sendMessage,
       openChatPanel: extra.openChatPanel,
       continueFromExecution,

@@ -90,7 +90,7 @@ const props = defineProps({
   currentAgentId: String,
 })
 
-const emit = defineEmits(['close', 'select', 'create', 'archive', 'open-session-search'])
+const emit = defineEmits(['close', 'select', 'create', 'archive', 'destroy', 'open-session-search'])
 
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
@@ -225,14 +225,16 @@ function createSession(agentId) {
 async function archiveSession(sessionId) {
   const isRunning = props.runningSessionIds.has(sessionId)
   const confirmMsg = isRunning ? t('session.confirmArchiveRunning') : t('session.confirmArchive')
-  if (!await dialog.confirm(confirmMsg, { dangerous: true })) return
-  const session = sessions.value.find(s => s.id === sessionId)
-  emit('archive', sessionId, session?.backend)
-  // No optimistic removal — the archive is async (cancel + API call) and emit
-  // doesn't await the parent handler. If the API fails, an optimistic removal
-  // would make the session vanish then reappear on next load. Instead, rely on
-  // useChatSession.archiveSession to refresh state via loadSessionsOnce/switchSession
-  // on success, and leave the list unchanged on failure.
+  const confirmed = await dialog.confirm(confirmMsg, {
+    dangerous: true,
+    extraText: t('chat.archive.destroyBtn'),
+    extraPrimedText: t('chat.archive.destroyBtnPrimed'),
+    onExtraAction: () => emit('destroy', sessionId),
+  })
+  if (confirmed) {
+    const session = sessions.value.find(s => s.id === sessionId)
+    emit('archive', sessionId, session?.backend)
+  }
 }
 
 function addSessionLocally(session) {

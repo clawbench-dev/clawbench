@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="dlg">
-      <div v-if="dlg.state.value.visible" ref="overlayRef" class="dlg-overlay" :style="{ zIndex: 3000 }" tabindex="-1" @click.self="handleCancel" @keydown.escape="handleCancel" @keydown.enter="handleKeyEnter">
+      <div v-if="dlg.state.value.visible" ref="overlayRef" class="dlg-overlay" :style="{ zIndex: 3000 }" tabindex="-1" @click.self="handleOverlayClick" @keydown.escape="handleCancel" @keydown.enter="handleKeyEnter">
         <div class="dlg-box">
           <div v-if="dlg.state.value.title" class="dlg-title">{{ dlg.state.value.title }}</div>
           <div class="dlg-msg">{{ dlg.state.value.message }}</div>
@@ -14,6 +14,12 @@
             @keydown.enter="handleConfirm"
           />
           <div class="dlg-actions">
+            <button
+              v-if="dlg.state.value.extraText && dlg.state.value.type !== 'alert'"
+              class="dlg-btn dlg-extra"
+              :class="{ 'dlg-extra-primed': extraPrimed }"
+              @click="handleExtraClick"
+            >{{ extraPrimed ? (dlg.state.value.extraPrimedText || t('common.confirm')) : dlg.state.value.extraText }}</button>
             <button
               v-if="dlg.state.value.type !== 'alert'"
               class="dlg-btn dlg-cancel"
@@ -42,6 +48,7 @@ const dlg = useDialog()
 const inputVal = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
 const overlayRef = ref<HTMLElement | null>(null)
+const extraPrimed = ref(false)
 let unregisterBack: (() => void) | null = null
 
 watch(() => dlg.state.value.visible, async (v) => {
@@ -50,6 +57,7 @@ watch(() => dlg.state.value.visible, async (v) => {
     return
   }
   inputVal.value = dlg.state.value.value ?? ''
+  extraPrimed.value = false
   await nextTick()
   if (dlg.state.value.type === 'prompt') {
     inputRef.value?.focus()
@@ -80,11 +88,25 @@ function handleCancel() {
   dlg.resolve(dlg.state.value.type === 'prompt' ? null : false)
 }
 
+function handleOverlayClick() {
+  extraPrimed.value = false
+  handleCancel()
+}
+
 function handleKeyEnter() {
   // Prompt type: let the input handle Enter itself
   if (dlg.state.value.type === 'prompt') return
   // Confirm/alert: Enter triggers confirm
   handleConfirm()
+}
+
+function handleExtraClick() {
+  if (extraPrimed.value) {
+    dlg.state.value.onExtraAction?.()
+    dlg.resolve(null)
+  } else {
+    extraPrimed.value = true
+  }
 }
 
 onBeforeUnmount(() => {
@@ -183,6 +205,32 @@ onBeforeUnmount(() => {
 .dlg-danger {
   background: #d32f2f;
   color: #fff;
+}
+
+.dlg-extra {
+  background: transparent;
+  color: #d32f2f;
+  border: 1px solid #d32f2f;
+  font-size: 12px;
+  padding: 5px 10px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.dlg-extra-primed {
+  background: #d32f2f;
+  color: #fff;
+  border-color: #d32f2f;
+}
+
+[data-theme="dark"] .dlg-extra {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+[data-theme="dark"] .dlg-extra-primed {
+  background: #ef4444;
+  color: #fff;
+  border-color: #ef4444;
 }
 
 [data-theme="dark"] .dlg-box {

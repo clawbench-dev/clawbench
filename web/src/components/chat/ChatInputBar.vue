@@ -37,11 +37,6 @@
           :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
           <Archive :size="14" />
         </button>
-        <button class="chat-action-btn chat-action-btn-destroy" :class="{ disabled: !currentSessionId }"
-          @click="handleDestroy"
-          :title="currentSessionId ? t('chat.actions.destroyCurrentSession') : t('chat.actions.noSessionToDestroy')">
-          <Trash2 :size="14" />
-        </button>
       </div>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
         @click="$emit('toggle-auto-speech')"
@@ -246,7 +241,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Search, Archive, Trash2, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, ClipboardPaste, Minimize2 } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, ClipboardPaste, Minimize2 } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -666,15 +661,14 @@ function handleCreateClick(e) {
 
 async function handleArchive() {
   if (!props.currentSessionId) return
-  if (await dialog.confirm(t('chat.archive.confirm'), { dangerous: true })) {
+  const confirmed = await dialog.confirm(t('chat.archive.confirm'), {
+    dangerous: true,
+    extraText: t('chat.archive.destroyBtn'),
+    extraPrimedText: t('chat.archive.destroyBtnPrimed'),
+    onExtraAction: () => emit('destroy-session'),
+  })
+  if (confirmed) {
     emit('archive-session')
-  }
-}
-
-async function handleDestroy() {
-  if (!props.currentSessionId) return
-  if (await dialog.confirm(t('chat.archive.destroyConfirm'), { dangerous: true })) {
-    emit('destroy-session')
   }
 }
 
@@ -1237,28 +1231,6 @@ defineExpose({
 }
 
 .chat-action-btn-archive.disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.chat-action-btn-destroy:not(.disabled) {
-  color: var(--text-muted, #999);
-}
-
-@media (hover: hover) {
-  .chat-action-btn-destroy:not(.disabled):hover {
-    color: var(--color-danger, #d32f2f);
-    background: color-mix(in srgb, var(--color-danger, #d32f2f) 10%, transparent);
-  }
-}
-
-.chat-action-btn-destroy:not(.disabled):active {
-  color: var(--color-danger, #d32f2f);
-  background: color-mix(in srgb, var(--color-danger, #d32f2f) 18%, transparent);
-  transform: scale(0.92);
-}
-
-.chat-action-btn-destroy.disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }

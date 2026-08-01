@@ -318,6 +318,8 @@ export default {
     archive: {
       confirm: '确认归档当前会话？归档后可通过会话搜索恢复。',
       destroyConfirm: '永久删除当前会话？此操作不可恢复，所有消息、工具调用和相关数据将被删除。',
+      destroyBtn: '永久删除',
+      destroyBtnPrimed: '确认删除',
     },
     stream: {
       aiReplied: '会话完成',

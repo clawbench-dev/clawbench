@@ -318,6 +318,8 @@ export default {
     archive: {
       confirm: 'Archive current session? You can restore archived sessions via session search.',
       destroyConfirm: 'Permanently delete current session? This cannot be undone. All messages, tool calls, and related data will be removed.',
+      destroyBtn: 'Delete permanently',
+      destroyBtnPrimed: 'Confirm delete',
     },
     stream: {
       aiReplied: 'Session complete',

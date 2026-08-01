@@ -16,6 +16,9 @@ let dlgState = ref({
   confirmText: '',
   cancelText: '',
   dangerous: false,
+  extraText: '',
+  extraPrimedText: '',
+  onExtraAction: null as (() => void) | null,
   resolve: null as ((v: string | boolean | null) => void) | null,
 })
 
@@ -74,6 +77,9 @@ function resetState(overrides: Partial<typeof dlgState.value> = {}) {
     confirmText: '',
     cancelText: '',
     dangerous: false,
+    extraText: '',
+    extraPrimedText: '',
+    onExtraAction: null,
     resolve: null,
     ...overrides,
   })
@@ -349,6 +355,114 @@ describe('DialogOverlay', () => {
       // Verify word-break style is applied via CSS
       const style = getComputedStyle(msg!)
       expect(style.wordBreak).toBe('break-word')
+    })
+  })
+
+  describe('Extra action button', () => {
+    it('does not render extra button when extraText is empty', async () => {
+      resetState({ visible: true, type: 'confirm', extraText: '' })
+      mountDialog()
+      await nextTick()
+
+      expect($('.dlg-extra')).toBeFalsy()
+    })
+
+    it('renders extra button with extraText', async () => {
+      resetState({ visible: true, type: 'confirm', extraText: 'Delete permanently', extraPrimedText: 'Confirm delete' })
+      mountDialog()
+      await nextTick()
+
+      const extraBtn = $('.dlg-extra')
+      expect(extraBtn).toBeTruthy()
+      expect(extraBtn?.textContent).toBe('Delete permanently')
+    })
+
+    it('does not render extra button in alert dialogs', async () => {
+      resetState({ visible: true, type: 'alert', extraText: 'Delete permanently' })
+      mountDialog()
+      await nextTick()
+
+      expect($('.dlg-extra')).toBeFalsy()
+    })
+
+    it('primes extra button on first click and changes text', async () => {
+      resetState({ visible: true, type: 'confirm', extraText: 'Delete permanently', extraPrimedText: 'Confirm delete' })
+      mountDialog()
+      await nextTick()
+      await nextTick()
+
+      expect(wrapper!.vm.extraPrimed).toBe(false)
+
+      // Click extra button to prime it
+      $('.dlg-extra')!.click()
+      await nextTick()
+
+      // Internal reactive state is updated
+      expect(wrapper!.vm.extraPrimed).toBe(true)
+      expect(mockResolve).not.toHaveBeenCalled()
+    })
+
+    it('fires onExtraAction and resolves null on second click of primed button', async () => {
+      const onExtraAction = vi.fn()
+      resetState({ visible: true, type: 'confirm', extraText: 'Delete permanently', extraPrimedText: 'Confirm delete', onExtraAction })
+      mountDialog()
+      await nextTick()
+      await nextTick()
+
+      // First click: primes
+      $('.dlg-extra')!.click()
+      await nextTick()
+      expect(onExtraAction).not.toHaveBeenCalled()
+
+      // Second click: fires action and resolves
+      $('.dlg-extra')!.click()
+      await nextTick()
+      expect(onExtraAction).toHaveBeenCalledOnce()
+      expect(mockResolve).toHaveBeenCalledWith(null)
+    })
+
+    it('resets primed state and cancels when overlay background is clicked', async () => {
+      resetState({ visible: true, type: 'confirm', extraText: 'Delete permanently', extraPrimedText: 'Confirm delete' })
+      mountDialog()
+      await nextTick()
+      await nextTick()
+
+      $('.dlg-extra')!.click()
+      await nextTick()
+      expect(wrapper!.vm.extraPrimed).toBe(true)
+
+      // Click overlay background resets primed state and cancels dialog
+      const overlay = $('.dlg-overlay')!
+      overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await nextTick()
+      // Dialog resolved as false (cancel)
+      expect(mockResolve).toHaveBeenCalledWith(false)
+      // After cancel, component's extraPrimed is reset
+      expect(wrapper!.vm.extraPrimed).toBe(false)
+    })
+
+    it('resets primed state when dialog opens again', async () => {
+      resetState({ visible: true, type: 'confirm', extraText: 'Delete permanently', extraPrimedText: 'Confirm delete' })
+      mountDialog()
+      await nextTick()
+      await nextTick()
+
+      // Prime the button
+      $('.dlg-extra')!.click()
+      await nextTick()
+      expect(wrapper!.vm.extraPrimed).toBe(true)
+
+      // Close and reopen
+      dlgState.value.visible = false
+      await nextTick()
+      dlgState.value.visible = true
+      await nextTick()
+      await nextTick()
+
+      // Primed state should be reset
+      expect(wrapper!.vm.extraPrimed).toBe(false)
+      expect($('.dlg-extra')!.classList.contains('dlg-extra-primed')).toBe(false)
+      expect($('.dlg-extra')!.textContent).toBe('Delete permanently')
     })
   })
 })

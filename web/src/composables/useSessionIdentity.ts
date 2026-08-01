@@ -315,6 +315,7 @@ export function toggleAutoApprove(enabled: boolean) {
 let _switchSession: ((sessionId: string) => Promise<void>) | null = null
 let _createSession: ((agentId?: string) => Promise<void>) | null = null
 let _archiveSession: ((sessionId: string, backend?: string) => Promise<void>) | null = null
+let _destroySession: ((sessionId: string) => Promise<void>) | null = null
 let _sendMessage: ((text: string) => Promise<void>) | null = null
 let _openChatPanel: (() => void) | null = null
 let _continueFromExecution: ((taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>) | null = null
@@ -327,6 +328,7 @@ export interface SessionActions {
   switchSession: (sessionId: string) => Promise<void>
   createSession: (agentId?: string) => Promise<void>
   archiveSession: (sessionId: string, backend?: string) => Promise<void>
+  destroySession: (sessionId: string) => Promise<void>
   sendMessage: (text: string) => Promise<void>
   openChatPanel: () => void
   continueFromExecution: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
@@ -347,6 +349,7 @@ export function registerSessionActions(actions: SessionActions) {
   _switchSession = actions.switchSession
   _createSession = actions.createSession
   _archiveSession = actions.archiveSession
+  _destroySession = actions.destroySession
   _sendMessage = actions.sendMessage
   _openChatPanel = actions.openChatPanel
   _continueFromExecution = actions.continueFromExecution
@@ -552,6 +555,12 @@ export function useSessionIdentity() {
     }
   }
 
+  async function destroySession(sessionId: string) {
+    if (_destroySession) {
+      await _destroySession(sessionId)
+    }
+  }
+
   /**
    * Send a message to the current session. Delegates to ChatPanel
    * if available, otherwise makes a direct API call.
@@ -672,6 +681,7 @@ export function useSessionIdentity() {
     switchSession,
     createSession,
     archiveSession,
+    destroySession,
     sendMessage,
     openChatPanel,
     openSessionTab,

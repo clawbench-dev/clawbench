@@ -15,6 +15,9 @@ interface DialogState {
   confirmText: string
   cancelText: string
   dangerous: boolean
+  extraText: string
+  extraPrimedText: string
+  onExtraAction: (() => void) | null
   resolve: ((v: string | boolean | null) => void) | null
 }
 
@@ -28,6 +31,9 @@ const state = ref<DialogState>({
   confirmText: '',
   cancelText: '',
   dangerous: false,
+  extraText: '',
+  extraPrimedText: '',
+  onExtraAction: null,
   resolve: null,
 })
 
@@ -38,6 +44,9 @@ function open(type: DialogState['type'], message: string, opts: {
   confirmText?: string
   cancelText?: string
   dangerous?: boolean
+  extraText?: string
+  extraPrimedText?: string
+  onExtraAction?: () => void
 } = {}): Promise<string | boolean | null> {
   return new Promise(resolve => {
     // Resolve the previous dialog as cancelled before replacing it,
@@ -63,6 +72,9 @@ function open(type: DialogState['type'], message: string, opts: {
       confirmText: opts.confirmText || '',
       cancelText: opts.cancelText || '',
       dangerous: opts.dangerous ?? false,
+      extraText: opts.extraText || '',
+      extraPrimedText: opts.extraPrimedText || '',
+      onExtraAction: opts.onExtraAction ?? null,
       resolve,
     }
   })
