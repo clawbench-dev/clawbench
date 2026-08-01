@@ -104,10 +104,18 @@ func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error)
 	return messages, nil
 }
 
-// GetChatMessageCount returns the number of messages in a session.
+// GetChatMessageCount returns the number of messages in a session (including streaming).
 func GetChatMessageCount(sessionID string) int {
 	var count int
 	dbRead.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count)
+	return count
+}
+
+// GetFinalizedMessageCount returns the number of finalized (non-streaming) messages in a session.
+// Used to determine whether a session has real content worth preserving for RAG.
+func GetFinalizedMessageCount(sessionID string) int {
+	var count int
+	dbRead.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND streaming = 0", sessionID).Scan(&count)
 	return count
 }
 

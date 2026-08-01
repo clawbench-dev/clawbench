@@ -833,7 +833,11 @@ export function useChatSession(options: UseChatSessionOptions) {
         }
         const maxCount = store.state.sessionMaxCount
         if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
-        toast.show(gt('chat.session.archived', { count: data.sessionCount ?? '', max: maxCount }), { icon: '📦', type: 'success', duration: 2000 })
+        if (data.destroyed) {
+          toast.show(gt('chat.session.destroyed'), { icon: '🗑️', type: 'success', duration: 2000 })
+        } else {
+          toast.show(gt('chat.session.archived', { count: data.sessionCount ?? '', max: maxCount }), { icon: '📦', type: 'success', duration: 2000 })
+        }
       } else {
         toast.show(gt('chat.session.archiveFailed'), { icon: '⚠️', type: 'error' })
       }

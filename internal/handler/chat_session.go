@@ -189,13 +189,38 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Empty sessions have nothing worth preserving for RAG — hard-delete instead.
+	// Use GetFinalizedMessageCount to exclude streaming placeholder rows,
+	// so a session with only a streaming row (e.g. interrupted mid-generation)
+	// is still considered empty.
+	msgCount := service.GetFinalizedMessageCount(sessionID)
+	if msgCount == 0 {
+		slog.Info("archiving empty session → hard-delete", "session_id", sessionID)
+
+		// Delete RAG chunks (best-effort, no-op if RAG not initialized)
+		if chunksDeleted, err := service.PurgeRAGChunksBySessionIDs([]string{sessionID}); err != nil {
+			slog.Warn("failed to delete RAG chunks for empty archived session", "session_id", sessionID, "err", err)
+		} else if chunksDeleted > 0 {
+			slog.Info("deleted RAG chunks for empty archived session", "session_id", sessionID, "chunks", chunksDeleted)
+		}
+
+		if err := service.HardDeleteSession(sessionID); err != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("failed to destroy empty session")))
+			return
+		}
+
+		sessionCount, _ := service.GetSessionCount(projectPath)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount})
+		return
+	}
+
 	if err := service.ArchiveSession(projectPath, backend, sessionID); err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to archive session")))
 		return
 	}
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionCount": sessionCount})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": false, "sessionCount": sessionCount})
 }
 
 // DestroySession handles DELETE for physically removing a session and all its data.
@@ -246,7 +271,7 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionCount": sessionCount})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount})
 }
 
 // getSessionID retrieves session ID from query param or cookie.

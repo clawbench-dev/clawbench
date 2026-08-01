@@ -505,12 +505,16 @@ func TestArchiveSession_SoftDelete(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "to archive", "", "", "default", "chat")
 	require.NoError(t, err)
 
+	// Add a message so the session has content and triggers soft-archive (not hard-delete)
+	_, err = service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "hello", nil, false, "")
+	require.NoError(t, err)
+
 	// Verify session appears in list
 	sessions, err := service.GetSessions(env.ProjectDir, "")
 	require.NoError(t, err)
 	assert.Len(t, sessions, 1)
 
-	// Delete the session
+	// Archive the session
 	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID, nil)
 	withProjectCookie(req, env.ProjectDir)
 
@@ -520,8 +524,9 @@ func TestArchiveSession_SoftDelete(t *testing.T) {
 	var result map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, false, result["destroyed"], "session with messages should be soft-archived, not destroyed")
 
-	// Verify session no longer appears in list (archived)
+	// Verify session no longer appears in active list (archived)
 	sessions, err = service.GetSessions(env.ProjectDir, "")
 	require.NoError(t, err)
 	assert.Empty(t, sessions, "archived session should not appear in session list")

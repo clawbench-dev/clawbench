@@ -183,6 +183,63 @@ func TestArchiveSession_UnknownAgentSkipsACPClose(t *testing.T) {
 
 // ── ServeAISessionUpdate (PATCH /api/ai/session/update) ────────────────────
 
+// ── ArchiveSession: empty session → hard-delete ─────────────────────────────
+
+func TestArchiveSession_EmptySessionHardDeletes(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a session with no messages
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "empty-session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	// Verify it has zero finalized messages
+	assert.Equal(t, 0, service.GetFinalizedMessageCount(sessionID))
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID+"&backend=claude", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ArchiveSession, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, true, result["destroyed"], "empty session should be hard-deleted (destroyed=true)")
+
+	// Session should be physically gone — session count should be 0
+	count, err := service.GetSessionCount(env.ProjectDir)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "hard-deleted session should not count toward session total")
+}
+
+func TestArchiveSession_SessionWithMessagesSoftDeletes(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "has-messages", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	// Add a message so it's not empty
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "hello", nil, false, "")
+	require.NoError(t, err)
+	assert.Equal(t, 1, service.GetFinalizedMessageCount(sessionID))
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID+"&backend=claude", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ArchiveSession, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, false, result["destroyed"], "session with messages should be soft-archived (destroyed=false)")
+
+	// Session should still exist (archived=1), not hard-deleted — messages still accessible
+	assert.Equal(t, 1, service.GetChatMessageCount(sessionID))
+}
+
 func TestServeAISessionUpdate_InvalidJSON(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
