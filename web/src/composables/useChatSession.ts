@@ -98,6 +98,134 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   const toast = useToast()
 
+  // ── Queue restore helper ──
+  // Append pending messages from the backend queue field to messages.value.
+  // The queue lives in-memory (not in DB), so parseMessages won't include them.
+  // Since parseMessages just replaced messages.value, there are no stale
+  // pending messages to clear — just append from the authoritative backend queue.
+  function appendQueueItems(queueData: Array<Record<string, unknown>> | undefined) {
+    if (!queueData) return
+    for (const item of queueData) {
+      const itemFiles = [...(item.files as FileEntry[] || []).map((f: FileEntry) => typeof f === 'string' ? { path: f, isDir: false } : f), ...(item.filePaths as string[] || []).map((p: string) => ({ path: p, isDir: false }))]
+      messages.value.push({
+        role: 'user',
+        id: item.queueId || `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content: item.text || '',
+        blocks: item.text ? [{ type: 'text', text: item.text as string }] : [],
+        files: itemFiles,
+        createdAt: item.createdAt || new Date().toISOString(),
+        pending: true,
+      })
+    }
+  }
+
+  // ── Session state sync helper ──
+  // Shared logic for syncing session identity, available modes/commands/plan,
+  // change detection, message replacement, and running/replay stream connection.
+  // Used by both the recovery path and the main path in loadHistory.
+  // Returns { synced, keepInputDisabled }:
+  //   synced: true if state was applied (false when skipIfUnchanged detected no change)
+  //   keepInputDisabled: true when replayPending requires input to remain locked
+  function syncSessionState(
+    sessionData: Record<string, unknown>,
+    forceScrollBottom: boolean,
+    skipIfUnchanged: boolean,
+    forceNotRunning: boolean,
+    immediate: boolean,
+  ): { synced: boolean; keepInputDisabled: boolean } {
+    const rawMsgs = (sessionData.messages as Array<Record<string, unknown>> | undefined) || []
+    const isRunning = forceNotRunning ? false : !!sessionData.running
+    const isReplayPending = !!sessionData.replayPending && !forceNotRunning
+
+    // ── Change detection ──
+    const newSnapshot = buildMessageSnapshot(rawMsgs)
+    if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && !isRunning) {
+      return { synced: false, keepInputDisabled: false } // no change, skip UI refresh
+    }
+    lastMessageSnapshot = newSnapshot
+
+    // ── Message replacement ──
+    const prevCount = messages.value.length
+    const newCount = rawMsgs.length
+    const sameCore = prevCount === newCount && prevCount > 0 && rawMsgs.slice(0, -1).every((m: Record<string, unknown>, i: number) => m.id === messages.value[i]?.id)
+    if (!sameCore) {
+      expandedTools.value = {}
+    }
+    Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
+    Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
+    messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, isRunning)
+    appendQueueItems(sessionData.queue as Array<Record<string, unknown>> | undefined)
+    totalMessages.value = (sessionData.total as number) || messages.value.length
+
+    // ── Identity sync ──
+    const returnedId = (sessionData.sessionId as string) || ''
+    const requestedId = currentSessionId.value
+    if (returnedId && requestedId && returnedId !== requestedId) {
+      appLog.w(TAG, `loadHistory: session ID mismatch (requested=${requestedId}, returned=${returnedId})`)
+    }
+    currentSessionId.value = returnedId
+    currentSessionTitle.value = (sessionData.sessionTitle as string) || ''
+    currentBackend.value = (sessionData.backend as string) || ''
+    currentAgentId.value = (sessionData.agentId as string) || ''
+    syncModelFromData(currentAgentId.value, sessionData.modelId as string)
+    syncThinkingEffortFromData((sessionData.thinkingEffortState as Record<string, unknown>)?.currentId as string || '')
+    syncModeFromData(
+      (sessionData.modeState as Record<string, unknown>)?.currentModeId as string || '',
+      (sessionData.modeState as Record<string, unknown>)?.availableModes as Array<{id: string; name: string}> || [],
+    )
+    syncTransportFromData(sessionData.transport as string)
+    syncUsageFromData(sessionData.usageState as { used?: number; size?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }, returnedId)
+    if (sessionData.autoApprove !== undefined) {
+      autoApprove.value = sessionData.autoApprove as boolean
+    }
+
+    // ── Available modes / thinking / commands / plan ──
+    const modeState = sessionData.modeState as Record<string, unknown> | undefined
+    if (modeState && (modeState.availableModes as Array<unknown>)?.length > 0) {
+      updateAvailableModes(modeState.availableModes as Array<{id: string; name: string}>)
+    }
+    const thinkingState = sessionData.thinkingEffortState as Record<string, unknown> | undefined
+    if (thinkingState && (thinkingState.availableLevels as Array<unknown>)?.length > 0) {
+      updateAvailableThinkingEfforts(thinkingState.availableLevels as Array<{id: string; name: string}>)
+    } else if (sessionData.agentId) {
+      // Fallback: agent config (e.g. OpenCode/Kimi ACP don't expose thought_level)
+      const agentLevels = getAgentThinkingEffortLevels(sessionData.agentId as string)
+      if (agentLevels.length > 0) {
+        updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))
+      }
+    }
+    if (Array.isArray(sessionData.commands) && (sessionData.commands as Array<unknown>).length > 0 && availableCommands.value.length === 0) {
+      updateCommandState(sessionData.commands as Array<{ name: string; description: string; inputHint?: string }>)
+    }
+    const planState = sessionData.planState as Record<string, unknown> | undefined
+    if (planState && (planState.entries as Array<unknown>)?.length > 0) {
+      updatePlanEntries(planState.entries as Array<{ content: string; priority: 'high' | 'medium' | 'low'; status: 'pending' | 'in_progress' | 'completed' }>)
+    }
+
+    // ── Scheduled tasks + render ──
+    onExtractScheduledTasks(messages.value)
+    onRenderUpdate(forceScrollBottom)
+
+    // ── Running / replay / idle ──
+    let keepInputDisabled = false
+    if (isRunning) {
+      loading.value = true
+      onScrollBottom(forceScrollBottom)
+      onConnectStream(currentSessionId.value)
+    } else if (isReplayPending) {
+      loading.value = true
+      if (immediate) keepInputDisabled = true
+      else inputDisabled.value = true
+      onScrollBottom(forceScrollBottom)
+      onConnectStream(currentSessionId.value, immediate ? { subscribeOnly: true } : undefined)
+    } else {
+      loading.value = false
+      onScrollBottom(forceScrollBottom)
+    }
+
+    return { synced: true, keepInputDisabled }
+  }
+
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
   const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, thinkingEffortState, modeState } = identity
@@ -189,9 +317,6 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   const agentHeaderTitle = computed(() => makeAgentTitle(currentAgentId.value))
 
-  // Guard against concurrent switchSession calls — only the last one wins
-  let switchSessionSeq = 0
-
   // Guard against concurrent loadHistory calls — only the last one wins.
   // Without this, stale responses (e.g. from a loadHistory triggered before
   // visibility change) can overwrite currentSessionId with a wrong value.
@@ -208,7 +333,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   // one completes. This prevents redundant concurrent fetches while ensuring the
   // final state is always fresh.
   let loadHistoryInProgress = false
-  let pendingReload: { forceScrollBottom: boolean; showOverlay: boolean; skipIfUnchanged: boolean; forceNotRunning: boolean } | null = null
+  let pendingReload: { forceScrollBottom: boolean; showOverlay: boolean; skipIfUnchanged: boolean; forceNotRunning: boolean; immediate?: boolean } | null = null
   let loadHistoryDeferred: { promise: Promise<void> } | null = null
 
   // forceScrollBottom: true = always scroll to bottom (switch session, first load)
@@ -222,23 +347,37 @@ export function useChatSession(options: UseChatSessionOptions) {
   //                  prevent a race where the server's in-memory running state
   //                  hasn't been updated yet, causing loadHistory to re-connect
   //                  the stream and set loading=true again)
-  async function loadHistory(forceScrollBottom = true, showOverlay = false, skipIfUnchanged = false, forceNotRunning = false) {
-    // If a load is already in-flight, record the requested params and return
-    // a promise that resolves when all queued loads complete. This coalesces
-    // rapid calls while ensuring callers can await + .finally() and that the
-    // final state is always fresh.
-    if (loadHistoryInProgress) {
-      pendingReload = { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning }
-      // Return the in-flight load's promise so callers can await/finally it.
-      // The pendingReload will be executed after the in-flight load completes.
-      return loadHistoryDeferred!.promise
+  // immediate: true = skip the loadHistoryInProgress queue and execute immediately.
+  //             Used by switchSession which must not wait for a stale polling request
+  //             to finish. When immediate=true, switching/inputDisabled are set and
+  //             restored in loadHistory's finally block (same as switchSession did).
+  async function loadHistory(forceScrollBottom = true, showOverlay = false, skipIfUnchanged = false, forceNotRunning = false, immediate = false) {
+    // Track whether input should remain disabled after load (replayPending case).
+    // Only relevant when immediate=true (switchSession path).
+    let keepInputDisabled = false
+
+    // immediate mode: skip the queue, execute directly. Used by switchSession
+    // which must not wait for a stale polling loadHistory to finish.
+    if (!immediate) {
+      // If a load is already in-flight, record the requested params and return
+      // a promise that resolves when all queued loads complete. This coalesces
+      // rapid calls while ensuring callers can await + .finally() and that the
+      // final state is always fresh.
+      if (loadHistoryInProgress) {
+        pendingReload = { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning, immediate }
+        // Return the in-flight load's promise so callers can await/finally it.
+        // The pendingReload will be executed after the in-flight load completes.
+        return loadHistoryDeferred!.promise
+      }
     }
     loadHistoryInProgress = true
     let resolveDeferred: () => void
     loadHistoryDeferred = { promise: new Promise<void>((r) => { resolveDeferred = r }) }
 
     const mySeq = ++loadHistorySeq
-    if (showOverlay) switching.value = true
+    if (showOverlay || immediate) switching.value = true
+    // immediate mode (switchSession): lock input to prevent stale messages
+    if (immediate) inputDisabled.value = true
     try {
       // Warm worktree cache so annotateWorktreePaths has data when rendering messages
       warmWorktreeCache(store.state.projectRoot)
@@ -277,68 +416,20 @@ export function useChatSession(options: UseChatSessionOptions) {
           const recoverData = await recoverResp.json()
           if (loadHistorySeq !== mySeq) { return }
           if (recoverData.sessionId) {
+            // Recovery path sets currentSessionId BEFORE calling syncSessionState
+            // so the helper can use it for usage cache and stream connection.
             currentSessionId.value = recoverData.sessionId
-            currentSessionTitle.value = recoverData.sessionTitle || ''
-            currentBackend.value = recoverData.backend || ''
-            currentAgentId.value = recoverData.agentId || ''
-            syncModelFromData(currentAgentId.value, recoverData.modelId)
-            syncThinkingEffortFromData(recoverData.thinkingEffortState?.currentId || '')
-            syncModeFromData(recoverData.modeState?.currentModeId || '', recoverData.modeState?.availableModes)
-            syncTransportFromData(recoverData.transport)
-            syncUsageFromData(recoverData.usageState, recoverData.sessionId)
-            if (recoverData.autoApprove !== undefined) {
-              autoApprove.value = recoverData.autoApprove
-            }
-            // If the recovery response already contains messages, use them directly
-            // instead of making a second fetch below. This eliminates the double-fetch
-            // that previously used limit=1 then re-fetched with full limit.
-            const recoverMsgs = recoverData.messages || []
-            if (recoverMsgs.length > 0) {
-              // Change detection
-              const newSnapshot = buildMessageSnapshot(recoverMsgs)
-              if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && (forceNotRunning || !recoverData.running)) {
+            const rawMsgs = (recoverData.messages || []) as Array<Record<string, unknown>>
+            if (rawMsgs.length > 0) {
+              const result = syncSessionState(recoverData, forceScrollBottom, skipIfUnchanged, forceNotRunning, immediate)
+              keepInputDisabled = result.keepInputDisabled
+              if (result.synced) {
+                // Skip the second fetch — we already have the data
                 return
               }
-              lastMessageSnapshot = newSnapshot
-              const prevCount = messages.value.length
-              const newCount = recoverMsgs.length
-              const sameCore = prevCount === newCount && prevCount > 0 && recoverMsgs.slice(0, -1).every((m: Record<string, unknown>, i: number) => m.id === messages.value[i]?.id)
-              if (!sameCore) {
-                expandedTools.value = {}
-              }
-              Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
-              Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
-              messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value, forceNotRunning ? false : recoverData.running)
-              totalMessages.value = recoverData.total || messages.value.length
-              // Sync remaining session metadata from recovery response
-              if (recoverData.modeState && recoverData.modeState?.availableModes?.length > 0) {
-                updateAvailableModes(recoverData.modeState.availableModes)
-              }
-              if (recoverData.thinkingEffortState && recoverData.thinkingEffortState.availableLevels?.length > 0) {
-                updateAvailableThinkingEfforts(recoverData.thinkingEffortState.availableLevels)
-              }
-              if (Array.isArray(recoverData.commands) && recoverData.commands.length > 0 && availableCommands.value.length === 0) {
-                updateCommandState(recoverData.commands)
-              }
-              if (recoverData.planState && recoverData.planState.entries?.length > 0) {
-                updatePlanEntries(recoverData.planState.entries)
-              }
-              onExtractScheduledTasks(messages.value)
-              onRenderUpdate(forceScrollBottom)
-              onScrollBottom(forceScrollBottom)
-              if (recoverData.running && !forceNotRunning) {
-                loading.value = true
-                onConnectStream(currentSessionId.value)
-              } else if (recoverData.replayPending && !forceNotRunning) {
-                loading.value = true
-                inputDisabled.value = true
-                onConnectStream(currentSessionId.value)
-              } else {
-                loading.value = false
-              }
-              // Skip the second fetch — we already have the data
-              return
             }
+            // Recovery returned sessionId but no messages — identity is set,
+            // fall through to the main fetch to load messages.
           }
         } else {
           // Recovery request failed (e.g. 403 NoProjectSelected when
@@ -390,9 +481,9 @@ export function useChatSession(options: UseChatSessionOptions) {
           loadHistoryInProgress = false
           resolveDeferred!()
           loadHistoryDeferred = null
-          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning }
+          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning, immediate }
           pendingReload = null
-          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning), 0)
+          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning, next.immediate), 0)
           return
         }
         throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
@@ -400,118 +491,14 @@ export function useChatSession(options: UseChatSessionOptions) {
       const data = await resp.json()
       // Re-check after JSON parse (another async boundary)
       if (loadHistorySeq !== mySeq) { return }
-      const rawMsgs = data.messages || []
 
-      // Change detection: if skipIfUnchanged and data matches last snapshot, do nothing.
-      // Always refresh when session is running (SSE events may have been dropped).
-      const newSnapshot = buildMessageSnapshot(rawMsgs)
-      if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && (forceNotRunning || !data.running)) {
-        return
-      }
-      lastMessageSnapshot = newSnapshot
+      // Delegate all state sync to the shared helper.
+      // Main path does NOT set currentSessionId before calling — the helper
+      // sets it from the response data (returnedId).
+      const result = syncSessionState(data, forceScrollBottom, skipIfUnchanged, forceNotRunning, immediate)
+      keepInputDisabled = result.keepInputDisabled
+      if (!result.synced) return // skipIfUnchanged detected no change
 
-      // Data has changed (or this is a full load) — apply new data.
-      // Preserve expandedTools when only the last message changed (SSE done reload),
-      // to avoid collapsing user-expanded tool details and triggering full re-render.
-      // Only reset when message count or non-last message identities differ.
-      const prevCount = messages.value.length
-      const newCount = rawMsgs.length
-      const sameCore = prevCount === newCount && prevCount > 0 && rawMsgs.slice(0, -1).every((m: Record<string, unknown>, i: number) => m.id === messages.value[i]?.id)
-      if (!sameCore) {
-        expandedTools.value = {}
-      }
-      // Clear stale blockAskQuestions — after backend converts <ask-question> text blocks
-      // to tool_use blocks, old entries keyed by text-block indices would cause duplicate
-      // rendering. extractScheduledTasks below will re-populate from current DB state.
-      Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
-      Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
-
-      // Replace messages with server data.
-      messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, forceNotRunning ? false : data.running)
-
-      // Append pending messages from the queue field in the backend response.
-      // The queue lives in-memory (not in DB), so parseMessages won't include them.
-      // Since parseMessages just replaced messages.value, there are no stale
-      // pending messages to clear — just append from the authoritative backend queue.
-      const queueItems = data.queue as Array<Record<string, unknown>> | undefined
-      if (queueItems) {
-        for (const item of queueItems) {
-          const itemFiles = [...(item.files as FileEntry[] || []).map((f: FileEntry) => typeof f === 'string' ? { path: f, isDir: false } : f), ...(item.filePaths as string[] || []).map((p: string) => ({ path: p, isDir: false }))]
-          messages.value.push({
-            role: 'user',
-            id: item.queueId || `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            content: item.text || '',
-            blocks: item.text ? [{ type: 'text', text: item.text as string }] : [],
-            files: itemFiles,
-            createdAt: item.createdAt || new Date().toISOString(),
-            pending: true,
-          })
-        }
-      }
-
-      totalMessages.value = data.total || messages.value.length
-      // Sanity check: if the backend returned a different sessionId than what we
-      // requested, log a warning — this indicates a potential issue (e.g. session
-      // was deleted, project mismatch). The sequence guard already prevents stale
-      // responses from winning a race, so we still apply the data but log for
-      // debugging.
-      const requestedId = currentSessionId.value
-      const returnedId = data.sessionId || ''
-      if (returnedId && requestedId && returnedId !== requestedId) {
-        appLog.w(TAG, `loadHistory: session ID mismatch (requested=${requestedId}, returned=${returnedId})`)
-      }
-      currentSessionId.value = returnedId
-      currentSessionTitle.value = data.sessionTitle || ''
-      currentBackend.value = data.backend || ''
-      currentAgentId.value = data.agentId || ''
-      syncModelFromData(currentAgentId.value, data.modelId)
-      syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
-      syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
-      syncTransportFromData(data.transport)
-      syncUsageFromData(data.usageState, returnedId)
-      // Restore autoApprove from server state (per-session, not global)
-      if (data.autoApprove !== undefined) {
-        autoApprove.value = data.autoApprove
-      }
-      // Populate ACP mode available modes from REST response.
-      if (data.modeState && data.modeState.availableModes?.length > 0) {
-        updateAvailableModes(data.modeState.availableModes)
-      }
-      // Update available thinking effort levels from ACP state
-      if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
-        updateAvailableThinkingEfforts(data.thinkingEffortState.availableLevels)
-      } else if (data.agentId) {
-        // Fallback: agent config (e.g. OpenCode/Kimi ACP don't expose thought_level)
-        const agentLevels = getAgentThinkingEffortLevels(data.agentId)
-        if (agentLevels.length > 0) {
-          updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))
-        }
-      }
-      // Populate slash commands from REST response (cached ACP state)
-      if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
-        updateCommandState(data.commands)
-      }
-      // Populate plan state from REST response (cached ACP state)
-      // Only set if entries are non-empty to avoid clearing active SSE streaming plan
-      if (data.planState && data.planState.entries?.length > 0) {
-        updatePlanEntries(data.planState.entries)
-      }
-      onExtractScheduledTasks(messages.value)
-      onRenderUpdate(true)
-      if (data.running && !forceNotRunning) {
-        loading.value = true
-        onScrollBottom(forceScrollBottom)
-        onConnectStream(currentSessionId.value)
-      } else if (data.replayPending && !forceNotRunning) {
-        // LoadSession replay is in progress — connect WS to receive replay_done event
-        loading.value = true
-        inputDisabled.value = true
-        onScrollBottom(forceScrollBottom)
-        onConnectStream(currentSessionId.value)
-      } else {
-        loading.value = false
-        onScrollBottom(forceScrollBottom)
-      }
       switching.value = false
       // Check if another loadHistory was requested while we were in-flight
       loadHistoryInProgress = false
@@ -519,7 +506,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         const next = pendingReload
         pendingReload = null
         // Execute pending load — its completion will resolve the deferred
-        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning), 0)
+        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning, next.immediate || false), 0)
       } else {
         // No pending load — resolve the deferred so all awaiting callers proceed
         resolveDeferred!()
@@ -533,7 +520,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (pendingReload) {
         const next = pendingReload
         pendingReload = null
-        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning), 0)
+        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning, next.immediate || false), 0)
       } else {
         resolveDeferred!()
         loadHistoryDeferred = null
@@ -544,6 +531,15 @@ export function useChatSession(options: UseChatSessionOptions) {
       // aren't stuck awaiting and future loadHistory calls aren't blocked.
       loadHistoryInProgress = false
       switching.value = false
+      // immediate mode (switchSession path): restore inputDisabled.
+      // Same logic as switchSession's old finally block:
+      // - If not keepInputDisabled, unlock input
+      // - If keepInputDisabled (replayPending), leave input locked — replay_done
+      //   WS event will re-enable it later
+      // - If a newer switch started, it will set inputDisabled=true again immediately
+      if (immediate && !keepInputDisabled) {
+        inputDisabled.value = false
+      }
       if (loadHistoryDeferred) {
         resolveDeferred!()
         loadHistoryDeferred = null
@@ -577,23 +573,12 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   async function switchSession(sessionId: string) {
-    // Increment sequence counter — if another switch starts before we finish,
-    // our results will be discarded (last writer wins)
-    const mySeq = ++switchSessionSeq
-    // Also bump loadHistorySeq so any in-flight loadHistory results are discarded
-    // (switchSession takes priority over stale loadHistory responses)
+    // Bump loadHistorySeq so any in-flight loadHistory results are discarded
+    // (switchSession takes priority over stale loadHistory responses).
+    // loadHistory's own mySeq check handles the actual guard.
     ++loadHistorySeq
 
-    // Track whether input should remain disabled after switch (replayPending case)
-    let keepInputDisabled = false
-
-    // Mark switching state immediately so UI can show a fade/placeholder
-    switching.value = true
-    // Briefly lock input to prevent sending messages with stale sessionId.
-    // This is the ONLY place inputDisabled is set to true — it defaults to false
-    // and is restored as soon as the switch completes (even if the session is running).
-    inputDisabled.value = true
-
+    // Disconnect stream and invalidate snapshot before switching identity.
     onDisconnectStream()
     lastMessageSnapshot = ''  // Invalidate snapshot — new session may have different data
     expandedTools.value = {}
@@ -610,126 +595,23 @@ export function useChatSession(options: UseChatSessionOptions) {
     // flashing stale info during the async fetch. Will be repopulated from
     // the REST response. This also clears ACP state (mode/commands/thinking).
     clearSessionIdentity(sessionId)
-    // No clearUsageState() here — usage state is per-session in a Map cache.
-    // Switching currentSessionId makes the computed refs read from the new
-    // session's cache entry instantly, with no clear→repopulate race.
     // Clear plan progress from previous session — will be repopulated by SSE plan_update
     clearPlanState()
-    try {
-      // Load agents and fetch chat data in parallel — agents are only needed
-      // for model name resolution which can happen after the initial render.
-      const limit = store.state.chatInitialMessages
-      const chatUrl = `/api/ai/chat?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`
-      const agentsPromise = agents.value.length === 0 ? loadAgents() : Promise.resolve()
-      const [, resp] = await Promise.all([
-        agentsPromise,
-        fetch(chatUrl),
-      ])
-      if (!resp.ok) {
-        // If the session was deleted, clear stale currentSessionId and recover
-        // by falling back to the latest available session (same as archiveSession).
-        const errData = await resp.json().catch(() => ({}))
-        if (resp.status === 404 && errData.msgKey === 'SessionNotFound') {
-          appLog.w(TAG, 'switchSession: session not found, recovering to latest session')
-          const sessionsResp = await fetch('/api/ai/sessions')
-          const sessionsData = await sessionsResp.json()
-          // If another switch happened while fetching sessions, bail
-          if (switchSessionSeq !== mySeq) return
-          if (sessionsData.sessions && sessionsData.sessions.length > 0) {
-            // Switch to the most recent session — guard against recursive deletion
-            const targetId = sessionsData.sessions[0].id
-            if (targetId !== sessionId) {
-              await switchSession(targetId)
-              return
-            }
-          }
-          // No valid sessions left — create a new one
-          await createSession('')
-          return
-        }
-        toast.show(gt('chat.session.switchFailed'), { icon: '⚠️', type: 'error' })
-        return
-      }
-      const data = await resp.json()
 
-      // If another switch happened while we were fetching, discard our results
-      // (the newer switch will set switching=false when it completes)
-      if (switchSessionSeq !== mySeq) return
+    // Delegate to loadHistory which handles:
+    // - Fetch + parseMessages + queue restore (single path, no duplication)
+    // - Switching overlay / inputDisabled control
+    // - Stream connection for running sessions
+    // immediate=true skips the loadHistoryInProgress queue and
+    // handles switching/inputDisabled in its finally block.
+    await loadHistory(true, true, false, false, true)
 
-      messages.value = parseMessages(data.messages || [], onParseAssistantContent, undefined, data.running)
-      totalMessages.value = data.total || messages.value.length
-      // Re-assign from server response for authority (clearSessionIdentity already
-      // set this to sessionId; data.sessionId should match but takes precedence).
-      currentSessionId.value = data.sessionId || sessionId
-      currentSessionTitle.value = data.sessionTitle || ''
-      currentBackend.value = data.backend || ''
-      currentAgentId.value = data.agentId || ''
-      syncModelFromData(currentAgentId.value, data.modelId)
-      syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
-      syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
-      syncTransportFromData(data.transport)
-      syncUsageFromData(data.usageState, data.sessionId || sessionId)
-      // Restore autoApprove from server state (per-session, not global)
-      if (data.autoApprove !== undefined) {
-        autoApprove.value = data.autoApprove
-      }
-      // Populate ACP mode available modes from REST response.
-      if (data.modeState && data.modeState?.availableModes?.length > 0) {
-        updateAvailableModes(data.modeState.availableModes)
-      }
-      // Update available thinking effort levels from ACP state
-      if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
-        updateAvailableThinkingEfforts(data.thinkingEffortState.availableLevels)
-      }
-      // Populate slash commands from REST response (cached ACP state)
-      if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
-        updateCommandState(data.commands)
-      }
-      // Populate plan state from REST response (cached ACP state)
-      // Only set if entries are non-empty to avoid clearing active SSE streaming plan
-      if (data.planState && data.planState.entries?.length > 0) {
-        updatePlanEntries(data.planState.entries)
-      }
-      onExtractScheduledTasks(messages.value)
-      onRenderUpdate(true)
-      onScrollBottom(true)
-      if (data.running) {
-        loading.value = true
-        onConnectStream(sessionId)
-      } else if (data.replayPending) {
-        // LoadSession replay is in progress — connect WS to receive replay_done event
-        // Use subscribeOnly to avoid creating a phantom streaming message
-        loading.value = true
-        keepInputDisabled = true
-        onConnectStream(sessionId, { subscribeOnly: true })
-      } else {
-        loading.value = false
-      }
-      // Recalculate global chatUnread after switching — the backend has already
-      // marked this session as read (UpdateLastRead), so the session list will
-      // reflect the correct unread state. Without this, chatUnread stays true
-      // when the user is already on the chat tab (switchTab early-returns).
-      // Fire-and-forget: don't block the switching overlay on this secondary call.
-      loadSessionsOnce()
-    } catch (err: unknown) {
-      // If another switch happened, don't touch state
-      if (switchSessionSeq !== mySeq) return
-      appLog.e(TAG, 'Failed to switch session:', err)
-      toast.show(gt('chat.session.switchFailed'), { icon: '⚠️', type: 'error' })
-    } finally {
-      // Always restore input — switchSession is the only place that locks it,
-      // so it must always unlock regardless of success/failure/race.
-      // If a newer switch started, it will set inputDisabled=true again immediately.
-      // EXCEPTION: keep input disabled during replayPending — the user must not
-      // send messages before the replayed history is fully loaded from DB,
-      // otherwise their message could end up before the replayed messages in the
-      // chat list (DB auto-increment ordering race). Input will be re-enabled
-      // by the replay_done WS event handler (via onReplayDone callback).
-      if (!keepInputDisabled) {
-        inputDisabled.value = false
-      }
-      switching.value = false
-    }
+    // Recalculate global chatUnread after switching — the backend has already
+    // marked this session as read (UpdateLastRead), so the session list will
+    // reflect the correct unread state. Without this, chatUnread stays true
+    // when the user is already on the chat tab (switchTab early-returns).
+    // Fire-and-forget: don't block the switching overlay on this secondary call.
+    loadSessionsOnce()
   }
 
   async function createSession(agentId: string) {

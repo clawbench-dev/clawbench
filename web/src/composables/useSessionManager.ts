@@ -191,10 +191,10 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   async function switchSession(sessionId: string) {
     cleanupActiveStream()
     _clearInputState()
-    // Clear pending messages BEFORE switching session — they belong to the
-    // old session. loadHistory will restore pending messages for the new
-    // session from the queue field in the /api/ai/chat response.
-    clearPendingMessages()
+    // No clearPendingMessages here — loadHistory's parseMessages + queueAppend
+    // replaces the entire messages array, so old pending messages are naturally
+    // removed. Explicit clearPendingMessages would erase pending messages before
+    // loadHistory can restore them from the backend queue field.
     await switchSessionCore(sessionId)
   }
 
