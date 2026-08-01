@@ -749,28 +749,27 @@ func TestStreamHub_EmitACPStateEvents_WithCommandsOnly(t *testing.T) {
 	assert.True(t, found, "expected commands_update event in buffered events")
 }
 
-func TestStreamHub_EmitACPStateEvents_OrphanedUsage(t *testing.T) {
-	acpMgr := ai.GetACPConnManager()
-	// Create a connection with usage state, then close it to orphan the usage
-	agent := &model.Agent{ID: "test-acp-orphan", Backend: "acp-stdio", AcpCommand: "echo"}
-	conn := ai.NewACPConnForTest(agent, "session-orphan")
-	conn.SetCachedUsageState(&ai.UsageState{Used: 999, Size: 200000})
-	acpMgr.SetConnForTest("session-orphan", conn)
-	// CloseConn preserves usage into orphanedUsage
-	acpMgr.CloseConn("session-orphan")
-
+func TestStreamHub_EmitACPStateEvents_DBUsageFallback(t *testing.T) {
 	wsMgr, hub := newTestStreamHub()
+	// Inject a function that simulates DB fallback for usage state
+	hub.SetGetContextStateUsageFunc(func(sessionID string) *ContextStateUsage {
+		if sessionID == "session-db-fallback" {
+			return &ContextStateUsage{Used: 999, Size: 200000}
+		}
+		return nil
+	})
+
 	var writeMu sync.Mutex
 	sub := wsMgr.Subscribe(nil, &writeMu, "client1", "")
 
-	hub.EmitACPStateEvents("client1", "session-orphan")
+	hub.EmitACPStateEvents("client1", "session-db-fallback")
 
 	buffered := sub.GetBufferedEvents()
-	require.NotEmpty(t, buffered, "expected orphaned usage_update event")
+	require.NotEmpty(t, buffered, "expected DB fallback usage_update event")
 	data, ok := buffered[0].Data.(ChatStreamData)
 	require.True(t, ok)
 	assert.Equal(t, "usage_update", data.EventType)
-	usage, _ := data.Payload.(*ai.UsageState)
+	usage, _ := data.Payload.(*ContextStateUsage)
 	require.NotNil(t, usage)
 	assert.Equal(t, 999, usage.Used)
 }

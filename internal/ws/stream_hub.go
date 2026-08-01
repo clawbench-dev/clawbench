@@ -9,13 +9,37 @@ import (
 	"clawbench/internal/ai"
 )
 
+// ContextStateUsage represents the persisted usage state for a session,
+// used as a DB fallback when no live ACP connection is available.
+// Fields must match service.UsageStatePersist — both structs map the same DB column.
+type ContextStateUsage struct {
+	Used         int     `json:"used"`
+	Size         int     `json:"size"`
+	InputTokens  int     `json:"inputTokens,omitempty"`
+	OutputTokens int     `json:"outputTokens,omitempty"`
+	Cost         float64 `json:"cost,omitempty"`
+	Currency     string  `json:"currency,omitempty"`
+}
+
+// GetContextStateUsageFunc is a function that retrieves persisted usage state
+// for a session. Injected by the service layer to avoid circular imports.
+type GetContextStateUsageFunc func(sessionID string) *ContextStateUsage
+
 // StreamHub manages session-scoped streaming event fan-out via WebSocket.
 // It replaces the single-consumer SSE channel with multi-client WS delivery.
 // Clients subscribe to specific sessions to receive their streaming events.
 type StreamHub struct {
-	mu          sync.RWMutex
-	subscribers map[string]map[string]struct{} // sessionID -> set of clientIDs
-	mgr         *Manager
+	mu                sync.RWMutex
+	subscribers       map[string]map[string]struct{} // sessionID -> set of clientIDs
+	mgr               *Manager
+	getContextUsageFn GetContextStateUsageFunc // injected by service layer
+}
+
+// SetGetContextStateUsageFunc injects a function that retrieves persisted usage
+// state from DB. Called by the service layer during initialization to avoid
+// circular imports.
+func (h *StreamHub) SetGetContextStateUsageFunc(fn GetContextStateUsageFunc) {
+	h.getContextUsageFn = fn
 }
 
 // NewStreamHub creates a StreamHub associated with the given Manager.
@@ -330,9 +354,15 @@ func (h *StreamHub) EmitACPStateEvents(clientID, sessionID string) {
 	s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID)
 	if s.Mode != nil || s.Config != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil {
 		h.emitACPState(clientID, sessionID, s)
-	} else if ou := ai.GetACPConnManager().GetOrphanedUsageState(sessionID); ou != nil {
-		h.emitStateEvent(clientID, sessionID, "usage_update", ou)
-		slog.Debug("streamhub: re-emitted orphaned usage on subscribe", "session_id", sessionID, "client_id", clientID)
+	} else if h.getContextUsageFn != nil {
+		// No live ACP connection — fall back to DB for usage only.
+		// Mode/thinking effort are not restored from DB here because agents
+		// re-emit them on reconnect; only usage (cumulative tokens/cost)
+		// needs DB persistence to survive server restarts.
+		if usage := h.getContextUsageFn(sessionID); usage != nil {
+			h.emitStateEvent(clientID, sessionID, "usage_update", usage)
+			slog.Debug("streamhub: re-emitted DB usage on subscribe", "session_id", sessionID, "client_id", clientID)
+		}
 	}
 }
 

@@ -956,6 +956,7 @@ type ThinkingEffortDef struct {
 }
 
 // UsageStatePersist is the DB-persisted form of ai.UsageState.
+// Fields must match ws.ContextStateUsage — both structs map the same DB column.
 type UsageStatePersist struct {
 	Used         int     `json:"used"`
 	Size         int     `json:"size"`
@@ -963,6 +964,87 @@ type UsageStatePersist struct {
 	OutputTokens int     `json:"outputTokens,omitempty"`
 	Cost         float64 `json:"cost,omitempty"`
 	Currency     string  `json:"currency,omitempty"`
+}
+
+// PersistContextStateFromEvent extracts context state from a StreamEvent
+// and persists it to DB using atomic json_set() partial updates.
+// This is called from SessionExecutor.forwardEvent so that mode, thinking effort,
+// and usage state survive server restarts.
+func PersistContextStateFromEvent(sessionID string, event ai.StreamEvent) {
+	if sessionID == "" {
+		return
+	}
+	switch event.Type {
+	case "mode_update":
+		if event.Mode == nil {
+			return
+		}
+		modeJSON, err := json.Marshal(ModeStatePersist{
+			CurrentModeID:  event.Mode.CurrentModeID,
+			AvailableModes: convertModeDefsFromAI(event.Mode.AvailableModes),
+		})
+		if err != nil {
+			slog.Warn("persist context state: marshal mode", "session", sessionID, "error", err)
+			return
+		}
+		PatchContextStateMerge(sessionID, map[string]string{"mode": string(modeJSON)})
+
+	case "thinking_effort_update":
+		if event.ThinkingEffort == nil {
+			return
+		}
+		effortJSON, err := json.Marshal(ThinkingEffortPersist{
+			CurrentID:       event.ThinkingEffort.CurrentID,
+			AvailableLevels: convertThinkingEffortDefsFromAI(event.ThinkingEffort.AvailableLevels),
+		})
+		if err != nil {
+			slog.Warn("persist context state: marshal thinking effort", "session", sessionID, "error", err)
+			return
+		}
+		PatchContextStateMerge(sessionID, map[string]string{"thinkingEffort": string(effortJSON)})
+
+	case "usage_update":
+		if event.Usage == nil {
+			return
+		}
+		usageJSON, err := json.Marshal(UsageStatePersist{
+			Used:         event.Usage.Used,
+			Size:         event.Usage.Size,
+			InputTokens:  event.Usage.InputTokens,
+			OutputTokens: event.Usage.OutputTokens,
+			Cost:         event.Usage.Cost,
+			Currency:     event.Usage.Currency,
+		})
+		if err != nil {
+			slog.Warn("persist context state: marshal usage", "session", sessionID, "error", err)
+			return
+		}
+		PatchContextStateMerge(sessionID, map[string]string{"usage": string(usageJSON)})
+	}
+}
+
+// convertModeDefsFromAI converts ai.ModeDef slices to service.ModeDef for DB persistence.
+func convertModeDefsFromAI(modes []ai.ModeDef) []ModeDef {
+	if len(modes) == 0 {
+		return nil
+	}
+	result := make([]ModeDef, len(modes))
+	for i, m := range modes {
+		result[i] = ModeDef{ID: m.ID, Name: m.Name}
+	}
+	return result
+}
+
+// convertThinkingEffortDefsFromAI converts ai.ThinkingEffortDef slices to service.ThinkingEffortDef for DB persistence.
+func convertThinkingEffortDefsFromAI(levels []ai.ThinkingEffortDef) []ThinkingEffortDef {
+	if len(levels) == 0 {
+		return nil
+	}
+	result := make([]ThinkingEffortDef, len(levels))
+	for i, l := range levels {
+		result[i] = ThinkingEffortDef{ID: l.ID, Name: l.Name}
+	}
+	return result
 }
 
 // SaveContextState persists the context_state JSON for a session.

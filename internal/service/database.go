@@ -737,16 +737,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
-	// Migrate: add ACP cached usage state column to agents table for persistent
-	// storage of agent-level usage state (best-effort fallback for session switch).
-	var hasCachedUsage int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_cached_usage_state'").Scan(&hasCachedUsage)
-	if hasCachedUsage == 0 {
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_cached_usage_state TEXT NOT NULL DEFAULT ''"); err != nil {
-			return fmt.Errorf("failed to add acp_cached_usage_state column: %w", err)
-		}
-	}
-
 	// Migrate: add is_default column to recent_projects for server-side default project.
 	var hasIsDefault int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('recent_projects') WHERE name='is_default'").Scan(&hasIsDefault)
@@ -1567,9 +1557,12 @@ func GetClusterCache() ([]ClusterCacheEntry, string, time.Time, error) {
 }
 
 // SaveClusterMeta inserts or replaces the meta row with computation progress info.
+// If mode is empty string, the previous mode value is preserved (useful during
+// computing phases when the final mode is not yet known).
 func SaveClusterMeta(progress, mode string, msgCount, clusterCount, elapsedMs int) error {
 	_, err := WriteExec(
-		"INSERT OR REPLACE INTO message_clusters_meta (id, mode, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg, updated_at) VALUES (1, ?, ?, '', ?, ?, ?, '', CURRENT_TIMESTAMP)",
+		"INSERT OR REPLACE INTO message_clusters_meta (id, mode, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg, updated_at) "+
+			"VALUES (1, COALESCE(NULLIF(?, ''), (SELECT mode FROM message_clusters_meta WHERE id = 1), ''), ?, '', ?, ?, ?, '', CURRENT_TIMESTAMP)",
 		mode, progress, msgCount, clusterCount, elapsedMs,
 	)
 	return err

@@ -189,7 +189,8 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	}
 }
 
-// forwardEvent forwards an event to WS clients via StreamHub.
+// forwardEvent forwards an event to WS clients via StreamHub
+// and persists context state (mode, thinking effort, usage) to DB.
 // Note: For resume_split events, the hub emission is deferred to handleResumeSplit
 // because the message_id is only available after the new message is created.
 func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
@@ -203,6 +204,11 @@ func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
 	if event.Type != "resume_split" {
 		ws.EmitToSession(e.cfg.SessionID, forwardEvent)
 	}
+
+	// Persist context state to DB so it survives server restarts.
+	// Called for all event types; PersistContextStateFromEvent only acts on
+	// mode_update/usage_update/thinking_effort_update and ignores others.
+	PersistContextStateFromEvent(e.cfg.SessionID, event)
 }
 
 // RunWithChannel executes the event loop against a pre-built event channel.

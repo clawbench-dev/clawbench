@@ -2760,6 +2760,36 @@ func TestSaveClusterMeta(t *testing.T) {
 	assert.False(t, updatedAt.IsZero())
 }
 
+func TestSaveClusterMeta_EmptyModePreservesPrevious(t *testing.T) {
+	teardown := setupTestDBForClusters(t)
+	defer teardown()
+
+	// First: save with a real mode
+	err := SaveClusterMeta("done", "fts", 50, 10, 1000)
+	assert.NoError(t, err)
+	mode, _, _, _, _, _, _, _ := GetClusterMeta()
+	assert.Equal(t, "fts", mode)
+
+	// Second: save computing state with empty mode — should preserve "fts"
+	err = SaveClusterMeta("computing", "", 0, 0, 0)
+	assert.NoError(t, err)
+	mode, _, progress, _, _, _, _, _ := GetClusterMeta()
+	assert.Equal(t, "fts", mode) // preserved
+	assert.Equal(t, "computing", progress)
+}
+
+func TestSaveClusterMeta_EmptyModeOnFirstInsert(t *testing.T) {
+	teardown := setupTestDBForClusters(t)
+	defer teardown()
+
+	// First insert with empty mode (no prior row exists) — should fall back to ""
+	err := SaveClusterMeta("computing", "", 0, 0, 0)
+	assert.NoError(t, err)
+	mode, _, progress, _, _, _, _, _ := GetClusterMeta()
+	assert.Equal(t, "", mode) // fallback to empty string (no prior row to preserve)
+	assert.Equal(t, "computing", progress)
+}
+
 func TestSaveClusterMetaError(t *testing.T) {
 	teardown := setupTestDBForClusters(t)
 	defer teardown()

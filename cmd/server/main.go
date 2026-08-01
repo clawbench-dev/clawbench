@@ -1096,6 +1096,24 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	ws.OnCancelSession = service.CancelSession
 	ws.OnPermissionRespond = service.RespondPermission
 
+	// Inject DB context state usage fallback into StreamHub (breaks import cycle).
+	// Fields are mapped individually between service.UsageStatePersist and
+	// ws.ContextStateUsage — both must stay in sync (see struct comments).
+	ws.GetManager().StreamHub().SetGetContextStateUsageFunc(func(sessionID string) *ws.ContextStateUsage {
+		ctxState := service.GetContextState(sessionID)
+		if ctxState == nil || ctxState.Usage == nil {
+			return nil
+		}
+		return &ws.ContextStateUsage{
+			Used:         ctxState.Usage.Used,
+			Size:         ctxState.Usage.Size,
+			InputTokens:  ctxState.Usage.InputTokens,
+			OutputTokens: ctxState.Usage.OutputTokens,
+			Cost:         ctxState.Usage.Cost,
+			Currency:     ctxState.Usage.Currency,
+		}
+	})
+
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 

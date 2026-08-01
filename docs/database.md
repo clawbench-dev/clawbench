@@ -174,7 +174,7 @@ UNIQUE：`(message_id)`
 | acp_available_thinking_efforts | TEXT | NOT NULL | `'[]'` | ACP 可选力度 JSON |
 | acp_available_commands | TEXT | NOT NULL | `'[]'` | ACP 可用命令 JSON |
 | acp_config_options | TEXT | NOT NULL | `''` | ACP 配置选项 |
-| acp_cached_usage_state | TEXT | NOT NULL | `''` | 缓存的使用状态 |
+
 | acp_load_session | BOOLEAN | NOT NULL | `false` | 支持加载会话 |
 | acp_list_sessions | BOOLEAN | NOT NULL | `false` | 支持列出会话 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
@@ -517,7 +517,7 @@ erDiagram
         TEXT acp_available_thinking_efforts
         TEXT acp_available_commands
         TEXT acp_config_options
-        TEXT acp_cached_usage_state
+
         BOOLEAN acp_load_session
         BOOLEAN acp_list_sessions
         DATETIME created_at

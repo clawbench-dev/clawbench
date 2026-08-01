@@ -206,7 +206,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				// appear immediately without requiring the first message.
 				// Note: usageState is NOT restored from agent-level registry — it is
 				// per-session and using the agent-level cache would show another
-				// session's context usage. It is resolved from orphanedUsage below.
+				// session's context usage. It is resolved from DB fallback below.
 				reg := ai.GetAgentCapabilityRegistry()
 				agentCap := reg.Get(sessionAgentID)
 				if agentCap != nil && agentCap.HasData() {
@@ -222,13 +222,6 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					if ml := reg.GetModelListState(sessionAgentID, ""); ml != nil {
 						modelListState = ml
 					}
-				}
-			}
-			// If no usageState from live connection, try orphaned usage
-			// (preserved when the connection was reaped by idle sweep).
-			if usageState == nil {
-				if ou := ai.GetACPConnManager().GetOrphanedUsageState(sessionID); ou != nil {
-					usageState = ou
 				}
 			}
 
@@ -539,7 +532,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				service.UnregisterSessionCancel(sessionID)
 				cancel()
 				// Emit error event to WS clients
-				emitStreamEvent(sessionID, ai.StreamEvent{Type: "error", Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
+				ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
 				// Persist error to database
 				errMsg := "AI internal error, please retry"
 				errContent, _ := json.Marshal(map[string]any{"blocks": []any{map[string]string{"type": "error", "text": errMsg, "reason": ai.ReasonPanic}}})
@@ -560,7 +553,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		markDoneAndSendFinal := func(event ai.StreamEvent) {
 			service.SetSessionRunning(sessionID, false, true) // skip event — we emit directly
 			// Emit terminal event to WS clients via StreamHub
-			emitStreamEvent(sessionID, event)
+			ws.EmitToSession(sessionID, event)
 		}
 		// Mark ACP connection as idle when the session goroutine exits.
 		// Previously this used CloseConn, which caused a race: the goroutine
@@ -618,78 +611,6 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// emitStreamEvent emits a stream event to WS clients via StreamHub.
-// It also persists ACP context state (mode, thinking effort, usage) to DB
-// so that SessionInfoBar data survives server restarts.
-func emitStreamEvent(sessionID string, event ai.StreamEvent) {
-	ws.EmitToSession(sessionID, event)
-	persistContextStateFromEvent(sessionID, event)
-}
-
-// persistContextStateFromEvent extracts context state from a StreamEvent
-// and persists it to DB using atomic json_set() partial updates.
-// This avoids the read-merge-write race condition where concurrent
-// mode+usage updates could overwrite each other.
-func persistContextStateFromEvent(sessionID string, event ai.StreamEvent) {
-	switch event.Type {
-	case "mode_update":
-		if event.Mode == nil {
-			return
-		}
-		modeJSON, _ := json.Marshal(service.ModeStatePersist{
-			CurrentModeID:  event.Mode.CurrentModeID,
-			AvailableModes: convertModeDefs(event.Mode.AvailableModes),
-		})
-		service.PatchContextStateMerge(sessionID, map[string]string{"mode": string(modeJSON)})
-
-	case "thinking_effort_update":
-		if event.ThinkingEffort == nil {
-			return
-		}
-		effortJSON, _ := json.Marshal(service.ThinkingEffortPersist{
-			CurrentID:       event.ThinkingEffort.CurrentID,
-			AvailableLevels: convertThinkingEffortDefs(event.ThinkingEffort.AvailableLevels),
-		})
-		service.PatchContextStateMerge(sessionID, map[string]string{"thinkingEffort": string(effortJSON)})
-
-	case "usage_update":
-		if event.Usage == nil {
-			return
-		}
-		usageJSON, _ := json.Marshal(service.UsageStatePersist{
-			Used:         event.Usage.Used,
-			Size:         event.Usage.Size,
-			InputTokens:  event.Usage.InputTokens,
-			OutputTokens: event.Usage.OutputTokens,
-			Cost:         event.Usage.Cost,
-			Currency:     event.Usage.Currency,
-		})
-		service.PatchContextStateMerge(sessionID, map[string]string{"usage": string(usageJSON)})
-	}
-}
-
-func convertModeDefs(modes []ai.ModeDef) []service.ModeDef {
-	if len(modes) == 0 {
-		return nil
-	}
-	result := make([]service.ModeDef, len(modes))
-	for i, m := range modes {
-		result[i] = service.ModeDef{ID: m.ID, Name: m.Name}
-	}
-	return result
-}
-
-func convertThinkingEffortDefs(levels []ai.ThinkingEffortDef) []service.ThinkingEffortDef {
-	if len(levels) == 0 {
-		return nil
-	}
-	result := make([]service.ThinkingEffortDef, len(levels))
-	for i, l := range levels {
-		result[i] = service.ThinkingEffortDef{ID: l.ID, Name: l.Name}
-	}
-	return result
-}
-
 // streamRunResult captures the outcome of a single AI stream execution.
 type streamRunResult struct {
 	cancelReason string // "", "user"
@@ -717,7 +638,7 @@ func executeStreamRun(
 	if err != nil {
 		slog.Error("failed to create backend", slog.String("backend", backendName), slog.String("err", err.Error()))
 		errMsg := T(r, "BackendCreateFailed", map[string]any{"Error": err.Error()})
-		emitStreamEvent(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
+		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
 		_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", errMsg, nil, false, "")
 		return streamRunResult{err: errMsg}
 	}
@@ -735,7 +656,7 @@ func executeStreamRun(
 	if err != nil {
 		slog.Error("failed to start stream", slog.String("err", err.Error()))
 		errMsg := T(r, "StreamStartFailed", map[string]any{"Error": err.Error()})
-		emitStreamEvent(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
+		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
 		_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", errMsg, nil, false, "")
 		return streamRunResult{err: errMsg}
 	}
@@ -765,7 +686,7 @@ func executeStreamRun(
 	runResult = executor.Finalize(runResult, eventCh)
 
 	// Send updated metadata (with wallMs) to WS clients before the terminal event
-	emitStreamEvent(sessionID, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
+	ws.EmitToSession(sessionID, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
 
 	// Convert RunResult to streamRunResult
 	result := streamRunResult{}

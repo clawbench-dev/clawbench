@@ -17,6 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const schema = `
@@ -3373,6 +3374,132 @@ func TestGetContextState_EmptyColumn(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Test")
 
 	// Fresh session has empty context_state
+	state := service.GetContextState(sid)
+	assert.Nil(t, state)
+}
+
+func TestPersistContextStateFromEvent_ModeUpdate(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Initially empty
+	state := service.GetContextState(sid)
+	assert.Nil(t, state)
+
+	// Persist mode_update event
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{
+		Type: "mode_update",
+		Mode: &ai.ModeState{
+			CurrentModeID:  "code",
+			AvailableModes: []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}},
+		},
+	})
+
+	state = service.GetContextState(sid)
+	require.NotNil(t, state)
+	require.NotNil(t, state.Mode)
+	assert.Equal(t, "code", state.Mode.CurrentModeID)
+	assert.Equal(t, 2, len(state.Mode.AvailableModes))
+	assert.Equal(t, "code", state.Mode.AvailableModes[0].ID)
+	assert.Equal(t, "Ask", state.Mode.AvailableModes[1].Name)
+}
+
+func TestPersistContextStateFromEvent_UsageUpdate(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Persist usage_update event
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{
+		Type: "usage_update",
+		Usage: &ai.UsageState{
+			Used:         50000,
+			Size:         200000,
+			InputTokens:  4530,
+			OutputTokens: 1441,
+			Cost:         0.87,
+			Currency:     "USD",
+		},
+	})
+
+	state := service.GetContextState(sid)
+	require.NotNil(t, state)
+	require.NotNil(t, state.Usage)
+	assert.Equal(t, 50000, state.Usage.Used)
+	assert.Equal(t, 200000, state.Usage.Size)
+	assert.Equal(t, 4530, state.Usage.InputTokens)
+	assert.Equal(t, 1441, state.Usage.OutputTokens)
+	assert.Equal(t, 0.87, state.Usage.Cost)
+	assert.Equal(t, "USD", state.Usage.Currency)
+}
+
+func TestPersistContextStateFromEvent_MergesDifferentTypes(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Persist mode first
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{
+		Type: "mode_update",
+		Mode: &ai.ModeState{CurrentModeID: "code"},
+	})
+
+	// Then persist usage — should not overwrite mode
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{
+		Type: "usage_update",
+		Usage: &ai.UsageState{Used: 30000, Size: 100000},
+	})
+
+	// Then persist thinking effort — should not overwrite mode or usage
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{
+		Type: "thinking_effort_update",
+		ThinkingEffort: &ai.ThinkingEffortState{CurrentID: "high"},
+	})
+
+	state := service.GetContextState(sid)
+	require.NotNil(t, state)
+	require.NotNil(t, state.Mode)
+	assert.Equal(t, "code", state.Mode.CurrentModeID)
+	require.NotNil(t, state.Usage)
+	assert.Equal(t, 30000, state.Usage.Used)
+	assert.Equal(t, 100000, state.Usage.Size)
+	require.NotNil(t, state.ThinkingEffort)
+	assert.Equal(t, "high", state.ThinkingEffort.CurrentID)
+}
+
+func TestPersistContextStateFromEvent_NilPayload(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Nil payloads should be skipped without writing anything
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{Type: "mode_update", Mode: nil})
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{Type: "usage_update", Usage: nil})
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{Type: "thinking_effort_update", ThinkingEffort: nil})
+
+	state := service.GetContextState(sid)
+	assert.Nil(t, state)
+}
+
+func TestPersistContextStateFromEvent_EmptySessionID(t *testing.T) {
+	// Should not crash with empty session ID
+	service.PersistContextStateFromEvent("", ai.StreamEvent{
+		Type: "usage_update",
+		Usage: &ai.UsageState{Used: 100, Size: 200},
+	})
+}
+
+func TestPersistContextStateFromEvent_IgnoresOtherEventTypes(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// Non-context event types should not write anything
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{Type: "content", Content: "hello"})
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{Type: "metadata"})
+	service.PersistContextStateFromEvent(sid, ai.StreamEvent{Type: "done"})
+
 	state := service.GetContextState(sid)
 	assert.Nil(t, state)
 }
