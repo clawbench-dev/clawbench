@@ -52,6 +52,7 @@ flowchart TD
 - **索引进度跟踪**：`GET /api/rag/status` 返回索引进度（总消息数、已索引数、已嵌入数、嵌入模式）；`GET /api/rag/message-index-status?id=<id>` 查询单条消息的 FTS 和向量嵌入状态。前端 `useRagStatus` composable 轮询 status 端点并计算实时索引/嵌入速度（基于相邻两次轮询的差值），在设置页显示索引健康度
 - **自动清理**：超过 `RetentionDays`（默认 90 天）的软删除数据定期清理，防止索引无限增长
 - **会话聚合搜索**：`RAGSessionSearch()` 在向量/FTS 搜索基础上按 `session_id` 聚合结果——返回 `SessionSearchResult`（含 `session_id`、`title`、`score`、`match_count`、分块列表），每会话最多 5 个分块。分块携带字符级偏移用于高亮。前端 `SessionSearchDrawer` 提供搜索结果列表 + 钻取详情两种视图，详情页将偏移转换为 DOM 高亮标记。`useSessionSearch` composable 封装搜索 API 调用，带防抖和 RAG 可用性缓存
+- **消息聚类分析**：将跨所有会话的相似用户消息自动分组为"消息集群"，帮助用户识别自己的常见提问模式。用户触发按需计算（`POST /api/chat/message-clusters/compute`），后端执行三阶段管线：提取（top 5000 条用户消息统计）→ 聚类（Union-Find 算法，三级相似度优先：向量嵌入余弦相似 > FTS Sorensen-Dice 词汇重叠 > 精确去重）→ 缓存（结果存入 DB）。计算进度通过 `cluster_progress` WS 事件实时推送，完成后通过 `GET /api/chat/message-clusters` 获取缓存结果。已被设为快捷发送的消息变体自动过滤，只展示未设置的集群——引导用户将常见提问转为快捷发送
 
 ### 设计要点
 
