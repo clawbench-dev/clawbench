@@ -61,8 +61,6 @@ onEvent((event: string, data: unknown) => {
     stopPolling()
   } else if (d.status === 'computing') {
     computing.value = true
-    // If not already polling, start polling as fallback
-    if (!pollTimer) pollProgress()
   }
 })
 
@@ -142,7 +140,7 @@ function stopPolling() {
 // computing state must persist. Returning module-level refs
 // ensures reopening the drawer shows the ongoing progress.
 export function useMessageClusters() {
-  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, stopPolling }
+  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, stopPolling, pollProgress }
 }
 
 // ── Reset for tests only ──

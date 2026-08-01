@@ -69,7 +69,7 @@ const TAG = 'MsgClusterDrawer'
 
 const { t } = useI18n()
 const toast = useToast()
-const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute: rawStartCompute } = useMessageClusters()
+const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute: rawStartCompute, pollProgress } = useMessageClusters()
 const { addItem } = useQuickSend()
 
 // ── Tab binding (useTabDrawer) ──
@@ -111,6 +111,8 @@ function formatElapsed(ms: number): string {
 async function open() {
   drawer.open()
   await fetchClusters()
+  // If computation is running but not polling, start polling as WS fallback
+  if (computing.value) pollProgress()
 }
 
 async function handleStartCompute() {
