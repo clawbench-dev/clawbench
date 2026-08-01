@@ -241,28 +241,7 @@ describe('SessionDrawer', () => {
       expect(first.running).toBe(true)
     })
 
-    it('shows source session badge for scheduled tasks', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [
-            { id: 's1', title: 'Task', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli', sourceSessionId: 'parent-s' },
-          ],
-          hasMore: false,
-          totalCount: 1,
-        }),
-      })
 
-      const wrapper = mountDrawer()
-      await flushPromises()
-      await wrapper.vm.loadSessions()
-      await flushPromises()
-      await nextTick()
-
-      // Check sessionsWithStatus has sourceSessionId
-      const first = wrapper.vm.sessionsWithStatus[0]
-      expect(first.sourceSessionId).toBe('parent-s')
-    })
   })
 
   describe('selectSession', () => {

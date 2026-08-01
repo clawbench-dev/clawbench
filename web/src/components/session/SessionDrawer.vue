@@ -39,7 +39,6 @@
               </div>
               <div class="session-item-meta">
                 <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                <span v-if="session.sourceSessionId" class="session-item-scheduled">{{ t('session.fromTask') }}</span>
                 <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
                 <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
               </div>
@@ -407,16 +406,6 @@ onUnmounted(() => {
 .session-item-time {
   font-size: 11px;
   color: var(--text-muted, #999);
-}
-
-.session-item-scheduled {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-weight: 500;
-  flex-shrink: 0;
-  background: rgba(0, 102, 204, 0.08);
-  color: var(--text-secondary, #5a6270);
 }
 
 .session-item-agent {

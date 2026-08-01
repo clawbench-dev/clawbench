@@ -12,21 +12,19 @@ vi.mock('@/utils/appLog', () => ({
 
 describe('useRagStatus', () => {
   beforeEach(() => {
-    vi.useFakeTimers()
     vi.mocked(apiGet).mockResolvedValue({
       available: false, mode: 'none', has_fts_data: false, has_vec_data: false,
       embedder_healthy: false, total_messages: 0, indexed_messages: 0,
-      total_chunks: 0, embedded_chunks: 0,
+      embedded_messages: 0,
     })
   })
 
   afterEach(() => {
     _resetForTesting()
-    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
-  it('fetches status on startPolling', async () => {
+  it('fetches status on refresh', async () => {
     const mockStatus = {
       available: true,
       mode: 'hybrid',
@@ -35,59 +33,35 @@ describe('useRagStatus', () => {
       embedder_healthy: true,
       total_messages: 100,
       indexed_messages: 80,
-      total_chunks: 200,
-      embedded_chunks: 150,
+      embedded_messages: 60,
     }
     vi.mocked(apiGet).mockResolvedValue(mockStatus)
 
-    const { status, startPolling, stopPolling } = useRagStatus()
-    startPolling()
+    const { status, refresh } = useRagStatus()
+    await refresh()
 
-    await vi.waitFor(() => {
-      expect(apiGet).toHaveBeenCalledWith('/api/rag/status')
-    })
-
-    await vi.waitFor(() => {
-      expect(status.value.total_messages).toBe(100)
-      expect(status.value.embedder_healthy).toBe(true)
-      expect(status.value.mode).toBe('hybrid')
-    })
-
-    stopPolling()
+    expect(apiGet).toHaveBeenCalledWith('/api/rag/status')
+    expect(status.value.total_messages).toBe(100)
+    expect(status.value.indexed_messages).toBe(80)
+    expect(status.value.embedded_messages).toBe(60)
+    expect(status.value.embedder_healthy).toBe(true)
+    expect(status.value.mode).toBe('hybrid')
   })
 
-  it('polls at interval', async () => {
-    const { startPolling, stopPolling } = useRagStatus()
-    startPolling()
-
-    // Wait for initial fetch
-    await vi.waitFor(() => {
-      expect(apiGet).toHaveBeenCalled()
-    })
-
-    const callCountBefore = vi.mocked(apiGet).mock.calls.length
-
-    vi.advanceTimersByTime(10_000)
-    await vi.waitFor(() => {
-      expect(vi.mocked(apiGet).mock.calls.length).toBeGreaterThan(callCountBefore)
-    })
-
-    stopPolling()
+  it('has no speed fields in status', () => {
+    const { status } = useRagStatus()
+    expect('index_speed' in status.value).toBe(false)
+    expect('embed_speed' in status.value).toBe(false)
   })
 
-  it('stops polling when stopPolling is called', async () => {
-    const { startPolling, stopPolling } = useRagStatus()
-    startPolling()
+  it('handles fetch error gracefully', async () => {
+    vi.mocked(apiGet).mockRejectedValue(new Error('Network error'))
 
-    await vi.waitFor(() => {
-      expect(apiGet).toHaveBeenCalled()
-    })
+    const { status, refresh } = useRagStatus()
+    await refresh()
 
-    stopPolling()
-    const callCount = vi.mocked(apiGet).mock.calls.length
-
-    vi.advanceTimersByTime(30_000)
-    // No additional calls after stopping
-    expect(vi.mocked(apiGet).mock.calls.length).toBe(callCount)
+    // Status should remain at default values
+    expect(status.value.available).toBe(false)
+    expect(status.value.total_messages).toBe(0)
   })
 })
