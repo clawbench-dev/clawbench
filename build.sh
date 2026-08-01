@@ -5,10 +5,18 @@ NAME="clawbench"
 DIST="dist"
 ASSETS="assets"
 
+# Load shared shell utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/scripts/common.sh"
+
 # Parse arguments
 TARGET_OS=""
 TARGET_ARCH=""
 BUILD_ANDROID=""
+DO_RESTART=""
+RESTART_SKIP_BUILD=""
+RESTART_PORT=""
+RESTART_DETACHED=""
 for arg in "$@"; do
     case "$arg" in
         --windows)
@@ -35,8 +43,59 @@ for arg in "$@"; do
         --android)
             BUILD_ANDROID=1
             ;;
+        --restart)
+            DO_RESTART=1
+            ;;
+        --restart-skip-build)
+            DO_RESTART=1
+            RESTART_SKIP_BUILD=1
+            ;;
+        --restart-port=*)
+            RESTART_PORT="${arg#--restart-port=}"
+            ;;
+        --restart-detached)
+            RESTART_DETACHED=1
+            ;;
     esac
 done
+
+# Resolve restart port from config if not specified
+_resolve_port() {
+    local port
+    port=$(grep "^port:" "$SCRIPT_DIR/config/config.yaml" 2>/dev/null | awk '{print $2}' | tr -d '"')
+    echo "${port:-20000}"
+}
+
+# === Restart detachment logic ===
+# When running inside ClawBench's PTY, killing ClawBench destroys the PTY,
+# sending SIGHUP to all processes in the old session. By moving into a new
+# session first via setsid, we survive the parent's death.
+if [[ -n "$DO_RESTART" && -z "$RESTART_DETACHED" ]]; then
+    PORT=$(_resolve_port)
+    if [[ -n "$RESTART_PORT" ]]; then
+        PORT="$RESTART_PORT"
+    fi
+    LOG="$SCRIPT_DIR/.clawbench/build-and-restart.log"
+    mkdir -p "$SCRIPT_DIR/.clawbench"
+    echo "=== ClawBench Build & Restart ==="
+    echo "  Detaching into new session..."
+    setsid "$SCRIPT_DIR/build.sh" --restart --restart-detached \
+        ${RESTART_SKIP_BUILD:+--restart-skip-build} \
+        ${RESTART_PORT:+--restart-port=$RESTART_PORT} \
+        >> "$LOG" 2>&1 &
+    SETSID_PID=$!
+    sleep 1
+    if kill -0 "$SETSID_PID" 2>/dev/null; then
+        echo "  Detached process started (PID $SETSID_PID)."
+        echo "  Log: $LOG"
+        echo "  The current terminal session will disconnect when ClawBench stops."
+        echo "  Reconnect after restart completes."
+    else
+        echo "  ERROR: Failed to start detached process. Check $LOG"
+        exit 1
+    fi
+    exit 0
+fi
 
 echo "=== Building $NAME ==="
 
@@ -108,9 +167,16 @@ else
 fi
 
 # 3. Build Go backend (after frontend + APK so embed dir is populated)
-echo "[3/5] Building Go backend..."
-
-if command -v go >/dev/null 2>&1; then
+# In restart mode with --restart-skip-build, skip this step
+if [[ -n "$RESTART_SKIP_BUILD" ]]; then
+    echo "[3/5] Go backend build skipped (--restart-skip-build)"
+    BIN="$SCRIPT_DIR/$NAME"
+    if [[ ! -f "$BIN" ]]; then
+        echo "ERROR: Binary not found at $BIN. Run with build first." >&2
+        exit 1
+    fi
+elif command -v go >/dev/null 2>&1; then
+    echo "[3/5] Building Go backend..."
     if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
         BINARY_NAME="$NAME"
         if [ "$TARGET_OS" = "windows" ]; then
@@ -123,10 +189,8 @@ if command -v go >/dev/null 2>&1; then
         echo "  Go binary: ./$NAME"
     fi
     # Build ACP mock agent binary (for E2E testing with ACP stdio transport)
-    if command -v go >/dev/null 2>&1; then
-        go build -o "acp-mock" ./cmd/acp-mock
-        echo "  ACP mock: ./acp-mock"
-    fi
+    go build -o "acp-mock" ./cmd/acp-mock
+    echo "  ACP mock: ./acp-mock"
 else
     echo "  Go not found, skipping backend build"
 fi
@@ -144,14 +208,103 @@ else
     echo "  ./$NAME              # Go binary (frontend+APK embedded)"
 fi
 echo "  public/              # Frontend on disk (used if present, overrides embed)"
-echo ""
-echo "Run with: ./$NAME"
-echo ""
-echo "Cross-compile targets:"
-echo "  ./build.sh --windows        # Windows amd64"
-echo "  ./build.sh --linux          # Linux amd64"
-echo "  ./build.sh --darwin         # macOS arm64 (Apple Silicon)"
-echo "  ./build.sh --darwin-amd64   # macOS amd64 (Intel)"
-echo "  ./build.sh --target=darwin/arm64"
-echo "  ./build.sh --android          # Android APK (release)"
-echo ""
+
+# === Restart logic (executed after build in detached session) ===
+if [[ -n "$DO_RESTART" ]]; then
+    PORT=$(_resolve_port)
+    if [[ -n "$RESTART_PORT" ]]; then
+        PORT="$RESTART_PORT"
+    fi
+    BIN="$SCRIPT_DIR/$NAME"
+    LOG="$SCRIPT_DIR/.clawbench/build-and-restart.log"
+
+    echo ""
+    echo "=== Restarting ClawBench ==="
+    echo "  Port: $PORT"
+    echo "  PID:  $$"
+    echo "  Log:  $LOG"
+
+    # Step 1: Stop current ClawBench process by port
+    echo "[restart] Stopping current ClawBench on port $PORT..."
+    _stop_servers "" "$PORT" "clawbench"
+
+    # Wait for port to be fully released
+    echo "[restart] Waiting for port $PORT to be released..."
+    WAITED=0
+    while [[ $WAITED -lt 30 ]]; do
+        BOUND=""
+        if command -v ss >/dev/null 2>&1; then
+            BOUND=$(ss -tlnp 2>/dev/null | grep ":$PORT") || true
+        fi
+        if [[ -z "$BOUND" ]]; then
+            break
+        fi
+        sleep 1
+        WAITED=$((WAITED + 1))
+    done
+    if [[ $WAITED -ge 30 ]]; then
+        echo "ERROR: Port $PORT still occupied after 30s. Aborting." >&2
+        exit 1
+    fi
+    echo "[restart] Port $PORT released."
+
+    # Step 2: Start new ClawBench in background
+    echo "[restart] Starting ClawBench..."
+    cd "$SCRIPT_DIR"
+
+    PORT_ARGS=""
+    if [[ -n "$RESTART_PORT" ]]; then
+        PORT_ARGS="--port $RESTART_PORT"
+    fi
+
+    # setsid ensures the new ClawBench is in its own session, fully detached
+    setsid "$BIN" $PORT_ARGS >> "$LOG" 2>&1 &
+    NEW_PID=$!
+    echo "  New PID: $NEW_PID"
+
+    # Sanity check: verify process is alive
+    sleep 2
+    if ! kill -0 "$NEW_PID" 2>/dev/null; then
+        echo "ERROR: ClawBench process exited immediately. Check $LOG" >&2
+        exit 1
+    fi
+
+    # Wait for port to bind (up to 15s)
+    WAITED=0
+    while [[ $WAITED -lt 15 ]]; do
+        BOUND=""
+        if command -v ss >/dev/null 2>&1; then
+            BOUND=$(ss -tlnp 2>/dev/null | grep ":$PORT") || true
+        fi
+        if [[ -n "$BOUND" ]]; then
+            break
+        fi
+        sleep 1
+        WAITED=$((WAITED + 1))
+    done
+
+    if [[ $WAITED -ge 15 ]]; then
+        echo "WARNING: Port $PORT not yet bound after 15s. Process may still be starting."
+    else
+        echo "[restart] ClawBench restarted successfully on port $PORT."
+        show_auto_password "$SCRIPT_DIR/.clawbench/auto-password"
+    fi
+    echo "Done."
+else
+    echo ""
+    echo "Run with: ./$NAME"
+    echo ""
+    echo "Build options:"
+    echo "  ./build.sh --windows        # Windows amd64"
+    echo "  ./build.sh --linux          # Linux amd64"
+    echo "  ./build.sh --darwin         # macOS arm64 (Apple Silicon)"
+    echo "  ./build.sh --darwin-amd64   # macOS amd64 (Intel)"
+    echo "  ./build.sh --target=darwin/arm64"
+    echo "  ./build.sh --android        # Android APK (release)"
+    echo ""
+    echo "Restart options (build + restart):"
+    echo "  ./build.sh --restart            # Build and restart ClawBench"
+    echo "  ./build.sh --restart-skip-build # Restart without rebuilding"
+    echo "  ./build.sh --restart --restart-port=8080  # Restart on specific port"
+    echo ""
+fi

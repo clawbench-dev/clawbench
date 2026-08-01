@@ -32,8 +32,9 @@ npm test                             # Vitest 前端测试
 ./scripts/pre-push-checks.sh --skip-coverage  # 跳过覆盖率门槛
 ./scripts/pre-push-checks.sh --skip-android   # 跳过 Android 覆盖率
 
-./build-and-restart.sh              # 编译 + 后台重启 ClawBench（可在 Web 终端内执行）
-./build-and-restart.sh --skip-build # 跳过编译，仅重启
+./build.sh --restart              # 编译 + 后台重启 ClawBench（可在 Web 终端内执行）
+./build.sh --restart-skip-build   # 跳过编译，仅重启
+./build.sh --restart --restart-port=8080  # 重启并指定端口
 ```
 
 ## 架构
