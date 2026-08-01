@@ -22,7 +22,7 @@ func TestClusterMessages_ExactDedupOnly(t *testing.T) {
 		{Text: "hello", Count: 2},
 	}
 
-	clusters := ClusterMessages(stats, nil, 0.65)
+	clusters := ClusterMessages(stats, nil, 0.65, nil)
 
 	if len(clusters) != 2 {
 		t.Fatalf("expected 2 clusters, got %d", len(clusters))
@@ -43,7 +43,7 @@ func TestClusterMessages_ThresholdZero(t *testing.T) {
 	}
 
 	mockSim := func(a, b string) float64 { return 0.99 }
-	clusters := ClusterMessages(stats, mockSim, 0)
+	clusters := ClusterMessages(stats, mockSim, 0, nil)
 
 	if len(clusters) != 2 {
 		t.Fatalf("expected 2 clusters with threshold 0, got %d", len(clusters))
@@ -65,7 +65,7 @@ func TestClusterMessages_SimilarGrouping(t *testing.T) {
 		return 0
 	}
 
-	clusters := ClusterMessages(stats, mockSim, 0.65)
+	clusters := ClusterMessages(stats, mockSim, 0.65, nil)
 
 	if len(clusters) != 2 {
 		t.Fatalf("expected 2 clusters, got %d", len(clusters))
@@ -106,7 +106,7 @@ func TestClusterMessages_NoClusterBelowThreshold(t *testing.T) {
 
 	mockSim := func(a, b string) float64 { return 0.5 }
 
-	clusters := ClusterMessages(stats, mockSim, 0.65)
+	clusters := ClusterMessages(stats, mockSim, 0.65, nil)
 
 	if len(clusters) != 2 {
 		t.Fatalf("expected 2 clusters (similarity below threshold), got %d", len(clusters))
@@ -124,7 +124,7 @@ func TestClusterMessages_RepresentativeIsMostFrequent(t *testing.T) {
 	// All similar -> one cluster
 	mockSim := func(a, b string) float64 { return 0.9 }
 
-	clusters := ClusterMessages(stats, mockSim, 0.8)
+	clusters := ClusterMessages(stats, mockSim, 0.8, nil)
 
 	if len(clusters) != 1 {
 		t.Fatalf("expected 1 cluster, got %d", len(clusters))
@@ -144,12 +144,12 @@ func TestClusterMessages_RepresentativeIsMostFrequent(t *testing.T) {
 }
 
 func TestClusterMessages_EmptyInput(t *testing.T) {
-	clusters := ClusterMessages(nil, nil, 0.65)
+	clusters := ClusterMessages(nil, nil, 0.65, nil)
 	if len(clusters) != 0 {
 		t.Fatalf("expected 0 clusters for nil input, got %d", len(clusters))
 	}
 
-	clusters = ClusterMessages([]MessageStat{}, nil, 0.65)
+	clusters = ClusterMessages([]MessageStat{}, nil, 0.65, nil)
 	if len(clusters) != 0 {
 		t.Fatalf("expected 0 clusters for empty input, got %d", len(clusters))
 	}
@@ -221,7 +221,7 @@ func TestVectorSimilarityMatrix_Basic(t *testing.T) {
 	embedder := NewEmbeddingClient(server.URL, "test-model", "")
 	ctx := context.Background()
 
-	lookup, err := VectorSimilarityMatrix(ctx, embedder, []string{"a", "b", "c"})
+	lookup, err := VectorSimilarityMatrix(ctx, embedder, []string{"a", "b", "c"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestVectorSimilarityMatrix_NilEmbeddingSkipped(t *testing.T) {
 		texts[i] = "text"
 	}
 
-	lookup, err := VectorSimilarityMatrix(ctx, embedder, texts)
+	lookup, err := VectorSimilarityMatrix(ctx, embedder, texts, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestVectorSimilarityMatrix_AllEmbeddingsFailed(t *testing.T) {
 	embedder := NewEmbeddingClient(server.URL, "test-model", "")
 	ctx := context.Background()
 
-	_, err := VectorSimilarityMatrix(ctx, embedder, []string{"a", "b", "c"})
+	_, err := VectorSimilarityMatrix(ctx, embedder, []string{"a", "b", "c"}, nil)
 	if err == nil {
 		t.Error("expected error when all embeddings fail, got nil")
 	}
@@ -341,7 +341,7 @@ func TestClusterMessagesWithEmbeddings_FTSFallbackNoEmbedder(t *testing.T) {
 		{Text: "hello", Count: 2},
 	}
 
-	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, nil, 0.65)
+	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, nil, 0.65, nil)
 
 	if mode != "fts" {
 		t.Errorf("expected mode 'fts', got %q", mode)
@@ -365,7 +365,7 @@ func TestClusterMessagesWithEmbeddings_FTSFallback(t *testing.T) {
 	// Use a real embedder struct but it won't be called since healthy=false
 	embedder := &EmbeddingClient{}
 
-	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65)
+	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65, nil)
 
 	if mode != "fts" {
 		t.Errorf("expected mode 'fts', got %q", mode)
@@ -401,7 +401,7 @@ func TestClusterMessagesWithEmbeddings_VectorMode(t *testing.T) {
 		{Text: "hello", Count: 1},
 	}
 
-	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65)
+	clusters, mode := ClusterMessagesWithEmbeddings(context.Background(), stats, embedder, 0.65, nil)
 
 	if mode != "vector" {
 		t.Errorf("expected mode 'vector', got %q", mode)

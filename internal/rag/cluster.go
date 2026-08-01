@@ -8,6 +8,11 @@ import (
 	"sort"
 )
 
+// ClusterProgressCallback is called periodically during cluster computation
+// to report fine-grained progress. done is the number of items completed,
+// total is the total number of items to process.
+type ClusterProgressCallback func(done, total int)
+
 // MessageStat is a unique user message with its occurrence count.
 // Defined in rag package to avoid rag→service data-type coupling.
 type MessageStat struct {
@@ -28,7 +33,8 @@ type SimilarityFunc func(textA, textB string) float64
 
 // ClusterMessages groups similar messages using Union-Find.
 // If simFn is nil or threshold <= 0, each stat is its own cluster (exact dedup only).
-func ClusterMessages(stats []MessageStat, simFn SimilarityFunc, threshold float64) []MessageCluster {
+// progressCb is called periodically during O(n²) comparison; nil means no progress reporting.
+func ClusterMessages(stats []MessageStat, simFn SimilarityFunc, threshold float64, progressCb ClusterProgressCallback) []MessageCluster {
 	if len(stats) == 0 {
 		return nil
 	}
@@ -85,13 +91,31 @@ func ClusterMessages(stats []MessageStat, simFn SimilarityFunc, threshold float6
 		}
 	}
 
-	// Compare all pairs O(n²)
+	// Compare all pairs O(n²) — report progress every ~1% completion
+	totalPairs := n * (n - 1) / 2
+	pairIdx := 0
+	nextReport := 0
+	reportInterval := 0
+	if totalPairs > 0 && progressCb != nil {
+		reportInterval = totalPairs / 100 // ~1% granularity
+		if reportInterval < 1 {
+			reportInterval = 1
+		}
+	}
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
 			if simFn(stats[i].Text, stats[j].Text) >= threshold {
 				union(i, j)
 			}
+			pairIdx++
+			if progressCb != nil && reportInterval > 0 && pairIdx >= nextReport+reportInterval {
+				nextReport = pairIdx
+				progressCb(pairIdx, totalPairs)
+			}
 		}
+	}
+	if progressCb != nil && pairIdx > 0 {
+		progressCb(pairIdx, totalPairs) // final 100%
 	}
 
 	// Group by root
@@ -187,8 +211,8 @@ func sorensenDiceWithLengthPenalty(minLengthRatio float64) SimilarityFunc {
 
 // VectorSimilarityMatrix batch-embeds texts and returns a pairwise
 // cosine similarity lookup function. Returns (lookupFn, error).
-func VectorSimilarityMatrix(ctx context.Context, embedder *EmbeddingClient, texts []string) (func(i, j int) float64, error) {
-	embeddings := embedInSubBatches(ctx, embedder, texts)
+func VectorSimilarityMatrix(ctx context.Context, embedder *EmbeddingClient, texts []string, progressCb ClusterProgressCallback) (func(i, j int) float64, error) {
+	embeddings := embedInSubBatches(ctx, embedder, texts, progressCb)
 
 	// Count how many embeddings actually succeeded
 	successCount := 0
@@ -245,7 +269,7 @@ func VectorSimilarityMatrix(ctx context.Context, embedder *EmbeddingClient, text
 // Uses embedSubBatchSize (= 5, same as RAG indexer).
 // Failed sub-batches leave nil entries in results (graceful degradation).
 // Returns all embeddings in the same order as input texts.
-func embedInSubBatches(ctx context.Context, embedder *EmbeddingClient, texts []string) [][]float64 {
+func embedInSubBatches(ctx context.Context, embedder *EmbeddingClient, texts []string, progressCb ClusterProgressCallback) [][]float64 {
 	results := make([][]float64, len(texts))
 	for i := 0; i < len(texts); i += embedSubBatchSize {
 		end := i + embedSubBatchSize
@@ -264,6 +288,11 @@ func embedInSubBatches(ctx context.Context, embedder *EmbeddingClient, texts []s
 		for j, emb := range embeddings {
 			results[i+j] = emb
 		}
+		// Report embedding progress
+		if progressCb != nil {
+			done := min(end, len(texts))
+			progressCb(done, len(texts))
+		}
 		// Check context cancellation between sub-batches
 		if ctx.Err() != nil {
 			break
@@ -274,25 +303,34 @@ func embedInSubBatches(ctx context.Context, embedder *EmbeddingClient, texts []s
 
 // ClusterMessagesWithEmbeddings clusters messages using best available method.
 // Returns (clusters, mode) where mode is "vector" | "fts" | "exact".
-func ClusterMessagesWithEmbeddings(ctx context.Context, stats []MessageStat, embedder *EmbeddingClient, threshold float64) ([]MessageCluster, string) {
+// progressCb reports fine-grained progress during embedding and comparison phases.
+func ClusterMessagesWithEmbeddings(ctx context.Context, stats []MessageStat, embedder *EmbeddingClient, threshold float64, progressCb ClusterProgressCallback) ([]MessageCluster, string) {
 	// Try vector mode: if embedder != nil and EmbedderHealthy()
+	// Embedding phase: pct 0-30, Comparison phase: pct 30-100 (of overall clustering)
 	if embedder != nil && EmbedderHealthy() {
-		lookup, err := VectorSimilarityMatrix(ctx, embedder, extractTexts(stats))
-		if err == nil {
-			// Build text→index map for SimilarityFunc
-			textToIdx := make(map[string]int, len(stats))
-			for i, s := range stats {
-				textToIdx[s.Text] = i
-			}
-			simFn := func(textA, textB string) float64 {
-				iA, okA := textToIdx[textA]
-				iB, okB := textToIdx[textB]
-				if !okA || !okB {
-					return 0
+		// Embedding sub-progress: 0→30% of overall clustering
+		embedCb := func(done, total int) {
+			if progressCb != nil {
+				subPct := 0
+				if total > 0 {
+					subPct = done * 30 / total
 				}
-				return lookup(iA, iB)
+				progressCb(subPct, 100)
 			}
-			clusters := ClusterMessages(stats, simFn, threshold)
+		}
+		lookup, err := VectorSimilarityMatrix(ctx, embedder, extractTexts(stats), embedCb)
+		if err == nil {
+			// Comparison sub-progress: 30→100% of overall clustering
+			compCb := func(done, total int) {
+				if progressCb != nil {
+					subPct := 30
+					if total > 0 {
+						subPct = 30 + done*70/total
+					}
+					progressCb(subPct, 100)
+				}
+			}
+			clusters := ClusterMessages(stats, simFnFromLookup(lookup, stats), threshold, compCb)
 			return clusters, "vector"
 		}
 		// Vector failed → fall back to FTS
@@ -303,8 +341,24 @@ func ClusterMessagesWithEmbeddings(ctx context.Context, stats []MessageStat, emb
 	// FTS fallback — always available (token-based Sørensen-Dice, no embedding needed)
 	// Used when: no embedder, embedder unhealthy, or vector failed
 	simFn := sorensenDiceWithLengthPenalty(0.5)
-	clusters := ClusterMessages(stats, simFn, threshold)
+	clusters := ClusterMessages(stats, simFn, threshold, progressCb)
 	return clusters, "fts"
+}
+
+// simFnFromLookup creates a SimilarityFunc from a pairwise similarity lookup and stats.
+func simFnFromLookup(lookup func(i, j int) float64, stats []MessageStat) SimilarityFunc {
+	textToIdx := make(map[string]int, len(stats))
+	for i, s := range stats {
+		textToIdx[s.Text] = i
+	}
+	return func(textA, textB string) float64 {
+		iA, okA := textToIdx[textA]
+		iB, okB := textToIdx[textB]
+		if !okA || !okB {
+			return 0
+		}
+		return lookup(iA, iB)
+	}
 }
 
 // extractTexts returns just the Text field from each MessageStat.

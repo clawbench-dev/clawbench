@@ -370,6 +370,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Message clusters (cached cluster suggestions + on-demand computation)
 	register("/api/chat/message-clusters", middleware.Auth(ServeMessageClusters))
 	register("/api/chat/message-clusters/compute", middleware.Auth(ServeMessageClustersCompute))
+	register("/api/chat/message-clusters/compute/cancel", middleware.Auth(ServeMessageClustersComputeCancel))
 	register("/api/chat/message-clusters/compute/status", middleware.Auth(ServeMessageClustersComputeStatus))
 
 	// Self-upgrade

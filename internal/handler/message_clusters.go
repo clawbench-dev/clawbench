@@ -6,12 +6,20 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 )
 
-// MessageClustersResponse is the JSON response for GET /api/chat/message-clusters.
+// MinClusterTotalCount is the minimum total_count for a cluster to appear
+// in recommendations. Clusters below this threshold are too rare to be useful.
+const MinClusterTotalCount = 3
+
+// MinClusterTextLen is the minimum character length for a representative text.
+// Short texts have no value as quick-send shortcuts.
+const MinClusterTextLen = 3
+
 type MessageClustersResponse struct {
 	Clusters  []ClusterItem `json:"clusters"`
 	Total     int           `json:"total"`
@@ -59,9 +67,15 @@ func ServeMessageClusters(w http.ResponseWriter, r *http.Request) {
 		qsSet[cmd] = true
 	}
 
-	// 4. Build filtered cluster items
+	// 4. Build filtered cluster items (only show clusters with total_count ≥ 3)
 	var items []ClusterItem
 	for _, e := range entries {
+		if e.TotalCount < MinClusterTotalCount {
+			continue
+		}
+		if utf8.RuneCountInString(e.Representative) < MinClusterTextLen {
+			continue
+		}
 		var variants []string
 		if err := json.Unmarshal([]byte(e.Variants), &variants); err != nil {
 			slog.Warn("failed to unmarshal variants", slog.String("err", err.Error()), slog.Int64("id", e.ID))
@@ -72,6 +86,11 @@ func ServeMessageClusters(w http.ResponseWriter, r *http.Request) {
 			if !qsSet[v] {
 				unmatched = append(unmatched, v)
 			}
+		}
+		// If representative itself is in quick-send → skip entire cluster
+		// (user already has this as a shortcut, no need to recommend it)
+		if qsSet[e.Representative] {
+			continue
 		}
 		// If ALL variants match quick-send → skip entire cluster
 		if len(unmatched) == 0 {
@@ -124,6 +143,28 @@ func ServeMessageClustersCompute(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "accepted",
+	})
+}
+
+// ServeMessageClustersComputeCancel handles POST /api/chat/message-clusters/compute/cancel —
+// cancels an in-progress cluster computation. Returns 404 if no worker is initialized.
+func ServeMessageClustersComputeCancel(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	if rag.GlobalClusterWorker == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "idle",
+		})
+		return
+	}
+
+	rag.GlobalClusterWorker.Stop()
+	service.SaveClusterMetaError("cancelled", "", "user cancelled")
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "cancelled",
 	})
 }
 

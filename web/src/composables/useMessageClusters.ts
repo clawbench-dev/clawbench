@@ -11,12 +11,13 @@ export interface MessageCluster {
 }
 
 export interface ClusterProgress {
-  status: string       // "idle" | "computing" | "done" | "error"
+  status: string       // "idle" | "computing" | "done" | "error" | "cancelled"
   phase: string        // "extracting" | "clustering" | "saving"
   msg_count: number
   cluster_count: number
   elapsed_ms: number
   mode: string
+  progress_pct: number // 0-100 fine-grained progress within phase
   error?: string
 }
 
@@ -39,7 +40,7 @@ const loaded = ref(false)
 const loading = ref(false)
 const computing = ref(false)
 const progress = ref<ClusterProgress>({
-  status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: ''
+  status: 'idle', phase: '', msg_count: 0, cluster_count: 0, elapsed_ms: 0, mode: '', progress_pct: 0
 })
 const mode = ref<string>('')
 const updatedAt = ref<string>('')
@@ -56,7 +57,7 @@ onEvent((event: string, data: unknown) => {
     computing.value = false
     stopPolling()
     fetchClusters()
-  } else if (d.status === 'error') {
+  } else if (d.status === 'error' || d.status === 'cancelled') {
     computing.value = false
     stopPolling()
   } else if (d.status === 'computing') {
@@ -106,6 +107,18 @@ async function startCompute() {
   }
 }
 
+// ── Cancel in-progress computation ──
+async function cancelCompute() {
+  try {
+    const resp = await fetch('/api/chat/message-clusters/compute/cancel', { method: 'POST' })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    computing.value = false
+    stopPolling()
+  } catch (e) {
+    appLog.e('MsgCluster', `Failed to cancel computation: ${e}`)
+  }
+}
+
 // ── Poll progress every 2 seconds (module-level timer) ──
 let pollTimer: ReturnType<typeof setInterval> | null = null
 function pollProgress() {
@@ -116,7 +129,7 @@ function pollProgress() {
       if (!resp.ok) return
       const data: ClusterProgress = await resp.json()
       progress.value = data
-      if (data.status === 'done' || data.status === 'error') {
+      if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
         stopPolling()
         computing.value = false
         if (data.status === 'done') {
@@ -141,7 +154,7 @@ function stopPolling() {
 // computing state must persist. Returning module-level refs
 // ensures reopening the drawer shows the ongoing progress.
 export function useMessageClusters() {
-  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, stopPolling, pollProgress }
+  return { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchClusters, startCompute, cancelCompute, stopPolling, pollProgress }
 }
 
 // ── Reset for tests only ──

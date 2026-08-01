@@ -13,12 +13,13 @@ import (
 
 // ClusterProgress represents the progress state of a cluster computation.
 type ClusterProgress struct {
-	Status       string `json:"status"`       // "idle" | "computing" | "done" | "error"
+	Status       string `json:"status"`       // "idle" | "computing" | "done" | "error" | "cancelled"
 	Phase        string `json:"phase"`        // "extracting" | "clustering" | "saving"
 	MsgCount     int    `json:"msg_count"`
 	ClusterCount int    `json:"cluster_count"`
 	ElapsedMs    int64  `json:"elapsed_ms"`
 	Mode         string `json:"mode"`         // available only when done
+	ProgressPct  int    `json:"progress_pct"` // 0-100 fine-grained progress within phase
 	Error        string `json:"error,omitempty"`
 }
 
@@ -138,12 +139,21 @@ func (cw *ClusterWorker) compute(ctx context.Context, myGen uint64) {
 		return
 	}
 
-	// Phase 2: clustering
+	// Phase 2: clustering (with fine-grained progress)
 	ragStats := make([]MessageStat, len(stats))
 	for i, s := range stats {
 		ragStats[i] = MessageStat{Text: s.Text, Count: s.Count}
 	}
-	clusters, mode := ClusterMessagesWithEmbeddings(ctx, ragStats, GlobalEmbedder, 0.65)
+	progressCb := func(done, total int) {
+		pct := 0
+		if total > 0 {
+			pct = done * 100 / total
+		}
+		elapsedMsCb := int(time.Since(start).Milliseconds())
+		// Broadcast via WS (lightweight, no DB write for sub-progress)
+		cw.broadcastProgress("computing", "clustering", len(stats), 0, int64(elapsedMsCb), "", pct)
+	}
+	clusters, mode := ClusterMessagesWithEmbeddings(ctx, ragStats, GlobalEmbedder, 0.65, progressCb)
 	elapsedMs = int(time.Since(start).Milliseconds())
 	service.SaveClusterMeta("computing", "", len(stats), len(clusters), elapsedMs)
 	cw.broadcastProgress("computing", "clustering", len(stats), len(clusters), int64(elapsedMs), "")
@@ -194,13 +204,17 @@ func (cw *ClusterWorker) compute(ctx context.Context, myGen uint64) {
 
 // broadcastProgress sends a cluster_progress event to all connected WS clients.
 // If hub is nil, the broadcast is skipped.
-func (cw *ClusterWorker) broadcastProgress(status, phase string, msgCount, clusterCount int, elapsedMs int64, mode string) {
+func (cw *ClusterWorker) broadcastProgress(status, phase string, msgCount, clusterCount int, elapsedMs int64, mode string, progressPct ...int) {
 	if cw.hub == nil {
 		return
 	}
 	mgr := cw.hub.Manager()
 	if mgr == nil {
 		return
+	}
+	pct := 0
+	if len(progressPct) > 0 {
+		pct = progressPct[0]
 	}
 	mgr.BroadcastEvent(ws.ServerMessage{
 		Type:  ws.MessageTypeEvent,
@@ -213,6 +227,7 @@ func (cw *ClusterWorker) broadcastProgress(status, phase string, msgCount, clust
 			ClusterCount: clusterCount,
 			ElapsedMs:    elapsedMs,
 			Mode:         mode,
+			ProgressPct:  pct,
 		},
 	})
 }

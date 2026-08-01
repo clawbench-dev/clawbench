@@ -6,6 +6,10 @@ import { ref } from 'vue'
 // Mock lucide icons
 vi.mock('lucide-vue-next', () => ({
   Sparkles: { name: 'SparklesIcon', render: () => null },
+  Plus: { name: 'PlusIcon', render: () => null },
+  List: { name: 'ListIcon', render: () => null },
+  Play: { name: 'PlayIcon', render: () => null },
+  RefreshCw: { name: 'RefreshCwIcon', render: () => null },
 }))
 
 // Mock BottomSheet
@@ -14,6 +18,16 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
     name: 'BottomSheet',
     template: '<div><slot name="header" /><slot /></div>',
     props: ['open', 'auto', 'title'],
+    emits: ['close'],
+  },
+}))
+
+// Mock ModalDialog
+vi.mock('@/components/common/ModalDialog.vue', () => ({
+  default: {
+    name: 'ModalDialog',
+    template: '<div v-if="open"><slot /></div>',
+    props: ['open', 'title', 'zIndex', 'fullHeight', 'maxWidth'],
     emits: ['close'],
   },
 }))
@@ -41,6 +55,8 @@ vi.mock('@/composables/useMessageClusters', () => ({
     updatedAt: mockUpdatedAt,
     fetchClusters: mockFetchClusters,
     startCompute: mockStartCompute,
+    cancelCompute: vi.fn(),
+    pollProgress: vi.fn(),
     stopPolling: mockStopPolling,
   }),
   MessageCluster: {},
@@ -94,7 +110,13 @@ const i18n = createI18n({
           noCache: 'No analysis results yet.',
           firstAnalyze: 'Start Analysis',
           reanalyze: 'Re-analyze',
-          addQuickSend: 'Add to Quick Send',
+          add: 'Add',
+          variantsTitle: 'Message Variants',
+          cancel: 'Cancel',
+          cancelled: 'Cancelled',
+          mode_fts: 'Full-text Search',
+          mode_vector: 'Semantic Vector',
+          mode_exact: 'Exact Match',
           cacheStatus: 'Mode: {mode} | Updated: {updatedAt}',
           error: 'Analysis failed',
           retry: 'Retry',
@@ -169,6 +191,8 @@ describe('MessageClustersDrawer', () => {
     expect(wrapper.find('.mc-results').exists()).toBe(true)
     expect(wrapper.find('.mc-cluster-item').exists()).toBe(true)
     expect(wrapper.find('.mc-cluster-representative').text()).toContain('Fix the bug')
+    // No add button in the cluster list
+    expect(wrapper.find('.mc-cluster-list .mc-btn.add').exists()).toBe(false)
   })
 
   it('calls startCompute when "Start Analysis" button is clicked', async () => {
@@ -184,16 +208,22 @@ describe('MessageClustersDrawer', () => {
     expect(mockStartCompute).toHaveBeenCalledOnce()
   })
 
-  it('calls addItem when "Add to Quick Send" is clicked', async () => {
+  it('add button in dialog calls addItem with label=representative, command=variant', async () => {
     mockLoaded.value = true
     mockClusters.value = [
-      { id: 1, representative: 'Fix the bug', variants: [], total_count: 3, representative_count: 2 },
+      { id: 1, representative: 'Fix the bug', variants: ['fix bug', 'bug fix'], total_count: 5, representative_count: 3 },
     ]
     mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto' }
     mockAddItem.mockResolvedValue(true)
     const wrapper = mountDrawer()
-    await wrapper.find('.mc-btn.add').trigger('click')
-    expect(mockAddItem).toHaveBeenCalledWith({ label: 'Fix the bug', command: 'Fix the bug' })
+    // Open dialog
+    await wrapper.find('.mc-cluster-item').trigger('click')
+    expect(wrapper.vm.variantsDialogOpen).toBe(true)
+    // Click add button on the first variant
+    const addBtns = wrapper.findAll('.mc-variant-item .mc-btn.add')
+    expect(addBtns.length).toBe(2)
+    await addBtns[0].trigger('click')
+    expect(mockAddItem).toHaveBeenCalledWith({ label: 'Fix the bug', command: 'fix bug' })
   })
 
   it('open() sets visible and calls fetchClusters', async () => {
@@ -201,5 +231,29 @@ describe('MessageClustersDrawer', () => {
     const wrapper = mountDrawer()
     await wrapper.vm.open()
     expect(mockFetchClusters).toHaveBeenCalledOnce()
+  })
+
+  it('clicking cluster item opens variants dialog', async () => {
+    mockLoaded.value = true
+    mockClusters.value = [
+      { id: 1, representative: 'Fix the bug', variants: ['fix bug', 'bug fix', 'fix it'], total_count: 5, representative_count: 3 },
+    ]
+    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto' }
+    const wrapper = mountDrawer()
+    await wrapper.find('.mc-cluster-item').trigger('click')
+    expect(wrapper.vm.variantsDialogOpen).toBe(true)
+    expect(wrapper.vm.variantsDialogRepresentative).toBe('Fix the bug')
+    expect(wrapper.vm.variantsDialogItems).toEqual(['fix bug', 'bug fix', 'fix it'])
+  })
+
+  it('clicking cluster with no variants does not open dialog', async () => {
+    mockLoaded.value = true
+    mockClusters.value = [
+      { id: 1, representative: 'Fix the bug', variants: [], total_count: 3, representative_count: 2 },
+    ]
+    mockProgress.value = { status: 'done', phase: '', msg_count: 0, elapsed_ms: 0, mode: 'auto' }
+    const wrapper = mountDrawer()
+    await wrapper.find('.mc-cluster-item').trigger('click')
+    expect(wrapper.vm.variantsDialogOpen).toBe(false)
   })
 })
