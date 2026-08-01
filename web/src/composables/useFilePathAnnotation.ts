@@ -605,8 +605,6 @@ export function useFilePathAnnotation() {
         stripCodeString,
         openFilePath,
         navToFileInManager,
-        useFilePathNavHandlers,
-        getFileAnnotationPath,
         dispatchScrollToLine,
         clearVerifiedCache,
     }
@@ -724,31 +722,11 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
 }
 
 /**
- * Extract file path from a file annotation element (.chat-file-path, .chat-file-open-btn, .code-file-path).
- * Used by long-press / right-click handlers to get the resolved path for navToFileInManager.
- */
-export function getFileAnnotationPath(target: EventTarget): string | null {
-    const el = (target as HTMLElement).closest('.chat-file-path, .chat-file-open-btn, .code-file-path')
-    if (!el) return null
-    return el.getAttribute('data-file-path')
-}
-
-/**
  * Open the containing directory of a file/dir path in the file manager,
  * then highlight and scroll to the target item.
  * If the path is a directory itself, navigate into its parent and highlight it.
  */
-let _lastNavTime = 0
-
-/** Reset internal debounce state (for testing). */
-export function _resetNavDebounce() { _lastNavTime = 0 }
-
 export async function navToFileInManager(resolvedPath: string): Promise<boolean> {
-    // Debounce: prevent double-fire from long-press + contextmenu on mobile
-    const now = Date.now()
-    if (now - _lastNavTime < 500) return false
-    _lastNavTime = now
-
     const isExternal = resolvedPath.startsWith('/')
 
     // Verify the path exists
@@ -793,39 +771,12 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
     const parentDir = dirName(resolvedPath)
     await store.loadFiles(parentDir)
 
-    // Delay highlight to let touch events from the long-press finish bubbling
-    // (otherwise contextmenu/click events may fire in the file manager and interfere)
+    // Brief delay to let DOM settle after loadFiles before highlighting the target
     setTimeout(() => {
         window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: resolvedPath } }))
-    }, 300)
+    }, 50)
 
     return true
-}
-
-/**
- * Reusable contextmenu / long-press handlers for navigating to a file-path
- * annotation in the file manager. Eliminates duplicate boilerplate across
- * multiple components.
- */
-export function useFilePathNavHandlers() {
-    const handleContextMenu = async (e: MouseEvent) => {
-        if (!e.target) return
-        const filePath = getFileAnnotationPath(e.target)
-        if (filePath) {
-            e.preventDefault()
-            await navToFileInManager(filePath)
-        }
-    }
-    const handleLongPress = async (e: TouchEvent) => {
-        const touch = e.touches[0]
-        const el = document.elementFromPoint(touch.clientX, touch.clientY)
-        if (!el) return
-        const filePath = getFileAnnotationPath(el)
-        if (filePath) {
-            await navToFileInManager(filePath)
-        }
-    }
-    return { handleContextMenu, handleLongPress }
 }
 
 /**

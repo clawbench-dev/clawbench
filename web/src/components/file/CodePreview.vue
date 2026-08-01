@@ -1,6 +1,6 @@
 <template>
   <div class="code-preview-wrapper">
-    <pre class="raw-content-pre" :class="{ 'word-wrap': wordWrap, 'no-line-num': !showLineNumbers }" ref="codeRef" :data-file-path="filePath" :data-language="language" @click="handleClick" @contextmenu="handleCodeContextMenu" v-long-press="handleCodeLongPress">
+    <pre class="raw-content-pre" :class="{ 'word-wrap': wordWrap, 'no-line-num': !showLineNumbers }" ref="codeRef" :data-file-path="filePath" :data-language="language" @click="handleClick">
       <div v-if="stickyLines.length > 0" class="sticky-scroll-overlay">
         <div v-for="s in stickyLines" :key="s.lineNum" class="sticky-line"
           :data-line="s.lineNum" :style="{ top: s.top + 'px', height: s.height + 'px' }"
@@ -20,7 +20,7 @@ import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useStickyScroll } from '@/composables/useStickyScroll.ts'
 import { renderCodeLines } from '@/utils/codeRender.ts'
-import { tryResolveCodeString, stripCodeString, verifyFilePaths, useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
+import { tryResolveCodeString, stripCodeString, verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { store } from '@/stores/app.ts'
 import {
@@ -55,7 +55,6 @@ const codeHtml = ref('')
 const codeRef = ref(null)
 
 const quoteQuestion = useQuoteQuestion()
-const { handleContextMenu: handleCodeContextMenu, handleLongPress: handleCodeLongPress } = useFilePathNavHandlers()
 
 // Sticky scroll
 const { stickyLines, initSticky, teardownSticky, invalidateCache } = useStickyScroll()

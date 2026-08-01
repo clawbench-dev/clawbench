@@ -54,7 +54,6 @@ vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
   tryResolveCodeString: (...args: any[]) => mockTryResolveCodeString(...args),
   stripCodeString: (...args: any[]) => mockStripCodeString(...args),
   verifyFilePaths: vi.fn(),
-  useFilePathNavHandlers: () => ({ handleContextMenu: vi.fn(), handleLongPress: vi.fn() }),
 }))
 
 // Mock store for file path annotation

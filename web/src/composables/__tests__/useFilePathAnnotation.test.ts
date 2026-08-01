@@ -10,8 +10,6 @@ import {
   clearVerifiedCache,
   openFilePath,
   navToFileInManager,
-  getFileAnnotationPath,
-  _resetNavDebounce,
 } from '@/composables/useFilePathAnnotation'
 
 // Mock escapeHtml from html utils
@@ -1556,7 +1554,6 @@ describe('openFilePath', () => {
     mockSelectFile.mockClear()
     mockNavigateToDir.mockClear()
     mockLoadFiles.mockClear()
-    _resetNavDebounce()
   })
 
   afterEach(() => {
@@ -1872,82 +1869,4 @@ describe('openFilePath', () => {
     vi.unstubAllGlobals()
   })
 
-  it('navToFileInManager: debounces rapid calls within 500ms', async () => {
-    const mockFetch = vi.fn()
-      .mockResolvedValue({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) })
-
-    vi.stubGlobal('fetch', mockFetch)
-
-    // First call succeeds
-    const result1 = await navToFileInManager('src/main.go')
-    expect(result1).toBe(true)
-
-    // Immediate second call is debounced
-    const result2 = await navToFileInManager('src/main.go')
-    expect(result2).toBe(false)
-
-    vi.unstubAllGlobals()
-  })
-})
-
-describe('getFileAnnotationPath', () => {
-  it('returns path from .chat-file-path element', () => {
-    const span = document.createElement('span')
-    span.className = 'chat-file-path'
-    span.setAttribute('data-file-path', 'src/main.go')
-    document.body.appendChild(span)
-
-    const result = getFileAnnotationPath(span)
-    expect(result).toBe('src/main.go')
-
-    document.body.removeChild(span)
-  })
-
-  it('returns path from .chat-file-open-btn element', () => {
-    const btn = document.createElement('button')
-    btn.className = 'chat-file-open-btn'
-    btn.setAttribute('data-file-path', 'internal/rag/index.ts')
-    document.body.appendChild(btn)
-
-    const result = getFileAnnotationPath(btn)
-    expect(result).toBe('internal/rag/index.ts')
-
-    document.body.removeChild(btn)
-  })
-
-  it('returns path from .code-file-path element', () => {
-    const span = document.createElement('span')
-    span.className = 'code-file-path'
-    span.setAttribute('data-file-path', 'web/src/App.vue')
-    document.body.appendChild(span)
-
-    const result = getFileAnnotationPath(span)
-    expect(result).toBe('web/src/App.vue')
-
-    document.body.removeChild(span)
-  })
-
-  it('returns null for non-annotation elements', () => {
-    const div = document.createElement('div')
-    document.body.appendChild(div)
-
-    const result = getFileAnnotationPath(div)
-    expect(result).toBeNull()
-
-    document.body.removeChild(div)
-  })
-
-  it('returns path from closest ancestor', () => {
-    const span = document.createElement('span')
-    span.className = 'chat-file-path'
-    span.setAttribute('data-file-path', 'pkg/util.go')
-    const child = document.createElement('strong')
-    span.appendChild(child)
-    document.body.appendChild(span)
-
-    const result = getFileAnnotationPath(child)
-    expect(result).toBe('pkg/util.go')
-
-    document.body.removeChild(span)
-  })
 })

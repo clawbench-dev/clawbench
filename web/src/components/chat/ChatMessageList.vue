@@ -1,6 +1,6 @@
 <template>
   <div class="chat-messages-wrapper">
-  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onTableMouseDown" @touchstart="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @scroll="handleScroll" @contextmenu="handleChatContextMenu" v-long-press="handleChatLongPress">
+  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onTableMouseDown" @touchstart="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @scroll="handleScroll">
     <!-- Lazy load feedback -->
     <div class="chat-load-area">
       <Transition name="load-hint-fade">
@@ -137,7 +137,7 @@ import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
-import { useFilePathAnnotation, useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
+import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
@@ -173,7 +173,6 @@ const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'f
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()
 const { openFilePath } = useFilePathAnnotation()
-const { handleContextMenu: handleChatContextMenu, handleLongPress: handleChatLongPress } = useFilePathNavHandlers()
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
@@ -289,8 +288,6 @@ async function handleChatClick(event) {
     if (ok) chatUI.navigateToFileViewer?.()
   })
 }
-
-// ── Long-press / right-click on file-path annotation → open in file manager (handled by useFilePathNavHandlers) ──
 
 let loadMorePending = false
 // Track whether the user is at the bottom of the chat.

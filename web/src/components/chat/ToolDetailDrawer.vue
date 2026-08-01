@@ -10,7 +10,7 @@
         <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-detail-status" />
       </div>
     </template>
-    <div class="tool-detail-body" @click="handleBodyClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @contextmenu="handleBodyContextMenu" v-long-press="handleBodyLongPress">
+    <div class="tool-detail-body" @click="handleBodyClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
       <div v-html="toolInputHtml"></div>
       <!-- Tool output section -->
       <div v-if="toolOutputHtml" class="tool-output-section tool-content-wrap word-wrap">
@@ -47,7 +47,6 @@ import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICO
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
-import { useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -119,9 +118,6 @@ function handleBodyClick(event) {
   event.stopPropagation()
 }
 
-// ── Long-press / right-click on file-path annotation → open in file manager ──
-
-const { handleContextMenu: handleBodyContextMenu, handleLongPress: handleBodyLongPress } = useFilePathNavHandlers()
 </script>
 
 <style scoped>

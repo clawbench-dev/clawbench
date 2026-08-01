@@ -7,7 +7,7 @@
     <div v-if="data" class="table-row-form" aria-live="polite">
       <div v-for="(header, hi) in data.headers" :key="hi" class="table-row-field">
         <div class="table-row-label">{{ header }}</div>
-        <div class="table-row-value" v-html="data.rows[data.currentIndex]?.[hi] || ''" @dblclick="handleValueDblClick" @click="handleValueClick" @contextmenu="handleValueContextMenu" v-long-press="handleValueLongPress"></div>
+        <div class="table-row-value" v-html="data.rows[data.currentIndex]?.[hi] || ''" @dblclick="handleValueDblClick" @click="handleValueClick"></div>
       </div>
     </div>
     <template #footer>
@@ -23,7 +23,7 @@ import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { gt } from '@/composables/useLocale'
-import { openFilePath, useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
+import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -173,7 +173,4 @@ async function handleValueClick(event) {
   }
 }
 
-// ── Long-press / right-click on file-path annotation → open in file manager (handled by useFilePathNavHandlers) ──
-
-const { handleContextMenu: handleValueContextMenu, handleLongPress: handleValueLongPress } = useFilePathNavHandlers()
 </script>

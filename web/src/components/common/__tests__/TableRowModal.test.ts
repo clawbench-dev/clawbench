@@ -70,7 +70,6 @@ vi.mock('@/composables/useDialog.ts', () => ({
 
 vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
   openFilePath: mockOpenFilePath,
-  useFilePathNavHandlers: () => ({ handleContextMenu: vi.fn(), handleLongPress: vi.fn() }),
 }))
 
 vi.mock('@/utils/clipboard.ts', () => ({

@@ -6,7 +6,7 @@
     </div>
 
     <!-- Scrollable message content -->
-    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @contextmenu="handleExecContextMenu" v-long-press="handleExecLongPress">
+    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
       <!-- Summary / Original tab bar (hidden during live streaming) -->
       <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
@@ -89,7 +89,7 @@ import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 import { useChatRender } from '@/composables/useChatRender.ts'
 import { useAgents } from '@/composables/useAgents'
-import { useFilePathAnnotation, useFilePathNavHandlers } from '@/composables/useFilePathAnnotation.ts'
+import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store as appStore } from '@/stores/app.ts'
@@ -115,7 +115,6 @@ const { refreshExecDetail } = useTaskTab()
 const identity = useSessionIdentity()
 const theme = inject('theme', ref('light'))
 const { openFilePath, verifyFilePaths } = useFilePathAnnotation()
-const { handleContextMenu: handleExecContextMenu, handleLongPress: handleExecLongPress } = useFilePathNavHandlers()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const switchTab = inject('switchTab', () => {})
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
@@ -454,8 +453,6 @@ function handleContentClick(event) {
     emit('open-file', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
   }
 }
-
-// ── Long-press / right-click on file-path annotation → open in file manager (handled by useFilePathNavHandlers) ──
 
 // ── Reset state when exec detail changes ──
 watch(() => props.execDetail, (newVal, oldVal) => {

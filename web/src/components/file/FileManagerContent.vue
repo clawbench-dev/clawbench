@@ -623,7 +623,7 @@ function closeDropdowns(e) {
   }
 }
 
-// ── Highlight file item (from long-press on file-path annotation) ──
+// ── Highlight file item (from navToFileInManager calls in FileHeader/FileSearchDrawer) ──
 
 let highlightRetryTimer = null
 const fileListRef = ref(null)
