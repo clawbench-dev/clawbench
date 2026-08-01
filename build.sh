@@ -124,14 +124,14 @@ echo "[1/5] Building Vue frontend..."
 if [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
     if [ ! -d "node_modules" ]; then
         echo "  Installing dependencies..."
-        npm install
+        npm install || { echo "ERROR: npm install failed" >&2; exit 1; }
     fi
     # Clean all stale build output before rebuild.
     # Vite generates new hashed filenames each build but does not remove old ones,
     # so leftover chunks (diagram JS, CSS, fonts, etc.) accumulate indefinitely.
     # Preserve only index.html and assets/ (static user assets); Vite regenerates the rest.
     find public/ -maxdepth 1 -type f ! -name 'index.html' -delete 2>/dev/null || true
-    npm run build
+    npm run build || { echo "ERROR: npm run build failed" >&2; exit 1; }
     echo "  Frontend: public/"
 
     # Copy ALL frontend build output for Go embed (go:embed all:dist in internal/frontend/)
@@ -150,7 +150,7 @@ if [ -n "$BUILD_ANDROID" ]; then
     echo "[2/5] Building Android APK..."
     if [ -d "android" ] && [ -f "android/gradlew" ]; then
         (cd android && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew assembleRelease \
-            -PversionCode=$VERSION_CODE -PversionName="$FULL_VERSION")
+            -PversionCode=$VERSION_CODE -PversionName="$FULL_VERSION") || { echo "ERROR: Android APK build failed" >&2; exit 1; }
         echo "  APK: android/app/build/outputs/apk/release/clawbench-android.apk"
         if [ -f android/app/build/outputs/apk/release/clawbench-android.apk ]; then
             mkdir -p internal/frontend/dist/assets
@@ -182,14 +182,14 @@ elif command -v go >/dev/null 2>&1; then
         if [ "$TARGET_OS" = "windows" ]; then
             BINARY_NAME="${NAME}.exe"
         fi
-        GOOS=$TARGET_OS GOARCH=$TARGET_ARCH go build -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server
+        GOOS=$TARGET_OS GOARCH=$TARGET_ARCH go build -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go cross-compile failed" >&2; exit 1; }
         echo "  Cross-compiled: $BINARY_NAME ($TARGET_OS/$TARGET_ARCH)"
     else
-        go build -ldflags "$LDFLAGS" -o "$NAME" ./cmd/server
+        go build -ldflags "$LDFLAGS" -o "$NAME" ./cmd/server || { echo "ERROR: Go build failed" >&2; exit 1; }
         echo "  Go binary: ./$NAME"
     fi
     # Build ACP mock agent binary (for E2E testing with ACP stdio transport)
-    go build -o "acp-mock" ./cmd/acp-mock
+    go build -o "acp-mock" ./cmd/acp-mock || { echo "ERROR: acp-mock build failed" >&2; exit 1; }
     echo "  ACP mock: ./acp-mock"
 else
     echo "  Go not found, skipping backend build"
