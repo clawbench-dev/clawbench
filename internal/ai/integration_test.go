@@ -432,6 +432,7 @@ const (
 	TestForkSessionAmnesia         = "ForkSessionAmnesia"
 	TestForkAcrossBackends         = "ForkAcrossBackends"
 	TestForkResumeVsNewSession     = "ForkResumeVsNewSession"
+	TestFirstMessageInterruptedResume = "FirstMessageInterruptedResume"
 )
 
 // allCLITestPoints returns the base set of test points every CLI backend runs.
@@ -452,6 +453,7 @@ func withResumeTestPoints(base map[string]bool, extras ...string) map[string]boo
 	m[TestResumeAfterCancel] = true
 	m[TestResumeMetadataCapture] = true
 	m[TestForkAcrossBackends] = true
+	m[TestFirstMessageInterruptedResume] = true
 	return m
 }
 
@@ -927,6 +929,7 @@ var cliTestCases = []cliTestCase{
 	{Name: TestForkSessionAmnesia, ShouldRun: supportsTest(TestForkSessionAmnesia), Run: testCLIForkSessionAmnesia},
 	{Name: TestForkAcrossBackends, ShouldRun: supportsTest(TestForkAcrossBackends), Run: testCLIForkAcrossBackends},
 	{Name: TestForkResumeVsNewSession, ShouldRun: supportsTest(TestForkResumeVsNewSession), Run: testCLIForkResumeVsNewSession},
+	{Name: TestFirstMessageInterruptedResume, ShouldRun: supportsTest(TestFirstMessageInterruptedResume), Run: testCLIFirstMessageInterruptedResume},
 }
 
 // supportsTest returns a ShouldRun function that checks cfg.SupportedTests[name].
@@ -1608,4 +1611,96 @@ func amnesiaStatus(content, secret string) string {
 		return "NOT AMNESIAC (recalled " + secret + ")"
 	}
 	return "AMNESIAC (cannot recall " + secret + ")"
+}
+
+// --- 15. First Message Interrupted Resume ---
+// Simulates the bug: user sends a message, immediately cancels before AI
+// establishes a session. On the next prompt, Resume=true but the AI never
+// saw this session — the handler should detect this and start fresh.
+func testCLIFirstMessageInterruptedResume(t *testing.T, cfg cliTestConfig) {
+	backend := cliSetupAndCreate(t, cfg)
+
+	// Phase 1: send first message and cancel IMMEDIATELY (no content events)
+	// This simulates "Claude Code hasn't established a session yet"
+	timeout1 := cfg.Timeout
+	if timeout1 == 0 {
+		timeout1 = 60 * time.Second
+	}
+	ctx1, cancel1 := context.WithTimeout(context.Background(), timeout1)
+	defer cancel1()
+
+	req1 := cliNewSessionRequest(cfg, "你好，请记住数字42")
+	ch1, err := backend.ExecuteStream(ctx1, req1)
+	require.NoError(t, err)
+
+	// Cancel context immediately — don't even wait for content.
+	// This ensures the AI never establishes a session.
+	cancel1()
+
+	// Drain remaining events (the stream will end due to context cancel)
+	var events1 []StreamEvent
+	timer1 := time.NewTimer(5 * time.Second)
+	defer timer1.Stop()
+	for {
+		select {
+		case event, ok := <-ch1:
+			if !ok {
+				goto phase1Done
+			}
+			events1 = append(events1, event)
+		case <-timer1.C:
+			goto phase1Done
+		}
+	}
+phase1Done:
+	t.Logf("phase 1: cancelled immediately, got %d events, types: %v", len(events1), eventTypes(events1))
+
+	// There should be NO session_capture or metadata with session ID
+	// (the AI never established a session before we cancelled)
+	sessionCaptures := findEvents(events1, "session_capture")
+	metasWithSID := 0
+	for _, e := range findEvents(events1, "metadata") {
+		if e.Meta != nil && e.Meta.SessionID != "" {
+			metasWithSID++
+		}
+	}
+	t.Logf("phase 1: session_capture events=%d, metadata with SessionID=%d", len(sessionCaptures), metasWithSID)
+
+	// Phase 2: send a second message with Resume=true using the same session ID.
+	// In the buggy behavior, this would fail because --resume gets an invalid
+	// session ID. With the fix, the handler detects no real AI content and
+	// starts a fresh session.
+	sessionID := cliResolveSessionID(cfg, req1, events1)
+	// If we didn't get a session ID from phase 1 (cancelled too early),
+	// use the request's SessionID as fallback (for backends that set it upfront)
+	if sessionID == "" && req1.SessionID != "" {
+		sessionID = req1.SessionID
+	}
+
+	req2 := ChatRequest{
+		Prompt:    "说一个字：好",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	}
+	if cfg.Command != "" {
+		req2.Command = cfg.Command
+	}
+
+	events2 := cliExecPrompt(t, cfg, backend, req2)
+
+	// Key assertion: second message should succeed with content.
+	// No error events from invalid --resume.
+	skipIfVeCLINoContent(t, cfg, events2)
+
+	content2 := concatContent(events2)
+	assert.NotEmpty(t, content2, "second message after immediate cancel should receive content (handler starts fresh)")
+
+	errorEvents2 := findEvents(events2, "error")
+	for _, e := range errorEvents2 {
+		// Some backends may produce non-fatal errors; only fail on resume-related errors
+		if strings.Contains(e.Error, "resume") || strings.Contains(e.Error, "session") {
+			t.Errorf("second message should not have resume/session errors, got: %s", e.Error)
+		}
+	}
 }
