@@ -39,7 +39,7 @@ flowchart TD
 - **Panic 恢复**：中间件链最外层捕获 panic，返回 500 而不是让进程崩溃。任何 handler 的未处理异常都被优雅地降级为错误响应
 - **请求 ID**：每个请求分配唯一 ID（`X-Request-ID` header），贯穿日志和错误响应。追踪问题时的关键线索
 - **请求日志**：记录方法、路径、状态码、耗时、请求 ID。这是生产环境排查问题的第一入口
-- **i18n 本地化**：从 `Accept-Language` header 提取语言偏好，错误响应使用用户语言显示。AGENTS.md 中所有 handler 的 `writeLocalizedError` 都基于此
+- **i18n 本地化**：从 `X-Locale` header → `clawbench-locale` Cookie → `Accept-Language` header 优先级链解析语言偏好，错误响应使用用户语言显示。推送通知场景使用 `LocalizerForLocale()` 独立解析语言。详见[国际化](i18n.md)
 - **NoCache 响应头**：全局中间件为所有 API 响应设置 `Cache-Control: no-store`，确保浏览器刷新时总是获取最新数据，而非使用缓存的旧状态
 - **按路由认证**：`Auth` 不在全局 `Chain` 中；路由注册时明确决定是否包裹认证。健康检查、最小状态等公开接口可以保持可达，包含配置、项目或用户数据的 API 必须受保护
 - **密码修改与密钥轮换**：`POST /api/settings/password` 验证当前密码后写入新的 SHA-256 哈希，同时轮换所有 API 密钥的加密密钥（[配置与自动发现](config-and-discovery.md)），并即时更新内存中的认证状态——修改密码不需要重启服务

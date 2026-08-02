@@ -42,7 +42,7 @@ flowchart TD
 - **双传输支持**：Agent 的 `Transport` 字段（"cli" / "acp-stdio"）决定使用哪种传输模式。ACP 支持的 Agent 自动设置 `acp_command`，用户可以在会话中切换传输方式
 - **Model 自动发现**：通过 CLI 命令（如 `deepseek models`）或 `BackendSpec.RegisterDiscoverModelsFunc` 注册的自定义发现函数发现可用模型。当 `ListModelsCmd` 为空时使用 `KnownModels` 或用户手动定义；ACP 后端优先用 ACP 返回的模型列表（覆盖 CLI 发现结果）。结果缓存到 SQLite 与内存
 - **后台模型刷新**：启动后后台定期刷新模型缓存，更新自动发现的 Agent 的模型列表。新增模型无需重启
-- **运行时连通性与升级**：前端 `useConnectivityTest` 检查服务连通性；`useUpgrade` 调用 `/api/upgrade/check`、`/api/upgrade/start` 和 `/api/upgrade/status` 完成版本检查、启动升级和进度查询，三个端点均要求认证；`useSystemResources` 轮询 `GET /api/system/resources` 获取 CPU、内存、磁盘、网络和负载指标，用于设置页资源监控
+- **运行时连通性与升级**：前端 `useConnectivityTest` 检查服务连通性；`useUpgrade` 调用 `/api/upgrade/check`、`/api/upgrade/start` 和 `/api/upgrade/status` 完成版本检查、启动升级和进度查询，三个端点均要求认证；`useSystemResources` 轮询 `GET /api/system/resources` 获取 CPU、内存、磁盘、网络和负载指标，用于设置页资源监控（详见[系统资源监控](../features/system-resources.md)）
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖，标志区分用户定义和自动发现。用户对配置有最终控制权
 - **供应商注册表**：内置 27 个 LLM 供应商规格（含 minimax / minimax-cn）。已知模型由 `BackendSpec.KnownModels` 静态声明，或由后端通过 `RegisterDiscoverModelsFunc()` 动态注册。运行时可通过 `POST /api/agents/rescan` 重新扫描 PATH；当前实现不依赖外部模型目录生成服务
 - **API 密钥加密存储**：LLM 供应商的 API 密钥使用 AES-256-GCM 加密后存入 `agent_api_keys` 表，加密密钥由登录密码经 HKDF-SHA256 派生。密码变更时自动轮换
