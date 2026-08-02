@@ -63,11 +63,12 @@ CREATE INDEX IF NOT EXISTS idx_thinking_session ON chat_thinking(session_id, cre
 ### 4. Service + API
 
 - 新文件 `internal/service/thinking.go`：`ThinkingRecord`、`UpsertThinking`、`GetThinking(thinkID, messageID)`、`GetThinkingBySession(thinkID, sessionID)`——全部仿 `tool_calls.go`
-- 新端点 `GET /api/ai/chat/thinking?think_id=&message_id=&session_id=`，仿 `ServeToolCallDetail`（`chat_history.go:216`）：GET 校验、`requireProject`、参数校验、按 message_id 主查 → session_id 兜底、归档 + 项目归属检查、`writeJSON` 返回记录
+- 新端点 `GET /api/ai/chat/thinking?think_id=&message_id=&session_id=`，仿 `ServeToolCallDetail`（`chat_history.go:216`）：GET 校验、`requireProject`、参数校验、按 message_id 主查 → session_id 兜底、归档 + 项目归属检查、`writeJSON` 返回记录；路由注册于 `handler.go` 的 `register()` 段（仿 `register("/api/ai/chat/tool-call", ...)`）
 
 ### 5. Fork / 续会话复制（修存量 bug）
 
 - 新函数 `copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionID string) error`：把源会话的 `chat_tool_calls` 和 `chat_thinking` 复制到新会话，`message_id` 用 `idMap` 重映射（`UNIQUE(tool_id, message_id)` / `UNIQUE(think_id, message_id)` 在新 message_id 下仍唯一）
+- **按 `idMap` 迭代复制**（仿 `copySessionSummaries`）：只复制源 `message_id` 在 `idMap` 中的行；fork 带 `beforeMessageID` 截断时，截断点之后的消息不在 `idMap` 里，其工具/思考行直接跳过——避免孤儿行或无法映射的行
 - 调用点（两条独立复制路径都补）：
   - `ForkSession` → `copySessionMessages` 之后（`continue_conversation.go:345`）
   - `ContinueFromExecution` → 复制 summaries 之后（`continue_conversation.go:236`）
@@ -91,7 +92,7 @@ CREATE INDEX IF NOT EXISTS idx_thinking_session ON chat_thinking(session_id, cre
   - 并发去重（in-flight Map）
   - `loadThinking(block, msgId)`：调 `GET /api/ai/chat/thinking?think_id=&message_id=&session_id=`，返回 `{text, loading, error}`
   - 缓存清空挂在会话切换处（与 `staticBlockCache.clear()` 同处）
-- `ContentBlocks.vue` `getThinkingHtml`（`:550`）：`block.text` 存在 → 照旧渲染；否则有 `think_id` → 展开时触发懒加载，loading 显示占位（复用 `.placeholder-dots`），错误显示重试
+- `ContentBlocks.vue` `getThinkingHtml`（`:550`）：`block.text` 存在 → 照旧渲染；否则有 `think_id` → 渲染 loading 占位（复用 `.placeholder-dots`）或错误重试态。**懒加载请求从展开事件触发**（`handleThinkingClick` 或对 expanded 状态的 `watch`），不在 `getThinkingHtml` 渲染 getter 内发请求（避免渲染期副作用）
 - 流式不受影响（live 块始终有 `text`）
 
 ## 已知取舍（非本次范围）
@@ -106,7 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_thinking_session ON chat_thinking(session_id, cre
 - `slimThinkingInContent`：有/无 thinking 块、保留 metadata、think_id 生成
 - `SessionExecutor.Finalize`：thinking 拆分 → `chat_thinking` 行 + DB slim content + WS 全量 blocks
 - `MigrateThinkingFromContent`：老格式 → slim + 行；幂等（跳过已 slim 消息）
-- `ForkSession` / `ContinueFromExecution`：`chat_tool_calls` + `chat_thinking` 均被复制
+- `ForkSession` / `ContinueFromExecution`：`chat_tool_calls` + `chat_thinking` 均被复制；**fork 带 `beforeMessageID` 截断时**，截断点后的工具/思考行被跳过、截断点内的正确重映射
 - `ServeThinkingDetail`：found / 404 / session 兜底 / 项目不匹配 / 方法校验
 - Purge：`chat_thinking` 被清理
 
