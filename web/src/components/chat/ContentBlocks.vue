@@ -215,6 +215,7 @@ import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronRight, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, Clock, Archive } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { useThinkingContent } from '@/composables/useThinkingContent.ts'
 import { formatDuration } from '@/utils/format.ts'
 import {
   isSevereWarning,
@@ -234,6 +235,7 @@ import {
 } from '@/utils/contentBlocks.ts'
 
 const { t, locale } = useI18n()
+const thinkingContent = useThinkingContent()
 
 // Auto-expand tools (AskUserQuestion, PermissionApproval) need input to render inline.
 // In slim format, input is absent from DB-loaded content — fetch from API automatically.
@@ -388,14 +390,25 @@ function handleThinkingClick(block, bi) {
     expandingThinking.value[blockKey] = true
     thinkingExpanded.value[blockKey] = true
     blockHtmlCache.value = {}
+    // Slim block (think_id, no text): lazy-load the thinking text on expand
+    if (!block.text && block.think_id) {
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
+        .catch(() => { /* error surfaced via errors ref */ })
+    }
     // Clean up expanding state after animation
     const t = setTimeout(() => {
       delete expandingThinking.value[blockKey]
     }, EXPAND_TRANSITION_MS)
     _collapseTimers.push(t)
   } else if (isThinkingExpandedDone(block, bi)) {
-    // Collapse inline with animation
-    triggerThinkingCollapse(blockKey)
+    // Retry failed lazy-load when clicking an error-state slim block;
+    // otherwise collapse.
+    if (!block.text && block.think_id && thinkingContent.errors.value[block.think_id]) {
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
+        .catch(() => { /* error surfaced via errors ref */ })
+    } else {
+      triggerThinkingCollapse(blockKey)
+    }
   }
 }
 
@@ -554,17 +567,34 @@ function getBlockHtml(bi, block) {
   return html
 }
 
-/** Get HTML for thinking block content during streaming (uses renderMarkdownHtml with throttling). */
+/** Get HTML for thinking block content. Live blocks render text inline;
+ *  slim blocks (think_id) render from the lazy-load cache/loading/error state. */
 function getThinkingHtml(bi, block) {
+  if (block.text) {
+    return getThinkingTextHtml(block.text, bi, block)
+  }
+  if (block.think_id) {
+    const text = thinkingContent.cachedText(block.think_id)
+    if (text) return renderMarkdownHtml(text)
+    if (thinkingContent.errors.value[block.think_id]) {
+      return `<div class="thinking-load-error"><span>${t('chat.contentBlocks.thinkingLoadFailed')}</span><button class="thinking-retry-btn" onclick="this.closest('.chat-thinking').querySelector('.thinking-header').click()">${t('chat.contentBlocks.retry')}</button></div>`
+    }
+    return '<div class="placeholder-dots"><span></span><span></span><span></span></div>'
+  }
+  return ''
+}
+
+/** Existing throttled streaming/inline render path (unchanged behavior). */
+function getThinkingTextHtml(text, bi, block) {
   if (!props.streaming || !props.active) {
-    return renderMarkdownHtml(block.text)
+    return renderMarkdownHtml(text)
   }
   const cacheKey = `t-${stableBlockKey(bi, block)}`
   // Streaming: deferred rendering with throttling (same pattern as text blocks)
   if (blockHtmlCache.value[cacheKey] !== undefined) {
     if (!_throttleTimer) {
       const newCache = { ...blockHtmlCache.value }
-      newCache[cacheKey] = renderMarkdownHtml(block.text)
+      newCache[cacheKey] = renderMarkdownHtml(text)
       blockHtmlCache.value = newCache
       _throttleTimer = setTimeout(flushBlockHtml, THROTTLE_MS)
     } else {
@@ -572,7 +602,7 @@ function getThinkingHtml(bi, block) {
     }
     return blockHtmlCache.value[cacheKey]
   }
-  const html = renderMarkdownHtml(block.text)
+  const html = renderMarkdownHtml(text)
   blockHtmlCache.value = { ...blockHtmlCache.value, [cacheKey]: html }
   return html
 }
@@ -646,6 +676,30 @@ onUnmounted(() => {
 @keyframes dot-bounce {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
   40% { transform: scale(1); opacity: 1; }
+}
+
+/* Slim thinking block lazy-load error state */
+.thinking-load-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.thinking-retry-btn {
+  border: 1px solid color-mix(in srgb, #ef4444 40%, var(--border-color));
+  background: transparent;
+  color: #dc2626;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.thinking-retry-btn:hover {
+  background: rgba(239, 68, 68, 0.08);
 }
 
 /* Inline cancelled marker inside thinking header — always visible even when thinking is collapsed */

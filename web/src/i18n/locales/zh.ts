@@ -390,6 +390,7 @@ export default {
       repeat: '重复：',
       prompt: '提示词：',
       cancelled: '已中断',
+      thinkingLoadFailed: '思考内容加载失败',
       summaryViewOriginal: 'AI 已精简总结 · 查看原文',
       summaryViewSummary: '查看精简总结',
       loading: '加载中...',

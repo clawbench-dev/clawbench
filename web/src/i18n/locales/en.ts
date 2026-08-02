@@ -390,6 +390,7 @@ export default {
       repeat: 'Repeat:',
       prompt: 'Prompt:',
       cancelled: 'Cancelled',
+      thinkingLoadFailed: 'Failed to load thinking',
       summaryViewOriginal: 'AI summarized · View original',
       summaryViewSummary: 'View summary',
       loading: 'Loading...',

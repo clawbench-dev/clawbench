@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick, reactive } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
@@ -77,6 +77,8 @@ const i18n = createI18n({
         nextRun: 'Next run',
         viewDetail: 'View detail',
         taskDeleted: 'Task deleted',
+        thinkingLoadFailed: 'Failed to load thinking',
+        retry: 'Retry',
       },
     },
     tool: { askUser: { name: 'Ask' } },
@@ -544,6 +546,83 @@ describe('ContentBlocks', () => {
       const wrappers = wrapper.findAll('.thinking-content-wrapper')
       expect(wrappers[0].classes()).toContain('thinking-content-open')
       expect(wrappers[1].classes()).not.toContain('thinking-content-open')
+    })
+  })
+
+  // ── Thinking lazy load (slim blocks with think_id) ──
+
+  describe('thinking lazy load', () => {
+    it('expanding a slim thinking block fetches and renders text', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ think_id: 'th_1', text: 'loaded reasoning' }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const wrapper = mountBlocks({
+        msgId: 'm1',
+        sessionId: 's1',
+        blocks: [{ type: 'thinking', think_id: 'th_1', done: true }],
+        streaming: false,
+        active: true,
+      })
+
+      await wrapper.find('.thinking-header').trigger('click')
+      await nextTick()
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/ai/chat/thinking?think_id=th_1&message_id=m1&session_id=s1',
+      )
+      expect(wrapper.find('.thinking-content-wrapper').classes()).toContain('thinking-content-open')
+
+      await flushPromises()
+      await nextTick()
+      expect(wrapper.find('.thinking-inline-content').html()).toContain('loaded reasoning')
+    })
+
+    it('renders existing text directly without fetching', async () => {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const wrapper = mountBlocks({
+        msgId: 'm1',
+        sessionId: 's1',
+        blocks: [{ type: 'thinking', text: 'inline thought', done: true }],
+        streaming: false,
+        active: true,
+      })
+
+      await wrapper.find('.thinking-header').trigger('click')
+      await nextTick()
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(wrapper.find('.thinking-inline-content').html()).toContain('inline thought')
+    })
+
+    it('shows error retry and refetches on retry click', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ think_id: 'th_2', text: 'recovered' }) })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const wrapper = mountBlocks({
+        msgId: 'm1',
+        sessionId: 's1',
+        blocks: [{ type: 'thinking', think_id: 'th_2', done: true }],
+        streaming: false,
+        active: true,
+      })
+
+      await wrapper.find('.thinking-header').trigger('click')
+      await flushPromises()
+      await nextTick()
+      expect(wrapper.find('.thinking-inline-content').html()).toContain('Failed to load thinking')
+
+      // Retry: click the header again (expanded-done + error → re-trigger load)
+      await wrapper.find('.thinking-header').trigger('click')
+      await flushPromises()
+      await nextTick()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(wrapper.find('.thinking-inline-content').html()).toContain('recovered')
     })
   })
 })
