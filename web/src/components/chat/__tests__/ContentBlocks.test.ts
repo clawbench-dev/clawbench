@@ -543,6 +543,11 @@ describe('ContentBlocks', () => {
       // Expand the first only; the second must stay collapsed.
       await chips[0].find('.thinking-header').trigger('click')
       await nextTick()
+      // Force a re-render: :class bindings that call plain functions may not
+      // re-render in jsdom after ref({}) deep property assignment (see comment
+      // in the "expands inline on thinking click when collapsed" test).
+      await wrapper.vm.$forceUpdate()
+      await nextTick()
       const wrappers = wrapper.findAll('.thinking-content-wrapper')
       expect(wrappers[0].classes()).toContain('thinking-content-open')
       expect(wrappers[1].classes()).not.toContain('thinking-content-open')
@@ -573,9 +578,15 @@ describe('ContentBlocks', () => {
       expect(fetchMock).toHaveBeenCalledWith(
         '/api/ai/chat/thinking?think_id=th_1&message_id=m1&session_id=s1',
       )
+      // Force a re-render before asserting post-click DOM (jsdom quirk: plain
+      // function :class/v-html bindings may not re-render after ref({}) writes).
+      await wrapper.vm.$forceUpdate()
+      await nextTick()
       expect(wrapper.find('.thinking-content-wrapper').classes()).toContain('thinking-content-open')
 
       await flushPromises()
+      await nextTick()
+      await wrapper.vm.$forceUpdate()
       await nextTick()
       expect(wrapper.find('.thinking-inline-content').html()).toContain('loaded reasoning')
     })
@@ -615,11 +626,16 @@ describe('ContentBlocks', () => {
       await wrapper.find('.thinking-header').trigger('click')
       await flushPromises()
       await nextTick()
+      // Force a re-render before asserting post-click DOM (jsdom quirk).
+      await wrapper.vm.$forceUpdate()
+      await nextTick()
       expect(wrapper.find('.thinking-inline-content').html()).toContain('Failed to load thinking')
 
       // Retry: click the header again (expanded-done + error → re-trigger load)
       await wrapper.find('.thinking-header').trigger('click')
       await flushPromises()
+      await nextTick()
+      await wrapper.vm.$forceUpdate()
       await nextTick()
       expect(fetchMock).toHaveBeenCalledTimes(2)
       expect(wrapper.find('.thinking-inline-content').html()).toContain('recovered')
