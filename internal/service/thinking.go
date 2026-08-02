@@ -151,10 +151,15 @@ func persistThinkingToDB(content string, streamingMsgID int64, sessionID string)
 	if err := DeleteThinkingByMessage(streamingMsgID); err != nil {
 		slog.Warn("delete thinking for message failed", slog.Int64("msgID", streamingMsgID), slog.String("err", err.Error()))
 	}
+	failed := false
 	for _, rec := range records {
 		if err := UpsertThinking(streamingMsgID, sessionID, rec.ThinkID, rec.Text); err != nil {
+			failed = true
 			slog.Warn("upsert thinking failed", slog.String("thinkID", rec.ThinkID), slog.String("err", err.Error()))
 		}
+	}
+	if failed {
+		return content
 	}
 	return slimContent
 }

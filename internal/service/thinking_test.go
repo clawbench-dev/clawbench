@@ -147,3 +147,17 @@ func TestSlimThinkingInContent(t *testing.T) {
 		}
 	})
 }
+
+func TestPersistThinkingToDB_ParseErrorFallback(t *testing.T) {
+	dbDir := t.TempDir()
+	if err := initTestDB(dbDir); err != nil {
+		t.Fatalf("initTestDB: %v", err)
+	}
+	defer func() { db.Close(); dbRead.Close() }()
+
+	bad := "not json {"
+	got := persistThinkingToDB(bad, 42, "sess-1")
+	if got != bad {
+		t.Errorf("expected original content back on parse error, got %q", got)
+	}
+}
