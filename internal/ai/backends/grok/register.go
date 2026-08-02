@@ -18,8 +18,5 @@ func init() {
 			InstallCmd:           "curl -fsSL https://x.ai/cli/install.sh | bash",
 			SortOrder:            13,
 		},
-		ACP: &backends.ACPPlugin{
-			InputRemaps: GrokACPRemaps,
-		},
 	})
 }

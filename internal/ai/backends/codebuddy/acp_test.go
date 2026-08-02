@@ -11,17 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- ACP remaps ---
-
-func TestCodebuddyACPRemaps_ContainsExpectedKeys(t *testing.T) {
-	assert.Equal(t, "old_string", CodebuddyACPRemaps["oldString"])
-	assert.Equal(t, "new_string", CodebuddyACPRemaps["newString"])
-	assert.Equal(t, "path", CodebuddyACPRemaps["dirPath"])
-	assert.Equal(t, "file_path", CodebuddyACPRemaps["filePath"])
-	assert.Equal(t, "cell_index", CodebuddyACPRemaps["cellIndex"])
-	assert.Equal(t, "cell_type", CodebuddyACPRemaps["cellType"])
-}
-
 // --- Backend plugin registration ---
 
 func TestCodebuddyBackendPlugin_RegisteredInBackends(t *testing.T) {
@@ -41,11 +30,10 @@ func TestCodebuddyBackendPlugin_SpecFields(t *testing.T) {
 	assert.Equal(t, "codebuddy --acp", plugin.Spec.AcpCommand)
 }
 
-func TestCodebuddyBackendPlugin_ACPPlugin(t *testing.T) {
+func TestCodebuddyBackendPlugin_NoACPPlugin(t *testing.T) {
 	plugin := backends.Lookup("codebuddy")
 	require.NotNil(t, plugin)
-	require.NotNil(t, plugin.ACP, "codebuddy should have ACP plugin")
-	assert.Equal(t, CodebuddyACPRemaps, plugin.ACP.InputRemaps)
+	assert.Nil(t, plugin.ACP, "codebuddy should have nil ACP plugin (redundant InputRemaps removed)")
 }
 
 // --- CLI backend functionality ---

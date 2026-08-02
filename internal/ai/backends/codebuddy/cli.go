@@ -20,9 +20,6 @@ func init() {
 			InstallCmd:           "npm install -g @tencent-ai/codebuddy-code",
 			SortOrder:            2,
 		},
-		ACP: &backends.ACPPlugin{
-			InputRemaps: CodebuddyACPRemaps,
-		},
 	})
 }
 

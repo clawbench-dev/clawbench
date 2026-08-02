@@ -21,9 +21,6 @@ func init() {
 			InstallCmd:           "npm install -g @anthropic-ai/claude-code",
 			SortOrder:            1,
 		},
-		ACP: &backends.ACPPlugin{
-			InputRemaps: ClaudeACPRemaps,
-		},
 	})
 }
 

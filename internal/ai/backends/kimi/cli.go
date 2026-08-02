@@ -51,7 +51,6 @@ func init() {
 		},
 		ACP: &backends.ACPPlugin{
 			ToolCallIDPrefixes: KimiACPTCIDPrefixes,
-			InputRemaps:        map[string]string{},
 		},
 	})
 }

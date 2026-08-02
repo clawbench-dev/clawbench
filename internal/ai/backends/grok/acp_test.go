@@ -3,22 +3,11 @@ package grok
 import (
 	"testing"
 
+	"clawbench/internal/ai/backends"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"clawbench/internal/ai/backends"
 )
-
-// --- ACP remaps ---
-
-func TestGrokACPRemaps_ContainsExpectedKeys(t *testing.T) {
-	assert.Equal(t, "old_string", GrokACPRemaps["oldString"])
-	assert.Equal(t, "new_string", GrokACPRemaps["newString"])
-	assert.Equal(t, "path", GrokACPRemaps["dirPath"])
-	assert.Equal(t, "file_path", GrokACPRemaps["filePath"])
-	assert.Equal(t, "cell_index", GrokACPRemaps["cellIndex"])
-	assert.Equal(t, "cell_type", GrokACPRemaps["cellType"])
-}
 
 // --- Backend plugin registration ---
 
@@ -48,12 +37,10 @@ func TestGrokBackendPlugin_ThinkingEffortLevels(t *testing.T) {
 		plugin.Spec.ThinkingEffortLevels)
 }
 
-func TestGrokBackendPlugin_ACPPlugin(t *testing.T) {
+func TestGrokBackendPlugin_NoACPPlugin(t *testing.T) {
 	plugin := backends.Lookup("grok")
 	require.NotNil(t, plugin)
-	require.NotNil(t, plugin.ACP, "grok should have ACP plugin")
-	assert.Equal(t, GrokACPRemaps, plugin.ACP.InputRemaps)
-	assert.Nil(t, plugin.ACP.ToolCallIDPrefixes, "grok uses standard ACP tool names, no prefix map needed")
+	assert.Nil(t, plugin.ACP, "grok should have nil ACP plugin (redundant InputRemaps removed)")
 }
 
 func TestGrokBackendPlugin_NoCLIFactory(t *testing.T) {
