@@ -640,5 +640,36 @@ describe('ContentBlocks', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2)
       expect(wrapper.find('.thinking-inline-content').html()).toContain('recovered')
     })
+
+    it('retry button refetches after a failed load', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ think_id: 'th_3', text: 'button recovered' }) })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const wrapper = mountBlocks({
+        msgId: 'm1',
+        sessionId: 's1',
+        blocks: [{ type: 'thinking', think_id: 'th_3', done: true }],
+        streaming: false,
+        active: true,
+      })
+
+      await wrapper.find('.thinking-header').trigger('click')
+      await flushPromises()
+      await nextTick()
+
+      // Click the actual retry button rendered inside the error state.
+      const retryBtn = wrapper.find('.thinking-retry-btn')
+      expect(retryBtn.exists()).toBe(true)
+      await retryBtn.trigger('click')
+      await flushPromises()
+      await nextTick()
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      await wrapper.vm.$forceUpdate()
+      await nextTick()
+      expect(wrapper.find('.thinking-inline-content').html()).toContain('button recovered')
+    })
   })
 })
