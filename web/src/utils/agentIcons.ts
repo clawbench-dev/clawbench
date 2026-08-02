@@ -19,6 +19,7 @@ import kimiIcon from '@lobehub/icons-static-svg/icons/kimi-color.svg?raw'
 import deepseekIcon from '@lobehub/icons-static-svg/icons/deepseek-color.svg?raw'
 import qoderIcon from '@lobehub/icons-static-svg/icons/qoder-color.svg?raw'
 import mimoIcon from '@lobehub/icons-static-svg/icons/xiaomimimo.svg?raw'
+import antigravityIcon from '@lobehub/icons-static-svg/icons/antigravity-color.svg?raw'
 
 // Monochrome icons (fill="currentColor" — inherit CSS `color`, theme-aware)
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?raw'
@@ -51,6 +52,7 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     pi: { svg: extractSvgInner(piIcon), viewBox: extractViewBox(piIcon), needsBg: true, monoCssClass: 'mono-pi' },
     mimo: { svg: extractSvgInner(mimoIcon), viewBox: extractViewBox(mimoIcon), needsBg: true, monoCssClass: 'mono-mimo' },
     grok: { svg: extractSvgInner(grokIcon), viewBox: extractViewBox(grokIcon), needsBg: true, monoCssClass: 'mono-grok' },
+    antigravity: { svg: extractSvgInner(antigravityIcon), viewBox: extractViewBox(antigravityIcon) },
 
     // VeCLI not in lobe-icons — kept as inline fallback (explicit fill colors)
     vecli: {

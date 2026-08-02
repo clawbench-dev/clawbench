@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"clawbench/internal/ai/backends"
+	_ "clawbench/internal/ai/backends/antigravity"
 	_ "clawbench/internal/ai/backends/claude"
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/grok"
@@ -131,6 +132,30 @@ func TestACPInitRegistration(t *testing.T) {
 		}
 		if remaps["filePath"] != "file_path" {
 			t.Errorf("expected generic filePath->file_path for grok, got %q", remaps["filePath"])
+		}
+	})
+
+	t.Run("antigravity", func(t *testing.T) {
+		p := mustLookup(t, "antigravity")
+		// Antigravity ACP uses generic remaps (no ACP plugin registered)
+		if p.ACP != nil {
+			t.Fatal("expected nil ACP plugin for antigravity (redundant InputRemaps removed)")
+		}
+		remaps := backends.LookupACPRemaps("antigravity")
+		if remaps == nil {
+			t.Fatal("expected generic fallback remaps for antigravity")
+		}
+		if remaps["filePath"] != "file_path" {
+			t.Errorf("expected generic filePath->file_path for antigravity, got %q", remaps["filePath"])
+		}
+		if p.Spec.DefaultCmd != "agy" {
+			t.Errorf("expected DefaultCmd agy, got %q", p.Spec.DefaultCmd)
+		}
+		if p.Spec.AcpCommand != "npx -y agy-acp@latest" {
+			t.Errorf("expected AcpCommand npx -y agy-acp@latest, got %q", p.Spec.AcpCommand)
+		}
+		if !p.Spec.ACPLoadSession {
+			t.Error("expected ACPLoadSession=true for antigravity (bridge supports session/load)")
 		}
 	})
 
