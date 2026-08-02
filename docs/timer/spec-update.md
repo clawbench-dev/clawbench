@@ -49,8 +49,8 @@ docs/spec/ 目录下。执行时直接 `ls -R docs/spec/` 查看当前实际结�
 - ❌ "useQuickSend composable 封装了 SQLite CRUD 操作，通过 apiPrefix 参数区分终端快捷指令和聊天快捷发送"
 
 **设计要点**（3-5 条 bullets）：讲关键的设计决策——"为什么这么设计"而非"怎么实现"。例如：
-- ✅ "AutoResumeBackend 包装了 ExitPlanMode→取消→自动恢复 的模式，避免每个后端重复实现"
-- ❌ "AutoResumeBackend 在 ExecuteStream 中检测 ExitPlanMode 事件，调用 CancelSession 后重新发送'继续'"
+- ✅ "ACP 连接池按 session 级隔离，每个 ClawBench session 对应一个 ACPConn，避免多设备并发冲突"
+- ❌ "ACPConnManager 用 map[clawbenchSID]*ACPConn 存储连接，5 分钟 idle sweep 清理过期连接"
 
 ## 写作原则
 
