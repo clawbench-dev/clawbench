@@ -95,6 +95,7 @@ var hotReloadFields = map[string]bool{
 	"rag.model":                 true,
 	"rag.api_key":               true,
 	"rag.chunk_size":            true,
+	"rag.chunk_overlap":         true,
 	"rag.search_limit":          true,
 	"rag.search_pool_size":      true,
 	"rag.retention_days":        true,
@@ -262,6 +263,7 @@ type configRAG struct {
 	Model          string `json:"model"`
 	APIKey         string `json:"api_key"`
 	ChunkSize      int    `json:"chunk_size"`
+	ChunkOverlap   int    `json:"chunk_overlap"`
 	SearchLimit    int    `json:"search_limit"`
 	SearchPoolSize int    `json:"search_pool_size"`
 	RetentionDays  int    `json:"retention_days"`
@@ -347,6 +349,7 @@ var PatchableConfigPaths = map[string]bool{
 	"rag.model":                   true,
 	"rag.api_key":                 true,
 	"rag.chunk_size":              true,
+	"rag.chunk_overlap":           true,
 	"rag.search_limit":            true,
 	"rag.search_pool_size":        true,
 	"rag.retention_days":          true,
@@ -468,6 +471,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Model:          cfg.RAG.Model,
 			APIKey:         cfg.RAG.APIKey,
 			ChunkSize:      cfg.RAG.ChunkSize,
+			ChunkOverlap:   cfg.RAG.ChunkOverlap,
 			SearchLimit:    cfg.RAG.SearchLimit,
 			SearchPoolSize: cfg.RAG.SearchPoolSize,
 			RetentionDays:  cfg.RAG.RetentionDays,
@@ -1061,6 +1065,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := rag["chunk_size"].(float64); ok {
 			cfg.RAG.ChunkSize = int(v)
+		}
+		if v, ok := rag["chunk_overlap"].(float64); ok {
+			cfg.RAG.ChunkOverlap = int(v)
 		}
 		if v, ok := rag["search_limit"].(float64); ok {
 			cfg.RAG.SearchLimit = int(v)

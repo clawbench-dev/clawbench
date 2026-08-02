@@ -320,6 +320,7 @@ const serverDefaults: Record<string, unknown> = {
   'rag.model': 'bge-m3',
   'rag.api_key': '',
   'rag.chunk_size': 512,
+  'rag.chunk_overlap': 64,
   'rag.search_limit': 5,
   'rag.search_pool_size': 20,
   'rag.retention_days': 90,

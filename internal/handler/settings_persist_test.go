@@ -448,6 +448,16 @@ func TestPersist_RAGChunkSize(t *testing.T) {
 	assert.Equal(t, 1024, getNestedValue(cfg, "rag.chunk_size"))
 }
 
+func TestPersist_RAGChunkOverlap(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+
+	cfg := patchAndReadConfig(t, `{"rag":{"chunk_overlap":128}}`)
+	assert.Equal(t, 128, getNestedValue(cfg, "rag.chunk_overlap"))
+}
+
 func TestPersist_RAGSearchLimit(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
