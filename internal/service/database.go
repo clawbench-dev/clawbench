@@ -796,6 +796,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// chat_tool_calls table and rewrite content to slim format (no input/output).
 	MigrateToolCallsFromContent()
 
+	// Migrate: extract thinking text from chat_history.content into chat_thinking
+	// and rewrite content to slim format (think_id instead of text).
+	MigrateThinkingFromContent()
+
 	return nil
 }
 
