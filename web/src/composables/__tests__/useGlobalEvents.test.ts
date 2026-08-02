@@ -390,6 +390,24 @@ describe('useGlobalEvents', () => {
         })
     })
 
+    describe('hasConnectedOnce', () => {
+        it('is false before any connection', () => {
+            expect(events.hasConnectedOnce.value).toBe(false)
+        })
+
+        it('becomes true after first successful connection', () => {
+            connectAndGetWs()
+            expect(events.hasConnectedOnce.value).toBe(true)
+        })
+
+        it('resets to false on destroy', () => {
+            connectAndGetWs()
+            expect(events.hasConnectedOnce.value).toBe(true)
+            events.destroy()
+            expect(events.hasConnectedOnce.value).toBe(false)
+        })
+    })
+
     describe('init and destroy', () => {
         it('init only runs once (idempotent)', () => {
             events.init()

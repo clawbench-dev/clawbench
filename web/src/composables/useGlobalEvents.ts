@@ -41,6 +41,9 @@ type EventHandler = (event: string, data: ServerEvent['data']) => void
 
 // Module-level singleton state
 const connected = ref(false)
+// True once the WS connection has been established at least once.
+// Used to suppress the reconnect overlay during initial page load.
+const hasConnectedOnce = ref(false)
 const handlers: EventHandler[] = []
 const processedEventIds = new Set<string>()
 const MAX_PROCESSED_IDS = 100
@@ -176,6 +179,7 @@ function connect() {
 
     ws.onopen = () => {
         connected.value = true
+        hasConnectedOnce.value = true
         missedPongs = 0
         reconnect.reset()
 
@@ -465,11 +469,13 @@ export function useGlobalEvents() {
         handlers.length = 0
         processedEventIds.clear()
         missedPongs = 0
+        hasConnectedOnce.value = false
         initialized = false
     }
 
     return {
         connected,
+        hasConnectedOnce,
         wsStatus,
         connect,
         disconnect,
