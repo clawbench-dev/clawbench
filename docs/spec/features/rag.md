@@ -46,9 +46,10 @@ flowchart TD
 
 - **语义搜索**：用自然语言搜索历史对话，不依赖精确关键词匹配。用户描述问题即可找到相关历史，降低检索门槛
 - **向量嵌入可独立开关**：`rag.vector_enabled` 配置控制向量嵌入（默认 true），FTS 全文检索始终启用。关闭向量嵌入后退化为纯 FTS 模式，适合无嵌入服务的场景
-- **混合检索**：向量检索捕获语义相似性，BM25 全文检索捕获关键词匹配，两者通过 RRF（Reciprocal Rank Fusion）融合排序。比单一检索模式更全面
+- **混合检索**：向量检索捕获语义相似性，BM25 全文检索捕获关键词匹配，两者通过 RRF（Reciprocal Rank Fusion）融合排序。搜索模式通过 `rag.search_mode` 配置控制（hybrid/vector/fts），FTS 模式始终可用，不依赖嵌入服务是否在线——比单一检索模式更全面
 - **过滤条件**：支持按项目、后端、角色、会话、时间范围过滤。缩小搜索范围，提高结果精度
 - **增量索引**：新消息自动标记为待索引，Indexer 轮询处理（5s 间隔，50 条/批）。不影响聊天主流程的响应速度
+- **两级索引重建**：支持向量重建（仅重建向量索引，保留 FTS 分块）和全量重建（重建 FTS + 向量）两种模式。向量重建适用于切换嵌入模型或维度变化，全量重建适用于修改分块策略。通过 `rag.chunk_overlap` 和 `rag.search_mode` 配置控制分块重叠量和搜索模式（hybrid/vector/fts），配置变更后按需触发重建
 - **索引进度跟踪**：`GET /api/rag/status` 返回索引进度（总消息数、已索引数、已嵌入数、嵌入模式）；`GET /api/rag/message-index-status?id=<id>` 查询单条消息的 FTS 和向量嵌入状态。前端 `useRagStatus` composable 轮询 status 端点并计算实时索引/嵌入速度（基于相邻两次轮询的差值），在设置页显示索引健康度
 - **自动清理**：超过 `RetentionDays`（默认 90 天）的软删除数据定期清理，防止索引无限增长
 - **会话聚合搜索**：`RAGSessionSearch()` 在向量/FTS 搜索基础上按 `session_id` 聚合结果——返回 `SessionSearchResult`（含 `session_id`、`title`、`score`、`match_count`、分块列表），每会话最多 5 个分块。分块携带字符级偏移用于高亮。前端 `SessionSearchDrawer` 提供搜索结果列表 + 钻取详情两种视图，详情页将偏移转换为 DOM 高亮标记。`useSessionSearch` composable 封装搜索 API 调用，带防抖和 RAG 可用性缓存
