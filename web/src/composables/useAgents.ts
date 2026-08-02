@@ -48,6 +48,7 @@ interface AgentRecord {
   systemPrompt?: string
   customSystemPrompt?: string
   canRefreshModels?: boolean
+  supportsCLI?: boolean
 }
 
 const agents = ref<AgentRecord[]>([])
@@ -326,10 +327,32 @@ function canRefreshModels(agentId: string): boolean {
     return !!agent?.canRefreshModels
 }
 
-/** Check if an agent supports both ACP and CLI transport modes (has acpCommand set). */
-function supportsDualTransport(agentId: string): boolean {
+/**
+ * Check if an agent supports ACP transport (has acpCommand set).
+ * ACP-only backends (e.g. grok) support ACP but not CLI.
+ */
+function supportsACP(agentId: string): boolean {
     const agent = agents.value.find(a => a.id === agentId)
     return !!agent?.acpCommand
+}
+
+/**
+ * Check if an agent supports CLI transport (has a CLI backend implementation).
+ * Backends without a CLI factory (e.g. grok, ACP-only) return false.
+ * Falls back to true for legacy agents where supportsCLI is not reported.
+ */
+function supportsCLI(agentId: string): boolean {
+    const agent = agents.value.find(a => a.id === agentId)
+    if (!agent) return false
+    return agent.supportsCLI !== false
+}
+
+/**
+ * Check if an agent supports BOTH ACP and CLI transport modes
+ * (has acpCommand AND a CLI backend implementation).
+ */
+function supportsDualTransport(agentId: string): boolean {
+    return supportsACP(agentId) && supportsCLI(agentId)
 }
 
 /** Get the current transport mode for an agent. Returns 'acp-stdio' or 'cli'. */
@@ -440,6 +463,8 @@ export function useAgents() {
         setDefaultAgent,
         canRefreshModels,
         agentCanResume,
+        supportsACP,
+        supportsCLI,
         supportsDualTransport,
         getAgentTransport,
         invalidateACPStateCache,

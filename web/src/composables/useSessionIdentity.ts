@@ -443,16 +443,16 @@ export async function initSessionFromAPI() {
         }
         // Initialize mode: from ACP state or agent preference
         // Only populate mode state for ACP-capable agents — CLI backends don't support modes
-        if (agentsApi.supportsDualTransport(data.agentId || '')) {
+        if (agentsApi.supportsACP(data.agentId || '')) {
           modeState.clear()
           modeState.syncAndFallback(data.modeState?.currentModeId || '', data.modeState?.availableModes || [], data.agentId || '')
         }
         // Populate thinking effort state — update available levels.
         // currentThinkingEffort was already set above from ACP state.
         // Only for ACP-capable agents — CLI backends don't support thinking effort
-        if (agentsApi.supportsDualTransport(data.agentId || '') && data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
+        if (agentsApi.supportsACP(data.agentId || '') && data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
           updateAvailableThinkingEfforts(data.thinkingEffortState.availableLevels)
-        } else if (agentsApi.supportsDualTransport(data.agentId || '') && data.agentId) {
+        } else if (agentsApi.supportsACP(data.agentId || '') && data.agentId) {
           // Fallback: agent config (e.g. OpenCode/Kimi ACP don't expose thought_level)
           const agentLevels = agentsApi.getAgentThinkingEffortLevels(data.agentId)
           if (agentLevels.length > 0) {

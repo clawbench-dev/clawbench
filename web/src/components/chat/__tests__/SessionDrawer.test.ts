@@ -112,9 +112,13 @@ const mockAgents = {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return !!a?.canRefreshModels
   }),
-  supportsDualTransport: vi.fn((agentId: string) => {
+  supportsACP: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return !!a?.acpCommand
+  }),
+  supportsCLI: vi.fn((agentId: string) => {
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    return a ? a.supportsCLI !== false : false
   }),
   getAgentTransport: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)

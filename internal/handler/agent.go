@@ -190,6 +190,7 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 			clone.ThinkingEffortLevels = spec.ThinkingEffortLevels
 		}
 	}
+	clone.SupportsCLI = model.BackendSupportsCLI(clone.Backend)
 
 	writeJSON(w, http.StatusOK, clone)
 }
@@ -393,9 +394,10 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		transport, _ := v.(string)
 		spec := model.FindSpecByBackend(agent.Backend)
 		hasACP := spec != nil && spec.AcpCommand != ""
+		hasCLI := agent.SupportsCLI
 		oldTransport := agent.Transport
 		switch {
-		case transport == "cli":
+		case transport == "cli" && hasCLI:
 			agent.Transport = "cli"
 		case transport == "acp-stdio" && hasACP:
 			agent.Transport = "acp-stdio"

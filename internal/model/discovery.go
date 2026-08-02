@@ -62,6 +62,20 @@ type BackendSpec struct {
 // injection to avoid import cycles (model cannot import backends).
 var LoadBackendSpecs func() []BackendSpec
 
+// BackendSupportsCLIFn is set by the backends package at init time to report
+// whether a backend has a CLI implementation (a registered CLI backend factory).
+// Uses function-variable injection to avoid import cycles (model cannot import ai).
+var BackendSupportsCLIFn func(backendID string) bool
+
+// BackendSupportsCLI reports whether the given backend has a CLI implementation.
+// Falls back to false when the function variable is not wired (e.g. isolated tests).
+func BackendSupportsCLI(backendID string) bool {
+	if BackendSupportsCLIFn == nil {
+		return false
+	}
+	return BackendSupportsCLIFn(backendID)
+}
+
 // BackendRegistry lists all known AI backends for auto-discovery.
 // Populated lazily from backend plugins via GetBackendRegistry().
 // Direct reads should use GetBackendRegistry() to ensure initialization.
@@ -572,6 +586,8 @@ func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]Agent
 		if spec := FindSpecByBackend(agent.Backend); spec != nil {
 			agent.CanRefreshModels = CanDiscoverModels(*spec)
 		}
+		// Set SupportsCLI from the ai backend factory registry (runtime only)
+		agent.SupportsCLI = BackendSupportsCLI(agent.Backend)
 	}
 
 	// Build common prompt and compose SystemPrompt from commonPrompt + CustomSystemPrompt.

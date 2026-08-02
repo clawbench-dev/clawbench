@@ -234,7 +234,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 }))
 
 // Mock useAgents — return enough functions to avoid TypeError
-const mockSupportsDualTransport = vi.fn().mockReturnValue(false)
+const mockSupportsACP = vi.fn().mockReturnValue(false)
 const mockAgentCanResume = vi.fn().mockReturnValue(false)
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
@@ -257,7 +257,7 @@ vi.mock('@/composables/useAgents', () => ({
     setDefaultAgent: vi.fn(),
     canRefreshModels: () => false,
     agentCanResume: mockAgentCanResume,
-    supportsDualTransport: mockSupportsDualTransport,
+    supportsACP: mockSupportsACP,
     getAgentTransport: () => 'cli',
     invalidateACPStateCache: vi.fn(),
     updateACPModelList: vi.fn(),
@@ -967,13 +967,13 @@ describe('ChatInputBar', () => {
     beforeEach(() => {
       mockAutoApprove.value = false
       mockToggleAutoApprove.mockReset()
-      mockSupportsDualTransport.mockReturnValue(true)
+      mockSupportsACP.mockReturnValue(true)
       mockAvailableModes.value = [{ name: 'code', description: 'Code mode' }]
       wrapper = mountBar({ currentModelName: 'gpt-4', currentAgentId: 'claude' })
     })
 
     afterEach(() => {
-      mockSupportsDualTransport.mockReturnValue(false)
+      mockSupportsACP.mockReturnValue(false)
     })
 
     it('clicking mode chip opens settings drawer', async () => {

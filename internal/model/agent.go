@@ -45,6 +45,11 @@ type Agent struct {
 	// has model discovery capability (registered via RegisterDiscoverModelsFunc).
 	CanRefreshModels bool `json:"canRefreshModels"`
 
+	// SupportsCLI indicates whether this agent's backend has a CLI implementation
+	// (a registered CLI backend factory). Backends like grok are ACP-only and
+	// return false. Computed at load time from the ai backend factory registry.
+	SupportsCLI bool `json:"supportsCLI"`
+
 	// SortOrder determines display order in agent list; lower values first.
 	SortOrder int `json:"sortOrder"`
 }

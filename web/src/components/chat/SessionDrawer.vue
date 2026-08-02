@@ -101,8 +101,8 @@
     <!-- Transport tab -->
     <div v-if="activeTab === 'transport'" class="model-tab-content">
       <div class="model-list">
-        <!-- Only show ACP option for agents that support dual transport -->
-        <div v-if="supportsDualTransport(props.agentId || '')" class="model-item-wrapper">
+        <!-- Only show ACP option for agents that support ACP -->
+        <div v-if="supportsACP(props.agentId || '')" class="model-item-wrapper">
           <button
             class="thinking-item"
             :class="{ current: isACP, 'is-default': defaultTransport === 'acp-stdio' }"
@@ -117,7 +117,8 @@
           </button>
           <div class="model-divider"></div>
         </div>
-        <div class="model-item-wrapper">
+        <!-- Only show CLI option for agents that support CLI -->
+        <div v-if="supportsCLI(props.agentId || '')" class="model-item-wrapper">
           <button
             class="thinking-item"
             :class="{ current: !isACP, 'is-default': defaultTransport !== 'acp-stdio' }"
@@ -214,7 +215,7 @@ const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'sw
 
 const { t } = useI18n()
 const toast = useToast()
-const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshModels, supportsDualTransport, getAgentTransport } = useAgents()
+const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshModels, supportsACP, supportsCLI, getAgentTransport } = useAgents()
 const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove } = useSessionIdentity()
 
 const activeTab = ref('model')

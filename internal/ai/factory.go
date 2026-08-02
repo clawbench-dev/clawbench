@@ -45,6 +45,13 @@ func LookupBackendFactoryForTest(id string) *BackendFactoryEntry {
 	return lookupBackendFactory(id)
 }
 
+// BackendSupportsCLI returns true if a CLI backend factory is registered
+// for the given backend ID. Backends that only implement ACP (e.g. grok)
+// have no CLI factory and return false.
+func BackendSupportsCLI(id string) bool {
+	return lookupBackendFactory(id) != nil
+}
+
 // NewBackend creates the backend via the factory entry.
 func (e *BackendFactoryEntry) NewBackend() AIBackend {
 	return e.NewBackendFn()
@@ -61,7 +68,7 @@ func NewBackend(backendType string) (AIBackend, error) {
 
 	// All backends have been migrated to the plugin registry.
 	// If we reach here, the backend type is truly unsupported.
-	return nil, fmt.Errorf("unsupported backend type: %s", backendType)
+	return nil, fmt.Errorf("unsupported backend type: %s (no CLI implementation registered; is it an ACP-only backend?)", backendType)
 }
 
 // NewBackendForAgent creates a backend instance for the given agent.

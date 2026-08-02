@@ -123,9 +123,13 @@ const mockAgents = {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return !!a?.canRefreshModels
   }),
-  supportsDualTransport: vi.fn((agentId: string) => {
+  supportsACP: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return !!a?.acpCommand
+  }),
+  supportsCLI: vi.fn((agentId: string) => {
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    return a ? a.supportsCLI !== false : false
   }),
   getAgentTransport: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
@@ -489,14 +493,14 @@ describe('SessionDrawer', () => {
   // --- Transport tab ---
 
   describe('transport tab', () => {
-    it('supportsDualTransport returns true for agents with acpCommand', async () => {
+    it('supportsACP returns true for agents with acpCommand', async () => {
       const wrapper = mountDrawer()
-      expect(wrapper.vm.supportsDualTransport('claude')).toBe(true)
+      expect(wrapper.vm.supportsACP('claude')).toBe(true)
     })
 
-    it('supportsDualTransport returns false for agents without acpCommand', async () => {
+    it('supportsACP returns false for agents without acpCommand', async () => {
       const wrapper = mountDrawer({ agentId: 'kimi' })
-      expect(wrapper.vm.supportsDualTransport('kimi')).toBe(false)
+      expect(wrapper.vm.supportsACP('kimi')).toBe(false)
     })
 
     it('isACP is true when currentTransport is acp-stdio', async () => {

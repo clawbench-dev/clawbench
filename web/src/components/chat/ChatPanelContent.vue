@@ -742,7 +742,7 @@ async function sendMessageNow(text, filePaths, files) {
             }
             stream.connectStream(identity.currentSessionId.value)
             // Proactively sync ACP state for the running session
-            if (effectiveAgentId && agentsComposable.supportsDualTransport(effectiveAgentId)) {
+            if (effectiveAgentId && agentsComposable.supportsACP(effectiveAgentId)) {
                 populateACPStateFromCache(effectiveAgentId)
             }
             return
@@ -753,7 +753,7 @@ async function sendMessageNow(text, filePaths, files) {
         // the first prompt, but the frontend's clearModeState() during session switch
         // may have cleared availableModes before the SSE mode_update event arrives.
         // This ensures mode/thinking chips appear immediately.
-        if (effectiveAgentId && agentsComposable.supportsDualTransport(effectiveAgentId)) {
+        if (effectiveAgentId && agentsComposable.supportsACP(effectiveAgentId)) {
             populateACPStateFromCache(effectiveAgentId)
         }
     } catch (err) {

@@ -14,7 +14,7 @@ import (
 
 // parseACPToolCall dispatches ACP ToolCall parsing to the appropriate per-agent
 // function based on the backend identifier (e.g. "claude", "codebuddy").
-// Backends not listed here (e.g., "copilot", "vecli")
+// Backends not listed here (e.g., "grok", "copilot", "vecli")
 // fall through to parseGenericACPToolCall.
 func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 	switch backend {
@@ -27,7 +27,7 @@ func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 	case "kimi":
 		return parseKimiACPToolCall(tc)
 	default:
-		return parseGenericACPToolCall(tc)
+		return parseGenericACPToolCall(tc, backend)
 	}
 }
 
@@ -45,7 +45,7 @@ func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *Tool
 	case "kimi":
 		return parseKimiACPToolCallUpdate(tcu)
 	default:
-		return parseGenericACPToolCallUpdate(tcu)
+		return parseGenericACPToolCallUpdate(tcu, backend)
 	}
 }
 
@@ -142,27 +142,27 @@ func resolveACPToolInput(tc acp.SessionUpdateToolCall, tool *ToolCall, remaps ma
 // extraction logic (title/kind/toolCallId prefix for name, RawInput for input,
 // Content/Locations/Title fallbacks for input inference).
 // Does not attempt _meta extraction — per-agent functions handle their own _meta formats.
-func parseGenericACPToolCall(tc acp.SessionUpdateToolCall) *ToolCall {
+func parseGenericACPToolCall(tc acp.SessionUpdateToolCall, backendID string) *ToolCall {
 	tool := &ToolCall{
-		Name: extractToolName(tc.Title, tc.Kind, "", string(tc.ToolCallId)),
+		Name: extractToolName(tc.Title, tc.Kind, backendID, string(tc.ToolCallId)),
 		ID:   string(tc.ToolCallId),
 		Done: false,
 	}
 
-	resolveACPToolInput(tc, tool, getRemaps("generic_acp"))
+	resolveACPToolInput(tc, tool, acpRemapsForBackend(backendID))
 	return tool
 }
 
 // parseGenericACPToolCallUpdate creates a ToolCall from an ACP ToolCallUpdate
 // using generic extraction logic.
-func parseGenericACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
+func parseGenericACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string) *ToolCall {
 	tool := &ToolCall{
 		ID: string(tcu.ToolCallId),
 	}
 
 	mapToolCallStatus(tcu.Status, tool)
-	mapToolCallInput(tcu, tool, "")
-	mapToolCallName(tcu, tool, "")
+	mapToolCallInput(tcu, tool, backendID)
+	mapToolCallName(tcu, tool, backendID)
 	if tool.Done {
 		mapToolCallOutput(tcu, tool)
 	}

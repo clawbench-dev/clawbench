@@ -288,7 +288,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgentModel: mockAgentFns.getAgentModel,
     agentHeaderTitle: mockAgentFns.agentHeaderTitle,
     getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
-    supportsDualTransport: vi.fn().mockReturnValue(false),
+    supportsACP: vi.fn().mockReturnValue(false),
   }),
   restoreOriginalModels: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),

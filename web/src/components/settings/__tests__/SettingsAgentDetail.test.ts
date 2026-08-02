@@ -128,6 +128,16 @@ describe('SettingsAgentDetail', () => {
     expect(count2).toBeGreaterThan(count1)
   })
 
+  it('ACP-only agent has no transport select (no CLI option offered)', () => {
+    // Genuine ACP-only agent: acpCommand set but supportsCLI=false (e.g. grok).
+    // A transport select must NOT be rendered — CLI is not available to switch to.
+    const wrapper = mountDetail({ acpCommand: 'grok agent stdio', supportsCLI: false })
+    const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+
+    const transportItem = items.find((it: any) => it.props('item')?.key === 'transport')
+    expect(transportItem).toBeUndefined()
+  })
+
   it('renders fewer items for agent without command', () => {
     const wrapper1 = mountDetail({ command: 'claude' })
     const count1 = wrapper1.findAllComponents({ name: 'SettingsItem' }).length
@@ -152,8 +162,9 @@ describe('SettingsAgentDetail', () => {
     const wrapper1 = mountDetail({ acpCommand: '', canRefreshModels: true })
     const count1 = wrapper1.findAllComponents({ name: 'SettingsItem' }).length
 
-    // ACP-only has no transport select but has system prompt as info
-    const wrapper2 = mountDetail({ acpCommand: 'claude --acp', canRefreshModels: false })
+    // Genuine ACP-only agent: has acpCommand but no CLI support (supportsCLI=false).
+    // No transport select (no dual transport) and system prompt shown as info.
+    const wrapper2 = mountDetail({ acpCommand: 'grok agent stdio', supportsCLI: false })
     const count2 = wrapper2.findAllComponents({ name: 'SettingsItem' }).length
 
     // Both should have items

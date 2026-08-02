@@ -82,11 +82,18 @@ async function loadCommonPrompt() {
 
 const agent = computed(() => getAgent(props.agentId))
 
-// Determine if agent is ACP-only (has acpCommand and no CLI model discovery)
+// Determine if agent is ACP-only (has acpCommand but no CLI backend implementation)
 const isACPOnly = computed(() => {
   const a = agent.value
   if (!a) return false
-  return a.acpCommand && !a.canRefreshModels
+  return a.acpCommand && !a.supportsCLI
+})
+
+// Determine if agent supports both ACP and CLI (dual transport)
+const isDualTransport = computed(() => {
+  const a = agent.value
+  if (!a) return false
+  return a.acpCommand && a.supportsCLI !== false
 })
 
 interface AgentItem {
@@ -137,8 +144,8 @@ const items = computed<AgentItem[]>(() => {
     })
   }
 
-  // Transport (only for dual-transport agents)
-  if (a.acpCommand) {
+  // Transport (only for dual-transport agents — both ACP and CLI supported)
+  if (isDualTransport.value) {
     result.push({
       key: 'transport',
       label: t('settings.items.agentTransport'),

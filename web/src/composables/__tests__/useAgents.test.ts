@@ -47,7 +47,7 @@ describe('useAgents', () => {
     getAgent, getAgentModel, getAgentDefaultModelName, agentHeaderTitle,
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
-    agentCanResume, supportsDualTransport, getAgentTransport,
+    agentCanResume, supportsACP, supportsCLI, supportsDualTransport, getAgentTransport,
     setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, hasPreferredMode } = useAgents()
 
   // Register mock identity updaters — normally done by useSessionIdentity at
@@ -989,16 +989,73 @@ describe('useAgents', () => {
     })
   })
 
-  // --- supportsDualTransport ---
+  // --- supportsACP / supportsCLI / supportsDualTransport ---
 
-  describe('supportsDualTransport', () => {
+  describe('supportsACP', () => {
     it('returns true when agent has acpCommand', async () => {
       resetAgents()
       registerMocks()
       const agentsWithAcp = testAgents.map(a => a.id === 'claude' ? { ...a, acpCommand: 'claude-acp' } : a)
       mockApiGet.mockResolvedValue({ agents: agentsWithAcp, defaultAgent: 'claude' })
       await loadAgents()
+      expect(supportsACP('claude')).toBe(true)
+    })
+
+    it('returns false when agent has no acpCommand', () => {
+      expect(supportsACP('simple')).toBe(false)
+    })
+
+    it('returns false for unknown agent', () => {
+      expect(supportsACP('nonexistent')).toBe(false)
+    })
+  })
+
+  describe('supportsCLI', () => {
+    it('returns true when backend reports supportsCLI', async () => {
+      resetAgents()
+      registerMocks()
+      const agentsWithCli = testAgents.map(a => a.id === 'claude' ? { ...a, supportsCLI: true } : a)
+      mockApiGet.mockResolvedValue({ agents: agentsWithCli, defaultAgent: 'claude' })
+      await loadAgents()
+      expect(supportsCLI('claude')).toBe(true)
+    })
+
+    it('returns false when backend explicitly reports no CLI support (ACP-only)', async () => {
+      resetAgents()
+      registerMocks()
+      const agentsWithNoCli = testAgents.map(a => a.id === 'claude' ? { ...a, acpCommand: 'grok agent stdio', supportsCLI: false } : a)
+      mockApiGet.mockResolvedValue({ agents: agentsWithNoCli, defaultAgent: 'claude' })
+      await loadAgents()
+      expect(supportsCLI('claude')).toBe(false)
+    })
+
+    it('returns true for legacy agents where supportsCLI is not reported', () => {
+      // Legacy agents without the supportsCLI field default to CLI-capable.
+      expect(supportsCLI('claude')).toBe(true)
+    })
+
+    it('returns false for unknown agent', () => {
+      expect(supportsCLI('nonexistent')).toBe(false)
+    })
+  })
+
+  describe('supportsDualTransport', () => {
+    it('returns true only when agent has both acpCommand and CLI support', async () => {
+      resetAgents()
+      registerMocks()
+      const dualAgents = testAgents.map(a => a.id === 'claude' ? { ...a, acpCommand: 'claude-acp', supportsCLI: true } : a)
+      mockApiGet.mockResolvedValue({ agents: dualAgents, defaultAgent: 'claude' })
+      await loadAgents()
       expect(supportsDualTransport('claude')).toBe(true)
+    })
+
+    it('returns false for ACP-only agents (acpCommand but no CLI)', async () => {
+      resetAgents()
+      registerMocks()
+      const acpOnlyAgents = testAgents.map(a => a.id === 'claude' ? { ...a, acpCommand: 'grok agent stdio', supportsCLI: false } : a)
+      mockApiGet.mockResolvedValue({ agents: acpOnlyAgents, defaultAgent: 'claude' })
+      await loadAgents()
+      expect(supportsDualTransport('claude')).toBe(false)
     })
 
     it('returns false when agent has no acpCommand', () => {

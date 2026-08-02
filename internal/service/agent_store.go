@@ -307,7 +307,7 @@ func LoadAgentsIntoMemory() error {
 	for _, agent := range agents {
 		newAgentsMap[agent.ID] = agent
 		// Populate runtime-only fields from BackendRegistry
-		// (CanRefreshModels and ThinkingEffortLevels are not persisted in DB)
+		// (CanRefreshModels, SupportsCLI and ThinkingEffortLevels are not persisted in DB)
 		if spec := model.FindSpecByBackend(agent.Backend); spec != nil {
 			if model.CanDiscoverModels(*spec) {
 				agent.CanRefreshModels = true
@@ -316,6 +316,7 @@ func LoadAgentsIntoMemory() error {
 				agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
 			}
 		}
+		agent.SupportsCLI = model.BackendSupportsCLI(agent.Backend)
 	}
 
 	// Atomically assign the fully-built map so concurrent readers never see an empty map.

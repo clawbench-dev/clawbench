@@ -49,7 +49,7 @@ vi.mock('@/composables/useAgents', () => ({
         getEffectiveThinkingEffort: mockGetEffectiveThinkingEffort,
         getAgentThinkingEffortLevels: mockGetAgentThinkingEffortLevels,
         agentHeaderTitle: mockAgentHeaderTitle,
-        supportsDualTransport: vi.fn().mockReturnValue(true),
+        supportsACP: vi.fn().mockReturnValue(true),
     }),
     registerIdentityUpdaters: vi.fn(),
 }))

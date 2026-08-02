@@ -21,6 +21,15 @@ var grokDefaultModels = []model.AgentModel{
 	{ID: "grok-build", Name: "Grok Build"},
 }
 
+// grokModelNames maps known model IDs to pretty display names, so discovered
+// models are named consistently with the fallback list.
+var grokModelNames = map[string]string{
+	"grok-4.5":    "Grok 4.5",
+	"grok-3":      "Grok 3",
+	"grok-3-mini": "Grok 3 Mini",
+	"grok-build":  "Grok Build",
+}
+
 // parseGrokModels parses `grok models` output.
 // Format (each available model on its own line, default marked):
 //
@@ -32,10 +41,10 @@ var grokDefaultModels = []model.AgentModel{
 //
 // Only lines beginning with "* " are parsed; the "(default)" suffix marks the
 // default model. The first model is used as fallback default when the suffix
-// is absent.
+// is absent. At most one model is marked default.
 func parseGrokModels(output string) []model.AgentModel {
 	var models []model.AgentModel
-	defaultSeen := false
+	defaultMarked := false
 
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -55,21 +64,34 @@ func parseGrokModels(output string) []model.AgentModel {
 		if id == "" {
 			continue
 		}
+
+		// Only the first model may be default — ignore duplicate "(default)" markers.
+		modelDefault := isDefault && !defaultMarked
+		if isDefault {
+			defaultMarked = true
+		}
+
 		models = append(models, model.AgentModel{
 			ID:      id,
-			Name:    id,
-			Default: isDefault,
+			Name:    grokModelName(id),
+			Default: modelDefault,
 		})
-		if isDefault {
-			defaultSeen = true
-		}
 	}
 
 	// If no model carried "(default)", mark the first as default.
-	if !defaultSeen && len(models) > 0 {
+	if !defaultMarked && len(models) > 0 {
 		models[0].Default = true
 	}
 	return models
+}
+
+// grokModelName returns the pretty display name for a model ID, falling back
+// to the raw ID when the model is unknown.
+func grokModelName(id string) string {
+	if name, ok := grokModelNames[id]; ok {
+		return name
+	}
+	return id
 }
 
 // DiscoverGrokModels discovers Grok model IDs by running `grok models`.

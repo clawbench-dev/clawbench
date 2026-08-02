@@ -21,10 +21,13 @@ Available models:
 	require.Len(t, models, 3)
 
 	assert.Equal(t, "grok-4.5", models[0].ID)
+	assert.Equal(t, "Grok 4.5", models[0].Name, "known models should use pretty names")
 	assert.True(t, models[0].Default)
 	assert.Equal(t, "grok-build", models[1].ID)
+	assert.Equal(t, "Grok Build", models[1].Name)
 	assert.False(t, models[1].Default)
 	assert.Equal(t, "grok-3", models[2].ID)
+	assert.Equal(t, "Grok 3", models[2].Name)
 	assert.False(t, models[2].Default)
 }
 
@@ -38,6 +41,27 @@ func TestParseGrokModels_NoDefaultSuffix_FirstIsDefault(t *testing.T) {
 	assert.Equal(t, "grok-4.5", models[0].ID)
 	assert.True(t, models[0].Default, "first model should be marked default when no (default) suffix")
 	assert.False(t, models[1].Default)
+}
+
+func TestParseGrokModels_DuplicateDefault_OnlyFirstWins(t *testing.T) {
+	output := `Available models:
+  * grok-4.5 (default)
+  * grok-build (default)
+`
+	models := parseGrokModels(output)
+	require.Len(t, models, 2)
+	assert.True(t, models[0].Default, "first (default) marker wins")
+	assert.False(t, models[1].Default, "duplicate (default) marker should be ignored")
+}
+
+func TestParseGrokModels_UnknownModel_UsesRawID(t *testing.T) {
+	output := `Available models:
+  * some-future-model
+`
+	models := parseGrokModels(output)
+	require.Len(t, models, 1)
+	assert.Equal(t, "some-future-model", models[0].ID)
+	assert.Equal(t, "some-future-model", models[0].Name, "unknown models fall back to raw ID")
 }
 
 func TestParseGrokModels_Unauthenticated(t *testing.T) {

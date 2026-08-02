@@ -262,14 +262,14 @@ import { useFileUpload } from '@/composables/useFileUpload'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
-const { supportsDualTransport, hasPreferredMode, agentCanResume } = useAgents()
+const { supportsACP, hasPreferredMode, agentCanResume } = useAgents()
 const toast = useToast()
 const { uploadAndAttach } = useFileUpload()
 
 // isACP: true when the current agent supports ACP (has acpCommand).
 // Used for mode chips — these are ACP features
 // that apply regardless of the current session's transport mode.
-const isACP = computed(() => supportsDualTransport(props.currentAgentId || ''))
+const isACP = computed(() => supportsACP(props.currentAgentId || ''))
 
 // isACPTransport: true when the current session is using ACP transport.
 // Slash commands are only available in ACP transport mode — even if the

@@ -228,7 +228,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, thinkingEffortState, modeState } = identity
 
   // ── Agents from singleton ──
-  const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsDualTransport } = useAgents()
+  const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
 
   // Helper: sync model state from agent config when agent changes
   function syncModelFromAgentLocal(agentId: string) {
@@ -655,7 +655,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // This runs after switchSession's finally block, so the UI is already
       // interactive — a failure here is non-critical (SSE will populate later).
       const effectiveAgentId = currentAgentId.value || data.agentId || agentId
-      if (effectiveAgentId && supportsDualTransport(effectiveAgentId)) {
+      if (effectiveAgentId && supportsACP(effectiveAgentId)) {
         try {
           await populateACPStateFromCache(effectiveAgentId)
         } catch {

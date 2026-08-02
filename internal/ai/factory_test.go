@@ -178,6 +178,20 @@ func TestNewBackend_CaseSensitive(t *testing.T) {
 	assert.Error(t, err, "backend type should be case-sensitive")
 }
 
+func TestBackendSupportsCLI(t *testing.T) {
+	setupTestBackends()
+	// Registered CLI backends report true
+	assert.True(t, BackendSupportsCLI("claude"))
+	assert.True(t, BackendSupportsCLI("kimi"))
+	assert.True(t, BackendSupportsCLI("codex")) // custom backend also counts as CLI
+	assert.True(t, BackendSupportsCLI("vecli"))
+
+	// Unregistered backends report false
+	assert.False(t, BackendSupportsCLI("grok"), "ACP-only backend without CLI factory should report false")
+	assert.False(t, BackendSupportsCLI("unsupported"))
+	assert.False(t, BackendSupportsCLI(""))
+}
+
 // --- NewBackendForAgent tests ---
 
 func TestNewBackendForAgent_NoAgentID_FallsBackToCLI(t *testing.T) {

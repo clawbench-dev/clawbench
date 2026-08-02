@@ -15,4 +15,8 @@ func init() {
 	// Wire up the BackendSpec loader so model/discovery.go can build
 	// BackendRegistry dynamically from backend plugins.
 	model.LoadBackendSpecs = AllSpecsSorted
+
+	// Wire up the CLI capability reporter so model can tell whether a backend
+	// has a CLI implementation (grok and other ACP-only backends return false).
+	model.BackendSupportsCLIFn = ai.BackendSupportsCLI
 }

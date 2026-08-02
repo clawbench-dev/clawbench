@@ -97,6 +97,20 @@ model.BackendSpec{
 - **聊天**：`NewBackendForAgentWithTransport` 命中 `acp-stdio` + `SupportsACP()` → 直接创建 `ACPBackend`，不经过 CLI factory（无需 `ai.RegisterBackend`）
 - **工具名归一化**：Grok 使用标准 ACP 工具（title/kind），共享 `acp_tool_names.go` 前缀匹配已覆盖 Read/Write/Edit/Bash 等，走 `parseGenericACPToolCall`，无需 per-agent 解析函数或 ToolCallIDPrefixes
 
+## ACP / CLI 正交能力模型（本次重构）
+
+原模型将 "有 acpCommand" 等同于 "双传输"，导致 ACP-only 后端（如 grok）被错误地提供 CLI 选项，切换后报 `unsupported backend type`。重构为 ACP 与 CLI **正交** 的两个独立能力信号：
+
+| 能力 | 来源 | 示例 |
+| --- | --- | --- |
+| `SupportsACP` | `Agent.AcpCommand != ""`（已有 `SupportsACP()`） | grok / claude |
+| `SupportsCLI` | 是否有 CLI factory 注册（`ai.RegisterBackend` 或 plugin CLI/Custom） | claude / pi；grok=false |
+
+- **模型层**：`Agent` 新增运行时字段 `SupportsCLI`（`json:"supportsCLI"`，不持久化），在 `MergeDiscoveredDataDB` / `agent_store.go` / 创建 agent 时由 `model.BackendSupportsCLI(backend)` 计算；该函数通过 `model.BackendSupportsCLIFn` 函数变量注入（`backends/acp_wire.go` → `ai.BackendSupportsCLI`），避免 import cycle
+- **后端校验**：`serveAgentsPatch` 对 `transport=cli` 增加 `agent.SupportsCLI` 校验；`factory.go` 对无 CLI factory 的后端给出明确错误（提示可能是 ACP-only）
+- **前端**：`useAgents` 新增 `supportsACP()` / `supportsCLI()`；`supportsDualTransport()` 语义修正为 `supportsACP && supportsCLI`。原先用它表示 "是 ACP agent" 的调用点（mode chips、ACP 状态同步、新会话状态恢复）改用 `supportsACP()`。`SessionDrawer` 传输 tab 按能力分别显示 ACP/CLI 选项；`SettingsAgentDetail` 传输下拉仅双传输后端显示，`isACPOnly` 改用 `supportsCLI === false`
+- **ACP 泛型 remaps**：`parseGenericACPToolCall(Update)` 透传 backendID，使后端注册的 `InputRemaps`（如 GrokACPRemaps）真正生效（原先硬编码 `generic_acp` 造成死数据）
+
 ### 模型发现
 
 `grok models` 输出解析（登录后每行 `* <model-id>` 或 `* <model-id> (default)`）。未登录/命令失败 → 回退默认列表：
@@ -123,5 +137,5 @@ var grokDefaultModels = []model.AgentModel{
 
 ## 已知限制
 
-- 仅 ACP 模式，无 CLI 回退——若用户将 transport 强制改为 `cli`，会报 "unsupported backend type: grok"（预期行为，Pi 的 CLI-only 是对称情形）
+- 仅 ACP 模式，无 CLI 回退——前端不再为 ACP-only 后端提供 CLI 选项，且 PATCH API 拒绝 `transport=cli`；但若绕过前端直接构造 `transport=cli` 请求仍会报 "unsupported backend type: grok"（预期行为，Pi 的 CLI-only 是对称情形）
 - `grok models` 未登录时只显示默认模型，登录后模型列表由 CLI 返回

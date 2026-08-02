@@ -58,6 +58,7 @@ func setupAgentTestEnv(t *testing.T) func() {
 			{ID: "claude-sonnet-4-6", Name: "Claude Sonnet", Default: true},
 		},
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
+		SupportsCLI:          true, // claude has a CLI backend implementation
 	}
 
 	require.NoError(t, service.SaveAgent(db, codebuddyAgent))
@@ -860,6 +861,35 @@ func TestAgentPatch_TransportACPNotAllowedForNoACPAgent(t *testing.T) {
 	w := callHandler(ServeAgents, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAgentPatch_TransportCLINotAllowedForACPOnlyAgent(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Create an agent whose backend is ACP-only (no CLI implementation).
+	// This mirrors grok — has AcpCommand but no CLI factory.
+	model.Agents["acp-only"] = &model.Agent{
+		ID:          "acp-only",
+		Name:        "ACPOnly",
+		Backend:     "acp-only",
+		AcpCommand:  "grok agent stdio",
+		SupportsCLI: false,
+		Transport:   "acp-stdio",
+		Models:      []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+	}
+	model.AgentList = append(model.AgentList, model.Agents["acp-only"])
+	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), model.Agents["acp-only"]))
+
+	body := map[string]any{
+		"id":        "acp-only",
+		"transport": "cli",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "acp-stdio", model.Agents["acp-only"].Transport, "transport should remain unchanged")
 }
 
 func TestAgentPatch_TransportInvalid(t *testing.T) {
