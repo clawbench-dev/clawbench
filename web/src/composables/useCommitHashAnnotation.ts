@@ -24,8 +24,32 @@ export const COMMIT_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke
  * Pure-decimal 7-digit numbers (timestamps, byte counts) are excluded
  * because git commit hashes are SHA-1 values that virtually always
  * contain at least one hex letter.
+ *
+ * NOTE: This regex deliberately avoids regex lookbehind (Safari/iPadOS < 16.4
+ * does not support it — a lookbehind literal throws SyntaxError at parse time
+ * and white-screens the whole bundle). Prefix exclusions are enforced in
+ * hasExcludedCommitPrefix() instead.
  */
-const COMMIT_HASH_RE = /(?<![#\\%]|\b0[xX]|:\/\/)(\b[0-9a-f]{7,40}\b)(?!%)/gi
+export const COMMIT_HASH_RE = /(\b[0-9a-f]{7,40}\b)(?!%)/gi
+
+/**
+ * Check whether the text immediately before a candidate hash match is one of
+ * the excluded prefixes (lookbehind emulation for Safari < 16.4):
+ *   - # → CSS color values
+ *   - \ → Unicode escape sequences
+ *   - % → URL-encoded segments
+ *   - :// → URL scheme hex
+ *
+ * Note: 0x/0X prefixes do not need a check here — \b already requires a
+ * word boundary before the hash, and 'x'/'X' are word characters, so a hash
+ * cannot directly follow "0x" anyway.
+ */
+export function hasExcludedCommitPrefix(text: string, index: number): boolean {
+    if (index <= 0) return false
+    const prev = text[index - 1]
+    if (prev === '#' || prev === '\\' || prev === '%') return true
+    return index >= 3 && text.slice(index - 3, index) === '://'
+}
 
 /**
  * Check if a string looks like a git commit hash.
@@ -119,7 +143,9 @@ export function annotateCommitHashes(
         let match: RegExpExecArray | null
         while ((match = COMMIT_HASH_RE.exec(text)) !== null) {
             const shaStr = match[1]
-            const isCommit = looksLikeCommitHash(shaStr)
+            // Exclude hashes with disallowed prefixes (lookbehind emulation
+            // for Safari < 16.4 — the regex itself has no lookbehind).
+            const isCommit = looksLikeCommitHash(shaStr) && !hasExcludedCommitPrefix(text, match.index)
             // Push the text before this match
             if (match.index > lastIndex) {
                 parts.push({ text: text.slice(lastIndex, match.index), sha: null })

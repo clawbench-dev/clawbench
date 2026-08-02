@@ -35,6 +35,14 @@ export interface RenderResult {
 }
 
 /**
+ * Inline math $...$ 匹配正则。
+ *
+ * 不使用 lookbehind（Safari/iPadOS < 16.4 不支持，导致 bundle 解析失败白屏），
+ * 用捕获组 `(^|[^$])` 保留前置字符并在回调中回填，语义与 `(?<!\$)` 等价。
+ */
+export const INLINE_MATH_RE = /(^|[^$])\$(?!\$)([^$\n]+?)\$(?!\$)/g
+
+/**
  * 在HTML字符串中渲染KaTeX数学公式（字符串级别，不操作DOM）
  *
  * 【重要】必须使用 katex.renderToString() 在字符串阶段渲染，
@@ -70,11 +78,12 @@ export function renderKatexInString(html: string): string {
 
     // Inline math: $...$  和  \(...\)
     // 注意：$ 必须匹配非空内容，且左右不能是数字或字母（避免误匹配价格等）
-    html = html.replace(/(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g, (_, math) => {
+    // 不使用 lookbehind（Safari < 16.4 不支持），用 (^|[^$]) 捕获前缀再回填
+    html = html.replace(INLINE_MATH_RE, (whole, pre, math) => {
         try {
-            return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
+            return pre + katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
         } catch {
-            return escapeHtml(_)
+            return pre + escapeHtml(whole.slice(pre.length))
         }
     })
     html = html.replace(/\\\(([\s\S]+?)\\\)/g, (_, math) => {

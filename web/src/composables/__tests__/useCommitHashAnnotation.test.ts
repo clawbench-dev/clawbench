@@ -6,6 +6,8 @@ import {
     verifyCommitHashes,
     getCachedCommitInfo,
     clearCommitHashCache,
+    COMMIT_HASH_RE,
+    hasExcludedCommitPrefix,
 } from '@/composables/useCommitHashAnnotation'
 
 // Mock escapeHtml to pass through (for asserting HTML structure)
@@ -24,6 +26,60 @@ if (typeof (globalThis as any).CSS === 'undefined') {
 if (typeof (globalThis as any).CSS.escape === 'undefined') {
     ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&')
 }
+
+// ── COMMIT_HASH_RE ──
+
+describe('COMMIT_HASH_RE', () => {
+    it('does not use regex lookbehind (Safari < 16.4 compatibility)', () => {
+        // Lookbehind (?<= / (?<!) is only supported from Safari/iPadOS 16.4.
+        // A lookbehind regex literal throws SyntaxError at parse time on older
+        // Safari, killing the entire bundle → white screen.
+        expect(COMMIT_HASH_RE.source).not.toMatch(/\(\?<[=!]/)
+    })
+})
+
+// ── hasExcludedCommitPrefix ──
+
+describe('hasExcludedCommitPrefix', () => {
+    it('rejects # prefix (CSS colors)', () => {
+        expect(hasExcludedCommitPrefix('#abcdef0', 1)).toBe(true)
+    })
+
+    it('rejects backslash prefix (Unicode escapes)', () => {
+        expect(hasExcludedCommitPrefix('\\abcdef0', 1)).toBe(true)
+    })
+
+    it('rejects % prefix (URL-encoded segments)', () => {
+        expect(hasExcludedCommitPrefix('%abcdef0', 1)).toBe(true)
+    })
+
+    it('rejects :// prefix (URL scheme hex)', () => {
+        expect(hasExcludedCommitPrefix('http://abcdef01', 7)).toBe(true)
+    })
+
+    it('accepts hash at start of string', () => {
+        expect(hasExcludedCommitPrefix('abcdef0', 0)).toBe(false)
+    })
+
+    it('accepts plain-space prefix', () => {
+        expect(hasExcludedCommitPrefix('commit abcdef0', 7)).toBe(false)
+    })
+
+    it('accepts single colon prefix (commit:sha format)', () => {
+        expect(hasExcludedCommitPrefix('commit:abc1234', 7)).toBe(false)
+    })
+
+    it('accepts non-excluded punctuation prefix', () => {
+        expect(hasExcludedCommitPrefix('(abc1234)', 1)).toBe(false)
+        expect(hasExcludedCommitPrefix('-abcdef0', 1)).toBe(false)
+    })
+
+    it('rejects 0x/0X prefix via word boundary even though regex matches', () => {
+        // 0x/0X are handled by \b in the regex, but the exclusion must hold
+        // when the hash does not directly abut the 0x (e.g. 0x abcdef0).
+        expect(hasExcludedCommitPrefix('0x abcdef0', 3)).toBe(false)
+    })
+})
 
 // ── looksLikeCommitHash ──
 
@@ -217,6 +273,21 @@ describe('annotateCommitHashes', () => {
     it('does NOT annotate URL scheme hex (:// prefix)', () => {
         const result = annotateCommitHashes('<p>http://abcdef01</p>')
         expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('does NOT annotate % prefix in plain text (URL-encoded segment)', () => {
+        const result = annotateCommitHashes('<p>fetch %2Fabcdef0 now</p>')
+        expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('annotates real hash while skipping excluded prefix in same text', () => {
+        const result = annotateCommitHashes('<p>color #abcdef0 but commit abc1234 ok</p>')
+        expect(result.detectedSHAs).toEqual(['abc1234'])
+        // Only abc1234 (not #abcdef0) should be wrapped
+        const pending = result.html.match(/chat-commit-hash-pending/g)
+        expect(pending).toHaveLength(1)
+        expect(result.html).toContain('data-commit-sha="abc1234"')
+        expect(result.html).not.toContain('data-commit-sha="abcdef0"')
     })
 
     it('STILL annotates commit:sha format (colon is allowed)', () => {

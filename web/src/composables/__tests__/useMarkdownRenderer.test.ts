@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { renderKatexInString, renderMarkdown, renderMarkdownHtml, renderMermaidInElement, useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
+import { renderKatexInString, renderMarkdown, renderMarkdownHtml, renderMermaidInElement, useMarkdownRenderer, INLINE_MATH_RE } from '@/composables/useMarkdownRenderer'
 
 // Mock globals
 const mockMarkedParse = vi.fn((s: string) => `<p>${s}</p>`)
@@ -85,6 +85,13 @@ vi.mock('@/stores/app', () => ({
 describe('renderKatexInString', () => {
   beforeEach(() => {
     mockKatexRenderToString.mockClear()
+  })
+
+  it('INLINE_MATH_RE does not use regex lookbehind (Safari < 16.4 compatibility)', () => {
+    // Lookbehind (?<= / (?<!) is only supported from Safari/iPadOS 16.4.
+    // A lookbehind regex literal throws SyntaxError at parse time on older
+    // Safari, killing the entire bundle → white screen.
+    expect(INLINE_MATH_RE.source).not.toMatch(/\(\?<[=!]/)
   })
 
   it('renders display math with $$ delimiters', () => {
