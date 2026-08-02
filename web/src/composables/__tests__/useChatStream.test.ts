@@ -2019,4 +2019,43 @@ describe('useChatStream', () => {
       expect(textBlocks.length).toBe(0)
     })
   })
+
+  // ── tool_use block timeout ──
+
+  describe('tool_use block timeout', () => {
+    it('keeps subagent (task) tool block running past the 30s tool timeout', () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('tool_use', { id: 'tool-task-1', name: 'task', done: false, status: '' })
+      vi.advanceTimersByTime(5000)
+      // Reset the stream timeout so only the per-tool timeout fires.
+      simulateWsEvent('content', { content: 'working' })
+      vi.advanceTimersByTime(26000) // 31s total since the tool started
+
+      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant')
+      const taskBlock = streamingMsg.blocks.find((b: any) => b.id === 'tool-task-1')
+      expect(taskBlock.done).toBe(false)
+      vi.useRealTimers()
+    })
+
+    it('marks a non-subagent tool done after the 30s tool timeout (unchanged)', () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('tool_use', { id: 'tool-read-1', name: 'Read', done: false, status: '' })
+      vi.advanceTimersByTime(5000)
+      simulateWsEvent('content', { content: 'working' })
+      vi.advanceTimersByTime(26000)
+
+      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant')
+      const readBlock = streamingMsg.blocks.find((b: any) => b.id === 'tool-read-1')
+      expect(readBlock.done).toBe(true)
+      vi.useRealTimers()
+    })
+  })
 })

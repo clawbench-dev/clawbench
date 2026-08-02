@@ -68,6 +68,15 @@ export function useChatStream(options: UseChatStreamOptions) {
   const PERMISSION_STREAM_TIMEOUT_MS = 300000 // 5 min when permission approval is pending (user deciding)
   const TOOL_USE_TIMEOUT_MS = 30000 // 30 seconds without 'done' event = mark as done
 
+  // Subagent (task/Agent) tool calls run for minutes inside a child session whose
+  // inner events aren't forwarded over ACP, so the outer call legitimately exceeds
+  // TOOL_USE_TIMEOUT_MS. Don't kill their spinner with the 30s fallback, otherwise a
+  // long-running subagent looks like it already finished.
+  const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent'])
+  function isSubagentToolName(name?: string): boolean {
+    return !!name && SUBAGENT_TOOL_NAMES.has(name.toLowerCase())
+  }
+
   const { onEvent, sendWsMessage, connected } = useGlobalEvents()
 
   function debouncedRender() {
@@ -324,7 +333,7 @@ export function useChatStream(options: UseChatStreamOptions) {
             if (data.display_name) newBlock.display_name = data.display_name
             if (data.file_path) newBlock.file_path = data.file_path
             blocks.push(newBlock)
-            if (data.name !== 'PermissionApproval') {
+            if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
               const timer = setTimeout(() => {
                 if (!newBlock.done) {
                   appLog.w(TAG, `tool_use block ${data.id} timed out without 'done', marking as done`)
