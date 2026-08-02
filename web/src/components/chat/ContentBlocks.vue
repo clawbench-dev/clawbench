@@ -368,12 +368,16 @@ function scheduledTaskKeys(bi) {
 
 /** Generate a stable key for a block, used for v-for :key and animation state.
  *  tool_use: block.id (unique tool call ID from backend)
- *  thinking: block._key (stable key assigned at creation/parsing)
+ *  thinking: block.think_id (stable backend-assigned ID, survives re-opens),
+ *            falling back to block._key (key assigned at creation/parsing)
  *  text: text-${bi} (text blocks merge so index is stable)
  *  other: type-bi (fallback) */
 function stableBlockKey(bi, block) {
   if (block.type === 'tool_use' && block.id) return block.id
-  if (block.type === 'thinking' && block._key) return block._key
+  if (block.type === 'thinking') {
+    if (block.think_id) return block.think_id
+    if (block._key) return block._key
+  }
   return `${block.type || 'other'}-${bi}`
 }
 

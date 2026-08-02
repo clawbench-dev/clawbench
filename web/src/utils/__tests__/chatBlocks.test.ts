@@ -699,3 +699,30 @@ describe('formatDetailTime', () => {
     expect(formatDetailTime(input)).toBe(formatDetailTime(input))
   })
 })
+
+// ── parseAssistantContent slim thinking ──
+
+describe('parseAssistantContent slim thinking', () => {
+  it('keeps slim thinking blocks with think_id and no text', () => {
+    const content = JSON.stringify({
+      blocks: [
+        { type: 'text', text: 'hi' },
+        { type: 'thinking', think_id: 'th_01', done: true },
+      ],
+    })
+    const { blocks } = parseAssistantContent(content)
+    expect(blocks[1].type).toBe('thinking')
+    expect(blocks[1].think_id).toBe('th_01')
+    expect(blocks[1].text).toBeUndefined()
+    expect(blocks[1]._key).toBe('thinking-0')
+  })
+
+  it('keeps live thinking blocks with text', () => {
+    const content = JSON.stringify({
+      blocks: [{ type: 'thinking', text: 'live thought', done: false }],
+    })
+    const { blocks } = parseAssistantContent(content)
+    expect(blocks[0].text).toBe('live thought')
+    expect(blocks[0].think_id).toBeUndefined()
+  })
+})
