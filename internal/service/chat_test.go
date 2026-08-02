@@ -128,6 +128,29 @@ CREATE TABLE IF NOT EXISTS chat_metadata (
 	error_message TEXT DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS chat_tool_calls (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	message_id INTEGER NOT NULL,
+	session_id TEXT NOT NULL,
+	tool_id TEXT NOT NULL,
+	name TEXT NOT NULL,
+	input TEXT NOT NULL DEFAULT '{}',
+	output TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT '',
+	done INTEGER NOT NULL DEFAULT 0,
+	summary TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(tool_id, message_id)
+);
+CREATE TABLE IF NOT EXISTS chat_thinking (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	message_id INTEGER NOT NULL,
+	session_id TEXT NOT NULL,
+	think_id TEXT NOT NULL,
+	text TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(think_id, message_id)
+);
 `
 
 // setupDB creates an in-memory SQLite database with the required schema,

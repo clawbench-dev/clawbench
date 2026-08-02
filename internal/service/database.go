@@ -321,6 +321,19 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		);
 		CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON chat_tool_calls(message_id);
 		CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON chat_tool_calls(session_id, created_at DESC);
+
+		-- Thinking block detail storage (text split from chat_history.content for performance)
+		CREATE TABLE IF NOT EXISTS chat_thinking (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL REFERENCES chat_history(id) ON DELETE CASCADE,
+			session_id TEXT NOT NULL,
+			think_id TEXT NOT NULL,
+			text TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(think_id, message_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_thinking_message ON chat_thinking(message_id);
+		CREATE INDEX IF NOT EXISTS idx_thinking_session ON chat_thinking(session_id, created_at DESC);
 		-- Covering index for session list ORDER BY + cursor pagination:
 		-- WHERE session_type = 'chat' AND project_path = ? AND archived = 0 ORDER BY updated_at DESC, id DESC
 		-- Without this, idx_sessions_type covers WHERE but requires a filesort for ORDER BY.
