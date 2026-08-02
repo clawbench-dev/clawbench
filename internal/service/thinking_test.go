@@ -2,8 +2,6 @@ package service
 
 import (
 	"testing"
-
-	"clawbench/internal/model"
 )
 
 func TestThinkingCRUD(t *testing.T) {
@@ -90,6 +88,3 @@ func TestGenerateThinkingID(t *testing.T) {
 		t.Error("two generated IDs should differ")
 	}
 }
-
-// Guard: model package must compile alongside (ensures package wiring).
-var _ = model.ChatSession{}
