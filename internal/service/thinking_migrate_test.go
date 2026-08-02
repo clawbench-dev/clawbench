@@ -140,3 +140,58 @@ func TestMigrateThinkingFromContent_IdempotentAndSkipsSlim(t *testing.T) {
 	db.QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
 	assert.Equal(t, 1, count, "streaming message must be skipped")
 }
+
+func TestMigrateThinkingFromContent_EmptyTextThinkingSlimmed(t *testing.T) {
+	teardown := setupTestDBForThinkingMigration(t)
+	defer teardown()
+
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+	oldContent := `{"blocks":[{"type":"thinking","done":true}]}`
+	res, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", oldContent, "sess-1",
+	)
+	assert.NoError(t, err)
+	msgID, _ := res.LastInsertId()
+
+	MigrateThinkingFromContent()
+
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&count)
+	assert.Equal(t, 0, count, "empty-text thinking should not create a row")
+
+	var newContent string
+	err = db.QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&newContent)
+	assert.NoError(t, err)
+	assert.Contains(t, newContent, "think_id")
+	assert.NotContains(t, newContent, "\"text\"")
+
+	// Second run must be a no-op (row now has think_id → excluded).
+	MigrateThinkingFromContent()
+	db.QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
+	assert.Equal(t, 0, count)
+}
+
+func TestMigrateThinkingFromContent_UpsertFailureKeepsContent(t *testing.T) {
+	teardown := setupTestDBForThinkingMigration(t)
+	defer teardown()
+
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+	oldContent := `{"blocks":[{"type":"thinking","text":"doomed","done":true}]}`
+	_, err = db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", oldContent, "sess-1",
+	)
+	assert.NoError(t, err)
+	_, err = db.Exec("DROP TABLE chat_thinking")
+	assert.NoError(t, err)
+
+	MigrateThinkingFromContent() // must not panic; rows fail internally
+
+	var content string
+	err = db.QueryRow("SELECT content FROM chat_history WHERE session_id = 'sess-1'").Scan(&content)
+	assert.NoError(t, err)
+	assert.Contains(t, content, "\"text\":\"doomed\"", "content must stay full when upsert fails")
+}

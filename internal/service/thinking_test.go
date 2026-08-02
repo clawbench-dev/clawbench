@@ -146,6 +146,29 @@ func TestSlimThinkingInContent(t *testing.T) {
 			t.Errorf("expected unchanged, got slim=%q records=%v err=%v", slim, records, err)
 		}
 	})
+
+	t.Run("slims empty-text thinking with no record", func(t *testing.T) {
+		in := `{"blocks":[{"type":"thinking","done":true},{"type":"text","text":"hi"}]}`
+		slim, records, err := slimThinkingInContent(in)
+		if err != nil {
+			t.Fatalf("slimThinkingInContent: %v", err)
+		}
+		if len(records) != 0 {
+			t.Fatalf("records = %d, want 0", len(records))
+		}
+		if slim == in {
+			t.Error("content should be rewritten (think_id added)")
+		}
+		var parsed struct {
+			Blocks []map[string]any `json:"blocks"`
+		}
+		if err := json.Unmarshal([]byte(slim), &parsed); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if parsed.Blocks[0]["think_id"] == "" {
+			t.Errorf("empty-text thinking block should get think_id: %v", parsed.Blocks[0])
+		}
+	})
 }
 
 func TestPersistThinkingToDB_ParseErrorFallback(t *testing.T) {

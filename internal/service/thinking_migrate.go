@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 )
@@ -15,7 +16,7 @@ func MigrateThinkingFromContent() {
 	// Both compact ("type":"thinking") and spaced ("type": "thinking") JSON are
 	// matched because historical content may contain either.
 	var needed int
-	_ = dbRead.QueryRow(`
+	_ = dbRead.QueryRowContext(context.Background(), `
 		SELECT COUNT(*) FROM chat_history h
 		WHERE h.role = 'assistant'
 		  AND (h.content LIKE '%"type":"thinking"%' OR h.content LIKE '%"type": "thinking"%')
@@ -38,7 +39,8 @@ func MigrateThinkingFromContent() {
 	failed := 0
 
 	for {
-		rows, err := dbRead.Query(`
+		rows, err := dbRead.QueryContext(
+			context.Background(), `
 			SELECT h.id, h.session_id, h.content FROM chat_history h
 			WHERE h.role = 'assistant'
 			  AND (h.content LIKE '%"type":"thinking"%' OR h.content LIKE '%"type": "thinking"%')
@@ -66,11 +68,16 @@ func MigrateThinkingFromContent() {
 		var batch []msgRow
 		for rows.Next() {
 			var r msgRow
-			if err := rows.Scan(&r.ID, &r.SessionID, &r.Content); err != nil {
+			if err = rows.Scan(&r.ID, &r.SessionID, &r.Content); err != nil {
 				slog.Error("thinking migration: scan failed", slog.String("err", err.Error()))
 				continue
 			}
 			batch = append(batch, r)
+		}
+		if err = rows.Err(); err != nil {
+			slog.Error("thinking migration: rows iteration failed", slog.String("err", err.Error()))
+			_ = rows.Close() //nolint:sqlclosecheck // batched loop: cannot defer inside for-loop
+			return
 		}
 		_ = rows.Close()
 
@@ -79,7 +86,7 @@ func MigrateThinkingFromContent() {
 		}
 
 		for _, r := range batch {
-			if err := migrateThinkingForRow(r.ID, r.SessionID, r.Content); err != nil {
+			if err = migrateThinkingForRow(r.ID, r.SessionID, r.Content); err != nil {
 				slog.Error("thinking migration: row failed",
 					slog.Int64("id", r.ID),
 					slog.String("err", err.Error()))
@@ -110,25 +117,33 @@ func MigrateThinkingFromContent() {
 // 1. Extract thinking text via slimThinkingInContent (assigns think_id)
 // 2. Insert into chat_thinking
 // 3. Rewrite content to slim format
+// Runs atomically in a transaction: on any failure the content is left full so
+// no thinking text is dropped.
 func migrateThinkingForRow(msgID int64, sessionID, content string) error {
 	slimContent, records, err := slimThinkingInContent(content)
 	if err != nil {
 		return fmt.Errorf("slim thinking: %w", err)
 	}
-	if len(records) == 0 {
+	if slimContent == content {
 		return nil
 	}
+	tx, err := WriteBegin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer writeMu.Unlock()
+	defer func() { _ = tx.Rollback() }()
 	for _, rec := range records {
-		if err := UpsertThinking(msgID, sessionID, rec.ThinkID, rec.Text); err != nil {
-			slog.Warn("thinking migration: upsert failed",
-				slog.String("thinkID", rec.ThinkID),
-				slog.String("err", err.Error()))
+		if _, err = tx.ExecContext(context.Background(), `
+			INSERT INTO chat_thinking (message_id, session_id, think_id, text)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(think_id, message_id) DO UPDATE SET text = excluded.text
+		`, msgID, sessionID, rec.ThinkID, rec.Text); err != nil {
 			return fmt.Errorf("upsert thinking %s: %w", rec.ThinkID, err)
 		}
 	}
-	_, err = WriteExec("UPDATE chat_history SET content = ? WHERE id = ?", slimContent, msgID)
-	if err != nil {
+	if _, err = tx.ExecContext(context.Background(), "UPDATE chat_history SET content = ? WHERE id = ?", slimContent, msgID); err != nil {
 		return fmt.Errorf("update slim content: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }

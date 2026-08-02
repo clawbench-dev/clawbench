@@ -96,7 +96,8 @@ func GetThinkingBySession(thinkID, sessionID string) (*ThinkingRecord, error) {
 // slimThinkingInContent parses content JSON, extracts thinking block text into
 // ThinkingRecord entries (generating think_id), and rewrites the content with
 // slim thinking blocks ({type:"thinking", think_id, done} — text removed).
-// If no thinking block has text, returns content unchanged with empty records.
+// Thinking blocks without text are slimmed too (think_id assigned, no record);
+// if nothing changed, returns content unchanged with empty records.
 func slimThinkingInContent(content string) (string, []ThinkingRecord, error) {
 	var wrapper map[string]any
 	if err := json.Unmarshal([]byte(content), &wrapper); err != nil {
@@ -113,15 +114,17 @@ func slimThinkingInContent(content string) (string, []ThinkingRecord, error) {
 		if !ok || block["type"] != "thinking" {
 			continue
 		}
-		text, _ := block["text"].(string)
-		if text == "" {
+		if _, alreadySlim := block["think_id"]; alreadySlim {
 			continue
 		}
+		text, _ := block["text"].(string)
 		thinkID := generateThinkingID()
 		delete(block, "text")
 		block["think_id"] = thinkID
-		records = append(records, ThinkingRecord{ThinkID: thinkID, Text: text})
 		changed = true
+		if text != "" {
+			records = append(records, ThinkingRecord{ThinkID: thinkID, Text: text})
+		}
 	}
 	if !changed {
 		return content, nil, nil
@@ -145,21 +148,23 @@ func persistThinkingToDB(content string, streamingMsgID int64, sessionID string)
 		slog.Warn("slim thinking failed; persisting full content", slog.Int64("msgID", streamingMsgID), slog.String("err", err.Error()))
 		return content
 	}
-	if len(records) == 0 {
+	if slimContent == content {
 		return content
 	}
-	if err := DeleteThinkingByMessage(streamingMsgID); err != nil {
-		slog.Warn("delete thinking for message failed", slog.Int64("msgID", streamingMsgID), slog.String("err", err.Error()))
-	}
-	failed := false
-	for _, rec := range records {
-		if err := UpsertThinking(streamingMsgID, sessionID, rec.ThinkID, rec.Text); err != nil {
-			failed = true
-			slog.Warn("upsert thinking failed", slog.String("thinkID", rec.ThinkID), slog.String("err", err.Error()))
+	if len(records) > 0 {
+		if err := DeleteThinkingByMessage(streamingMsgID); err != nil {
+			slog.Warn("delete thinking for message failed", slog.Int64("msgID", streamingMsgID), slog.String("err", err.Error()))
 		}
-	}
-	if failed {
-		return content
+		failed := false
+		for _, rec := range records {
+			if err := UpsertThinking(streamingMsgID, sessionID, rec.ThinkID, rec.Text); err != nil {
+				failed = true
+				slog.Warn("upsert thinking failed", slog.String("thinkID", rec.ThinkID), slog.String("err", err.Error()))
+			}
+		}
+		if failed {
+			return content
+		}
 	}
 	return slimContent
 }
