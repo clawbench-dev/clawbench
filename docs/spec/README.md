@@ -29,7 +29,7 @@ ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（Code
 | [会话导航与分叉](features/session-navigation.md) | 用户消息索引、跨分页定位、从指定消息创建对话分支 |
 | [快捷操作](features/quick-actions.md) | 聊天 Quick Send、终端 Quick Commands、CRUD 与排序 |
 | [RAG 检索](features/rag.md) | 文档分块、向量化（可独立开关）、SQLite vec0 向量索引、混合检索、会话聚合搜索、索引进度跟踪 |
-| [推送通知](features/push-notifications.md) | WebSocket 实时推送、离线事件持久化与拉取、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊） |
+| [推送通知](features/push-notifications.md) | WebSocket 实时推送、权限待审推送、离线事件持久化与拉取、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊） |
 | [系统资源监控](features/system-resources.md) | gopsutil 采集 CPU/内存/磁盘/网络/负载、500ms 采样缓存、可见性感知轮询、WS 断线时显示连接状态 |
 
 ### infra/ — 基础设施

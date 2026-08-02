@@ -243,7 +243,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/path/to/easytier-core --network-name my-clawbench --network-secret my-secret-password --ipv4 10.10.10.1 -p tcp://public.easytier.top:11010
+ExecStart=/usr/local/bin/easytier-core --network-name my-clawbench --network-secret my-secret-password --ipv4 10.10.10.1 -p tcp://public.easytier.top:11010
 Restart=on-failure
 RestartSec=5
 
