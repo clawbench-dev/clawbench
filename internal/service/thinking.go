@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -89,4 +91,70 @@ func GetThinkingBySession(thinkID, sessionID string) (*ThinkingRecord, error) {
 		return nil, fmt.Errorf("GetThinkingBySession: %w", err)
 	}
 	return &r, nil
+}
+
+// slimThinkingInContent parses content JSON, extracts thinking block text into
+// ThinkingRecord entries (generating think_id), and rewrites the content with
+// slim thinking blocks ({type:"thinking", think_id, done} — text removed).
+// If no thinking block has text, returns content unchanged with empty records.
+func slimThinkingInContent(content string) (string, []ThinkingRecord, error) {
+	var wrapper map[string]any
+	if err := json.Unmarshal([]byte(content), &wrapper); err != nil {
+		return content, nil, fmt.Errorf("slimThinkingInContent: unmarshal: %w", err)
+	}
+	blocksRaw, ok := wrapper[contentKeyBlocks].([]any)
+	if !ok {
+		return content, nil, nil
+	}
+	var records []ThinkingRecord
+	changed := false
+	for i := range blocksRaw {
+		block, ok := blocksRaw[i].(map[string]any)
+		if !ok || block["type"] != "thinking" {
+			continue
+		}
+		text, _ := block["text"].(string)
+		if text == "" {
+			continue
+		}
+		thinkID := generateThinkingID()
+		delete(block, "text")
+		block["think_id"] = thinkID
+		records = append(records, ThinkingRecord{ThinkID: thinkID, Text: text})
+		changed = true
+	}
+	if !changed {
+		return content, nil, nil
+	}
+	slim, err := json.Marshal(wrapper)
+	if err != nil {
+		return content, nil, fmt.Errorf("slimThinkingInContent: marshal: %w", err)
+	}
+	return string(slim), records, nil
+}
+
+// persistThinkingToDB slims thinking text out of the DB content into chat_thinking.
+// Returns the content to persist (slimmed if thinking records were extracted).
+// The WS terminal event keeps full blocks; only the persisted content is slimmed.
+func persistThinkingToDB(content string, streamingMsgID int64, sessionID string) string {
+	if streamingMsgID <= 0 || sessionID == "" {
+		return content
+	}
+	slimContent, records, err := slimThinkingInContent(content)
+	if err != nil {
+		slog.Warn("slim thinking failed; persisting full content", slog.Int64("msgID", streamingMsgID), slog.String("err", err.Error()))
+		return content
+	}
+	if len(records) == 0 {
+		return content
+	}
+	if err := DeleteThinkingByMessage(streamingMsgID); err != nil {
+		slog.Warn("delete thinking for message failed", slog.Int64("msgID", streamingMsgID), slog.String("err", err.Error()))
+	}
+	for _, rec := range records {
+		if err := UpsertThinking(streamingMsgID, sessionID, rec.ThinkID, rec.Text); err != nil {
+			slog.Warn("upsert thinking failed", slog.String("thinkID", rec.ThinkID), slog.String("err", err.Error()))
+		}
+	}
+	return slimContent
 }

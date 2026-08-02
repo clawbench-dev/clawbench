@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -87,4 +88,62 @@ func TestGenerateThinkingID(t *testing.T) {
 	if a == b {
 		t.Error("two generated IDs should differ")
 	}
+}
+
+func TestSlimThinkingInContent(t *testing.T) {
+	t.Run("extracts thinking and keeps metadata", func(t *testing.T) {
+		in := `{"blocks":[
+			{"type":"text","text":"intro"},
+			{"type":"thinking","text":"deep reasoning","done":true},
+			{"type":"tool_use","id":"toolu_x","name":"Bash","done":true}
+		],"metadata":{"model":"claude"}}`
+		slim, records, err := slimThinkingInContent(in)
+		if err != nil {
+			t.Fatalf("slimThinkingInContent: %v", err)
+		}
+		if len(records) != 1 {
+			t.Fatalf("records = %d, want 1", len(records))
+		}
+		if records[0].Text != "deep reasoning" || records[0].ThinkID == "" {
+			t.Errorf("record mismatch: %+v", records[0])
+		}
+		var parsed struct {
+			Blocks   []map[string]any `json:"blocks"`
+			Metadata map[string]any   `json:"metadata"`
+		}
+		if err := json.Unmarshal([]byte(slim), &parsed); err != nil {
+			t.Fatalf("unmarshal slim: %v", err)
+		}
+		if parsed.Blocks[1]["think_id"] != records[0].ThinkID {
+			t.Errorf("think_id not in slim block: %v", parsed.Blocks[1])
+		}
+		if _, hasText := parsed.Blocks[1]["text"]; hasText {
+			t.Error("slim block should not have text")
+		}
+		if parsed.Blocks[1]["done"] != true {
+			t.Error("slim block should preserve done")
+		}
+		if parsed.Blocks[0]["text"] != "intro" {
+			t.Error("text block should be untouched")
+		}
+		if parsed.Metadata["model"] != "claude" {
+			t.Error("metadata should be preserved")
+		}
+	})
+
+	t.Run("no thinking returns unchanged", func(t *testing.T) {
+		in := `{"blocks":[{"type":"text","text":"hi"}]}`
+		slim, records, err := slimThinkingInContent(in)
+		if err != nil || len(records) != 0 || slim != in {
+			t.Errorf("expected unchanged, got slim=%q records=%v err=%v", slim, records, err)
+		}
+	})
+
+	t.Run("already slim thinking skipped", func(t *testing.T) {
+		in := `{"blocks":[{"type":"thinking","think_id":"th_x","done":true}]}`
+		slim, records, err := slimThinkingInContent(in)
+		if err != nil || len(records) != 0 || slim != in {
+			t.Errorf("expected unchanged, got slim=%q records=%v err=%v", slim, records, err)
+		}
+	})
 }

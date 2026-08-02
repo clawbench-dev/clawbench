@@ -520,7 +520,12 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 
 	content, blocks := e.buildContentJSON(blocks, result, responseMetadata)
 
-	msgID, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, content)
+	// Split thinking text out of the DB content into chat_thinking (lazy-load).
+	// The WS terminal event keeps full blocks (result.Blocks); only the
+	// persisted content is slimmed. StreamingMessageID is the streaming row.
+	dbContent := persistThinkingToDB(content, e.cfg.StreamingMessageID, e.cfg.SessionID)
+
+	msgID, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, dbContent)
 	if err != nil {
 		slog.Error("failed to finalize streaming message",
 			slog.String("session", e.cfg.SessionID),

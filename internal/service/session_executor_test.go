@@ -2058,3 +2058,92 @@ func setupStreamingMessage(t *testing.T, sessionID string) int64 {
 	}
 	return msgID
 }
+
+func TestSessionExecutor_Finalize_SlimsThinkingToDB(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamingMsgID := GetStreamingMessageID(sid)
+	if streamingMsgID == 0 {
+		t.Fatal("expected non-zero streaming message ID from setup")
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "thinking", Content: "Let me think about this deeply."},
+		{Type: "content", Content: "Answer here."},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamingMsgID,
+	})
+	result := executor.RunWithChannel(ch)
+	finalized := executor.Finalize(result, nil)
+	if finalized.MsgID == 0 {
+		t.Fatal("expected non-zero message ID after Finalize")
+	}
+
+	// WS blocks must keep full thinking text.
+	var wsThinking string
+	for i := range finalized.Blocks {
+		if finalized.Blocks[i].Type == "thinking" {
+			wsThinking = finalized.Blocks[i].Text
+		}
+	}
+	if wsThinking != "Let me think about this deeply." {
+		t.Errorf("WS block thinking text = %q, want full text", wsThinking)
+	}
+
+	// DB content must be slim (thinking block has think_id, no text).
+	var dbContent string
+	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&dbContent)
+	if err != nil {
+		t.Fatalf("read db content: %v", err)
+	}
+	var parsed struct {
+		Blocks []map[string]any `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(dbContent), &parsed); err != nil {
+		t.Fatalf("unmarshal db content: %v", err)
+	}
+	var thinkBlock map[string]any
+	for _, b := range parsed.Blocks {
+		if b["type"] == "thinking" {
+			thinkBlock = b
+		}
+	}
+	if thinkBlock == nil {
+		t.Fatal("expected thinking block in DB content")
+	}
+	if _, hasText := thinkBlock["text"]; hasText {
+		t.Error("DB thinking block should not have text")
+	}
+	thinkID, _ := thinkBlock["think_id"].(string)
+	if thinkID == "" {
+		t.Fatal("expected think_id in slim block")
+	}
+
+	// chat_thinking row exists with the extracted text.
+	rec, err := GetThinking(thinkID, finalized.MsgID)
+	if err != nil || rec == nil {
+		t.Fatalf("expected thinking record, rec=%+v err=%v", rec, err)
+	}
+	if rec.Text != "Let me think about this deeply." {
+		t.Errorf("record text = %q", rec.Text)
+	}
+}
