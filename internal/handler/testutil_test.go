@@ -231,6 +231,17 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		);
 		CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON chat_tool_calls(message_id);
 		CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON chat_tool_calls(session_id, created_at DESC);
+		CREATE TABLE IF NOT EXISTS chat_thinking (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL REFERENCES chat_history(id) ON DELETE CASCADE,
+			session_id TEXT NOT NULL,
+			think_id TEXT NOT NULL,
+			text TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(think_id, message_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_thinking_message ON chat_thinking(message_id);
+		CREATE INDEX IF NOT EXISTS idx_thinking_session ON chat_thinking(session_id, created_at DESC);
 		CREATE TABLE IF NOT EXISTS message_clusters_cache (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			representative TEXT NOT NULL,

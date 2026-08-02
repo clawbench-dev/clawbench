@@ -30,6 +30,8 @@ SessionNotFound: session not found
 NoAgentsAvailable: no agents available
 MessageOrFilesRequired: Message or files required
 TextRequired: text is required
+ThinkIdAndMessageIdRequired: think_id and message_id are required
+ThinkingNotFound: thinking not found
 JobIdRequired: job ID required
 FileNotFound: "File not found: {{.Path}}"
 ClientIdRequired: clientId required

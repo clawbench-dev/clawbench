@@ -30,6 +30,8 @@ SessionNotFound: 会话未找到
 NoAgentsAvailable: 没有可用的智能体
 MessageOrFilesRequired: 消息或文件为必填项
 TextRequired: 文本为必填项
+ThinkIdAndMessageIdRequired: 缺少 think_id 或 message_id
+ThinkingNotFound: 思考内容未找到
 JobIdRequired: 任务ID为必填项
 FileNotFound: "文件未找到: {{.Path}}"
 ClientIdRequired: 客户端ID为必填项
