@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +38,7 @@ import (
 // backends/* sub-package but is self-contained within this file.
 
 func init() {
-	// claude — CLI backend (ExitPlanMode → cancel → resume)
+	// claude — CLI backend (ExitPlanMode ends stream normally)
 	RegisterBackend("claude", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "claude",
@@ -54,7 +53,7 @@ func init() {
 				cmd.Stdin = strings.NewReader(req.Prompt)
 			},
 		}
-	}, true)
+	})
 
 	// codebuddy — CLI backend
 	RegisterBackend("codebuddy", func() AIBackend {
@@ -76,7 +75,7 @@ func init() {
 				cmd.Stdin = strings.NewReader(req.Prompt)
 			},
 		}
-	}, true)
+	})
 
 	// opencode — handles ExitPlanMode internally
 	RegisterBackend("opencode", func() AIBackend {
@@ -95,12 +94,12 @@ func init() {
 				return line, true
 			},
 		}
-	}, false)
+	})
 
 	// codex — custom backend
 	RegisterBackend("codex", func() AIBackend {
 		return &CodexBackend{}
-	}, false)
+	})
 
 	// qoder — CLI backend
 	RegisterBackend("qoder", func() AIBackend {
@@ -113,7 +112,7 @@ func init() {
 				cmd.Stdin = strings.NewReader(req.Prompt)
 			},
 		}
-	}, true)
+	})
 
 	// deepseek (CodeWhale) — CLI backend
 	RegisterBackend("deepseek", func() AIBackend {
@@ -123,12 +122,12 @@ func init() {
 			BuildArgsFn: buildDeepSeekArgs,
 			NewParserFn: func() LineParser { return &DeepSeekStreamParser{} },
 		}
-	}, true)
+	})
 
 	// vecli — custom backend
 	RegisterBackend("vecli", func() AIBackend {
 		return NewVeCLIBackend()
-	}, false)
+	})
 
 	// cline — CLI backend
 	RegisterBackend("cline", func() AIBackend {
@@ -156,7 +155,7 @@ func init() {
 				cmd.Stdin = strings.NewReader(req.Prompt)
 			},
 		}
-	}, true)
+	})
 
 	// copilot — CLI backend
 	RegisterBackend("copilot", func() AIBackend {
@@ -191,7 +190,7 @@ func init() {
 				cmd.Stdin = strings.NewReader(req.Prompt)
 			},
 		}
-	}, true)
+	})
 
 	// kimi — CLI backend
 	RegisterBackend("kimi", func() AIBackend {
@@ -235,7 +234,7 @@ func init() {
 				return line, true
 			},
 		}
-	}, true)
+	})
 
 	// mimo — CLI backend
 	RegisterBackend("mimo", func() AIBackend {
@@ -279,7 +278,7 @@ func init() {
 				return line, true
 			},
 		}
-	}, true)
+	})
 
 	// pi — CLI backend
 	RegisterBackend("pi", func() AIBackend {
@@ -313,7 +312,7 @@ func init() {
 				return &PiStreamParser{InputRemaps: map[string]string{"path": "file_path"}}
 			},
 		}
-	}, true)
+	})
 }
 
 // buildOpenCodeArgs mirrors backends/opencode/cli.go buildOpenCodeStreamArgs.
