@@ -1472,6 +1472,9 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 	// Delete chat_tool_calls for these sessions
 	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id IN ("+placeholders+")", args...)
 
+	// Delete chat_thinking for these sessions
+	_, _ = tx.Exec("DELETE FROM chat_thinking WHERE session_id IN ("+placeholders+")", args...)
+
 	// Delete summaries and tts_summaries before chat_history (they reference chat_history.id)
 	_, _ = tx.Exec("DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE session_id IN ("+placeholders+"))", args...)
 	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id IN ("+placeholders+"))", args...)
@@ -1515,6 +1518,7 @@ func HardDeleteSession(sessionID string) error {
 
 	_, _ = tx.Exec("DELETE FROM ai_raw_responses WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id = ?", sessionID)
+	_, _ = tx.Exec("DELETE FROM chat_thinking WHERE session_id = ?", sessionID)
 	// Delete summaries and tts_summaries before chat_history (they reference chat_history.id)
 	_, _ = tx.Exec("DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
 	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)

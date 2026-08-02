@@ -3555,3 +3555,19 @@ func TestPersistContextStateFromEvent_IgnoresOtherEventTypes(t *testing.T) {
 	state := service.GetContextState(sid)
 	assert.Nil(t, state)
 }
+
+func TestHardDeleteSession_RemovesThinking(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Delete Me")
+	asstID, err := service.AddChatMessage("/project", "claude", sid, "assistant",
+		`{"blocks":[{"type":"thinking","think_id":"th_del","done":true}]}`, nil, false, "")
+	assert.NoError(t, err)
+	assert.NoError(t, service.UpsertThinking(asstID, sid, "th_del", "doomed"))
+
+	assert.NoError(t, service.HardDeleteSession(sid))
+
+	var count int
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE session_id = ?", sid).Scan(&count)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, count, "thinking rows must be purged with the session")
+}
