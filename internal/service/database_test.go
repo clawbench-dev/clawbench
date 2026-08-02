@@ -3,6 +3,7 @@ package service
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2432,6 +2433,44 @@ func TestMigrateToolCallsFromContent_NoToolUseBlocks(t *testing.T) {
 	var count int
 	db.QueryRow("SELECT COUNT(*) FROM chat_tool_calls").Scan(&count)
 	assert.Equal(t, 0, count, "messages without tool_use should not create tool call records")
+}
+
+// TestMigrateToolCallsFromContent_MoreThanOneBatch migrates more rows than one
+// batch (batchSize=200) and asserts EVERY old-format row is migrated. Guards
+// against OFFSET pagination over a shrinking result set skipping rows: as rows
+// are slimmed they leave the query result set, so a fixed OFFSET drifts ahead
+// and permanently skips a batch's worth of rows.
+func TestMigrateToolCallsFromContent_MoreThanOneBatch(t *testing.T) {
+	teardown := setupTestDBForToolCallMigration(t)
+	defer teardown()
+
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-8', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+
+	const total = 450
+	for i := range total {
+		oldContent := fmt.Sprintf(`{"blocks":[{"type":"tool_use","name":"Bash","id":"toolu_%03d","input":{"command":"ls"},"output":"out","status":"success","done":true}]}`, i)
+		_, err = db.Exec(
+			"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+			"/proj", oldContent, "sess-8",
+		)
+		assert.NoError(t, err)
+	}
+
+	MigrateToolCallsFromContent()
+
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_tool_calls").Scan(&count)
+	assert.NoError(t, err)
+	assert.Equal(t, total, count, "every old-format tool-use row must be migrated, none skipped by OFFSET pagination")
+
+	var unmigrated int
+	err = db.QueryRow(`
+		SELECT COUNT(*) FROM chat_history
+		WHERE role = 'assistant' AND content LIKE '%"tool_use"%' AND content LIKE '%"input"%'
+	`).Scan(&unmigrated)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, unmigrated, "no old-format tool-use rows may remain after migration")
 }
 
 // ---------- GetUserMessageStats: user message frequency analysis ----------

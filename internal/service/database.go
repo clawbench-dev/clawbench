@@ -1044,7 +1044,11 @@ func MigrateToolCallsFromContent() {
 	slog.Info("migrating tool_use input/output from chat_history to chat_tool_calls", slog.Int("rows", needed))
 
 	batchSize := 200
-	offset := 0
+	// Keyset cursor pagination: rows are slimmed (and thus removed from the
+	// matching set) as they are processed, so a fixed OFFSET would drift ahead
+	// and permanently skip rows. Cursor by id guarantees each row is visited
+	// exactly once.
+	lastID := int64(0)
 	migrated := 0
 	failed := 0
 
@@ -1061,9 +1065,10 @@ func MigrateToolCallsFromContent() {
 			    WHERE tc.message_id = h.id
 			    LIMIT 1
 			  )
+			  AND h.id > ?
 			ORDER BY h.id
-			LIMIT ? OFFSET ?`,
-			batchSize, offset,
+			LIMIT ?`,
+			lastID, batchSize,
 		)
 		if err != nil {
 			slog.Error("tool_use migration: query failed", slog.String("err", err.Error()))
@@ -1096,9 +1101,13 @@ func MigrateToolCallsFromContent() {
 					slog.Int64("id", r.ID),
 					slog.String("err", err.Error()))
 				failed++
-				continue
+			} else {
+				migrated++
 			}
-			migrated++
+			// Advance the cursor for every visited row so a row that cannot be
+			// migrated (e.g. a literal "tool_use"/"input" in a text block, or a
+			// persistent DB error) is visited only once.
+			lastID = r.ID
 		}
 
 		slog.Info("tool_use migration progress",
@@ -1110,7 +1119,6 @@ func MigrateToolCallsFromContent() {
 		if len(batch) < batchSize {
 			break
 		}
-		offset += batchSize
 	}
 
 	slog.Info("tool_use migration complete",
