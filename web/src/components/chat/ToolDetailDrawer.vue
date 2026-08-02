@@ -5,6 +5,7 @@
         <component :is="headerIcon" :size="14" class="tool-detail-header-icon" />
         <span class="tool-detail-header-name">{{ displayName }}</span>
         <span v-if="toolSummary" class="tool-detail-header-summary">{{ toolSummary }}</span>
+        <span v-if="toolDone && toolDuration > 0" class="tool-detail-duration">{{ formatDuration(toolDuration) }}</span>
         <span v-if="!toolDone" class="tool-detail-spinner"></span>
         <XCircle v-else-if="toolStatus === 'error'" :size="14" color="#ef4444" class="tool-detail-status" />
         <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-detail-status" />
@@ -43,6 +44,7 @@ import { CheckCircle2, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { getToolIcon } from '@/utils/icons'
+import { formatDuration } from '@/utils/format.ts'
 import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { store } from '@/stores/app.ts'
@@ -57,6 +59,7 @@ const props = defineProps({
   toolOutputHtml: { type: String, default: '' },
   toolStatus: { type: String, default: '' },
   toolDone: { type: Boolean, default: true },
+  toolDuration: { type: Number, default: 0 },
   displayNameOverride: { type: String, default: '' },
 })
 
@@ -173,6 +176,18 @@ function handleBodyClick(event) {
 .tool-detail-status {
   flex-shrink: 0;
   margin-left: auto;
+}
+
+.tool-detail-duration {
+  flex-shrink: 0;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--tool-accent) 12%, transparent);
+  color: color-mix(in srgb, var(--tool-accent) 90%, transparent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .tool-detail-spinner {

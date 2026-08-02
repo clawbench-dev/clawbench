@@ -47,6 +47,7 @@
       :toolOutputHtml="toolDetailOverlay.outputHtml"
       :toolStatus="toolDetailOverlay.status"
       :toolDone="toolDetailOverlay.done"
+      :toolDuration="toolDetailOverlay.duration"
       :displayNameOverride="toolDetailOverlay.displayNameOverride"
       @close="closeOverlay"
       @file-open="handleFileOpenInOverlay"

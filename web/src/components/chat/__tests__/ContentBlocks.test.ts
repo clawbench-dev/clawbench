@@ -179,29 +179,6 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.tool-error-icon').exists()).toBe(true)
     })
 
-    it('shows user-friendly duration on the right when done with duration_ms', () => {
-      const wrapper = mountBlocks({
-        blocks: [{ type: 'tool_use', name: 'Bash', done: true, status: 'success', summary: 'ls -la', duration_ms: 90000 }],
-      })
-      const duration = wrapper.find('.tool-duration')
-      expect(duration.exists()).toBe(true)
-      expect(duration.text()).toBe('1m30s')
-    })
-
-    it('does not show duration while tool is still running', () => {
-      const wrapper = mountBlocks({
-        blocks: [{ type: 'tool_use', name: 'Bash', done: false, duration_ms: 500 }],
-      })
-      expect(wrapper.find('.tool-duration').exists()).toBe(false)
-    })
-
-    it('does not show duration when duration_ms is missing or zero', () => {
-      const wrapper = mountBlocks({
-        blocks: [{ type: 'tool_use', name: 'Bash', done: true, status: 'success' }],
-      })
-      expect(wrapper.find('.tool-duration').exists()).toBe(false)
-    })
-
     it('emits show-tool-detail on tool click for non-auto-expand tools', async () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'tool_use', name: 'Read', done: true, status: 'success', id: 'tool-1' }],

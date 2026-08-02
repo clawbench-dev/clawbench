@@ -56,6 +56,18 @@ describe('useToolDetailDrawer', () => {
   })
 
   describe('done/status sync from API', () => {
+    it('syncs duration_ms from API response', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ input: { cmd: 'ls' }, output: 'ok', done: true, status: 'completed', duration_ms: 4200 }), { status: 200 })
+      )
+
+      await drawer.fetchToolCallDetail('tool1', 1, { name: 'Bash' })
+
+      expect(drawer.toolDetailData.value.duration).toBe(4200)
+
+      fetchSpy.mockRestore()
+    })
+
     it('syncs done=true from API response', async () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(JSON.stringify({ input: { cmd: 'ls' }, output: 'ok', done: true, status: 'completed' }), { status: 200 })
@@ -217,6 +229,18 @@ describe('useToolDetailDrawer', () => {
       drawer.handleShowToolDetail({ name: 'DeepThink', input: {}, output: 'result', msgId: 1, blockIdx: 0 })
 
       expect(drawer.toolDetailData.value.displayNameOverride).toBe('chat.message.deepThinking')
+    })
+
+    it('copies duration_ms from the live block', () => {
+      drawer.handleShowToolDetail({ name: 'Bash', input: { cmd: 'ls' }, output: 'ok', duration_ms: 9000, msgId: 1, blockIdx: 0 })
+
+      expect(drawer.toolDetailData.value.duration).toBe(9000)
+    })
+
+    it('defaults duration to 0 when block has none', () => {
+      drawer.handleShowToolDetail({ name: 'Bash', input: { cmd: 'ls' }, output: 'ok', msgId: 1, blockIdx: 0 })
+
+      expect(drawer.toolDetailData.value.duration).toBe(0)
     })
 
     it('does not override DeepThink display name when display_name is present', () => {

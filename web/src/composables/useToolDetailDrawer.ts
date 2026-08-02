@@ -18,6 +18,7 @@ interface ToolBlock {
   status?: string
   done?: boolean
   tool_id?: string | number
+  duration_ms?: number
 }
 
 interface ChatRenderRef {
@@ -58,6 +59,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     outputHtml: '' as string,
     status: '' as string,
     done: true as boolean,
+    duration: 0 as number,
     displayNameOverride: '' as string,
     _fetchIds: null as { toolId: string | number; msgId: string | number } | null,
   })
@@ -98,6 +100,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       outputHtml: hasOutput ? formatToolOutput(block.output as string, block.name || '') : '',
       status: block.status || '',
       done: !!block.done,
+      duration: block.duration_ms || 0,
       displayNameOverride: block.name === 'DeepThink' && !block.display_name ? t('chat.message.deepThinking') : '',
       _fetchIds: null,
     }
@@ -176,6 +179,9 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       }
       if (data.status !== undefined && data.status !== null) {
         toolDetailData.value.status = data.status
+      }
+      if (data.duration_ms !== undefined && data.duration_ms !== null && data.duration_ms > 0) {
+        toolDetailData.value.duration = data.duration_ms
       }
     } catch (e) {
       appLog.w(TAG, 'Failed to fetch tool call detail:', e)
