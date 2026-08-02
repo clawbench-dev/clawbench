@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("mimo", newMimoBackend, true)
+	ai.RegisterBackend("mimo", newMimoBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "mimo",
 		Spec: model.BackendSpec{

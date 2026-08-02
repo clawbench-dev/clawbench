@@ -69,7 +69,7 @@ func GetToolCall(toolID string, messageID int64) (*ToolCallRecord, error) {
 
 // GetToolCallBySession retrieves a tool call record by tool_id and session_id.
 // This is a fallback for task executions where the session has multiple assistant
-// messages (from AutoResumeBackend resume splits) and the tool call may be stored
+// messages and the tool call may be stored
 // under a different message_id than the one the frontend knows about.
 // Returns nil if not found.
 func GetToolCallBySession(toolID, sessionID string) (*ToolCallRecord, error) {

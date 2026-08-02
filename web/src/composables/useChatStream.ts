@@ -206,29 +206,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
 
-      case 'resume_split': {
-        if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        resetStreamTimeout()
-        // Finalize Phase 1 message
-        delete sm.streaming
-        // Create Phase 2 streaming message
-        const phase2: ChatMessage = {
-          role: 'assistant',
-          id: (payload.message_id as number) || `resume-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          content: '',
-          blocks: [],
-          streaming: true,
-          createdAt: new Date().toISOString(),
-          backend: currentBackend.value
-        }
-        messages.value.push(phase2)
-        thinkingBlockCounter = 0
-        onRenderNeeded()
-        debouncedRender()
-        break
-      }
+
 
       case 'content': {
         if (sessionChanged()) return

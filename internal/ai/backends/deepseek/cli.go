@@ -17,7 +17,7 @@ var DeepSeekInputRemaps = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("deepseek", newDeepSeekBackend, true)
+	ai.RegisterBackend("deepseek", newDeepSeekBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "deepseek",
 		Spec: model.BackendSpec{

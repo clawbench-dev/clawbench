@@ -33,8 +33,8 @@ interface ToolDetailDrawerOptions {
   tabId: string
   onFileOpen?: (path: string, lineStart?: number, lineEnd?: number) => void
   findLiveBlock?: (ids: { msgId: string | number; blockIdx: number }) => ToolBlock | null
-  /** Optional session ID for tool-call API fallback. When the session has multiple
-   *  assistant messages (e.g. AutoResumeBackend resume splits), the tool call may
+  /** Optional session ID for tool-call API fallback. When the session has
+   *  multiple assistant messages (e.g. ACP sessions), the tool call may
    *  be stored under a different message_id. Passing session_id enables the backend
    *  to fall back to tool_id+session_id lookup. */
   sessionId?: () => string | undefined

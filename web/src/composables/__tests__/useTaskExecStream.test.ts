@@ -202,23 +202,7 @@ describe('useTaskExecStream', () => {
       stream.stopPreview()
     })
 
-    it('handles resume_split event', () => {
-      const { stream } = createStream()
-      stream.startPreview()
 
-      // First, create some content in the original message
-      simulateWsEvent('content', { content: 'Phase 1' })
-
-      // Then resume_split creates a new message
-      simulateWsEvent('resume_split', { message_id: 99 })
-
-      const msg = stream.streamingMsg.value
-      expect(msg!.id).toBe(99)
-      expect(msg!.blocks).toHaveLength(0)
-      expect(msg!.streaming).toBe(true)
-
-      stream.stopPreview()
-    })
 
     it('handles metadata event', () => {
       const { stream } = createStream()

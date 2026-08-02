@@ -168,12 +168,6 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// Upsert tool call metadata to DB (best-effort)
 	e.upsertToolCallToDB(event)
 
-	// resume_split: finalize current message, start new one
-	if event.Type == "resume_split" {
-		e.handleResumeSplit()
-		return
-	}
-
 	// metadata capture
 	if event.Type == "metadata" && event.Meta != nil {
 		e.responseMetadata = event.Meta
@@ -191,8 +185,6 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 
 // forwardEvent forwards an event to WS clients via StreamHub
 // and persists context state (mode, thinking effort, usage) to DB.
-// Note: For resume_split events, the hub emission is deferred to handleResumeSplit
-// because the message_id is only available after the new message is created.
 func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
 	forwardEvent := event
 	if (event.Type == "tool_use" || event.Type == "tool_result") && event.Tool != nil { //nolint:goconst // event type strings
@@ -200,10 +192,7 @@ func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
 		forwardEvent.ToolMeta = &meta
 	}
 
-	// Emit to StreamHub for WS fan-out (except resume_split, handled separately)
-	if event.Type != "resume_split" {
-		ws.EmitToSession(e.cfg.SessionID, forwardEvent)
-	}
+	ws.EmitToSession(e.cfg.SessionID, forwardEvent)
 
 	// Persist context state to DB so it survives server restarts.
 	// Called for all event types; PersistContextStateFromEvent only acts on
@@ -276,7 +265,7 @@ func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model
 // the chat_tool_calls table. These blocks were created by
 // ConvertAskQuestionBlocks and missed the normal upsertToolCallToDB
 // path during the event loop. Must be called after every postProcessBlocks
-// call that writes blocks to the DB (currently Finalize and handleResumeSplit).
+// call that writes blocks to the DB (currently Finalize).
 func (e *SessionExecutor) persistAskToolCalls(blocks []model.ContentBlock) {
 	if e.cfg.StreamingMessageID <= 0 || e.cfg.SessionID == "" {
 		return
@@ -390,72 +379,6 @@ func (e *SessionExecutor) flushStreamingMessage() {
 	}
 }
 
-// handleResumeSplit finalizes the current streaming message and creates a new placeholder.
-func (e *SessionExecutor) handleResumeSplit() {
-	slog.Info("resume_split received, finalizing current message and starting new one",
-		slog.String("session", e.cfg.SessionID))
-
-	// Finalize current streaming message with post-processing
-	// (ask-question conversion, rejected-tool removal, thinking merge).
-	// Without this, <ask-question> tags in the pre-resume portion are
-	// persisted as raw text instead of tool_use blocks.
-	serializedBlocks := e.blocks
-	if serializedBlocks == nil {
-		serializedBlocks = []model.ContentBlock{}
-	}
-	serializedBlocks = e.postProcessBlocks(serializedBlocks)
-	e.persistAskToolCalls(serializedBlocks)
-	contentMap := map[string]any{contentKeyBlocks: serializedBlocks}
-	if e.responseMetadata != nil {
-		contentMap[contentKeyMetadata] = e.responseMetadata
-	}
-	blocksJSON, _ := json.Marshal(contentMap)
-	if msgID, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, string(blocksJSON)); err != nil {
-		slog.Error("failed to finalize pre-resume message",
-			slog.String("session", e.cfg.SessionID),
-			slog.String("err", err.Error()))
-	} else if msgID > 0 && e.responseMetadata != nil {
-		_ = SaveMetadata(msgID, e.responseMetadata)
-	}
-
-	// Save raw output if captured so far
-	if e.rawOutput != "" {
-		if msgID := GetStreamingMessageID(e.cfg.SessionID); msgID > 0 {
-			if err := SaveRawResponse(e.cfg.SessionID, e.cfg.BackendName, msgID, e.rawOutput); err != nil {
-				slog.Error("failed to save raw response",
-					slog.String("session", e.cfg.SessionID),
-					slog.String("err", err.Error()))
-			}
-		}
-		e.rawOutput = ""
-	}
-
-	// Reset state for the resumed stream
-	e.blocks = nil
-	e.responseMetadata = nil
-	e.eventCount = 0
-	e.wallStart = time.Now().UnixMilli()
-
-	// Create new streaming assistant placeholder
-	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
-	if newMsgID, err := AddChatMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, roleAssistant, string(emptyContent), nil, true, ""); err != nil {
-		slog.Error("failed to create resume streaming message",
-			slog.String("session", e.cfg.SessionID),
-			slog.String("err", err.Error()))
-	} else if newMsgID > 0 {
-		e.cfg.StreamingMessageID = newMsgID
-	}
-
-	// Emit resume_split to StreamHub with the new message_id
-	// (must be after AddChatMessage which sets StreamingMessageID)
-	if mgr := ws.GetManager(); mgr != nil {
-		if hub := mgr.StreamHub(); hub != nil && hub.HasSubscribers(e.cfg.SessionID) {
-			msgID := GetStreamingMessageID(e.cfg.SessionID)
-			hub.EmitResumeSplitEvent(e.cfg.SessionID, msgID)
-		}
-	}
-}
-
 // injectSessionMetadata populates ACP mode, thinking effort, transport, and model
 // into the response metadata from session-level state.
 func (e *SessionExecutor) injectSessionMetadata(meta *ai.Metadata) {
@@ -526,6 +449,10 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 // In addition to raw_output (for debugging), it also processes tool_use/tool_result
 // events that arrived after the main event loop exited (e.g., debouncer flushAll
 // on cancel), persisting them via AccumulateBlock + upsertToolCallToDB.
+//
+// It also processes session_capture and metadata events to persist the external
+// session ID, even when the stream was cancelled before the main loop processed
+// these events. This prevents resume failures on subsequent prompts.
 func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, rawOutput string) string {
 	if eventCh == nil {
 		return rawOutput
@@ -545,6 +472,14 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, ra
 			case "tool_use", "tool_result":
 				ai.AccumulateBlock(&e.blocks, event)
 				e.upsertToolCallToDB(event)
+			case "session_capture":
+				if event.Content != "" {
+					e.captureExternalSessionID(event.Content)
+				}
+			case "metadata":
+				if event.Meta != nil && event.Meta.SessionID != "" {
+					e.captureExternalSessionID(event.Meta.SessionID)
+				}
 			}
 		default:
 			return rawOutput

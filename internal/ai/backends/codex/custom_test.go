@@ -13,13 +13,6 @@ func TestCodexPlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestCodexPlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("codex")
-	if entry.NeedsAutoResume {
-		t.Error("codex should have needsAutoResume=false")
-	}
-}
-
 func TestCodexPlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("codex")
 	backend := entry.NewBackend()

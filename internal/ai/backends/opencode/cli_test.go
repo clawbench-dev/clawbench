@@ -13,13 +13,6 @@ func TestOpenCodePlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestOpenCodePlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("opencode")
-	if entry.NeedsAutoResume {
-		t.Error("opencode should have needsAutoResume=false (handles ExitPlanMode internally)")
-	}
-}
-
 func TestOpenCodePlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("opencode")
 	backend := entry.NewBackend()

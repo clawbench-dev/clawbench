@@ -13,13 +13,6 @@ func TestVeCLIPlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestVeCLIPlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("vecli")
-	if entry.NeedsAutoResume {
-		t.Error("vecli should have needsAutoResume=false (handles session lifecycle internally)")
-	}
-}
-
 func TestVeCLIPlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("vecli")
 	backend := entry.NewBackend()

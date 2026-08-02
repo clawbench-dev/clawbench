@@ -124,8 +124,8 @@ func TestStreamHub_EmitSkipsNilPayload(t *testing.T) {
 	mgr.Subscribe(nil, &writeMu, "client1", "")
 	hub.Subscribe("client1", "session1")
 
-	// resume_split returns nil payload from StreamEventToPayload — Emit should skip it
-	hub.Emit("session1", ai.StreamEvent{Type: "resume_split"})
+	// Unknown event types return nil payload from StreamEventToPayload — Emit should skip it
+	hub.Emit("session1", ai.StreamEvent{Type: "unknown_nil_payload"})
 }
 
 // --- EmitToSession ---
@@ -227,12 +227,6 @@ func TestStreamEventToPayload_Metadata(t *testing.T) {
 	result, ok := payload.(*ai.Metadata)
 	assert.True(t, ok)
 	assert.Equal(t, "gpt-4", result.Model)
-}
-
-func TestStreamEventToPayload_ResumeSplit(t *testing.T) {
-	// resume_split is handled by EmitResumeSplitEvent, not StreamEventToPayload
-	payload := StreamEventToPayload(ai.StreamEvent{Type: "resume_split"})
-	assert.Nil(t, payload, "resume_split should return nil since it's handled separately")
 }
 
 // --- StreamEventToPayload: error and warning ---
@@ -636,51 +630,6 @@ func TestStreamHub_EmitStreamStartEvent(t *testing.T) {
 	require.True(t, ok, "expected ChatStreamData")
 	assert.Equal(t, "stream_start", data.EventType)
 	assert.Equal(t, "session-start", data.SessionID)
-}
-
-// --- EmitResumeSplitEvent ---
-
-func TestStreamHub_EmitResumeSplitEvent_WithSubscribers(t *testing.T) {
-	mgr, hub := newTestStreamHub()
-
-	var writeMu sync.Mutex
-	sub := mgr.Subscribe(nil, &writeMu, "client-resume", "")
-	hub.Subscribe("client-resume", "session-resume")
-
-	hub.EmitResumeSplitEvent("session-resume", 99)
-
-	buffered := sub.GetBufferedEvents()
-	require.NotEmpty(t, buffered, "expected at least one buffered event")
-	data, ok := buffered[0].Data.(ChatStreamData)
-	require.True(t, ok, "expected ChatStreamData")
-	assert.Equal(t, "resume_split", data.EventType)
-	payload, _ := data.Payload.(map[string]any)
-	assert.Equal(t, int64(99), payload["message_id"])
-}
-
-func TestStreamHub_EmitResumeSplitEvent_NoSubscribers(t *testing.T) {
-	_, hub := newTestStreamHub()
-
-	// Should return early without panic
-	hub.EmitResumeSplitEvent("session-none", 1)
-}
-
-func TestStreamHub_EmitResumeSplitEvent_ZeroMessageID(t *testing.T) {
-	mgr, hub := newTestStreamHub()
-
-	var writeMu sync.Mutex
-	sub := mgr.Subscribe(nil, &writeMu, "client-zero", "")
-	hub.Subscribe("client-zero", "session-zero")
-
-	hub.EmitResumeSplitEvent("session-zero", 0)
-
-	buffered := sub.GetBufferedEvents()
-	require.NotEmpty(t, buffered, "expected at least one buffered event")
-	data, ok := buffered[0].Data.(ChatStreamData)
-	require.True(t, ok, "expected ChatStreamData")
-	payload, _ := data.Payload.(map[string]any)
-	_, hasMessageID := payload["message_id"]
-	assert.False(t, hasMessageID, "message_id should be omitted when 0")
 }
 
 // --- EmitACPStateEvents ---

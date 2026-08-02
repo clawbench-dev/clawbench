@@ -239,49 +239,7 @@ func TestSessionExecutor_Finalize_DrainRawFromEventChannel(t *testing.T) {
 	}
 }
 
-func TestSessionExecutor_HandleResumeSplit_WithRawOutput(t *testing.T) {
-	// Cover lines 306-316: handleResumeSplit saves raw output and clears it.
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:        ModeInteractive,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   sid,
-		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-	}
-
-	events := []ai.StreamEvent{
-		{Type: "raw_output", RawOutput: "before-split-raw"},
-		{Type: "content", Content: "part1"},
-		{Type: "resume_split"},
-		{Type: "content", Content: "part2"},
-		{Type: "done"},
-	}
-	ch := make(chan ai.StreamEvent, len(events))
-	for _, e := range events {
-		ch <- e
-	}
-	close(ch)
-
-	executor := NewSessionExecutor(ctx, cfg)
-	result := executor.RunWithChannel(ch)
-
-	if !result.ReceivedTerminal {
-		t.Fatal("expected ReceivedTerminal=true")
-	}
-
-	// After resume_split, raw output from before split should have been saved
-	// and the final raw output should only contain post-split content (none in this case)
-	_ = result // Just verify no panic
-}
 
 func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
 	// Verify Finalize works with minimal metadata — the function accesses
@@ -905,7 +863,7 @@ func setupExecutorDB(t *testing.T) {
 
 // setupExecutorSession creates a session and a streaming placeholder message,
 // returning the session ID. This is the minimum DB state needed for
-// flushStreamingMessage, handleResumeSplit, and Finalize.
+// flushStreamingMessage and Finalize.
 func setupExecutorSession(t *testing.T, agentID string) string {
 	t.Helper()
 	sid, err := CreateSession("/test", "test", "Executor Test", agentID, "", "default", "chat")
@@ -1033,144 +991,9 @@ func TestSessionExecutor_FlushStreamingMessage_WithMetadata(t *testing.T) {
 	}
 }
 
-func TestSessionExecutor_HandleResumeSplit(t *testing.T) {
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:        ModeInteractive,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   sid,
-		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-	}
-	executor := NewSessionExecutor(ctx, cfg)
 
-	// Add some blocks and metadata, then trigger resume_split
-	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "part1"})
-	executor.responseMetadata = &ai.Metadata{InputTokens: 50}
-	executor.rawOutput = "raw line 1"
-	executor.handleResumeSplit()
 
-	// Verify the old streaming message was finalized (streaming=0)
-	var streamingCount int
-	err := dbRead.QueryRow(
-		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0",
-		sid,
-	).Scan(&streamingCount)
-	if err != nil {
-		t.Fatalf("failed to query finalized messages: %v", err)
-	}
-	if streamingCount == 0 {
-		t.Fatal("expected at least one finalized message after resume_split")
-	}
-
-	// Verify a new streaming placeholder was created
-	var newStreamingCount int
-	err = dbRead.QueryRow(
-		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
-		sid,
-	).Scan(&newStreamingCount)
-	if err != nil {
-		t.Fatalf("failed to query new streaming message: %v", err)
-	}
-	if newStreamingCount == 0 {
-		t.Fatal("expected a new streaming message after resume_split")
-	}
-
-	// Verify executor state was reset
-	if len(executor.blocks) != 0 {
-		t.Fatalf("expected blocks to be reset after resume_split, got %d blocks", len(executor.blocks))
-	}
-	if executor.responseMetadata != nil {
-		t.Fatal("expected responseMetadata to be nil after resume_split")
-	}
-	if executor.rawOutput != "" {
-		t.Fatalf("expected rawOutput to be empty after resume_split, got %q", executor.rawOutput)
-	}
-}
-
-func TestSessionExecutor_HandleResumeSplit_AskQuestionConversion(t *testing.T) {
-	// Regression test: handleResumeSplit must apply postProcessBlocks,
-	// converting <ask-question> tags to tool_use blocks before persisting
-	// to DB. Previously it wrote raw unconverted blocks.
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"askq-test-agent": {ID: "askq-test-agent", Name: "AskQ Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
-
-	sid := setupExecutorSession(t, "askq-test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:               ModeInteractive,
-		ProjectPath:        "/test",
-		BackendName:        "test",
-		SessionID:          sid,
-		AgentID:            "askq-test-agent",
-		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
-		StreamingMessageID: 0, // will be set by AddChatMessage below
-	}
-
-	// Create a streaming message so persistAskToolCalls has a valid StreamingMessageID
-	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	streamingMsgID, err := AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
-	if err != nil {
-		t.Fatalf("failed to create streaming message: %v", err)
-	}
-	cfg.StreamingMessageID = streamingMsgID
-
-	executor := NewSessionExecutor(ctx, cfg)
-
-	// Simulate blocks containing <ask-question> XML
-	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "Pick one <ask-question><item><header>Choice</header><multi-select>false</multi-select><question>Which?</question><option><label>A</label><description>First</description></option></item></ask-question>"})
-	executor.handleResumeSplit()
-
-	// Verify the finalized message in DB contains a tool_use block (not raw <ask-question>)
-	var content string
-	err = dbRead.QueryRow(
-		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT 1",
-		sid,
-	).Scan(&content)
-	if err != nil {
-		t.Fatalf("failed to query finalized message: %v", err)
-	}
-
-	var parsed struct {
-		Blocks []model.ContentBlock `json:"blocks"`
-	}
-	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		t.Fatalf("failed to parse content: %v", err)
-	}
-
-	// Should have 2 blocks: text ("Pick one") + tool_use (AskUserQuestion)
-	foundText := false
-	foundToolUse := false
-	for _, b := range parsed.Blocks {
-		if b.Type == "text" && strings.Contains(b.Text, "Pick one") {
-			foundText = true
-			// The text block must NOT contain raw <ask-question> tags
-			if strings.Contains(b.Text, "<ask-question") {
-				t.Fatal("text block should not contain raw <ask-question> tag — conversion should have stripped it")
-			}
-		}
-		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
-			foundToolUse = true
-		}
-	}
-	if !foundText {
-		t.Fatal("expected text block with 'Pick one' in finalized message")
-	}
-	if !foundToolUse {
-		t.Fatalf("expected AskUserQuestion tool_use block in finalized message, got blocks: %+v", parsed.Blocks)
-	}
-}
 
 func TestSessionExecutor_Finalize_WithDB(t *testing.T) {
 	setupExecutorDB(t)
@@ -1643,47 +1466,7 @@ func TestSessionExecutor_RunWithChannel_SessionCaptureFromMetadata(t *testing.T)
 	}
 }
 
-func TestSessionExecutor_RunWithChannel_ResumeSplit(t *testing.T) {
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:        ModeInteractive,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   sid,
-		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-	}
-
-	events := []ai.StreamEvent{
-		{Type: "content", Content: "part1"},
-		{Type: "resume_split"},
-		{Type: "content", Content: "part2"},
-		{Type: "done"},
-	}
-	ch := make(chan ai.StreamEvent, len(events))
-	for _, e := range events {
-		ch <- e
-	}
-	close(ch)
-
-	executor := NewSessionExecutor(ctx, cfg)
-	result := executor.RunWithChannel(ch)
-
-	if !result.ReceivedTerminal {
-		t.Fatal("expected ReceivedTerminal=true")
-	}
-	// After resume_split, blocks should only contain the post-resume content
-	if len(result.Blocks) == 0 {
-		t.Fatal("expected some blocks after resume_split")
-	}
-}
 
 func TestSessionExecutor_BuildResult_InteractiveCancelReason(t *testing.T) {
 	setupExecutorDB(t)
@@ -2046,70 +1829,9 @@ func TestSessionExecutor_RunWithChannel_TickerFlush(t *testing.T) {
 	}
 }
 
-func TestSessionExecutor_HandleResumeSplit_Errors(t *testing.T) {
-	// Cover lines 378-380, 386-390, 397-401: handleResumeSplit error paths.
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:        ModeInteractive,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   sid,
-		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-	}
-	executor := NewSessionExecutor(ctx, cfg)
 
-	// Set up state before resume_split
-	executor.blocks = []model.ContentBlock{{Type: "text", Text: "part1"}}
-	executor.responseMetadata = &ai.Metadata{InputTokens: 10}
-	executor.rawOutput = "raw before split"
 
-	// Drop chat_history to make FinalizeStreamingMessage fail
-	_, _ = WriteExec("DROP TABLE chat_history")
-
-	// Should not panic even when finalize fails
-	executor.handleResumeSplit()
-}
-
-func TestSessionExecutor_HandleResumeSplit_AddChatMessageFails(t *testing.T) {
-	// Cover lines 414-418: AddChatMessage failure in handleResumeSplit.
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
-
-	sid := setupExecutorSession(t, "test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:        ModeInteractive,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   sid,
-		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-	}
-	executor := NewSessionExecutor(ctx, cfg)
-
-	executor.blocks = []model.ContentBlock{{Type: "text", Text: "part1"}}
-
-	// First resume_split succeeds (finalize existing + add new streaming msg)
-	executor.handleResumeSplit()
-
-	// Drop chat_history so second AddChatMessage fails
-	_, _ = WriteExec("DROP TABLE chat_history")
-
-	executor.blocks = []model.ContentBlock{{Type: "text", Text: "part2"}}
-	// Should not panic
-	executor.handleResumeSplit()
-}
 
 func TestSessionExecutor_BuildContentJSON_WithBlocks_ContextCancel(t *testing.T) {
 	// Cover line 488-490: buildContentJSON with blocks and context cancelled.

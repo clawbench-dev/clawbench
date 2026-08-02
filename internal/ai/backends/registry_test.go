@@ -28,7 +28,6 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 			ToolNameMap: map[string]string{"read_file": "Read"},
 			InputRemaps: map[string]string{"filePath": "file_path"},
 		},
-		NeedsAutoResume: true,
 	}
 
 	backends.Register(p)
@@ -39,9 +38,6 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 	}
 	if got.CLI == nil {
 		t.Error("expected CLI plugin to be non-nil")
-	}
-	if got.NeedsAutoResume != true {
-		t.Error("expected NeedsAutoResume to be true")
 	}
 }
 

@@ -593,38 +593,7 @@ func TestSessionExecutor_UpsertToolCallToDB_EmptySessionIDEarlyReturn(t *testing
 	// Early return — no panic, no DB call
 }
 
-// --- handleResumeSplit additional coverage ---
 
-func TestSessionExecutor_HandleResumeSplit_NoRawOutput(t *testing.T) {
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
-
-	sid := setupExecutorSession(t, "test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:        ModeInteractive,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   sid,
-		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-	}
-	executor := NewSessionExecutor(ctx, cfg)
-
-	// Add some blocks but no raw output
-	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "part1"})
-	executor.responseMetadata = &ai.Metadata{InputTokens: 50}
-	executor.rawOutput = "" // empty raw output
-	executor.handleResumeSplit()
-
-	// Verify state was reset
-	assert.Nil(t, executor.blocks)
-	assert.Nil(t, executor.responseMetadata)
-	assert.Equal(t, 0, executor.eventCount)
-}
 
 // --- Finalize with metadata save ---
 
@@ -872,37 +841,7 @@ func TestSessionExecutor_BuildResult_AskUserQuestionPersisted(t *testing.T) {
 	_ = result
 }
 
-// --- handleResumeSplit sets StreamingMessageID ---
 
-func TestSessionExecutor_HandleResumeSplit_SetsStreamingMessageID(t *testing.T) {
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
-
-	sid := setupExecutorSession(t, "test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:               ModeInteractive,
-		ProjectPath:        "/test",
-		BackendName:        "test",
-		SessionID:          sid,
-		AgentID:            "test-agent",
-		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
-		StreamingMessageID: 0,
-	}
-	executor := NewSessionExecutor(ctx, cfg)
-
-	// Add some blocks and raw output
-	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "part1"})
-	executor.rawOutput = "raw output"
-	executor.responseMetadata = &ai.Metadata{InputTokens: 50}
-	executor.handleResumeSplit()
-
-	// StreamingMessageID should have been set by the new streaming message
-	assert.Greater(t, executor.cfg.StreamingMessageID, int64(0), "StreamingMessageID should be set after handleResumeSplit")
-}
 
 // --- tool_result SSE forwarding with meta extraction ---
 

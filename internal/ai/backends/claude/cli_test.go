@@ -14,13 +14,6 @@ func TestClaudePlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestClaudePlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("claude")
-	if !entry.NeedsAutoResume {
-		t.Error("claude should have needsAutoResume=true")
-	}
-}
-
 func TestClaudePlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("claude")
 	backend := entry.NewBackend()

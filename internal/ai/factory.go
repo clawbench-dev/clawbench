@@ -16,21 +16,19 @@ var (
 )
 
 type BackendFactoryEntry struct {
-	NewBackendFn    func() AIBackend // returns a new backend instance
-	NeedsAutoResume bool             // wrap with AutoResumeBackend?
+	NewBackendFn func() AIBackend // returns a new backend instance
 }
 
 // RegisterBackend registers a backend factory function.
 // Called by backend plugin sub-packages in their init().
-func RegisterBackend(id string, newBackend func() AIBackend, needsAutoResume bool) {
+func RegisterBackend(id string, newBackend func() AIBackend) {
 	backendFactoriesMu.Lock()
 	defer backendFactoriesMu.Unlock()
 	if _, exists := backendFactories[id]; exists {
 		panic(fmt.Sprintf("backend factory already registered: %s", id))
 	}
 	backendFactories[id] = &BackendFactoryEntry{
-		NewBackendFn:    newBackend,
-		NeedsAutoResume: needsAutoResume,
+		NewBackendFn: newBackend,
 	}
 }
 
@@ -58,9 +56,6 @@ func NewBackend(backendType string) (AIBackend, error) {
 	// Try plugin registry first (migrated backends)
 	if entry := lookupBackendFactory(backendType); entry != nil {
 		backend := entry.NewBackendFn()
-		if entry.NeedsAutoResume {
-			backend = &AutoResumeBackend{inner: backend}
-		}
 		return backend, nil
 	}
 
@@ -71,7 +66,7 @@ func NewBackend(backendType string) (AIBackend, error) {
 
 // NewBackendForAgent creates a backend instance for the given agent.
 // If the agent has ACP transport configured (acp-stdio), it creates
-// an ACPBackend directly (no AutoResumeBackend wrapping — ACP uses session/cancel
+// an ACPBackend directly (ACP uses session/cancel
 // instead of process kill for stuck agents). Otherwise, it falls back to the
 // CLI-based NewBackend.
 //
@@ -107,6 +102,6 @@ func NewBackendForAgentWithTransport(backendType, agentID, transportOverride str
 		}
 	}
 
-	// Fall back to CLI backend (with AutoResumeBackend for ExitPlanMode agents)
+	// Fall back to CLI backend
 	return NewBackend(backendType)
 }

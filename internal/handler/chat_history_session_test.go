@@ -481,7 +481,7 @@ func TestServeToolCallDetail_SessionIDFallback(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Test", "claude", "", "default", "chat")
 	require.NoError(t, err)
 
-	// Simulate AutoResumeBackend: two assistant messages in the same session
+	// Simulate multiple assistant messages in a session
 	msgID1, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", `{"blocks":[{"type":"tool_use","name":"Read","id":"toolu_split01","status":"success","done":true}]}`, nil, false, "")
 	require.NoError(t, err)
 

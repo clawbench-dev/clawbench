@@ -350,7 +350,7 @@ func TestACPIntegration_ConnReuse_SameSession(t *testing.T) {
 }
 
 // A3: Kill agent process → next prompt triggers respawn + ResumeSession → state recovered
-func TestACPIntegration_ProcessCrash_AutoResume(t *testing.T) {
+func TestACPIntegration_ProcessCrash(t *testing.T) {
 	requireCodeBuddyACPAvailable(t)
 	env := setupACPTestEnv(t)
 

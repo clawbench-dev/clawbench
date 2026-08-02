@@ -17,7 +17,7 @@ var PiInputRemaps = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("pi", newPiBackend, true)
+	ai.RegisterBackend("pi", newPiBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "pi",
 		Spec: model.BackendSpec{

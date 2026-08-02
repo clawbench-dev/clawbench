@@ -14,13 +14,6 @@ func TestQoderPlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestQoderPlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("qoder")
-	if !entry.NeedsAutoResume {
-		t.Error("qoder should have needsAutoResume=true")
-	}
-}
-
 func TestQoderPlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("qoder")
 	backend := entry.NewBackend()
@@ -219,4 +212,36 @@ func TestQoderPlugin_CmdName(t *testing.T) {
 	if clib.Cmd != "qodercli" {
 		t.Errorf("expected Cmd 'qodercli', got %q", clib.Cmd)
 	}
+}
+
+func TestQoderPlugin_BuildArgs_ResumeWithEmptySessionID(t *testing.T) {
+	entry := ai.LookupBackendFactoryForTest("qoder")
+	clib := entry.NewBackend().(*ai.CLIBackend)
+
+	req := ai.ChatRequest{
+		Prompt:    "continue",
+		SessionID: "",
+		Resume:    true,
+	}
+	args := clib.BuildArgsFn(req)
+
+	// Must NOT contain --resume with empty value
+	for _, a := range args {
+		if a == "--resume" {
+			t.Error("should not pass --resume when SessionID is empty (would produce --resume \"\")")
+		}
+	}
+	// Should still have --print and basic args
+	if !containsArg(args, "--print") {
+		t.Error("expected --print in args")
+	}
+}
+
+func containsArg(args []string, target string) bool {
+	for _, a := range args {
+		if a == target {
+			return true
+		}
+	}
+	return false
 }

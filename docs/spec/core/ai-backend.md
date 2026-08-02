@@ -16,10 +16,7 @@ flowchart TD
 
     D --> G[ACP JSON-RPC over stdio]
     E --> F
-    F --> H{需要 AutoResume?}
-    H -->|是| I[AutoResumeBackend 包装]
-    H -->|否| J[直接使用 CLIBackend]
-    I --> J
+    F --> J[直接使用 CLIBackend]
     J --> K[构造 CLI 命令 → 子进程 → LineParser]
     G --> L[输出 StreamEvent channel]
     K --> L
@@ -71,27 +68,7 @@ sequenceDiagram
     Note over 前端: 回放完成，可显示历史
 ```
 
-### AutoResume 流程（仅 CLI 模式）
 
-```mermaid
-sequenceDiagram
-    participant 调用方
-    participant AutoResume
-    participant 内层后端
-
-    调用方->>AutoResume: ExecuteStream()
-    AutoResume->>内层后端: ExecuteStream(原始 prompt)
-    内层后端-->>AutoResume: StreamEvent 流
-    AutoResume-->>调用方: 转发事件
-    Note over AutoResume: 检测到 ExitPlanMode
-    AutoResume->>AutoResume: 取消内层上下文
-    AutoResume-->>调用方: 发出 resume_split 事件
-    AutoResume->>内层后端: ExecuteStream("继续", Resume=true)
-    内层后端-->>AutoResume: 新的 StreamEvent 流
-    AutoResume-->>调用方: 转发恢复后的事件
-```
-
-AutoResume 只用于 CLI 模式后端。ACP 后端使用会话级取消而非进程终止来处理卡死，不需要 AutoResume 的"杀进程→恢复"模式。某些 CLI 后端（Claude、Codebuddy、Qoder 等）在计划审批时触发 ExitPlanMode——AutoResumeBackend 自动处理：检测到后取消当前执行，自动恢复并继续，对调用方透明。
 
 ## 功能与设计要点
 
@@ -101,7 +78,6 @@ AutoResume 只用于 CLI 模式后端。ACP 后端使用会话级取消而非进
 - **双传输模式**：CLI shell-out（传统模式，通过 stdout 解析）和 ACP stdio（JSON-RPC 双向通信，提供模式切换、斜杠命令、权限审批等结构化能力）。Agent 的 `Transport` 字段决定使用哪种传输，可按会话切换
 - **多后端支持**：支持 12 种 AI 后端（Claude、Codebuddy、OpenCode、Codex、Qoder、VeCLI、DeepSeek/CodeWhale、Cline、Kimi、Copilot、MiMo-Code、Pi），每个后端在 `BackendRegistry` 中声明规格（CLI 命令、模型发现策略、ACP 命令），factory 根据后端类型创建对应的 `AIBackend` 实例
 - **ACP 连接管理**：每个 ClawBench 会话独占一个 ACP 连接（通过 `ACPConnManager` 单例的 `conns map[string]*ACPConn` 维护，键为 `clawbenchSID`）。连接空闲 5 分钟后由定时清理任务回收，活跃会话不会被回收；连接断开后可重新创建并重试，失效的配置值会被跳过
-- **自动恢复（AutoResume）**：仅 CLI 模式。对 ExitPlanMode 场景自动执行"取消→恢复继续"流程，避免用户手动干预
 - **流式事件累加（AccumulateBlock）**：StreamEvent 经 `AccumulateBlock()` 合并为 `[]ContentBlock` 列表。text/thinking 事件合并到最近的同类型 Block（跨 tool_use 边界回溯），tool_use 按 ID 增量更新。ACP 子 Agent 回放检测：当子 Agent 在工具调用后重发已完成段落的前缀文本时，累加器识别并替换原始 Block、删除中间重复 Block，避免同一段落被碎片化展示
 - **ACP context_state 持久化**：ACP 会话的 mode、thinking effort、usage 状态持久化到 `chat_sessions.context_state` 列（JSON 格式）。服务重启后加载会话时即可恢复状态显示，无需等待 ACP 重连推送。部分更新通过原子合并操作写入，避免并发读-写-合并竞态。详见 [会话生命周期](session-lifecycle.md)
 - **流式事件标准化**：各后端不同的输出格式经 LineParser（CLI）或 ACP 事件翻译层（ACP）统一为标准 StreamEvent 类型。ACP 额外提供 mode_update、config_update、thinking_effort_update、plan_update、model_list_update、commands_update 等能力事件
@@ -130,7 +106,6 @@ AutoResume 只用于 CLI 模式后端。ACP 后端使用会话级取消而非进
 - **ACP 一对一而非连接池**：`ACPConnManager` 是单例，管理每个 ClawBench 会话独占一个 ACP 连接。AI Agent 的会话状态是私有的，无法在连接间共享
 - **CLIBackend 是通用骨架**：所有 shell-out 后端共享 `CLIBackend` 的进程管理、stdout 管道、上下文取消逻辑，差异仅在于 CLI 参数构建和输出解析策略——新增后端只需提供这两个策略
 - **后端规格集中声明**：所有后端的规格（CLI 命令、模型发现策略、ACP 命令）在 `BackendRegistry` 中集中声明，factory 通过后端类型字符串匹配创建实例。新增后端需要同时添加规格条目和 factory 分支
-- **AutoResumeBackend 是透明包装器**：仅包装 CLI 后端。ACP 后端不使用 AutoResume——ACP 用会话级取消替代进程终止，两种取消策略不兼容
 - **ACP 状态缓存与重发**：每个连接缓存当前的 mode、thinking effort、config、commands、plan 状态和 `replayPending` 标志。新连接或重连时自动重发，保证前端在任何时刻都能恢复完整的 UI 状态。`replayPending` 标识 LoadSession 异步回放是否仍在进行
 - **ACP 全局函数变量打破循环依赖**：`acp_globals.go` 定义三个全局函数变量（`getExternalSessionID`、`getSessionAutoApprove`、`onPermissionStateChange`），由 `cmd/server/main.go` 在启动时注入真实实现。`internal/ai` 包不能直接 import `internal/service` 或 `internal/ws`（Go 循环依赖），函数变量是在编译期解耦、运行期桥接的折中方案
 - **ACP 工具调用防抖**：`ToolCallUpdate` 事件以 50ms 窗口批量发送，将推送给前端的 WS 事件率降低约 95% 而不丢失信息——AI 工具调用的流式更新频率极高，逐条推送会淹没前端。终端事件（完成/失败）立即发送，不等待防抖窗口

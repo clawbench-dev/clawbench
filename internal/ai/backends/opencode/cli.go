@@ -35,7 +35,7 @@ var OpenCodeToolNameMap = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("opencode", newOpenCodeBackend, false)
+	ai.RegisterBackend("opencode", newOpenCodeBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "opencode",
 		Spec: model.BackendSpec{

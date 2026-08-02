@@ -15,13 +15,6 @@ func TestCodebuddyPlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestCodebuddyPlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("codebuddy")
-	if !entry.NeedsAutoResume {
-		t.Error("codebuddy should have needsAutoResume=true")
-	}
-}
-
 func TestCodebuddyPlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("codebuddy")
 	backend := entry.NewBackend()

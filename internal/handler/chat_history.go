@@ -210,9 +210,9 @@ func ServeChatMessageUpdate(w http.ResponseWriter, r *http.Request) {
 // input/output for a single tool call from the chat_tool_calls table.
 // Parameters: tool_id (required), message_id (required), session_id (optional).
 // When the tool_id+message_id lookup fails, falls back to tool_id+session_id
-// lookup if session_id is provided. This handles task executions where
-// AutoResumeBackend resume splits create multiple assistant messages and the
-// tool call may be stored under a different message_id.
+// lookup if session_id is provided. This handles ACP sessions that can create
+// multiple assistant messages, where the tool call may be stored under a
+// different message_id.
 func ServeToolCallDetail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")

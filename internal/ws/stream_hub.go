@@ -160,8 +160,6 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 	switch event.Type {
 	case "thinking_done", "done", "replay_done":
 		return map[string]any{}
-	case "resume_split":
-		return nil
 	}
 
 	switch event.Type {
@@ -388,43 +386,6 @@ func (h *StreamHub) emitACPState(clientID, sessionID string, s ai.ACPCachedState
 // EmitStreamStartEvent sends a stream_start chat_stream event with the streaming message ID.
 func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID int64) {
 	h.emitStateEvent(clientID, sessionID, "stream_start", map[string]int64{"message_id": messageID})
-}
-
-// EmitResumeSplitEvent sends a resume_split chat_stream event to all subscribers.
-// The message_id is injected from the caller since it's only available after
-// handleResumeSplit creates the new streaming message.
-func (h *StreamHub) EmitResumeSplitEvent(sessionID string, messageID int64) {
-	h.mu.RLock()
-	subs, ok := h.subscribers[sessionID]
-	if !ok || len(subs) == 0 {
-		h.mu.RUnlock()
-		return
-	}
-	clientIDs := make([]string, 0, len(subs))
-	for id := range subs {
-		clientIDs = append(clientIDs, id)
-	}
-	h.mu.RUnlock()
-
-	payload := map[string]any{}
-	if messageID > 0 {
-		payload["message_id"] = messageID
-	}
-
-	msg := ServerMessage{
-		Type:  MessageTypeEvent,
-		ID:    GenerateEventID(),
-		Event: "chat_stream",
-		Data: ChatStreamData{
-			SessionID: sessionID,
-			EventType: "resume_split",
-			Payload:   payload,
-		},
-	}
-
-	for _, clientID := range clientIDs {
-		h.mgr.SendToClient(clientID, msg)
-	}
 }
 
 // emitStateEvent sends a single chat_stream state event to a specific client.

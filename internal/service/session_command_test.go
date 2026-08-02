@@ -2273,7 +2273,7 @@ func (m *mockStreamErrBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest
 func TestExecuteStreamRunShared_StreamStartFails_CoversAbsErrAndReasonKeys(t *testing.T) {
 	// Register a mock backend that succeeds creation but fails ExecuteStream.
 	// This covers lines 460-463 (absErr rename) and 472 (contentKeyReason in stream error path).
-	ai.RegisterBackend("test-stream-err", func() ai.AIBackend { return &mockStreamErrBackend{} }, false)
+	ai.RegisterBackend("test-stream-err", func() ai.AIBackend { return &mockStreamErrBackend{} })
 
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()

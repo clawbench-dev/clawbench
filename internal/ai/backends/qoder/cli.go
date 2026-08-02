@@ -1,6 +1,7 @@
 package qoder
 
 import (
+	"log/slog"
 	"os/exec"
 	"strings"
 
@@ -10,7 +11,7 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("qoder", newQoderBackend, true)
+	ai.RegisterBackend("qoder", newQoderBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "qoder",
 		Spec: model.BackendSpec{
@@ -43,8 +44,10 @@ func newQoderBackend() ai.AIBackend {
 // buildQoderStreamArgs constructs the CLI arguments for Qoder streaming
 func buildQoderStreamArgs(req ai.ChatRequest) []string {
 	args := []string{"--print", "--output-format", "stream-json"}
-	if req.Resume {
+	if req.Resume && req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
+	} else if req.Resume {
+		slog.Warn("cli: resume requested but no session_id, starting fresh (qoder)")
 	} else if req.SessionID != "" {
 		args = append(args, "--session-id", req.SessionID)
 	}

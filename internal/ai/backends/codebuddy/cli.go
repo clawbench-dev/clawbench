@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("codebuddy", newCodebuddyBackend, true)
+	ai.RegisterBackend("codebuddy", newCodebuddyBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "codebuddy",
 		Spec: model.BackendSpec{

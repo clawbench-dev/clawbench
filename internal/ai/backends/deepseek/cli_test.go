@@ -13,13 +13,6 @@ func TestDeepSeekPlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestDeepSeekPlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("deepseek")
-	if !entry.NeedsAutoResume {
-		t.Error("deepseek should have needsAutoResume=true")
-	}
-}
-
 func TestDeepSeekPlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("deepseek")
 	backend := entry.NewBackend()

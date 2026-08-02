@@ -14,13 +14,6 @@ func TestCopilotPlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestCopilotPlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("copilot")
-	if !entry.NeedsAutoResume {
-		t.Error("copilot should have needsAutoResume=true")
-	}
-}
-
 func TestCopilotPlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("copilot")
 	backend := entry.NewBackend()

@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("cline", newClineBackend, true)
+	ai.RegisterBackend("cline", newClineBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "cline",
 		Spec: model.BackendSpec{

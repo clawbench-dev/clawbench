@@ -14,13 +14,6 @@ func TestKimiPlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestKimiPlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("kimi")
-	if !entry.NeedsAutoResume {
-		t.Error("kimi should have needsAutoResume=true")
-	}
-}
-
 func TestKimiPlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("kimi")
 	backend := entry.NewBackend()

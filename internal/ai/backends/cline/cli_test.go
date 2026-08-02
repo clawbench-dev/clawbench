@@ -15,13 +15,6 @@ func TestClinePlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestClinePlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("cline")
-	if !entry.NeedsAutoResume {
-		t.Error("cline should have needsAutoResume=true")
-	}
-}
-
 func TestClinePlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("cline")
 	backend := entry.NewBackend()

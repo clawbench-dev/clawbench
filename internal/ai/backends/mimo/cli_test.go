@@ -13,13 +13,6 @@ func TestMimoPlugin_Registered(t *testing.T) {
 	}
 }
 
-func TestMimoPlugin_NeedsAutoResume(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("mimo")
-	if !entry.NeedsAutoResume {
-		t.Error("mimo should have needsAutoResume=true")
-	}
-}
-
 func TestMimoPlugin_NewBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("mimo")
 	backend := entry.NewBackend()

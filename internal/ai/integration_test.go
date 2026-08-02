@@ -39,7 +39,7 @@ import (
 // backends/* sub-package but is self-contained within this file.
 
 func init() {
-	// claude — needs AutoResume (ExitPlanMode → cancel → resume)
+	// claude — CLI backend (ExitPlanMode → cancel → resume)
 	RegisterBackend("claude", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "claude",
@@ -56,7 +56,7 @@ func init() {
 		}
 	}, true)
 
-	// codebuddy — needs AutoResume
+	// codebuddy — CLI backend
 	RegisterBackend("codebuddy", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "codebuddy",
@@ -78,7 +78,7 @@ func init() {
 		}
 	}, true)
 
-	// opencode — handles ExitPlanMode internally, no AutoResume
+	// opencode — handles ExitPlanMode internally
 	RegisterBackend("opencode", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "opencode",
@@ -97,12 +97,12 @@ func init() {
 		}
 	}, false)
 
-	// codex — custom backend, no AutoResume
+	// codex — custom backend
 	RegisterBackend("codex", func() AIBackend {
 		return &CodexBackend{}
 	}, false)
 
-	// qoder — needs AutoResume
+	// qoder — CLI backend
 	RegisterBackend("qoder", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "qoder",
@@ -115,7 +115,7 @@ func init() {
 		}
 	}, true)
 
-	// deepseek (CodeWhale) — needs AutoResume
+	// deepseek (CodeWhale) — CLI backend
 	RegisterBackend("deepseek", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "deepseek",
@@ -125,12 +125,12 @@ func init() {
 		}
 	}, true)
 
-	// vecli — custom backend, no AutoResume
+	// vecli — custom backend
 	RegisterBackend("vecli", func() AIBackend {
 		return NewVeCLIBackend()
 	}, false)
 
-	// cline — needs AutoResume
+	// cline — CLI backend
 	RegisterBackend("cline", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "cline",
@@ -158,7 +158,7 @@ func init() {
 		}
 	}, true)
 
-	// copilot — needs AutoResume
+	// copilot — CLI backend
 	RegisterBackend("copilot", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "copilot",
@@ -193,7 +193,7 @@ func init() {
 		}
 	}, true)
 
-	// kimi — needs AutoResume
+	// kimi — CLI backend
 	RegisterBackend("kimi", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "kimi",
@@ -237,7 +237,7 @@ func init() {
 		}
 	}, true)
 
-	// mimo — needs AutoResume
+	// mimo — CLI backend
 	RegisterBackend("mimo", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "mimo",
@@ -281,7 +281,7 @@ func init() {
 		}
 	}, true)
 
-	// pi — needs AutoResume
+	// pi — CLI backend
 	RegisterBackend("pi", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "pi",
@@ -893,9 +893,9 @@ func TestIntegration_CLI_NewSession(t *testing.T) {
 				assert.NotEmpty(t, metaEvents[0].Meta.Model, "metadata should contain model name")
 			}
 
-			// AutoResumeBackend forwards the "done" event
+			// The "done" event signals stream completion
 			doneEvents := findEvents(events, "done")
-			assert.NotEmpty(t, doneEvents, "should receive 'done' event from AutoResumeBackend")
+			assert.NotEmpty(t, doneEvents, "should receive 'done' event")
 
 			errorEvents := findEvents(events, "error")
 			assert.Empty(t, errorEvents, "should not have error events")
@@ -1077,58 +1077,6 @@ func TestIntegration_Codex_InvalidCommand(t *testing.T) {
 		Command: "nonexistent-codex-binary-12345",
 	})
 	assert.Error(t, err, "invalid Command should cause ExecuteStream to return error")
-}
-
-// --- 6. AutoResume ExitPlanMode ---
-
-func TestIntegration_AutoResume_ExitPlanMode(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
-
-	// Verify it's an AutoResumeBackend
-	_, ok := backend.(*AutoResumeBackend)
-	require.True(t, ok, "claude backend should be AutoResumeBackend")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:    "请进入规划模式，帮我规划一下如何给hello world程序写测试",
-		SessionID: newSessionID(),
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 200*time.Second)
-
-	resumeSplitEvents := findEvents(events, "resume_split")
-	if len(resumeSplitEvents) == 0 {
-		t.Log("ExitPlanMode was not triggered in this run — this is expected and not a failure")
-		t.Log("AI behavior is non-deterministic; ExitPlanMode may not always be triggered")
-		metaEvents := findEvents(events, "metadata")
-		if len(metaEvents) > 0 {
-			t.Log("basic flow completed with metadata event")
-		} else {
-			contentEvents := findEvents(events, "content")
-			if assert.NotEmpty(t, contentEvents, "should have at least content events") {
-				t.Log("basic flow produced content events but no metadata (may have timed out)")
-			}
-		}
-		return
-	}
-
-	t.Log("ExitPlanMode detected — verifying resume flow")
-	requireEventSequence(t, events, "resume_split", "content", "metadata")
-
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have content events after resume")
-
-	metaEvents := findEvents(events, "metadata")
-	assert.NotEmpty(t, metaEvents, "should have metadata from resumed session")
-
-	doneEvents := findEvents(events, "done")
-	assert.NotEmpty(t, doneEvents, "should receive 'done' event")
 }
 
 // --- 7. System Prompt Injection ---

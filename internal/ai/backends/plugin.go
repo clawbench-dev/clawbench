@@ -36,9 +36,6 @@ type BackendPlugin struct {
 	// ACP event handling logic stays in internal/ai/ as shared infrastructure;
 	// sub-packages only register mapping data (tool names, input field remaps).
 	ACP *ACPPlugin
-
-	// NeedsAutoResume when true wraps CLI mode with AutoResumeBackend.
-	NeedsAutoResume bool
 }
 
 // CLIPlugin provides CLI-mode configuration for backends using the CLIBackend skeleton.

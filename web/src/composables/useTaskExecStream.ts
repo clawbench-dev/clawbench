@@ -87,19 +87,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
         break
       }
 
-      case 'resume_split': {
-        delete streamingMsg.value?.streaming
-        const phase2: StreamingMsg = {
-          role: 'assistant',
-          content: '',
-          blocks: [],
-          streaming: true,
-          createdAt: new Date().toISOString(),
-        }
-        if (payload.message_id) phase2.id = payload.message_id as number
-        streamingMsg.value = phase2
-        break
-      }
+
 
       case 'content': {
         const msg = streamingMsg.value

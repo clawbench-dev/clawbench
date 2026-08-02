@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("vecli", newVeCLIBackend, false)
+	ai.RegisterBackend("vecli", newVeCLIBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "vecli",
 		Spec: model.BackendSpec{
@@ -20,7 +20,7 @@ func init() {
 
 // newVeCLIBackend returns a VeCLIBackend instance.
 // VeCLI is a custom backend — it wraps CLIBackend with additional
-// session-summary post-processing. AutoResume is not needed.
+// session-summary post-processing.
 func newVeCLIBackend() ai.AIBackend {
 	return ai.NewVeCLIBackend()
 }

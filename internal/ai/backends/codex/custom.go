@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("codex", newCodexBackend, false)
+	ai.RegisterBackend("codex", newCodexBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "codex",
 		Spec: model.BackendSpec{
@@ -23,7 +23,7 @@ func init() {
 
 // newCodexBackend returns a CodexBackend instance.
 // Codex is a custom backend — it directly implements AIBackend,
-// not using the CLIBackend skeleton. AutoResume is not needed.
+// not using the CLIBackend skeleton.
 func newCodexBackend() ai.AIBackend {
 	return &ai.CodexBackend{}
 }
