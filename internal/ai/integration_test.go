@@ -5,6 +5,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"strings"
@@ -430,29 +431,89 @@ type cliTestConfig struct {
 
 	// SetupFn is an optional per-test setup function (e.g. requireCodexEnv).
 	SetupFn func(t *testing.T)
+
+	// SupportedTests declares which test points this backend should run.
+	// Backends that don't support a test point are silently skipped,
+	// making coverage gaps visible without noise.
+	SupportedTests map[string]bool
+}
+
+// --- Test Point Names ---
+//
+// Each test point has a constant name used as key in SupportedTests and as
+// the t.Run label. This avoids string hardcoding and makes it easy to see
+// which test points exist.
+
+const (
+	TestNewSession                 = "NewSession"
+	TestStreamEvents               = "StreamEvents"
+	TestResumeSession              = "ResumeSession"
+	TestCancelMidStream            = "CancelMidStream"
+	TestInvalidWorkDir             = "InvalidWorkDir"
+	TestCodexInvalidCommand        = "CodexInvalidCommand"
+	TestSystemPromptInjection      = "SystemPromptInjection"
+	TestMultiTurnResume            = "MultiTurnResume"
+	TestResumeSessionIDConsistency = "ResumeSessionIDConsistency"
+	TestResumeAfterCancel          = "ResumeAfterCancel"
+	TestResumeMetadataCapture      = "ResumeMetadataCapture"
+	TestForkSessionAmnesia         = "ForkSessionAmnesia"
+	TestForkAcrossBackends         = "ForkAcrossBackends"
+	TestForkResumeVsNewSession     = "ForkResumeVsNewSession"
+)
+
+// allCLITestPoints returns the base set of test points every CLI backend runs.
+func allCLITestPoints() map[string]bool {
+	return map[string]bool{
+		TestNewSession:            true,
+		TestStreamEvents:          true,
+		TestSystemPromptInjection: true,
+	}
+}
+
+// withResumeTestPoints adds resume-related test points to a base set,
+// plus any additional test points passed as extras.
+func withResumeTestPoints(base map[string]bool, extras ...string) map[string]bool {
+	m := withTestPoints(base, extras...)
+	m[TestResumeSession] = true
+	m[TestMultiTurnResume] = true
+	m[TestResumeAfterCancel] = true
+	m[TestResumeMetadataCapture] = true
+	m[TestForkAcrossBackends] = true
+	return m
+}
+
+// withTestPoints adds extra test points to a base set.
+func withTestPoints(base map[string]bool, extras ...string) map[string]bool {
+	m := maps.Clone(base)
+	for _, e := range extras {
+		m[e] = true
+	}
+	return m
 }
 
 // cliBackends is the master table of all CLI backends for integration tests.
 var cliBackends = []cliTestConfig{
 	{
-		Backend:            "claude",
-		CLIName:            "claude",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		HasModelInMeta:     true,
-		HasSessionIDInMeta: true,
+		Backend:             "claude",
+		CLIName:             "claude",
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		HasModelInMeta:      true,
+		HasSessionIDInMeta:  true,
 		HasTokenUsageInMeta: true,
-		SupportsResume:     true,
+		SupportsResume:      true,
+		SupportedTests: withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir, TestForkSessionAmnesia, TestForkResumeVsNewSession, TestResumeSessionIDConsistency),
 	},
 	{
-		Backend:            "codebuddy",
-		CLIName:            "codebuddy",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		HasModelInMeta:     true,
-		HasSessionIDInMeta: true,
+		Backend:             "codebuddy",
+		CLIName:             "codebuddy",
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		HasModelInMeta:      true,
+		HasSessionIDInMeta:  true,
 		HasTokenUsageInMeta: true,
-		SupportsResume:     true,
+		SupportsResume:      true,
+		SupportedTests: withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir, TestResumeSessionIDConsistency),
 	},
 	{
 		Backend:            "opencode",
@@ -464,6 +525,7 @@ var cliBackends = []cliTestConfig{
 		HasSessionIDInMeta:   true,
 		HasTokenUsageInMeta:  false, // OpenCodeStreamParser does not always report InputTokens
 		SupportsResume:      true,
+		SupportedTests: withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir),
 	},
 	{
 		Backend:             "codex",
@@ -477,16 +539,18 @@ var cliBackends = []cliTestConfig{
 		HasTokenUsageInMeta: false, // CodexBackend resume path omits token usage
 		SupportsResume:      true,
 		SetupFn:             func(t *testing.T) { requireCodexEnv(t) },
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestCancelMidStream, TestCodexInvalidCommand),
 	},
 	{
-		Backend:            "qoder",
-		CLIName:            "qodercli",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		HasModelInMeta:     true,
-		HasSessionIDInMeta: true,
+		Backend:             "qoder",
+		CLIName:             "qodercli",
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		HasModelInMeta:      true,
+		HasSessionIDInMeta:  true,
 		HasTokenUsageInMeta: false, // QoderStreamParser omits InputTokens
-		SupportsResume:     true,
+		SupportsResume:      true,
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestResumeSessionIDConsistency),
 	},
 	{
 		Backend:            "deepseek",
@@ -500,6 +564,7 @@ var cliBackends = []cliTestConfig{
 		HasSessionIDInMeta:   true,   // Reports session ID in metadata
 		HasTokenUsageInMeta: false, // CodeWhale mode doesn't reliably report tokens
 		SupportsResume:     true,
+		SupportedTests:     withResumeTestPoints(allCLITestPoints(), TestCancelMidStream),
 	},
 	{
 		Backend:          "vecli",
@@ -512,46 +577,51 @@ var cliBackends = []cliTestConfig{
 		HasTokenUsageInMeta:  false,
 		SkipNewSessionID:     true,
 		EmitsSessionCapture:  false,
+		SupportedTests:       withTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir),
 	},
 	{
-		Backend:            "cline",
-		CLIName:            "cline",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		HasModelInMeta:     true,
-		HasSessionIDInMeta: true,
+		Backend:             "cline",
+		CLIName:             "cline",
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		HasModelInMeta:      true,
+		HasSessionIDInMeta:  true,
 		HasTokenUsageInMeta: false,
-		SupportsResume:     true,
+		SupportsResume:      true,
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestResumeSessionIDConsistency),
 	},
 	{
-		Backend:            "copilot",
-		CLIName:            "copilot",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		HasModelInMeta:     true,
-		HasSessionIDInMeta: true,
+		Backend:             "copilot",
+		CLIName:             "copilot",
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		HasModelInMeta:      true,
+		HasSessionIDInMeta:  true,
 		HasTokenUsageInMeta: false,
-		SupportsResume:     true,
+		SupportsResume:      true,
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestResumeSessionIDConsistency),
 	},
 	{
-		Backend:            "kimi",
-		CLIName:            "kimi",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		HasModelInMeta:     true,
-		HasSessionIDInMeta: true,
+		Backend:             "kimi",
+		CLIName:             "kimi",
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		HasModelInMeta:      true,
+		HasSessionIDInMeta:  true,
 		HasTokenUsageInMeta: false,
-		SupportsResume:     true,
+		SupportsResume:      true,
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestResumeSessionIDConsistency),
 	},
 	{
-		Backend:            "mimo",
-		CLIName:            "mimo",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		HasModelInMeta:     true,
-		HasSessionIDInMeta: true,
+		Backend:             "mimo",
+		CLIName:             "mimo",
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		HasModelInMeta:      true,
+		HasSessionIDInMeta:  true,
 		HasTokenUsageInMeta: false,
-		SupportsResume:     true,
+		SupportsResume:      true,
+		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestResumeSessionIDConsistency),
 	},
 	{
 		Backend:            "pi",
@@ -564,18 +634,8 @@ var cliBackends = []cliTestConfig{
 		HasSessionIDInMeta:   true,
 		HasTokenUsageInMeta:  true,
 		SupportsResume:       true,
+		SupportedTests:       withResumeTestPoints(allCLITestPoints()),
 	},
-}
-
-// resumeBackends filters cliBackends to only those that support resume.
-var resumeBackends []cliTestConfig
-
-func init() {
-	for _, cfg := range cliBackends {
-		if cfg.SupportsResume {
-			resumeBackends = append(resumeBackends, cfg)
-		}
-	}
 }
 
 // --- Shared Helpers ---
@@ -871,198 +931,239 @@ func skipIfVeCLINoContent(t *testing.T, cfg cliTestConfig, events []StreamEvent)
 	}
 }
 
-// --- 1. New Session Basic Dialog ---
+// ===========================================================================
+// Table-Driven CLI Integration Tests — Unified Entry Point
+// ===========================================================================
+//
+// All CLI integration tests are organized as a single table-driven
+// TestIntegration_CLI function. Each test point is one entry in cliTestCases,
+// and each backend's participation is determined by SupportedTests.
+// Backends that don't support a test point are silently skipped (continue),
+// making coverage gaps visible without noise.
 
-func TestIntegration_CLI_NewSession(t *testing.T) {
-	for _, cfg := range cliBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			req := cliNewSessionRequest(cfg, "说一个字：好")
-			events := cliTestBackend(t, cfg, req)
+// cliTestCase describes one test point for table-driven CLI integration tests.
+type cliTestCase struct {
+	Name      string                        // Test point name (also used as t.Run label)
+	ShouldRun func(cfg cliTestConfig) bool   // Returns true if this backend should run this test
+	Run       func(t *testing.T, cfg cliTestConfig) // The test logic
+}
 
-			skipIfVeCLINoContent(t, cfg, events)
+// cliTestCases is the master table of all CLI integration test points.
+var cliTestCases = []cliTestCase{
+	{Name: TestNewSession, ShouldRun: supportsTest(TestNewSession), Run: testCLINewSession},
+	{Name: TestStreamEvents, ShouldRun: supportsTest(TestStreamEvents), Run: testCLIStreamEvents},
+	{Name: TestResumeSession, ShouldRun: supportsTest(TestResumeSession), Run: testCLIResumeSession},
+	{Name: TestCancelMidStream, ShouldRun: supportsTest(TestCancelMidStream), Run: testCLICancelMidStream},
+	{Name: TestInvalidWorkDir, ShouldRun: supportsTest(TestInvalidWorkDir), Run: testCLIInvalidWorkDir},
+	{Name: TestCodexInvalidCommand, ShouldRun: supportsTest(TestCodexInvalidCommand), Run: testCLICodexInvalidCommand},
+	{Name: TestSystemPromptInjection, ShouldRun: supportsTest(TestSystemPromptInjection), Run: testCLISystemPromptInjection},
+	{Name: TestMultiTurnResume, ShouldRun: supportsTest(TestMultiTurnResume), Run: testCLIMultiTurnResume},
+	{Name: TestResumeSessionIDConsistency, ShouldRun: supportsTest(TestResumeSessionIDConsistency), Run: testCLIResumeSessionIDConsistency},
+	{Name: TestResumeAfterCancel, ShouldRun: supportsTest(TestResumeAfterCancel), Run: testCLIResumeAfterCancel},
+	{Name: TestResumeMetadataCapture, ShouldRun: supportsTest(TestResumeMetadataCapture), Run: testCLIResumeMetadataCapture},
+	{Name: TestForkSessionAmnesia, ShouldRun: supportsTest(TestForkSessionAmnesia), Run: testCLIForkSessionAmnesia},
+	{Name: TestForkAcrossBackends, ShouldRun: supportsTest(TestForkAcrossBackends), Run: testCLIForkAcrossBackends},
+	{Name: TestForkResumeVsNewSession, ShouldRun: supportsTest(TestForkResumeVsNewSession), Run: testCLIForkResumeVsNewSession},
+}
 
-			requireEventSequence(t, events, "content", "metadata")
-			content := concatContent(events)
-			assert.NotEmpty(t, content, "should receive content from %s", cfg.Backend)
+// supportsTest returns a ShouldRun function that checks cfg.SupportedTests[name].
+func supportsTest(name string) func(cfg cliTestConfig) bool {
+	return func(cfg cliTestConfig) bool { return cfg.SupportedTests[name] }
+}
 
-			metaEvents := findEvents(events, "metadata")
-			require.NotEmpty(t, metaEvents, "should have metadata event")
-
-			if cfg.HasModelInMeta {
-				assert.NotEmpty(t, metaEvents[0].Meta.Model, "metadata should contain model name")
+// TestIntegration_CLI is the unified entry point for all CLI integration tests.
+// validateTestCoverage panics if any test point in cliTestCases has zero
+// backend coverage — a configuration error that would silently drop tests.
+func validateTestCoverage() {
+	for _, tc := range cliTestCases {
+		hasAny := false
+		for _, cfg := range cliBackends {
+			if tc.ShouldRun(cfg) {
+				hasAny = true
+				break
 			}
+		}
+		if !hasAny {
+			panic(fmt.Sprintf("test point %q has no backend coverage — add it to at least one SupportedTests", tc.Name))
+		}
+	}
+}
 
-			// The "done" event signals stream completion
-			doneEvents := findEvents(events, "done")
-			assert.NotEmpty(t, doneEvents, "should receive 'done' event")
+func TestIntegration_CLI(t *testing.T) {
+	validateTestCoverage()
 
-			errorEvents := findEvents(events, "error")
-			assert.Empty(t, errorEvents, "should not have error events")
+	for _, tc := range cliTestCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			for _, cfg := range cliBackends {
+				if !tc.ShouldRun(cfg) {
+					continue // silently skip — avoids 14×12 SKIP noise
+				}
+				t.Run(cfg.Backend, func(t *testing.T) {
+					tc.Run(t, cfg)
+				})
+			}
 		})
 	}
 }
 
+// ===========================================================================
+// Test Point Implementations
+// ===========================================================================
+// Each function implements one test point. The cfg parameter contains all
+// backend-specific configuration; no inline config slices are needed.
+
+// --- 1. New Session Basic Dialog ---
+func testCLINewSession(t *testing.T, cfg cliTestConfig) {
+	req := cliNewSessionRequest(cfg, "说一个字：好")
+	events := cliTestBackend(t, cfg, req)
+
+	skipIfVeCLINoContent(t, cfg, events)
+
+	requireEventSequence(t, events, "content", "metadata")
+	content := concatContent(events)
+	assert.NotEmpty(t, content, "should receive content from %s", cfg.Backend)
+
+	metaEvents := findEvents(events, "metadata")
+	require.NotEmpty(t, metaEvents, "should have metadata event")
+
+	if cfg.HasModelInMeta {
+		assert.NotEmpty(t, metaEvents[0].Meta.Model, "metadata should contain model name")
+	}
+
+	// The "done" event signals stream completion
+	doneEvents := findEvents(events, "done")
+	assert.NotEmpty(t, doneEvents, "should receive 'done' event")
+
+	errorEvents := findEvents(events, "error")
+	assert.Empty(t, errorEvents, "should not have error events")
+}
+
 // --- 2. Stream Event Completeness ---
+func testCLIStreamEvents(t *testing.T, cfg cliTestConfig) {
+	req := cliNewSessionRequest(cfg, "1+1等于几？只回答数字")
+	events := cliTestBackend(t, cfg, req)
 
-func TestIntegration_CLI_StreamEvents(t *testing.T) {
-	for _, cfg := range cliBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			req := cliNewSessionRequest(cfg, "1+1等于几？只回答数字")
-			events := cliTestBackend(t, cfg, req)
+	skipIfVeCLINoContent(t, cfg, events)
 
-			skipIfVeCLINoContent(t, cfg, events)
+	contentEvents := findEvents(events, "content")
+	thinkingEvents := findEvents(events, "thinking")
+	assert.True(t, len(contentEvents) > 0 || len(thinkingEvents) > 0,
+		"should have content or thinking events")
 
-			contentEvents := findEvents(events, "content")
-			thinkingEvents := findEvents(events, "thinking")
-			assert.True(t, len(contentEvents) > 0 || len(thinkingEvents) > 0,
-				"should have content or thinking events")
+	metaEvents := findEvents(events, "metadata")
+	require.NotEmpty(t, metaEvents, "should have metadata event")
 
-			metaEvents := findEvents(events, "metadata")
-			require.NotEmpty(t, metaEvents, "should have metadata event")
+	// Backends that capture session ID via session_capture
+	if cfg.EmitsSessionCapture {
+		sessionCaptureEvents := findEvents(events, "session_capture")
+		assert.NotEmpty(t, sessionCaptureEvents, "%s should emit session_capture", cfg.Backend)
+	} else if cfg.HasSessionIDInMeta {
+		assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "%s metadata should contain session ID", cfg.Backend)
+	}
 
-			// Backends that capture session ID via session_capture
-			if cfg.EmitsSessionCapture {
-				sessionCaptureEvents := findEvents(events, "session_capture")
-				assert.NotEmpty(t, sessionCaptureEvents, "%s should emit session_capture", cfg.Backend)
-			} else if cfg.HasSessionIDInMeta {
-				assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "%s metadata should contain session ID", cfg.Backend)
-			}
-
-			// Most CLI backends emit raw_output for debugging (except CodeWhale which has its own parser)
-			if cfg.Backend != "deepseek" {
-				rawEvents := findEvents(events, "raw_output")
-				assert.NotEmpty(t, rawEvents, "should have raw_output event")
-			}
-		})
+	// Most CLI backends emit raw_output for debugging (except CodeWhale which has its own parser)
+	if cfg.Backend != "deepseek" {
+		rawEvents := findEvents(events, "raw_output")
+		assert.NotEmpty(t, rawEvents, "should have raw_output event")
 	}
 }
 
 // --- 3. Session Resume (2-turn) ---
+func testCLIResumeSession(t *testing.T, cfg cliTestConfig) {
+	backend := cliSetupAndCreate(t, cfg)
 
-func TestIntegration_CLI_ResumeSession(t *testing.T) {
-	for _, cfg := range resumeBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			backend := cliSetupAndCreate(t, cfg)
+	// Phase 1: new session
+	req1 := cliNewSessionRequest(cfg, "记住数字42，稍后我会问你。只回复OK")
+	events1 := cliExecPrompt(t, cfg, backend, req1)
 
-			// Phase 1: new session
-			req1 := cliNewSessionRequest(cfg, "记住数字42，稍后我会问你。只回复OK")
-			events1 := cliExecPrompt(t, cfg, backend, req1)
+	meta1 := findEvents(events1, "metadata")
+	require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
 
-			meta1 := findEvents(events1, "metadata")
-			require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
+	sessionID := cliResolveSessionID(cfg, req1, events1)
+	require.NotEmpty(t, sessionID, "should capture session ID")
 
-			sessionID := cliResolveSessionID(cfg, req1, events1)
-			require.NotEmpty(t, sessionID, "should capture session ID")
-
-			// Phase 2: resume session
-			req2 := ChatRequest{
-				Prompt:    "我之前让你记住的数字是什么？只回答数字",
-				SessionID: sessionID,
-				WorkDir:   testWorkDir(),
-				Resume:    true,
-			}
-			events2 := cliExecPrompt(t, cfg, backend, req2)
-
-			requireEventSequence(t, events2, "content", "metadata")
-			content := concatContent(events2)
-			assert.NotEmpty(t, content, "should receive content in resumed session")
-
-			doneEvents2 := findEvents(events2, "done")
-			assert.NotEmpty(t, doneEvents2, "should receive 'done' event in resumed session")
-		})
+	// Phase 2: resume session
+	req2 := ChatRequest{
+		Prompt:    "我之前让你记住的数字是什么？只回答数字",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
 	}
+	events2 := cliExecPrompt(t, cfg, backend, req2)
+
+	requireEventSequence(t, events2, "content", "metadata")
+	content := concatContent(events2)
+	assert.NotEmpty(t, content, "should receive content in resumed session")
+
+	doneEvents2 := findEvents(events2, "done")
+	assert.NotEmpty(t, doneEvents2, "should receive 'done' event in resumed session")
 }
 
 // --- 4. Context Cancellation ---
-
-func TestIntegration_CLI_CancelMidStream(t *testing.T) {
-	cancelBackends := []cliTestConfig{
-		{Backend: "claude", CLIName: "claude", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second},
-		{Backend: "codebuddy", CLIName: "codebuddy", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second},
-		{Backend: "opencode", CLIName: "opencode", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SkipNewSessionID: true, EmitsSessionCapture: true},
-		{Backend: "codex", CLIName: "codex", Command: codexCommand, Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SetupFn: func(t *testing.T) { requireCodexEnv(t) }},
-		{Backend: "deepseek", CLIName: "codewhale", AltCLIName: "deepseek", Timeout: 120 * time.Second, CollectTimeout: 150 * time.Second, SkipNewSessionID: true},
-		{Backend: "vecli", CLIName: "vecli", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SkipNewSessionID: true},
+func testCLICancelMidStream(t *testing.T, cfg cliTestConfig) {
+	if cfg.SetupFn != nil {
+		cfg.SetupFn(t)
+	} else {
+		requireBackendCLI(t, cfg)
 	}
 
-	for _, cfg := range cancelBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			if cfg.SetupFn != nil {
-				cfg.SetupFn(t)
-			} else {
-				requireBackendCLI(t, cfg)
-			}
+	backend, err := NewBackend(cfg.Backend)
+	require.NoError(t, err)
 
-			backend, err := NewBackend(cfg.Backend)
-			require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	defer cancel()
 
-			ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
-			defer cancel()
-
-			req := ChatRequest{
-				Prompt:  "写一篇500字的文章，主题是春天的花园",
-				WorkDir: testWorkDir(),
-			}
-			if !cfg.SkipNewSessionID {
-				req.SessionID = newSessionID()
-			}
-			if cfg.Command != "" {
-				req.Command = cfg.Command
-			}
-
-			ch, err := backend.ExecuteStream(ctx, req)
-			require.NoError(t, err)
-
-			events := cancelOnFirstContent(t, ch, cancel)
-
-			skipIfVeCLINoContent(t, cfg, events)
-
-			contentEvents := findEvents(events, "content")
-			assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
-		})
+	req := ChatRequest{
+		Prompt:  "写一篇500字的文章，主题是春天的花园",
+		WorkDir: testWorkDir(),
 	}
+	if !cfg.SkipNewSessionID {
+		req.SessionID = newSessionID()
+	}
+	if cfg.Command != "" {
+		req.Command = cfg.Command
+	}
+
+	ch, err := backend.ExecuteStream(ctx, req)
+	require.NoError(t, err)
+
+	events := cancelOnFirstContent(t, ch, cancel)
+
+	skipIfVeCLINoContent(t, cfg, events)
+
+	contentEvents := findEvents(events, "content")
+	assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
 }
 
 // --- 5. Error Paths ---
+func testCLIInvalidWorkDir(t *testing.T, cfg cliTestConfig) {
+	requireBackendCLI(t, cfg)
+	backend, err := NewBackend(cfg.Backend)
+	require.NoError(t, err)
 
-func TestIntegration_CLI_InvalidWorkDir(t *testing.T) {
-	errorBackends := []cliTestConfig{
-		{Backend: "claude", CLIName: "claude"},
-		{Backend: "codebuddy", CLIName: "codebuddy"},
-		{Backend: "opencode", CLIName: "opencode"},
-		{Backend: "vecli", CLIName: "vecli"},
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	ch, err := backend.ExecuteStream(ctx, ChatRequest{
+		Prompt:    "hello",
+		SessionID: newSessionID(),
+		WorkDir:   "/nonexistent/path/that/does/not/exist/abc123",
+	})
+	if err != nil {
+		t.Logf("ExecuteStream returned error (expected for invalid WorkDir): %v", err)
+		return
 	}
 
-	for _, cfg := range errorBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			requireBackendCLI(t, cfg)
-			backend, err := NewBackend(cfg.Backend)
-			require.NoError(t, err)
-
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			ch, err := backend.ExecuteStream(ctx, ChatRequest{
-				Prompt:    "hello",
-				SessionID: newSessionID(),
-				WorkDir:   "/nonexistent/path/that/does/not/exist/abc123",
-			})
-			if err != nil {
-				t.Logf("ExecuteStream returned error (expected for invalid WorkDir): %v", err)
-				return
-			}
-
-			events := collectAllEvents(t, ch, 30*time.Second)
-			hasError := len(findEvents(events, "error")) > 0
-			hasWarning := len(findEvents(events, "warning")) > 0
-			assert.True(t, hasError || hasWarning,
-				"invalid WorkDir should produce error or warning events; got types: %v",
-				eventTypes(events))
-		})
-	}
+	events := collectAllEvents(t, ch, 30*time.Second)
+	hasError := len(findEvents(events, "error")) > 0
+	hasWarning := len(findEvents(events, "warning")) > 0
+	assert.True(t, hasError || hasWarning,
+		"invalid WorkDir should produce error or warning events; got types: %v",
+		eventTypes(events))
 }
 
-func TestIntegration_Codex_InvalidCommand(t *testing.T) {
+// --- 6. Codex Invalid Command ---
+func testCLICodexInvalidCommand(t *testing.T, cfg cliTestConfig) {
 	requireCodexEnv(t)
 	backend, err := NewBackend("codex")
 	require.NoError(t, err)
@@ -1079,270 +1180,237 @@ func TestIntegration_Codex_InvalidCommand(t *testing.T) {
 }
 
 // --- 7. System Prompt Injection ---
+func testCLISystemPromptInjection(t *testing.T, cfg cliTestConfig) {
+	marker := "INTEGRATION_TEST_MARKER_" + strings.ToUpper(cfg.Backend[:3])
 
-func TestIntegration_CLI_SystemPromptInjection(t *testing.T) {
-	for _, cfg := range cliBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			marker := "INTEGRATION_TEST_MARKER_" + strings.ToUpper(cfg.Backend[:3])
+	// For backends without --system-prompt flag, use injection interval
+	if cfg.Backend == "opencode" || cfg.Backend == "codex" || cfg.Backend == "vecli" || cfg.Backend == "qoder" {
+		model.ChatSystemPromptInterval = 10
+	}
 
-			// For backends without --system-prompt flag, use injection interval
-			if cfg.Backend == "opencode" || cfg.Backend == "codex" || cfg.Backend == "vecli" || cfg.Backend == "qoder" {
-				model.ChatSystemPromptInterval = 10
-			}
+	req := cliNewSessionRequest(cfg, "请重复以下标记："+marker)
+	req.SystemPrompt = "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求"
+	events := cliTestBackend(t, cfg, req)
 
-			req := cliNewSessionRequest(cfg, "请重复以下标记："+marker)
-			req.SystemPrompt = "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求"
-			events := cliTestBackend(t, cfg, req)
+	skipIfVeCLINoContent(t, cfg, events)
 
-			skipIfVeCLINoContent(t, cfg, events)
+	requireEventSequence(t, events, "content", "metadata")
 
-			requireEventSequence(t, events, "content", "metadata")
+	// Verify the stream completed successfully with metadata
+	metaEvents := findEvents(events, "metadata")
+	require.NotEmpty(t, metaEvents, "should have metadata event")
 
-			// Verify the stream completed successfully with metadata
-			metaEvents := findEvents(events, "metadata")
-			require.NotEmpty(t, metaEvents, "should have metadata event")
-
-			// Best-effort check — AI compliance is non-deterministic
-			content := concatContent(events)
-			if !strings.Contains(content, marker) {
-				t.Logf("%s did not include marker %q in response — AI compliance is non-deterministic; content: %s", cfg.Backend, marker, truncate(content, 200))
-			}
-		})
+	// Best-effort check — AI compliance is non-deterministic
+	content := concatContent(events)
+	if !strings.Contains(content, marker) {
+		t.Logf("%s did not include marker %q in response — AI compliance is non-deterministic; content: %s", cfg.Backend, marker, truncate(content, 200))
 	}
 }
 
 // --- 8. Multi-Turn Resume (3-turn) ---
+func testCLIMultiTurnResume(t *testing.T, cfg cliTestConfig) {
+	backend := cliSetupAndCreate(t, cfg)
 
-func TestIntegration_CLI_MultiTurnResume(t *testing.T) {
-	for _, cfg := range resumeBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			backend := cliSetupAndCreate(t, cfg)
+	// Turn 1: establish session
+	req1 := cliNewSessionRequest(cfg, "记住数字42，稍后我会问你。只回复OK")
+	events1 := cliExecPrompt(t, cfg, backend, req1)
+	meta1 := findEvents(events1, "metadata")
+	require.NotEmpty(t, meta1, "turn 1 should complete with metadata event")
 
-			// Turn 1: establish session
-			req1 := cliNewSessionRequest(cfg, "记住数字42，稍后我会问你。只回复OK")
-			events1 := cliExecPrompt(t, cfg, backend, req1)
-			meta1 := findEvents(events1, "metadata")
-			require.NotEmpty(t, meta1, "turn 1 should complete with metadata event")
+	sessionID := cliResolveSessionID(cfg, req1, events1)
+	require.NotEmpty(t, sessionID, "should capture session ID after turn 1")
 
-			sessionID := cliResolveSessionID(cfg, req1, events1)
-			require.NotEmpty(t, sessionID, "should capture session ID after turn 1")
-
-			if cfg.HasSessionIDInMeta {
-				assert.NotEmpty(t, meta1[0].Meta.SessionID, "turn 1 metadata should contain session ID")
-			}
-
-			// Turn 2: resume and recall
-			req2 := ChatRequest{
-				Prompt:    "我之前让你记住的数字是什么？只回答数字",
-				SessionID: sessionID,
-				WorkDir:   testWorkDir(),
-				Resume:    true,
-			}
-			events2 := cliExecPrompt(t, cfg, backend, req2)
-			requireEventSequence(t, events2, "content", "metadata")
-			content2 := concatContent(events2)
-			assert.NotEmpty(t, content2, "turn 2 should receive content")
-
-			meta2 := findEvents(events2, "metadata")
-			require.NotEmpty(t, meta2, "turn 2 should have metadata event")
-
-			doneEvents2 := findEvents(events2, "done")
-			assert.NotEmpty(t, doneEvents2, "turn 2 should receive 'done' event")
-
-			// Turn 3: resume again
-			req3 := ChatRequest{
-				Prompt:    "再告诉我一次那个数字",
-				SessionID: sessionID,
-				WorkDir:   testWorkDir(),
-				Resume:    true,
-			}
-			events3 := cliExecPrompt(t, cfg, backend, req3)
-			requireEventSequence(t, events3, "content", "metadata")
-			content3 := concatContent(events3)
-			assert.NotEmpty(t, content3, "turn 3 should receive content")
-
-			doneEvents3 := findEvents(events3, "done")
-			assert.NotEmpty(t, doneEvents3, "turn 3 should receive 'done' event")
-		})
+	if cfg.HasSessionIDInMeta {
+		assert.NotEmpty(t, meta1[0].Meta.SessionID, "turn 1 metadata should contain session ID")
 	}
+
+	// Turn 2: resume and recall
+	req2 := ChatRequest{
+		Prompt:    "我之前让你记住的数字是什么？只回答数字",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	}
+	events2 := cliExecPrompt(t, cfg, backend, req2)
+	requireEventSequence(t, events2, "content", "metadata")
+	content2 := concatContent(events2)
+	assert.NotEmpty(t, content2, "turn 2 should receive content")
+
+	meta2 := findEvents(events2, "metadata")
+	require.NotEmpty(t, meta2, "turn 2 should have metadata event")
+
+	doneEvents2 := findEvents(events2, "done")
+	assert.NotEmpty(t, doneEvents2, "turn 2 should receive 'done' event")
+
+	// Turn 3: resume again
+	req3 := ChatRequest{
+		Prompt:    "再告诉我一次那个数字",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	}
+	events3 := cliExecPrompt(t, cfg, backend, req3)
+	requireEventSequence(t, events3, "content", "metadata")
+	content3 := concatContent(events3)
+	assert.NotEmpty(t, content3, "turn 3 should receive content")
+
+	doneEvents3 := findEvents(events3, "done")
+	assert.NotEmpty(t, doneEvents3, "turn 3 should receive 'done' event")
 }
 
 // --- 9. Resume Session ID Consistency ---
+func testCLIResumeSessionIDConsistency(t *testing.T, cfg cliTestConfig) {
+	backend := cliSetupAndCreate(t, cfg)
 
-func TestIntegration_CLI_ResumeSessionIDConsistency(t *testing.T) {
-	// Only backends that report SessionID in metadata can be verified for consistency
-	var consistentBackends []cliTestConfig
-	for _, cfg := range resumeBackends {
-		if cfg.HasSessionIDInMeta && !cfg.SkipNewSessionID {
-			consistentBackends = append(consistentBackends, cfg)
-		}
+	sessionID := newSessionID()
+
+	// Phase 1
+	req1 := ChatRequest{
+		Prompt:    "说一个字：好",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
 	}
+	events1 := cliExecPrompt(t, cfg, backend, req1)
+	meta1 := findEvents(events1, "metadata")
+	require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
+	firstSessionID := meta1[0].Meta.SessionID
+	assert.NotEmpty(t, firstSessionID, "metadata should contain session ID")
 
-	for _, cfg := range consistentBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			backend := cliSetupAndCreate(t, cfg)
-
-			sessionID := newSessionID()
-
-			// Phase 1
-			req1 := ChatRequest{
-				Prompt:    "说一个字：好",
-				SessionID: sessionID,
-				WorkDir:   testWorkDir(),
-			}
-			events1 := cliExecPrompt(t, cfg, backend, req1)
-			meta1 := findEvents(events1, "metadata")
-			require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
-			firstSessionID := meta1[0].Meta.SessionID
-			assert.NotEmpty(t, firstSessionID, "metadata should contain session ID")
-
-			// Phase 2
-			req2 := ChatRequest{
-				Prompt:    "再说一个字：是",
-				SessionID: sessionID,
-				WorkDir:   testWorkDir(),
-				Resume:    true,
-			}
-			events2 := cliExecPrompt(t, cfg, backend, req2)
-			meta2 := findEvents(events2, "metadata")
-			require.NotEmpty(t, meta2, "resumed session should complete with metadata event")
-			resumedSessionID := meta2[0].Meta.SessionID
-			assert.NotEmpty(t, resumedSessionID, "resumed metadata should contain session ID")
-
-			assert.Equal(t, firstSessionID, resumedSessionID,
-				"session ID should remain consistent across resume")
-		})
+	// Phase 2
+	req2 := ChatRequest{
+		Prompt:    "再说一个字：是",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
 	}
+	events2 := cliExecPrompt(t, cfg, backend, req2)
+	meta2 := findEvents(events2, "metadata")
+	require.NotEmpty(t, meta2, "resumed session should complete with metadata event")
+	resumedSessionID := meta2[0].Meta.SessionID
+	assert.NotEmpty(t, resumedSessionID, "resumed metadata should contain session ID")
+
+	assert.Equal(t, firstSessionID, resumedSessionID,
+		"session ID should remain consistent across resume")
 }
 
 // --- 10. Resume After Cancel ---
+func testCLIResumeAfterCancel(t *testing.T, cfg cliTestConfig) {
+	backend := cliSetupAndCreate(t, cfg)
 
-func TestIntegration_CLI_ResumeAfterCancel(t *testing.T) {
-	for _, cfg := range resumeBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			backend := cliSetupAndCreate(t, cfg)
+	// Phase 1: new session — must complete fully
+	req1 := cliNewSessionRequest(cfg, "记住数字7，只回复OK")
+	events1 := cliExecPrompt(t, cfg, backend, req1)
+	meta1 := findEvents(events1, "metadata")
+	require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
 
-			// Phase 1: new session — must complete fully
-			req1 := cliNewSessionRequest(cfg, "记住数字7，只回复OK")
-			events1 := cliExecPrompt(t, cfg, backend, req1)
-			meta1 := findEvents(events1, "metadata")
-			require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
+	sessionID := cliResolveSessionID(cfg, req1, events1)
+	require.NotEmpty(t, sessionID, "should capture session ID")
 
-			sessionID := cliResolveSessionID(cfg, req1, events1)
-			require.NotEmpty(t, sessionID, "should capture session ID")
+	// Phase 2: cancel a second prompt mid-stream
+	timeout2 := cfg.Timeout
+	if timeout2 == 0 {
+		timeout2 = 60 * time.Second
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), timeout2)
+	defer cancel2()
 
-			// Phase 2: cancel a second prompt mid-stream
-			timeout2 := cfg.Timeout
-			if timeout2 == 0 {
-				timeout2 = 60 * time.Second
+	req2 := ChatRequest{
+		Prompt:    "现在从1数到100，每个数字一行",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	}
+	if cfg.Command != "" {
+		req2.Command = cfg.Command
+	}
+
+	ch2, err := backend.ExecuteStream(ctx2, req2)
+	require.NoError(t, err)
+
+	var events2 []StreamEvent
+	cancelled := false
+	timer := time.NewTimer(90 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event, ok := <-ch2:
+			if !ok {
+				goto phase2Done
 			}
-			ctx2, cancel2 := context.WithTimeout(context.Background(), timeout2)
-			defer cancel2()
-
-			req2 := ChatRequest{
-				Prompt:    "现在从1数到100，每个数字一行",
-				SessionID: sessionID,
-				WorkDir:   testWorkDir(),
-				Resume:    true,
+			events2 = append(events2, event)
+			if !cancelled && event.Type == "content" {
+				cancelled = true
+				cancel2()
 			}
-			if cfg.Command != "" {
-				req2.Command = cfg.Command
-			}
+		case <-timer.C:
+			t.Log("phase 2: timeout waiting for content")
+			goto phase2Done
+		}
+	}
+phase2Done:
+	contentEvents2 := findEvents(events2, "content")
+	assert.NotEmpty(t, contentEvents2, "should have received content before cancel in phase 2")
+	t.Logf("phase 2: cancelled after %d events, %d content events", len(events2), len(contentEvents2))
 
-			ch2, err := backend.ExecuteStream(ctx2, req2)
-			require.NoError(t, err)
+	// Phase 3: resume the session after cancellation
+	req3 := ChatRequest{
+		Prompt:    "我之前让你记住的数字是什么？只回答数字",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	}
+	events3 := cliExecPrompt(t, cfg, backend, req3)
+	requireEventSequence(t, events3, "content", "metadata")
+	content3 := concatContent(events3)
+	assert.NotEmpty(t, content3, "should receive content in resumed session after cancel")
 
-			var events2 []StreamEvent
-			cancelled := false
-			timer := time.NewTimer(90 * time.Second)
-			defer timer.Stop()
-			for {
-				select {
-				case event, ok := <-ch2:
-					if !ok {
-						goto phase2Done
-					}
-					events2 = append(events2, event)
-					if !cancelled && event.Type == "content" {
-						cancelled = true
-						cancel2()
-					}
-				case <-timer.C:
-					t.Log("phase 2: timeout waiting for content")
-					goto phase2Done
-				}
-			}
-		phase2Done:
-			contentEvents2 := findEvents(events2, "content")
-			assert.NotEmpty(t, contentEvents2, "should have received content before cancel in phase 2")
-			t.Logf("phase 2: cancelled after %d events, %d content events", len(events2), len(contentEvents2))
-
-			// Phase 3: resume the session after cancellation
-			req3 := ChatRequest{
-				Prompt:    "我之前让你记住的数字是什么？只回答数字",
-				SessionID: sessionID,
-				WorkDir:   testWorkDir(),
-				Resume:    true,
-			}
-			events3 := cliExecPrompt(t, cfg, backend, req3)
-			requireEventSequence(t, events3, "content", "metadata")
-			content3 := concatContent(events3)
-			assert.NotEmpty(t, content3, "should receive content in resumed session after cancel")
-
-			if !strings.Contains(content3, "7") {
-				t.Logf("%s did not recall number 7 after cancel+resume — AI behavior is non-deterministic; content: %s", cfg.Backend, truncate(content3, 300))
-			}
-		})
+	if !strings.Contains(content3, "7") {
+		t.Logf("%s did not recall number 7 after cancel+resume — AI behavior is non-deterministic; content: %s", cfg.Backend, truncate(content3, 300))
 	}
 }
 
 // --- 11. Resume Metadata Capture ---
+func testCLIResumeMetadataCapture(t *testing.T, cfg cliTestConfig) {
+	backend := cliSetupAndCreate(t, cfg)
 
-func TestIntegration_CLI_ResumeMetadataCapture(t *testing.T) {
-	for _, cfg := range resumeBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			backend := cliSetupAndCreate(t, cfg)
+	req1 := cliNewSessionRequest(cfg, "说一个字：好")
+	events1 := cliExecPrompt(t, cfg, backend, req1)
+	meta1 := findEvents(events1, "metadata")
+	require.NotEmpty(t, meta1, "should have metadata event from new session")
 
-			req1 := cliNewSessionRequest(cfg, "说一个字：好")
-			events1 := cliExecPrompt(t, cfg, backend, req1)
-			meta1 := findEvents(events1, "metadata")
-			require.NotEmpty(t, meta1, "should have metadata event from new session")
+	sessionID := cliResolveSessionID(cfg, req1, events1)
+	require.NotEmpty(t, sessionID, "should capture session ID")
 
-			sessionID := cliResolveSessionID(cfg, req1, events1)
-			require.NotEmpty(t, sessionID, "should capture session ID")
+	// Check metadata fields that this backend is expected to populate
+	if cfg.HasSessionIDInMeta {
+		assert.NotEmpty(t, meta1[0].Meta.SessionID, "new session metadata should have SessionID")
+	}
+	if cfg.HasModelInMeta {
+		assert.NotEmpty(t, meta1[0].Meta.Model, "new session metadata should have Model")
+	}
+	if cfg.HasTokenUsageInMeta {
+		assert.NotZero(t, meta1[0].Meta.InputTokens, "new session should report input token usage")
+	}
 
-			// Check metadata fields that this backend is expected to populate
-			if cfg.HasSessionIDInMeta {
-				assert.NotEmpty(t, meta1[0].Meta.SessionID, "new session metadata should have SessionID")
-			}
-			if cfg.HasModelInMeta {
-				assert.NotEmpty(t, meta1[0].Meta.Model, "new session metadata should have Model")
-			}
-			if cfg.HasTokenUsageInMeta {
-				assert.NotZero(t, meta1[0].Meta.InputTokens, "new session should report input token usage")
-			}
+	// Phase 2: resume
+	req2 := ChatRequest{
+		Prompt:    "再说一个字：是",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	}
+	events2 := cliExecPrompt(t, cfg, backend, req2)
+	meta2 := findEvents(events2, "metadata")
+	require.NotEmpty(t, meta2, "should have metadata event from resumed session")
 
-			// Phase 2: resume
-			req2 := ChatRequest{
-				Prompt:    "再说一个字：是",
-				SessionID: sessionID,
-				WorkDir:   testWorkDir(),
-				Resume:    true,
-			}
-			events2 := cliExecPrompt(t, cfg, backend, req2)
-			meta2 := findEvents(events2, "metadata")
-			require.NotEmpty(t, meta2, "should have metadata event from resumed session")
-
-			if cfg.HasSessionIDInMeta {
-				assert.NotEmpty(t, meta2[0].Meta.SessionID, "resumed session metadata should have SessionID")
-			}
-			if cfg.HasModelInMeta {
-				assert.NotEmpty(t, meta2[0].Meta.Model, "resumed session metadata should have Model")
-			}
-			if cfg.HasTokenUsageInMeta {
-				assert.NotZero(t, meta2[0].Meta.InputTokens, "resumed session should report input token usage")
-			}
-		})
+	if cfg.HasSessionIDInMeta {
+		assert.NotEmpty(t, meta2[0].Meta.SessionID, "resumed session metadata should have SessionID")
+	}
+	if cfg.HasModelInMeta {
+		assert.NotEmpty(t, meta2[0].Meta.Model, "resumed session metadata should have Model")
+	}
+	if cfg.HasTokenUsageInMeta {
+		assert.NotZero(t, meta2[0].Meta.InputTokens, "resumed session should report input token usage")
 	}
 }
 
@@ -1364,162 +1432,127 @@ func forkAmnesiaSecret() string {
 	return fmt.Sprintf("%04d", time.Now().UnixNano()%10000)
 }
 
-// TestIntegration_CLI_ForkSessionAmnesia detects whether a forked session is
-// "amnesiac" using Claude as the anchor backend.
-func TestIntegration_CLI_ForkSessionAmnesia(t *testing.T) {
-	anchorCfg := cliTestConfig{
-		Backend:            "claude",
-		CLIName:            "claude",
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		HasModelInMeta:     true,
-		HasSessionIDInMeta: true,
-		HasTokenUsageInMeta: true,
-		SupportsResume:     true,
-	}
-
-	t.Run("claude_anchor", func(t *testing.T) {
-		requireCLIAvailable(t, anchorCfg.CLIName)
-		backend, err := NewBackend(anchorCfg.Backend)
-		require.NoError(t, err)
-
-		secret := forkAmnesiaSecret()
-		parentSessionID := newSessionID()
-
-		// --- Parent Turn 1: establish a fact ---
-		req1 := ChatRequest{
-			Prompt:    fmt.Sprintf("记住密码是%s，只回复好的", secret),
-			SessionID: parentSessionID,
-			WorkDir:   testWorkDir(),
-		}
-		events1 := cliExecPrompt(t, anchorCfg, backend, req1)
-		meta1 := findEvents(events1, "metadata")
-		require.NotEmpty(t, meta1, "parent turn 1 should complete with metadata")
-
-		content1 := concatContent(events1)
-		t.Logf("Parent turn 1 (establish fact '%s'): %q", secret, truncate(content1, 200))
-
-		// --- Parent Turn 2: recall the fact → proves context works ---
-		req2 := ChatRequest{
-			Prompt:    "密码是什么？只回答数字",
-			SessionID: parentSessionID,
-			WorkDir:   testWorkDir(),
-			Resume:    true,
-		}
-		events2 := cliExecPrompt(t, anchorCfg, backend, req2)
-		meta2 := findEvents(events2, "metadata")
-		require.NotEmpty(t, meta2, "parent turn 2 should complete with metadata")
-
-		content2 := concatContent(events2)
-		t.Logf("Parent turn 2 (recall with Resume=true): %q", truncate(content2, 200))
-		assert.True(t, strings.Contains(content2, secret),
-			"Parent turn 2: AI should recall password '%s' with resume, got: %s", secret, content2)
-
-		// --- Fork Session: new SessionID, Resume=false (simulates ForkSession) ---
-		forkSessionID := newSessionID()
-		req3 := ChatRequest{
-			Prompt:    "密码是什么？只回答数字",
-			SessionID: forkSessionID,
-			WorkDir:   testWorkDir(),
-			Resume:    false, // ForkSession starts fresh — no resume
-		}
-		events3 := cliExecPrompt(t, anchorCfg, backend, req3)
-		meta3 := findEvents(events3, "metadata")
-		require.NotEmpty(t, meta3, "fork session should complete with metadata")
-
-		content3 := concatContent(events3)
-		t.Logf("Fork session (recall, Resume=false, NEW SessionID): %q", truncate(content3, 200))
-
-		// --- Amnesia Detection ---
-		if strings.Contains(content3, secret) {
-			t.Logf("FORK AMNESIA FIXED: AI recalled '%s' in forked session — context was preserved!", secret)
-		} else {
-			t.Logf("FORK AMNESIA CONFIRMED: AI answered %q in forked session — context was LOST", truncate(content3, 50))
-			t.Logf("Root cause: ForkSession does not copy external_session_id. The CLI starts")
-			t.Logf("a brand-new session (no --resume), so the AI has no conversation context.")
-		}
-		// The key assertion: forked session does NOT recall the secret (amnesia)
-		assert.NotContains(t, content3, secret,
-			"AMNESIA: forked session should NOT recall password '%s' because it has no context from parent session. "+
-				"If this assertion FAILS, the amnesia has been fixed!", secret)
-	})
-}
-
-// TestIntegration_CLI_ForkSessionAmnesia_AcrossBackends tests fork session
-// amnesia across all resume-capable backends.
-func TestIntegration_CLI_ForkSessionAmnesia_AcrossBackends(t *testing.T) {
-	for _, cfg := range resumeBackends {
-		t.Run(cfg.Backend, func(t *testing.T) {
-			backend := cliSetupAndCreate(t, cfg)
-			secret := forkAmnesiaSecret()
-
-			// Parent Turn 1: establish fact
-			req1 := cliNewSessionRequest(cfg, fmt.Sprintf("记住密码是%s，只回复好的", secret))
-			events1 := cliExecPrompt(t, cfg, backend, req1)
-			meta1 := findEvents(events1, "metadata")
-			require.NotEmpty(t, meta1, "parent turn 1 should complete with metadata")
-
-			sessionID := cliResolveSessionID(cfg, req1, events1)
-			require.NotEmpty(t, sessionID, "should capture parent session ID")
-
-			// Parent Turn 2: recall (resume) → should recall the secret
-			req2 := ChatRequest{
-				Prompt:    "密码是什么？只回答数字",
-				SessionID: sessionID,
-				WorkDir:   testWorkDir(),
-				Resume:    true,
-			}
-			events2 := cliExecPrompt(t, cfg, backend, req2)
-			meta2 := findEvents(events2, "metadata")
-			require.NotEmpty(t, meta2, "parent turn 2 should complete with metadata")
-
-			content2 := concatContent(events2)
-			t.Logf("Parent turn 2 (recall, Resume=true): %q", truncate(content2, 200))
-
-			// Fork: new session ID, Resume=false
-			forkSessionID := newSessionID()
-			req3 := ChatRequest{
-				Prompt:    "密码是什么？只回答数字",
-				SessionID: forkSessionID,
-				WorkDir:   testWorkDir(),
-				Resume:    false,
-			}
-			events3 := cliExecPrompt(t, cfg, backend, req3)
-			meta3 := findEvents(events3, "metadata")
-			require.NotEmpty(t, meta3, "fork session should complete with metadata")
-
-			content3 := concatContent(events3)
-			t.Logf("Fork session (recall, Resume=false, NEW SessionID): %q", truncate(content3, 200))
-
-			// Report amnesia status
-			if strings.Contains(content3, secret) {
-				t.Logf("FORK AMNESIA FIXED for %s: AI recalled '%s'", cfg.Backend, secret)
-			} else {
-				t.Logf("FORK AMNESIA CONFIRMED for %s: AI answered %q (cannot recall '%s' without context)",
-					cfg.Backend, truncate(content3, 50), secret)
-			}
-		})
-	}
-}
-
-// TestIntegration_CLI_ForkSessionAmnesia_ResumeVsNewSession explicitly compares
-// three approaches to fix fork amnesia, using Claude as the diagnostic backend:
-//
-//   - Fork A: new SessionID + Resume=false (current behavior → amnesiac)
-//   - Fork B: new SessionID + Resume=true (unknown session → likely amnesiac)
-//   - Fork C: parent SessionID + Resume=true (ContinueFromExecution pattern → should work)
-//
-// If Fork C recalls the secret, the fix is: ForkSession should copy
-// external_session_id and send Resume=true with the parent's session ID.
-func TestIntegration_CLI_ForkSessionAmnesia_ResumeVsNewSession(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
+func testCLIForkSessionAmnesia(t *testing.T, cfg cliTestConfig) {
+	requireCLIAvailable(t, cfg.CLIName)
+	backend, err := NewBackend(cfg.Backend)
 	require.NoError(t, err)
 
-	cfg := cliTestConfig{
-		Backend: "claude", CLIName: "claude",
-		Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second,
+	secret := forkAmnesiaSecret()
+	parentSessionID := newSessionID()
+
+	// --- Parent Turn 1: establish a fact ---
+	req1 := ChatRequest{
+		Prompt:    fmt.Sprintf("记住密码是%s，只回复好的", secret),
+		SessionID: parentSessionID,
+		WorkDir:   testWorkDir(),
 	}
+	events1 := cliExecPrompt(t, cfg, backend, req1)
+	meta1 := findEvents(events1, "metadata")
+	require.NotEmpty(t, meta1, "parent turn 1 should complete with metadata")
+
+	content1 := concatContent(events1)
+	t.Logf("Parent turn 1 (establish fact '%s'): %q", secret, truncate(content1, 200))
+
+	// --- Parent Turn 2: recall the fact → proves context works ---
+	req2 := ChatRequest{
+		Prompt:    "密码是什么？只回答数字",
+		SessionID: parentSessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	}
+	events2 := cliExecPrompt(t, cfg, backend, req2)
+	meta2 := findEvents(events2, "metadata")
+	require.NotEmpty(t, meta2, "parent turn 2 should complete with metadata")
+
+	content2 := concatContent(events2)
+	t.Logf("Parent turn 2 (recall with Resume=true): %q", truncate(content2, 200))
+	assert.True(t, strings.Contains(content2, secret),
+		"Parent turn 2: AI should recall password '%s' with resume, got: %s", secret, content2)
+
+	// --- Fork Session: new SessionID, Resume=false (simulates ForkSession) ---
+	forkSessionID := newSessionID()
+	req3 := ChatRequest{
+		Prompt:    "密码是什么？只回答数字",
+		SessionID: forkSessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    false, // ForkSession starts fresh — no resume
+	}
+	events3 := cliExecPrompt(t, cfg, backend, req3)
+	meta3 := findEvents(events3, "metadata")
+	require.NotEmpty(t, meta3, "fork session should complete with metadata")
+
+	content3 := concatContent(events3)
+	t.Logf("Fork session (recall, Resume=false, NEW SessionID): %q", truncate(content3, 200))
+
+	// --- Amnesia Detection ---
+	if strings.Contains(content3, secret) {
+		t.Logf("FORK AMNESIA FIXED: AI recalled '%s' in forked session — context was preserved!", secret)
+	} else {
+		t.Logf("FORK AMNESIA CONFIRMED: AI answered %q in forked session — context was LOST", truncate(content3, 50))
+		t.Logf("Root cause: ForkSession does not copy external_session_id. The CLI starts")
+		t.Logf("a brand-new session (no --resume), so the AI has no conversation context.")
+	}
+	// The key assertion: forked session does NOT recall the secret (amnesia)
+	assert.NotContains(t, content3, secret,
+		"AMNESIA: forked session should NOT recall password '%s' because it has no context from parent session. "+
+			"If this assertion FAILS, the amnesia has been fixed!", secret)
+}
+
+func testCLIForkAcrossBackends(t *testing.T, cfg cliTestConfig) {
+	backend := cliSetupAndCreate(t, cfg)
+	secret := forkAmnesiaSecret()
+
+	// Parent Turn 1: establish fact
+	req1 := cliNewSessionRequest(cfg, fmt.Sprintf("记住密码是%s，只回复好的", secret))
+	events1 := cliExecPrompt(t, cfg, backend, req1)
+	meta1 := findEvents(events1, "metadata")
+	require.NotEmpty(t, meta1, "parent turn 1 should complete with metadata")
+
+	sessionID := cliResolveSessionID(cfg, req1, events1)
+	require.NotEmpty(t, sessionID, "should capture parent session ID")
+
+	// Parent Turn 2: recall (resume) → should recall the secret
+	req2 := ChatRequest{
+		Prompt:    "密码是什么？只回答数字",
+		SessionID: sessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	}
+	events2 := cliExecPrompt(t, cfg, backend, req2)
+	meta2 := findEvents(events2, "metadata")
+	require.NotEmpty(t, meta2, "parent turn 2 should complete with metadata")
+
+	content2 := concatContent(events2)
+	t.Logf("Parent turn 2 (recall, Resume=true): %q", truncate(content2, 200))
+
+	// Fork: new session ID, Resume=false
+	forkSessionID := newSessionID()
+	req3 := ChatRequest{
+		Prompt:    "密码是什么？只回答数字",
+		SessionID: forkSessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    false,
+	}
+	events3 := cliExecPrompt(t, cfg, backend, req3)
+	meta3 := findEvents(events3, "metadata")
+	require.NotEmpty(t, meta3, "fork session should complete with metadata")
+
+	content3 := concatContent(events3)
+	t.Logf("Fork session (recall, Resume=false, NEW SessionID): %q", truncate(content3, 200))
+
+	// Report amnesia status
+	if strings.Contains(content3, secret) {
+		t.Logf("FORK AMNESIA FIXED for %s: AI recalled '%s'", cfg.Backend, secret)
+	} else {
+		t.Logf("FORK AMNESIA CONFIRMED for %s: AI answered %q (cannot recall '%s' without context)",
+			cfg.Backend, truncate(content3, 50), secret)
+	}
+}
+
+func testCLIForkResumeVsNewSession(t *testing.T, cfg cliTestConfig) {
+	requireCLIAvailable(t, cfg.CLIName)
+	backend, err := NewBackend(cfg.Backend)
+	require.NoError(t, err)
 
 	secret := forkAmnesiaSecret()
 	parentSessionID := newSessionID()
