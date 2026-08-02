@@ -35,15 +35,6 @@
         <span>{{ restarting ? t('settings.restarting') : t('settings.restartPending') }}</span>
       </button>
     </footer>
-    <!-- Restart loading overlay -->
-    <Teleport to="body">
-      <div v-if="restartingOverlay" class="restart-overlay">
-        <div class="restart-overlay__content">
-          <div class="restart-overlay__spinner"></div>
-          <div class="restart-overlay__text">{{ t('settings.restartingPleaseWait') }}</div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
@@ -68,7 +59,7 @@ const {
   t, loadConfig,
   navStack, currentCategory, pushNav, popNav,
   restartDialogVisible, changedColdFields, needsRestart,
-  restarting, restartingOverlay,
+  restarting,
   handleRestartNeeded, handleRestart,
   checkAllGuards,
 } = useSettingsNavigation()
@@ -276,45 +267,5 @@ watch(() => props.active, (val) => {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
-}
-
-/* Restart loading overlay */
-.restart-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-
-.restart-overlay__content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 20px;
-  padding: 40px 48px;
-  border-radius: 16px;
-  background: var(--bg-primary);
-  box-shadow: var(--shadow-md);
-}
-
-.restart-overlay__spinner {
-  width: 36px;
-  height: 36px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-.restart-overlay__text {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text-primary);
-  white-space: nowrap;
 }
 </style>

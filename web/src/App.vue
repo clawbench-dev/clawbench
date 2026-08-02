@@ -17,6 +17,7 @@
         :home-dir="homeDir"
         @open-project-dialog="handleOpenProjectDialog"
       />
+      <ConnectionOverlay />
 
       <main class="main-content">
         <div class="content-area" id="contentArea">
@@ -337,6 +338,7 @@ import { useFileNavStack } from './composables/useFileNavStack'
 import { removeRecentFile } from './composables/useRecentFiles'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
+import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
 import { useUpgrade } from './composables/useUpgrade'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, requestExitConfirm } from './composables/useBackHandler'
