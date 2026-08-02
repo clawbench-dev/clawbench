@@ -572,6 +572,62 @@ func TestForkSession_CopiesToolCallsAndThinking(t *testing.T) {
 	}
 }
 
+// ---------- ForkSession: truncation skips detail rows beyond the cut ----------
+
+func TestForkSession_TruncationSkipsDetailRows(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original")
+	user1ID, err := service.AddChatMessage("/project", "claude", sessID, "user", "First", nil, false, "")
+	assert.NoError(t, err)
+	asst1ID, err := service.AddChatMessage("/project", "claude", sessID, "assistant",
+		`{"blocks":[{"type":"tool_use","id":"toolu_keep","name":"Read","done":true},{"type":"thinking","think_id":"th_keep","done":true}]}`,
+		nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "Second", nil, false, "")
+	assert.NoError(t, err)
+	asst2ID, err := service.AddChatMessage("/project", "claude", sessID, "assistant",
+		`{"blocks":[{"type":"tool_use","id":"toolu_cut","name":"Bash","done":true},{"type":"thinking","think_id":"th_cut","done":true}]}`,
+		nil, false, "")
+	assert.NoError(t, err)
+	assert.NoError(t, service.UpsertToolCall(asst1ID, sessID, "toolu_keep", "Read", []byte(`{"file_path":"/a.go"}`), "keep-out", "success", "a.go", true))
+	assert.NoError(t, service.UpsertThinking(asst1ID, sessID, "th_keep", "keep text"))
+	assert.NoError(t, service.UpsertToolCall(asst2ID, sessID, "toolu_cut", "Bash", []byte(`{"command":"ls"}`), "cut-out", "success", "ls", true))
+	assert.NoError(t, service.UpsertThinking(asst2ID, sessID, "th_cut", "cut text"))
+
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] First", user1ID)
+	assert.NoError(t, err)
+
+	// Only the first exchange's rows are copied into the fork.
+	var toolCount, thinkCount int
+	db := service.UnsafeDBForTest()
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_tool_calls WHERE session_id = ?", newSessID).Scan(&toolCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, toolCount, "only rows before the cut should be copied")
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE session_id = ?", newSessID).Scan(&thinkCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, thinkCount, "only rows before the cut should be copied")
+
+	// The kept tool call + thinking must be retrievable under the fork's new message id.
+	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
+	assert.NoError(t, err)
+	var forkAsst1ID int64
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			forkAsst1ID = m.ID
+		}
+	}
+	rec, err := service.GetToolCall("toolu_keep", forkAsst1ID)
+	assert.NoError(t, err)
+	assert.NotNil(t, rec)
+	th, err := service.GetThinking("th_keep", forkAsst1ID)
+	assert.NoError(t, err)
+	assert.NotNil(t, th)
+	if th != nil {
+		assert.Equal(t, "keep text", th.Text)
+	}
+}
+
 // ---------- ForkSession: beforeMessageID = 0 (backward compatible, copies all) ----------
 
 func TestForkSession_BeforeMessageID_Zero(t *testing.T) {
