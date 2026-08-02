@@ -429,11 +429,10 @@ export default {
         restart: 'Server restarted, AI response interrupted',
         panic: 'AI internal error, please retry',
       },
-      ragUntitled: 'Untitled Session',
       ragResume: 'Resume Conversation',
       ragResumeConfirm: 'Resume this conversation session "{title}"?',
       ragResumeFailed: 'Failed to resume session',
-      ragDetail: 'Search Result Details',
+      ragUntitled: 'Untitled Session',
     },
     metadata: {
       title: 'Message Details',

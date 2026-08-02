@@ -11,14 +11,11 @@ import {
   stripScheduledTaskTags,
   detectAskQuestion,
   stripAskQuestionTag,
-  detectRagResults,
-  stripRagResultsTags,
   taskChanged,
   StaticBlockCache,
 } from '@/utils/streamPerf.ts'
 import {
   parseAskQuestionContent,
-  parseRagResultsContent,
 } from '@/utils/chatRenderUtils.ts'
 import {
   parseAssistantContent,
@@ -43,7 +40,6 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
 
   const blockTasks: Record<string, unknown> = reactive({})
   const blockAskQuestions: Record<string, unknown> = reactive({})
-  const blockRagResults: Record<string, unknown> = reactive({})
   const expandedTools = ref({}) as Ref<Record<string, boolean>>
   let lastRenderedCount = 0
 
@@ -226,54 +222,6 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
     // Detect ask-question tags
     const askResult = detectAskQuestion(text)
 
-    // Detect rag-results tags (before ask-question check so both can coexist)
-    const ragResult = detectRagResults(text)
-    if (ragResult.found) {
-      const ragKey = `${msgId}-${blockIdx}`
-      if (!blockRagResults[ragKey]) {
-        const parsed = parseRagResultsContent(ragResult.content!)
-        if (parsed && parsed.length > 0) {
-          blockRagResults[ragKey] = parsed
-        }
-      }
-      // Strip rag-results from text for markdown rendering
-      let cleanText = stripRagResultsTags(text)
-      // Still process scheduled-task and ask-question in the remaining text
-      const taskIds = extractScheduledTaskIds(cleanText)
-      if (taskIds.length > 0) {
-        const taskKeys = taskIds.map((tid, tagIdx) => ({
-          key: `${msgId}-${blockIdx}-${tagIdx}`,
-          taskId: Number(tid),
-        }))
-        fetchBatchTaskData(taskKeys)
-      }
-      const askInClean = detectAskQuestion(cleanText)
-      if (askInClean.found) {
-        const askKey = `${msgId}-${blockIdx}`
-        if (!blockAskQuestions[askKey]) {
-          const parsed = parseAskQuestionContent(askInClean.content!)
-          if (parsed) {
-            blockAskQuestions[askKey] = parsed
-          }
-        }
-        const afterAsk = stripAskQuestionTag(cleanText, askInClean)
-        cleanText = stripScheduledTaskTags(afterAsk)
-        return cleanText ? renderMarkdown(cleanText, { skipEnhancements: deferEnhancements }) : ''
-      }
-      cleanText = stripScheduledTaskTags(cleanText)
-      // When rag-results is the only content, cleanText is empty.
-      // If blockRagResults was populated, the RAG card v-for will render
-      // independently of this return value — but the surrounding-text
-      // <div v-if="getBlockHtml(...)"> would hide an empty string.
-      // Returning a zero-width space ensures the block is not treated as
-      // completely empty, and prevents the entire message from disappearing
-      // when parseRagResultsContent fails and blockRagResults is unset.
-      if (!cleanText) {
-        return blockRagResults[ragKey] ? '\u200B' : ''
-      }
-      return renderMarkdown(cleanText, { skipEnhancements: deferEnhancements })
-    }
-
     if (askResult.found) {
       const askKey = `${msgId}-${blockIdx}`
       if (!blockAskQuestions[askKey]) {
@@ -352,7 +300,6 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
   return {
     blockTasks,
     blockAskQuestions,
-    blockRagResults,
     expandedTools,
     renderMarkdown,
     renderTextBlock,

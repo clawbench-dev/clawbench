@@ -7,7 +7,6 @@
       :expandedTools="render.expandedTools.value"
       :blockTasks="render.blockTasks"
       :blockAskQuestions="render.blockAskQuestions"
-      :blockRagResults="render.blockRagResults"
       :agents="agentsList"
       :currentAgent="currentAgent"
       :currentSessionId="identity.currentSessionId.value"
@@ -28,7 +27,6 @@
       @render-flush="scrollBottom()"
       @toggle-summary="handleToggleSummary"
       @resume-session="handleResumeSession"
-      @show-rag-detail="handleRagDetail"
       @fork-from-message="handleForkFromMessage"
     />
 
@@ -145,8 +143,6 @@
     @send-message="handleToolSendMessage"
     @click="handleOverlayRetryClick"
   />
-  <!-- RAG search result detail drawer -->
-  <RagDetailDrawer :item="ragDetailDrawer.effectiveOpen.value ? ragDetailItem : null" @close="ragDetailDrawer.close(); ragDetailItem.value = null" @resume="handleResumeFromDetail" />
 </template>
 
 <script setup>
@@ -156,7 +152,6 @@ import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import RagDetailDrawer from './RagDetailDrawer.vue'
 import ChatMetadataModal from './ChatMetadataModal.vue'
 import ToolDetailDrawer from './ToolDetailDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
@@ -298,7 +293,6 @@ const session = useChatSession({
   inputDisabled,
   blockTasks: render.blockTasks,
   blockAskQuestions: render.blockAskQuestions,
-  blockRagResults: render.blockRagResults,
   expandedTools: render.expandedTools,
   onParseAssistantContent: (content) => render.parseAssistantContent(content),
   onExtractScheduledTasks: (msgs) => render.extractScheduledTasks(msgs),
@@ -876,40 +870,6 @@ function handleToggleSummary(msgId) {
     msg.showingSummary = !msg.showingSummary
 }
 
-// RAG detail drawer
-const ragDetailItem = ref(null)
-const ragDetailDrawer = useTabDrawer('chat')
-
-function handleRagDetail(ragItem) {
-    ragDetailItem.value = ragItem
-    ragDetailDrawer.open()
-}
-
-async function handleResumeFromDetail(item) {
-    ragDetailItem.value = null
-    ragDetailDrawer.close()
-    if (!item?.sessionId) return
-    const confirmed = await dialog.confirm(
-        t('chat.contentBlocks.ragResumeConfirm', { title: item.sessionTitle || t('chat.contentBlocks.ragUntitled') }),
-        { title: t('chat.contentBlocks.ragResume'), confirmText: t('common.confirm') }
-    )
-    if (!confirmed) return
-    try {
-        const resp = await fetch('/api/ai/session/resume', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session_id: item.sessionId }),
-        })
-        if (!resp.ok) {
-            const data = await resp.json().catch(() => ({}))
-            toast.show(data.error || t('chat.contentBlocks.ragResumeFailed'), { icon: '⚠️', type: 'error' })
-            return
-        }
-        await session.switchSession(item.sessionId)
-    } catch {
-        toast.show(t('chat.contentBlocks.ragResumeFailed'), { icon: '⚠️', type: 'error' })
-    }
-}
 
 // Resume a session from RAG search results (direct event, no detail drawer)
 async function handleResumeSession({ sessionId, sessionTitle }) {

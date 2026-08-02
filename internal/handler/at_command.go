@@ -9,7 +9,7 @@ import (
 
 // chatSearchInjectTemplate is the on-demand instruction template injected when
 // the user sends a message starting with "@chatsearch ". It provides the AI
-// with RAG search command usage and XML output format requirements.
+// with RAG search command usage and output format requirements.
 // Placeholders: {{CLAWBENCH_BIN}}, {{PROJECT_PATH}}, {{SESSION_ID}}, {{PORT}}, {{DATA_DIR}}
 const chatSearchInjectTemplate = `[You have access to historical conversation search for this request. Use the Bash tool to execute commands.]
 
@@ -24,20 +24,7 @@ Command flags:
 - --role: Filter by role (user/assistant)
 - --from / --to: Time range
 
-The search results include session_title for each match. You MUST copy the session_title value exactly as provided — do NOT omit it or leave it empty.
-
-After searching, you MUST output results using this XML format:
-
-<rag-results>
-  <rag-item>
-    <session-id>session-id-here</session-id>
-    <session-title>Session Title</session-title>
-    <created-at>2026-01-01T12:00:00Z</created-at>
-    <summary>Concise summary based on search results</summary>
-  </rag-item>
-</rag-results>
-
-You may summarize or supplement the chunk content in <summary>.
+After searching, present the results in a natural, readable format (e.g. a summary paragraph or bullet list). Mention the session titles and key findings.
 If no results found, answer based on your own knowledge — do NOT mention the search process.
 `
 

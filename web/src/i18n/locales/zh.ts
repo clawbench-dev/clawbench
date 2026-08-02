@@ -429,11 +429,10 @@ export default {
         restart: '服务重启，AI 响应中断',
         panic: 'AI 内部错误，请重试',
       },
-      ragUntitled: '未命名会话',
       ragResume: '恢复对话',
       ragResumeConfirm: '恢复此对话会话「{title}」？',
       ragResumeFailed: '恢复会话失败',
-      ragDetail: '搜索结果详情',
+      ragUntitled: '未命名会话',
     },
     metadata: {
       title: '消息详情',

@@ -54,7 +54,6 @@ vi.mock('@/utils/chatRenderUtils', () => ({
   rewriteImageUrls: (html: string) => html,
   convertAudioLinks: (html: string) => html,
   parseAskQuestionContent: vi.fn(),
-  parseRagResultsContent: vi.fn(),
 }))
 
 vi.mock('@/composables/useFilePathAnnotation', () => ({

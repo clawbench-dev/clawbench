@@ -89,7 +89,7 @@ export function renderKatexInString(html: string): string {
 }
 
 // DOMPurify 配置：取所有调用方的并集
-const DOMPURIFY_ADD_TAGS = ['math', 'button', 'rag-results', 'rag-item', 'session-id', 'session-title', 'created-at', 'summary']
+const DOMPURIFY_ADD_TAGS = ['math', 'button']
 const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-path', 'data-table-idx', 'data-row-idx']
 
 /**

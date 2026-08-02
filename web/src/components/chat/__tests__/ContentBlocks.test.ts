@@ -77,7 +77,6 @@ const i18n = createI18n({
         nextRun: 'Next run',
         viewDetail: 'View detail',
         taskDeleted: 'Task deleted',
-        ragUntitled: 'Untitled',
       },
     },
     tool: { askUser: { name: 'Ask' } },
@@ -385,76 +384,6 @@ describe('ContentBlocks', () => {
       const summaryDiv = wrapper.find('[v-show]')
       // The original content should be visible
       expect(wrapper.html()).toContain('Original content')
-    })
-    it('shows RAG results in summary mode', () => {
-      const ragItem = {
-        sessionId: 'sess-1',
-        sessionTitle: 'Chat about Go',
-        createdAt: '2026-07-19T10:00:00Z',
-        summary: 'Discussion about Go error handling',
-      }
-      const wrapper = mountBlocks({
-        blocks: [{ type: 'text', text: '<rag-results>...</rag-results>' }],
-        summary: 'Summary text',
-        showingSummary: true,
-        blockRagResults: { 'msg-1-0': [ragItem] },
-      })
-      expect(wrapper.html()).toContain('Summary text')
-      expect(wrapper.find('.rag-result-card').exists()).toBe(true)
-      expect(wrapper.html()).toContain('Chat about Go')
-    })
-
-    it('shows RAG results in summary mode even when blockRagResults not pre-filled', async () => {
-      // Simulates message loaded from DB with showingSummary=true —
-      // blockRagResults starts empty. detectRagInText(block) checks block.text
-      // for <rag-results>, so the v-else-if condition matches and getBlockHtml
-      // triggers renderTextBlock which fills blockRagResults as side-effect.
-      const ragItem = {
-        sessionId: 's1',
-        sessionTitle: 'RAG Title',
-        summary: 'RAG summary text',
-      }
-      const ragResults = reactive<Record<string, unknown>>({})
-      const cache = new Map<string, string>()
-      const staticBlockCache = {
-        get: (msgId, bi, text) => cache.get(`${msgId}-${bi}`),
-        set: (msgId, bi, text, html) => cache.set(`${msgId}-${bi}`, html),
-        isDeferred: () => false,
-        scheduleUpgrade: () => {},
-      }
-      const renderFn = vi.fn((text: string, msgId: string, bi: number) => {
-        if (text.includes('<rag-results>')) {
-          ragResults[`${msgId}-${bi}`] = [ragItem]
-        }
-        return `<p>${text.replace(/<rag-results>.*?<\/rag-results>/, '')}</p>`
-      })
-      const wrapper = mountBlocks({
-        blocks: [{ type: 'text', text: 'Some text <rag-results><rag-item><session-id>s1</session-id><session-title>RAG Title</session-title><summary>RAG summary text</summary></rag-item></rag-results>' }],
-        summary: 'Summary text',
-        showingSummary: true,
-        blockRagResults: ragResults,
-        renderTextBlock: renderFn,
-        staticBlockCache,
-      })
-      await nextTick()
-      expect(wrapper.find('.rag-result-card').exists()).toBe(true)
-      expect(wrapper.html()).toContain('RAG Title')
-    })
-
-    it('shows RAG results without summary (non-summary mode)', () => {
-      const ragItem = {
-        sessionId: 'sess-1',
-        sessionTitle: 'Chat about Go',
-        createdAt: '2026-07-19T10:00:00Z',
-        summary: 'Discussion about Go error handling',
-      }
-      const wrapper = mountBlocks({
-        blocks: [{ type: 'text', text: '<rag-results>...</rag-results>' }],
-        showingSummary: false,
-        blockRagResults: { 'msg-1-0': [ragItem] },
-      })
-      expect(wrapper.find('.rag-result-card').exists()).toBe(true)
-      expect(wrapper.html()).toContain('Chat about Go')
     })
   })
 

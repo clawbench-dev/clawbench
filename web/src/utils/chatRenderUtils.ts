@@ -3,7 +3,7 @@
  * These have no Vue reactivity dependencies and can be tested in isolation.
  */
 
-import { parseAskQuestionXML, parseRagResultsXML } from '@/utils/xmlParser.ts'
+import { parseAskQuestionXML } from '@/utils/xmlParser.ts'
 
 /** Audio file extensions that should be converted to inline audio players */
 const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.wma', '.opus']
@@ -72,15 +72,6 @@ export function convertAudioLinks(html: string): string {
  */
 export function parseAskQuestionContent(rawContent: string): { questions: Array<Record<string, unknown>> } | null {
   return parseAskQuestionXML(rawContent) as { questions: Array<Record<string, unknown>> } | null
-}
-
-/**
- * Parse rag-results content from XML format.
- * Returns null if parsing fails or no rag-items found.
- */
-export function parseRagResultsContent(rawContent: string): { sessionId: string; sessionTitle: string; createdAt: string; summary: string }[] | null {
-  const items = parseRagResultsXML(rawContent)
-  return items.length > 0 ? items : null
 }
 
 /** Export audio extensions for testing */

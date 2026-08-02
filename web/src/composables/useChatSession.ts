@@ -65,7 +65,6 @@ export interface UseChatSessionOptions {
   inputDisabled: Ref<boolean>
   blockTasks: Record<string, unknown>
   blockAskQuestions: Record<string, unknown>
-  blockRagResults: Record<string, unknown>
   expandedTools: Ref<Record<string, boolean>>
   switching?: Ref<boolean>
   onParseAssistantContent: (content: string) => Record<string, unknown>
@@ -86,7 +85,6 @@ export function useChatSession(options: UseChatSessionOptions) {
     inputDisabled,
     blockTasks,
     blockAskQuestions,
-    blockRagResults,
     expandedTools,
     onParseAssistantContent,
     onExtractScheduledTasks,
@@ -152,7 +150,6 @@ export function useChatSession(options: UseChatSessionOptions) {
       expandedTools.value = {}
     }
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
-    Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
     messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, isRunning)
     appendQueueItems(sessionData.queue as Array<Record<string, unknown>> | undefined)
     totalMessages.value = (sessionData.total as number) || messages.value.length
@@ -585,7 +582,6 @@ export function useChatSession(options: UseChatSessionOptions) {
     // Clear stale blockAskQuestions from previous session
     Object.keys(blockTasks).forEach(k => delete blockTasks[k])
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
-    Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
     // Restore original CLI model list in case ACP had overridden it
     // Must run BEFORE clearing currentAgentId so the old agent's models
     // can be properly restored.

@@ -3,7 +3,6 @@ import {
   rewriteImageUrls,
   convertAudioLinks,
   parseAskQuestionContent,
-  parseRagResultsContent,
   AUDIO_EXTENSIONS,
 } from '@/utils/chatRenderUtils.ts'
 
@@ -543,52 +542,4 @@ describe('AUDIO_EXTENSIONS', () => {
   })
 })
 
-// ─── parseRagResultsContent ────────────────────────────────────────────────
 
-describe('parseRagResultsContent', () => {
-  it('parses rag-results XML with items', () => {
-    const xml = `<rag-results>
-  <rag-item>
-    <session-id>abc-123</session-id>
-    <session-title>Fix Login Bug</session-title>
-    <created-at>2026-07-01T10:30:00Z</created-at>
-    <summary>JWT expiry issue</summary>
-  </rag-item>
-</rag-results>`
-    const result = parseRagResultsContent(xml)
-    expect(result).not.toBeNull()
-    expect(result).toHaveLength(1)
-    expect(result![0].sessionId).toBe('abc-123')
-    expect(result![0].sessionTitle).toBe('Fix Login Bug')
-    expect(result![0].createdAt).toBe('2026-07-01T10:30:00Z')
-    expect(result![0].summary).toBe('JWT expiry issue')
-  })
-
-  it('parses multiple rag-items', () => {
-    const xml = `<rag-results>
-  <rag-item>
-    <session-id>abc</session-id>
-    <session-title>A</session-title>
-    <created-at>2026-01-01T00:00:00Z</created-at>
-    <summary>S1</summary>
-  </rag-item>
-  <rag-item>
-    <session-id>def</session-id>
-    <session-title>B</session-title>
-    <created-at>2026-02-01T00:00:00Z</created-at>
-    <summary>S2</summary>
-  </rag-item>
-</rag-results>`
-    const result = parseRagResultsContent(xml)
-    expect(result).not.toBeNull()
-    expect(result).toHaveLength(2)
-  })
-
-  it('returns null for invalid XML', () => {
-    expect(parseRagResultsContent('not xml')).toBeNull()
-  })
-
-  it('returns null for XML without rag-items', () => {
-    expect(parseRagResultsContent('<rag-results></rag-results>')).toBeNull()
-  })
-})

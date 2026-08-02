@@ -2,9 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   parseAskQuestionXML,
   parseAskQuestionJSON,
-  parseRagResultsXML,
-  detectRagResults,
-  stripRagResultsTags,
 } from '@/utils/xmlParser.ts'
 import { isValidAskContent, detectAskQuestion } from '@/utils/streamPerf.ts'
 
@@ -253,104 +250,4 @@ describe('detectAskQuestion', () => {
   })
 })
 
-// ─── parseRagResultsXML ──────────────────────────────────────────────────
 
-describe('parseRagResultsXML', () => {
-  it('parses single rag-item', () => {
-    const xml = `<rag-results>
-  <rag-item>
-    <session-id>abc-123</session-id>
-    <session-title>Fix Login Bug</session-title>
-    <created-at>2026-07-01T10:30:00Z</created-at>
-    <summary>JWT expiry issue resolved</summary>
-  </rag-item>
-</rag-results>`
-
-    const result = parseRagResultsXML(xml)
-    expect(result).toHaveLength(1)
-    expect(result[0]).toEqual({
-      sessionId: 'abc-123',
-      sessionTitle: 'Fix Login Bug',
-      createdAt: '2026-07-01T10:30:00Z',
-      summary: 'JWT expiry issue resolved',
-    })
-  })
-
-  it('parses multiple rag-items', () => {
-    const xml = `<rag-results>
-  <rag-item>
-    <session-id>abc-123</session-id>
-    <session-title>Bug 1</session-title>
-    <created-at>2026-07-01T10:30:00Z</created-at>
-    <summary>Summary 1</summary>
-  </rag-item>
-  <rag-item>
-    <session-id>def-456</session-id>
-    <session-title>Bug 2</session-title>
-    <created-at>2026-06-28T14:20:00Z</created-at>
-    <summary>Summary 2</summary>
-  </rag-item>
-</rag-results>`
-
-    const result = parseRagResultsXML(xml)
-    expect(result).toHaveLength(2)
-    expect(result[0].sessionId).toBe('abc-123')
-    expect(result[1].sessionId).toBe('def-456')
-  })
-
-  it('returns empty array for invalid XML', () => {
-    const result = parseRagResultsXML('not xml')
-    expect(result).toEqual([])
-  })
-
-  it('returns empty array for XML without rag-items', () => {
-    const result = parseRagResultsXML('<rag-results><something>else</something></rag-results>')
-    expect(result).toEqual([])
-  })
-
-  it('handles missing optional fields with empty string', () => {
-    const xml = `<rag-results>
-  <rag-item>
-    <session-id>abc-123</session-id>
-    <session-title>Title</session-title>
-    <created-at>2026-01-01T00:00:00Z</created-at>
-    <summary>Summary</summary>
-  </rag-item>
-</rag-results>`
-
-    const result = parseRagResultsXML(xml)
-    expect(result).toHaveLength(1)
-    expect(result[0].sessionId).toBe('abc-123')
-  })
-})
-
-// ─── detectRagResults ────────────────────────────────────────────────────
-
-describe('detectRagResults', () => {
-  it('detects rag-results tag', () => {
-    const text = 'Here are the results:\n<rag-results>\n<rag-item>\n<session-id>abc</session-id>\n</rag-item>\n</rag-results>\nDone.'
-    const result = detectRagResults(text)
-    expect(result.found).toBe(true)
-    expect(result.startIdx).toBeGreaterThanOrEqual(0)
-  })
-
-  it('returns found=false when no rag-results tag', () => {
-    const result = detectRagResults('no rag results here')
-    expect(result.found).toBe(false)
-  })
-})
-
-// ─── stripRagResultsTags ─────────────────────────────────────────────────
-
-describe('stripRagResultsTags', () => {
-  it('strips rag-results tags from text', () => {
-    const text = 'Before <rag-results><rag-item><session-id>abc</session-id></rag-item></rag-results> After'
-    const result = stripRagResultsTags(text)
-    expect(result).toBe('Before After')
-  })
-
-  it('returns original text if no rag-results tags', () => {
-    const text = 'No rag results here'
-    expect(stripRagResultsTags(text)).toBe('No rag results here')
-  })
-})

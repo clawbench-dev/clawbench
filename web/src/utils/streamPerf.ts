@@ -181,12 +181,6 @@ export function stripAskQuestionTag(text: string, result: AskQuestionResult): st
 }
 
 // ────────────────────────────────────────────────────────────
-// rag-results detection (re-export from xmlParser)
-// ────────────────────────────────────────────────────────────
-
-export { detectRagResults, stripRagResultsTags } from '@/utils/xmlParser.ts'
-
-// ────────────────────────────────────────────────────────────
 // Task semantic comparison (for blockTasks watcher)
 // ────────────────────────────────────────────────────────────
 

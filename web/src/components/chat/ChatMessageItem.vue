@@ -14,7 +14,6 @@
         :expandedTools="expandedTools"
         :blockTasks="blockTasks"
         :blockAskQuestions="blockAskQuestions"
-        :blockRagResults="blockRagResults"
         :streaming="msg.streaming"
         :cancelled="msg.cancelled"
         :summary="msg.summary"
@@ -36,7 +35,7 @@
         @render-flush="$emit('render-flush')"
         @toggle-summary="$emit('toggle-summary', msg.id)"
         @resume-session="$emit('resume-session', $event)"
-        @show-rag-detail="$emit('show-rag-detail', $event)"
+
       />
     </div>
 
@@ -130,13 +129,12 @@ const props = defineProps({
   expandedTools: Object,
   blockTasks: Object,
   blockAskQuestions: Object,
-  blockRagResults: Object,
   agents: Array,
   staticBlockCache: Object,
   active: { type: Boolean, default: true },
 })
 
-defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'remove-pending', 'fork-from-message'])
+defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'remove-pending', 'fork-from-message'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)

@@ -94,19 +94,16 @@ func TestProcessAtCommand_TaskPlaceholderReplacement(t *testing.T) {
 	assert.NotContains(t, result, "{{PROJECT_PATH}}")
 }
 
-func TestProcessAtCommand_ChatSearchContainsXMLFormat(t *testing.T) {
+func TestProcessAtCommand_ChatSearchContainsNaturalFormat(t *testing.T) {
 	model.ClawbenchBin = "/usr/local/bin/clawbench"
 	defer func() { model.ClawbenchBin = "" }()
 
 	result := processAtCommand("@chatsearch test", "/project", "session-123")
 
-	// Must instruct AI about XML output format
-	assert.Contains(t, result, "<rag-results>")
-	assert.Contains(t, result, "<rag-item>")
-	assert.Contains(t, result, "<session-id>")
-	assert.Contains(t, result, "<session-title>")
-	assert.Contains(t, result, "<created-at>")
-	assert.Contains(t, result, "<summary>")
+	// Must instruct AI to present results naturally (no structured XML card format)
+	assert.Contains(t, result, "natural, readable format")
+	assert.NotContains(t, result, "<rag-results>")
+	assert.NotContains(t, result, "<rag-item>")
 }
 
 func TestProcessAtCommand_TaskContainsScheduledTaskTag(t *testing.T) {
