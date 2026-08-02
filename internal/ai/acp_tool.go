@@ -14,7 +14,7 @@ import (
 
 // parseACPToolCall dispatches ACP ToolCall parsing to the appropriate per-agent
 // function based on the backend identifier (e.g. "claude", "codebuddy").
-// Backends not listed here (e.g., "mimo", "cline", "copilot", "vecli")
+// Backends not listed here (e.g., "copilot", "vecli")
 // fall through to parseGenericACPToolCall.
 func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 	switch backend {
@@ -22,7 +22,7 @@ func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 		return parseClaudeACPToolCall(tc)
 	case "codebuddy":
 		return parseCodeBuddyACPToolCall(tc)
-	case "opencode":
+	case "opencode", "mimo":
 		return parseOpenCodeACPToolCall(tc)
 	case "kimi":
 		return parseKimiACPToolCall(tc)
@@ -40,7 +40,7 @@ func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *Tool
 		return parseClaudeACPToolCallUpdate(tcu)
 	case "codebuddy":
 		return parseCodeBuddyACPToolCallUpdate(tcu)
-	case "opencode":
+	case "opencode", "mimo":
 		return parseOpenCodeACPToolCallUpdate(tcu)
 	case "kimi":
 		return parseKimiACPToolCallUpdate(tcu)

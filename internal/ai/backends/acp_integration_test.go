@@ -6,6 +6,7 @@ import (
 
 	"clawbench/internal/ai"
 	_ "clawbench/internal/ai/backends/kimi"
+	_ "clawbench/internal/ai/backends/mimo"
 	_ "clawbench/internal/ai/backends/opencode"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -68,6 +69,20 @@ func TestACPRemapsForBackend(t *testing.T) {
 		}
 		if remaps["replaceAll"] != "replace_all" {
 			t.Errorf("opencode remaps[replaceAll] = %q, want 'replace_all'", remaps["replaceAll"])
+		}
+	})
+
+	t.Run("mimo_reuses_opencode_remaps", func(t *testing.T) {
+		remaps := ai.LookupACPRemapsFn("mimo")
+		if remaps == nil {
+			t.Fatal("expected non-nil remaps for mimo")
+		}
+		// MiMo-Code is an OpenCode fork, should have same remaps
+		if remaps["oldString"] != "old_string" {
+			t.Errorf("mimo remaps[oldString] = %q, want 'old_string'", remaps["oldString"])
+		}
+		if remaps["replaceAll"] != "replace_all" {
+			t.Errorf("mimo remaps[replaceAll] = %q, want 'replace_all'", remaps["replaceAll"])
 		}
 	})
 

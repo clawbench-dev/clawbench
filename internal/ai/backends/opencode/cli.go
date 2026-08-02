@@ -57,28 +57,33 @@ func newOpenCodeBackend() ai.AIBackend {
 	return &ai.CLIBackend{
 		BackendName: "opencode",
 		Cmd:         "opencode",
-		BuildArgsFn: buildOpenCodeStreamArgs,
+		BuildArgsFn: BuildOpenCodeStreamArgs,
 		NewParserFn: func() ai.LineParser {
 			return &ai.OpenCodeStreamParser{
 				ToolNameMap: OpenCodeToolNameMap,
 				InputRemaps: OpenCodeInputRemaps,
 			}
 		},
-		FilterLineFn: func(line string) (string, bool) {
-			if line == "" || strings.HasPrefix(line, "[opencode-mobile]") {
-				return "", false
-			}
-			if !strings.HasPrefix(line, "{") {
-				return "", false
-			}
-			return line, true
-		},
+		FilterLineFn: OpenCodeFilterLine,
 		PreStartFn: nil,
 	}
 }
 
-// buildOpenCodeStreamArgs constructs the CLI arguments for OpenCode streaming.
-func buildOpenCodeStreamArgs(req ai.ChatRequest) []string {
+// OpenCodeFilterLine filters raw CLI output lines for OpenCode and its forks.
+// Exported for reuse by MiMo-Code and any other OpenCode-fork backends.
+func OpenCodeFilterLine(line string) (string, bool) {
+	if line == "" || strings.HasPrefix(line, "[opencode-mobile]") {
+		return "", false
+	}
+	if !strings.HasPrefix(line, "{") {
+		return "", false
+	}
+	return line, true
+}
+
+// BuildOpenCodeStreamArgs constructs the CLI arguments for OpenCode streaming.
+// Exported for reuse by MiMo-Code and any other OpenCode-fork backends.
+func BuildOpenCodeStreamArgs(req ai.ChatRequest) []string {
 	// OpenCode CLI has no --system-prompt flag — inject into user prompt.
 	prompt := ai.InjectSystemPrompt(req)
 
