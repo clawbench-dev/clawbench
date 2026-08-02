@@ -62,6 +62,19 @@ describe('useThinkingContent', () => {
     expect(errors.value['th_1']).toBeTruthy()
   })
 
+  it('refetches after a failed load (in-flight cleanup)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 404 })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ think_id: 'th_1', text: 'recovered' }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { loadThinking } = useThinkingContent()
+    await expect(loadThinking('th_1', 42)).rejects.toThrow()
+    const text = await loadThinking('th_1', 42)
+    expect(text).toBe('recovered')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('clearThinkingCache clears cached text', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

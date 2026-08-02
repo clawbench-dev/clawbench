@@ -1,9 +1,9 @@
-import { ref } from 'vue'
+import { ref, reactive } from 'vue'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ThinkingContent'
 
-const thinkingTextCache = new Map<string, string>()
+const thinkingTextCache = reactive(new Map<string, string>())
 const inFlight = new Map<string, Promise<string>>()
 
 function clearThinkingCache() {
