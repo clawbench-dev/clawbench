@@ -18,12 +18,18 @@ func BuildBaseStreamArgs(req ChatRequest, extraFlags func(ChatRequest) []string)
 		"--include-partial-messages",
 	}
 
-	if req.Resume {
+	if req.Resume && req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
 		slog.Info("cli: --resume",
 			slog.String("backend", req.AgentID),
 			slog.String("session_id", req.SessionID),
 			slog.Int("assistant_msg_count", req.AssistantMessageCount))
+	} else if req.Resume {
+		// Resume requested but SessionID is empty — the AI never established
+		// a session. Start fresh instead of passing --resume "" (which would
+		// cause CLI errors).
+		slog.Warn("cli: resume requested but no session_id, starting fresh",
+			slog.String("backend", req.AgentID))
 	} else if req.SessionID != "" {
 		args = append(args, "--session-id", req.SessionID)
 		slog.Info("cli: --session-id (new conversation)",

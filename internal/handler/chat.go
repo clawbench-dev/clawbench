@@ -785,6 +785,20 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 				slog.String("backend", backendName),
 				slog.String("agent", agentID),
 				slog.Bool("ext_id_is_clawbench_uuid", resolvedExtID == sessionID))
+		} else if !service.SessionHasRealAssistantContent(sessionID) {
+			// The first assistant message is an empty cancel/warning placeholder
+			// (no text/tool_use/thinking blocks). This means the AI never responded
+			// with real content — the stream was interrupted before the CLI
+			// established a session. Resume with any ID would fail because the AI
+			// never saw this session. Clear effectiveSessionID and set resume=false
+			// so the backend starts a completely fresh session (no --resume, proper
+			// system prompt injection).
+			effectiveSessionID = ""
+			resume = false
+			slog.Info("session resume: external_session_id is empty and no real AI content (first message interrupted), starting fresh",
+				slog.String("session", sessionID),
+				slog.String("backend", backendName),
+				slog.String("agent", agentID))
 		} else {
 			// No external session ID available — the CLI cannot resume a session
 			// it has never seen. Clear effectiveSessionID so the backend does not
@@ -808,11 +822,15 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	// ForkSession which copies messages in DB but doesn't inherit the AI-side session.
 	// Inject formatted history so the AI can continue with context.
 	//
+	// Note: This branch only fires when resume is still true after the above
+	// checks. If the first message was interrupted (resume set to false above),
+	// this fork detection is skipped — correct, because a phantom-cancel session
+	// is not a fork.
+	//
 	// Guard against re-injection on subsequent messages:
 	// After the first AI response, session_capture persists external_session_id,
-	// so resolvedExtID != "" and this branch is skipped. If capture fails
-	// (unlikely), the condition would re-trigger, but that's acceptable
-	// because the AI still needs context.
+	// so resolvedExtID != "" and the above resume branch uses it directly,
+	// bypassing this fork detection.
 	var forkContext string
 	if resume && resolvedExtID == "" {
 		forkContext = buildForkContext(sessionID)

@@ -1592,9 +1592,10 @@ func TestBuildChatRequest_PiNewSession(t *testing.T) {
 }
 
 // TestBuildChatRequest_ClaudeResumeNoExternalID verifies that when
-// external_session_id is empty (not yet captured from stream), Claude falls
-// back to empty effectiveSessionID — the CLI will start a new session.
-// After session_capture fires, subsequent messages will use the captured ID.
+// external_session_id is empty but AI did produce real content (stream
+// interrupted after AI responded), Claude gets empty effectiveSessionID
+// (context amnesia). This is the existing behavior for "lost external_session_id"
+// scenarios where the backend cannot resume.
 func TestBuildChatRequest_ClaudeResumeNoExternalID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -1602,13 +1603,54 @@ func TestBuildChatRequest_ClaudeResumeNoExternalID(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "test-claude", "", "", "claude", "chat")
 	assert.NoError(t, err)
 
+	// Real AI content — AI did respond before stream was interrupted
 	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", `{"blocks":[{"type":"text","text":"hi"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	// external_session_id is empty (not yet captured)
+	// external_session_id is empty (not yet captured) — stream interrupted
 	req := buildChatRequest("continue", sessionID, env.ProjectDir, "claude", "claude", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
-	assert.Equal(t, "", req.SessionID, "Claude should get empty SessionID when external_session_id is not yet captured")
+	assert.Equal(t, "", req.SessionID, "Claude should get empty SessionID when external_session_id is lost (context amnesia)")
+}
+
+// TestBuildChatRequest_FirstMessageInterrupted verifies that when the first
+// message was interrupted before AI produced real content (empty cancel
+// placeholder), the handler starts a completely fresh session:
+// effectiveSessionID="" and Resume=false.
+func TestBuildChatRequest_FirstMessageInterrupted(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "test-claude-interrupted", "", "", "claude", "chat")
+	assert.NoError(t, err)
+
+	// Finalized empty placeholder (user cancelled before AI responded)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant",
+		`{"blocks":[],"metadata":null,"cancelled":true}`, nil, false, "")
+	assert.NoError(t, err)
+
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "claude", "claude", "", "", "", "", "", false)
+	assert.False(t, req.Resume, "first message interrupted: should NOT attempt resume")
+	assert.Equal(t, "", req.SessionID, "first message interrupted: effectiveSessionID should be empty")
+}
+
+// TestBuildChatRequest_FirstMessageInterrupted_WarningOnly verifies
+// the same behavior when the placeholder has only a warning block.
+func TestBuildChatRequest_FirstMessageInterrupted_WarningOnly(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "test-claude-warning", "", "", "claude", "chat")
+	assert.NoError(t, err)
+
+	// Finalized warning-only placeholder
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant",
+		`{"blocks":[{"type":"warning","text":"AI response cancelled","reason":"context_cancel"}],"metadata":null,"cancelled":true}`, nil, false, "")
+	assert.NoError(t, err)
+
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "claude", "claude", "", "", "", "", "", false)
+	assert.False(t, req.Resume, "warning-only placeholder: should NOT attempt resume")
+	assert.Equal(t, "", req.SessionID, "warning-only placeholder: effectiveSessionID should be empty")
 }
 
 // TestBuildChatRequest_OpenCodeResumeWithExternalSessionID verifies that

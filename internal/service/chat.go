@@ -1165,6 +1165,40 @@ func UpdateStreamingMessage(projectPath, backend, sessionID, content string) err
 	return err
 }
 
+// SessionHasRealAssistantContent checks whether a session has at least one
+// finalized assistant message with real AI content (text, tool_use, or thinking
+// blocks — not just a cancellation/error warning placeholder).
+// Used by buildChatRequest to distinguish "first message interrupted before AI
+// responded" from "stream interrupted after AI produced content".
+func SessionHasRealAssistantContent(sessionID string) bool {
+	var content string
+	err := dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id ASC LIMIT 1",
+		sessionID).Scan(&content)
+	if err != nil || content == "" {
+		return false
+	}
+	// Error messages stored by handler are plain text (not JSON blocks format).
+	// They represent backend failures, not real AI content.
+	if !strings.HasPrefix(strings.TrimSpace(content), "{") {
+		return false
+	}
+	var parsed struct {
+		Blocks []struct {
+			Type string `json:"type"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return false
+	}
+	for _, b := range parsed.Blocks {
+		if b.Type != "warning" {
+			return true
+		}
+	}
+	return false
+}
+
 // FinalizeStreamingMessage marks the latest streaming assistant message as complete and updates its content.
 // Also marks the message as unindexed (indexed=0) so the RAG indexer picks it up.
 // Uses subquery with ORDER BY id DESC LIMIT 1 to target only the most recent streaming=1 row,

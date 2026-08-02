@@ -394,3 +394,47 @@ func TestExecCommandJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(result), &parsed))
 	assert.Equal(t, `echo "hello\nworld"`, parsed["command"])
 }
+
+// --- BuildBaseStreamArgs resume safety tests ---
+
+func TestBuildBaseStreamArgs_ResumeWithEmptySessionID(t *testing.T) {
+	req := ChatRequest{
+		Prompt:    "hello",
+		Resume:    true,
+		SessionID: "",
+		AgentID:   "claude",
+	}
+	args := BuildBaseStreamArgs(req, nil)
+	// Must NOT contain --resume with empty value
+	for _, arg := range args {
+		assert.NotEqual(t, "--resume", arg, "should not pass --resume when SessionID is empty")
+	}
+	// Should still have --print and --output-format
+	assert.Contains(t, args, "--print")
+	assert.Contains(t, args, "--output-format")
+}
+
+func TestBuildBaseStreamArgs_ResumeWithSessionID(t *testing.T) {
+	req := ChatRequest{
+		Prompt:    "hello",
+		Resume:    true,
+		SessionID: "session-abc",
+		AgentID:   "claude",
+	}
+	args := BuildBaseStreamArgs(req, nil)
+	assert.Contains(t, args, "--resume")
+	assert.Contains(t, args, "session-abc")
+}
+
+func TestBuildBaseStreamArgs_NewSessionWithID(t *testing.T) {
+	req := ChatRequest{
+		Prompt:    "hello",
+		Resume:    false,
+		SessionID: "session-abc",
+		AgentID:   "claude",
+	}
+	args := BuildBaseStreamArgs(req, nil)
+	assert.Contains(t, args, "--session-id")
+	assert.Contains(t, args, "session-abc")
+	assert.NotContains(t, args, "--resume")
+}

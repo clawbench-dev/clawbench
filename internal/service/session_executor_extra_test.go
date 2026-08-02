@@ -995,3 +995,102 @@ func TestUpsertToolCall_EmptyOutputNotOverwritten(t *testing.T) {
 	assert.Equal(t, "existing output", record.Output, "empty output should not overwrite existing output")
 	assert.Equal(t, "updated", record.Status)
 }
+
+// --- SessionHasRealAssistantContent tests ---
+
+func TestSessionHasRealAssistantContent_EmptyPlaceholder(t *testing.T) {
+	setupExecutorDB(t)
+	sid, err := CreateSession("/test", "claude", "test-real-content-empty", "", "", "claude", "chat")
+	require.NoError(t, err)
+
+	// Finalize an empty placeholder (cancelled stream, no AI content)
+	emptyBlocks, _ := json.Marshal(map[string]any{
+		"blocks":    []any{},
+		"metadata":  nil,
+		"cancelled": true,
+	})
+	_, err = AddChatMessage("/test", "claude", sid, "assistant", string(emptyBlocks), nil, false, "")
+	require.NoError(t, err)
+
+	assert.False(t, SessionHasRealAssistantContent(sid), "empty cancelled placeholder should not count as real content")
+}
+
+func TestSessionHasRealAssistantContent_WarningOnly(t *testing.T) {
+	setupExecutorDB(t)
+	sid, err := CreateSession("/test", "claude", "test-real-content-warning", "", "", "claude", "chat")
+	require.NoError(t, err)
+
+	// Finalize a warning-only placeholder (context cancelled)
+	warningBlocks, _ := json.Marshal(map[string]any{
+		"blocks": []any{
+			map[string]any{"type": "warning", "text": "AI response cancelled", "reason": "context_cancel"},
+		},
+		"metadata":  nil,
+		"cancelled": true,
+	})
+	_, err = AddChatMessage("/test", "claude", sid, "assistant", string(warningBlocks), nil, false, "")
+	require.NoError(t, err)
+
+	assert.False(t, SessionHasRealAssistantContent(sid), "warning-only placeholder should not count as real content")
+}
+
+func TestSessionHasRealAssistantContent_RealTextBlock(t *testing.T) {
+	setupExecutorDB(t)
+	sid, err := CreateSession("/test", "claude", "test-real-content-text", "", "", "claude", "chat")
+	require.NoError(t, err)
+
+	// Finalize a message with real content
+	realBlocks, _ := json.Marshal(map[string]any{
+		"blocks": []any{
+			map[string]any{"type": "text", "text": "Hello, I can help you with that."},
+		},
+		"metadata": map[string]any{"session_id": "ext-123"},
+	})
+	_, err = AddChatMessage("/test", "claude", sid, "assistant", string(realBlocks), nil, false, "")
+	require.NoError(t, err)
+
+	assert.True(t, SessionHasRealAssistantContent(sid), "message with text block should count as real content")
+}
+
+func TestSessionHasRealAssistantContent_ToolUseBlock(t *testing.T) {
+	setupExecutorDB(t)
+	sid, err := CreateSession("/test", "claude", "test-real-content-tool", "", "", "claude", "chat")
+	require.NoError(t, err)
+
+	// Tool use block counts as real content even if there's no text
+	toolBlocks, _ := json.Marshal(map[string]any{
+		"blocks": []any{
+			map[string]any{"type": "tool_use", "id": "tu-1", "name": "Read"},
+			map[string]any{"type": "warning", "text": "AI response cancelled", "reason": "context_cancel"},
+		},
+		"cancelled": true,
+	})
+	_, err = AddChatMessage("/test", "claude", sid, "assistant", string(toolBlocks), nil, false, "")
+	require.NoError(t, err)
+
+	assert.True(t, SessionHasRealAssistantContent(sid), "message with tool_use block should count as real content")
+}
+
+func TestSessionHasRealAssistantContent_PlainTextError(t *testing.T) {
+	setupExecutorDB(t)
+	sid, err := CreateSession("/test", "claude", "test-real-content-err", "", "", "claude", "chat")
+	require.NoError(t, err)
+
+	// Error messages from handler are plain text (not JSON)
+	_, err = AddChatMessage("/test", "claude", sid, "assistant", "Backend create failed: exit 1", nil, false, "")
+	require.NoError(t, err)
+
+	assert.False(t, SessionHasRealAssistantContent(sid), "plain text error message should not count as real content")
+}
+
+func TestSessionHasRealAssistantContent_NoAssistantMessages(t *testing.T) {
+	setupExecutorDB(t)
+	sid, err := CreateSession("/test", "claude", "test-real-content-none", "", "", "claude", "chat")
+	require.NoError(t, err)
+
+	// Only user message, no assistant messages
+	_, err = AddChatMessage("/test", "claude", sid, "user", "hello", nil, false, "")
+	require.NoError(t, err)
+
+	assert.False(t, SessionHasRealAssistantContent(sid), "session without assistant messages should not have real content")
+}
