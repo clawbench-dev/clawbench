@@ -519,4 +519,31 @@ describe('ContentBlocks', () => {
       expect(classes).toContain('thinking-collapsed')
     })
   })
+
+  // ── stableBlockKey with think_id ──
+
+  describe('stableBlockKey with think_id', () => {
+    it('renders two slim thinking blocks as distinct expandable chips', async () => {
+      const wrapper = mountBlocks({
+        msgId: 'm1',
+        sessionId: 's1',
+        blocks: [
+          { type: 'thinking', think_id: 'th_a', done: true },
+          { type: 'thinking', think_id: 'th_b', done: true },
+        ],
+        streaming: false,
+        active: true,
+      })
+
+      const chips = wrapper.findAll('.chat-thinking')
+      expect(chips).toHaveLength(2)
+
+      // Expand the first only; the second must stay collapsed.
+      await chips[0].find('.thinking-header').trigger('click')
+      await nextTick()
+      const wrappers = wrapper.findAll('.thinking-content-wrapper')
+      expect(wrappers[0].classes()).toContain('thinking-content-open')
+      expect(wrappers[1].classes()).not.toContain('thinking-content-open')
+    })
+  })
 })
