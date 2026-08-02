@@ -20,6 +20,10 @@ function unregisterGuard(id: string) {
   guards.delete(id)
 }
 
+// Module-level shared overlay state — the global ConnectionOverlay reads the same
+// ref that SettingsPage writes to, so both stay in sync.
+export const restartingOverlay = ref(false)
+
 /** Check all registered guards. Returns true if all guards allow reset. */
 function checkAllGuards(): boolean {
   for (const guard of guards.values()) {
@@ -42,7 +46,6 @@ export function useSettingsNavigation() {
   const changedColdFields = ref<string[]>([])
   const needsRestart = ref(false)
   const restarting = ref(false)
-  const restartingOverlay = ref(false)
 
   // Track the poll timer for cleanup
   let pollTimer: ReturnType<typeof setInterval> | null = null

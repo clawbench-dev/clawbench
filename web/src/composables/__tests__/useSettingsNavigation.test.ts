@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
+import { restartingOverlay, useSettingsNavigation } from '@/composables/useSettingsNavigation'
 
 // Mock dependencies
 const mockLoadConfig = vi.fn()
@@ -38,6 +38,7 @@ describe('useSettingsNavigation', () => {
     beforeEach(() => {
         vi.clearAllMocks()
         vi.useFakeTimers()
+        restartingOverlay.value = false
     })
 
     afterEach(() => {
@@ -257,6 +258,14 @@ describe('useSettingsNavigation', () => {
             expect(typeof nav.resetState).toBe('function')
             expect(typeof nav.handleRestartNeeded).toBe('function')
             expect(typeof nav.handleRestart).toBe('function')
+        })
+    })
+
+    describe('module-level restartingOverlay', () => {
+        it('shares the same ref across multiple useSettingsNavigation() calls', () => {
+            const nav1 = useSettingsNavigation()
+            const nav2 = useSettingsNavigation()
+            expect(nav1.restartingOverlay).toBe(nav2.restartingOverlay)
         })
     })
 })
