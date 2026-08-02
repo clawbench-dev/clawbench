@@ -480,6 +480,48 @@ func TestContinueFromExecution_CopiesChatMessageSummary(t *testing.T) {
 	assert.Equal(t, "Scheduled task summary", copiedSummary)
 }
 
+// ========== ContinueFromExecution: copies chat_tool_calls and chat_thinking ==========
+
+func TestContinueFromExecution_CopiesToolCallsAndThinking(t *testing.T) {
+	setupDB(t)
+
+	taskID := helperCreateScheduledTask(t, "/project", "Daily Review", "claude")
+	sessID := helperCreateScheduledSession(t, "/project", "claude", "Daily Review")
+	execID := helperCreateTaskExecution(t, taskID, sessID, "completed")
+
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Review", nil, false, "")
+	assert.NoError(t, err)
+	asstID, err := service.AddChatMessage("/project", "claude", sessID, "assistant",
+		`{"blocks":[{"type":"tool_use","id":"toolu_c01","name":"Bash","done":true},{"type":"thinking","think_id":"th_c01","done":true}]}`,
+		nil, false, "")
+	assert.NoError(t, err)
+	assert.NoError(t, service.UpsertToolCall(asstID, sessID, "toolu_c01", "Bash", []byte(`{"command":"ls"}`), "out", "success", "ls", true))
+	assert.NoError(t, service.UpsertThinking(asstID, sessID, "th_c01", "continued thought"))
+
+	newSessID, exists, err := service.ContinueFromExecution(execID, "/project")
+	assert.NoError(t, err)
+	assert.False(t, exists)
+	assert.NotEmpty(t, newSessID)
+
+	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
+	assert.NoError(t, err)
+	var newAsstID int64
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			newAsstID = m.ID
+		}
+	}
+	rec, err := service.GetToolCall("toolu_c01", newAsstID)
+	assert.NoError(t, err)
+	assert.NotNil(t, rec, "tool call must be copied into continued session")
+	th, err := service.GetThinking("th_c01", newAsstID)
+	assert.NoError(t, err)
+	assert.NotNil(t, th, "thinking must be copied into continued session")
+	if th != nil {
+		assert.Equal(t, "continued thought", th.Text)
+	}
+}
+
 // ========== restoreArchivedSession (tested via DB) ==========
 
 // TestRestoreDeletedSession_NonExistent verifies that restoring a non-existent

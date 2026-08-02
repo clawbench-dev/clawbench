@@ -528,6 +528,50 @@ func TestForkSession_BeforeMessageID_StreamingMessage(t *testing.T) {
 	assert.Contains(t, err.Error(), "streaming message")
 }
 
+// ---------- ForkSession: copies chat_tool_calls and chat_thinking ----------
+
+func TestForkSession_CopiesToolCallsAndThinking(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original")
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Hello", nil, false, "")
+	assert.NoError(t, err)
+	asstID, err := service.AddChatMessage("/project", "claude", sessID, "assistant",
+		`{"blocks":[{"type":"tool_use","id":"toolu_01","name":"Read","done":true},{"type":"thinking","think_id":"th_01","done":true}]}`,
+		nil, false, "")
+	assert.NoError(t, err)
+	assert.NoError(t, service.UpsertToolCall(asstID, sessID, "toolu_01", "Read", []byte(`{"file_path":"/a.go"}`), "contents", "success", "a.go", true))
+	assert.NoError(t, service.UpsertThinking(asstID, sessID, "th_01", "deep text"))
+
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0)
+	assert.NoError(t, err)
+
+	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
+	assert.NoError(t, err)
+	var forkAsstID int64
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			forkAsstID = m.ID
+		}
+	}
+
+	rec, err := service.GetToolCall("toolu_01", forkAsstID)
+	assert.NoError(t, err)
+	assert.NotNil(t, rec, "tool call must be copied into fork")
+	if rec != nil {
+		assert.Equal(t, "contents", rec.Output)
+		assert.Equal(t, newSessID, rec.SessionID)
+	}
+
+	th, err := service.GetThinking("th_01", forkAsstID)
+	assert.NoError(t, err)
+	assert.NotNil(t, th, "thinking must be copied into fork")
+	if th != nil {
+		assert.Equal(t, "deep text", th.Text)
+		assert.Equal(t, newSessID, th.SessionID)
+	}
+}
+
 // ---------- ForkSession: beforeMessageID = 0 (backward compatible, copies all) ----------
 
 func TestForkSession_BeforeMessageID_Zero(t *testing.T) {

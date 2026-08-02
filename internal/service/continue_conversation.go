@@ -253,6 +253,9 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 			return "", false, fmt.Errorf("failed to copy summary for message %d: %w", oldID, err)
 		}
 	}
+	if err := copySessionDetailTables(idMap, sourceSessionID, newSessionID); err != nil {
+		return "", false, err
+	}
 
 	return newSessionID, false, nil
 }
@@ -262,7 +265,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 // does NOT copy external_session_id — the forked session starts fresh.
 // If beforeMessageID > 0, only messages up to and including the assistant reply
 // following the specified user message are copied. The title is provided by the caller.
-func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64) (string, error) {
+func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64) (string, error) { //nolint:gocyclo // multi-step session fork with fork-point resolution
 	// 1. Get source session metadata
 	var backend, agentID, agentSource, modelName, sessProjectPath string
 	err := dbRead.QueryRow(
@@ -347,6 +350,9 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 		return "", err
 	}
 	if err := copySessionSummaries(idMap); err != nil {
+		return "", err
+	}
+	if err := copySessionDetailTables(idMap, sourceSessionID, newSessionID); err != nil {
 		return "", err
 	}
 
@@ -443,5 +449,93 @@ func copySessionSummaries(idMap map[int64]int64) error {
 			return fmt.Errorf("failed to copy summary for message %d: %w", oldID, err)
 		}
 	}
+	return nil
+}
+
+// copySessionDetailTables copies chat_tool_calls and chat_thinking rows from the
+// source session to the fork/continued session, remapping message_id via idMap.
+// Rows whose source message_id is not in idMap (e.g. fork truncation) are skipped.
+func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionID string) error {
+	if len(idMap) == 0 {
+		return nil
+	}
+
+	// chat_tool_calls
+	tcRows, err := dbRead.Query(
+		"SELECT message_id, tool_id, name, input, output, status, done, summary, created_at FROM chat_tool_calls WHERE session_id = ?",
+		sourceSessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to query source tool calls: %w", err)
+	}
+	defer func() { _ = tcRows.Close() }()
+	type toolRow struct {
+		messageID int64
+		toolID    string
+		name      string
+		input     string
+		output    string
+		status    string
+		done      int
+		summary   string
+		createdAt time.Time
+	}
+	var toolRows []toolRow
+	for tcRows.Next() {
+		var r toolRow
+		if err := tcRows.Scan(&r.messageID, &r.toolID, &r.name, &r.input, &r.output, &r.status, &r.done, &r.summary, &r.createdAt); err != nil {
+			return fmt.Errorf("failed to scan tool call: %w", err)
+		}
+		toolRows = append(toolRows, r)
+	}
+	for _, r := range toolRows {
+		newID, ok := idMap[r.messageID]
+		if !ok {
+			continue
+		}
+		if _, err := WriteExec(
+			"INSERT OR REPLACE INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output, status, done, summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			newID, newSessionID, r.toolID, r.name, r.input, r.output, r.status, r.done, r.summary, r.createdAt,
+		); err != nil {
+			return fmt.Errorf("failed to copy tool call %s: %w", r.toolID, err)
+		}
+	}
+
+	// chat_thinking
+	thRows, err := dbRead.Query(
+		"SELECT message_id, think_id, text, created_at FROM chat_thinking WHERE session_id = ?",
+		sourceSessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to query source thinking: %w", err)
+	}
+	defer func() { _ = thRows.Close() }()
+	type thinkRow struct {
+		messageID int64
+		thinkID   string
+		text      string
+		createdAt time.Time
+	}
+	var thinkRows []thinkRow
+	for thRows.Next() {
+		var r thinkRow
+		if err := thRows.Scan(&r.messageID, &r.thinkID, &r.text, &r.createdAt); err != nil {
+			return fmt.Errorf("failed to scan thinking: %w", err)
+		}
+		thinkRows = append(thinkRows, r)
+	}
+	for _, r := range thinkRows {
+		newID, ok := idMap[r.messageID]
+		if !ok {
+			continue
+		}
+		if _, err := WriteExec(
+			"INSERT OR REPLACE INTO chat_thinking (message_id, session_id, think_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
+			newID, newSessionID, r.thinkID, r.text, r.createdAt,
+		); err != nil {
+			return fmt.Errorf("failed to copy thinking %s: %w", r.thinkID, err)
+		}
+	}
+
 	return nil
 }
