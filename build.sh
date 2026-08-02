@@ -66,37 +66,6 @@ _resolve_port() {
     echo "${port:-20000}"
 }
 
-# === Restart detachment logic ===
-# When running inside ClawBench's PTY, killing ClawBench destroys the PTY,
-# sending SIGHUP to all processes in the old session. By moving into a new
-# session first via setsid, we survive the parent's death.
-if [[ -n "$DO_RESTART" && -z "$RESTART_DETACHED" ]]; then
-    PORT=$(_resolve_port)
-    if [[ -n "$RESTART_PORT" ]]; then
-        PORT="$RESTART_PORT"
-    fi
-    LOG="$SCRIPT_DIR/.clawbench/build-and-restart.log"
-    mkdir -p "$SCRIPT_DIR/.clawbench"
-    echo "=== ClawBench Build & Restart ==="
-    echo "  Detaching into new session..."
-    setsid "$SCRIPT_DIR/build.sh" --restart --restart-detached \
-        ${RESTART_SKIP_BUILD:+--restart-skip-build} \
-        ${RESTART_PORT:+--restart-port=$RESTART_PORT} \
-        >> "$LOG" 2>&1 &
-    SETSID_PID=$!
-    sleep 1
-    if kill -0 "$SETSID_PID" 2>/dev/null; then
-        echo "  Detached process started (PID $SETSID_PID)."
-        echo "  Log: $LOG"
-        echo "  The current terminal session will disconnect when ClawBench stops."
-        echo "  Reconnect after restart completes."
-    else
-        echo "  ERROR: Failed to start detached process. Check $LOG"
-        exit 1
-    fi
-    exit 0
-fi
-
 echo "=== Building $NAME ==="
 
 # Derive version from git (e.g. v1.0.0, v0.30.0-30-g830bb6c, or short SHA)
@@ -121,7 +90,9 @@ echo "  Version: $FULL_VERSION (code: $VERSION_CODE, release: $IS_RELEASE)"
 
 # 1. Build Vue frontend (must come before Go build so embed dir is populated)
 echo "[1/5] Building Vue frontend..."
-if [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
+if [[ -n "$RESTART_SKIP_BUILD" ]]; then
+    echo "  Frontend build skipped (--restart-skip-build)"
+elif [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
     if [ ! -d "node_modules" ]; then
         echo "  Installing dependencies..."
         npm install || { echo "ERROR: npm install failed" >&2; exit 1; }
@@ -209,7 +180,12 @@ else
 fi
 echo "  public/              # Frontend on disk (used if present, overrides embed)"
 
-# === Restart logic (executed after build in detached session) ===
+# === Restart logic ===
+# Build runs in the foreground so compile errors are visible directly. Only
+# the stop+start is delegated to a detached session: when running inside
+# ClawBench's own PTY, killing ClawBench destroys the PTY and sends SIGHUP
+# to every process in the old session. Detaching via setsid lets the restart
+# survive the parent's death.
 if [[ -n "$DO_RESTART" ]]; then
     PORT=$(_resolve_port)
     if [[ -n "$RESTART_PORT" ]]; then
@@ -217,7 +193,32 @@ if [[ -n "$DO_RESTART" ]]; then
     fi
     BIN="$SCRIPT_DIR/$NAME"
     LOG="$SCRIPT_DIR/.clawbench/build-and-restart.log"
+    mkdir -p "$SCRIPT_DIR/.clawbench"
 
+    # === Foreground mode: build already done, delegate stop+start ===
+    if [[ -z "$RESTART_DETACHED" ]]; then
+        echo ""
+        echo "=== Restarting ClawBench ==="
+        echo "  Port: $PORT"
+        echo "  Log:  $LOG"
+        echo "  Detaching restart into a new session..."
+        setsid "$SCRIPT_DIR/build.sh" --restart --restart-detached --restart-skip-build \
+            ${RESTART_PORT:+--restart-port=$RESTART_PORT} \
+            >> "$LOG" 2>&1 &
+        SETSID_PID=$!
+        sleep 1
+        if kill -0 "$SETSID_PID" 2>/dev/null; then
+            echo "  Detached restart process started (PID $SETSID_PID)."
+            echo "  The current terminal session will disconnect when ClawBench stops."
+            echo "  Reconnect after restart completes."
+        else
+            echo "  ERROR: Failed to start detached restart process. Check $LOG"
+            exit 1
+        fi
+        exit 0
+    fi
+
+    # === Detached session: stop old ClawBench + start new one ===
     echo ""
     echo "=== Restarting ClawBench ==="
     echo "  Port: $PORT"
