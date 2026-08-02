@@ -69,6 +69,7 @@ TaskExecutionNotFound: 执行实例未找到或已结束
 DirectoryNameRequired: 目录名称为必填项
 LineNumberOutOfRange: 行号超出范围
 InvalidIndex: 无效的索引
+InvalidMessageId: 无效的消息 ID
 JobNotFound: 任务未找到
 AgentNotFound: 智能体未找到
 InvalidModelForAgent: 无效的模型

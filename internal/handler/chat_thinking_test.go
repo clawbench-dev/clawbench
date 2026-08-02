@@ -46,6 +46,15 @@ func TestServeThinkingDetail_MissingParams(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestServeThinkingDetail_BadMessageID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/thinking?think_id=th_x&message_id=invalid", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeThinkingDetail, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestServeThinkingDetail_NotFound(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
