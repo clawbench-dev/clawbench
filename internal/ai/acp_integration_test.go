@@ -5,8 +5,10 @@ package ai
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -20,23 +22,443 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Shared Helpers
+// ACP Test Config & Backend Table
 // ---------------------------------------------------------------------------
 
-// acpTestAgent returns a model.Agent configured for CodeBuddy ACP transport.
-func acpTestAgent() *model.Agent {
-	return &model.Agent{
-		ID:         "codebuddy-acp-test",
-		Name:       "CodeBuddy ACP Test",
-		Backend:    "codebuddy",
-		Transport:  "acp-stdio",
-		AcpCommand: "codebuddy --acp",
-		Models: []model.AgentModel{
-			{ID: "glm-4-plus", Name: "GLM-4 Plus", Default: true},
-		},
-		ThinkingEffortLevels: []string{"low", "medium", "high"},
+// acpTestConfig describes an ACP backend for table-driven integration tests.
+type acpTestConfig struct {
+	// Basic identity
+	ID         string        // Agent ID (matches BackendRegistry ID)
+	Backend    string        // Backend type
+	AcpCommand string        // ACP spawn command
+	DefaultCmd string        // CLI binary name for availability check
+	Timeout    time.Duration // Per-prompt timeout
+
+	// Capability flags
+	HasThinking     bool // Whether backend supports thinking_effort configuration
+	SupportsConfig  bool // Whether backend supports set_config RPC (mode/model/thinking)
+
+	// Agent construction parameters
+	DefaultModel       string   // Default model ID
+	ThinkingLevels     []string // Available thinking_effort levels
+	AltModels          []string // Alternative model IDs for ModelSwitch test
+
+	// SupportedTests declares which test points this backend should run.
+	SupportedTests map[string]bool
+}
+
+// --- ACP Test Point Names ---
+const (
+	AcpNewSessionCreateAndCapture    = "NewSessionCreateAndCapture"
+	AcpConnReuseSameSession          = "ConnReuseSameSession"
+	AcpProcessCrash                  = "ProcessCrash"
+	AcpPeerDisconnectRetryPrompt     = "PeerDisconnectRetryPrompt"
+	AcpIdleSweepRecycled             = "IdleSweepRecycled"
+	AcpExplicitCloseNewSession       = "ExplicitCloseNewSession"
+	AcpMultipleSessionsIsolated      = "MultipleSessionsIsolated"
+	AcpModeSwitch                    = "ModeSwitch"
+	AcpModelSwitch                   = "ModelSwitch"
+	AcpThinkingEffortSwitch          = "ThinkingEffortSwitch"
+	AcpUnsupportedConfig             = "UnsupportedConfig"
+	AcpConfigDedup                   = "ConfigDedup"
+	AcpConfigKilledConnection        = "ConfigKilledConnection"
+	AcpResumeModePreserved           = "ResumeModePreserved"
+	AcpResumeModelPreserved          = "ResumeModelPreserved"
+	AcpResumeThinkingPreserved       = "ResumeThinkingPreserved"
+	AcpResumeCommandsPreserved       = "ResumeCommandsPreserved"
+	AcpResumeConfigDedupReset        = "ResumeConfigDedupReset"
+	AcpResumePlanStateLost           = "ResumePlanStateLost"
+	AcpSSEDisconnectDrain            = "SSEDisconnectDrain"
+	AcpSSEReconnectStateReemitted    = "SSEReconnectStateReemitted"
+	AcpLongRunningMultipleTurns      = "LongRunningMultipleTurns"
+	AcpLongRunningConfigConsistency  = "LongRunningConfigConsistency"
+	AcpUserCancelResumeConversation  = "UserCancelResumeConversation"
+	AcpProcessCrashResumeConversation = "ProcessCrashResumeConversation"
+	AcpMultipleCancelResume          = "MultipleCancelResume"
+	AcpMultipleCrashResume           = "MultipleCrashResume"
+	AcpCancelAndCrashResume          = "CancelAndCrashResume"
+	AcpSessionRecoveryAfterConnLoss  = "SessionRecoveryAfterConnLoss"
+	AcpUnrecoverableSessionError     = "UnrecoverableSessionError"
+	AcpTransportSwitchACPtoCLItoACP  = "TransportSwitchACPtoCLItoACP"
+	AcpSessionCapabilities           = "SessionCapabilities"
+	AcpCodeWhaleBasicSession         = "CodeWhaleBasicSession"
+	AcpCodeWhaleMultiTurnContext     = "CodeWhaleMultiTurnContext"
+	AcpCodeWhaleMultiTurnResume      = "CodeWhaleMultiTurnResume"
+	AcpStateModeThinkingCommands     = "StateModeThinkingCommands"
+	AcpStateReemittedOnSecondPrompt  = "StateReemittedOnSecondPrompt"
+)
+
+// allACPTestPoints returns the base set of test points every ACP backend runs.
+func allACPTestPoints() map[string]bool {
+	return map[string]bool{
+		AcpNewSessionCreateAndCapture: true,
+		AcpConnReuseSameSession:       true,
+		AcpProcessCrash:               true,
+		AcpPeerDisconnectRetryPrompt:  true,
+		AcpIdleSweepRecycled:          true,
+		AcpExplicitCloseNewSession:    true,
+		AcpMultipleSessionsIsolated:   true,
+		AcpResumeModePreserved:        true,
+		AcpResumeModelPreserved:       true,
+		AcpResumeCommandsPreserved:    true,
+		AcpResumeConfigDedupReset:     true,
+		AcpResumePlanStateLost:        true,
+		AcpSSEDisconnectDrain:         true,
+		AcpLongRunningMultipleTurns:   true,
+		AcpUserCancelResumeConversation:  true,
+		AcpProcessCrashResumeConversation: true,
+		AcpMultipleCancelResume:       true,
+		AcpMultipleCrashResume:        true,
+		AcpCancelAndCrashResume:       true,
+		AcpSessionRecoveryAfterConnLoss:  true,
+		AcpUnrecoverableSessionError:     true,
+		AcpTransportSwitchACPtoCLItoACP:  true,
+		// SessionCapabilities expanded from original 2 backends (codebuddy, claude)
+		// to all 7 ACP backends — the test handles non-supporting agents gracefully
+		AcpSessionCapabilities:           true,
+		AcpStateModeThinkingCommands:     true,
 	}
 }
+
+// withACPConfigTestPoints adds config-related test points (mode/model/thinking switching).
+func withACPConfigTestPoints(base map[string]bool) map[string]bool {
+	m := maps.Clone(base)
+	m[AcpModeSwitch] = true
+	m[AcpModelSwitch] = true
+	m[AcpThinkingEffortSwitch] = true
+	m[AcpUnsupportedConfig] = true
+	m[AcpConfigDedup] = true
+	m[AcpConfigKilledConnection] = true
+	m[AcpSSEReconnectStateReemitted] = true
+	m[AcpLongRunningConfigConsistency] = true
+	m[AcpResumeThinkingPreserved] = true
+	m[AcpStateReemittedOnSecondPrompt] = true
+	return m
+}
+
+// acpBackends is the master table of all ACP backends for integration tests.
+var acpBackends = []acpTestConfig{
+	{
+		ID:             "claude",
+		Backend:        "claude",
+		AcpCommand:     "npx -y @agentclientprotocol/claude-agent-acp@latest",
+		DefaultCmd:     "claude",
+		Timeout:        120 * time.Second,
+		HasThinking:    true,
+		SupportsConfig: true,
+		DefaultModel:   "claude-sonnet-4-6",
+		ThinkingLevels: []string{"low", "medium", "high", "xhigh", "max"},
+		AltModels:      []string{"claude-haiku-4-5"},
+		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
+	},
+	{
+		ID:             "codebuddy",
+		Backend:        "codebuddy",
+		AcpCommand:     "codebuddy --acp",
+		DefaultCmd:     "codebuddy",
+		Timeout:        90 * time.Second,
+		HasThinking:    true,
+		SupportsConfig: true,
+		DefaultModel:   "glm-4-plus",
+		ThinkingLevels: []string{"low", "medium", "high"},
+		AltModels:      []string{"glm-4-flash"},
+		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
+	},
+	{
+		ID:             "opencode",
+		Backend:        "opencode",
+		AcpCommand:     "opencode acp",
+		DefaultCmd:     "opencode",
+		Timeout:        90 * time.Second,
+		HasThinking:    true,
+		SupportsConfig: true,
+		DefaultModel:   "default",
+		ThinkingLevels: []string{"low", "medium", "high"},
+		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
+	},
+	{
+		ID:             "codex",
+		Backend:        "codex",
+		AcpCommand:     "npx -y @agentclientprotocol/codex-acp@latest",
+		DefaultCmd:     "codex",
+		Timeout:        120 * time.Second,
+		HasThinking:    true,
+		SupportsConfig: true,
+		DefaultModel:   "codex-mini",
+		ThinkingLevels: []string{"low", "medium", "high"},
+		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
+	},
+	{
+		ID:             "qoder",
+		Backend:        "qoder",
+		AcpCommand:     "qodercli --acp",
+		DefaultCmd:     "qodercli",
+		Timeout:        90 * time.Second,
+		HasThinking:    false,
+		SupportsConfig: false,
+		SupportedTests: allACPTestPoints(), // no config tests
+	},
+	{
+		ID:             "kimi",
+		Backend:        "kimi",
+		AcpCommand:     "kimi acp",
+		DefaultCmd:     "kimi",
+		Timeout:        90 * time.Second,
+		HasThinking:    true,
+		SupportsConfig: true,
+		ThinkingLevels: []string{"low", "medium", "high"},
+		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
+	},
+	{
+		ID:             "copilot",
+		Backend:        "copilot",
+		AcpCommand:     "copilot --acp",
+		DefaultCmd:     "copilot",
+		Timeout:        90 * time.Second,
+		HasThinking:    true,
+		SupportsConfig: true,
+		ThinkingLevels: []string{"low", "medium", "high"},
+		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
+	},
+	// DeepSeek (CodeWhale) — uses ChatRequest.Resume/SystemPrompt fields, separate test points
+	{
+		ID:             "deepseek",
+		Backend:        "deepseek",
+		AcpCommand:     "codewhale serve --acp",
+		DefaultCmd:     "codewhale",
+		Timeout:        150 * time.Second,
+		HasThinking:    false,
+		SupportsConfig: false,
+		SupportedTests: map[string]bool{
+			AcpCodeWhaleBasicSession:      true,
+			AcpCodeWhaleMultiTurnContext:  true,
+			AcpCodeWhaleMultiTurnResume:   true,
+		},
+	},
+}
+
+// buildACPAgent creates a model.Agent from an acpTestConfig.
+func buildACPAgent(cfg acpTestConfig) *model.Agent {
+	return &model.Agent{
+		ID:                   cfg.ID + "-acp-test",
+		Name:                 cfg.ID + " ACP Test",
+		Backend:              cfg.Backend,
+		Transport:            "acp-stdio",
+		AcpCommand:           cfg.AcpCommand,
+		Models:                []model.AgentModel{{ID: cfg.DefaultModel, Name: cfg.DefaultModel, Default: true}},
+		ThinkingEffortLevels: cfg.ThinkingLevels,
+	}
+}
+
+// requireACPBackendAvailable skips the test if the ACP backend is not available.
+// Handles both npx bridge adapters (claude, codex) and native CLI agents.
+func requireACPBackendAvailable(t *testing.T, cfg acpTestConfig) {
+	t.Helper()
+	// npx-based bridge adapters: check npx availability + underlying CLI
+	if strings.HasPrefix(cfg.AcpCommand, "npx") {
+		if _, err := exec.LookPath("npx"); err != nil {
+			t.Skipf("npx not available, skipping %s ACP integration test", cfg.ID)
+		}
+		// Bridge adapters also need the underlying CLI (e.g. claude, codex)
+		if _, err := exec.LookPath(cfg.DefaultCmd); err != nil {
+			t.Skipf("%s CLI not available, skipping %s ACP bridge test", cfg.DefaultCmd, cfg.ID)
+		}
+		return
+	}
+	// Native CLI agents: check binary exists
+	cmd := cfg.DefaultCmd
+	path, err := exec.LookPath(cmd)
+	if err != nil {
+		// Try known alternative names for deepseek
+		if cfg.ID == "deepseek" {
+			if _, err2 := exec.LookPath("deepseek"); err2 != nil {
+				t.Skipf("%s/%s CLI not available, skipping ACP integration test", cmd, "deepseek")
+			}
+			return
+		}
+		t.Skipf("%s CLI not available, skipping ACP integration test", cmd)
+	}
+	// For backends known to support --version with ACP args, verify the subcommand.
+	// Other backends rely on the ACP Initialize protocol itself to verify availability.
+	if cfg.ID == "codebuddy" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		checkCmd := exec.CommandContext(ctx, path, "--acp", "--version")
+		output, checkErr := checkCmd.CombinedOutput()
+		if checkErr != nil {
+			t.Skipf("%s ACP subcommand not supported (error: %v, output: %s), skipping",
+				cmd, checkErr, truncate(string(output), 200))
+		}
+	}
+}
+
+// setupACPTestEnvForConfig creates a test environment for a given acpTestConfig.
+func setupACPTestEnvForConfig(t *testing.T, cfg acpTestConfig) *acpTestEnv {
+	t.Helper()
+	agent := buildACPAgent(cfg)
+	return setupACPTestEnvForAgent(t, agent)
+}
+
+// ---------------------------------------------------------------------------
+// Table-Driven Infrastructure
+// ---------------------------------------------------------------------------
+
+// acpTestCase represents a single test point in the table-driven ACP integration suite.
+type acpTestCase struct {
+	Name      string                            // Test point name (matches SupportedTests keys)
+	ShouldRun func(cfg acpTestConfig) bool       // Returns true if this backend should run this test
+	Run       func(t *testing.T, cfg acpTestConfig) // The actual test function
+}
+
+// supportsACPTest returns a ShouldRun closure that checks cfg.SupportedTests[name].
+func supportsACPTest(name string) func(cfg acpTestConfig) bool {
+	return func(cfg acpTestConfig) bool {
+		return cfg.SupportedTests[name]
+	}
+}
+
+// acpTestCases is the master list of all ACP integration test points.
+var acpTestCases = []acpTestCase{
+	{Name: AcpNewSessionCreateAndCapture, ShouldRun: supportsACPTest(AcpNewSessionCreateAndCapture), Run: testACPNewSessionCreateAndCapture},
+	{Name: AcpConnReuseSameSession, ShouldRun: supportsACPTest(AcpConnReuseSameSession), Run: testACPConnReuseSameSession},
+	{Name: AcpProcessCrash, ShouldRun: supportsACPTest(AcpProcessCrash), Run: testACPProcessCrash},
+	{Name: AcpPeerDisconnectRetryPrompt, ShouldRun: supportsACPTest(AcpPeerDisconnectRetryPrompt), Run: testACPPeerDisconnectRetryPrompt},
+	{Name: AcpIdleSweepRecycled, ShouldRun: supportsACPTest(AcpIdleSweepRecycled), Run: testACPIdleSweepRecycled},
+	{Name: AcpExplicitCloseNewSession, ShouldRun: supportsACPTest(AcpExplicitCloseNewSession), Run: testACPExplicitCloseNewSession},
+	{Name: AcpMultipleSessionsIsolated, ShouldRun: supportsACPTest(AcpMultipleSessionsIsolated), Run: testACPMultipleSessionsIsolated},
+	{Name: AcpModeSwitch, ShouldRun: supportsACPTest(AcpModeSwitch), Run: testACPModeSwitch},
+	{Name: AcpModelSwitch, ShouldRun: supportsACPTest(AcpModelSwitch), Run: testACPModelSwitch},
+	{Name: AcpThinkingEffortSwitch, ShouldRun: supportsACPTest(AcpThinkingEffortSwitch), Run: testACPThinkingEffortSwitch},
+	{Name: AcpUnsupportedConfig, ShouldRun: supportsACPTest(AcpUnsupportedConfig), Run: testACPUnsupportedConfig},
+	{Name: AcpConfigDedup, ShouldRun: supportsACPTest(AcpConfigDedup), Run: testACPConfigDedup},
+	{Name: AcpConfigKilledConnection, ShouldRun: supportsACPTest(AcpConfigKilledConnection), Run: testACPConfigKilledConnection},
+	{Name: AcpResumeModePreserved, ShouldRun: supportsACPTest(AcpResumeModePreserved), Run: testACPResumeModePreserved},
+	{Name: AcpResumeModelPreserved, ShouldRun: supportsACPTest(AcpResumeModelPreserved), Run: testACPResumeModelPreserved},
+	{Name: AcpResumeThinkingPreserved, ShouldRun: supportsACPTest(AcpResumeThinkingPreserved), Run: testACPResumeThinkingPreserved},
+	{Name: AcpResumeCommandsPreserved, ShouldRun: supportsACPTest(AcpResumeCommandsPreserved), Run: testACPResumeCommandsPreserved},
+	{Name: AcpResumeConfigDedupReset, ShouldRun: supportsACPTest(AcpResumeConfigDedupReset), Run: testACPResumeConfigDedupReset},
+	{Name: AcpResumePlanStateLost, ShouldRun: supportsACPTest(AcpResumePlanStateLost), Run: testACPResumePlanStateLost},
+	{Name: AcpSSEDisconnectDrain, ShouldRun: supportsACPTest(AcpSSEDisconnectDrain), Run: testACPSSEDisconnectDrain},
+	{Name: AcpSSEReconnectStateReemitted, ShouldRun: supportsACPTest(AcpSSEReconnectStateReemitted), Run: testACPSSEReconnectStateReemitted},
+	{Name: AcpLongRunningMultipleTurns, ShouldRun: supportsACPTest(AcpLongRunningMultipleTurns), Run: testACPLongRunningMultipleTurns},
+	{Name: AcpLongRunningConfigConsistency, ShouldRun: supportsACPTest(AcpLongRunningConfigConsistency), Run: testACPLongRunningConfigConsistency},
+	{Name: AcpUserCancelResumeConversation, ShouldRun: supportsACPTest(AcpUserCancelResumeConversation), Run: testACPUserCancelResumeConversation},
+	{Name: AcpProcessCrashResumeConversation, ShouldRun: supportsACPTest(AcpProcessCrashResumeConversation), Run: testACPProcessCrashResumeConversation},
+	{Name: AcpMultipleCancelResume, ShouldRun: supportsACPTest(AcpMultipleCancelResume), Run: testACPMultipleCancelResume},
+	{Name: AcpMultipleCrashResume, ShouldRun: supportsACPTest(AcpMultipleCrashResume), Run: testACPMultipleCrashResume},
+	{Name: AcpCancelAndCrashResume, ShouldRun: supportsACPTest(AcpCancelAndCrashResume), Run: testACPCancelAndCrashResume},
+	{Name: AcpSessionRecoveryAfterConnLoss, ShouldRun: supportsACPTest(AcpSessionRecoveryAfterConnLoss), Run: testACPSessionRecoveryAfterConnLoss},
+	{Name: AcpUnrecoverableSessionError, ShouldRun: supportsACPTest(AcpUnrecoverableSessionError), Run: testACPUnrecoverableSessionError},
+	{Name: AcpTransportSwitchACPtoCLItoACP, ShouldRun: supportsACPTest(AcpTransportSwitchACPtoCLItoACP), Run: testACPTransportSwitchACPtoCLItoACP},
+	{Name: AcpSessionCapabilities, ShouldRun: supportsACPTest(AcpSessionCapabilities), Run: testACPSessionCapabilities},
+	{Name: AcpCodeWhaleBasicSession, ShouldRun: supportsACPTest(AcpCodeWhaleBasicSession), Run: testACPCodeWhaleBasicSession},
+	{Name: AcpCodeWhaleMultiTurnContext, ShouldRun: supportsACPTest(AcpCodeWhaleMultiTurnContext), Run: testACPCodeWhaleMultiTurnContext},
+	{Name: AcpCodeWhaleMultiTurnResume, ShouldRun: supportsACPTest(AcpCodeWhaleMultiTurnResume), Run: testACPCodeWhaleMultiTurnResume},
+	{Name: AcpStateModeThinkingCommands, ShouldRun: supportsACPTest(AcpStateModeThinkingCommands), Run: testACPStateModeThinkingCommands},
+	{Name: AcpStateReemittedOnSecondPrompt, ShouldRun: supportsACPTest(AcpStateReemittedOnSecondPrompt), Run: testACPStateReemittedOnSecondPrompt},
+}
+
+// validateACPTestCoverage ensures every test point constant has a corresponding acpTestCase.
+// This prevents accidental omission of test points from the acpTestCases slice.
+func validateACPTestCoverage(t *testing.T) {
+	t.Helper()
+	// Collect all test point constants defined above
+	allConstants := map[string]string{
+		AcpNewSessionCreateAndCapture:    AcpNewSessionCreateAndCapture,
+		AcpConnReuseSameSession:          AcpConnReuseSameSession,
+		AcpProcessCrash:                  AcpProcessCrash,
+		AcpPeerDisconnectRetryPrompt:     AcpPeerDisconnectRetryPrompt,
+		AcpIdleSweepRecycled:             AcpIdleSweepRecycled,
+		AcpExplicitCloseNewSession:       AcpExplicitCloseNewSession,
+		AcpMultipleSessionsIsolated:      AcpMultipleSessionsIsolated,
+		AcpModeSwitch:                    AcpModeSwitch,
+		AcpModelSwitch:                   AcpModelSwitch,
+		AcpThinkingEffortSwitch:          AcpThinkingEffortSwitch,
+		AcpUnsupportedConfig:             AcpUnsupportedConfig,
+		AcpConfigDedup:                   AcpConfigDedup,
+		AcpConfigKilledConnection:        AcpConfigKilledConnection,
+		AcpResumeModePreserved:           AcpResumeModePreserved,
+		AcpResumeModelPreserved:          AcpResumeModelPreserved,
+		AcpResumeThinkingPreserved:       AcpResumeThinkingPreserved,
+		AcpResumeCommandsPreserved:       AcpResumeCommandsPreserved,
+		AcpResumeConfigDedupReset:        AcpResumeConfigDedupReset,
+		AcpResumePlanStateLost:           AcpResumePlanStateLost,
+		AcpSSEDisconnectDrain:            AcpSSEDisconnectDrain,
+		AcpSSEReconnectStateReemitted:    AcpSSEReconnectStateReemitted,
+		AcpLongRunningMultipleTurns:      AcpLongRunningMultipleTurns,
+		AcpLongRunningConfigConsistency:  AcpLongRunningConfigConsistency,
+		AcpUserCancelResumeConversation:  AcpUserCancelResumeConversation,
+		AcpProcessCrashResumeConversation: AcpProcessCrashResumeConversation,
+		AcpMultipleCancelResume:          AcpMultipleCancelResume,
+		AcpMultipleCrashResume:           AcpMultipleCrashResume,
+		AcpCancelAndCrashResume:          AcpCancelAndCrashResume,
+		AcpSessionRecoveryAfterConnLoss:  AcpSessionRecoveryAfterConnLoss,
+		AcpUnrecoverableSessionError:     AcpUnrecoverableSessionError,
+		AcpTransportSwitchACPtoCLItoACP:  AcpTransportSwitchACPtoCLItoACP,
+		AcpSessionCapabilities:           AcpSessionCapabilities,
+		AcpCodeWhaleBasicSession:         AcpCodeWhaleBasicSession,
+		AcpCodeWhaleMultiTurnContext:     AcpCodeWhaleMultiTurnContext,
+		AcpCodeWhaleMultiTurnResume:      AcpCodeWhaleMultiTurnResume,
+		AcpStateModeThinkingCommands:     AcpStateModeThinkingCommands,
+		AcpStateReemittedOnSecondPrompt:  AcpStateReemittedOnSecondPrompt,
+	}
+
+	// Collect all names from acpTestCases
+	testCaseNames := make(map[string]bool)
+	for _, tc := range acpTestCases {
+		testCaseNames[tc.Name] = true
+	}
+
+	// Check for missing test cases
+	var missing []string
+	for constantName := range allConstants {
+		if !testCaseNames[constantName] {
+			missing = append(missing, constantName)
+		}
+	}
+
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Fatalf("ACP test coverage gap: constants without acpTestCase entries: %v", missing)
+	}
+
+	// Check for extra test cases (names not matching any constant)
+	for tcName := range testCaseNames {
+		if _, ok := allConstants[tcName]; !ok {
+			t.Errorf("ACP test case %q has no matching test point constant", tcName)
+		}
+	}
+}
+
+// TestIntegration_ACP is the unified entry point for all ACP integration tests.
+// Uses two-level t.Run() nesting: outer level = backend config, inner level = test point.
+//
+// requireACPBackendAvailable is called both at the outer level (line 458) and
+// inside each test function. The outer call skips all sub-tests for an unavailable
+// backend in one shot; the inner calls act as a safety net if a backend becomes
+// unavailable mid-suite (e.g. process killed by prior test).
+func TestIntegration_ACP(t *testing.T) {
+	// Validate coverage first — catches missing test cases early
+	validateACPTestCoverage(t)
+
+	for _, cfg := range acpBackends {
+		t.Run(cfg.ID, func(t *testing.T) {
+			requireACPBackendAvailable(t, cfg)
+			for _, tc := range acpTestCases {
+				if !tc.ShouldRun(cfg) {
+					continue
+				}
+				t.Run(tc.Name, func(t *testing.T) {
+					tc.Run(t, cfg)
+				})
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Shared Helpers
+// ---------------------------------------------------------------------------
 
 // acpTestWorkDir returns the project root directory (git repo preferred).
 func acpTestWorkDir() string {
@@ -44,25 +466,6 @@ func acpTestWorkDir() string {
 		return dir
 	}
 	return os.TempDir()
-}
-
-// requireCodeBuddyACPAvailable skips the test if CodeBuddy CLI is not installed
-// or doesn't support the `acp` subcommand.
-func requireCodeBuddyACPAvailable(t *testing.T) {
-	t.Helper()
-	path, err := exec.LookPath("codebuddy")
-	if err != nil {
-		t.Skipf("codebuddy CLI not available, skipping ACP integration test")
-	}
-	// Verify acp subcommand is supported (codebuddy --acp --version works)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "--acp", "--version")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Skipf("codebuddy acp subcommand not supported (error: %v, output: %s), skipping",
-			err, truncate(string(output), 200))
-	}
 }
 
 // acpSessionID generates a unique ClawBench session ID for testing.
@@ -81,15 +484,6 @@ type acpTestEnv struct {
 func (e *acpTestEnv) closeConn(t *testing.T, sessionID string) {
 	t.Helper()
 	e.mgr.CloseConn(sessionID)
-}
-
-// setupACPTestEnv creates a test environment with external session ID store
-// and state persister overrides. Uses t.Cleanup() to ensure global state
-// is restored after all test teardown completes.
-// Defaults to CodeBuddy ACP agent; use setupACPTestEnvForAgent for other agents.
-func setupACPTestEnv(t *testing.T) *acpTestEnv {
-	t.Helper()
-	return setupACPTestEnvForAgent(t, acpTestAgent())
 }
 
 // setupACPTestEnvForAgent creates a test environment for any ACP agent.
@@ -271,7 +665,6 @@ func cachedThinkingEffortState(sessionID string) *ThinkingEffortState {
 }
 
 // cleanupConn closes the connection for the given session after the test.
-// cleanupConn closes the connection for the given session after the test.
 // Kills the agent process first if it's still running to avoid cleanup hangs
 // (bridge adapters like claude-agent-acp may not exit cleanly on stdin close).
 func cleanupConn(t *testing.T, sessionID string) {
@@ -285,21 +678,106 @@ func cleanupConn(t *testing.T, sessionID string) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// State Event Helpers
+// ---------------------------------------------------------------------------
+
+// findModeUpdateEvents finds all mode_update events in the event list.
+func findModeUpdateEvents(events []StreamEvent) []StreamEvent {
+	return findACPEvents(events, "mode_update")
+}
+
+// findConfigUpdateEvents finds all config_update events in the event list.
+func findConfigUpdateEvents(events []StreamEvent) []StreamEvent {
+	return findACPEvents(events, "config_update")
+}
+
+// findThinkingEffortUpdateEvents finds all thinking_effort_update events.
+func findThinkingEffortUpdateEvents(events []StreamEvent) []StreamEvent {
+	return findACPEvents(events, "thinking_effort_update")
+}
+
+// findCommandsUpdateEvents finds all commands_update events.
+func findCommandsUpdateEvents(events []StreamEvent) []StreamEvent {
+	return findACPEvents(events, "commands_update")
+}
+
+// findModelListUpdateEvents finds all model_list_update events.
+func findModelListUpdateEvents(events []StreamEvent) []StreamEvent {
+	return findACPEvents(events, "model_list_update")
+}
+
+// configUpdateHasModeCategory checks whether any config_update event contains
+// a mode-category option.
+func configUpdateHasModeCategory(events []StreamEvent) bool {
+	for _, e := range events {
+		if e.Config == nil {
+			continue
+		}
+		for _, opt := range e.Config.Options {
+			if opt.Category == "mode" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// configUpdateHasThoughtLevelCategory checks whether any config_update event
+// contains a thought_level-category option.
+func configUpdateHasThoughtLevelCategory(events []StreamEvent) bool {
+	for _, e := range events {
+		if e.Config == nil {
+			continue
+		}
+		for _, opt := range e.Config.Options {
+			if opt.Category == "thought_level" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// modeNamesFromState returns a slice of "id:name" strings for logging.
+func modeNamesFromState(ms *ModeState) []string {
+	if ms == nil {
+		return nil
+	}
+	names := make([]string, len(ms.AvailableModes))
+	for i, m := range ms.AvailableModes {
+		if m.Name != "" {
+			names[i] = fmt.Sprintf("%s:%s", m.ID, m.Name)
+		} else {
+			names[i] = m.ID
+		}
+	}
+	return names
+}
+
+// firstCmdName returns the name of the first command, or "<none>" if empty.
+func firstCmdName(cmds []AvailableCommandInfo) string {
+	if len(cmds) == 0 {
+		return "<none>"
+	}
+	return cmds[0].Name
+}
+
 // ===========================================================================
 // Category A: Connection Lifecycle
 // ===========================================================================
 
 // A1: First GetOrCreateConn → NewSession → session_capture event + cache populated
-func TestACPIntegration_NewSession_CreateAndCapture(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPNewSessionCreateAndCapture(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
 	defer env.closeConn(t, sessionID)
-	events := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events)
 
 	// Should have session_capture event
@@ -319,9 +797,9 @@ func TestACPIntegration_NewSession_CreateAndCapture(t *testing.T) {
 }
 
 // A2: Second prompt with same sessionID → connection reuse → no second session_capture
-func TestACPIntegration_ConnReuse_SameSession(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPConnReuseSameSession(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -330,14 +808,14 @@ func TestACPIntegration_ConnReuse_SameSession(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// First prompt — creates new session
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	captures1 := findACPEvents(events1, "session_capture")
 	require.NotEmpty(t, captures1, "first prompt should emit session_capture")
 	firstACPSSID := captures1[0].Content
 
 	// Second prompt — should reuse connection
-	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	captures2 := findACPEvents(events2, "session_capture")
@@ -350,9 +828,9 @@ func TestACPIntegration_ConnReuse_SameSession(t *testing.T) {
 }
 
 // A3: Kill agent process → next prompt triggers respawn + ResumeSession → state recovered
-func TestACPIntegration_ProcessCrash(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPProcessCrash(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -361,7 +839,7 @@ func TestACPIntegration_ProcessCrash(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// First prompt — establish connection
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	acpSSID := extractACPCaptureID(t, events1)
 	require.NotEmpty(t, acpSSID, "should have ACP session ID")
@@ -379,7 +857,7 @@ func TestACPIntegration_ProcessCrash(t *testing.T) {
 	killConnProcess(t, conn)
 
 	// Second prompt — should respawn + ResumeSession
-	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	// Should get content back (resume succeeded)
@@ -394,9 +872,9 @@ func TestACPIntegration_ProcessCrash(t *testing.T) {
 }
 
 // A4: Agent crashes during prompt → isACPPeerDisconnected → auto-retry with respawn
-func TestACPIntegration_PeerDisconnect_RetryPrompt(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPPeerDisconnectRetryPrompt(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -405,13 +883,13 @@ func TestACPIntegration_PeerDisconnect_RetryPrompt(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// First prompt — establish connection and get ACP session ID
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
 
 	// Send a long-running prompt, then kill the process mid-stream
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
 	ch, err := backend.ExecuteStream(ctx, ChatRequest{
@@ -449,7 +927,7 @@ func TestACPIntegration_PeerDisconnect_RetryPrompt(t *testing.T) {
 	}
 
 	// Continue collecting — the retry mechanism should kick in
-	remainingEvents := collectACPEvents(t, ch, 90*time.Second)
+	remainingEvents := collectACPEvents(t, ch, cfg.Timeout)
 	allEvents := append(preKillEvents, remainingEvents...)
 
 	// After retry, should eventually get either done or error
@@ -460,9 +938,9 @@ func TestACPIntegration_PeerDisconnect_RetryPrompt(t *testing.T) {
 }
 
 // A5: Idle sweep closes connection → next prompt triggers respawn + ResumeSession
-func TestACPIntegration_IdleSweep_ConnectionRecycled(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPIdleSweepRecycled(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -470,7 +948,7 @@ func TestACPIntegration_IdleSweep_ConnectionRecycled(t *testing.T) {
 	sessionID := acpSessionID()
 
 	// First prompt — establish connection
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
@@ -479,7 +957,7 @@ func TestACPIntegration_IdleSweep_ConnectionRecycled(t *testing.T) {
 	env.mgr.CloseConn(sessionID)
 
 	// Second prompt — should create new connection + ResumeSession
-	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	content := concatACPContent(events2)
@@ -487,9 +965,9 @@ func TestACPIntegration_IdleSweep_ConnectionRecycled(t *testing.T) {
 }
 
 // A6: Explicit CloseConn → next prompt creates entirely new session (not resume)
-func TestACPIntegration_ExplicitClose_NewSessionCreated(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPExplicitCloseNewSession(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -497,7 +975,7 @@ func TestACPIntegration_ExplicitClose_NewSessionCreated(t *testing.T) {
 	sessionID := acpSessionID()
 
 	// First prompt
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	firstACPSSID := extractACPCaptureID(t, events1)
 
@@ -509,7 +987,7 @@ func TestACPIntegration_ExplicitClose_NewSessionCreated(t *testing.T) {
 	// through to NewSession instead of ResumeSession
 
 	// Second prompt — should create a brand new session
-	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	captures2 := findACPEvents(events2, "session_capture")
@@ -522,9 +1000,9 @@ func TestACPIntegration_ExplicitClose_NewSessionCreated(t *testing.T) {
 }
 
 // A7: Two sessions → independent connections → one crash doesn't affect the other
-func TestACPIntegration_MultipleSessions_IsolatedConns(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPMultipleSessionsIsolated(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -535,10 +1013,10 @@ func TestACPIntegration_MultipleSessions_IsolatedConns(t *testing.T) {
 	defer env.closeConn(t, sessionID2)
 
 	// Establish both sessions
-	events1a := sendACPPrompt(t, backend, sessionID1, "说一个字：好", 90*time.Second)
+	events1a := sendACPPrompt(t, backend, sessionID1, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1a)
 
-	events2a := sendACPPrompt(t, backend, sessionID2, "说一个字：棒", 90*time.Second)
+	events2a := sendACPPrompt(t, backend, sessionID2, "说一个字：棒", cfg.Timeout)
 	requireDoneEvent(t, events2a)
 
 	// Both should have session_capture with different ACP session IDs
@@ -553,7 +1031,7 @@ func TestACPIntegration_MultipleSessions_IsolatedConns(t *testing.T) {
 	killConnProcess(t, conn1)
 
 	// Session2 should still work fine
-	events2b := sendACPPrompt(t, backend, sessionID2, "再说一个字：强", 90*time.Second)
+	events2b := sendACPPrompt(t, backend, sessionID2, "再说一个字：强", cfg.Timeout)
 	requireDoneEvent(t, events2b)
 	content := concatACPContent(events2b)
 	assert.NotEmpty(t, content, "session2 should still work after session1 crashed")
@@ -564,17 +1042,17 @@ func TestACPIntegration_MultipleSessions_IsolatedConns(t *testing.T) {
 // ===========================================================================
 
 // B1: Switch mode via SetSessionConfigOption → cache reflects new mode
-func TestACPIntegration_ModeSwitch_CodeToPlan(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPModeSwitch(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
 	cleanupConn(t, sessionID)
 
 	// First prompt — establish connection and get initial state
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	// Check initial mode
@@ -610,17 +1088,17 @@ func TestACPIntegration_ModeSwitch_CodeToPlan(t *testing.T) {
 }
 
 // B2: Switch model via SetSessionConfigOption → cache reflects new model
-func TestACPIntegration_ModelSwitch_ChangeModel(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPModelSwitch(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
 	cleanupConn(t, sessionID)
 
 	// First prompt
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	mgr := GetACPConnManager()
@@ -659,10 +1137,10 @@ func TestACPIntegration_ModelSwitch_ChangeModel(t *testing.T) {
 
 // B3: Switch thinking effort via SetSessionConfigOption → cache reflects new effort
 // B3: Thinking effort state READ from ACP protocol (NewSession config_options)
-func TestACPIntegration_ThinkingEffortSwitch(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPThinkingEffortSwitch(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
@@ -670,7 +1148,7 @@ func TestACPIntegration_ThinkingEffortSwitch(t *testing.T) {
 
 	// First prompt — establish connection; ACP NewSession response includes
 	// config_options with category=thought_level containing available levels.
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	mgr := GetACPConnManager()
@@ -709,10 +1187,17 @@ func TestACPIntegration_ThinkingEffortSwitch(t *testing.T) {
 		return
 	}
 
+	// Try SET — use first available thinking level from config
+	if len(cfg.ThinkingLevels) == 0 {
+		t.Log("No thinking levels configured — skipping set verification")
+		return
+	}
+	targetLevel := cfg.ThinkingLevels[len(cfg.ThinkingLevels)-1] // use highest level
+
 	// Try SET — may fail if agent doesn't actually support it
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	conn.SetSessionConfigOption(ctx, "thinkingEffort", "high")
+	conn.SetSessionConfigOption(ctx, "thinkingEffort", targetLevel)
 	time.Sleep(500 * time.Millisecond)
 
 	// Re-check: if SET failed, the agent marked it as unsupported
@@ -724,21 +1209,21 @@ func TestACPIntegration_ThinkingEffortSwitch(t *testing.T) {
 	if conn.IsAlive() {
 		effortAfterSet := cachedThinkingEffortState(sessionID)
 		require.NotNil(t, effortAfterSet)
-		assert.Equal(t, "high", effortAfterSet.CurrentID, "cached thinking effort should be 'high' after set")
+		assert.Equal(t, targetLevel, effortAfterSet.CurrentID, "cached thinking effort should match set value after set")
 	}
 }
 
 // B4: Unsupported config option → graceful degradation
-func TestACPIntegration_UnsupportedConfig_GracefulDegradation(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPUnsupportedConfig(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
 	cleanupConn(t, sessionID)
 
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	mgr := GetACPConnManager()
@@ -756,16 +1241,16 @@ func TestACPIntegration_UnsupportedConfig_GracefulDegradation(t *testing.T) {
 }
 
 // B5: Setting same config value twice → dedup prevents second RPC
-func TestACPIntegration_ConfigDedup_NoResend(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPConfigDedup(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
 	cleanupConn(t, sessionID)
 
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	mgr := GetACPConnManager()
@@ -789,17 +1274,17 @@ func TestACPIntegration_ConfigDedup_NoResend(t *testing.T) {
 }
 
 // B6: Config option that crashes agent → configKilledConnectionError → retry skips that config
-func TestACPIntegration_ConfigKilledConnection_RetrySkipsConfig(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPConfigKilledConnection(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
 	cleanupConn(t, sessionID)
 
 	// Send a prompt with a non-existent model — the agent may crash or ignore it
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
 	ch, err := backend.ExecuteStream(ctx, ChatRequest{
@@ -810,7 +1295,7 @@ func TestACPIntegration_ConfigKilledConnection_RetrySkipsConfig(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectACPEvents(t, ch, 120*time.Second)
+	events := collectACPEvents(t, ch, cfg.Timeout)
 
 	dones := findACPEvents(events, "done")
 	errors := findACPEvents(events, "error")
@@ -831,9 +1316,9 @@ func TestACPIntegration_ConfigKilledConnection_RetrySkipsConfig(t *testing.T) {
 // reset to incorrect values after a connection is respawned.
 
 // C1: Switch to plan mode → crash → resume → cached mode still "plan"
-func TestACPIntegration_ResumeAfterCrash_ModePreserved(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPResumeModePreserved(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -842,7 +1327,7 @@ func TestACPIntegration_ResumeAfterCrash_ModePreserved(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Step 1: Establish connection
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
@@ -868,7 +1353,7 @@ func TestACPIntegration_ResumeAfterCrash_ModePreserved(t *testing.T) {
 	killConnProcess(t, conn)
 
 	// Step 4: Resume — send another prompt
-	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	// Step 5: Check mode after resume — should NOT be amnesiac
@@ -885,9 +1370,9 @@ func TestACPIntegration_ResumeAfterCrash_ModePreserved(t *testing.T) {
 }
 
 // C2: Switch model → crash → resume → cached model still the new model
-func TestACPIntegration_ResumeAfterCrash_ModelPreserved(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPResumeModelPreserved(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -896,7 +1381,7 @@ func TestACPIntegration_ResumeAfterCrash_ModelPreserved(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Step 1: Establish connection
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
@@ -936,7 +1421,7 @@ func TestACPIntegration_ResumeAfterCrash_ModelPreserved(t *testing.T) {
 	killConnProcess(t, conn)
 
 	// Step 4: Resume
-	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	// Step 5: Check model after resume
@@ -953,9 +1438,9 @@ func TestACPIntegration_ResumeAfterCrash_ModelPreserved(t *testing.T) {
 }
 
 // C3: Switch thinking effort → crash → resume → cached effort preserved
-func TestACPIntegration_ResumeAfterCrash_ThinkingPreserved(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPResumeThinkingPreserved(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -964,18 +1449,23 @@ func TestACPIntegration_ResumeAfterCrash_ThinkingPreserved(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Step 1: Establish connection
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
 
-	// Step 2: Switch thinking effort
+	// Step 2: Switch thinking effort — use highest available level
+	if len(cfg.ThinkingLevels) == 0 {
+		t.Skip("No thinking levels configured for this backend")
+	}
+	targetLevel := cfg.ThinkingLevels[len(cfg.ThinkingLevels)-1]
+
 	conn := env.mgr.GetConn(sessionID)
 	require.NotNil(t, conn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	conn.SetSessionConfigOption(ctx, "thinkingEffort", "high")
+	conn.SetSessionConfigOption(ctx, "thinkingEffort", targetLevel)
 	time.Sleep(500 * time.Millisecond)
 
 	if !conn.IsAlive() {
@@ -990,7 +1480,7 @@ func TestACPIntegration_ResumeAfterCrash_ThinkingPreserved(t *testing.T) {
 	killConnProcess(t, conn)
 
 	// Step 4: Resume
-	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	// Step 5: Check thinking effort after resume
@@ -1007,9 +1497,9 @@ func TestACPIntegration_ResumeAfterCrash_ThinkingPreserved(t *testing.T) {
 }
 
 // C4: Agent sends available_commands_update → crash → resume → commands still cached
-func TestACPIntegration_ResumeAfterCrash_CommandsPreserved(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPResumeCommandsPreserved(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1018,7 +1508,7 @@ func TestACPIntegration_ResumeAfterCrash_CommandsPreserved(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Step 1: Establish connection (commands are cached during session)
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
@@ -1037,7 +1527,7 @@ func TestACPIntegration_ResumeAfterCrash_CommandsPreserved(t *testing.T) {
 	killConnProcess(t, conn)
 
 	// Step 3: Resume
-	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	// Step 4: Check commands after resume
@@ -1060,9 +1550,9 @@ func TestACPIntegration_ResumeAfterCrash_CommandsPreserved(t *testing.T) {
 }
 
 // C5: Set model X → crash → resume → lastSetModel reset → re-sends model X (not infinite loop)
-func TestACPIntegration_ResumeAfterCrash_ConfigDedupReset(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPResumeConfigDedupReset(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1071,7 +1561,7 @@ func TestACPIntegration_ResumeAfterCrash_ConfigDedupReset(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Step 1: Establish connection
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
@@ -1095,7 +1585,7 @@ func TestACPIntegration_ResumeAfterCrash_ConfigDedupReset(t *testing.T) {
 	killConnProcess(t, conn)
 
 	// Step 4: Resume — this should work without infinite loop
-	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	// If we get here, no infinite loop occurred
@@ -1108,9 +1598,9 @@ func TestACPIntegration_ResumeAfterCrash_ConfigDedupReset(t *testing.T) {
 }
 
 // C6: Agent sends plan → crash → resume → planState is nil (transient, expected loss)
-func TestACPIntegration_ResumeAfterCrash_PlanStateLost(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPResumePlanStateLost(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1119,7 +1609,7 @@ func TestACPIntegration_ResumeAfterCrash_PlanStateLost(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Step 1: Establish connection
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
@@ -1134,7 +1624,7 @@ func TestACPIntegration_ResumeAfterCrash_PlanStateLost(t *testing.T) {
 	killConnProcess(t, conn)
 
 	// Step 3: Resume
-	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：行", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	// Step 4: Plan state is expected to be nil after resume (transient by design)
@@ -1156,17 +1646,17 @@ func TestACPIntegration_ResumeAfterCrash_PlanStateLost(t *testing.T) {
 // ===========================================================================
 
 // D1: Simulate SSE disconnect → drain → agent continues → reconnect → cached state re-emitted
-func TestACPIntegration_SSEDisconnect_DrainAndContinue(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPSSEDisconnectDrain(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
 	cleanupConn(t, sessionID)
 
 	// Step 1: Send a prompt and let it complete normally
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	// Step 2: Verify connection is still alive
@@ -1182,7 +1672,7 @@ func TestACPIntegration_SSEDisconnect_DrainAndContinue(t *testing.T) {
 		modeBefore != nil, effortBefore != nil)
 
 	// Step 4: Simulate reconnection by sending another prompt
-	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	// After reconnection, config_update and commands_update should be re-emitted
@@ -1197,17 +1687,17 @@ func TestACPIntegration_SSEDisconnect_DrainAndContinue(t *testing.T) {
 }
 
 // D2: Full session → SSE reconnect → state events re-emitted correctly
-func TestACPIntegration_SSEReconnect_StateReemitted(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPSSEReconnectStateReemitted(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
 	cleanupConn(t, sessionID)
 
 	// First prompt — establish connection and get initial state
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	// Record what state events were emitted on first connection
@@ -1218,7 +1708,7 @@ func TestACPIntegration_SSEReconnect_StateReemitted(t *testing.T) {
 		len(firstConfigUpdates), len(firstCommandsUpdates))
 
 	// Second prompt (simulates SSE reconnect)
-	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	secondConfigUpdates := findACPEvents(events2, "config_update")
@@ -1241,10 +1731,10 @@ func TestACPIntegration_SSEReconnect_StateReemitted(t *testing.T) {
 }
 
 // D3: 5 turns on same connection → no leaks, cache stays consistent
-func TestACPIntegration_LongRunning_MultipleTurns(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPLongRunningMultipleTurns(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
@@ -1260,7 +1750,7 @@ func TestACPIntegration_LongRunning_MultipleTurns(t *testing.T) {
 
 	for i, prompt := range prompts {
 		t.Logf("Turn %d: %q", i+1, prompt)
-		events := sendACPPrompt(t, backend, sessionID, prompt, 90*time.Second)
+		events := sendACPPrompt(t, backend, sessionID, prompt, cfg.Timeout)
 		requireDoneEvent(t, events)
 
 		content := concatACPContent(events)
@@ -1280,25 +1770,31 @@ func TestACPIntegration_LongRunning_MultipleTurns(t *testing.T) {
 }
 
 // D4: Switch config 10 times → final state matches last successful setting
-func TestACPIntegration_LongRunning_ConfigStateConsistency(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
+func testACPLongRunningConfigConsistency(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
 
-	backend, err := NewACPBackend(acpTestAgent())
+	backend, err := NewACPBackend(buildACPAgent(cfg))
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
 	cleanupConn(t, sessionID)
 
 	// First prompt — establish connection
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	mgr := GetACPConnManager()
 	conn := mgr.GetConn(sessionID)
 	require.NotNil(t, conn)
 
-	// Try switching thinking effort multiple times
-	effortLevels := []string{"low", "medium", "high", "medium", "low", "high", "low", "high", "medium", "low"}
+	// Try switching thinking effort multiple times, cycling through available levels
+	if len(cfg.ThinkingLevels) == 0 {
+		t.Skip("No thinking levels configured for this backend")
+	}
+	effortLevels := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		effortLevels = append(effortLevels, cfg.ThinkingLevels[i%len(cfg.ThinkingLevels)])
+	}
 	lastSuccessfulEffort := ""
 
 	for i, effort := range effortLevels {
@@ -1395,9 +1891,9 @@ func containsSubstring(events []StreamEvent, substr string) bool {
 }
 
 // E1: User cancel → resume prompt → verify conversation memory
-func TestACPIntegration_UserCancel_ResumeConversation(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPUserCancelResumeConversation(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1406,7 +1902,7 @@ func TestACPIntegration_UserCancel_ResumeConversation(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Turn 1: Tell the AI a fact
-	events1 := sendACPPrompt(t, backend, sessionID, "请记住我的名字是小明，只回复'好的'", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "请记住我的名字是小明，只回复'好的'", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	// Store ACP session ID for ResumeSession
@@ -1414,11 +1910,11 @@ func TestACPIntegration_UserCancel_ResumeConversation(t *testing.T) {
 	env.storeSID(sessionID, acpSSID)
 
 	// Turn 2: Cancel a prompt mid-stream
-	events2 := sendACPPromptWithCancel(t, backend, sessionID, "用50字描述Go语言的优点", 90*time.Second)
+	events2 := sendACPPromptWithCancel(t, backend, sessionID, "用50字描述Go语言的优点", cfg.Timeout)
 	t.Logf("After cancel: %d events, types: %v", len(events2), acpEventTypes(events2))
 
 	// Turn 3: Ask the AI what it remembers — should remember "小明"
-	events3 := sendACPPrompt(t, backend, sessionID, "我叫什么名字？只回答名字", 120*time.Second)
+	events3 := sendACPPrompt(t, backend, sessionID, "我叫什么名字？只回答名字", cfg.Timeout)
 	requireDoneEvent(t, events3)
 
 	content3 := concatACPContent(events3)
@@ -1428,9 +1924,9 @@ func TestACPIntegration_UserCancel_ResumeConversation(t *testing.T) {
 }
 
 // E2: Process crash → resume prompt → verify conversation memory
-func TestACPIntegration_ProcessCrash_ResumeConversation(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPProcessCrashResumeConversation(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1439,7 +1935,7 @@ func TestACPIntegration_ProcessCrash_ResumeConversation(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Turn 1: Tell the AI a fact
-	events1 := sendACPPrompt(t, backend, sessionID, "请记住我喜欢的颜色是蓝色，只回复'好的'", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "请记住我喜欢的颜色是蓝色，只回复'好的'", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	acpSSID := extractACPCaptureID(t, events1)
@@ -1451,7 +1947,7 @@ func TestACPIntegration_ProcessCrash_ResumeConversation(t *testing.T) {
 	killConnProcess(t, conn)
 
 	// Turn 2: Ask what it remembers — ResumeSession should recover conversation context
-	events2 := sendACPPrompt(t, backend, sessionID, "我喜欢的颜色是什么？只回答颜色", 120*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "我喜欢的颜色是什么？只回答颜色", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	content2 := concatACPContent(events2)
@@ -1461,9 +1957,9 @@ func TestACPIntegration_ProcessCrash_ResumeConversation(t *testing.T) {
 }
 
 // E3: Multiple user cancels → multiple resumes
-func TestACPIntegration_MultipleCancel_Resume(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPMultipleCancelResume(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1472,28 +1968,28 @@ func TestACPIntegration_MultipleCancel_Resume(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Turn 1: Normal prompt
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：一", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：一", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
 
 	// Turn 2: Cancel mid-stream
-	events2 := sendACPPromptWithCancel(t, backend, sessionID, "用50字描述Go语言的优点", 90*time.Second)
+	events2 := sendACPPromptWithCancel(t, backend, sessionID, "用50字描述Go语言的优点", cfg.Timeout)
 	t.Logf("Cancel #1: %d events", len(events2))
 
 	// Turn 3: Normal prompt after cancel
-	events3 := sendACPPrompt(t, backend, sessionID, "说一个字：二", 90*time.Second)
+	events3 := sendACPPrompt(t, backend, sessionID, "说一个字：二", cfg.Timeout)
 	requireDoneEvent(t, events3)
 	content3 := concatACPContent(events3)
 	assert.NotEmpty(t, content3, "turn 3 should produce content after cancel")
 
 	// Turn 4: Cancel again
-	events4 := sendACPPromptWithCancel(t, backend, sessionID, "用50字描述Python语言的优点", 90*time.Second)
+	events4 := sendACPPromptWithCancel(t, backend, sessionID, "用50字描述Python语言的优点", cfg.Timeout)
 	t.Logf("Cancel #2: %d events", len(events4))
 
 	// Turn 5: Normal prompt after second cancel
-	events5 := sendACPPrompt(t, backend, sessionID, "说一个字：三", 120*time.Second)
+	events5 := sendACPPrompt(t, backend, sessionID, "说一个字：三", cfg.Timeout)
 	requireDoneEvent(t, events5)
 	content5 := concatACPContent(events5)
 	assert.NotEmpty(t, content5, "turn 5 should produce content after second cancel")
@@ -1506,9 +2002,9 @@ func TestACPIntegration_MultipleCancel_Resume(t *testing.T) {
 }
 
 // E4: Multiple process crashes → multiple resumes
-func TestACPIntegration_MultipleCrash_Resume(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPMultipleCrashResume(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1517,7 +2013,7 @@ func TestACPIntegration_MultipleCrash_Resume(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Turn 1: Normal prompt
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：甲", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：甲", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	acpSSID := extractACPCaptureID(t, events1)
@@ -1528,7 +2024,7 @@ func TestACPIntegration_MultipleCrash_Resume(t *testing.T) {
 	require.NotNil(t, conn)
 	killConnProcess(t, conn)
 
-	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：乙", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "说一个字：乙", cfg.Timeout)
 	requireDoneEvent(t, events2)
 	content2 := concatACPContent(events2)
 	assert.NotEmpty(t, content2, "turn 2 should produce content after crash #1 + resume")
@@ -1539,7 +2035,7 @@ func TestACPIntegration_MultipleCrash_Resume(t *testing.T) {
 		killConnProcess(t, conn)
 	}
 
-	events3 := sendACPPrompt(t, backend, sessionID, "说一个字：丙", 120*time.Second)
+	events3 := sendACPPrompt(t, backend, sessionID, "说一个字：丙", cfg.Timeout)
 	requireDoneEvent(t, events3)
 	content3 := concatACPContent(events3)
 	assert.NotEmpty(t, content3, "turn 3 should produce content after crash #2 + resume")
@@ -1552,9 +2048,9 @@ func TestACPIntegration_MultipleCrash_Resume(t *testing.T) {
 }
 
 // E5: Mixed cancel + crash → verify conversation memory
-func TestACPIntegration_CancelAndCrash_ResumeConversation(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPCancelAndCrashResume(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1563,18 +2059,18 @@ func TestACPIntegration_CancelAndCrash_ResumeConversation(t *testing.T) {
 	defer env.closeConn(t, sessionID)
 
 	// Turn 1: Tell the AI a fact
-	events1 := sendACPPrompt(t, backend, sessionID, "请记住密码是1234，只回复'好的'", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "请记住密码是1234，只回复'好的'", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	acpSSID := extractACPCaptureID(t, events1)
 	env.storeSID(sessionID, acpSSID)
 
 	// Turn 2: Cancel a prompt
-	events2 := sendACPPromptWithCancel(t, backend, sessionID, "用50字描述Rust语言的优点", 90*time.Second)
+	events2 := sendACPPromptWithCancel(t, backend, sessionID, "用50字描述Rust语言的优点", cfg.Timeout)
 	t.Logf("After cancel: %d events", len(events2))
 
 	// Turn 3: Ask after cancel — should remember
-	events3 := sendACPPrompt(t, backend, sessionID, "密码是什么？只回答数字", 120*time.Second)
+	events3 := sendACPPrompt(t, backend, sessionID, "密码是什么？只回答数字", cfg.Timeout)
 	requireDoneEvent(t, events3)
 
 	content3 := concatACPContent(events3)
@@ -1587,7 +2083,7 @@ func TestACPIntegration_CancelAndCrash_ResumeConversation(t *testing.T) {
 	}
 
 	// Turn 5: Ask after crash — should still remember
-	events5 := sendACPPrompt(t, backend, sessionID, "再告诉我一次密码是什么？只回答数字", 120*time.Second)
+	events5 := sendACPPrompt(t, backend, sessionID, "再告诉我一次密码是什么？只回答数字", cfg.Timeout)
 	requireDoneEvent(t, events5)
 
 	content5 := concatACPContent(events5)
@@ -1597,58 +2093,20 @@ func TestACPIntegration_CancelAndCrash_ResumeConversation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CodeWhale (formerly DeepSeek TUI) ACP Integration Tests
+// CodeWhale (DeepSeek) ACP Integration Tests
 // ---------------------------------------------------------------------------
 
-// codeWhaleTestAgent returns a model.Agent configured for CodeWhale ACP transport.
-func codeWhaleTestAgent() *model.Agent {
-	return &model.Agent{
-		ID:         "codewhale-acp-test",
-		Name:       "CodeWhale ACP Test",
-		Backend:    "deepseek",
-		Transport:  "acp-stdio",
-		AcpCommand: "codewhale serve --acp",
-		Models: []model.AgentModel{
-			{ID: "deepseek/deepseek-v4-pro", Name: "deepseek/deepseek-v4-pro", Default: true},
-		},
-	}
-}
+// CW1: Basic session — create, prompt, stream content back
+func testACPCodeWhaleBasicSession(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
-// requireCodeWhaleACPAvailable skips the test if codewhale CLI is not installed.
-func requireCodeWhaleACPAvailable(t *testing.T) {
-	t.Helper()
-	path, err := exec.LookPath("codewhale")
-	if err != nil {
-		// Try legacy deepseek shim
-		path, err = exec.LookPath("deepseek")
-		if err != nil {
-			t.Skipf("codewhale/deepseek CLI not available, skipping CodeWhale ACP integration test")
-		}
-	}
-	// Verify acp subcommand is supported
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "serve", "--acp", "--help")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Skipf("codewhale serve --acp not supported (error: %v, output: %s), skipping",
-			err, truncate(string(output), 200))
-	}
-}
-
-// TestACPIntegration_CodeWhale_BasicSession tests the CodeWhale ACP backend
-// can create a session, receive a prompt, and stream content back.
-func TestACPIntegration_CodeWhale_BasicSession(t *testing.T) {
-	requireCodeWhaleACPAvailable(t)
-
-	agent := codeWhaleTestAgent()
-	_ = setupACPTestEnvForAgent(t, agent)
 	sessionID := acpSessionID()
 
-	backend, err := NewACPBackend(agent)
+	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err, "NewACPBackend should succeed for CodeWhale")
 
-	events := sendACPPrompt(t, backend, sessionID, "说一句话证明你是AI", 120*time.Second)
+	events := sendACPPrompt(t, backend, sessionID, "说一句话证明你是AI", cfg.Timeout)
 	t.Logf("CodeWhale ACP: got %d events, types: %v", len(events), acpEventTypes(events))
 
 	// Should have at least content and done events
@@ -1663,22 +2121,18 @@ func TestACPIntegration_CodeWhale_BasicSession(t *testing.T) {
 	t.Logf("CodeWhale ACP content: %q", truncate(content, 300))
 }
 
-// TestACPIntegration_CodeWhale_MultiTurnContext tests that CodeWhale ACP
-// maintains conversation context across multiple turns.
-// Uses a simple arithmetic chain: "1+1" → 2, "add one" → 3, "add one" → 4.
-// Each turn depends on the accumulated context from all previous turns.
-func TestACPIntegration_CodeWhale_MultiTurnContext(t *testing.T) {
-	requireCodeWhaleACPAvailable(t)
+// CW2: Multi-turn context — arithmetic chain proves conversation memory
+func testACPCodeWhaleMultiTurnContext(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
-	agent := codeWhaleTestAgent()
-	env := setupACPTestEnvForAgent(t, agent)
 	sessionID := acpSessionID()
 
-	backend, err := NewACPBackend(agent)
+	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
 
 	// Turn 1: 1+1 → expect "2"
-	events1 := sendACPPrompt(t, backend, sessionID, "1+1等于几？只回答数字", 120*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "1+1等于几？只回答数字", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	captureEvents := findACPEvents(events1, "session_capture")
@@ -1693,7 +2147,7 @@ func TestACPIntegration_CodeWhale_MultiTurnContext(t *testing.T) {
 		"Turn 1: AI should answer '2' for 1+1, got: %s", content1)
 
 	// Turn 2: add one → expect "3" (requires context: previous answer was 2)
-	events2 := sendACPPrompt(t, backend, sessionID, "再加一等于几？只回答数字", 120*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "再加一等于几？只回答数字", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	content2 := concatACPContent(events2)
@@ -1702,7 +2156,7 @@ func TestACPIntegration_CodeWhale_MultiTurnContext(t *testing.T) {
 		"Turn 2: AI should answer '3' for (1+1)+1, proving multi-turn context. Got: %s", content2)
 
 	// Turn 3: add one again → expect "4" (requires context: all previous turns)
-	events3 := sendACPPrompt(t, backend, sessionID, "再加一等于几？只回答数字", 120*time.Second)
+	events3 := sendACPPrompt(t, backend, sessionID, "再加一等于几？只回答数字", cfg.Timeout)
 	requireDoneEvent(t, events3)
 
 	content3 := concatACPContent(events3)
@@ -1711,22 +2165,18 @@ func TestACPIntegration_CodeWhale_MultiTurnContext(t *testing.T) {
 		"Turn 3: AI should answer '4' for ((1+1)+1)+1, proving stable multi-turn context. Got: %s", content3)
 }
 
-// TestACPIntegration_CodeWhale_MultiTurnContext_WithResume tests multi-turn conversation
-// with realistic ChatRequest fields (Resume=true, SystemPrompt, AssistantMessageCount)
-// matching the handler's buildChatRequest behavior.
-// Uses a three-turn arithmetic chain: "1+1" → 2, "add one" → 3, "add one" → 4.
-func TestACPIntegration_CodeWhale_MultiTurnContext_WithResume(t *testing.T) {
-	requireCodeWhaleACPAvailable(t)
+// CW3: Multi-turn with Resume=true, SystemPrompt, AssistantMessageCount
+func testACPCodeWhaleMultiTurnResume(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
-	agent := codeWhaleTestAgent()
-	env := setupACPTestEnvForAgent(t, agent)
 	sessionID := acpSessionID()
 
-	backend, err := NewACPBackend(agent)
+	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
 
 	// Turn 1: Resume=false, SystemPrompt injected (first message)
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx1, cancel1 := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel1()
 
 	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
@@ -1738,7 +2188,7 @@ func TestACPIntegration_CodeWhale_MultiTurnContext_WithResume(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events1 := collectACPEvents(t, ch1, 120*time.Second)
+	events1 := collectACPEvents(t, ch1, cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	captureEvents := findACPEvents(events1, "session_capture")
@@ -1753,7 +2203,7 @@ func TestACPIntegration_CodeWhale_MultiTurnContext_WithResume(t *testing.T) {
 		"Turn 1: AI should answer '2' for 1+1, got: %s", content1)
 
 	// Turn 2: Resume=true (has 1 assistant message)
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel2()
 
 	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
@@ -1766,7 +2216,7 @@ func TestACPIntegration_CodeWhale_MultiTurnContext_WithResume(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events2 := collectACPEvents(t, ch2, 120*time.Second)
+	events2 := collectACPEvents(t, ch2, cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	content2 := concatACPContent(events2)
@@ -1775,7 +2225,7 @@ func TestACPIntegration_CodeWhale_MultiTurnContext_WithResume(t *testing.T) {
 		"Turn 2: AI should answer '3' for (1+1)+1, proving multi-turn context with Resume=true. Got: %s", content2)
 
 	// Turn 3: Resume=true (has 2 assistant messages)
-	ctx3, cancel3 := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx3, cancel3 := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel3()
 
 	ch3, err := backend.ExecuteStream(ctx3, ChatRequest{
@@ -1788,7 +2238,7 @@ func TestACPIntegration_CodeWhale_MultiTurnContext_WithResume(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events3 := collectACPEvents(t, ch3, 120*time.Second)
+	events3 := collectACPEvents(t, ch3, cfg.Timeout)
 	requireDoneEvent(t, events3)
 
 	content3 := concatACPContent(events3)
@@ -1802,11 +2252,9 @@ func TestACPIntegration_CodeWhale_MultiTurnContext_WithResume(t *testing.T) {
 // ===========================================================================
 
 // F1: Session recovery after connection loss via ResumeSession
-// Tests that when a session has a prior ACP session ID and the connection is
-// lost (e.g., server restart), the session can be recovered via ResumeSession.
-func TestACPIntegration_SessionRecoveryAfterConnLoss(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPSessionRecoveryAfterConnLoss(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1814,7 +2262,7 @@ func TestACPIntegration_SessionRecoveryAfterConnLoss(t *testing.T) {
 	// Phase 1: Create a session and send first message
 	sessionID := acpSessionID()
 	defer env.closeConn(t, sessionID)
-	events1 := sendACPPrompt(t, backend, sessionID, "记住数字42，只回答：已记住", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "记住数字42，只回答：已记住", cfg.Timeout)
 	requireDoneEvent(t, events1)
 
 	// Capture the ACP session ID from session_capture
@@ -1832,7 +2280,7 @@ func TestACPIntegration_SessionRecoveryAfterConnLoss(t *testing.T) {
 	//   1. Pre-populate acpSID from external_session_id
 	//   2. Try ResumeSession → if succeeds, session context is preserved
 	//   3. If ResumeSession fails → return error (no silent NewSession/amnesia)
-	events2 := sendACPPrompt(t, backend, sessionID, "我之前让你记住的数字是什么？只回答数字", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "我之前让你记住的数字是什么？只回答数字", cfg.Timeout)
 	requireDoneEvent(t, events2)
 
 	content2 := concatACPContent(events2)
@@ -1842,12 +2290,9 @@ func TestACPIntegration_SessionRecoveryAfterConnLoss(t *testing.T) {
 }
 
 // F2: Unrecoverable session returns error (not silent amnesia)
-// When ResumeSession fails for a session that had a prior ACP session ID,
-// ensureAliveWithSession must return an error instead of silently falling
-// back to NewSession which would lose all conversation context.
-func TestACPIntegration_UnrecoverableSession_ReturnsError(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPUnrecoverableSessionError(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1862,7 +2307,7 @@ func TestACPIntegration_UnrecoverableSession_ReturnsError(t *testing.T) {
 	fakeAcpSID := "nonexistent-session-" + uuid.New().String()[:8]
 	env.storeSID(sessionID, fakeAcpSID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
 	ch, err := backend.ExecuteStream(ctx, ChatRequest{
@@ -1872,7 +2317,7 @@ func TestACPIntegration_UnrecoverableSession_ReturnsError(t *testing.T) {
 	})
 	require.NoError(t, err, "ExecuteStream should not return error on creation")
 
-	events := collectACPEvents(t, ch, 120*time.Second)
+	events := collectACPEvents(t, ch, cfg.Timeout)
 
 	// The session should either:
 	// - Succeed (if ResumeSession somehow works with the fake ID)
@@ -1891,11 +2336,10 @@ func TestACPIntegration_UnrecoverableSession_ReturnsError(t *testing.T) {
 	}
 }
 
-// F2: ACP connection reuse after transport switch
-// Verifies that switching from ACP to CLI and back to ACP works correctly.
-func TestACPIntegration_TransportSwitch_ACPtoCLItoACP(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+// F3: ACP connection reuse after transport switch
+func testACPTransportSwitchACPtoCLItoACP(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1903,7 +2347,7 @@ func TestACPIntegration_TransportSwitch_ACPtoCLItoACP(t *testing.T) {
 	sessionID := acpSessionID()
 
 	// Phase 1: Start with ACP
-	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events1)
 	content1 := concatACPContent(events1)
 	assert.NotEmpty(t, content1, "should receive content from ACP")
@@ -1913,7 +2357,7 @@ func TestACPIntegration_TransportSwitch_ACPtoCLItoACP(t *testing.T) {
 	assert.Nil(t, env.mgr.GetConn(sessionID), "ACP connection should be closed")
 
 	// Phase 3: Switch back to ACP — new ACP connection should be created
-	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：行", 90*time.Second)
+	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：行", cfg.Timeout)
 	requireDoneEvent(t, events2)
 	content2 := concatACPContent(events2)
 	assert.NotEmpty(t, content2, "should receive content from ACP after switch-back")
@@ -1923,26 +2367,15 @@ func TestACPIntegration_TransportSwitch_ACPtoCLItoACP(t *testing.T) {
 }
 
 // ===========================================================================
-// Category G: ACP Capability Discovery — LoadSession / ListSessions
+// Category G: ACP Capability Discovery — SessionCapabilities
 // ===========================================================================
 //
-// These tests directly query the ACP Initialize response to determine whether
-// an agent advertises LoadSession and SessionCapabilities.List capabilities.
+// Checks LoadSession and ListSessions capabilities from the ACP Initialize response.
 // This is what controls the "resume session" button visibility in the UI.
 
-// G1: CodeBuddy ACP — check LoadSession and ListSessions capabilities
-//
-// This test directly inspects the ACP Initialize response from CodeBuddy CLI
-// to determine if it advertises session/list and session/load capabilities.
-// The actionbar "resume session" button (RotateCcw) is gated on these
-// capabilities: GetLoadSession() && GetListSessions() must both return true.
-//
-// Run with:
-//
-//	go test -v -run TestACPIntegration_CodeBuddy_SessionCapabilities -tags integration -timeout 120s
-func TestACPIntegration_CodeBuddy_SessionCapabilities(t *testing.T) {
-	requireCodeBuddyACPAvailable(t)
-	env := setupACPTestEnv(t)
+func testACPSessionCapabilities(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	env := setupACPTestEnvForConfig(t, cfg)
 
 	backend, err := NewACPBackend(env.agent)
 	require.NoError(t, err)
@@ -1950,7 +2383,7 @@ func TestACPIntegration_CodeBuddy_SessionCapabilities(t *testing.T) {
 	// Send a prompt to trigger Initialize (which populates the capability registry)
 	sessionID := acpSessionID()
 	defer env.closeConn(t, sessionID)
-	events := sendACPPrompt(t, backend, sessionID, "说一个字：好", 90*time.Second)
+	events := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
 	requireDoneEvent(t, events)
 
 	// Check the AgentCapabilityRegistry for LoadSession and ListSessions
@@ -1958,7 +2391,7 @@ func TestACPIntegration_CodeBuddy_SessionCapabilities(t *testing.T) {
 	loadSession := reg.GetLoadSession(env.agent.ID)
 	listSessions := reg.GetListSessions(env.agent.ID)
 
-	t.Logf("CodeBuddy ACP capabilities: LoadSession=%v, ListSessions=%v", loadSession, listSessions)
+	t.Logf("%s ACP capabilities: LoadSession=%v, ListSessions=%v", cfg.ID, loadSession, listSessions)
 
 	// Also directly inspect the ACPConn for the raw Initialize response data
 	conn := env.mgr.GetConn(sessionID)
@@ -1974,13 +2407,23 @@ func TestACPIntegration_CodeBuddy_SessionCapabilities(t *testing.T) {
 
 	// Document the current state — these assertions intentionally use assert
 	// (not require) so both are always checked and reported.
-	// If CodeBuddy doesn't support these capabilities, the test still passes
+	// If the agent doesn't support these capabilities, the test still passes
 	// but clearly reports what's missing.
 	if !loadSession {
-		t.Log("CodeBuddy ACP does NOT advertise LoadSession capability — session/load RPC is unavailable")
+		t.Logf("%s ACP does NOT advertise LoadSession capability — session/load RPC is unavailable", cfg.ID)
 	}
 	if !listSessions {
-		t.Log("CodeBuddy ACP does NOT advertise SessionCapabilities.List — session/list RPC is unavailable")
+		t.Logf("%s ACP does NOT advertise SessionCapabilities.List — session/list RPC is unavailable", cfg.ID)
+	}
+
+	// For Claude, assert hard expectations for known capabilities.
+	// Note: LoadSession is "skipped (use BackendSpec)" for bridge adapters,
+	// so we only assert ListSessions which is advertised via Initialize.
+	if cfg.ID == "claude" {
+		if !loadSession {
+			t.Logf("Claude ACP bridge adapter does not advertise LoadSession via Initialize — this is expected for bridge adapters (LoadSession is handled via BackendSpec)")
+		}
+		assert.True(t, listSessions, "Claude ACP should advertise SessionCapabilities.List")
 	}
 
 	// Attempt to call ListSessions directly to confirm
@@ -1999,36 +2442,258 @@ func TestACPIntegration_CodeBuddy_SessionCapabilities(t *testing.T) {
 	}
 }
 
-// G2: Compare capabilities across agents — Claude vs CodeBuddy
-//
-// This test runs the same capability check for Claude ACP (if available)
-// to provide a comparison baseline. Claude Code is known to support
-// LoadSession and ListSessions.
-//
-// Run with:
-//
-//	go test -v -run TestACPIntegration_Claude_SessionCapabilities -tags integration -timeout 120s
-func TestACPIntegration_Claude_SessionCapabilities(t *testing.T) {
-	requireClaudeACPAvailable(t)
+// ===========================================================================
+// Category H: State Event Tests
+// ===========================================================================
 
-	agent := claudeACPAgent()
+// H1: Verify mode_update, thinking_effort_update, commands_update, model_list
+// state are emitted on first prompt and correctly cached.
+//
+// This addresses the bug where Claude/OpenCode agents in ACP mode don't show
+// the current mode in the Session Info bar. The root cause is that some agents
+// may not report modes/thinking in their NewSessionResponse, or the backend
+// may not correctly extract/cached the state.
+func testACPStateModeThinkingCommands(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	agent := buildACPAgent(cfg)
+	env := setupACPTestEnvForAgent(t, agent)
+
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err, "NewACPBackend should succeed for %s", cfg.ID)
+
+	sessionID := acpSessionID()
+	cleanupConn(t, sessionID)
+
+	// Send a short prompt to establish the ACP connection and get state.
+	events := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
+	requireDoneEvent(t, events)
+
+	conn := env.mgr.GetConn(sessionID)
+
+	// ── Mode State ──────────────────────────────────────────────
+	t.Run("mode", func(t *testing.T) {
+		modeUpdates := findModeUpdateEvents(events)
+		configUpdates := findConfigUpdateEvents(events)
+		hasConfigMode := configUpdateHasModeCategory(configUpdates)
+
+		// At least one source of mode state must be present.
+		if len(modeUpdates) == 0 && !hasConfigMode {
+			// Check cached state — if cached, the event may have been
+			// consumed before we started listening.
+			if conn != nil {
+				if ms := cachedModeState(sessionID); ms != nil && len(ms.AvailableModes) > 0 {
+					t.Logf("No mode_update/config_update(mode) SSE event, but cached ModeState exists: current=%q, available=%d",
+						ms.CurrentModeID, len(ms.AvailableModes))
+					return
+				}
+			}
+			t.Errorf("Agent %s: no mode state available — neither mode_update nor config_update(category=mode) in SSE events. "+
+				"Frontend Session Info will NOT show mode chip.", cfg.ID)
+			return
+		}
+
+		// Check cached mode state on the connection.
+		if conn == nil {
+			t.Skip("Connection not available (agent may have disconnected)")
+		}
+		modeState := cachedModeState(sessionID)
+		require.NotNil(t, modeState, "Agent %s: cached ModeState should not be nil after prompt", cfg.ID)
+
+		assert.NotEmpty(t, modeState.CurrentModeID,
+			"Agent %s: ModeState.CurrentModeID should not be empty", cfg.ID)
+		assert.NotEmpty(t, modeState.AvailableModes,
+			"Agent %s: ModeState.AvailableModes should not be empty — this is what drives frontend mode chip display", cfg.ID)
+
+		// Check that mode names are populated (frontend displays the name).
+		for _, m := range modeState.AvailableModes {
+			if m.Name == "" {
+				t.Logf("WARN: Agent %s: ModeDef{id=%q} has empty Name — frontend will fall back to ID for display", cfg.ID, m.ID)
+			}
+		}
+
+		t.Logf("Mode state: current=%q, available=%v", modeState.CurrentModeID,
+			modeNamesFromState(modeState))
+
+		// Verify SSE event data matches cached state.
+		if len(modeUpdates) > 0 && modeUpdates[0].Mode != nil {
+			assert.Equal(t, modeState.CurrentModeID, modeUpdates[0].Mode.CurrentModeID,
+				"Agent %s: SSE mode_update currentModeId should match cached state", cfg.ID)
+		}
+	})
+
+	// ── Thinking Effort State ───────────────────────────────────
+	t.Run("thinking_effort", func(t *testing.T) {
+		effortUpdates := findThinkingEffortUpdateEvents(events)
+		configUpdates := findConfigUpdateEvents(events)
+		hasConfigThought := configUpdateHasThoughtLevelCategory(configUpdates)
+
+		if conn == nil {
+			t.Skip("Connection not available")
+		}
+		effortState := cachedThinkingEffortState(sessionID)
+
+		if effortState == nil && !cfg.HasThinking {
+			t.Logf("Agent %s: no thinking effort state (expected — not listed in BackendRegistry)", cfg.ID)
+			return
+		}
+
+		if effortState == nil {
+			if len(effortUpdates) == 0 && !hasConfigThought {
+				if cfg.HasThinking {
+					t.Logf("WARN: Agent %s: BackendRegistry lists thinking levels but agent does not report them via ACP configOptions — "+
+						"thinking effort chip will not appear in frontend", cfg.ID)
+				} else {
+					t.Logf("Agent %s: no thinking effort state from agent (optional)", cfg.ID)
+				}
+			}
+			return
+		}
+
+		assert.NotEmpty(t, effortState.AvailableLevels,
+			"Agent %s: ThinkingEffortState.AvailableLevels should not be empty", cfg.ID)
+
+		t.Logf("Thinking effort state: current=%q, available=%d levels",
+			effortState.CurrentID, len(effortState.AvailableLevels))
+
+		// Check that level names are populated.
+		for _, l := range effortState.AvailableLevels {
+			if l.Name == "" {
+				t.Logf("WARN: Agent %s: ThinkingEffortDef{id=%q} has empty Name", cfg.ID, l.ID)
+			}
+		}
+
+		// Verify SSE/cache consistency.
+		if len(effortUpdates) > 0 && effortUpdates[0].ThinkingEffort != nil {
+			assert.Equal(t, effortState.CurrentID, effortUpdates[0].ThinkingEffort.CurrentID,
+				"Agent %s: SSE thinking_effort_update currentId should match cached state", cfg.ID)
+		}
+	})
+
+	// ── Commands State ──────────────────────────────────────────
+	t.Run("commands", func(t *testing.T) {
+		cmdUpdates := findCommandsUpdateEvents(events)
+
+		if conn == nil {
+			t.Skip("Connection not available")
+		}
+
+		// Commands are reported via available_commands_update ACP notification,
+		// which the backend forwards as commands_update SSE.
+		if len(cmdUpdates) == 0 {
+			// Check if client has cached commands
+			client := conn.GetClient()
+			if client != nil {
+				cmds := client.GetCommandsAsInfo()
+				if len(cmds) > 0 {
+					t.Logf("No commands_update SSE event, but client has %d cached commands", len(cmds))
+					return
+				}
+			}
+			t.Logf("Agent %s: no commands reported (optional — agent may not support slash commands)", cfg.ID)
+			return
+		}
+
+		cmds := cmdUpdates[0].Commands
+		assert.NotEmpty(t, cmds,
+			"Agent %s: commands_update event should contain at least one command", cfg.ID)
+
+		// Verify command format.
+		for _, c := range cmds {
+			assert.NotEmpty(t, c.Name, "Agent %s: command should have a name", cfg.ID)
+		}
+
+		t.Logf("Commands: %d available (%s...)", len(cmds), firstCmdName(cmds))
+	})
+
+	// ── Model List State ────────────────────────────────────────
+	t.Run("model_list", func(t *testing.T) {
+		modelUpdates := findModelListUpdateEvents(events)
+
+		if conn == nil {
+			t.Skip("Connection not available")
+		}
+		modelListState := cachedModelListState(sessionID)
+
+		if modelListState == nil {
+			if len(modelUpdates) > 0 {
+				t.Errorf("Agent %s: model_list_update SSE event present but cached ModelListState is nil", cfg.ID)
+			} else {
+				t.Logf("Agent %s: no model list from ACP (optional — agent may not report models via ConfigOptions)", cfg.ID)
+			}
+			return
+		}
+
+		assert.NotEmpty(t, modelListState.Models,
+			"Agent %s: ModelListState.Models should not be empty", cfg.ID)
+
+		t.Logf("Model list: current=%q, available=%d models",
+			modelListState.CurrentModelID, len(modelListState.Models))
+	})
+
+	// ── Summary ────────────────────────────────────────────────
+	t.Logf("Full state: %s", fmtACPStateSummary(sessionID))
+}
+
+// H2: State events (mode_update, thinking_effort_update, commands_update)
+// are re-emitted on every ExecuteStream call, which is critical for SSE reconnection.
+func testACPStateReemittedOnSecondPrompt(t *testing.T, cfg acpTestConfig) {
+	requireACPBackendAvailable(t, cfg)
+	agent := buildACPAgent(cfg)
 	env := setupACPTestEnvForAgent(t, agent)
 
 	backend, err := NewACPBackend(agent)
 	require.NoError(t, err)
 
 	sessionID := acpSessionID()
-	defer env.closeConn(t, sessionID)
-	events := sendACPPrompt(t, backend, sessionID, "说一个字：好", 120*time.Second)
-	requireDoneEvent(t, events)
+	cleanupConn(t, sessionID)
 
-	reg := GetAgentCapabilityRegistry()
-	loadSession := reg.GetLoadSession(agent.ID)
-	listSessions := reg.GetListSessions(agent.ID)
+	// First prompt — establish connection.
+	events1 := sendACPPrompt(t, backend, sessionID, "说一个字：好", cfg.Timeout)
+	requireDoneEvent(t, events1)
 
-	t.Logf("Claude ACP capabilities: LoadSession=%v, ListSessions=%v", loadSession, listSessions)
+	// Second prompt on same session — state should be re-emitted.
+	events2 := sendACPPrompt(t, backend, sessionID, "再说一个字：棒", cfg.Timeout)
+	requireDoneEvent(t, events2)
 
-	// Claude Code is expected to support both
-	assert.True(t, loadSession, "Claude ACP should advertise LoadSession capability")
-	assert.True(t, listSessions, "Claude ACP should advertise SessionCapabilities.List")
+	// Mode state should be re-emitted on second prompt.
+	modeUpdates2 := findModeUpdateEvents(events2)
+	configUpdates2 := findConfigUpdateEvents(events2)
+	hasConfigMode2 := configUpdateHasModeCategory(configUpdates2)
+
+	conn := env.mgr.GetConn(sessionID)
+	if conn != nil {
+		modeState := cachedModeState(sessionID)
+		if modeState != nil && len(modeState.AvailableModes) > 0 {
+			// Cached mode exists — second prompt should re-emit it.
+			if len(modeUpdates2) == 0 && !hasConfigMode2 {
+				t.Errorf("Agent %s: mode state exists in cache but was NOT re-emitted on second prompt. "+
+					"Frontend will not populate mode chip after SSE reconnect.", cfg.ID)
+			} else {
+				t.Logf("Agent %s: mode state re-emitted on second prompt (mode_update=%d, config_mode=%v)",
+					cfg.ID, len(modeUpdates2), hasConfigMode2)
+			}
+		}
+	}
+
+	// Thinking effort should be re-emitted.
+	effortUpdates2 := findThinkingEffortUpdateEvents(events2)
+	if conn != nil {
+		effortState := cachedThinkingEffortState(sessionID)
+		if effortState != nil && len(effortState.AvailableLevels) > 0 {
+			if len(effortUpdates2) == 0 {
+				t.Errorf("Agent %s: thinking effort state exists in cache but was NOT re-emitted on second prompt. "+
+					"Frontend will not populate thinking chip after SSE reconnect.", cfg.ID)
+			} else {
+				t.Logf("Agent %s: thinking effort re-emitted on second prompt (%d events)",
+					cfg.ID, len(effortUpdates2))
+			}
+		}
+	}
+
+	// Commands should be re-emitted.
+	cmdUpdates2 := findCommandsUpdateEvents(events2)
+	if len(cmdUpdates2) > 0 {
+		t.Logf("Agent %s: commands re-emitted on second prompt (%d commands)",
+			cfg.ID, len(cmdUpdates2[0].Commands))
+	}
 }
