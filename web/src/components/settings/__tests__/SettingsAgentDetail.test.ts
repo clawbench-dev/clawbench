@@ -17,7 +17,7 @@ vi.mock('vue-i18n', () => ({
       const map: Record<string, string> = {
         'settings.items.agentPreferredModel': 'Preferred Model',
         'settings.items.agentPreferredThinkingEffort': 'Thinking Effort',
-        'settings.items.agentTransport': 'Transport',
+        'settings.items.agentTransport': 'Protocol',
         'settings.items.agentSectionIdentity': 'Identity',
         'settings.items.agentName': 'Name',
         'settings.items.agentSpecialty': 'Specialty',

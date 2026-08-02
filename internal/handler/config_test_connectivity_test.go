@@ -97,7 +97,7 @@ func TestTestSummarizeText_NotAPI(t *testing.T) {
 		"summarize.backend": "simple",
 	})
 	assert.True(t, result.Success)
-	assert.Contains(t, result.Message, "not API mode")
+	assert.Contains(t, result.Message, "not protocol mode")
 }
 
 func TestTestSummarizeText_EmptyURL(t *testing.T) {

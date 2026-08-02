@@ -201,7 +201,7 @@ func testFRP(ctx context.Context, values map[string]any) ConnectivityTestResult 
 func testSummarizeText(ctx context.Context, values map[string]any) ConnectivityTestResult {
 	backend := resolveStringValue(values, "summarize.backend", model.ConfigInstance.Summarize.Backend)
 	if backend != strAPI {
-		return ConnectivityTestResult{Success: true, Message: "Text summary backend is not API mode, no test needed"}
+		return ConnectivityTestResult{Success: true, Message: "Text summary backend is not protocol mode, no test needed"}
 	}
 
 	baseURL := resolveStringValue(values, "summarize.api.base_url", model.ConfigInstance.Summarize.API.BaseURL)
@@ -223,7 +223,7 @@ func testSummarizeText(ctx context.Context, values map[string]any) ConnectivityT
 func testSummarizeVoice(ctx context.Context, values map[string]any) ConnectivityTestResult {
 	ttsBackend := resolveStringValue(values, "summarize.tts_backend", model.ConfigInstance.Summarize.TTSBackend)
 	if ttsBackend != strAPI {
-		return ConnectivityTestResult{Success: true, Message: "Voice summary backend is not API mode, no test needed"}
+		return ConnectivityTestResult{Success: true, Message: "Voice summary backend is not protocol mode, no test needed"}
 	}
 
 	baseURL := resolveStringValue(values, "summarize.tts_api.base_url", model.ConfigInstance.Summarize.TTSAPI.BaseURL)
