@@ -23,6 +23,7 @@ import mimoIcon from '@lobehub/icons-static-svg/icons/xiaomimimo.svg?raw'
 // Monochrome icons (fill="currentColor" — inherit CSS `color`, theme-aware)
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?raw'
 import piIcon from '@lobehub/icons-static-svg/icons/pi.svg?raw'
+import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg?raw'
 
 import { extractSvgInner, extractViewBox } from '@/utils/providerIcons'
 
@@ -49,6 +50,7 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     opencode: { svg: extractSvgInner(opencodeIcon), viewBox: extractViewBox(opencodeIcon), needsBg: true, monoCssClass: 'mono-opencode' },
     pi: { svg: extractSvgInner(piIcon), viewBox: extractViewBox(piIcon), needsBg: true, monoCssClass: 'mono-pi' },
     mimo: { svg: extractSvgInner(mimoIcon), viewBox: extractViewBox(mimoIcon), needsBg: true, monoCssClass: 'mono-mimo' },
+    grok: { svg: extractSvgInner(grokIcon), viewBox: extractViewBox(grokIcon), needsBg: true, monoCssClass: 'mono-grok' },
 
     // VeCLI not in lobe-icons — kept as inline fallback (explicit fill colors)
     vecli: {

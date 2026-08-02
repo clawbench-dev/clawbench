@@ -31,3 +31,7 @@
 /* ---- xAI: pure black — invisible on dark bg ---- */
 .mono-xai { color: #000000; }
 [data-theme="dark"] .mono-xai { color: #c9d1d9; }
+
+/* ---- Grok: dark gray logo — invisible on dark bg ---- */
+.mono-grok { color: #1A1A1A; }
+[data-theme="dark"] .mono-grok { color: #e6edf3; }

@@ -153,6 +153,7 @@ exempt_files = {
     "internal/ai/backends/copilot/discovery.go",  # Copilot defaults: requires copilot binary
     "internal/ai/backends/kimi/discovery.go",  # Kimi CLI defaults: requires kimi binary
     "internal/ai/backends/mimo/discovery.go",  # Mimo defaults: requires mimo binary
+    "internal/ai/backends/grok/discovery.go",  # Grok models: requires grok binary + authentication
     "internal/ai/backends/opencode/discovery.go",  # OpenCode CLI models: requires opencode binary
     "internal/ai/backends/pi/cli.go",  # Pi API key injection: requires real DB + agent API key loader
     "internal/service/proxy.go",            # Defensive reverse proxy error paths, port conflict, OS-specific port detection

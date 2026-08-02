@@ -63,18 +63,19 @@ Available models:
 - 鉴权：`XAI_API_KEY` 环境变量 或 OAuth（`grok login`）
 - 安装：`curl -fsSL https://x.ai/cli/install.sh | bash`
 
-## 实现方案
+## 实现方案（仅 ACP 模式）
+
+> 决策：**不实现 CLI 模式**。Grok Build 不注册 `ai.RegisterBackend` CLI factory，不提供 CLIBackend/StreamParser。聊天完全走 ACP stdio（`grok agent stdio`），模型发现单独用 `grok models` 命令。与 Pi 的"仅 CLI"形成对称——Grok 是"仅 ACP"。
 
 ### 新文件
 
 | 文件 | 内容 |
 | --- | --- |
-| `internal/ai/backends/grok/cli.go` | `ai.RegisterBackend("grok", newGrokBackend)` + `backends.Register(...)`；BackendSpec 定义；`newGrokBackend()` 返回 CLIBackend；`buildGrokStreamArgs` |
-| `internal/ai/backends/grok/stream.go` | `GrokStreamParser`：解析 `{type,data}` NDJSON → StreamEvent |
+| `internal/ai/backends/grok/register.go` | `backends.Register(&BackendPlugin{...})`：Spec + ACP 插件（GrokACPRemaps）。**无** `ai.RegisterBackend`（无 CLI factory） |
+| `internal/ai/backends/grok/acp.go` | `GrokACPRemaps`：通用 ACP 输入字段重映射 |
 | `internal/ai/backends/grok/discovery.go` | `DiscoverGrokModels()`：解析 `grok models` 输出 + 默认回退 |
-| `internal/ai/backends/grok/cli_test.go` | 插件注册、CLIBackend 结构、args 构造测试 |
-| `internal/ai/backends/grok/stream_test.go` | 各事件类型解析测试 |
-| `internal/ai/backends/grok/discovery_test.go` | `grok models` 输出解析测试 |
+| `internal/ai/backends/grok/acp_test.go` | 插件注册、Spec 字段、ACP 插件、remaps 测试 |
+| `internal/ai/backends/grok/discovery_test.go` | `grok models` 输出解析测试（带/不带 `(default)`、未登录格式、空输出） |
 
 ### BackendSpec 规格
 
@@ -90,23 +91,22 @@ model.BackendSpec{
 }
 ```
 
-### CLI 参数构造
+### 运行路径
+
+- **Agent 创建**：`SyncDiscoverAgentsDB` 检测到 `grok` 二进制 → 创建 agent，因 `AcpCommand != ""` 默认 `transport=acp-stdio`
+- **聊天**：`NewBackendForAgentWithTransport` 命中 `acp-stdio` + `SupportsACP()` → 直接创建 `ACPBackend`，不经过 CLI factory（无需 `ai.RegisterBackend`）
+- **工具名归一化**：Grok 使用标准 ACP 工具（title/kind），共享 `acp_tool_names.go` 前缀匹配已覆盖 Read/Write/Edit/Bash 等，走 `parseGenericACPToolCall`，无需 per-agent 解析函数或 ToolCallIDPrefixes
+
+### 模型发现
+
+`grok models` 输出解析（登录后每行 `* <model-id>` 或 `* <model-id> (default)`）。未登录/命令失败 → 回退默认列表：
 
 ```go
-args := []string{
-    "-p", prompt,          // InjectSystemPrompt(req)
-    "--output-format", "streaming-json",
-    "--always-approve",    // headless 非 TTY 必须
+var grokDefaultModels = []model.AgentModel{
+    {ID: "grok-4.5", Name: "Grok 4.5"},
+    {ID: "grok-build", Name: "Grok Build"},
 }
-if req.Resume && req.SessionID != "" { args = append(args, "--resume", req.SessionID) }
-if req.WorkDir != "" { args = append(args, "--cwd", req.WorkDir) }
-if req.Model != "" { args = append(args, "-m", req.Model) }
-if req.ThinkingEffort != "" { args = append(args, "--reasoning-effort", req.ThinkingEffort) }
 ```
-
-### ACP 映射
-
-`AcpCommand: "grok agent stdio"`。Grok 使用标准 ACP 工具命名（`tool_call`/`tool_call_update` 带 title/kind），共享 `acp_tool_names.go` 的 title 前缀匹配已覆盖 Read/Write/Edit/Bash 等，无需额外 ToolCallIDPrefixes。ACP Plugin 注册 `InputRemaps` 用通用映射。
 
 ### 修改文件
 
@@ -118,11 +118,10 @@ if req.ThinkingEffort != "" { args = append(args, "--reasoning-effort", req.Thin
 
 ## 测试
 
-- **stream_test.go**：`text`/`thought`/`end`/`error`/未知类型/无效 JSON 各事件类型解析断言
-- **cli_test.go**：插件已注册、`*ai.CLIBackend` 类型、Cmd=`grok`、FilterLine 逻辑、args 构造（resume/workdir/model/effort 条件分支）
+- **acp_test.go**：插件注册（`backends.Lookup("grok")`）、Spec 字段断言、ACP 插件非空、GrokACPRemaps 键断言
 - **discovery_test.go**：带 `(default)` / 不带 / 未登录格式 / 空输出解析；默认回退模型
 
 ## 已知限制
 
-- CLI 模式无工具调用可视化（grok headless 不输出 tool 事件）；ACP 模式功能完整
+- 仅 ACP 模式，无 CLI 回退——若用户将 transport 强制改为 `cli`，会报 "unsupported backend type: grok"（预期行为，Pi 的 CLI-only 是对称情形）
 - `grok models` 未登录时只显示默认模型，登录后模型列表由 CLI 返回
