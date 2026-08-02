@@ -200,3 +200,41 @@ func TestMigrateThinkingFromContent_UpsertFailureKeepsContent(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, content, "\"text\":\"doomed\"", "content must stay full when upsert fails")
 }
+
+// TestMigrateThinkingFromContent_MoreThanOneBatch migrates more rows than one
+// batch (batchSize=200) and asserts EVERY old-format row is migrated. Guards
+// against OFFSET pagination over a shrinking result set skipping rows: as rows
+// are slimmed they leave the query result set, so a fixed OFFSET drifts ahead
+// and permanently skips a batch's worth of rows.
+func TestMigrateThinkingFromContent_MoreThanOneBatch(t *testing.T) {
+	teardown := setupTestDBForThinkingMigration(t)
+	defer teardown()
+
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+	oldContent := `{"blocks":[{"type":"thinking","text":"thought","done":true}]}`
+
+	const total = 450
+	for range total {
+		_, err = db.Exec(
+			"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+			"/proj", oldContent, "sess-1",
+		)
+		assert.NoError(t, err)
+	}
+
+	MigrateThinkingFromContent()
+
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
+	assert.NoError(t, err)
+	assert.Equal(t, total, count, "every old-format row must be migrated, none skipped by OFFSET pagination")
+
+	var unmigrated int
+	err = db.QueryRow(`
+		SELECT COUNT(*) FROM chat_history
+		WHERE role = 'assistant' AND content LIKE '%"type":"thinking"%' AND content NOT LIKE '%think_id%'
+	`).Scan(&unmigrated)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, unmigrated, "no old-format thinking rows may remain after migration")
+}
