@@ -45,6 +45,17 @@ function num(val: unknown): number | undefined {
   return typeof val === 'number' ? val : undefined
 }
 
+/**
+ * Coerce a 1-based line number from tool input: accepts numbers and numeric
+ * strings (some CLIs serialize JSON numbers as strings). Returns undefined for
+ * non-numeric, fractional, negative, or zero values — matching the codebase's
+ * convention that 0 means "no line" (fileOpenButtonHtml/extractLineInfo).
+ */
+function lineNum(val: unknown): number | undefined {
+  const n = typeof val === 'number' ? val : typeof val === 'string' && val.trim() !== '' ? Number(val) : NaN
+  return Number.isInteger(n) && n >= 1 ? n : undefined
+}
+
 // ────────────────────────────────────────────────────────────
 // Tool renderer functions
 // ────────────────────────────────────────────────────────────
@@ -172,18 +183,21 @@ function renderBashTerminal(input: ToolInput): string {
 
 /**
  * Build a clickable file path header used by Read/Write/Edit views.
+ * Optionally appends a `:start-end` line range suffix and passes it to the open
+ * button so clicking jumps to that location (annotation-style path:80-100).
  */
-function filePathHeader(input: ToolInput, extraBadge = ''): string {
+function filePathHeader(input: ToolInput, extraBadge = '', lineStart?: number, lineEnd?: number): string {
   const filePath = str(input.file_path)
   const projectRoot = store.state.projectRoot || ''
   const homeDir = store.state.homeDir || ''
   const resolvedPath = resolveFilePath(filePath, projectRoot, homeDir)
   const displayPath = resolvedPath || filePath.replace(/^\.\//, '')
+  const lineSuffix = lineStart ? `:${lineStart}${lineEnd ? `-${lineEnd}` : ''}` : ''
 
   let html = '<div class="tool-file-header">'
-  html += `<span class="tool-file-path">${escapeHtml(displayPath)}</span>`
+  html += `<span class="tool-file-path">${escapeHtml(displayPath + lineSuffix)}</span>`
   if (resolvedPath) {
-    html += fileOpenButtonHtml(resolvedPath)
+    html += fileOpenButtonHtml(resolvedPath, lineStart, lineEnd)
   }
   if (extraBadge) html += extraBadge
   html += '</div>'
@@ -201,10 +215,15 @@ function renderReadPreview(input: ToolInput): string {
   const content = str(input.content)
   const hasContent = !!content
 
+  const offset = lineNum(input.offset)
+  const limit = lineNum(input.limit)
+  const lineStart = offset
+  const lineEnd = offset && limit ? offset + limit : undefined
+
   let html = '<div class="file-preview-view'
   if (hasContent) html += ' tool-content-wrap word-wrap'
   html += '">'
-  html += filePathHeader(input)
+  html += filePathHeader(input, '', lineStart, lineEnd)
 
   // Content header (copy + wrap toggle) — only when there is content to copy
   if (hasContent) {
@@ -217,14 +236,6 @@ function renderReadPreview(input: ToolInput): string {
     const lines = content.split('\n')
     for (const line of lines) {
       html += `<div class="file-preview-line">${highlightLine(line, lang)}</div>`
-    }
-  } else {
-    // No content field — show offset/limit info if present
-    const parts: string[] = []
-    if (input.offset) parts.push(gt('tool.read.fromLine', { offset: input.offset }))
-    if (input.limit) parts.push(gt('tool.read.readLines', { limit: input.limit }))
-    if (parts.length > 0) {
-      html += `<div class="file-preview-meta">${parts.join(gt('common.listSeparator'))}</div>`
     }
   }
   html += '</div></div>'

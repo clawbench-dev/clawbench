@@ -525,13 +525,6 @@ function handleBodyClick(event) {
   color: var(--text-primary);
 }
 
-.tool-detail-body .file-preview-meta {
-  white-space: normal;
-  color: var(--text-muted, #999);
-  font-style: italic;
-  padding: 4px 0;
-}
-
 /* File write */
 .tool-detail-body .file-write-view {
   display: flex;

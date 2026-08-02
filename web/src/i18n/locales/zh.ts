@@ -1028,10 +1028,6 @@ export default {
     disabled: '自动朗读已关闭',
   },
   tool: {
-    read: {
-      fromLine: '从第 {offset} 行',
-      readLines: '读取 {limit} 行',
-    },
     write: {
       badge: '写入',
     },

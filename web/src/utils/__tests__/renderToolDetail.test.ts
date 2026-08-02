@@ -585,10 +585,50 @@ describe('Bash renderer (deep)', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('Read renderer (deep)', () => {
-  it('shows offset/limit info when no content', () => {
+  it('appends offset-limit range to path when no content', () => {
     const html = formatToolInput({ file_path: 'test.go', offset: 10, limit: 50 }, 'Read')
-    expect(html).toContain('file-preview-meta')
+    expect(html).toContain('test.go:10-60')
+    expect(html).not.toContain('file-preview-meta')
     expect(html).not.toContain('file-preview-line')
+  })
+
+  it('passes offset/limit to the open button for jump-to-line', () => {
+    const html = formatToolInput({ file_path: 'test.go', offset: 10, limit: 50 }, 'Read')
+    expect(html).toContain('chat-file-open-btn')
+    expect(html).toContain('data-line-start="10"')
+    expect(html).toContain('data-line-end="60"')
+  })
+
+  it('coerces numeric-string offset/limit (some CLIs serialize numbers as strings)', () => {
+    const html = formatToolInput({ file_path: 'test.go', offset: '10', limit: '50' }, 'Read')
+    expect(html).toContain('test.go:10-60')
+    expect(html).toContain('data-line-start="10"')
+    expect(html).toContain('data-line-end="60"')
+  })
+
+  it('appends no range for non-numeric or non-positive offsets', () => {
+    expect(formatToolInput({ file_path: 'test.go', offset: 'abc', limit: 50 }, 'Read')).not.toMatch(/test\.go:\d/)
+    expect(formatToolInput({ file_path: 'test.go', offset: 0, limit: 50 }, 'Read')).not.toMatch(/test\.go:\d/)
+    expect(formatToolInput({ file_path: 'test.go', offset: 10.5, limit: 50 }, 'Read')).not.toMatch(/test\.go:\d/)
+    expect(formatToolInput({ file_path: 'test.go', offset: -5, limit: 50 }, 'Read')).not.toMatch(/test\.go:\d/)
+  })
+
+  it('keeps the line-range suffix when content is also present', () => {
+    const html = formatToolInput({ file_path: 'test.go', offset: 10, limit: 50, content: 'line1' }, 'Read')
+    expect(html).toContain('test.go:10-60')
+    expect(html).toContain('file-preview-line')
+  })
+
+  it('shows only offset when no limit', () => {
+    const html = formatToolInput({ file_path: 'test.go', offset: 5 }, 'Read')
+    expect(html).toContain('test.go:5')
+    expect(html).not.toContain('test.go:5-')
+  })
+
+  it('appends nothing when only limit is present', () => {
+    const html = formatToolInput({ file_path: 'test.go', limit: 20 }, 'Read')
+    expect(html).toContain('tool-file-path')
+    expect(html).not.toMatch(/test\.go:\d/)
   })
 
   it('renders multi-line content with separate line divs', () => {
@@ -604,12 +644,12 @@ describe('Read renderer (deep)', () => {
   })
 
   it('renders content with offset but no limit', () => {
-    const html = formatToolInput({ file_path: 'test.go', offset: 5 }, 'Read')
+    const html = formatToolInput({ file_path: 'test.go', offset: 5, content: 'x' }, 'Read')
     expect(html).toContain('file-preview-view')
   })
 
   it('renders content with limit but no offset', () => {
-    const html = formatToolInput({ file_path: 'test.go', limit: 20 }, 'Read')
+    const html = formatToolInput({ file_path: 'test.go', limit: 20, content: 'x' }, 'Read')
     expect(html).toContain('file-preview-view')
   })
 })

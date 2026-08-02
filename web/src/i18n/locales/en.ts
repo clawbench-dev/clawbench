@@ -1027,10 +1027,6 @@ export default {
     disabled: 'Auto speech disabled',
   },
   tool: {
-    read: {
-      fromLine: 'From line {offset}',
-      readLines: 'Read {limit} lines',
-    },
     write: {
       badge: 'Write',
     },

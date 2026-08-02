@@ -1378,13 +1378,6 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-.content-blocks .tool-detail .file-preview-meta {
-  white-space: normal;
-  color: var(--text-muted, #999);
-  font-style: italic;
-  padding: 4px 0;
-}
-
 .content-blocks .tool-detail .file-write-view {
   display: flex;
   flex-direction: column;
