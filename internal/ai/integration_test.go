@@ -130,33 +130,6 @@ func init() {
 		return NewVeCLIBackend()
 	})
 
-	// cline — CLI backend
-	RegisterBackend("cline", func() AIBackend {
-		return &CLIBackend{
-			BackendName: "cline",
-			Cmd:         "cline",
-			BuildArgsFn: func(req ChatRequest) []string {
-				args := []string{"--json", "--auto-approve", "true"}
-				if req.SessionID != "" && req.Resume {
-					args = append(args, "--id", req.SessionID)
-				}
-				if req.WorkDir != "" {
-					args = append(args, "--cwd", req.WorkDir)
-				}
-				if req.Model != "" {
-					args = append(args, "--model", req.Model)
-				}
-				if req.ThinkingEffort != "" {
-					args = append(args, "--thinking", req.ThinkingEffort)
-				}
-				return args
-			},
-			NewParserFn: func() LineParser { return &StreamParser{} },
-			PreStartFn: func(cmd *exec.Cmd, req ChatRequest) {
-				cmd.Stdin = strings.NewReader(req.Prompt)
-			},
-		}
-	})
 
 	// copilot — CLI backend
 	RegisterBackend("copilot", func() AIBackend {
@@ -579,17 +552,7 @@ var cliBackends = []cliTestConfig{
 		EmitsSessionCapture:  false,
 		SupportedTests:       withTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir),
 	},
-	{
-		Backend:             "cline",
-		CLIName:             "cline",
-		Timeout:             60 * time.Second,
-		CollectTimeout:      90 * time.Second,
-		HasModelInMeta:      true,
-		HasSessionIDInMeta:  true,
-		HasTokenUsageInMeta: false,
-		SupportsResume:      true,
-		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestResumeSessionIDConsistency),
-	},
+
 	{
 		Backend:             "copilot",
 		CLIName:             "copilot",

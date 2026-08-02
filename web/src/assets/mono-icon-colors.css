@@ -7,9 +7,6 @@
  * Used by AgentIcon.vue and ProviderIcon.vue via CSS class on <svg> element.
  */
 
-/* ---- Cline: indigo — visible on both themes ---- */
-.mono-cline { color: #6366f1; }
-
 /* ---- OpenCode: dark gray — invisible on dark bg ---- */
 .mono-opencode { color: #4A4A4A; }
 [data-theme="dark"] .mono-opencode { color: #c9d1d9; }

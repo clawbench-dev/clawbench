@@ -145,7 +145,7 @@ describe('providerIcons', () => {
 
     describe('getProviderIcon', () => {
         it('returns icon data for known providers', () => {
-            const providers = ['openai', 'anthropic', 'claude', 'gemini', 'deepseek', 'mistral', 'meta', 'qwen', 'kimi', 'xiaomi', 'groq', 'xai', 'copilot', 'codex', 'codebuddy', 'cline', 'zhipu', 'chatglm', 'glm']
+            const providers = ['openai', 'anthropic', 'claude', 'gemini', 'deepseek', 'mistral', 'meta', 'qwen', 'kimi', 'xiaomi', 'groq', 'xai', 'copilot', 'codex', 'codebuddy', 'zhipu', 'chatglm', 'glm']
             for (const id of providers) {
                 const data = getProviderIcon(id)
                 expect(data, `provider "${id}" should have icon data`).not.toBeNull()

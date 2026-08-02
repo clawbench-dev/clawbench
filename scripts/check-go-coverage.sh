@@ -141,8 +141,6 @@ exempt_files = {
     "internal/ai/acp_events.go",            # ACP event mapping: 17+ event type branches, each trivial but structurally complex
     "internal/ai/agent_capability.go",      # ACP agent capability: persistAsync/saveToDB/LoadFromDB require real DB
     "internal/ai/orphan.go",                # Process scanning: reads /proc, requires OS-level integration
-    "internal/ai/cline.go",                 # Cline CLI backend: spawns subprocess
-    "internal/ai/cline_stream.go",          # Cline stream parser: requires real subprocess output
     "internal/ai/accumulate.go",            # Block accumulator: complex goroutine sync + cancel paths
     "internal/handler/chat_stream.go",      # SSE stream handler: goroutine + ctx cancellation paths
     "internal/ai/backends/codex/discovery.go",  # Codex binary scanning: requires real codex binary + npm package structure
@@ -152,7 +150,6 @@ exempt_files = {
     "internal/ai/backends/pi/discovery.go",  # Pi --list-models: requires pi binary
     "internal/ai/backends/vecli/discovery.go",  # VeCLI JS bundle parsing: requires installed vecli with MODEL_REGISTRY
     "internal/ai/backends/qoder/discovery.go",  # Qoder dynamic-texts.json: requires ~/.qoder/.auth/dynamic-texts.json
-    "internal/ai/backends/cline/discovery.go",  # Cline CLI: requires cline binary
     "internal/ai/backends/copilot/discovery.go",  # Copilot defaults: requires copilot binary
     "internal/ai/backends/kimi/discovery.go",  # Kimi CLI defaults: requires kimi binary
     "internal/ai/backends/mimo/discovery.go",  # Mimo defaults: requires mimo binary

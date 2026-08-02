@@ -37,7 +37,7 @@ var acpAgentSpecs = []acpAgentSpec{
 	{ID: "opencode", Backend: "opencode", AcpCommand: "opencode acp", DefaultCmd: "opencode", HasThinking: true, Timeout: 90 * time.Second},
 	{ID: "codex", Backend: "codex", AcpCommand: "npx -y @agentclientprotocol/codex-acp@latest", DefaultCmd: "codex", HasThinking: true, Timeout: 120 * time.Second},
 	{ID: "qoder", Backend: "qoder", AcpCommand: "qodercli --acp", DefaultCmd: "qodercli", HasThinking: false, Timeout: 90 * time.Second},
-	{ID: "cline", Backend: "cline", AcpCommand: "cline --acp", DefaultCmd: "cline", HasThinking: true, Timeout: 90 * time.Second},
+
 	{ID: "kimi", Backend: "kimi", AcpCommand: "kimi acp", DefaultCmd: "kimi", HasThinking: true, Timeout: 90 * time.Second},
 	{ID: "copilot", Backend: "copilot", AcpCommand: "copilot --acp", DefaultCmd: "copilot", HasThinking: true, Timeout: 90 * time.Second},
 }

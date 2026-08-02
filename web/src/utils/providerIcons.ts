@@ -60,7 +60,6 @@ import anthropicIcon from '@lobehub/icons-static-svg/icons/anthropic.svg?raw'
 import groqIcon from '@lobehub/icons-static-svg/icons/groq.svg?raw'
 import xaiIcon from '@lobehub/icons-static-svg/icons/xai.svg?raw'
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?raw'
-import clineIcon from '@lobehub/icons-static-svg/icons/cline.svg?raw'
 import piIcon from '@lobehub/icons-static-svg/icons/pi.svg?raw'
 
 // ---- Provider icon registry ----
@@ -108,7 +107,6 @@ const providerIconMap: Record<string, ProviderIconData> = {
     glm: { raw: zhipuIcon },
 
     // CLI backend tools — monochrome icons
-    cline: { raw: clineIcon, monoCssClass: 'mono-cline' },
     opencode: { raw: opencodeIcon, needsBg: true, monoCssClass: 'mono-opencode' },
     pi: { raw: piIcon, needsBg: true, monoCssClass: 'mono-pi' },
 

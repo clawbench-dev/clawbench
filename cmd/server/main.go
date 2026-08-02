@@ -23,7 +23,6 @@ import (
 	"clawbench/internal/ai"
 	_ "clawbench/internal/ai/backends"
 	_ "clawbench/internal/ai/backends/claude"
-	_ "clawbench/internal/ai/backends/cline"
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/copilot"

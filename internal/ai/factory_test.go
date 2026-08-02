@@ -24,7 +24,6 @@ func setupTestBackends() {
 		"vecli",
 		"pi",
 		"deepseek",
-		"cline",
 		"kimi",
 		"copilot",
 		"codex",
@@ -124,16 +123,6 @@ func TestNewBackend_DeepSeek(t *testing.T) {
 	assert.Equal(t, "deepseek", backend.Name())
 	_, ok := backend.(*CLIBackend)
 	assert.True(t, ok, "deepseek should be a CLIBackend")
-}
-
-func TestNewBackend_Cline(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackend("cline")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "cline", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "cline should be a CLIBackend")
 }
 
 func TestNewBackend_Kimi(t *testing.T) {
