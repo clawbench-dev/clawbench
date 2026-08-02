@@ -455,7 +455,7 @@ describe('ContentBlocks', () => {
       expect(thinking.classes()).toContain('thinking-collapsed')
     })
 
-    it('transitions to expanded-done when thinking_done fires mid-stream', async () => {
+    it('collapses a thinking block immediately when thinking_done fires mid-stream', async () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'thinking', text: 'Thinking...', done: false }],
         streaming: true,
@@ -463,17 +463,49 @@ describe('ContentBlocks', () => {
 
       expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-streaming')
 
-      // Simulate thinking_done: set block.done = true — block stays expanded during streaming
+      // Simulate thinking_done: set block.done = true → block collapses immediately
       await wrapper.setProps({
         blocks: [{ type: 'thinking', text: 'Thinking complete', done: true }],
       })
       await nextTick()
 
-      // Should no longer be streaming (done=true overrides streaming prop)
+      // No longer streaming (done=true overrides streaming prop), and NOT kept expanded.
       const thinking = wrapper.find('.chat-thinking')
       expect(thinking.classes()).not.toContain('thinking-streaming')
-      // Block should be expanded-done or collapsed depending on ref availability
-      expect(thinking.classes().some(c => c === 'thinking-expanded-done' || c === 'thinking-collapsed')).toBe(true)
+      expect(thinking.classes()).not.toContain('thinking-expanded-done')
+      // Content wrapper closes right away — only the streaming block stays open.
+      expect(wrapper.find('.thinking-content-wrapper').classes()).not.toContain('thinking-content-open')
+
+      // Once the collapse animation settles, the block is a collapsed chip.
+      vi.advanceTimersByTime(400)
+      await nextTick()
+      expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-collapsed')
+    })
+
+    it('keeps only the currently-streaming thinking block expanded when another finishes', async () => {
+      const wrapper = mountBlocks({
+        blocks: [
+          { type: 'thinking', text: 'First', done: false },
+          { type: 'thinking', text: 'Second', done: false },
+        ],
+        streaming: true,
+      })
+
+      const wrappers = () => wrapper.findAll('.thinking-content-wrapper')
+      expect(wrappers()[0].classes()).toContain('thinking-content-open')
+      expect(wrappers()[1].classes()).toContain('thinking-content-open')
+
+      // First block completes → it collapses, second stays open.
+      await wrapper.setProps({
+        blocks: [
+          { type: 'thinking', text: 'First', done: true },
+          { type: 'thinking', text: 'Second', done: false },
+        ],
+      })
+      await nextTick()
+
+      expect(wrappers()[0].classes()).not.toContain('thinking-content-open')
+      expect(wrappers()[1].classes()).toContain('thinking-content-open')
     })
 
     it('cleans up timers on unmount to prevent leaks', async () => {

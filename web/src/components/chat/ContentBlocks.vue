@@ -623,19 +623,24 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
 })
 
 // Watch for thinking blocks that become "done" mid-stream (via thinking_done SSE event).
-// Mark as expanded — only collapses on manual click.
-watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => b.done), () => {
-  if (!props.streaming) return // Only relevant during streaming
-  // Find thinking blocks that just became done (newly true), not already expanded/collapsing
-  for (let i = 0; i < props.blocks.length; i++) {
-    const block = props.blocks[i]
-    if (block.type === 'thinking' && block.done) {
-      const key = stableBlockKey(i, block)
-      if (!collapsingThinking.value[key] && !thinkingExpanded.value[key]) {
-        thinkingExpanded.value[key] = true
-      }
-    }
+// Only the block currently being streamed stays expanded — when its output
+// completes it collapses immediately. Blocks the user manually expanded are kept open.
+let _prevDoneKeys = new Set()
+watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => stableBlockKey(props.blocks.indexOf(b), b)), (doneKeys) => {
+  if (!props.streaming) {
+    // Not streaming: nothing to collapse live; remember the done set for later.
+    _prevDoneKeys = new Set(doneKeys)
+    return
   }
+  const doneSet = new Set(doneKeys)
+  for (const key of doneKeys) {
+    // Collapse only the blocks that JUST finished streaming (newly done),
+    // skipping ones already collapsed/collapsing or manually expanded.
+    if (_prevDoneKeys.has(key)) continue
+    if (thinkingExpanded.value[key] || collapsingThinking.value[key]) continue
+    triggerThinkingCollapse(key)
+  }
+  _prevDoneKeys = doneSet
   // Clear throttle cache so DOM re-renders with complete thinking content
   blockHtmlCache.value = {}
 })
