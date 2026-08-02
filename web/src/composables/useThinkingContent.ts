@@ -6,7 +6,7 @@ const TAG = 'ThinkingContent'
 const thinkingTextCache = reactive(new Map<string, string>())
 const inFlight = new Map<string, Promise<string>>()
 
-function clearThinkingCache() {
+export function clearThinkingCache() {
   thinkingTextCache.clear()
 }
 

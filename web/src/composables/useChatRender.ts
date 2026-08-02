@@ -3,6 +3,7 @@ import { renderMarkdown as baseRenderMarkdown, renderMarkdownHtml, renderMermaid
 import { formatToolInput } from '@/utils/renderToolDetail.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useCommitHashAnnotation } from '@/composables/useCommitHashAnnotation.ts'
+import { clearThinkingCache } from '@/composables/useThinkingContent.ts'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 import { createTaskBlockStore } from '@/utils/taskBlockStore.ts'
@@ -93,6 +94,7 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
   // Clear caches when session changes
   watch(currentSessionId, () => {
     staticBlockCache.clear()
+    clearThinkingCache()
   })
 
   type BlockTaskEntry = { taskId?: number; deleted?: boolean; loading?: boolean; task?: unknown; [key: string]: unknown }
