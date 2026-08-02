@@ -185,10 +185,15 @@ func TestMigrateThinkingFromContent_UpsertFailureKeepsContent(t *testing.T) {
 		"/proj", oldContent, "sess-1",
 	)
 	assert.NoError(t, err)
-	_, err = db.Exec("DROP TABLE chat_thinking")
+	// Keep chat_thinking readable (NOT EXISTS count still works) but make every
+	// INSERT fail, forcing the migration's tx.Exec path to error out.
+	_, err = db.Exec(`
+		CREATE TRIGGER trg_thinking_fail BEFORE INSERT ON chat_thinking
+		BEGIN SELECT RAISE(FAIL, 'forced failure'); END;
+	`)
 	assert.NoError(t, err)
 
-	MigrateThinkingFromContent() // must not panic; rows fail internally
+	MigrateThinkingFromContent()
 
 	var content string
 	err = db.QueryRow("SELECT content FROM chat_history WHERE session_id = 'sess-1'").Scan(&content)
