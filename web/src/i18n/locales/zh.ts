@@ -112,6 +112,7 @@ export default {
     loadAvg: '负载',
     disconnected: '连接断开',
     reconnecting: '正在重连...',
+    overlayReconnecting: '连接断开，正在重连…',
   },
   chat: {
     title: 'AI 对话',

@@ -112,6 +112,7 @@ export default {
     loadAvg: 'Load',
     disconnected: 'Connection Lost',
     reconnecting: 'Reconnecting...',
+    overlayReconnecting: 'Connection lost, reconnecting…',
   },
   chat: {
     title: 'AI Chat',
