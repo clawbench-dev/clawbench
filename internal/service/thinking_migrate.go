@@ -123,6 +123,7 @@ func migrateThinkingForRow(msgID int64, sessionID, content string) error {
 			slog.Warn("thinking migration: upsert failed",
 				slog.String("thinkID", rec.ThinkID),
 				slog.String("err", err.Error()))
+			return fmt.Errorf("upsert thinking %s: %w", rec.ThinkID, err)
 		}
 	}
 	_, err = WriteExec("UPDATE chat_history SET content = ? WHERE id = ?", slimContent, msgID)
