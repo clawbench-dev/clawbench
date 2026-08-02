@@ -288,6 +288,10 @@ type ToolCall struct {
 	Output string // Tool execution output text (populated when available)
 	Status string // Tool execution status: "success", "error", "" (unknown)
 	Done   bool   // Whether the tool call input is complete
+	// DurationMs is the wall-clock execution time in milliseconds.
+	// Injected by SessionExecutor when the tool completes; backend parsers
+	// leave it 0 (unknown).
+	DurationMs int `json:"duration_ms,omitempty"`
 }
 
 // maxToolOutputBytes limits tool output stored per tool call to prevent

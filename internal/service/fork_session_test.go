@@ -540,7 +540,7 @@ func TestForkSession_CopiesToolCallsAndThinking(t *testing.T) {
 		`{"blocks":[{"type":"tool_use","id":"toolu_01","name":"Read","done":true},{"type":"thinking","think_id":"th_01","done":true}]}`,
 		nil, false, "")
 	assert.NoError(t, err)
-	assert.NoError(t, service.UpsertToolCall(asstID, sessID, "toolu_01", "Read", []byte(`{"file_path":"/a.go"}`), "contents", "success", "a.go", true))
+	assert.NoError(t, service.UpsertToolCall(asstID, sessID, "toolu_01", "Read", []byte(`{"file_path":"/a.go"}`), "contents", "success", "a.go", true, 0))
 	assert.NoError(t, service.UpsertThinking(asstID, sessID, "th_01", "deep text"))
 
 	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0)
@@ -590,9 +590,9 @@ func TestForkSession_TruncationSkipsDetailRows(t *testing.T) {
 		`{"blocks":[{"type":"tool_use","id":"toolu_cut","name":"Bash","done":true},{"type":"thinking","think_id":"th_cut","done":true}]}`,
 		nil, false, "")
 	assert.NoError(t, err)
-	assert.NoError(t, service.UpsertToolCall(asst1ID, sessID, "toolu_keep", "Read", []byte(`{"file_path":"/a.go"}`), "keep-out", "success", "a.go", true))
+	assert.NoError(t, service.UpsertToolCall(asst1ID, sessID, "toolu_keep", "Read", []byte(`{"file_path":"/a.go"}`), "keep-out", "success", "a.go", true, 0))
 	assert.NoError(t, service.UpsertThinking(asst1ID, sessID, "th_keep", "keep text"))
-	assert.NoError(t, service.UpsertToolCall(asst2ID, sessID, "toolu_cut", "Bash", []byte(`{"command":"ls"}`), "cut-out", "success", "ls", true))
+	assert.NoError(t, service.UpsertToolCall(asst2ID, sessID, "toolu_cut", "Bash", []byte(`{"command":"ls"}`), "cut-out", "success", "ls", true, 0))
 	assert.NoError(t, service.UpsertThinking(asst2ID, sessID, "th_cut", "cut text"))
 
 	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] First", user1ID)

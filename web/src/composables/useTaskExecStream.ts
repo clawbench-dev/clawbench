@@ -142,6 +142,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (data.summary !== undefined) existing.summary = data.summary
             if (data.display_name !== undefined) existing.display_name = data.display_name
             if (data.file_path !== undefined) existing.file_path = data.file_path
+            if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
           }
           const timer = toolUseTimeouts.get(data.id)
           if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
@@ -185,6 +186,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
           if (data.name) existing.name = data.name
           if (data.status !== undefined) existing.status = data.status
           existing.done = true
+          if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
         }
         const timer = toolUseTimeouts.get(data.id)
         if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }

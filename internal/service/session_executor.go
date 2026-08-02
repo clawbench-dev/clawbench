@@ -42,6 +42,10 @@ const (
 	transportCLI = "cli"
 	// eventTypeError is the stream event type for errors.
 	eventTypeError = "error"
+	// eventTypeToolUse is the stream event type for tool calls.
+	eventTypeToolUse = "tool_use"
+	// eventTypeToolResult is the stream event type for tool results.
+	eventTypeToolResult = "tool_result"
 	// roleAssistant is the assistant role for chat messages.
 	roleAssistant = "assistant"
 	// roleUser is the user role for chat messages.
@@ -126,6 +130,9 @@ type SessionExecutor struct {
 	eventCount       int
 	receivedTerminal bool
 	wallStart        int64 // unix millis at execution start
+	// toolStarts tracks the start time of each tool call (by tool ID) so the
+	// wall-clock duration can be computed when the tool completes.
+	toolStarts map[string]time.Time
 }
 
 // NewSessionExecutor creates a new executor for the given configuration.
@@ -135,8 +142,9 @@ type SessionExecutor struct {
 // inner context.
 func NewSessionExecutor(ctx context.Context, cfg RunConfig) *SessionExecutor {
 	return &SessionExecutor{
-		cfg: cfg,
-		ctx: ctx,
+		cfg:        cfg,
+		ctx:        ctx,
+		toolStarts: make(map[string]time.Time),
 	}
 }
 
@@ -157,6 +165,12 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 			e.captureExternalSessionID(event.Content)
 		}
 		return
+	}
+
+	// Inject per-tool duration into completion events before forwarding,
+	// so WS clients and AccumulateBlock both see it.
+	if event.Type == eventTypeToolUse || event.Type == eventTypeToolResult {
+		e.trackToolDuration(&event)
 	}
 
 	// Forward event to WS clients via StreamHub
@@ -187,7 +201,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 // and persists context state (mode, thinking effort, usage) to DB.
 func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
 	forwardEvent := event
-	if (event.Type == "tool_use" || event.Type == "tool_result") && event.Tool != nil { //nolint:goconst // event type strings
+	if (event.Type == eventTypeToolUse || event.Type == eventTypeToolResult) && event.Tool != nil {
 		meta := ai.ExtractToolCallMeta(event)
 		forwardEvent.ToolMeta = &meta
 	}
@@ -277,7 +291,7 @@ func (e *SessionExecutor) persistAskToolCalls(blocks []model.ContentBlock) {
 			if err := UpsertToolCall(
 				e.cfg.StreamingMessageID, e.cfg.SessionID,
 				b.ID, b.Name, inputJSON,
-				b.Output, b.Status, b.Summary, b.Done,
+				b.Output, b.Status, b.Summary, b.Done, b.DurationMs,
 			); err != nil {
 				slog.Warn("upsert converted AskUserQuestion tool call failed",
 					slog.String("toolID", b.ID),
@@ -336,6 +350,41 @@ func (e *SessionExecutor) captureExternalSessionID(externalID string) {
 	}
 }
 
+// trackToolDuration records tool start times and injects the computed wall-clock
+// duration into completion events. The duration is cumulative from the first
+// tool_use event for a tool ID:
+//   - tool_use done=false: marks the start.
+//   - tool_use done=true: input streaming is complete and the tool begins
+//     executing — an interim (cumulative) duration is injected so backends
+//     that never emit tool_result still get a value. The start is kept.
+//   - tool_result: the tool actually finished — the final duration is injected
+//     and the start is released.
+//
+// The duration propagates to the WS payload, the accumulated block, and the
+// chat_tool_calls upsert. If no start was recorded (e.g. the first event is
+// already done), duration stays 0 (unknown).
+func (e *SessionExecutor) trackToolDuration(event *ai.StreamEvent) {
+	if event.Tool == nil || event.Tool.ID == "" {
+		return
+	}
+	if event.Type == eventTypeToolResult {
+		if start, ok := e.toolStarts[event.Tool.ID]; ok {
+			event.Tool.DurationMs = int(time.Since(start).Milliseconds())
+			delete(e.toolStarts, event.Tool.ID)
+		}
+		return
+	}
+	if event.Tool.Done {
+		if start, ok := e.toolStarts[event.Tool.ID]; ok {
+			event.Tool.DurationMs = int(time.Since(start).Milliseconds())
+		}
+		return
+	}
+	if _, ok := e.toolStarts[event.Tool.ID]; !ok {
+		e.toolStarts[event.Tool.ID] = time.Now()
+	}
+}
+
 // upsertToolCallToDB persists tool call data to the chat_tool_calls table.
 // Only runs for tool_use and tool_result events when StreamingMessageID is set.
 func (e *SessionExecutor) upsertToolCallToDB(event ai.StreamEvent) {
@@ -350,7 +399,7 @@ func (e *SessionExecutor) upsertToolCallToDB(event ai.StreamEvent) {
 			if err := UpsertToolCall(
 				e.cfg.StreamingMessageID, e.cfg.SessionID,
 				block.ID, block.Name, inputJSON,
-				block.Output, block.Status, block.Summary, block.Done,
+				block.Output, block.Status, block.Summary, block.Done, block.DurationMs,
 			); err != nil {
 				slog.Warn("upsert tool call failed",
 					slog.String("toolID", block.ID),
@@ -469,7 +518,8 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, ra
 					rawOutput += "\n"
 				}
 				rawOutput += event.RawOutput
-			case "tool_use", "tool_result":
+			case eventTypeToolUse, eventTypeToolResult:
+				e.trackToolDuration(&event)
 				ai.AccumulateBlock(&e.blocks, event)
 				e.upsertToolCallToDB(event)
 			case "session_capture":

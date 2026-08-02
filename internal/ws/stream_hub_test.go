@@ -465,7 +465,7 @@ func TestStreamEventToPayload_ToolResultMinimal(t *testing.T) {
 // --- attachToolMeta ---
 
 func TestAttachToolMeta_WithAllFields(t *testing.T) {
-	meta := ai.ToolCallMeta{DisplayName: "Edit File", Summary: "editing", FilePath: "/tmp/a.go"}
+	meta := ai.ToolCallMeta{DisplayName: "Edit File", Summary: "editing", FilePath: "/tmp/a.go", DurationMs: 3500}
 	payload := StreamEventToPayload(ai.StreamEvent{
 		Type:     "tool_use",
 		ToolMeta: &meta,
@@ -476,6 +476,14 @@ func TestAttachToolMeta_WithAllFields(t *testing.T) {
 	assert.Equal(t, "Edit File", m["display_name"])
 	assert.Equal(t, "editing", m["summary"])
 	assert.Equal(t, "/tmp/a.go", m["file_path"])
+	assert.Equal(t, 3500, m["duration_ms"])
+}
+
+func TestAttachToolMeta_ZeroDurationNotAttached(t *testing.T) {
+	payload := map[string]any{}
+	attachToolMeta(payload, &ai.ToolCallMeta{DurationMs: 0})
+	_, hasDuration := payload["duration_ms"]
+	assert.False(t, hasDuration, "zero duration should not be attached")
 }
 
 func TestAttachToolMeta_NilMeta(t *testing.T) {

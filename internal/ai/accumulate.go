@@ -160,6 +160,9 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 					(*blocks)[i].Name = event.Tool.Name
 				}
 				(*blocks)[i].Done = event.Tool.Done
+				if event.Tool.DurationMs > 0 {
+					(*blocks)[i].DurationMs = event.Tool.DurationMs
+				}
 				if event.Tool.Output != "" {
 					(*blocks)[i].Output = event.Tool.Output
 				}
@@ -175,13 +178,14 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 					input = make(map[string]any)
 				}
 				*blocks = append(*blocks, model.ContentBlock{
-					Type:   "tool_use",
-					Name:   event.Tool.Name,
-					ID:     event.Tool.ID,
-					Input:  input,
-					Done:   event.Tool.Done,
-					Output: event.Tool.Output,
-					Status: event.Tool.Status,
+					Type:       "tool_use",
+					Name:       event.Tool.Name,
+					ID:         event.Tool.ID,
+					Input:      input,
+					Done:       event.Tool.Done,
+					Output:     event.Tool.Output,
+					Status:     event.Tool.Status,
+					DurationMs: event.Tool.DurationMs,
 				})
 				upsertToolCallMeta(&(*blocks)[len(*blocks)-1])
 			}
@@ -210,6 +214,9 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 					(*blocks)[i].Output = event.Tool.Output
 					(*blocks)[i].Status = event.Tool.Status
 					(*blocks)[i].Done = true
+					if event.Tool.DurationMs > 0 {
+						(*blocks)[i].DurationMs = event.Tool.DurationMs
+					}
 					upsertToolCallMeta(&(*blocks)[i])
 					break
 				}

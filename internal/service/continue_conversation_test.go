@@ -495,7 +495,7 @@ func TestContinueFromExecution_CopiesToolCallsAndThinking(t *testing.T) {
 		`{"blocks":[{"type":"tool_use","id":"toolu_c01","name":"Bash","done":true},{"type":"thinking","think_id":"th_c01","done":true}]}`,
 		nil, false, "")
 	assert.NoError(t, err)
-	assert.NoError(t, service.UpsertToolCall(asstID, sessID, "toolu_c01", "Bash", []byte(`{"command":"ls"}`), "out", "success", "ls", true))
+	assert.NoError(t, service.UpsertToolCall(asstID, sessID, "toolu_c01", "Bash", []byte(`{"command":"ls"}`), "out", "success", "ls", true, 0))
 	assert.NoError(t, service.UpsertThinking(asstID, sessID, "th_c01", "continued thought"))
 
 	newSessID, exists, err := service.ContinueFromExecution(execID, "/project")

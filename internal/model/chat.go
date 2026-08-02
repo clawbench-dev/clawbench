@@ -141,6 +141,7 @@ type ContentBlock struct {
 	Summary     string         `json:"summary,omitempty"`      // extracted display summary (tool_use) — redundant, avoids loading input for toolbar
 	DisplayName string         `json:"display_name,omitempty"` // subagent_type for Agent tools (tool_use) — redundant, replaces toolDisplayName() lookup
 	FilePath    string         `json:"file_path,omitempty"`    // detected file path (tool_use) — redundant, for FILE_MODIFYING_TOOLS detection
+	DurationMs  int            `json:"duration_ms,omitempty"`  // tool execution wall-clock duration in ms (tool_use)
 }
 
 // MarshalJSON implements custom serialization for ContentBlock.
@@ -167,6 +168,7 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 				Summary     string         `json:"summary,omitempty"`
 				DisplayName string         `json:"display_name,omitempty"`
 				FilePath    string         `json:"file_path,omitempty"`
+				DurationMs  int            `json:"duration_ms,omitempty"`
 			}
 			return json.Marshal(InteractiveBlock{
 				Type:        b.Type,
@@ -179,6 +181,7 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 				Summary:     b.Summary,
 				DisplayName: b.DisplayName,
 				FilePath:    b.FilePath,
+				DurationMs:  b.DurationMs,
 			})
 		}
 		// Slim serialization: type+name+id+status+done+summary+display_name+file_path
@@ -191,6 +194,7 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 			Summary     string `json:"summary,omitempty"`
 			DisplayName string `json:"display_name,omitempty"`
 			FilePath    string `json:"file_path,omitempty"`
+			DurationMs  int    `json:"duration_ms,omitempty"`
 		}
 		return json.Marshal(SlimBlock{
 			Type:        b.Type,
@@ -201,6 +205,7 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 			Summary:     b.Summary,
 			DisplayName: b.DisplayName,
 			FilePath:    b.FilePath,
+			DurationMs:  b.DurationMs,
 		})
 	}
 	// Standard serialization using Alias to avoid infinite recursion

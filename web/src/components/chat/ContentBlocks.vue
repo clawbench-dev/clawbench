@@ -18,6 +18,7 @@
           <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
           <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
           <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
+          <span v-if="block.done && block.duration_ms > 0" class="tool-duration">{{ formatDuration(block.duration_ms) }}</span>
           <span v-if="!block.done" class="tool-spinner"></span>
           <XCircle v-else-if="block.status === 'error'" :size="14" color="#ef4444" class="tool-error-icon" />
           <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
@@ -114,6 +115,8 @@
           <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
           <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
           <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
+          <!-- Tool execution duration (user-friendly, right side) -->
+          <span v-if="block.done && block.duration_ms > 0" class="tool-duration">{{ formatDuration(block.duration_ms) }}</span>
           <!-- Loading: spinner -->
           <span v-if="!block.done" class="tool-spinner"></span>
           <!-- Done with error: red X -->
@@ -212,6 +215,7 @@ import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronRight, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, Clock, Archive } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { formatDuration } from '@/utils/format.ts'
 import {
   isSevereWarning,
   getWarningText as getWarningTextUtil,
@@ -972,6 +976,13 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-tool-call .tool-duration {
+  flex-shrink: 0;
+  color: var(--text-tertiary, #888);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-tool-call .tool-check {

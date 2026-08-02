@@ -120,6 +120,45 @@ func TestContentBlockSlimUnmarshal(t *testing.T) {
 	}
 }
 
+func TestContentBlockToolUseMarshalIncludesDurationMs(t *testing.T) {
+	// duration_ms should survive slim serialization so the frontend can display it
+	block := ContentBlock{
+		Type:       "tool_use",
+		Name:       "Bash",
+		ID:         "t-dur",
+		Done:       true,
+		Summary:    "ls -la",
+		DurationMs: 5200,
+	}
+
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if parsed["duration_ms"] != float64(5200) {
+		t.Errorf("expected duration_ms=5200, got %v", parsed["duration_ms"])
+	}
+
+	// Zero duration is omitted
+	zero := ContentBlock{Type: "tool_use", Name: "Read", ID: "t-z", Done: true}
+	zeroData, err := json.Marshal(zero)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var zeroParsed map[string]any
+	if err := json.Unmarshal(zeroData, &zeroParsed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if _, ok := zeroParsed["duration_ms"]; ok {
+		t.Error("duration_ms should be omitted when 0")
+	}
+}
+
 func TestContentBlockInteractiveToolMarshalWithInput(t *testing.T) {
 	// AskUserQuestion blocks should serialize WITH input for frontend rendering
 	block := ContentBlock{

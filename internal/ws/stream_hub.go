@@ -273,6 +273,9 @@ func attachToolMeta(payload map[string]any, meta *ai.ToolCallMeta) {
 	if meta.FilePath != "" {
 		payload["file_path"] = meta.FilePath
 	}
+	if meta.DurationMs > 0 {
+		payload["duration_ms"] = meta.DurationMs
+	}
 }
 
 func userMessagePayload(event ai.StreamEvent) any {

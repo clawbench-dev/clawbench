@@ -225,6 +225,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			status TEXT NOT NULL DEFAULT '',
 			done INTEGER NOT NULL DEFAULT 0,
 			summary TEXT NOT NULL DEFAULT '',
+			duration_ms INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(tool_id, message_id)
 		);

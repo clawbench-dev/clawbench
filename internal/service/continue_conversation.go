@@ -462,7 +462,7 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 
 	// chat_tool_calls
 	tcRows, err := dbRead.Query(
-		"SELECT message_id, tool_id, name, input, output, status, done, summary, created_at FROM chat_tool_calls WHERE session_id = ?",
+		"SELECT message_id, tool_id, name, input, output, status, done, summary, duration_ms, created_at FROM chat_tool_calls WHERE session_id = ?",
 		sourceSessionID,
 	)
 	if err != nil {
@@ -470,20 +470,21 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 	}
 	defer func() { _ = tcRows.Close() }()
 	type toolRow struct {
-		messageID int64
-		toolID    string
-		name      string
-		input     string
-		output    string
-		status    string
-		done      int
-		summary   string
-		createdAt time.Time
+		messageID  int64
+		toolID     string
+		name       string
+		input      string
+		output     string
+		status     string
+		done       int
+		summary    string
+		durationMs int
+		createdAt  time.Time
 	}
 	var toolRows []toolRow
 	for tcRows.Next() {
 		var r toolRow
-		if err := tcRows.Scan(&r.messageID, &r.toolID, &r.name, &r.input, &r.output, &r.status, &r.done, &r.summary, &r.createdAt); err != nil {
+		if err := tcRows.Scan(&r.messageID, &r.toolID, &r.name, &r.input, &r.output, &r.status, &r.done, &r.summary, &r.durationMs, &r.createdAt); err != nil {
 			return fmt.Errorf("failed to scan tool call: %w", err)
 		}
 		toolRows = append(toolRows, r)
@@ -494,8 +495,8 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 			continue
 		}
 		if _, err := WriteExec(
-			"INSERT OR REPLACE INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output, status, done, summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			newID, newSessionID, r.toolID, r.name, r.input, r.output, r.status, r.done, r.summary, r.createdAt,
+			"INSERT OR REPLACE INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output, status, done, summary, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			newID, newSessionID, r.toolID, r.name, r.input, r.output, r.status, r.done, r.summary, r.durationMs, r.createdAt,
 		); err != nil {
 			return fmt.Errorf("failed to copy tool call %s: %w", r.toolID, err)
 		}

@@ -316,6 +316,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			status TEXT NOT NULL DEFAULT '',
 			done INTEGER NOT NULL DEFAULT 0,
 			summary TEXT NOT NULL DEFAULT '',
+			duration_ms INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(tool_id, message_id)
 		);
@@ -781,6 +782,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		slog.Info("dropped source column from agents table")
 	}
 
+	// Migrate: add duration_ms column to chat_tool_calls for per-tool execution time.
+	var hasToolCallDuration int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_tool_calls') WHERE name='duration_ms'").Scan(&hasToolCallDuration)
+	if hasToolCallDuration == 0 {
+		if _, err := WriteExec("ALTER TABLE chat_tool_calls ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add duration_ms column to chat_tool_calls: %w", err)
+		}
+	}
+
 	// Migrate: extract metadata from chat_history.content into chat_metadata table.
 	// This is a one-time migration for existing data; new messages are saved
 	// to chat_metadata automatically via SaveMetadata().
@@ -1144,7 +1154,7 @@ func migrateToolCallsForRow(msgID int64, sessionID, content string) error {
 
 			// Upsert to chat_tool_calls
 			inputJSON, _ := json.Marshal(b.Input)
-			if err := UpsertToolCall(msgID, sessionID, b.ID, b.Name, inputJSON, b.Output, b.Status, b.Summary, b.Done); err != nil {
+			if err := UpsertToolCall(msgID, sessionID, b.ID, b.Name, inputJSON, b.Output, b.Status, b.Summary, b.Done, b.DurationMs); err != nil {
 				// Log but continue — don't block the whole migration
 				slog.Warn("tool_use migration: upsert failed",
 					slog.String("toolID", b.ID),
@@ -1158,7 +1168,7 @@ func migrateToolCallsForRow(msgID int64, sessionID, content string) error {
 			b.DisplayName = meta.DisplayName
 			b.FilePath = meta.FilePath
 			inputJSON, _ := json.Marshal(b.Input)
-			_ = UpsertToolCall(msgID, sessionID, b.ID, b.Name, inputJSON, b.Output, b.Status, b.Summary, b.Done)
+			_ = UpsertToolCall(msgID, sessionID, b.ID, b.Name, inputJSON, b.Output, b.Status, b.Summary, b.Done, b.DurationMs)
 		}
 	}
 

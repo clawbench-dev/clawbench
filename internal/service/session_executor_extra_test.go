@@ -910,6 +910,142 @@ func TestSessionExecutor_HandleNonTerminalEvent_UpsertToolCall(t *testing.T) {
 
 // --- UpsertToolCall and GetToolCall direct tests ---
 
+func TestSessionExecutor_TrackToolDuration(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: msgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Tool starts (done=false) — records the start time
+	executor.handleNonTerminalEvent(ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Bash", ID: "tool-dur-1", Input: `{"command":"ls"}`, Done: false},
+	})
+	time.Sleep(30 * time.Millisecond)
+	// Tool completes via tool_result — computes duration
+	executor.handleNonTerminalEvent(ai.StreamEvent{
+		Type: "tool_result",
+		Tool: &ai.ToolCall{Name: "Bash", ID: "tool-dur-1", Output: "ok", Status: "success"},
+	})
+
+	// The accumulated block should carry the duration
+	require.Len(t, executor.blocks, 1, "expected one accumulated block")
+	block := executor.blocks[0]
+	assert.True(t, block.Done)
+	assert.GreaterOrEqual(t, block.DurationMs, 25, "block duration should reflect elapsed wall-clock time")
+
+	// The persisted tool call record should carry the duration
+	record, err := GetToolCall("tool-dur-1", msgID)
+	require.NoError(t, err)
+	require.NotNil(t, record)
+	assert.GreaterOrEqual(t, record.DurationMs, 25, "DB duration should reflect elapsed wall-clock time")
+}
+
+func TestSessionExecutor_TrackToolDuration_StartEventAlreadyDone(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: msgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Backends that emit a single done tool_use without a start event:
+	// duration stays 0 (unknown) rather than a garbage value.
+	executor.handleNonTerminalEvent(ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Read", ID: "tool-dur-2", Input: `{"file_path":"/a.go"}`, Done: true},
+	})
+
+	record, err := GetToolCall("tool-dur-2", msgID)
+	require.NoError(t, err)
+	require.NotNil(t, record)
+	assert.Equal(t, 0, record.DurationMs)
+}
+
+func TestSessionExecutor_TrackToolDuration_InterimThenFinal(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: msgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Claude-style flow: start → input complete (done=true, interim duration) → tool_result (final).
+	executor.handleNonTerminalEvent(ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Edit", ID: "tool-dur-3", Input: `{"file_path":"/a.go"}`, Done: false},
+	})
+	time.Sleep(10 * time.Millisecond)
+	executor.handleNonTerminalEvent(ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Edit", ID: "tool-dur-3", Input: `{"file_path":"/a.go"}`, Done: true},
+	})
+	time.Sleep(40 * time.Millisecond)
+	executor.handleNonTerminalEvent(ai.StreamEvent{
+		Type: "tool_result",
+		Tool: &ai.ToolCall{Name: "Edit", ID: "tool-dur-3", Output: "done", Status: "success"},
+	})
+
+	// The final duration should cover the full span (start → tool_result), not just input streaming.
+	require.Len(t, executor.blocks, 1)
+	block := executor.blocks[0]
+	assert.GreaterOrEqual(t, block.DurationMs, 40, "final duration should reflect full elapsed time")
+
+	record, err := GetToolCall("tool-dur-3", msgID)
+	require.NoError(t, err)
+	require.NotNil(t, record)
+	assert.GreaterOrEqual(t, record.DurationMs, 40, "DB duration should be the final value")
+}
+
+// --- UpsertToolCall and GetToolCall direct tests ---
+
 func TestUpsertToolCall_InsertAndGet(t *testing.T) {
 	setupExecutorDB(t)
 
@@ -921,7 +1057,7 @@ func TestUpsertToolCall_InsertAndGet(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert
-	err = UpsertToolCall(msgID, sid, "toolu_direct_1", "Read", json.RawMessage(`{"file_path":"/tmp/test.go"}`), "contents here", "success", "test.go", true)
+	err = UpsertToolCall(msgID, sid, "toolu_direct_1", "Read", json.RawMessage(`{"file_path":"/tmp/test.go"}`), "contents here", "success", "test.go", true, 0)
 	require.NoError(t, err)
 
 	// Get
@@ -946,11 +1082,11 @@ func TestUpsertToolCall_UpdateExisting(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert
-	err = UpsertToolCall(msgID, sid, "toolu_update_1", "Bash", json.RawMessage(`{"command":"ls"}`), "", "running", "", false)
+	err = UpsertToolCall(msgID, sid, "toolu_update_1", "Bash", json.RawMessage(`{"command":"ls"}`), "", "running", "", false, 0)
 	require.NoError(t, err)
 
 	// Update with output
-	err = UpsertToolCall(msgID, sid, "toolu_update_1", "Bash", json.RawMessage(`{"command":"ls"}`), "file1.go\nfile2.go", "completed", "listing", true)
+	err = UpsertToolCall(msgID, sid, "toolu_update_1", "Bash", json.RawMessage(`{"command":"ls"}`), "file1.go\nfile2.go", "completed", "listing", true, 0)
 	require.NoError(t, err)
 
 	// Get updated record
@@ -982,11 +1118,11 @@ func TestUpsertToolCall_EmptyOutputNotOverwritten(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert with output
-	err = UpsertToolCall(msgID, sid, "toolu_output_1", "Read", json.RawMessage(`{}`), "existing output", "success", "", true)
+	err = UpsertToolCall(msgID, sid, "toolu_output_1", "Read", json.RawMessage(`{}`), "existing output", "success", "", true, 0)
 	require.NoError(t, err)
 
 	// Update with empty output — should keep existing output
-	err = UpsertToolCall(msgID, sid, "toolu_output_1", "Read", json.RawMessage(`{}`), "", "updated", "", true)
+	err = UpsertToolCall(msgID, sid, "toolu_output_1", "Read", json.RawMessage(`{}`), "", "updated", "", true, 0)
 	require.NoError(t, err)
 
 	record, err := GetToolCall("toolu_output_1", msgID)

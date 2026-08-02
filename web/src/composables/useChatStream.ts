@@ -278,6 +278,7 @@ export function useChatStream(options: UseChatStreamOptions) {
             if (data.summary !== undefined) existing.summary = data.summary
             if (data.display_name !== undefined) existing.display_name = data.display_name
             if (data.file_path !== undefined) existing.file_path = data.file_path
+            if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
           } else {
             const newBlock: ContentBlock = {
               type: 'tool_use', name: data.name!, id: data.id!, done: true,
@@ -289,6 +290,7 @@ export function useChatStream(options: UseChatStreamOptions) {
             if (data.summary) newBlock.summary = data.summary
             if (data.display_name) newBlock.display_name = data.display_name
             if (data.file_path) newBlock.file_path = data.file_path
+            if (data.duration_ms !== undefined) newBlock.duration_ms = data.duration_ms
             blocks.push(newBlock)
           }
           const timer = toolUseTimeouts.get(data.id!)
@@ -356,6 +358,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           if (data.name) existing.name = data.name
           if (data.status !== undefined) existing.status = data.status
           existing.done = true
+          if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
         }
         const timer = toolUseTimeouts.get(data.id!)
         if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id!) }

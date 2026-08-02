@@ -390,7 +390,7 @@ func TestServeToolCallDetail_Found(t *testing.T) {
 	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", `{"blocks":[]}`, nil, false, "")
 	require.NoError(t, err)
 
-	err = service.UpsertToolCall(msgID, sessionID, "toolu_td01", "Read", json.RawMessage(`{"file_path":"/tmp/test.go"}`), "contents", "success", "test.go", true)
+	err = service.UpsertToolCall(msgID, sessionID, "toolu_td01", "Read", json.RawMessage(`{"file_path":"/tmp/test.go"}`), "contents", "success", "test.go", true, 0)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/tool-call?tool_id=toolu_td01&message_id="+fmt.Sprintf("%d", msgID), nil)
@@ -447,7 +447,7 @@ func TestServeToolCallDetail_ProjectMismatch(t *testing.T) {
 	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", `{"blocks":[]}`, nil, false, "")
 	require.NoError(t, err)
 
-	err = service.UpsertToolCall(msgID, sessionID, "toolu_td02", "Read", json.RawMessage(`{}`), "contents", "success", "", true)
+	err = service.UpsertToolCall(msgID, sessionID, "toolu_td02", "Read", json.RawMessage(`{}`), "contents", "success", "", true, 0)
 	require.NoError(t, err)
 
 	otherDir := env.WatchDir + "/other-project"
@@ -489,11 +489,11 @@ func TestServeToolCallDetail_SessionIDFallback(t *testing.T) {
 	require.NoError(t, err)
 
 	// Tool call stored under msgID1 (first assistant message)
-	err = service.UpsertToolCall(msgID1, sessionID, "toolu_split01", "Read", json.RawMessage(`{"file_path":"/tmp/a.go"}`), "contents-a", "success", "", true)
+	err = service.UpsertToolCall(msgID1, sessionID, "toolu_split01", "Read", json.RawMessage(`{"file_path":"/tmp/a.go"}`), "contents-a", "success", "", true, 0)
 	require.NoError(t, err)
 
 	// Tool call stored under msgID2 (second assistant message)
-	err = service.UpsertToolCall(msgID2, sessionID, "toolu_split02", "Write", json.RawMessage(`{"file_path":"/tmp/b.go"}`), "contents-b", "success", "", true)
+	err = service.UpsertToolCall(msgID2, sessionID, "toolu_split02", "Write", json.RawMessage(`{"file_path":"/tmp/b.go"}`), "contents-b", "success", "", true, 0)
 	require.NoError(t, err)
 
 	// Case 1: Wrong message_id but correct session_id → should find via fallback

@@ -190,6 +190,21 @@ describe('useTaskExecStream', () => {
       stream.stopPreview()
     })
 
+    it('copies duration_ms from tool_result onto the block', () => {
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('tool_use', { name: 'Bash', id: 'tool-dur', done: false })
+      simulateWsEvent('tool_result', { id: 'tool-dur', status: 'success', duration_ms: 6700 })
+
+      const msg = stream.streamingMsg.value
+      const toolBlock = msg!.blocks.find((b: any) => b.id === 'tool-dur')
+      expect(toolBlock.done).toBe(true)
+      expect(toolBlock.duration_ms).toBe(6700)
+
+      stream.stopPreview()
+    })
+
     it('handles stream_start event', () => {
       const { stream } = createStream()
       stream.startPreview()

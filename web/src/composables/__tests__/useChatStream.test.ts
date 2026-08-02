@@ -589,6 +589,42 @@ describe('useChatStream', () => {
       expect(toolBlock.status).toBe('success')
     })
 
+    it('should copy duration_ms from tool_result onto the existing block', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+
+      simulateWsEvent('tool_use', { name: 'Read', id: 'tool-dur', input: { file_path: '/tmp/test.txt' } })
+      simulateWsEvent('tool_result', { id: 'tool-dur', status: 'success', duration_ms: 4200 })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      const toolBlock = assistantMsg.blocks.find(
+        (b: any) => b.type === 'tool_use' && b.id === 'tool-dur'
+      )
+      expect(toolBlock.duration_ms).toBe(4200)
+    })
+
+    it('should copy duration_ms from a done tool_use event', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+
+      simulateWsEvent('tool_use', { name: 'Read', id: 'tool-dur-2', input: { file_path: '/tmp/test.txt' } })
+      simulateWsEvent('tool_use', { name: 'Read', id: 'tool-dur-2', done: true, status: 'success', duration_ms: 1500 })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      const toolBlock = assistantMsg.blocks.find(
+        (b: any) => b.type === 'tool_use' && b.id === 'tool-dur-2'
+      )
+      expect(toolBlock.duration_ms).toBe(1500)
+    })
+
     it('should do nothing if no matching tool_use block exists', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)

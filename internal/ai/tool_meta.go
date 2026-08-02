@@ -15,9 +15,10 @@ type ToolCallMeta struct {
 	Summary     string `json:"summary"`
 	DisplayName string `json:"display_name"`
 	FilePath    string `json:"file_path"`
+	DurationMs  int    `json:"duration_ms,omitempty"`
 }
 
-// ExtractToolCallMeta extracts metadata (summary, display_name, file_path)
+// ExtractToolCallMeta extracts metadata (summary, display_name, file_path, duration_ms)
 // from a StreamEvent. This is called before WS forwarding so that
 // slim WS events can include display information without waiting for
 // AccumulateBlock.
@@ -36,6 +37,7 @@ func ExtractToolCallMeta(event StreamEvent) ToolCallMeta {
 		Summary:     ExtractSummary(event.Tool.Name, input),
 		DisplayName: ExtractDisplayName(event.Tool.Name, input),
 		FilePath:    ExtractFilePath(event.Tool.Name, input),
+		DurationMs:  event.Tool.DurationMs,
 	}
 }
 

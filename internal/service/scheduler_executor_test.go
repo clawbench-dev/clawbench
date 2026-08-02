@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS chat_tool_calls (
 	status TEXT DEFAULT '',
 	done INTEGER NOT NULL DEFAULT 0,
 	summary TEXT DEFAULT '',
+	duration_ms INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(tool_id, message_id)
 );

@@ -23,6 +23,7 @@ export interface ContentBlock {
   summary?: string
   display_name?: string
   file_path?: string
+  duration_ms?: number
   _key?: string
   reason?: string
   [key: string]: unknown
@@ -64,6 +65,7 @@ export interface ToolUseEventData {
   summary?: string
   display_name?: string
   file_path?: string
+  duration_ms?: number
 }
 
 /** SSE event data for mode/config/thinking_effort events */
