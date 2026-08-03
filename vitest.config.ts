@@ -1,6 +1,20 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import { realpathSync } from 'fs'
+
+// In git worktrees, web/node_modules may be a symlink into the primary
+// checkout's node_modules. Vite's fs.allow by default denies serving files
+// whose realpath lies outside the project root, which breaks imports such as
+// @lobehub/icons-static-svg SVG assets. Resolve the symlink's real target and
+// add it to the allowlist so tests run identically in worktrees.
+const webNodeModules = resolve(__dirname, 'web/node_modules')
+let webNodeModulesReal: string | null = null
+try {
+  webNodeModulesReal = realpathSync(webNodeModules)
+} catch {
+  // web/node_modules missing or not a symlink — nothing extra to allow
+}
 
 // Vite plugin: resolve static asset references (e.g., /logo.png) to the
 // actual file in the assets directory so they can be found during tests.
@@ -44,6 +58,11 @@ export default defineConfig({
     },
   },
   publicDir: resolve(__dirname, 'assets'),
+  server: {
+    fs: {
+      allow: [__dirname, ...(webNodeModulesReal ? [webNodeModulesReal] : [])],
+    },
+  },
   test: {
     environment: 'jsdom',
     css: true,
