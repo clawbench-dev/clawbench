@@ -19,114 +19,141 @@
       />
       <ConnectionOverlay />
 
-      <main class="main-content">
+      <main class="main-content" :class="{ 'big-screen': isBigScreen }">
+        <!-- Big-screen vertical dock (non-chat tabs only) -->
+        <div v-show="isBigScreen" class="big-dock">
+          <div class="big-dock-center">
+            <div class="dock-active-indicator big-dock-active-indicator" :style="bigDockIndicatorStyle"></div>
+            <div v-for="tab in BIG_SCREEN_DOCK_TABS" :key="tab" class="dock-btn-wrap">
+              <button class="dock-btn" :class="bigDockBtnClass(tab)" @click.stop="switchLeftTab(tab)" :title="bigDockTabTitle(tab)">
+                <component :is="bigDockTabIcon(tab)" />
+              </button>
+              <span v-if="bigDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': bigDockBadgeAnim(tab) }" @animationend="bigDockBadgeAnimEnd(tab)">{{ formatBadgeCount(bigDockBadgeCount(tab)) }}</span>
+            </div>
+          </div>
+        </div>
+
         <div class="content-area" id="contentArea">
-          <!-- Chat Tab -->
-          <TabPanel tabId="chat" :activeTab="activeTab">
-            <template #header>
-              <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
-              <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description">
-                <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
+          <SplitView
+            :enabled="isBigScreen"
+            :ratio="splitRatio"
+            @update:ratio="onSplitRatioChange"
+          >
+            <template #left>
+              <div class="col-left" v-show="isBigScreen || activeTab !== 'chat'">
+                <!-- File Browse Tab (合一：目录浏览 + 文件覆盖预览) -->
+                <TabPanel tabId="browse" :activeTab="leftPanelActive" :noHeader="true">
+                  <div class="browse-panel">
+                    <FileManagerContent
+                      ref="fileManagerRef"
+                      :entries="dirEntries"
+                      :current-dir="currentDir"
+                      :current-file="currentFile"
+                      :show-hidden="showHidden"
+                      :sort-field="sortField"
+                      :sort-dir="sortDir"
+                      :dir-loading="store.state.dirLoading"
+                      :search-drawer="fileSearchDrawer"
+                      :recent-drawer="recentFilesDrawer"
+                      @navigate-dir="handleNavigateDir"
+                      @navigate-back="handleNavigateBack"
+                      @select-file="handleBrowseSelectFile"
+                      @toggle-sort="handleToggleSort"
+                      @toggle-hidden="toggleHidden"
+                      @rename="handleRename"
+                      @delete="handleDelete"
+                      @batch-delete="handleBatchDelete"
+                      @refresh="handleRefresh"
+                      @open-terminal="handleOpenTerminal"
+                    />
+                    <FileOverlay
+                      ref="fileOverlayRef"
+                      :overlay-open="fileNav.overlayOpen.value"
+                      :current-file="currentFile"
+                      :file-loading="store.state.fileLoading"
+                      :toc-open="tocDrawer.effectiveOpen.value"
+                      :search-open="searchDrawer.effectiveOpen.value"
+                      :markdown-view-mode="markdownViewMode"
+                      :file-history-open="fileHistoryDrawer.effectiveOpen.value"
+                      :toc-file="tocFile"
+                      :pdf-outline="pdfOutline"
+                      @delete="handleDelete($event)"
+                      @show-details="detailsDrawer.open()"
+                      @open-git-history="openFileHistory"
+                      @toggle-toc="tocDrawer.toggle()"
+                      @toggle-search="currentFile?.content && searchDrawer.toggle()"
+                      @toggle-view="markdownViewMode = markdownViewMode === 'rendered' ? 'raw' : 'rendered'"
+                      @refresh="handleRefresh"
+                      @jump="scrollToLine"
+                      @jump-page="handleJumpPdfPage"
+                      @close-git-history="fileHistoryDrawer.close()"
+                      @open-file="handleOverlayOpenFile"
+                      @overlay-close="handleOverlayClose"
+                      @open-recent-files="recentFilesDrawer.open()"
+                    />
+                  </div>
+                </TabPanel>
+
+                <!-- History Tab -->
+                <TabPanel tabId="history" :activeTab="leftPanelActive" :noHeader="true">
+                  <GitHistoryContent
+                    mode="project"
+                    :active="panelIsActive('history')"
+                    @open-file="handleSelectFile"
+                  />
+                </TabPanel>
+
+                <!-- Proxy Tab -->
+                <TabPanel tabId="proxy" :activeTab="leftPanelActive" :noHeader="true">
+                  <ProxyPanelContent />
+                </TabPanel>
+
+                <!-- Terminal Tab -->
+                <TabPanel tabId="terminal" :activeTab="leftPanelActive" :noHeader="true">
+                  <TerminalPanelContent
+                    :requested-cwd="terminalRequestedCwd"
+                    :active="panelIsActive('terminal')"
+                    :platform-unsupported="isPlatformUnsupported"
+                    @cwd-handled="terminalRequestedCwd = null"
+                  />
+                </TabPanel>
+
+                <!-- Tasks Tab -->
+                <TabPanel tabId="tasks" :activeTab="leftPanelActive" :noHeader="true">
+                  <TaskTab :active="panelIsActive('tasks')" @open-file="handleTaskOpenFile" />
+                </TabPanel>
+
+                <!-- Settings Tab -->
+                <TabPanel tabId="settings" :activeTab="leftPanelActive" :noHeader="true">
+                  <SettingsPage :active="panelIsActive('settings')" />
+                </TabPanel>
               </div>
             </template>
-            <ChatPanelContent
-              :active="activeTab === 'chat'"
-              :current-file="currentFile"
-              :current-dir="currentDir"
-              @open="switchTab('chat')"
-              @open-file="handleSelectFile"
-              @task-card-click="onTaskCardClick"
-              @open-acp-sessions="acpSessionDrawer.open()"
-              @open-session-search="sessionSearchDrawer.open()"
-            />
-          </TabPanel>
 
-          <!-- File Browse Tab (合一：目录浏览 + 文件覆盖预览) -->
-          <TabPanel tabId="browse" :activeTab="activeTab" :noHeader="true">
-            <div class="browse-panel">
-              <FileManagerContent
-                ref="fileManagerRef"
-                :entries="dirEntries"
-                :current-dir="currentDir"
-                :current-file="currentFile"
-                :show-hidden="showHidden"
-                :sort-field="sortField"
-                :sort-dir="sortDir"
-                :dir-loading="store.state.dirLoading"
-                :search-drawer="fileSearchDrawer"
-                :recent-drawer="recentFilesDrawer"
-                @navigate-dir="handleNavigateDir"
-                @navigate-back="handleNavigateBack"
-                @select-file="handleBrowseSelectFile"
-                @toggle-sort="handleToggleSort"
-                @toggle-hidden="toggleHidden"
-                @rename="handleRename"
-                @delete="handleDelete"
-                @batch-delete="handleBatchDelete"
-                @refresh="handleRefresh"
-                @open-terminal="handleOpenTerminal"
-              />
-              <FileOverlay
-                ref="fileOverlayRef"
-                :overlay-open="fileNav.overlayOpen.value"
-                :current-file="currentFile"
-                :file-loading="store.state.fileLoading"
-                :toc-open="tocDrawer.effectiveOpen.value"
-                :search-open="searchDrawer.effectiveOpen.value"
-                :markdown-view-mode="markdownViewMode"
-                :file-history-open="fileHistoryDrawer.effectiveOpen.value"
-                :toc-file="tocFile"
-                :pdf-outline="pdfOutline"
-                @delete="handleDelete($event)"
-                @show-details="detailsDrawer.open()"
-                @open-git-history="openFileHistory"
-                @toggle-toc="tocDrawer.toggle()"
-                @toggle-search="currentFile?.content && searchDrawer.toggle()"
-                @toggle-view="markdownViewMode = markdownViewMode === 'rendered' ? 'raw' : 'rendered'"
-                @refresh="handleRefresh"
-                @jump="scrollToLine"
-                @jump-page="handleJumpPdfPage"
-                @close-git-history="fileHistoryDrawer.close()"
-                @open-file="handleOverlayOpenFile"
-                @overlay-close="handleOverlayClose"
-                @open-recent-files="recentFilesDrawer.open()"
-              />
-            </div>
-          </TabPanel>
-
-          <!-- History Tab -->
-          <TabPanel tabId="history" :activeTab="activeTab" :noHeader="true">
-            <GitHistoryContent
-              mode="project"
-              :active="activeTab === 'history'"
-              @open-file="handleSelectFile"
-            />
-          </TabPanel>
-
-          <!-- Proxy Tab -->
-          <TabPanel tabId="proxy" :activeTab="activeTab" :noHeader="true">
-            <ProxyPanelContent />
-          </TabPanel>
-
-          <!-- Terminal Tab -->
-          <TabPanel tabId="terminal" :activeTab="activeTab" :noHeader="true">
-            <TerminalPanelContent
-              :requested-cwd="terminalRequestedCwd"
-              :active="activeTab === 'terminal'"
-              :platform-unsupported="isPlatformUnsupported"
-              @cwd-handled="terminalRequestedCwd = null"
-            />
-          </TabPanel>
-
-          <!-- Tasks Tab -->
-          <TabPanel tabId="tasks" :activeTab="activeTab" :noHeader="true">
-            <TaskTab :active="activeTab === 'tasks'" @open-file="handleTaskOpenFile" />
-          </TabPanel>
-
-          <!-- Settings Tab -->
-          <TabPanel tabId="settings" :activeTab="activeTab" :noHeader="true">
-            <SettingsPage :active="activeTab === 'settings'" />
-          </TabPanel>
+            <template #right>
+              <div class="col-right" v-show="isBigScreen || activeTab === 'chat'">
+                <!-- Chat Tab -->
+                <TabPanel tabId="chat" :activeTab="chatActive">
+                  <template #header>
+                    <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
+                    <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description">
+                      <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
+                    </div>
+                  </template>
+                  <ChatPanelContent
+                    :active="isBigScreen || activeTab === 'chat'"
+                    :current-file="currentFile"
+                    :current-dir="currentDir"
+                    @open="switchTab('chat')"
+                    @open-file="handleSelectFile"
+                    @task-card-click="onTaskCardClick"
+                    @open-acp-sessions="acpSessionDrawer.open()"
+                    @open-session-search="sessionSearchDrawer.open()"
+                  />
+                </TabPanel>
+              </div>
+            </template>
+          </SplitView>
         </div>
       </main>
 
@@ -193,7 +220,7 @@
       />
 
       <!-- Bottom dock (tab bar) -->
-      <div v-if="isAuthenticated" v-show="!anyKeyboardActive" class="bottom-dock-wrapper">
+      <div v-if="isAuthenticated" v-show="!anyKeyboardActive && !isBigScreen" class="bottom-dock-wrapper">
         <div ref="dockRef" class="bottom-dock">
           <div class="dock-center">
             <div class="dock-active-indicator" :style="dockIndicatorStyle"></div>
@@ -346,6 +373,14 @@ import { store, loadBrowseDir } from './stores/app.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
 import { formatBadgeCount } from './utils/format.ts'
+import SplitView from './components/common/SplitView.vue'
+import {
+  useBigScreenLayout,
+  switchLeftTab,
+  setSplitRatio,
+  registerBigScreenCallbacks,
+  BIG_SCREEN_DOCK_TABS,
+} from './composables/useBigScreenLayout'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
@@ -452,6 +487,18 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
 
 const activeTab = ref('chat')
 
+// ── Big-screen layout state ──
+const { isBigScreen, leftTab, splitRatio } = useBigScreenLayout()
+
+const chatActive = computed(() => (isBigScreen.value ? 'chat' : activeTab.value))
+const leftPanelActive = computed(() => (isBigScreen.value ? leftTab.value : activeTab.value))
+const panelIsActive = (tabId) =>
+  isBigScreen.value ? leftTab.value === tabId : activeTab.value === tabId
+
+function onSplitRatioChange(ratio) {
+  setSplitRatio(ratio)
+}
+
 // Dock active indicator — water-drop sliding highlight
 // Dynamic button count: chat, browse, history, [inline overflow...], [overflow btn]
 const DOCK_STEP = 46 // 34 (btn width) + 12 (gap)
@@ -472,6 +519,12 @@ const dockIndicatorStyle = computed(() => ({
 }))
 
 function switchTab(tab) {
+  if (isBigScreen.value) {
+    // Big-screen: chat is always visible; non-chat tabs route to the left column
+    if (tab === 'chat') return
+    switchLeftTab(tab)
+    return
+  }
   if (activeTab.value === tab) return
   activeTab.value = tab
   // Auto-close all drawers not belonging to the new tab
@@ -1237,6 +1290,90 @@ function handleInlineOverflowClick(tab) {
   }
 }
 
+// Big-screen mode transitions: keep useTabDrawer's currentTab coherent
+// (chat drawers work in wide mode; collapse returns to the last active tab).
+watch(isBigScreen, (val) => {
+  if (val) {
+    // Continuity-first (Q1A): adopt activeTab if non-chat, else keep persisted leftTab
+    const next = activeTab.value !== 'chat' ? activeTab.value : leftTab.value
+    if (leftTab.value !== next) switchLeftTab(next)
+    onTabSwitch('chat')
+    overflowMenuOpen.value = false
+  } else {
+    onTabSwitch(activeTab.value)
+  }
+}, { immediate: true })
+
+// Route leftTab side-effects (reuse narrow-mode behaviors) and sync activeTab (Q3B)
+registerBigScreenCallbacks({
+  setActiveTab: (tab) => { activeTab.value = tab },
+  sideEffects: (tab) => {
+    if (tab === 'browse') store.loadFiles(store.state.currentDir)
+    if (tab === 'tasks') { store.state.taskUnreadCount = 0; loadTasks() }
+  },
+})
+
+// ── Big-screen vertical dock helpers ──
+const bigScreenTabMeta = {
+  browse: { icon: FolderOpen, titleKey: 'nav.fileManager' },
+  history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
+  tasks: overflowTabMeta.tasks,
+  proxy: overflowTabMeta.proxy,
+  terminal: overflowTabMeta.terminal,
+  settings: overflowTabMeta.settings,
+}
+
+function bigDockTabIcon(tab) {
+  return bigScreenTabMeta[tab]?.icon ?? FolderOpen
+}
+function bigDockTabTitle(tab) {
+  return bigScreenTabMeta[tab] ? t(bigScreenTabMeta[tab].titleKey) : ''
+}
+function bigDockBtnClass(tab) {
+  return {
+    active: leftTab.value === tab,
+    'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && leftTab.value !== 'tasks',
+    'just-completed': tab === 'tasks' && store.state.taskJustCompleted && leftTab.value !== 'tasks',
+    'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
+  }
+}
+function bigDockBadgeCount(tab) {
+  switch (tab) {
+    case 'history': return store.state.gitWorkingTreeChangeCount
+    case 'tasks': return store.state.taskUnreadCount
+    case 'terminal': return store.state.terminalSessionCount
+    case 'proxy': return store.state.portForwardActiveCount
+    default: return 0
+  }
+}
+function bigDockBadgeVisible(tab) {
+  return bigDockBadgeCount(tab) > 0 && leftTab.value !== tab
+}
+function bigDockBadgeAnim(tab) {
+  switch (tab) {
+    case 'history': return historyBadgeAnim.value
+    case 'tasks': return taskBadgeAnim.value
+    case 'terminal': return terminalBadgeAnim.value
+    case 'proxy': return proxyBadgeAnim.value
+    default: return false
+  }
+}
+function bigDockBadgeAnimEnd(tab) {
+  switch (tab) {
+    case 'history': historyBadgeAnim.value = false; break
+    case 'tasks': taskBadgeAnim.value = false; break
+    case 'terminal': terminalBadgeAnim.value = false; break
+    case 'proxy': proxyBadgeAnim.value = false; break
+  }
+}
+const bigDockActiveIndex = computed(() => {
+  const i = BIG_SCREEN_DOCK_TABS.indexOf(leftTab.value)
+  return i >= 0 ? i : 0
+})
+const bigDockIndicatorStyle = computed(() => ({
+  transform: `translate(-50%, ${bigDockActiveIndex.value * DOCK_STEP}px)`,
+}))
+
 const isOverflowTabActive = computed(() => popupOverflowTabs.value.includes(activeTab.value))
 
 const overflowPopupStyle = computed(() => {
@@ -1688,6 +1825,13 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Big-screen split panes — positioned ancestors for the absolute TabPanels */
+.col-left,
+.col-right {
+    position: relative;
+    height: 100%;
 }
 
 /* When chat keyboard is open on iOS/PWA (no adjustResize), shrink the app container
