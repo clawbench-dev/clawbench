@@ -936,5 +936,3 @@ func TestServeFileCopy(t *testing.T) {
 		assert.Equal(t, "content", string(data))
 	})
 }
-
-
