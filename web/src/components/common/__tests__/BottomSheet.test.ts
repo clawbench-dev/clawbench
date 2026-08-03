@@ -467,3 +467,25 @@ describe('BottomSheet unmount cleanup', () => {
     vi.advanceTimersByTime(300)
   })
 })
+
+describe('BottomSheet wide prop', () => {
+  let wrapper: VueWrapper<any> | null = null
+
+  afterEach(() => {
+    if (wrapper) {
+      wrapper.unmount()
+      wrapper = null
+    }
+    document.body.querySelectorAll('.bs-overlay').forEach(el => el.remove())
+  })
+
+  it('adds bs-wide class to the panel when wide=true', () => {
+    wrapper = mountSheet({ wide: true })
+    expect($('.bs-panel')?.classList.contains('bs-wide')).toBe(true)
+  })
+
+  it('does not add bs-wide class by default', () => {
+    wrapper = mountSheet({})
+    expect($('.bs-panel')?.classList.contains('bs-wide')).toBe(false)
+  })
+})

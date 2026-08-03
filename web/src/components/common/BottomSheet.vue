@@ -10,7 +10,7 @@
       @click.self="handleClose"
       @keydown.escape="handleEscapeKey"
     >
-      <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-compact': compact, 'bs-auto': auto, 'bs-handle-only': handleOnly }">
+      <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-compact': compact, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-wide': wide }">
         <!-- Header -->
         <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly }" @click="handleClose">
           <div class="bs-handle" />
@@ -47,6 +47,7 @@ const props = defineProps({
   auto: Boolean,     // 自适应模式，高度按内容需要，最大全屏
   noHeader: Boolean, // 隐藏Header（含手柄）
   handleOnly: Boolean, // 仅显示拖拽手柄，无标题栏
+  wide: Boolean, // 大屏模式放宽面板宽度（默认 560px → 820px）
   transparentOverlay: Boolean, // 透明遮罩（可点击关闭但可见底层内容）
   fullscreen: Boolean, // 全屏模式，覆盖 app header，用于无 header 的页面（如终端）
   closeGuard: Boolean, // 阻止一切关闭操作（overlay点击/header点击/返回手势），用于内部有原生选择器等场景
@@ -359,5 +360,17 @@ defineExpose({
   top: 0;
   bottom: 0;
   z-index: 1200;
+}
+
+/* Big-screen (≥1024px): constrain bottom-sheet width and center it.
+   Keep narrow screens full-width. */
+@media (min-width: 1024px) {
+  .bs-panel {
+    max-width: 560px;
+    margin: 0 auto;
+  }
+  .bs-panel.bs-wide {
+    max-width: 820px;
+  }
 }
 </style>
