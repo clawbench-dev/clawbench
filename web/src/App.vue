@@ -648,7 +648,7 @@ const sortField = ref(localConfig.sortField || null)
 const sortDir = ref(localConfig.sortDir || 'asc')
 
 useFileWatch({
-  fileManagerOpen: computed(() => activeTab.value === 'browse'),
+  fileManagerOpen: computed(() => leftPanelActive.value === 'browse'),
   currentDir: computed(() => store.state.currentDir),
   currentFile: computed(() => store.state.currentFile),
 })
@@ -676,15 +676,15 @@ const isPlatformUnsupported = computed(() => platformSupported.value === false)
 // disabled to avoid a flash of the terminal button on first mount.
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 watch(isSSHDisabled, (disabled) => {
-  if (disabled && activeTab.value === 'proxy') {
-    switchTab('chat')
+  if (disabled && panelIsActive('proxy')) {
+    switchTab(isBigScreen.value ? 'browse' : 'chat')
   }
 })
 watch(isTerminalDisabled, (disabled) => {
   // Only force-switch when terminal is config-disabled (not platform unsupported).
   // Platform unsupported shows a dedicated empty state — user can stay on the tab.
-  if (disabled && !isPlatformUnsupported.value && activeTab.value === 'terminal') {
-    switchTab('chat')
+  if (disabled && !isPlatformUnsupported.value && panelIsActive('terminal')) {
+    switchTab(isBigScreen.value ? 'browse' : 'chat')
   }
 })
 const { navigateToTaskSettings, navigateToTaskHistory, openExecDetail, loadTasks } = useTaskTab()
@@ -720,7 +720,7 @@ useEdgeSwipeBack()
 // 文件覆盖层的返回手势：overlay 优先级高于 browse，无论 mount 顺序如何
 useFeatureBackHandler(
   'file-overlay',
-  () => activeTab.value === 'browse' && fileNav.overlayOpen.value,
+  () => panelIsActive('browse') && fileNav.overlayOpen.value,
   () => {
     if (fileNav.canGoBack.value) {
       const prevPath = fileNav.goBack()
@@ -767,7 +767,7 @@ const terminalKeyboardNeedsShrink = computed(() => terminalKeyboardActive.value 
 // Chat keyboard — on iOS WKWebView there's no adjustResize, so we detect
 // keyboard via visualViewport and compensate in the web layer.
 const { chatKeyboardHeight } = useChatKeyboard()
-const chatKeyboardActive = computed(() => activeTab.value === 'chat' && chatKeyboardHeight.value > 0)
+const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKeyboardHeight.value > 0)
 
 // Unified: any soft keyboard is open (terminal or chat)
 const anyKeyboardActive = computed(() => terminalKeyboardActive.value || chatKeyboardActive.value)
@@ -1748,6 +1748,28 @@ onMounted(async () => {
 
 // ── Ctrl+F / Cmd+F: open context-aware search drawer ──
 const _dlg = useDialog()
+function openChatSearchDrawer() {
+  if (sessionSearchDrawer.isOpen.value) {
+    sessionSearchDrawerRef.value?.focusSearchInput()
+  } else {
+    sessionSearchDrawer.open()
+  }
+}
+function openBrowseSearchDrawer() {
+  if (fileNav.overlayOpen.value) {
+    if (searchDrawer.isOpen.value) {
+      fileOverlayRef.value?.focusSearchInput()
+    } else if (currentFile.value?.content) {
+      searchDrawer.open()
+    }
+  } else {
+    if (fileSearchDrawer.isOpen.value) {
+      fileManagerRef.value?.focusSearchInput()
+    } else {
+      fileSearchDrawer.open()
+    }
+  }
+}
 function handleCtrlF(e) {
     if (!(e.ctrlKey || e.metaKey) || e.key !== 'f') return
     // Skip when focus is in input/textarea/contenteditable/terminal
@@ -1758,30 +1780,21 @@ function handleCtrlF(e) {
     // Skip when modal dialog or project dialog is open
     if (_dlg.state.value.visible || projectDialogOpen.value) return
 
-    if (activeTab.value === 'chat') {
-        // Chat tab → SessionSearchDrawer
-        e.preventDefault()
-        if (sessionSearchDrawer.isOpen.value) {
-            sessionSearchDrawerRef.value?.focusSearchInput()
+    if (isBigScreen.value) {
+        // Two visible panes: browse (left workspace) takes priority, else chat (always visible)
+        if (panelIsActive('browse')) {
+            e.preventDefault()
+            openBrowseSearchDrawer()
         } else {
-            sessionSearchDrawer.open()
+            e.preventDefault()
+            openChatSearchDrawer()
         }
+    } else if (activeTab.value === 'chat') {
+        e.preventDefault()
+        openChatSearchDrawer()
     } else if (activeTab.value === 'browse') {
-        // Browse tab → context-aware: overlay open → SearchDrawer (content), else → FileSearchDrawer (filename)
         e.preventDefault()
-        if (fileNav.overlayOpen.value) {
-            if (searchDrawer.isOpen.value) {
-                fileOverlayRef.value?.focusSearchInput()
-            } else if (currentFile.value?.content) {
-                searchDrawer.open()
-            }
-        } else {
-            if (fileSearchDrawer.isOpen.value) {
-                fileManagerRef.value?.focusSearchInput()
-            } else {
-                fileSearchDrawer.open()
-            }
-        }
+        openBrowseSearchDrawer()
     }
     // Other tabs: don't preventDefault — let browser handle Ctrl+F natively
 }
