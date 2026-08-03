@@ -1,0 +1,14 @@
+/* ==========================================================================
+   Big-screen (≥1024px) two-column layout
+   Activated via .big-screen class on .main-content (bound to useBigScreenLayout.isBigScreen)
+   ========================================================================== */
+
+/* Switch the single-column flex to a horizontal dock + split layout */
+.main-content.big-screen {
+  flex-direction: row;
+}
+
+/* Let the split area shrink when the vertical dock is present */
+.main-content.big-screen .content-area {
+  min-width: 0;
+}
