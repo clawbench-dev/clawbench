@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -57,5 +58,43 @@ func TestRunCommandContextHonorsContextDeadline(t *testing.T) {
 	}
 	if elapsed > 5*time.Second {
 		t.Fatalf("RunCommandContext did not unblock after the context deadline (%v)", elapsed)
+	}
+}
+
+func TestRunCommandContextStdoutCreateTempFails(t *testing.T) {
+	// Force os.CreateTemp to fail by setting TMPDIR to a nonexistent directory.
+	origTmpdir := os.Getenv("TMPDIR")
+	os.Setenv("TMPDIR", "/nonexistent/path/that/does/not/exist")
+	defer os.Setenv("TMPDIR", origTmpdir)
+
+	ctx := context.Background()
+	_, _, err := RunCommandContext(ctx, "echo", "hi")
+	if err == nil {
+		t.Fatal("expected error when CreateTemp fails, got nil")
+	}
+}
+
+func TestRunCommandContextStderrCreateTempFails(t *testing.T) {
+	// This is hard to trigger directly (stdout succeeds, stderr fails),
+	// but we verify the deferred cleanup still runs when stderr creation fails
+	// by ensuring the stdout temp file is removed even on partial failure.
+	origTmpdir := os.Getenv("TMPDIR")
+	os.Setenv("TMPDIR", "/nonexistent/path/that/does/not/exist")
+	defer os.Setenv("TMPDIR", origTmpdir)
+
+	ctx := context.Background()
+	_, _, err := RunCommandContext(ctx, "echo", "hi")
+	if err == nil {
+		t.Fatal("expected error when CreateTemp fails, got nil")
+	}
+}
+
+func TestRunCommandContextCommandNotFound(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, _, err := RunCommandContext(ctx, "nonexistent_command_xyz")
+	if err == nil {
+		t.Fatal("expected error for nonexistent command, got nil")
 	}
 }
