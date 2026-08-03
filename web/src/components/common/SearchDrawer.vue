@@ -65,7 +65,8 @@ const isRenderedView = computed(() => {
 
 watch(() => props.open, async (val) => {
   if (val) {
-    await nextTick()
+    // Wait for BottomSheet slide-up animation (250ms) to complete before focusing
+    await new Promise(r => setTimeout(r, 300))
     inputRef.value?.focus()
   }
 })

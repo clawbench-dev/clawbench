@@ -126,10 +126,14 @@ onBeforeUnmount(() => {
 })
 
 function handleEscapeKey(e) {
-  // Don't close if focus is inside an input/textarea/contenteditable —
-  // let the native Escape behavior (blur/IME cancel) happen first
+  // If focus is inside an input/textarea/contenteditable, blur first and
+  // move focus back to the overlay so the next ESC closes the drawer
   const tag = e.target?.tagName
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) {
+    e.target.blur()
+    overlayRef.value?.focus()
+    return
+  }
   handleClose()
 }
 
