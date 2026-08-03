@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -61,26 +62,27 @@ func TestRunCommandContextHonorsContextDeadline(t *testing.T) {
 	}
 }
 
-func TestRunCommandContextStdoutCreateTempFails(t *testing.T) {
-	// Force os.CreateTemp to fail by setting TMPDIR to a nonexistent directory.
-	origTmpdir := os.Getenv("TMPDIR")
-	os.Setenv("TMPDIR", "/nonexistent/path/that/does/not/exist")
-	defer os.Setenv("TMPDIR", origTmpdir)
-
-	ctx := context.Background()
-	_, _, err := RunCommandContext(ctx, "echo", "hi")
-	if err == nil {
-		t.Fatal("expected error when CreateTemp fails, got nil")
+// setBadTempDir overrides the temp directory to a nonexistent path so that
+// os.CreateTemp fails. Returns a cleanup function to restore the original value.
+func setBadTempDir(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		// On Windows, os.CreateTemp uses TEMP/TMP, not TMPDIR.
+		for _, key := range []string{"TEMP", "TMP"} {
+			orig := os.Getenv(key)
+			os.Setenv(key, `X:\nonexistent\path\that\does\not\exist`)
+			t.Cleanup(func() { os.Setenv(key, orig) })
+		}
+	} else {
+		orig := os.Getenv("TMPDIR")
+		os.Setenv("TMPDIR", "/nonexistent/path/that/does/not/exist")
+		t.Cleanup(func() { os.Setenv("TMPDIR", orig) })
 	}
 }
 
-func TestRunCommandContextStderrCreateTempFails(t *testing.T) {
-	// This is hard to trigger directly (stdout succeeds, stderr fails),
-	// but we verify the deferred cleanup still runs when stderr creation fails
-	// by ensuring the stdout temp file is removed even on partial failure.
-	origTmpdir := os.Getenv("TMPDIR")
-	os.Setenv("TMPDIR", "/nonexistent/path/that/does/not/exist")
-	defer os.Setenv("TMPDIR", origTmpdir)
+func TestRunCommandContextCreateTempFails(t *testing.T) {
+	// Force os.CreateTemp to fail by setting the temp directory to a nonexistent path.
+	setBadTempDir(t)
 
 	ctx := context.Background()
 	_, _, err := RunCommandContext(ctx, "echo", "hi")

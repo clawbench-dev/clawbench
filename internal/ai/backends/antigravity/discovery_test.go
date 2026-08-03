@@ -3,6 +3,7 @@ package antigravity
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -103,6 +104,9 @@ func TestDiscoverAntigravityModels_FallsBackOnMissingBinary(t *testing.T) {
 }
 
 func TestDiscoverAntigravityModels_SucceedsWithMockBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock script relies on sh, not available on Windows")
+	}
 	// Create a mock `agy` script that returns model output, so the success
 	// path (parseAgyModels on stdout) is exercised in CI.
 	tmpDir := t.TempDir()
