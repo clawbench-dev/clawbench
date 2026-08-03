@@ -1,5 +1,8 @@
 import { ref, computed, watch, onUnmounted, getCurrentInstance, type Ref, type ComputedRef, readonly } from 'vue'
 import { appLog } from '@/utils/appLog'
+import { getBigScreenState } from './useBigScreenLayout'
+
+const { isBigScreen, leftTab } = getBigScreenState()
 
 /**
  * Tab-drawer declarative binding registry.
@@ -109,15 +112,24 @@ export function useTabDrawer(tabId: string, openRefOrOptions?: Ref<boolean> | Ta
     })
   }
 
-  const effectiveOpen = computed(() => currentTab.value === tabId && openRef.value)
+  const effectiveOpen = computed(() => {
+    const tabActive =
+      currentTab.value === tabId ||
+      (isBigScreen.value && (tabId === 'chat' || tabId === leftTab.value))
+    return tabActive && openRef.value
+  })
 
-  // For autoRestore: false, close the drawer when tab switches away
+  // For autoRestore: false, close the drawer when its tab is no longer active
+  // (narrow: currentTab changed; big-screen: leftTab changed away)
   if (!autoRestore) {
-    watch(() => currentTab.value, (newTab) => {
-      if (newTab !== tabId && openRef.value) {
-        openRef.value = false
-      }
-    })
+    const closeIfInactive = () => {
+      if (!openRef.value) return
+      const active =
+        currentTab.value === tabId ||
+        (isBigScreen.value && (tabId === 'chat' || tabId === leftTab.value))
+      if (!active) openRef.value = false
+    }
+    watch(() => [currentTab.value, isBigScreen.value, leftTab.value], closeIfInactive)
   }
 
   return {
