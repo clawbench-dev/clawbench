@@ -84,6 +84,16 @@ describe('getWarningText', () => {
   it('handles null/undefined text gracefully', () => {
     expect(getWarningText({ reason: undefined, text: undefined }, t)).toBe('')
   })
+
+  it('appends detail for request_failed with text', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.request_failed' ? 'AI request failed' : key
+    expect(getWarningText({ reason: 'request_failed', text: 'Internal error: Upstream request failed: Insufficient Balance' }, tFound)).toBe('AI request failed: Internal error: Upstream request failed: Insufficient Balance')
+  })
+
+  it('returns translated text for request_failed without text', () => {
+    const tFound = (key: string) => key === 'chat.contentBlocks.warningReasons.request_failed' ? 'AI request failed' : key
+    expect(getWarningText({ reason: 'request_failed' }, tFound)).toBe('AI request failed')
+  })
 })
 
 // ── statusClass ──

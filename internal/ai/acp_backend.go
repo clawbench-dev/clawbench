@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	acp "github.com/coder/acp-go-sdk"
+
 	"clawbench/internal/model"
 )
 
@@ -159,7 +161,17 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			// agent cancelled the turn). The agent process is still alive and
 			// the connection is usable — surface as an amber warning card so
 			// the user can retry without losing the session.
-			forwardACPEvent(ch, StreamEvent{Type: "warning", Content: fmt.Sprintf("acp: prompt: %v", err), Reason: ReasonRequestFailed})
+			//
+			// Extract human-readable error message from ACP RequestError.
+			// RequestError.Error() returns the full JSON blob which is not
+			// useful to the end user — we want just the .Message field
+			// (e.g. "Internal error: Upstream request failed: [invalid_request_error] Insufficient Balance").
+			errContent := err.Error()
+			var reqErr *acp.RequestError
+			if errors.As(err, &reqErr) {
+				errContent = reqErr.Message
+			}
+			forwardACPEvent(ch, StreamEvent{Type: "warning", Content: errContent, Reason: ReasonRequestFailed})
 			forwardACPEvent(ch, StreamEvent{Type: "done"})
 			return
 		}

@@ -18,6 +18,7 @@ export function isSevereWarning(block: { reason?: string }): boolean {
  * Get localized warning/error text.
  * Uses reason code to look up i18n key, falls back to block.text.
  * For parse_error and backend_exit, appends detail after colon/newline.
+ * For request_failed, appends the human-readable error detail.
  */
 export function getWarningText(
   block: { reason?: string; text?: string },
@@ -30,6 +31,7 @@ export function getWarningText(
     if (translated !== key) {
       // For parse_error: append detail after ": " from block.text
       // For backend_exit: append stderr after "\n" from block.text
+      // For request_failed: append human-readable error detail
       if ((block.reason === 'parse_error' || block.reason === 'backend_exit') && block.text) {
         const newlineIdx = block.text.indexOf('\n')
         if (newlineIdx >= 0) {
@@ -39,6 +41,9 @@ export function getWarningText(
         if (colonIdx >= 0) {
           return translated + ': ' + block.text.substring(colonIdx + 2)
         }
+      }
+      if (block.reason === 'request_failed' && block.text) {
+        return translated + ': ' + block.text
       }
       return translated
     }
