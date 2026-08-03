@@ -57,6 +57,7 @@
 |---|---|
 | `web/src/App.vue` | `.content-area` 内包 `col-left`/`col-right` + `SplitView`；新增纵向 Dock 块与相关状态/函数；`switchTab` 模式感知；Dock 隐藏；CSS 竖排变体 |
 | `web/src/composables/useTabDrawer.ts` | 大屏感知的 `effectiveOpen` 与 autoRestore watcher |
+| `web/src/components/common/BottomSheet.vue` | 大屏下 `.bs-panel` 全局限宽 + `wide` prop 逃逸通道（见第 6.5 节） |
 | `web/index.html` | 引入 `big-screen.css` |
 | `web/src/composables/__tests__/useTabDrawer.test.ts` | 增加大屏双激活标签用例 |
 
@@ -158,6 +159,22 @@ autoRestore:false 的 watcher 从仅监听 `currentTab` 扩展为同时监听 `c
 
 **最小宽度兜底**：容器 CSS `min-width` 同步设 320px，避免首帧跳动。
 
+### 6.5 大屏下抽屉宽度（方案 B：全局限宽 + 逃逸通道）
+
+**问题**：`.bs-panel` 为 `position:fixed` 全视口底部对齐（BottomSheet.vue:158-191），大屏下横跨全宽不美观。
+
+**方案**：
+- BottomSheet.vue 样式新增：
+  ```css
+  @media (min-width: 1024px) {
+    .bs-panel { max-width: 560px; margin: 0 auto; }   /* 底部对齐 + 水平居中 */
+    .bs-panel.bs-wide { max-width: 820px; }
+  }
+  ```
+- 新增 `wide` prop（Boolean）→ `.bs-wide` class。内容型抽屉（会话列表、文件搜索、Agent 选择器、Git 历史等富内容抽屉）按需标记 `wide`。
+- 阈值 1024px 与大屏触发宽度一致；窄屏（<1024）行为完全不变。
+- **不锚定栏内**（方案 D 否决）：BottomSheet 硬编码 `<Teleport to="body">`、95 处用法、栏矩形动态跟踪、双形态定位，改造面过大。
+
 ## 7. 纵向 Dock（App.vue 内，方案一）
 
 - 新增 `.big-dock` 块（`v-show="isBigScreen"`），位于 `.main-content` 内、`.content-area` 左侧。
@@ -179,6 +196,7 @@ autoRestore:false 的 watcher 从仅监听 `currentTab` 扩展为同时监听 `c
 | `useBigScreenLayout.test.ts` | matchMedia mock（有/无 matchMedia）；isBigScreen 翻转；leftTab 默认 browse/连续性采纳/持久化；clampSplitRatio 边界（0.5 默认、极值、容器过窄）；switchLeftTab side-effect 回调触发 |
 | `useTabDrawer.test.ts`（扩展） | 大屏下 chat 与 leftTab 双激活；autoRestore:false 随 leftTab 切换关闭；窄屏行为回归不变 |
 | `SplitView.test.ts` | enabled 两种形态；ratio→px 换算与 clamp；拖动 pointer 数学（纯 helper）；update:ratio 事件 |
+| `BottomSheet`（如已有测试则扩展） | `wide` prop 绑定 `.bs-wide` class（宽屏限宽为 CSS 媒体查询，jsdom 下验证 class 绑定即可） |
 
 ## 10. 不做（YAGNI）
 
@@ -186,4 +204,5 @@ autoRestore:false 的 watcher 从仅监听 `currentTab` 扩展为同时监听 `c
 - 分隔线键盘无障碍（←/→ 调整）
 - 大屏模式下 chat 可移至左栏
 - 独立标签状态入 store 的重构
+- 抽屉栏内锚定（方案 D / D-lite，见 6.5）
 - DockBar.vue 组件抽取（方案二，留待将来）
