@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest'
+import { nextTick } from 'vue'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer'
 import { _setBigScreenForTest, resetBigScreenState as resetBigScreen, switchLeftTab } from '@/composables/useBigScreenLayout'
 
@@ -151,7 +152,7 @@ describe('useTabDrawer big-screen awareness', () => {
     expect(chatDrawer.effectiveOpen.value).toBe(true)
   })
 
-  it('big-screen: autoRestore:false closes when leftTab switches away', () => {
+  it('big-screen: autoRestore:false closes when leftTab switches away', async () => {
     _setBigScreenForTest(true)
     switchLeftTab('browse')
     const drawer = useTabDrawer('browse', { autoRestore: false })
@@ -159,6 +160,8 @@ describe('useTabDrawer big-screen awareness', () => {
     expect(drawer.effectiveOpen.value).toBe(true)
 
     switchLeftTab('tasks')
+    await nextTick()
+    expect(drawer.isOpen.value).toBe(false)
     expect(drawer.effectiveOpen.value).toBe(false)
   })
 })
