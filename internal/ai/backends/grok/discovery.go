@@ -3,7 +3,6 @@ package grok
 import (
 	"context"
 	"log/slog"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -101,14 +100,13 @@ func DiscoverGrokModels() []model.AgentModel {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "grok", "models")
-	out, err := cmd.Output()
+	stdout, _, err := model.RunCommandContext(ctx, "grok", "models")
 	if err != nil {
 		slog.Debug("grok model discovery: command failed", "error", err)
 		return grokDefaults()
 	}
 
-	models := parseGrokModels(string(out))
+	models := parseGrokModels(stdout)
 	if len(models) == 0 {
 		slog.Debug("grok model discovery: no models parsed, using defaults")
 		return grokDefaults()

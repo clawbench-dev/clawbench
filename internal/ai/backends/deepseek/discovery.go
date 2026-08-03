@@ -3,7 +3,6 @@ package deepseek
 import (
 	"context"
 	"log/slog"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -69,19 +68,17 @@ func DiscoverDeepSeekModels() []model.AgentModel {
 	defer cancel()
 
 	// Try primary command first
-	cmd := exec.CommandContext(ctx, "codewhale", "models")
-	out, err := cmd.CombinedOutput()
+	stdout, stderr, err := model.RunCommandContext(ctx, "codewhale", "models")
 	if err != nil {
 		// Fallback to legacy command
-		cmd = exec.CommandContext(ctx, "deepseek", "models")
-		out, err = cmd.CombinedOutput()
+		stdout, stderr, err = model.RunCommandContext(ctx, "deepseek", "models")
 		if err != nil {
 			slog.Debug("deepseek model discovery: command failed", "error", err)
 			return nil
 		}
 	}
 
-	models := parseDeepSeekModels(string(out))
+	models := parseDeepSeekModels(stdout + stderr)
 	if len(models) == 0 {
 		slog.Debug("deepseek model discovery: no models parsed")
 		return nil

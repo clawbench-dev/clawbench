@@ -3,7 +3,6 @@ package pi
 import (
 	"context"
 	"log/slog"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -60,15 +59,14 @@ func DiscoverPiModels() []model.AgentModel {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, piCmd, "--list-models")
-	// Pi outputs the model table to stderr; use CombinedOutput to capture both.
-	out, err := cmd.CombinedOutput()
+	// Pi outputs the model table to stderr; parse both streams (CombinedOutput semantics).
+	stdout, stderr, err := model.RunCommandContext(ctx, piCmd, "--list-models")
 	if err != nil {
 		slog.Debug("pi model discovery: command failed", "error", err)
 		return nil
 	}
 
-	models := ParsePiModels(string(out))
+	models := ParsePiModels(stdout + stderr)
 	if len(models) == 0 {
 		slog.Debug("pi model discovery: no models parsed")
 		return nil

@@ -3,7 +3,6 @@ package antigravity
 import (
 	"context"
 	"log/slog"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -107,14 +106,13 @@ func DiscoverAntigravityModels() []model.AgentModel {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "agy", "models")
-	out, err := cmd.Output()
+	stdout, _, err := model.RunCommandContext(ctx, "agy", "models")
 	if err != nil {
 		slog.Debug("antigravity model discovery: command failed", "error", err)
 		return antigravityDefaults()
 	}
 
-	models := parseAgyModels(string(out))
+	models := parseAgyModels(stdout)
 	if len(models) == 0 {
 		slog.Debug("antigravity model discovery: no models parsed, using defaults")
 		return antigravityDefaults()

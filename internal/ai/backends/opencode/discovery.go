@@ -3,7 +3,6 @@ package opencode
 import (
 	"context"
 	"log/slog"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -57,14 +56,13 @@ func DiscoverOpenCodeModels() []model.AgentModel {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, opencodeCmd, "models")
-	out, err := cmd.Output()
+	stdout, _, err := model.RunCommandContext(ctx, opencodeCmd, "models")
 	if err != nil {
 		slog.Debug("opencode model discovery: command failed", "error", err)
 		return nil
 	}
 
-	models := parseOpenCodeModels(string(out))
+	models := parseOpenCodeModels(stdout)
 	if len(models) == 0 {
 		slog.Debug("opencode model discovery: no models parsed")
 		return nil
