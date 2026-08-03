@@ -186,7 +186,7 @@ onBeforeUnmount(() => {
 .split-view__divider:active .split-view__gutter-line {
   background: var(--accent-color, #0066cc);
 }
-body.split-view-dragging {
+:global(body.split-view-dragging) {
   user-select: none;
   cursor: col-resize;
 }

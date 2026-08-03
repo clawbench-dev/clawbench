@@ -376,6 +376,7 @@ import { formatBadgeCount } from './utils/format.ts'
 import SplitView from './components/common/SplitView.vue'
 import {
   useBigScreenLayout,
+  resolveLeftTabOnEnter,
   switchLeftTab,
   setSplitRatio,
   registerBigScreenCallbacks,
@@ -1295,7 +1296,7 @@ function handleInlineOverflowClick(tab) {
 watch(isBigScreen, (val) => {
   if (val) {
     // Continuity-first (Q1A): adopt activeTab if non-chat, else keep persisted leftTab
-    const next = activeTab.value !== 'chat' ? activeTab.value : leftTab.value
+    const next = resolveLeftTabOnEnter(activeTab.value, leftTab.value)
     if (leftTab.value !== next) switchLeftTab(next)
     onTabSwitch('chat')
     overflowMenuOpen.value = false

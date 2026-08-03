@@ -8,6 +8,7 @@ import {
   registerBigScreenCallbacks,
   _setBigScreenForTest,
   _resetForTest,
+  resolveLeftTabOnEnter,
   BIG_SCREEN_DOCK_TABS,
   LEFT_TAB_KEY,
   SPLIT_RATIO_KEY,
@@ -76,6 +77,22 @@ describe('useBigScreenLayout', () => {
     switchLeftTab('terminal')
     expect(isBigScreen.value).toBe(true)
     expect(leftTab.value).toBe('terminal')
+  })
+})
+
+describe('resolveLeftTabOnEnter', () => {
+  it('adopts a non-chat activeTab as the left tab', () => {
+    expect(resolveLeftTabOnEnter('terminal', 'browse')).toBe('terminal')
+    expect(resolveLeftTabOnEnter('settings', 'browse')).toBe('settings')
+  })
+
+  it('keeps persisted leftTab when activeTab is chat', () => {
+    expect(resolveLeftTabOnEnter('chat', 'settings')).toBe('settings')
+    expect(resolveLeftTabOnEnter('chat', 'browse')).toBe('browse')
+  })
+
+  it('falls back to browse for invalid persisted value', () => {
+    expect(resolveLeftTabOnEnter('chat', 'not-a-tab')).toBe('browse')
   })
 })
 

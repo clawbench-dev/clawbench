@@ -79,6 +79,16 @@ export function switchLeftTab(tab: string) {
   sideEffects?.(tab)
 }
 
+/**
+ * Q1A continuity rule: entering big-screen mode adopts the current narrow-mode
+ * tab as the left column tab when it is a non-chat tab; otherwise keeps the
+ * persisted/default leftTab.
+ */
+export function resolveLeftTabOnEnter(currentActiveTab: string, persistedLeftTab: string): string {
+  if (currentActiveTab !== 'chat' && BIG_SCREEN_DOCK_TABS.includes(currentActiveTab)) return currentActiveTab
+  return BIG_SCREEN_DOCK_TABS.includes(persistedLeftTab) ? persistedLeftTab : 'browse'
+}
+
 /** Normalize + persist the split ratio (persistence owned here, not in SplitView). */
 export function setSplitRatio(ratio: number) {
   splitRatio.value = normalizeRatio(ratio)

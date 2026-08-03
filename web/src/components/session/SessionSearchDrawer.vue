@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto @close="handleClose">
+  <BottomSheet :open="open" auto wide @close="handleClose">
     <template #header>
       <!-- Search results list view -->
       <template v-if="!selectedSession">

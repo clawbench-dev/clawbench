@@ -2,6 +2,7 @@
   <BottomSheet
     :open="visible"
     :auto="true"
+    wide
     :transparent-overlay="true"
     @close="emit('close')"
   >
