@@ -1,5 +1,10 @@
 <template>
-  <div ref="rootRef" class="split-view" :class="{ 'split-view--active': enabled }">
+  <div
+    ref="rootRef"
+    class="split-view"
+    :class="{ 'split-view--active': enabled }"
+    :style="{ '--split-gutter': `${gutterSize}px` }"
+  >
     <div class="split-view__left" :style="leftStyle">
       <slot name="left" />
     </div>
@@ -10,8 +15,8 @@
       role="separator"
       aria-orientation="vertical"
       :aria-valuenow="Math.round(internalRatio * 100)"
-      :aria-valuemin="Math.round(minLeftRatio)"
-      :aria-valuemax="Math.round(maxLeftRatio)"
+      :aria-valuemin="Math.round(minLeftRatio * 100)"
+      :aria-valuemax="Math.round(maxLeftRatio * 100)"
       :title="title"
       @pointerdown="onDividerPointerDown"
     >
@@ -140,7 +145,7 @@ onBeforeUnmount(() => {
 .split-view--active .split-view__left {
   flex: 0 0 auto;
   min-width: 320px;
-  max-width: calc(100% - 320px - 6px);
+  max-width: calc(100% - 320px - var(--split-gutter, 6px));
 }
 .split-view--active .split-view__right {
   flex: 1 1 auto;
@@ -150,7 +155,7 @@ onBeforeUnmount(() => {
 .split-view__divider {
   position: relative;
   flex: 0 0 auto;
-  width: 6px;
+  width: var(--split-gutter, 6px);
   cursor: col-resize;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;

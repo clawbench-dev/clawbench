@@ -61,4 +61,21 @@ describe('SplitView', () => {
     // 100px / 1000 = 0.1, clamped up to 320/1000 = 0.32
     expect(emitted[emitted.length - 1][0]).toBeCloseTo(0.32)
   })
+
+  it('gutterSize prop drives the divider width via --split-gutter CSS var', () => {
+    wrapper = mountSplit({ enabled: true, ratio: 0.5, gutterSize: 12 })
+    const root = wrapper.find('.split-view').element as HTMLElement
+    expect(root.style.getPropertyValue('--split-gutter')).toBe('12px')
+  })
+
+  it('aria-valuenow/min/max are on the same percentage scale', async () => {
+    const rect = { left: 0, width: 1000, top: 0, bottom: 0, height: 600, right: 1000, x: 0, y: 0, toJSON() {} }
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect as DOMRect)
+    wrapper = mountSplit({ enabled: true, ratio: 0.5 })
+    await nextTick()
+    const divider = wrapper.find('.split-view__divider').element as HTMLElement
+    expect(divider.getAttribute('aria-valuenow')).toBe('50')
+    expect(divider.getAttribute('aria-valuemin')).toBe('32')
+    expect(divider.getAttribute('aria-valuemax')).toBe('68')
+  })
 })
