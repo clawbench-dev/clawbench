@@ -5,6 +5,10 @@ import { _setBigScreenForTest, resetBigScreenState as resetBigScreen, switchLeft
 
 beforeEach(() => {
   resetTabDrawerState()
+  // Narrow-mode default: jsdom's innerWidth (1024) makes useBigScreenLayout's
+  // physical-width detection init to big-screen — force it off so the plain
+  // drawer tests exercise narrow behavior.
+  _setBigScreenForTest(false)
 })
 
 describe('useTabDrawer', () => {

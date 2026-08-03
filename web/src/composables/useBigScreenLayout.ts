@@ -2,9 +2,25 @@ import { ref } from 'vue'
 import { normalizeRatio } from '@/utils/splitRatio'
 
 export const BIG_SCREEN_MIN_WIDTH = 1024
+// Physical (device-pixel) width threshold for the big-screen layout. CSS width
+// alone can miss high-resolution tablets whose devicePixelRatio shrinks the CSS
+// viewport below 1024 (e.g. 2400 physical px at DPR 2.5 → 960 CSS px).
+export const BIG_SCREEN_MIN_PHYSICAL_WIDTH = 1280
 export const LEFT_TAB_KEY = 'clawbench-bigscreen-left-tab'
 export const SPLIT_RATIO_KEY = 'clawbench-bigscreen-split-ratio'
 export const BIG_SCREEN_DOCK_TABS = ['browse', 'history', 'proxy', 'terminal', 'tasks', 'settings']
+
+/**
+ * Big-screen detection. Active when the CSS viewport is ≥1024px (desktop), or
+ * when the device's physical width (CSS width × devicePixelRatio) is ≥1280px
+ * AND the viewport is landscape. The landscape gate keeps high-DPR phones in
+ * portrait (e.g. 430×3 = 1290) from accidentally splitting.
+ */
+export function computeIsBigScreen(cssWidth: number, cssHeight: number, devicePixelRatio: number): boolean {
+  const physicalWidth = cssWidth * (devicePixelRatio || 1)
+  return cssWidth >= BIG_SCREEN_MIN_WIDTH
+    || (physicalWidth >= BIG_SCREEN_MIN_PHYSICAL_WIDTH && cssWidth > cssHeight)
+}
 
 const isBigScreen = ref(false)
 const leftTab = ref<string>('browse')
@@ -38,14 +54,25 @@ function initBigScreen() {
   } catch {
     // ignore
   }
-  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-    const mql = window.matchMedia(`(min-width: ${BIG_SCREEN_MIN_WIDTH}px)`)
-    isBigScreen.value = mql.matches
-    const onChange = (e: MediaQueryListEvent) => { isBigScreen.value = e.matches }
-    if (typeof mql.addEventListener === 'function') {
-      mql.addEventListener('change', onChange)
-    } else if (typeof (mql as { addListener?: unknown }).addListener === 'function') {
-      ;(mql as { addListener: (cb: (e: MediaQueryListEvent) => void) => void }).addListener(onChange)
+  if (typeof window !== 'undefined') {
+    const recompute = () => {
+      isBigScreen.value = computeIsBigScreen(
+        window.innerWidth,
+        window.innerHeight,
+        window.devicePixelRatio || 1,
+      )
+    }
+    recompute()
+    // Viewport resize covers rotation, window resize and browser-zoom DPR changes.
+    window.addEventListener('resize', recompute)
+    if (typeof window.matchMedia === 'function') {
+      const mql = window.matchMedia(`(min-width: ${BIG_SCREEN_MIN_WIDTH}px)`)
+      const onChange = () => recompute()
+      if (typeof mql.addEventListener === 'function') {
+        mql.addEventListener('change', onChange)
+      } else if (typeof (mql as { addListener?: unknown }).addListener === 'function') {
+        ;(mql as { addListener: (cb: () => void) => void }).addListener(onChange)
+      }
     }
   }
 }

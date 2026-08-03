@@ -11,6 +11,7 @@ import {
   resolveLeftTabOnEnter,
   resolveActivePaneOnEnter,
   setActivePane,
+  computeIsBigScreen,
   BIG_SCREEN_DOCK_TABS,
   LEFT_TAB_KEY,
   SPLIT_RATIO_KEY,
@@ -22,8 +23,38 @@ beforeEach(() => {
   localStorage.clear()
 })
 
+describe('computeIsBigScreen', () => {
+  it('desktop: CSS width ≥1024 → big screen', () => {
+    expect(computeIsBigScreen(1280, 800, 1)).toBe(true)
+    expect(computeIsBigScreen(1024, 768, 1)).toBe(true)
+  })
+
+  it('high-DPR tablet landscape (CSS <1024) → big screen via physical width', () => {
+    // 2400 physical px at DPR 2.5 → CSS 960 (the user's tablet case)
+    expect(computeIsBigScreen(960, 600, 2.5)).toBe(true)
+  })
+
+  it('high-DPR phone portrait → NOT big screen (landscape gate)', () => {
+    // 430×3 = 1290 physical ≥1280, but portrait
+    expect(computeIsBigScreen(430, 900, 3)).toBe(false)
+  })
+
+  it('high-DPR phone landscape → big screen (wide physical viewport)', () => {
+    expect(computeIsBigScreen(844, 390, 3)).toBe(true)
+  })
+
+  it('small CSS width and small physical width → NOT big screen', () => {
+    expect(computeIsBigScreen(800, 1280, 1)).toBe(false)
+    expect(computeIsBigScreen(360, 800, 2)).toBe(false) // 720 physical
+  })
+})
+
 describe('useBigScreenLayout', () => {
-  it('matchMedia absent → isBigScreen stays false and does not throw', () => {
+  it('initializes big-screen from the viewport and does not throw', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1280 })
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 })
+    _resetForTest()
     const { isBigScreen } = useBigScreenLayout()
     expect(isBigScreen.value).toBe(false)
   })
@@ -122,24 +153,31 @@ describe('activePane focus tracking', () => {
   })
 })
 
-describe('useBigScreenLayout matchMedia wiring', () => {
+describe('useBigScreenLayout viewport wiring', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('reflects matchMedia matches and change events', async () => {
+  it('activates for a high-DPR landscape tablet and reacts to resize/rotation', async () => {
     vi.resetModules()
-    const listeners: Array<(e: { matches: boolean }) => void> = []
-    const mql = {
-      matches: true,
-      addEventListener: (_t: string, cb: (e: { matches: boolean }) => void) => { listeners.push(cb) },
-      removeEventListener: vi.fn(),
-    }
-    vi.stubGlobal('matchMedia', vi.fn(() => mql))
+    // 960 CSS × 2.5 = 2400 physical px, landscape → big screen
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 960 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2.5 })
     const mod = await import('@/composables/useBigScreenLayout')
     expect(mod.getBigScreenState().isBigScreen.value).toBe(true)
-    mql.matches = false
-    listeners.forEach((cb) => cb({ matches: false }))
+
+    // Rotate to portrait → back to single column
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 960 })
+    window.dispatchEvent(new Event('resize'))
+    expect(mod.getBigScreenState().isBigScreen.value).toBe(false)
+
+    // Phone portrait, high DPR → stays single column
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 430 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 3 })
+    window.dispatchEvent(new Event('resize'))
     expect(mod.getBigScreenState().isBigScreen.value).toBe(false)
   })
 })
