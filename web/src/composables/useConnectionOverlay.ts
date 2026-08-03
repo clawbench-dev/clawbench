@@ -4,7 +4,7 @@ import { useSettingsNavigation } from './useSettingsNavigation'
 
 // Delay before showing the reconnect mask, so transient blips that recover
 // within this window never flash a fullscreen overlay.
-export const RECONNECT_OVERLAY_DELAY_MS = 1500
+export const RECONNECT_OVERLAY_DELAY_MS = 5000
 
 export type ConnectionOverlayMode = 'restart' | 'reconnect' | null
 

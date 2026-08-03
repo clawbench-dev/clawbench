@@ -79,7 +79,7 @@ describe('useConnectionOverlay', () => {
         expect(overlay.mode.value).toBeNull()
     })
 
-    it('does NOT show when reconnected within the 1.5s window', async () => {
+    it('does NOT show when reconnected within the 5s window', async () => {
         hasConnectedOnceRef.value = true
         const overlay = make()
         wsStatusRef.value = 'disconnected'
