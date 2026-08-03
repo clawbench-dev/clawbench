@@ -471,6 +471,37 @@ describe('useGlobalEvents', () => {
         })
     })
 
+    describe('reconnect state refresh event', () => {
+        it('does NOT dispatch clawbench-reconnect on the first connect (startup already loads state)', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+            connectAndGetWs()
+
+            expect(dispatchSpy).not.toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'clawbench-reconnect' })
+            )
+            dispatchSpy.mockRestore()
+        })
+
+        it('dispatches clawbench-reconnect on a reconnect (after a disconnect)', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+            // First connection — no event
+            connectAndGetWs()
+            expect(dispatchSpy).not.toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'clawbench-reconnect' })
+            )
+
+            // Disconnect, then reconnect — the event fires
+            events.disconnect()
+            connectAndGetWs()
+            expect(dispatchSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'clawbench-reconnect' })
+            )
+
+            dispatchSpy.mockRestore()
+        })
+    })
+
     describe('processedEventIds eviction', () => {
         it('evicts old event IDs when exceeding MAX_PROCESSED_IDS', () => {
             const handler = vi.fn()

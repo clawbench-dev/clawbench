@@ -730,6 +730,16 @@ const handleForeground = () => {
     }
 }
 
+// WS reconnect: refresh WS-push state that may have changed while disconnected.
+// Lighter than handleForeground — skips file/dir refresh (SSE reconnects independently)
+// and terminal status (not WS-push state).
+const handleReconnect = () => {
+    if (!isAuthenticated.value) return
+    loadSessionsOnce()
+    loadTasks()
+    store.loadGitBranch()
+}
+
 // Edge swipe back gesture detection (right-edge-left-swipe → go back)
 useEdgeSwipeBack()
 
@@ -767,6 +777,7 @@ window.addEventListener('clawbench-back-press', () => {
     }
 })
 window.addEventListener('clawbench-foreground', handleForeground)
+window.addEventListener('clawbench-reconnect', handleReconnect)
 const terminalRequestedCwd = ref(null)
 
 // Terminal keyboard height for detecting when soft keyboard is open in terminal tab.
@@ -1880,6 +1891,7 @@ onUnmounted(() => {
     stopDockResize()
     removeTaskHandler()
     window.removeEventListener('clawbench-foreground', handleForeground)
+    window.removeEventListener('clawbench-reconnect', handleReconnect)
     destroyGlobalEvents()
     window.removeEventListener('open-file-manager', handleOpenFileManager)
     window.removeEventListener('open-file-overlay', handleOpenFileOverlay)

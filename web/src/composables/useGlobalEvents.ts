@@ -179,12 +179,23 @@ function connect() {
 
     ws.onopen = () => {
         connected.value = true
+        // True reconnect only if we've connected before — the app-startup first
+        // connect already loads sessions/tasks/git, so dispatching here too
+        // would duplicate those requests.
+        const isReconnect = hasConnectedOnce.value
         hasConnectedOnce.value = true
         missedPongs = 0
         reconnect.reset()
 
         // Fetch missed events that occurred while offline
         fetchPendingEvents()
+
+        // Notify other composables to refresh stale state
+        // (sessions, tasks, git — WS-push state that may have changed
+        // while disconnected beyond the 10s buffer window)
+        if (isReconnect) {
+            window.dispatchEvent(new CustomEvent('clawbench-reconnect'))
+        }
 
         // Start heartbeat monitoring
         startHeartbeat()
