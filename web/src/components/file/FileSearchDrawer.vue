@@ -85,7 +85,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Search, FolderTree, Globe, RotateCcw, FolderOpen } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
