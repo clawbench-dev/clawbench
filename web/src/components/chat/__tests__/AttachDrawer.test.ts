@@ -28,6 +28,7 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
 
 // Shared mutable refs for composable mocks so tests can trigger watchers
 const sharedPendingFiles = ref<any[]>([])
+const sharedAttachedFiles = ref<any[]>([])
 const sharedRecentShares = ref<any[]>([])
 const sharedRecentUploads = ref<any[]>([])
 const mockFetchRecentShares = vi.fn()
@@ -50,6 +51,7 @@ vi.mock('@/composables/useUploadRecent', () => ({
 vi.mock('@/composables/useFileUpload', () => ({
   useFileUpload: () => ({
     pendingFiles: sharedPendingFiles,
+    attachedFiles: sharedAttachedFiles,
     handleFileSelect: vi.fn(),
     handleFileDrop: vi.fn(),
     removeFile: vi.fn(),

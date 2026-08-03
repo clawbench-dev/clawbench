@@ -223,12 +223,12 @@ describe('settingsFieldMap', () => {
 
   // ── RAG panel ──
 
-  it('rag panel has 12 commonFields and requiredFields', () => {
+  it('rag panel has 13 commonFields and requiredFields', () => {
     const panels = getCategoryPanels('rag')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
-    expect(cfg.commonFields.length).toBe(12)
-    expect(cfg.commonFields[0].key).toBe('rag.vector_enabled')
+    expect(cfg.commonFields.length).toBe(13)
+    expect(cfg.commonFields[0].key).toBe('rag.status.mode')
     expect(cfg.requiredFields).toEqual(['rag.base_url'])
   })
 

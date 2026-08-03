@@ -27,6 +27,15 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   } as unknown as typeof globalThis.ResizeObserver
 }
 
+// ── Deterministic vue-devtools hook state ──
+// vue-i18n's app.use() plugin calls setupDevtoolsPlugin(), which invokes
+// hook.emit() whenever a __VUE_DEVTOOLS_GLOBAL_HOOK__ object exists on window.
+// jsdom can leave a half-initialized hook around, causing intermittent
+// "Cannot setup vue-devtools plugin" install errors (CANNOT_SETUP_VUE_DEVTOOLS_PLUGIN)
+// when many test files mount i18n apps. Clearing the hook makes the plugin
+// take the synchronous deferred-setup path and keeps tests deterministic.
+delete (globalThis as { __VUE_DEVTOOLS_GLOBAL_HOOK__?: unknown }).__VUE_DEVTOOLS_GLOBAL_HOOK__
+
 function isRecursiveUpdateError(reason: unknown): boolean {
   if (reason instanceof Error) {
     return reason.message.includes('Maximum recursive updates')

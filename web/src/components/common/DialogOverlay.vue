@@ -71,7 +71,7 @@ watch(() => dlg.state.value.visible, async (v) => {
     goBack: () => handleCancel(),
     priority: PRIORITY_OVERLAY + 1,
   })
-})
+}, { immediate: true })
 
 function handleConfirm() {
   if (dlg.state.value.type === 'prompt') {
