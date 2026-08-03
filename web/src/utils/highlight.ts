@@ -111,6 +111,7 @@ const languages: Record<string, typeof javascript> = {
     json,
     yaml,
     xml: xmlLang,
+    vue: xmlLang,
     markdown,
     graphql,
     handlebars,
