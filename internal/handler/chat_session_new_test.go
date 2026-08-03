@@ -240,6 +240,61 @@ func TestArchiveSession_SessionWithMessagesSoftDeletes(t *testing.T) {
 	assert.Equal(t, 1, service.GetChatMessageCount(sessionID))
 }
 
+func TestArchiveSession_RunningSessionCancelledBeforeArchive(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "running-archive", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "hello", nil, false, "")
+	require.NoError(t, err)
+
+	// Mark the session as running — archive must cancel it (force-clear) first.
+	service.SetSessionRunning(sessionID, true)
+	t.Cleanup(func() { service.SetSessionRunning(sessionID, false) })
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID+"&backend=claude", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ArchiveSession, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, false, result["destroyed"])
+	assert.False(t, service.IsSessionRunning(sessionID), "running state should be cleared after archive")
+}
+
+func TestDestroySession_RunningSessionCancelledBeforeDestroy(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "running-destroy", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "hello", nil, false, "")
+	require.NoError(t, err)
+
+	service.SetSessionRunning(sessionID, true)
+	t.Cleanup(func() { service.SetSessionRunning(sessionID, false) })
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/destroy?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(DestroySession, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, true, result["destroyed"])
+
+	// Session and its messages are physically gone.
+	count, err := service.GetSessionCount(env.ProjectDir)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
+
 func TestServeAISessionUpdate_InvalidJSON(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

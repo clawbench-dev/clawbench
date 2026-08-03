@@ -601,6 +601,21 @@ func TestSessionExecutor_Run_MetadataCapture(t *testing.T) {
 	}
 }
 
+func TestSessionExecutor_TrackToolDuration_NilOrEmptyTool(t *testing.T) {
+	// tool_use/tool_result events without a tool (or with an empty tool ID)
+	// must not panic and must not crash the run (trackToolDuration early-returns).
+	events := []ai.StreamEvent{
+		{Type: "tool_use", Tool: nil},
+		{Type: "tool_result", Tool: &ai.ToolCall{Name: "x", ID: ""}},
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+}
+
 func TestSessionExecutor_Run_RawOutputAccumulation(t *testing.T) {
 	events := []ai.StreamEvent{
 		{Type: "raw_output", RawOutput: "line1\n"},

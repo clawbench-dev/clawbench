@@ -303,6 +303,82 @@ func TestServeMessageClustersComputeStatus_MethodNotAllowed(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
+// ---------- Worker-not-initialized paths ----------
+
+func TestServeMessageClustersCompute_NilWorker(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Ensure no cluster worker is initialized (fresh state)
+	origWorker := rag.GlobalClusterWorker
+	rag.GlobalClusterWorker = nil
+	t.Cleanup(func() { rag.GlobalClusterWorker = origWorker })
+
+	req := newRequest(t, http.MethodPost, "/api/chat/message-clusters/compute", nil)
+	w := callHandlerWithAuth(ServeMessageClustersCompute, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestServeMessageClustersComputeCancel_NilWorker(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origWorker := rag.GlobalClusterWorker
+	rag.GlobalClusterWorker = nil
+	t.Cleanup(func() { rag.GlobalClusterWorker = origWorker })
+
+	req := newRequest(t, http.MethodPost, "/api/chat/message-clusters/compute/cancel", nil)
+	w := callHandlerWithAuth(ServeMessageClustersComputeCancel, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "idle", resp["status"])
+}
+
+func TestServeMessageClustersComputeStatus_NilWorker(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origWorker := rag.GlobalClusterWorker
+	rag.GlobalClusterWorker = nil
+	t.Cleanup(func() { rag.GlobalClusterWorker = origWorker })
+
+	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters/compute/status", nil)
+	w := callHandlerWithAuth(ServeMessageClustersComputeStatus, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var progress rag.ClusterProgress
+	err := json.Unmarshal(w.Body.Bytes(), &progress)
+	require.NoError(t, err)
+	assert.Equal(t, "idle", progress.Status)
+}
+
+func TestServeMessageClusters_InvalidVariantsFallback(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Cache entry with malformed variants JSON — handler should fall back
+	// to the representative text instead of failing the whole request.
+	entries := []service.ClusterCacheEntry{
+		{Representative: "继续写代码", Variants: "{not-valid-json", TotalCount: 5, RepresentativeCount: 3, SortOrder: 0},
+	}
+	err := service.SaveClusterCache(entries, "fts")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters", nil)
+	w := callHandlerWithAuth(ServeMessageClusters, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp MessageClustersResponse
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	require.Len(t, resp.Clusters, 1)
+	assert.Equal(t, []string{"继续写代码"}, resp.Clusters[0].Variants)
+}
+
 // ---------- Auth required ----------
 
 func TestMessageClustersRouteRequiresAuth(t *testing.T) {

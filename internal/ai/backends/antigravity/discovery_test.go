@@ -89,3 +89,13 @@ func TestDiscoverAntigravityModels_Registered(t *testing.T) {
 	}
 	assert.True(t, found, "antigravity should be in the backend registry")
 }
+
+func TestDiscoverAntigravityModels_FallsBackOnMissingBinary(t *testing.T) {
+	// In CI/test environments the `agy` binary is not installed, so the
+	// command fails and discovery must fall back to known defaults without
+	// returning an empty list. When agy is present, discovered models are
+	// returned — either way the result is non-empty and first is default.
+	models := DiscoverAntigravityModels()
+	require.NotEmpty(t, models)
+	assert.True(t, models[0].Default)
+}

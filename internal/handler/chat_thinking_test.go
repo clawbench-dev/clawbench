@@ -122,3 +122,26 @@ func TestServeThinkingDetail_MethodNotAllowed(t *testing.T) {
 	w := callHandler(ServeThinkingDetail, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+func TestServeThinkingDetail_NoProject(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	// No project cookie → requireProject fails before any lookup.
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/thinking?think_id=th_x&message_id=1", nil)
+	w := callHandler(ServeThinkingDetail, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeThinkingDetail_SessionWithoutBackend(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Insert a thinking record whose session has no chat_sessions row, so
+	// GetSessionBackend returns "" and the handler answers 404 SessionNotFound.
+	require.NoError(t, service.UpsertThinking(999, "nonexistent-session", "th_orphan", "orphan text"))
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/thinking?think_id=th_orphan&message_id=999", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeThinkingDetail, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}

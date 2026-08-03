@@ -165,6 +165,37 @@ func TestTerminalStatus_AllSessions(t *testing.T) {
 	assert.True(t, ok, "session_count field should be present")
 }
 
+func TestTerminalStatus_WithSessionID(t *testing.T) {
+	origMgr := GetTerminalManager()
+	t.Cleanup(func() {
+		curMgr := GetTerminalManager()
+		if curMgr != nil && curMgr != origMgr {
+			curMgr.Close()
+		}
+		SetTerminalManager(origMgr)
+	})
+
+	SetTerminalManager(terminal.NewManager(model.TerminalConfig{
+		Enabled:      true,
+		IdleTimeout:  "1m",
+		BufferLines:  100,
+		MaxLineBytes: 65536,
+		MaxBufferMB:  4,
+	}, 20000))
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/status?session=missing-session", nil)
+	w := callHandler(TerminalStatus, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	decodeRespJSON(t, w.Body, &result)
+	assert.Equal(t, true, result["enabled"])
+	assert.Equal(t, false, result["hasSession"])
+	assert.Equal(t, "missing-session", result["sessionId"])
+	assert.Equal(t, "", result["cwd"])
+	assert.Equal(t, false, result["running"])
+}
+
 // ---------- TerminalClose ----------
 
 func TestTerminalClose_NilManager(t *testing.T) {
