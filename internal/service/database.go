@@ -1626,15 +1626,28 @@ func SaveClusterMetaError(progress, phase, errMsg string) error {
 	return err
 }
 
+// ClusterMeta is the persisted message-clusters computation metadata row.
+type ClusterMeta struct {
+	Mode         string
+	UpdatedAt    time.Time
+	Progress     string
+	Phase        string
+	MsgCount     int
+	ClusterCount int
+	ElapsedMs    int
+	ErrorMsg     string
+}
+
 // GetClusterMeta returns the meta row values. If no row exists, returns defaults.
-func GetClusterMeta() (mode string, updatedAt time.Time, progress, phase string, msgCount, clusterCount, elapsedMs int, errMsg string) {
+func GetClusterMeta() ClusterMeta {
+	var m ClusterMeta
 	err := dbRead.QueryRow(
 		"SELECT mode, updated_at, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg FROM message_clusters_meta WHERE id = 1",
-	).Scan(&mode, &updatedAt, &progress, &phase, &msgCount, &clusterCount, &elapsedMs, &errMsg)
+	).Scan(&m.Mode, &m.UpdatedAt, &m.Progress, &m.Phase, &m.MsgCount, &m.ClusterCount, &m.ElapsedMs, &m.ErrorMsg)
 	if err != nil {
-		return "", time.Time{}, "idle", "", 0, 0, 0, ""
+		return ClusterMeta{Progress: "idle"}
 	}
-	return mode, updatedAt, progress, phase, msgCount, clusterCount, elapsedMs, errMsg
+	return m
 }
 
 // GetQuickSendCommands returns all command strings from chat_quick_send ordered by sort_order.

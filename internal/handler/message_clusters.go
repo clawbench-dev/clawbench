@@ -57,8 +57,7 @@ func ServeMessageClusters(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Get progress — read from meta table directly for consistency
 	progress := "idle"
-	_, _, metaProgress, _, _, _, _, _ := service.GetClusterMeta()
-	if metaProgress != "" {
+	if metaProgress := service.GetClusterMeta().Progress; metaProgress != "" {
 		progress = metaProgress
 	}
 
@@ -142,8 +141,7 @@ func ServeMessageClustersComputeCancel(w http.ResponseWriter, r *http.Request) {
 
 	rag.GlobalClusterWorker.Stop()
 	// Preserve current phase in cancelled meta so frontend shows which phase was interrupted
-	_, _, _, currentPhase, _, _, _, _ := service.GetClusterMeta()
-	service.SaveClusterMetaError("cancelled", currentPhase, "user cancelled")
+	_ = service.SaveClusterMetaError("cancelled", service.GetClusterMeta().Phase, "user cancelled")
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "cancelled",

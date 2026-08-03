@@ -2545,11 +2545,11 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 // insertUserMessage is a helper to insert a user message directly into chat_history
 // for testing GetUserMessageStats. It bypasses AddChatMessage to avoid the
 // archived-session guard and file-serialization logic.
-func insertUserMessage(t *testing.T, projectPath, sessionID, content string, files string, streaming int) {
+func insertUserMessage(t *testing.T, sessionID, content string, files string, streaming int) {
 	t.Helper()
 	_, err := db.Exec(
 		"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', ?, ?, ?, 'claude', ?)",
-		projectPath, content, files, sessionID, streaming,
+		"/proj", content, files, sessionID, streaming,
 	)
 	assert.NoError(t, err)
 }
@@ -2559,12 +2559,12 @@ func TestGetUserMessageStats_TopN(t *testing.T) {
 	defer teardown()
 
 	// Insert messages with varying frequency
-	insertUserMessage(t, "/proj", "sess-1", "hello", "", 0)
-	insertUserMessage(t, "/proj", "sess-1", "hello", "", 0) // duplicate
-	insertUserMessage(t, "/proj", "sess-2", "hello", "", 0) // duplicate across session
-	insertUserMessage(t, "/proj", "sess-1", "fix the bug", "", 0)
-	insertUserMessage(t, "/proj", "sess-2", "fix the bug", "", 0) // duplicate across session
-	insertUserMessage(t, "/proj", "sess-1", "continue", "", 0)
+	insertUserMessage(t, "sess-1", "hello", "", 0)
+	insertUserMessage(t, "sess-1", "hello", "", 0) // duplicate
+	insertUserMessage(t, "sess-2", "hello", "", 0) // duplicate across session
+	insertUserMessage(t, "sess-1", "fix the bug", "", 0)
+	insertUserMessage(t, "sess-2", "fix the bug", "", 0) // duplicate across session
+	insertUserMessage(t, "sess-1", "continue", "", 0)
 
 	stats, err := GetUserMessageStats(100)
 	assert.NoError(t, err)
@@ -2584,9 +2584,9 @@ func TestGetUserMessageStats_ExcludesStreaming(t *testing.T) {
 	defer teardown()
 
 	// streaming=0 message should be included
-	insertUserMessage(t, "/proj", "sess-1", "visible message", "", 0)
+	insertUserMessage(t, "sess-1", "visible message", "", 0)
 	// streaming=1 message should be excluded
-	insertUserMessage(t, "/proj", "sess-1", "in-progress message", "", 1)
+	insertUserMessage(t, "sess-1", "in-progress message", "", 1)
 
 	stats, err := GetUserMessageStats(100)
 	assert.NoError(t, err)
@@ -2603,15 +2603,15 @@ func TestGetUserMessageStats_ExcludesEmptyAndLong(t *testing.T) {
 	// so we insert a single space to test the "empty-like" filter.
 	// The SQL uses content != '' so only truly empty strings are excluded.
 	// Since NOT NULL prevents empty content, we test the LENGTH(content) <= 200 filter.
-	insertUserMessage(t, "/proj", "sess-1", "short message", "", 0)
+	insertUserMessage(t, "sess-1", "short message", "", 0)
 
 	// 201-char message should be excluded
 	longContent := strings.Repeat("a", 201)
-	insertUserMessage(t, "/proj", "sess-1", longContent, "", 0)
+	insertUserMessage(t, "sess-1", longContent, "", 0)
 
 	// 200-char message should be included
 	maxContent := strings.Repeat("b", 200)
-	insertUserMessage(t, "/proj", "sess-1", maxContent, "", 0)
+	insertUserMessage(t, "sess-1", maxContent, "", 0)
 
 	stats, err := GetUserMessageStats(100)
 	assert.NoError(t, err)
@@ -2627,16 +2627,16 @@ func TestGetUserMessageStats_ExcludesSlashCommands(t *testing.T) {
 	defer teardown()
 
 	// Normal messages should be included
-	insertUserMessage(t, "/proj", "sess-1", "hello", "", 0)
-	insertUserMessage(t, "/proj", "sess-1", "please help", "", 0)
+	insertUserMessage(t, "sess-1", "hello", "", 0)
+	insertUserMessage(t, "sess-1", "please help", "", 0)
 
 	// Slash commands should be excluded
-	insertUserMessage(t, "/proj", "sess-1", "/commit", "", 0)
-	insertUserMessage(t, "/proj", "sess-1", "/help me", "", 0)
+	insertUserMessage(t, "sess-1", "/commit", "", 0)
+	insertUserMessage(t, "sess-1", "/help me", "", 0)
 
 	// @-prefixed messages should be excluded
-	insertUserMessage(t, "/proj", "sess-1", "@agent do this", "", 0)
-	insertUserMessage(t, "/proj", "sess-1", "@file read this", "", 0)
+	insertUserMessage(t, "sess-1", "@agent do this", "", 0)
+	insertUserMessage(t, "sess-1", "@file read this", "", 0)
 
 	stats, err := GetUserMessageStats(100)
 	assert.NoError(t, err)
@@ -2655,7 +2655,7 @@ func TestGetUserMessageStats_ExcludesFileAttachments(t *testing.T) {
 	defer teardown()
 
 	// Message without files (empty string) should be included
-	insertUserMessage(t, "/proj", "sess-1", "hello", "", 0)
+	insertUserMessage(t, "sess-1", "hello", "", 0)
 	// Message with NULL files should be included
 	_, err := db.Exec(
 		"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', ?, NULL, ?, 'claude', 0)",
@@ -2663,7 +2663,7 @@ func TestGetUserMessageStats_ExcludesFileAttachments(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	// Message with non-empty files should be excluded
-	insertUserMessage(t, "/proj", "sess-1", "check this file", `[{"path":"/src/main.go"}]`, 0)
+	insertUserMessage(t, "sess-1", "check this file", `[{"path":"/src/main.go"}]`, 0)
 
 	stats, err := GetUserMessageStats(100)
 	assert.NoError(t, err)
@@ -2799,15 +2799,15 @@ func TestSaveClusterMeta(t *testing.T) {
 	err := SaveClusterMeta("clustering", "semantic", 100, 15, 5000)
 	assert.NoError(t, err)
 
-	mode, updatedAt, progress, phase, msgCount, clusterCount, elapsedMs, errMsg := GetClusterMeta()
-	assert.Equal(t, "semantic", mode)
-	assert.Equal(t, "clustering", progress)
-	assert.Equal(t, "", phase)
-	assert.Equal(t, 100, msgCount)
-	assert.Equal(t, 15, clusterCount)
-	assert.Equal(t, 5000, elapsedMs)
-	assert.Equal(t, "", errMsg)
-	assert.False(t, updatedAt.IsZero())
+	meta := GetClusterMeta()
+	assert.Equal(t, "semantic", meta.Mode)
+	assert.Equal(t, "clustering", meta.Progress)
+	assert.Equal(t, "", meta.Phase)
+	assert.Equal(t, 100, meta.MsgCount)
+	assert.Equal(t, 15, meta.ClusterCount)
+	assert.Equal(t, 5000, meta.ElapsedMs)
+	assert.Equal(t, "", meta.ErrorMsg)
+	assert.False(t, meta.UpdatedAt.IsZero())
 }
 
 func TestSaveClusterMeta_EmptyModePreservesPrevious(t *testing.T) {
@@ -2817,15 +2817,15 @@ func TestSaveClusterMeta_EmptyModePreservesPrevious(t *testing.T) {
 	// First: save with a real mode
 	err := SaveClusterMeta("done", "fts", 50, 10, 1000)
 	assert.NoError(t, err)
-	mode, _, _, _, _, _, _, _ := GetClusterMeta()
-	assert.Equal(t, "fts", mode)
+	meta := GetClusterMeta()
+	assert.Equal(t, "fts", meta.Mode)
 
 	// Second: save computing state with empty mode — should preserve "fts"
 	err = SaveClusterMeta("computing", "", 0, 0, 0)
 	assert.NoError(t, err)
-	mode, _, progress, _, _, _, _, _ := GetClusterMeta()
-	assert.Equal(t, "fts", mode) // preserved
-	assert.Equal(t, "computing", progress)
+	meta = GetClusterMeta()
+	assert.Equal(t, "fts", meta.Mode) // preserved
+	assert.Equal(t, "computing", meta.Progress)
 }
 
 func TestSaveClusterMeta_EmptyModeOnFirstInsert(t *testing.T) {
@@ -2835,9 +2835,9 @@ func TestSaveClusterMeta_EmptyModeOnFirstInsert(t *testing.T) {
 	// First insert with empty mode (no prior row exists) — should fall back to ""
 	err := SaveClusterMeta("computing", "", 0, 0, 0)
 	assert.NoError(t, err)
-	mode, _, progress, _, _, _, _, _ := GetClusterMeta()
-	assert.Equal(t, "", mode) // fallback to empty string (no prior row to preserve)
-	assert.Equal(t, "computing", progress)
+	meta := GetClusterMeta()
+	assert.Equal(t, "", meta.Mode) // fallback to empty string (no prior row to preserve)
+	assert.Equal(t, "computing", meta.Progress)
 }
 
 func TestSaveClusterMetaError(t *testing.T) {
@@ -2852,11 +2852,11 @@ func TestSaveClusterMetaError(t *testing.T) {
 	err = SaveClusterMetaError("error", "embedding", "API rate limit exceeded")
 	assert.NoError(t, err)
 
-	mode, _, progress, phase, _, _, _, errMsg := GetClusterMeta()
-	assert.Equal(t, "semantic", mode) // mode preserved from initial save
-	assert.Equal(t, "error", progress)
-	assert.Equal(t, "embedding", phase)
-	assert.Equal(t, "API rate limit exceeded", errMsg)
+	meta := GetClusterMeta()
+	assert.Equal(t, "semantic", meta.Mode) // mode preserved from initial save
+	assert.Equal(t, "error", meta.Progress)
+	assert.Equal(t, "embedding", meta.Phase)
+	assert.Equal(t, "API rate limit exceeded", meta.ErrorMsg)
 }
 
 func TestGetClusterMeta_Initial(t *testing.T) {
@@ -2864,15 +2864,15 @@ func TestGetClusterMeta_Initial(t *testing.T) {
 	defer teardown()
 
 	// No meta row inserted yet — should return defaults
-	mode, updatedAt, progress, phase, msgCount, clusterCount, elapsedMs, errMsg := GetClusterMeta()
-	assert.Equal(t, "", mode)
-	assert.Equal(t, "idle", progress)
-	assert.Equal(t, "", phase)
-	assert.Equal(t, 0, msgCount)
-	assert.Equal(t, 0, clusterCount)
-	assert.Equal(t, 0, elapsedMs)
-	assert.Equal(t, "", errMsg)
-	assert.True(t, updatedAt.IsZero())
+	meta := GetClusterMeta()
+	assert.Equal(t, "", meta.Mode)
+	assert.Equal(t, "idle", meta.Progress)
+	assert.Equal(t, "", meta.Phase)
+	assert.Equal(t, 0, meta.MsgCount)
+	assert.Equal(t, 0, meta.ClusterCount)
+	assert.Equal(t, 0, meta.ElapsedMs)
+	assert.Equal(t, "", meta.ErrorMsg)
+	assert.True(t, meta.UpdatedAt.IsZero())
 }
 
 func TestGetQuickSendCommands(t *testing.T) {

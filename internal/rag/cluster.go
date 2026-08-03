@@ -41,57 +41,83 @@ func ClusterMessages(stats []MessageStat, simFn SimilarityFunc, threshold float6
 
 	// Exact dedup only when simFn is nil or threshold <= 0
 	if simFn == nil || threshold <= 0 {
-		clusters := make([]MessageCluster, 0, len(stats))
-		for _, s := range stats {
-			clusters = append(clusters, MessageCluster{
-				Representative:      s.Text,
-				Variants:            []string{s.Text},
-				TotalCount:          s.Count,
-				RepresentativeCount: s.Count,
-			})
-		}
-		sortByTotalCount(clusters)
-		return clusters
+		return exactDedupClusters(stats)
 	}
 
 	n := len(stats)
+	uf := newUnionFind(n)
+	unionSimilarMessages(stats, uf, simFn, threshold, progressCb)
+
+	clusters := buildClustersFromGroups(stats, groupStatsByRoot(uf, n))
+	sortByTotalCount(clusters)
+	return clusters
+}
+
+// exactDedupClusters returns one cluster per unique message, preserving counts.
+func exactDedupClusters(stats []MessageStat) []MessageCluster {
+	clusters := make([]MessageCluster, 0, len(stats))
+	for _, s := range stats {
+		clusters = append(clusters, MessageCluster{
+			Representative:      s.Text,
+			Variants:            []string{s.Text},
+			TotalCount:          s.Count,
+			RepresentativeCount: s.Count,
+		})
+	}
+	sortByTotalCount(clusters)
+	return clusters
+}
+
+// unionFind is a disjoint-set data structure used for clustering.
+type unionFind struct {
+	parent []int
+	rank   []int
+}
+
+// newUnionFind initializes n disjoint singleton sets.
+func newUnionFind(n int) *unionFind {
 	parent := make([]int, n)
-	rank := make([]int, n)
 	for i := range parent {
 		parent[i] = i
 	}
+	return &unionFind{parent: parent, rank: make([]int, n)}
+}
 
-	// Union-Find with path compression + union-by-rank
-	find := func(x int) int {
-		root := x
-		for parent[root] != root {
-			root = parent[root]
-		}
-		// Path compression
-		for parent[x] != root {
-			next := parent[x]
-			parent[x] = root
-			x = next
-		}
-		return root
+// find returns the root of x, applying path compression.
+func (u *unionFind) find(x int) int {
+	root := x
+	for u.parent[root] != root {
+		root = u.parent[root]
 	}
-
-	union := func(x, y int) {
-		rx, ry := find(x), find(y)
-		if rx == ry {
-			return
-		}
-		if rank[rx] < rank[ry] {
-			parent[rx] = ry
-		} else if rank[rx] > rank[ry] {
-			parent[ry] = rx
-		} else {
-			parent[ry] = rx
-			rank[rx]++
-		}
+	// Path compression
+	for u.parent[x] != root {
+		next := u.parent[x]
+		u.parent[x] = root
+		x = next
 	}
+	return root
+}
 
-	// Compare all pairs O(n²) — report progress every ~1% completion
+// union merges the sets containing x and y using union-by-rank.
+func (u *unionFind) union(x, y int) {
+	rx, ry := u.find(x), u.find(y)
+	if rx == ry {
+		return
+	}
+	if u.rank[rx] < u.rank[ry] {
+		u.parent[rx] = ry
+	} else if u.rank[rx] > u.rank[ry] {
+		u.parent[ry] = rx
+	} else {
+		u.parent[ry] = rx
+		u.rank[rx]++
+	}
+}
+
+// unionSimilarMessages merges every pair of messages whose similarity meets the
+// threshold, reporting progress every ~1% of the O(n²) comparison.
+func unionSimilarMessages(stats []MessageStat, uf *unionFind, simFn SimilarityFunc, threshold float64, progressCb ClusterProgressCallback) {
+	n := len(stats)
 	totalPairs := n * (n - 1) / 2
 	pairIdx := 0
 	nextReport := 0
@@ -102,10 +128,12 @@ func ClusterMessages(stats []MessageStat, simFn SimilarityFunc, threshold float6
 			reportInterval = 1
 		}
 	}
-	for i := 0; i < n; i++ {
+	for i := range n - 1 {
 		for j := i + 1; j < n; j++ {
+			// j is bounded by the inner loop condition (j < n) and starts at i+1 ≤ n-1.
+			// #nosec G602 -- gosec cannot prove the j < n bound; it is guaranteed here.
 			if simFn(stats[i].Text, stats[j].Text) >= threshold {
-				union(i, j)
+				uf.union(i, j)
 			}
 			pairIdx++
 			if progressCb != nil && reportInterval > 0 && pairIdx >= nextReport+reportInterval {
@@ -117,14 +145,21 @@ func ClusterMessages(stats []MessageStat, simFn SimilarityFunc, threshold float6
 	if progressCb != nil && pairIdx > 0 {
 		progressCb(pairIdx, totalPairs) // final 100%
 	}
+}
 
-	// Group by root
+// groupStatsByRoot returns a map from union root index to the list of stat indices in that set.
+func groupStatsByRoot(uf *unionFind, n int) map[int][]int {
 	groups := make(map[int][]int)
-	for i := 0; i < n; i++ {
-		root := find(i)
+	for i := range n {
+		root := uf.find(i)
 		groups[root] = append(groups[root], i)
 	}
+	return groups
+}
 
+// buildClustersFromGroups converts union-find groups into MessageCluster values,
+// picking the most frequent text in each group as the representative.
+func buildClustersFromGroups(stats []MessageStat, groups map[int][]int) []MessageCluster {
 	clusters := make([]MessageCluster, 0, len(groups))
 	for _, indices := range groups {
 		// Pick most frequent text as representative
@@ -149,8 +184,6 @@ func ClusterMessages(stats []MessageStat, simFn SimilarityFunc, threshold float6
 			RepresentativeCount: stats[bestIdx].Count,
 		})
 	}
-
-	sortByTotalCount(clusters)
 	return clusters
 }
 
@@ -256,7 +289,7 @@ func VectorSimilarityMatrix(ctx context.Context, embedder *EmbeddingClient, text
 			return 0 // one or both embeddings failed
 		}
 		var dot float64
-		for k := 0; k < len(a); k++ {
+		for k := range a {
 			dot += a[k] * b[k]
 		}
 		return dot

@@ -56,7 +56,7 @@ type Config struct {
 		SystemPromptInterval int `yaml:"system_prompt_interval"` // Re-inject system prompt every N assistant turns (0=never, default: 10)
 	} `yaml:"chat"`
 	Session struct {
-		MaxCount               int  `yaml:"max_count"`                // Maximum number of chat sessions per project (default: 10)
+		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 10)
 		ArchiveRetentionEnabled bool `yaml:"archive_retention_enabled"` // Enable auto-purge of archived sessions after retention period (default: false)
 		ArchiveRetentionDays    int  `yaml:"archive_retention_days"`    // Days to keep archived sessions before auto-purge (0=keep forever, default: 30)
 	} `yaml:"session"`

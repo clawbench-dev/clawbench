@@ -183,7 +183,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	e.upsertToolCallToDB(event)
 
 	// metadata capture
-	if event.Type == "metadata" && event.Meta != nil {
+	if event.Type == contentKeyMetadata && event.Meta != nil {
 		e.responseMetadata = event.Meta
 		if event.Meta.SessionID != "" {
 			e.captureExternalSessionID(event.Meta.SessionID)
@@ -526,7 +526,7 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, ra
 				if event.Content != "" {
 					e.captureExternalSessionID(event.Content)
 				}
-			case "metadata":
+			case contentKeyMetadata:
 				if event.Meta != nil && event.Meta.SessionID != "" {
 					e.captureExternalSessionID(event.Meta.SessionID)
 				}

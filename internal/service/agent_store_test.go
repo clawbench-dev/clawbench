@@ -358,7 +358,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
 		"acp_config_options": true,
-		"created_at": true, "updated_at": true,
+		"created_at":         true, "updated_at": true,
 	}
 
 	rows, err := db.Query("SELECT name FROM pragma_table_info('agents')")

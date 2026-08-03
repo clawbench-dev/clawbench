@@ -269,8 +269,8 @@ func ServeRAGReset(w http.ResponseWriter, r *http.Request) {
 	slog.Info("rag: full rebuild triggered", slog.Int64("messages_reset", affected))
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":           "ok",
-		"messages_reset":   affected,
+		"status":         "ok",
+		"messages_reset": affected,
 	})
 }
 
@@ -311,8 +311,8 @@ func ServeRAGResetVector(w http.ResponseWriter, r *http.Request) {
 	slog.Info("rag: vector rebuild triggered", slog.Int64("chunks_reset", chunksReset))
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":        "ok",
-		"chunks_reset":  chunksReset,
+		"status":       "ok",
+		"chunks_reset": chunksReset,
 	})
 }
 

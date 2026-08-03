@@ -3324,7 +3324,7 @@ func TestPatchContextStateMerge_ModeOnly(t *testing.T) {
 	assert.NotNil(t, state)
 	assert.Equal(t, "code", state.Mode.CurrentModeID)
 	assert.Nil(t, state.ThinkingEffort) // not set yet
-	assert.Nil(t, state.Usage)           // not set yet
+	assert.Nil(t, state.Usage)          // not set yet
 }
 
 func TestPatchContextStateMerge_MergeDoesNotOverwrite(t *testing.T) {
@@ -3500,13 +3500,13 @@ func TestPersistContextStateFromEvent_MergesDifferentTypes(t *testing.T) {
 
 	// Then persist usage — should not overwrite mode
 	service.PersistContextStateFromEvent(sid, ai.StreamEvent{
-		Type: "usage_update",
+		Type:  "usage_update",
 		Usage: &ai.UsageState{Used: 30000, Size: 100000},
 	})
 
 	// Then persist thinking effort — should not overwrite mode or usage
 	service.PersistContextStateFromEvent(sid, ai.StreamEvent{
-		Type: "thinking_effort_update",
+		Type:           "thinking_effort_update",
 		ThinkingEffort: &ai.ThinkingEffortState{CurrentID: "high"},
 	})
 
@@ -3538,7 +3538,7 @@ func TestPersistContextStateFromEvent_NilPayload(t *testing.T) {
 func TestPersistContextStateFromEvent_EmptySessionID(t *testing.T) {
 	// Should not crash with empty session ID
 	service.PersistContextStateFromEvent("", ai.StreamEvent{
-		Type: "usage_update",
+		Type:  "usage_update",
 		Usage: &ai.UsageState{Used: 100, Size: 200},
 	})
 }

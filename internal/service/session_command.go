@@ -511,7 +511,7 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	runResult := executor.RunWithChannel(eventCh)
 	runResult = executor.Finalize(runResult, eventCh)
 
-	emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
+	emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: contentKeyMetadata, Meta: runResult.Metadata})
 
 	result := streamRunResultShared{}
 	if runResult.CancelReason == cancelReasonUser {

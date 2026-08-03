@@ -25,8 +25,8 @@ var (
 	GlobalStore    *Store
 	GlobalEmbedder *EmbeddingClient
 
-	globalIndexer      *Indexer
-	globalCleanup      *CleanupWorker
+	globalIndexer       *Indexer
+	globalCleanup       *CleanupWorker
 	globalClusterWorker *ClusterWorker
 	GlobalClusterWorker *ClusterWorker // exposed for handler access
 )

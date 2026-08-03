@@ -43,8 +43,10 @@ type SessionCleanupWorker struct {
 }
 
 // globalSessionCleanup is the running instance, protected by mu.
-var globalSessionCleanup *SessionCleanupWorker
-var sessionCleanupMu sync.Mutex
+var (
+	globalSessionCleanup *SessionCleanupWorker
+	sessionCleanupMu     sync.Mutex
+)
 
 // NewSessionCleanupWorker creates a new session cleanup worker.
 func NewSessionCleanupWorker(cfg model.Config) *SessionCleanupWorker {

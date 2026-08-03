@@ -65,7 +65,7 @@ func newOpenCodeBackend() ai.AIBackend {
 			}
 		},
 		FilterLineFn: OpenCodeFilterLine,
-		PreStartFn: nil,
+		PreStartFn:   nil,
 	}
 }
 

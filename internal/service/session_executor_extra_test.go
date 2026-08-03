@@ -593,8 +593,6 @@ func TestSessionExecutor_UpsertToolCallToDB_EmptySessionIDEarlyReturn(t *testing
 	// Early return — no panic, no DB call
 }
 
-
-
 // --- Finalize with metadata save ---
 
 func TestSessionExecutor_Finalize_SavesMetadata(t *testing.T) {
@@ -840,8 +838,6 @@ func TestSessionExecutor_BuildResult_AskUserQuestionPersisted(t *testing.T) {
 	assert.Equal(t, "AskUserQuestion", record.Name)
 	_ = result
 }
-
-
 
 // --- tool_result SSE forwarding with meta extraction ---
 

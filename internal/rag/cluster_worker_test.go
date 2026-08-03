@@ -112,12 +112,12 @@ func setupTestDBForClusterWorker(t *testing.T) func() {
 }
 
 // insertTestUserMessages inserts multiple user messages into chat_history for clustering.
-func insertTestUserMessages(t *testing.T, projectPath, sessionID string, contents []string) {
+func insertTestUserMessages(t *testing.T, sessionID string, contents []string) {
 	t.Helper()
 	for _, c := range contents {
 		_, err := service.UnsafeDBForTest().Exec(
 			"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
-			projectPath, c, sessionID,
+			"/proj", c, sessionID,
 		)
 		assert.NoError(t, err)
 	}
@@ -150,10 +150,10 @@ func TestClusterWorker_IsRunning(t *testing.T) {
 	assert.False(t, cw.IsRunning(), "should not be running initially")
 
 	// Insert messages so ComputeOnce actually does work
-	insertTestUserMessages(t, "/proj", "sess-1", []string{
+	insertTestUserMessages(t, "sess-1", []string{
 		"hello", "hello", "hello", // 3 identical
-		"fix bug", "fix bug",       // 2 identical
-		"continue",                 // 1 unique
+		"fix bug", "fix bug", // 2 identical
+		"continue", // 1 unique
 	})
 
 	var runningDuring atomic.Bool
@@ -165,7 +165,7 @@ func TestClusterWorker_IsRunning(t *testing.T) {
 	runningDuring.Store(cw.IsRunning())
 
 	// Wait for completion (up to 10 seconds)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if !cw.IsRunning() {
 			break
 		}
@@ -187,16 +187,16 @@ func TestClusterWorker_ComputeOnce(t *testing.T) {
 	cw := NewClusterWorker(nil)
 
 	// Insert messages for clustering
-	insertTestUserMessages(t, "/proj", "sess-1", []string{
+	insertTestUserMessages(t, "sess-1", []string{
 		"hello", "hello", "hello", // 3 identical → one cluster
-		"fix bug", "fix bug",       // 2 identical → one cluster
-		"continue",                 // 1 unique → one cluster
+		"fix bug", "fix bug", // 2 identical → one cluster
+		"continue", // 1 unique → one cluster
 	})
 
 	cw.ComputeOnce()
 
 	// Wait for completion
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if !cw.IsRunning() {
 			break
 		}
@@ -227,7 +227,7 @@ func TestClusterWorker_ComputeOnce_NoDuplicate(t *testing.T) {
 
 	cw := NewClusterWorker(nil)
 
-	insertTestUserMessages(t, "/proj", "sess-1", []string{"hello", "hello"})
+	insertTestUserMessages(t, "sess-1", []string{"hello", "hello"})
 
 	cw.ComputeOnce()
 
@@ -253,7 +253,7 @@ func TestClusterWorker_GetProgress_AfterCompute(t *testing.T) {
 
 	cw := NewClusterWorker(nil)
 
-	insertTestUserMessages(t, "/proj", "sess-1", []string{
+	insertTestUserMessages(t, "sess-1", []string{
 		"hello", "hello",
 		"fix bug",
 	})
@@ -281,7 +281,7 @@ func TestClusterWorker_BroadcastProgress(t *testing.T) {
 
 	cw := NewClusterWorker(hub)
 
-	insertTestUserMessages(t, "/proj", "sess-1", []string{
+	insertTestUserMessages(t, "sess-1", []string{
 		"hello", "hello",
 	})
 
@@ -295,7 +295,7 @@ func TestClusterWorker_BroadcastProgress(t *testing.T) {
 
 	// With hub=nil, no broadcast should happen
 	cwNil := NewClusterWorker(nil)
-	insertTestUserMessages(t, "/proj", "sess-nil-hub", []string{"test nil hub"})
+	insertTestUserMessages(t, "sess-nil-hub", []string{"test nil hub"})
 	cwNil.ComputeOnce()
 	require.Eventually(t, func() bool { return !cwNil.IsRunning() }, 10*time.Second, 100*time.Millisecond)
 	// Just verify it completes without error — no crash from nil hub
@@ -332,7 +332,7 @@ func TestClusterWorker_Stop(t *testing.T) {
 	for i := range longContents {
 		longContents[i] = strings.Repeat("a", 50) + string(rune(i))
 	}
-	insertTestUserMessages(t, "/proj", "sess-1", longContents)
+	insertTestUserMessages(t, "sess-1", longContents)
 
 	cw.ComputeOnce()
 	// Give goroutine time to start and enter extracting/clustering

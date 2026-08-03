@@ -239,8 +239,6 @@ func TestSessionExecutor_Finalize_DrainRawFromEventChannel(t *testing.T) {
 	}
 }
 
-
-
 func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
 	// Verify Finalize works with minimal metadata — the function accesses
 	// responseMetadata fields directly, so nil is not supported.
@@ -991,10 +989,6 @@ func TestSessionExecutor_FlushStreamingMessage_WithMetadata(t *testing.T) {
 	}
 }
 
-
-
-
-
 func TestSessionExecutor_Finalize_WithDB(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
@@ -1466,8 +1460,6 @@ func TestSessionExecutor_RunWithChannel_SessionCaptureFromMetadata(t *testing.T)
 	}
 }
 
-
-
 func TestSessionExecutor_BuildResult_InteractiveCancelReason(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
@@ -1828,10 +1820,6 @@ func TestSessionExecutor_RunWithChannel_TickerFlush(t *testing.T) {
 		t.Fatal("expected ReceivedTerminal=true")
 	}
 }
-
-
-
-
 
 func TestSessionExecutor_BuildContentJSON_WithBlocks_ContextCancel(t *testing.T) {
 	// Cover line 488-490: buildContentJSON with blocks and context cancelled.

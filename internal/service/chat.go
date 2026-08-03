@@ -926,14 +926,14 @@ type SessionInfo struct {
 // ContextState holds persisted session context info (mode, thinking effort, usage)
 // for restoring display after server restart. Stored as JSON in chat_sessions.context_state.
 type ContextState struct {
-	Mode             *ModeStatePersist     `json:"mode,omitempty"`
-	ThinkingEffort   *ThinkingEffortPersist `json:"thinkingEffort,omitempty"`
-	Usage            *UsageStatePersist    `json:"usage,omitempty"`
+	Mode           *ModeStatePersist      `json:"mode,omitempty"`
+	ThinkingEffort *ThinkingEffortPersist `json:"thinkingEffort,omitempty"`
+	Usage          *UsageStatePersist     `json:"usage,omitempty"`
 }
 
 // ModeStatePersist is the DB-persisted form of ai.ModeState.
 type ModeStatePersist struct {
-	CurrentModeID  string   `json:"currentModeId"`
+	CurrentModeID  string    `json:"currentModeId"`
 	AvailableModes []ModeDef `json:"availableModes,omitempty"`
 }
 
