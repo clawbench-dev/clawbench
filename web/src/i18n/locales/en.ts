@@ -633,6 +633,7 @@ export default {
     showHiddenFiles: 'Show hidden files',
     uploadHere: 'Upload files',
     dropToUpload: 'Drop to upload to current folder',
+    dropToAttach: 'Drop to attach to chat',
     pasteToUpload: 'Pasting files...',
     truncateHint: 'Showing first {max} of {total} items, use search to narrow down',
     emptyDir: 'This directory is empty.',

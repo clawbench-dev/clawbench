@@ -33,6 +33,24 @@ describe('SplitView', () => {
     expect(wrapper.find('.pane-right').text()).toBe('R')
   })
 
+  it('enabled=false: wrappers are display:contents (no absolute overlay blocking pointer events)', () => {
+    // Regression: if the disabled-mode wrappers stayed position:absolute, the
+    // later one would overlay the visible pane and swallow all touch/scroll.
+    wrapper = mountSplit({ enabled: false })
+    const left = wrapper.find('.split-view__left').element as HTMLElement
+    const right = wrapper.find('.split-view__right').element as HTMLElement
+    expect(getComputedStyle(left).display).toBe('contents')
+    expect(getComputedStyle(right).display).toBe('contents')
+  })
+
+  it('enabled=true: wrappers are positioned flex panes (not display:contents)', async () => {
+    wrapper = mountSplit({ enabled: true, ratio: 0.5 })
+    const left = wrapper.find('.split-view__left').element as HTMLElement
+    const right = wrapper.find('.split-view__right').element as HTMLElement
+    expect(getComputedStyle(left).display).not.toBe('contents')
+    expect(getComputedStyle(right).display).not.toBe('contents')
+  })
+
   it('enabled=true: renders divider and left width follows ratio', async () => {
     wrapper = mountSplit({ enabled: true, ratio: 0.4 })
     expect(wrapper.find('.split-view__divider').exists()).toBe(true)

@@ -136,6 +136,14 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
 }
+/* Disabled (single-column) mode: the wrappers are pure pass-throughs. If both
+   stayed absolutely positioned, the later one would overlay the other and,
+   when its slot content is v-show hidden, silently block every pointer event
+   (touch/scroll) on the visible pane — mobile regression on non-chat tabs. */
+.split-view:not(.split-view--active) .split-view__left,
+.split-view:not(.split-view--active) .split-view__right {
+  display: contents;
+}
 .split-view--active .split-view__left,
 .split-view--active .split-view__right {
   position: relative;

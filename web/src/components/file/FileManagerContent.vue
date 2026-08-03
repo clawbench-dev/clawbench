@@ -184,6 +184,8 @@
         <div
           v-long-press="(e) => onLongPress(entry, e)"
           class="file-item"
+          :draggable="isBigScreen"
+          @dragstart="onItemDragStart(entry, $event)"
           :class="{
             'dir-item': entry.type === 'dir',
             active: !multiSelect.active && selectedPath === itemPath(entry.name),
@@ -244,6 +246,8 @@
       <div v-for="entry in visibleEntries" :key="entry.name"
         v-long-press="(e) => onLongPress(entry, e)"
         class="grid-item"
+        :draggable="isBigScreen"
+        @dragstart="onItemDragStart(entry, $event)"
         :class="{
           'grid-dir': entry.type === 'dir',
           'grid-active': !multiSelect.active && selectedPath === itemPath(entry.name),
@@ -397,6 +401,8 @@ import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
+import { useBigScreenLayout } from '@/composables/useBigScreenLayout'
+import { setAttachDragData, hasAttachDragData } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
@@ -433,7 +439,9 @@ async function onUploadFileSelect(e) {
 
 // ── Drag-and-drop handlers (file-list / file-grid) ──
 
-function onDragEnter() {
+function onDragEnter(e) {
+  // Internal drags (file → chat) must not trigger the OS "drop to upload" overlay
+  if (hasAttachDragData(e.dataTransfer)) return
   dragCounter.value++
   isDragOver.value = true
 }
@@ -453,6 +461,14 @@ async function onDrop(e) {
   if (files.length === 0) return
   await handleFileDropToDir(files, props.currentDir || '.')
   emit('refresh')
+}
+
+/** Start an internal drag of a file/dir so it can be dropped onto the chat column. */
+function onItemDragStart(entry, e) {
+  if (!isBigScreen.value) return
+  const path = itemPath(entry.name)
+  setAttachDragData(e.dataTransfer, path, entry.type === 'dir')
+  e.dataTransfer.effectAllowed = 'copy'
 }
 
 // ── Clipboard paste handler ──
@@ -503,6 +519,7 @@ const dialog = useDialog()
 const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
+const { isBigScreen } = useBigScreenLayout()
 
 const activeTab = inject('activeTab', ref(''))
 
@@ -529,6 +546,7 @@ const props = defineProps({
     dirLoading: Boolean,
     searchDrawer: Object, // TabDrawer from useTabDrawer('browse')
     recentDrawer: Object, // TabDrawer from useTabDrawer('browse')
+    keyboardActive: { type: Boolean, default: true }, // focus-aware gating for global file shortcuts
 })
 
 const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
@@ -1241,6 +1259,8 @@ function doDelete() {
 function handleKeydown(e) {
     // Only active when browse tab is focused
     if (activeTab.value !== 'browse') return
+    // Focus-aware: in big-screen mode also require the left pane to be focused
+    if (props.keyboardActive === false) return
     // Skip in Android app mode
     if (isAppMode.value) return
     // Skip if a dialog/prompt is open (don't interfere with input fields)

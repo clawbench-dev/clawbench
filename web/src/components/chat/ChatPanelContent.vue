@@ -191,6 +191,9 @@ const TAG = 'ChatPanel'
 
 const props = defineProps({
     active: Boolean,
+    // Focus-aware keyboard gating: global chat shortcuts (Ctrl+←/→, Ctrl+Delete)
+    // fire only when the chat pane is the one the user is working in.
+    keyboardActive: { type: Boolean, default: true },
     currentFile: Object,
     currentDir: String,
 })
@@ -899,7 +902,7 @@ async function handleResumeSession({ sessionId, sessionTitle }) {
 
 // Desktop: Ctrl+Left/Right to switch sessions (always enabled, independent of swipeSession toggle)
 function handleCtrlArrowSessionSwitch(e) {
-  if (!props.active) return
+  if (!props.keyboardActive) return
   const tag = e.target?.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA') return
   if (e.target?.closest?.('.terminal-panel')) return
@@ -915,7 +918,7 @@ function handleCtrlArrowSessionSwitch(e) {
 
 // Desktop: Ctrl+Delete to archive current session
 function handleDeleteKey(e) {
-  if (!props.active) return
+  if (!props.keyboardActive) return
   if (e.key !== 'Delete' || !(e.ctrlKey || e.metaKey)) return
   inputBarRef.value?.handleDelete()
 }

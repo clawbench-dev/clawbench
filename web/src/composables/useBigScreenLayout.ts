@@ -9,6 +9,8 @@ export const BIG_SCREEN_DOCK_TABS = ['browse', 'history', 'proxy', 'terminal', '
 const isBigScreen = ref(false)
 const leftTab = ref<string>('browse')
 const splitRatio = ref(0.5)
+/** Big-screen focus tracking: which pane the user is currently working in. */
+const activePane = ref<'left' | 'right'>('right')
 let initialized = false
 let sideEffects: ((tab: string) => void) | null = null
 let setActiveTab: ((tab: string) => void) | null = null
@@ -51,13 +53,26 @@ function initBigScreen() {
 /** Returns the shared big-screen state refs (initializes once). */
 export function useBigScreenLayout() {
   initBigScreen()
-  return { isBigScreen, leftTab, splitRatio }
+  return { isBigScreen, leftTab, splitRatio, activePane }
 }
 
 /** Ref access for useTabDrawer (init once, return only the refs it needs). */
 export function getBigScreenState() {
   initBigScreen()
   return { isBigScreen, leftTab }
+}
+
+/** Record which pane the user is currently working in (drives focus-aware shortcuts). */
+export function setActivePane(pane: 'left' | 'right') {
+  activePane.value = pane
+}
+
+/**
+ * Focus continuity on entering big-screen: if the user was on chat, the right
+ * pane (chat) is focused; otherwise they were in a left-column tab.
+ */
+export function resolveActivePaneOnEnter(currentActiveTab: string): 'left' | 'right' {
+  return currentActiveTab === 'chat' ? 'right' : 'left'
 }
 
 export function registerBigScreenCallbacks(opts: { sideEffects?: (tab: string) => void; setActiveTab?: (tab: string) => void }) {
@@ -103,6 +118,7 @@ export function resetBigScreenState() {
   leftTab.value = 'browse'
   splitRatio.value = 0.5
   isBigScreen.value = false
+  activePane.value = 'right'
   sideEffects = null
   setActiveTab = null
 }

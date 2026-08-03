@@ -9,6 +9,8 @@ import {
   _setBigScreenForTest,
   _resetForTest,
   resolveLeftTabOnEnter,
+  resolveActivePaneOnEnter,
+  setActivePane,
   BIG_SCREEN_DOCK_TABS,
   LEFT_TAB_KEY,
   SPLIT_RATIO_KEY,
@@ -93,6 +95,30 @@ describe('resolveLeftTabOnEnter', () => {
 
   it('falls back to browse for invalid persisted value', () => {
     expect(resolveLeftTabOnEnter('chat', 'not-a-tab')).toBe('browse')
+  })
+})
+
+describe('activePane focus tracking', () => {
+  it('resolveActivePaneOnEnter: chat → right, any left tab → left', () => {
+    expect(resolveActivePaneOnEnter('chat')).toBe('right')
+    expect(resolveActivePaneOnEnter('browse')).toBe('left')
+    expect(resolveActivePaneOnEnter('terminal')).toBe('left')
+  })
+
+  it('setActivePane updates the shared activePane ref', () => {
+    const { activePane } = useBigScreenLayout()
+    expect(activePane.value).toBe('right')
+    setActivePane('left')
+    expect(activePane.value).toBe('left')
+    setActivePane('right')
+    expect(activePane.value).toBe('right')
+  })
+
+  it('resetBigScreenState resets activePane to right', () => {
+    setActivePane('left')
+    resetBigScreenState()
+    const { activePane } = useBigScreenLayout()
+    expect(activePane.value).toBe('right')
   })
 })
 

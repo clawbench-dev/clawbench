@@ -25,7 +25,7 @@
           <div class="big-dock-center">
             <div class="dock-active-indicator big-dock-active-indicator" :style="bigDockIndicatorStyle"></div>
             <div v-for="tab in BIG_SCREEN_DOCK_TABS" :key="tab" class="dock-btn-wrap">
-              <button class="dock-btn" :class="bigDockBtnClass(tab)" @click.stop="switchLeftTab(tab)" :title="bigDockTabTitle(tab)">
+              <button class="dock-btn" :class="bigDockBtnClass(tab)" @click.stop="handleBigDockTabClick(tab)" :title="bigDockTabTitle(tab)">
                 <component :is="bigDockTabIcon(tab)" />
               </button>
               <span v-if="bigDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': bigDockBadgeAnim(tab) }" @animationend="bigDockBadgeAnimEnd(tab)">{{ formatBadgeCount(bigDockBadgeCount(tab)) }}</span>
@@ -40,7 +40,7 @@
             @update:ratio="onSplitRatioChange"
           >
             <template #left>
-              <div class="col-left" v-show="isBigScreen || activeTab !== 'chat'">
+              <div class="col-left" v-show="isBigScreen || activeTab !== 'chat'" @pointerdown="setActivePane('left')" @focusin="setActivePane('left')">
                 <!-- File Browse Tab (合一：目录浏览 + 文件覆盖预览) -->
                 <TabPanel tabId="browse" :activeTab="leftPanelActive" :noHeader="true">
                   <div class="browse-panel">
@@ -55,6 +55,7 @@
                       :dir-loading="store.state.dirLoading"
                       :search-drawer="fileSearchDrawer"
                       :recent-drawer="recentFilesDrawer"
+                      :keyboard-active="fileManagerShortcutActive"
                       @navigate-dir="handleNavigateDir"
                       @navigate-back="handleNavigateBack"
                       @select-file="handleBrowseSelectFile"
@@ -131,7 +132,7 @@
             </template>
 
             <template #right>
-              <div class="col-right" v-show="isBigScreen || activeTab === 'chat'">
+              <div class="col-right" v-show="isBigScreen || activeTab === 'chat'" :class="{ 'chat-drop-active': chatDropActive }" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
                 <!-- Chat Tab -->
                 <TabPanel tabId="chat" :activeTab="chatActive">
                   <template #header>
@@ -142,6 +143,7 @@
                   </template>
                   <ChatPanelContent
                     :active="isBigScreen || activeTab === 'chat'"
+                    :keyboard-active="chatShortcutActive"
                     :current-file="currentFile"
                     :current-dir="currentDir"
                     @open="switchTab('chat')"
@@ -151,6 +153,10 @@
                     @open-session-search="sessionSearchDrawer.open()"
                   />
                 </TabPanel>
+                <div v-if="chatDropActive" class="chat-drop-hint">
+                  <Paperclip :size="16" />
+                  {{ t('file.dropToAttach') }}
+                </div>
               </div>
             </template>
           </SplitView>
@@ -315,7 +321,7 @@ import { appLog, startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
-import { MessageSquare, FolderOpen, GitBranch, EthernetPort, SquareTerminal as TerminalIcon, CalendarClock, MoreHorizontal, Settings } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, GitBranch, EthernetPort, SquareTerminal as TerminalIcon, CalendarClock, MoreHorizontal, Settings, Paperclip } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -373,10 +379,14 @@ import { store, loadBrowseDir } from './stores/app.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
 import { formatBadgeCount } from './utils/format.ts'
+import { useChatContext } from './composables/useChatContext.ts'
+import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
 import {
   useBigScreenLayout,
   resolveLeftTabOnEnter,
+  setActivePane,
+  resolveActivePaneOnEnter,
   switchLeftTab,
   setSplitRatio,
   registerBigScreenCallbacks,
@@ -489,12 +499,17 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
 const activeTab = ref('chat')
 
 // ── Big-screen layout state ──
-const { isBigScreen, leftTab, splitRatio } = useBigScreenLayout()
+const { isBigScreen, leftTab, splitRatio, activePane } = useBigScreenLayout()
 
 const chatActive = computed(() => (isBigScreen.value ? 'chat' : activeTab.value))
 const leftPanelActive = computed(() => (isBigScreen.value ? leftTab.value : activeTab.value))
 const panelIsActive = (tabId) =>
   isBigScreen.value ? leftTab.value === tabId : activeTab.value === tabId
+
+// Focus-aware keyboard gating: a panel's global shortcuts only fire when the
+// user is actually working in that pane (big-screen) or that tab (narrow).
+const chatShortcutActive = computed(() => (isBigScreen.value ? activePane.value === 'right' : activeTab.value === 'chat'))
+const fileManagerShortcutActive = computed(() => (isBigScreen.value ? activePane.value === 'left' : activeTab.value === 'browse'))
 
 function onSplitRatioChange(ratio) {
   setSplitRatio(ratio)
@@ -1300,8 +1315,23 @@ watch(isBigScreen, (val) => {
     if (leftTab.value !== next) switchLeftTab(next)
     onTabSwitch('chat')
     overflowMenuOpen.value = false
+    // Focus continuity: the pane the user was working in becomes the active one.
+    setActivePane(resolveActivePaneOnEnter(activeTab.value))
+    // Big-screen: the bottom dock is hidden, so bottom-sheet drawers must sit
+    // flush with the screen bottom — don't let a stale --dock-height leave a gap.
+    document.documentElement.style.setProperty('--dock-height', '0px')
   } else {
     onTabSwitch(activeTab.value)
+    // Bottom dock visible again — re-measure (ResizeObserver may miss the
+    // display:none → visible transition, see the keyboard safety-net comment).
+    nextTick(() => {
+      startDockResize()
+      const dw = document.querySelector('.bottom-dock-wrapper')
+      if (dw) {
+        const h = dw.offsetHeight
+        document.documentElement.style.setProperty('--dock-height', h ? `${h}px` : '0px')
+      }
+    })
   }
 }, { immediate: true })
 
@@ -1315,6 +1345,47 @@ registerBigScreenCallbacks({
 })
 
 // ── Big-screen vertical dock helpers ──
+function handleBigDockTabClick(tab) {
+  // Clicking a dock item means the user intends to work in the left pane.
+  setActivePane('left')
+  switchLeftTab(tab)
+}
+
+// ── Drag file/dir from the left panel → attach to chat (big-screen only) ──
+const { addAttachedFile } = useChatContext()
+const chatDropActive = ref(false)
+let chatDropCounter = 0
+
+function onChatColDragEnter(e) {
+  if (!isBigScreen.value || !hasAttachDragData(e.dataTransfer)) return
+  chatDropCounter++
+  chatDropActive.value = true
+}
+
+function onChatColDragOver(e) {
+  // Allow the drop only for internal attach drags (don't hijack OS file drops)
+  if (isBigScreen.value && hasAttachDragData(e.dataTransfer)) e.preventDefault()
+}
+
+function onChatColDragLeave() {
+  chatDropCounter--
+  if (chatDropCounter <= 0) {
+    chatDropCounter = 0
+    chatDropActive.value = false
+  }
+}
+
+function onChatColDrop(e) {
+  chatDropCounter = 0
+  chatDropActive.value = false
+  if (!isBigScreen.value) return
+  const data = readAttachDragData(e.dataTransfer)
+  if (!data) return
+  e.preventDefault()
+  addAttachedFile(data.path, data.isDir)
+  toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+}
+
 const bigScreenTabMeta = {
   browse: { icon: FolderOpen, titleKey: 'nav.fileManager' },
   history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
@@ -1782,14 +1853,15 @@ function handleCtrlF(e) {
     if (_dlg.state.value.visible || projectDialogOpen.value) return
 
     if (isBigScreen.value) {
-        // Two visible panes: browse (left workspace) takes priority, else chat (always visible)
-        if (panelIsActive('browse')) {
-            e.preventDefault()
-            openBrowseSearchDrawer()
-        } else {
+        // Focus-aware: route Ctrl+F to the pane the user is working in
+        if (activePane.value === 'right') {
             e.preventDefault()
             openChatSearchDrawer()
+        } else if (panelIsActive('browse')) {
+            e.preventDefault()
+            openBrowseSearchDrawer()
         }
+        // Left pane focused on a non-searchable tab → native Ctrl+F
     } else if (activeTab.value === 'chat') {
         e.preventDefault()
         openChatSearchDrawer()
@@ -1848,6 +1920,38 @@ onUnmounted(() => {
     height: 100%;
 }
 
+/* Drag file/dir onto the chat column (big-screen) — highlight the drop target */
+.chat-drop-active::after {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    border: 2px dashed var(--accent-color, #0066cc);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 6%, transparent);
+    pointer-events: none;
+    z-index: 10;
+}
+
+.chat-drop-hint {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    border-radius: 999px;
+    background: var(--bg-primary);
+    border: 1px solid var(--accent-color, #0066cc);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    color: var(--accent-color, #0066cc);
+    font-size: 14px;
+    font-weight: 600;
+    pointer-events: none;
+    z-index: 11;
+}
+
 /* When chat keyboard is open on iOS/PWA (no adjustResize), shrink the app container
    from the bottom so content stays above the keyboard. */
 .chat-keyboard-open {
@@ -1868,13 +1972,14 @@ onUnmounted(() => {
     user-select: none;
 }
 
-/* Big-screen vertical dock (left edge) */
+/* Big-screen vertical dock (left edge) — VS Code activity-bar style */
 .big-dock {
     flex-shrink: 0;
-    width: 60px;
+    width: 48px;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
+    padding-top: 8px;
     background: var(--bg-primary);
     border-right: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
     -webkit-tap-highlight-color: transparent;
