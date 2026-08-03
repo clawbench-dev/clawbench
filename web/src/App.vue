@@ -1867,6 +1867,33 @@ onUnmounted(() => {
     user-select: none;
 }
 
+/* Big-screen vertical dock (left edge) */
+.big-dock {
+    flex-shrink: 0;
+    width: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-primary);
+    border-right: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+.big-dock-center {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+/* Vertical variant of the water-drop indicator (base .dock-active-indicator is already scoped) */
+.big-dock-active-indicator {
+    left: 50%;
+    top: 0;
+}
+
 .bottom-dock {
     display: flex;
     align-items: center;
