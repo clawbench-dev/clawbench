@@ -23,6 +23,7 @@ nohup.out
 
 # Node/Vite
 node_modules/
+node_modules
 vite.log
 public/
 internal/frontend/dist/
