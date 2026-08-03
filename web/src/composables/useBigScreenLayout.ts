@@ -28,8 +28,11 @@ function initBigScreen() {
   initialized = true
   leftTab.value = readPersistedLeftTab()
   try {
-    const raw = Number(localStorage.getItem(SPLIT_RATIO_KEY))
-    if (Number.isFinite(raw)) splitRatio.value = normalizeRatio(raw)
+    const stored = localStorage.getItem(SPLIT_RATIO_KEY)
+    if (stored !== null) {
+      const raw = Number(stored)
+      if (Number.isFinite(raw)) splitRatio.value = normalizeRatio(raw)
+    }
   } catch {
     // ignore
   }
@@ -51,7 +54,7 @@ export function useBigScreenLayout() {
   return { isBigScreen, leftTab, splitRatio }
 }
 
-/** Ref access for useTabDrawer (avoids importing refs eagerly at module scope). */
+/** Ref access for useTabDrawer (init once, return only the refs it needs). */
 export function getBigScreenState() {
   initBigScreen()
   return { isBigScreen, leftTab }

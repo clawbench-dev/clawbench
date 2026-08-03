@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   useBigScreenLayout,
   getBigScreenState,
@@ -65,6 +65,11 @@ describe('useBigScreenLayout', () => {
     expect(leftTab.value).toBe('settings')
   })
 
+  it('fresh init with no persisted ratio keeps splitRatio at 0.5', () => {
+    const { splitRatio } = useBigScreenLayout()
+    expect(splitRatio.value).toBe(0.5)
+  })
+
   it('big-screen mode makes getBigScreenState expose chat + leftTab as active tabs', () => {
     const { isBigScreen, leftTab } = getBigScreenState()
     _setBigScreenForTest(true)
@@ -75,6 +80,10 @@ describe('useBigScreenLayout', () => {
 })
 
 describe('useBigScreenLayout matchMedia wiring', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('reflects matchMedia matches and change events', async () => {
     vi.resetModules()
     const listeners: Array<(e: { matches: boolean }) => void> = []
@@ -89,6 +98,5 @@ describe('useBigScreenLayout matchMedia wiring', () => {
     mql.matches = false
     listeners.forEach((cb) => cb({ matches: false }))
     expect(mod.getBigScreenState().isBigScreen.value).toBe(false)
-    vi.unstubAllGlobals()
   })
 })
