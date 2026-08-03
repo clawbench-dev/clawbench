@@ -47,6 +47,14 @@ var orphanCmdlinePatterns = [][2]string{
 // managed, not orphans.
 // On macOS/Windows: no-op (orphaned processes exit when stdin pipe closes).
 func CleanupOrphans() {
+	// A ClawBench server is never an orphan child. If this process inherited
+	// the orphan marker from its spawner (e.g. build.sh --restart launched
+	// from inside a ClawBench-spawned subprocess, whose env carries the
+	// marker), strip it now so it does not propagate to our own children
+	// (terminals, agents) and does not mark this server as an orphan later.
+	_ = os.Unsetenv(strings.SplitN(OrphanChildEnvVar, "=", 2)[0])
+	_ = os.Unsetenv(strings.SplitN(OrphanSupervisorVar, "=", 2)[0])
+
 	if runtime.GOOS != "linux" {
 		return
 	}
@@ -57,10 +65,11 @@ func CleanupOrphans() {
 		return
 	}
 
+	selfPID := os.Getpid()
 	var killed, skipped int
 	for _, entry := range entries {
 		pid, ok := parseDirEntryAsPID(entry)
-		if !ok {
+		if !ok || pid == selfPID {
 			continue
 		}
 

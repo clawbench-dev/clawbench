@@ -1547,9 +1547,11 @@ func IsRunningUnderSupervisor() bool {
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		return true
 	}
-	if os.Getppid() == 1 {
-		return true
-	}
+	// NOTE: PPid==1 (re-parented to init) is NOT evidence of a supervisor. It
+	// happens whenever the parent dies — e.g. a server launched by the restart
+	// sentinel, or started via setsid/nohup. Treating it as supervised would
+	// make the next config-panel restart skip launching a sentinel and simply
+	// shut down, leaving the service permanently down.
 	return false
 }
 
