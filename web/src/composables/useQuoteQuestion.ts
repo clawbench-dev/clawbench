@@ -39,7 +39,9 @@ function onSelectionChange() {
   debounceTimer = setTimeout(() => {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.toString().trim()) {
-      // When bar is pinned (user clicked "引用提问"), don't auto-hide on selection loss
+      // When the selection is gone, drop the quote (both modes) — unless the
+      // user explicitly pinned it via "引用提问". A stale quote chip must not
+      // linger in the chat input after the user deselects the text.
       if (!barPinned.value) {
         barVisible.value = false
         setQuoteData(null)

@@ -1443,7 +1443,7 @@ const bigDockActiveIndex = computed(() => {
   return i >= 0 ? i : 0
 })
 const bigDockIndicatorStyle = computed(() => ({
-  transform: `translate(-50%, ${bigDockActiveIndex.value * DOCK_STEP}px)`,
+  transform: `translateY(${bigDockActiveIndex.value * DOCK_STEP}px)`,
 }))
 
 const isOverflowTabActive = computed(() => popupOverflowTabs.value.includes(activeTab.value))
@@ -1979,25 +1979,54 @@ onUnmounted(() => {
     display: flex;
     align-items: flex-start;
     justify-content: center;
-    padding-top: 8px;
     background: var(--bg-primary);
-    border-right: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+    border-right: 1px solid var(--border-color);
     -webkit-tap-highlight-color: transparent;
     user-select: none;
 }
 
 .big-dock-center {
     position: relative;
+    width: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 12px;
 }
 
-/* Vertical variant of the water-drop indicator (base .dock-active-indicator is already scoped) */
-.big-dock-active-indicator {
-    left: 50%;
+/* VS Code activity-bar style active highlight: faint translucent theme tint
+   spanning the dock width + a thin theme-colored bar on the left edge.
+   Scoped under .big-dock so it outranks the base .dock-active-indicator
+   (same single-class specificity — a bare .big-dock-active-indicator would
+   lose to the later base rule and render as the circular water-drop). */
+.big-dock .big-dock-active-indicator {
+    position: absolute;
+    left: 0;
     top: 0;
+    width: 100%;
+    height: 34px;
+    border-radius: 0;
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+    /* Base uses a springy overshoot (for the bottom-dock water-drop); a smooth
+       ease-out reads better on a full-width highlight. */
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.big-dock .big-dock-active-indicator::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--accent-color);
+}
+
+/* Active icon follows the theme color (VS Code activity bar) */
+.big-dock .dock-btn.active {
+    color: var(--accent-color);
+}
+.big-dock .dock-btn.active:hover {
+    color: var(--accent-color);
 }
 
 .bottom-dock {
