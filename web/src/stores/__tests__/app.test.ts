@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { loadBrowseDir } from '@/stores/app.ts'
+import { loadBrowseDir, loadOpenFile, clearOpenFile } from '@/stores/app.ts'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 
@@ -167,5 +167,58 @@ describe('loadFiles DirectoryNotFound → parent navigation', () => {
     expect(store.state.dirLoading).toBe(false)
     // apiGet should have been called at least 11 times (initial + 10 recursive)
     expect(vi.mocked(apiGet).mock.calls.length).toBeGreaterThanOrEqual(10)
+  })
+})
+
+describe('saveOpenFile / loadOpenFile / clearOpenFile', () => {
+  const OPEN_FILE_PREFIX = 'clawbench-open-file:'
+
+  beforeEach(() => {
+    localStorage.clear()
+    store.state.projectRoot = ''
+    store.state.currentFile = null
+  })
+
+  it('loadOpenFile returns empty string when no projectRoot', () => {
+    store.state.projectRoot = ''
+    expect(loadOpenFile()).toBe('')
+  })
+
+  it('loadOpenFile returns saved file path for the current project', () => {
+    store.state.projectRoot = '/home/user/myproject'
+    localStorage.setItem(OPEN_FILE_PREFIX + '/home/user/myproject', 'src/main.go')
+    expect(loadOpenFile()).toBe('src/main.go')
+  })
+
+  it('loadOpenFile returns empty string when no saved file exists', () => {
+    store.state.projectRoot = '/home/user/newproject'
+    expect(loadOpenFile()).toBe('')
+  })
+
+  it('clearOpenFile removes the persisted file for the current project', () => {
+    store.state.projectRoot = '/home/user/myproject'
+    localStorage.setItem(OPEN_FILE_PREFIX + '/home/user/myproject', 'src/main.go')
+    clearOpenFile()
+    expect(localStorage.getItem(OPEN_FILE_PREFIX + '/home/user/myproject')).toBeNull()
+  })
+
+  it('clearOpenFile does nothing when projectRoot is empty', () => {
+    store.state.projectRoot = ''
+    localStorage.setItem(OPEN_FILE_PREFIX + '/home/user/other', 'other.go')
+    clearOpenFile()
+    // Should not affect other keys
+    expect(localStorage.getItem(OPEN_FILE_PREFIX + '/home/user/other')).toBe('other.go')
+  })
+
+  it('different projects have independent open files', () => {
+    store.state.projectRoot = '/project/a'
+    localStorage.setItem(OPEN_FILE_PREFIX + '/project/a', 'file-a.ts')
+    store.state.projectRoot = '/project/b'
+    localStorage.setItem(OPEN_FILE_PREFIX + '/project/b', 'file-b.ts')
+
+    store.state.projectRoot = '/project/a'
+    expect(loadOpenFile()).toBe('file-a.ts')
+    store.state.projectRoot = '/project/b'
+    expect(loadOpenFile()).toBe('file-b.ts')
   })
 })

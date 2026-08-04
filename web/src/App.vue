@@ -376,7 +376,7 @@ import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
 import { useUpgrade } from './composables/useUpgrade'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, requestExitConfirm } from './composables/useBackHandler'
-import { store, loadBrowseDir } from './stores/app.ts'
+import { store, loadBrowseDir, loadOpenFile, clearOpenFile } from './stores/app.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
 import { formatBadgeCount } from './utils/format.ts'
@@ -415,6 +415,8 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   await new Promise(r => setTimeout(r, 150))
 
   // ── Phase 2: POST to backend — now returns full init data (roots, homeDir, config) ──
+  // Clear open file for the OLD project before switching (setProject resets projectRoot)
+  clearOpenFile()
   try {
     await store.setProject(newProjectPath)
   } catch (err) {
@@ -466,6 +468,12 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
       }
     } else {
       await store.loadFiles('')
+    }
+    // Restore last opened file for this project
+    const savedFile = loadOpenFile()
+    if (savedFile) {
+      const ok = await store.selectFile(savedFile)
+      if (ok) fileNav.openFile(savedFile)
     }
   }
   await sessionIdentity.initSessionFromAPI()
@@ -686,6 +694,7 @@ const fileNav = useFileNavStack()
 
 function closeOverlayAndSync() {
   fileNav.closeOverlay()
+  clearOpenFile()
   tocDrawer.close()
   detailsDrawer.close()
   searchDrawer.close()
@@ -986,6 +995,12 @@ async function initializeApp() {
     try { await store.loadFiles('') } catch {
       toast.show(t('toast.fileListLoadFailed'), { icon: '⚠️', type: 'error', duration: 6000 })
     }
+  }
+  // Restore last opened file (per-project)
+  const savedFile = loadOpenFile()
+  if (savedFile) {
+    const ok = await store.selectFile(savedFile)
+    if (ok) fileNav.openFile(savedFile)
   }
   return true
 }

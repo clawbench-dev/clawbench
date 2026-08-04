@@ -10,6 +10,35 @@ import { useFileNavStack } from '@/composables/useFileNavStack'
 
 const TAG = 'Store'
 
+// ── Open file persistence (per-project) ──
+const OPEN_FILE_PREFIX = 'clawbench-open-file:'
+
+function saveOpenFile(): void {
+    if (!state.projectRoot) return
+    try {
+        const path = state.currentFile?.path
+        if (path) {
+            localStorage.setItem(OPEN_FILE_PREFIX + state.projectRoot, path)
+        } else {
+            localStorage.removeItem(OPEN_FILE_PREFIX + state.projectRoot)
+        }
+    } catch { /* ignore */ }
+}
+
+export function loadOpenFile(): string {
+    if (!state.projectRoot) return ''
+    try {
+        return localStorage.getItem(OPEN_FILE_PREFIX + state.projectRoot) || ''
+    } catch { return '' }
+}
+
+export function clearOpenFile(): void {
+    if (!state.projectRoot) return
+    try {
+        localStorage.removeItem(OPEN_FILE_PREFIX + state.projectRoot)
+    } catch { /* ignore */ }
+}
+
 // ── Browse directory persistence (per-project) ──
 const BROWSE_DIR_PREFIX = 'clawbench-browse-dir:'
 
@@ -341,27 +370,27 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
     if (isPdf) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isPdf: true }
-        return true
+        saveOpenFile(); return true
     }
     if (isImage) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isImage: true }
-        return true
+        saveOpenFile(); return true
     }
     if (isAudio) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isAudio: true }
-        return true
+        saveOpenFile(); return true
     }
     if (isVideo) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isVideo: true }
-        return true
+        saveOpenFile(); return true
     }
     if (isOffice) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isOffice: true }
-        return true
+        saveOpenFile(); return true
     }
 
     try {
@@ -391,7 +420,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
                 const fileName = baseName(path)
                 const sizeInfo = state.dirEntries.find(e => e.name === fileName)
                 state.currentFile = { name: fileName, path, content: null, tooLarge: true, size: sizeInfo?.size }
-                return true
+                saveOpenFile(); return true
             }
             throw new Error(err.error || 'Failed')
         }
@@ -415,7 +444,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         } else {
             state.currentFile = data
         }
-        return true
+        saveOpenFile(); return true
     } catch (err: unknown) {
         // Don't replace currentFile — keep the previously opened file visible.
         useToast().show((err as Error).message, { type: 'error', icon: '⚠️' })
@@ -450,6 +479,7 @@ async function deleteFile(filePath: string): Promise<void> {
     }
     if (state.currentFile?.path === filePath) {
         state.currentFile = null
+        clearOpenFile()
         useFileNavStack().removePath(filePath)
     }
     appLog.d(TAG, '[deleteFile] refreshing, currentDir:', state.currentDir, 'loadFilesSeq:', loadFilesSeq)
@@ -473,6 +503,7 @@ async function deleteFiles(paths: string[]): Promise<void> {
     if (state.currentFile && paths.includes(state.currentFile.path)) {
         useFileNavStack().removePath(state.currentFile.path)
         state.currentFile = null
+        clearOpenFile()
     }
     await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
     appLog.d(TAG, '[deleteFiles] done, dirEntries count:', state.dirEntries.length)
