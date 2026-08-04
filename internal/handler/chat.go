@@ -895,8 +895,15 @@ func buildForkContext(sessionID string) string {
 		return ""
 	}
 
-	const maxPerMsg = 2000
-	const maxTotal = 10000
+	// Batch-fetch tool call details for the session
+	toolCalls, _ := service.GetToolCallsBySession(sessionID)
+	toolCallMap := make(map[string]*service.ToolCallRecord, len(toolCalls))
+	for i := range toolCalls {
+		toolCallMap[toolCalls[i].ToolID] = &toolCalls[i]
+	}
+
+	const maxPerMsg = 4000
+	const maxTotal = 20000
 
 	var sb strings.Builder
 	sb.WriteString("[Below is the conversation history from before this session. Continue based on this context.]\n\n")
@@ -907,13 +914,54 @@ func buildForkContext(sessionID string) string {
 		if m.Role == "assistant" {
 			role = "Assistant"
 		}
-		// Convert JSON block format to readable plain text.
-		// For assistant messages this strips tool_use/tool_result blocks
-		// and keeps only the text content.
-		content := service.ExtractPlainText(m.Content)
-		if content == "" {
-			continue // skip messages with no readable text (e.g. pure tool calls)
+
+		if m.Role != "user" && m.Role != "assistant" {
+			continue
 		}
+
+		var wrapper struct {
+			Blocks []model.ContentBlock `json:"blocks"`
+		}
+		if !strings.HasPrefix(m.Content, `{"blocks":`) || json.Unmarshal([]byte(m.Content), &wrapper) != nil {
+			// Non-block content: treat as plain text
+			content := m.Content
+			if content == "" {
+				continue
+			}
+			if len(content) > maxPerMsg {
+				content = content[:maxPerMsg] + "...(truncated)"
+			}
+			line := fmt.Sprintf("%s: %s\n\n", role, content)
+			if total+len(line) > maxTotal {
+				sb.WriteString("...(history too long, remaining messages omitted)\n\n")
+				break
+			}
+			sb.WriteString(line)
+			total += len(line)
+			continue
+		}
+
+		// Render blocks: text as-is, tool_use as structured JSON, thinking skipped
+		var msgParts []string
+		for _, b := range wrapper.Blocks {
+			switch b.Type {
+			case "text":
+				if b.Text != "" {
+					msgParts = append(msgParts, b.Text)
+				}
+			case "tool_use":
+				tcJSON := service.FormatToolUseBlock(b, toolCallMap)
+				if tcJSON != "" {
+					msgParts = append(msgParts, tcJSON)
+				}
+			// thinking, warning, error: skipped
+			}
+		}
+		if len(msgParts) == 0 {
+			continue
+		}
+
+		content := strings.Join(msgParts, "\n\n")
 		if len(content) > maxPerMsg {
 			content = content[:maxPerMsg] + "...(truncated)"
 		}

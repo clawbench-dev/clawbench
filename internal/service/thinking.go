@@ -93,6 +93,29 @@ func GetThinkingBySession(thinkID, sessionID string) (*ThinkingRecord, error) {
 	return &r, nil
 }
 
+// GetThinkingBySessionAll retrieves all thinking records for a session.
+// Used by BuildForkContext to batch-fetch thinking text without N+1 queries.
+func GetThinkingBySessionAll(sessionID string) ([]ThinkingRecord, error) {
+	rows, err := dbRead.QueryContext(context.Background(), `
+		SELECT id, message_id, session_id, think_id, text, created_at
+		FROM chat_thinking WHERE session_id = ?
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("GetThinkingBySessionAll: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var records []ThinkingRecord
+	for rows.Next() {
+		var r ThinkingRecord
+		if err := rows.Scan(&r.ID, &r.MessageID, &r.SessionID, &r.ThinkID, &r.Text, &r.CreatedAt); err != nil {
+			return nil, fmt.Errorf("GetThinkingBySessionAll scan: %w", err)
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
 // slimThinkingInContent parses content JSON, extracts thinking block text into
 // ThinkingRecord entries (generating think_id), and rewrites the content with
 // slim thinking blocks ({type:"thinking", think_id, done} — text removed).

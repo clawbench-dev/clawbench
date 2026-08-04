@@ -71,6 +71,36 @@ func GetToolCall(toolID string, messageID int64) (*ToolCallRecord, error) {
 	return &r, nil
 }
 
+// GetToolCallsBySession retrieves all tool call records for a session.
+// Used by BuildForkContext to batch-fetch tool details without N+1 queries.
+func GetToolCallsBySession(sessionID string) ([]ToolCallRecord, error) {
+	rows, err := dbRead.QueryContext(context.Background(), `
+		SELECT id, message_id, session_id, tool_id, name, input, output, status, done, summary, duration_ms, created_at
+		FROM chat_tool_calls WHERE session_id = ?
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("GetToolCallsBySession: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var records []ToolCallRecord
+	for rows.Next() {
+		var r ToolCallRecord
+		var doneInt int
+		var inputStr string
+		if err := rows.Scan(
+			&r.ID, &r.MessageID, &r.SessionID, &r.ToolID, &r.Name,
+			&inputStr, &r.Output, &r.Status, &doneInt, &r.Summary, &r.DurationMs, &r.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("GetToolCallsBySession scan: %w", err)
+		}
+		r.Input = json.RawMessage(inputStr)
+		r.Done = doneInt != 0
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
 // GetToolCallBySession retrieves a tool call record by tool_id and session_id.
 // This is a fallback for task executions where the session has multiple assistant
 // messages and the tool call may be stored
