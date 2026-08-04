@@ -2181,9 +2181,9 @@ func TestFormatToolUseBlock_Truncation(t *testing.T) {
 		Summary:    longSummary,
 	}
 	tc := ToolCallRecord{
-		ToolID:  "toolu_trunc",
-		Input:   json.RawMessage(longInput),
-		Output:  longOutput,
+		ToolID: "toolu_trunc",
+		Input:  json.RawMessage(longInput),
+		Output: longOutput,
 	}
 	toolCallMap := map[string]*ToolCallRecord{"toolu_trunc": &tc}
 
@@ -2194,6 +2194,50 @@ func TestFormatToolUseBlock_Truncation(t *testing.T) {
 	assert.NotContains(t, result, strings.Repeat("a", 600))
 	// Summary truncated at 500
 	assert.Contains(t, result, strings.Repeat("c", 500))
+}
+
+func TestExtractMessageParts_TextBlocks(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: contentKeyText, Text: "hello"},
+		{Type: contentKeyText, Text: "world"},
+	}
+	parts := extractMessageParts(blocks, nil)
+	assert.Equal(t, []string{"hello", "world"}, parts)
+}
+
+func TestExtractMessageParts_SkipsEmptyText(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: contentKeyText, Text: ""},
+		{Type: contentKeyText, Text: "visible"},
+	}
+	parts := extractMessageParts(blocks, nil)
+	assert.Equal(t, []string{"visible"}, parts)
+}
+
+func TestExtractMessageParts_ToolUseBlock(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: contentKeyText, Text: "preamble"},
+		{Type: eventTypeToolUse, Name: "Bash", ID: "t1", Status: "success", Done: true},
+	}
+	parts := extractMessageParts(blocks, nil)
+	assert.Len(t, parts, 2)
+	assert.Equal(t, "preamble", parts[0])
+	assert.Contains(t, parts[1], "<tool_use>")
+}
+
+func TestExtractMessageParts_SkipsThinkingAndWarning(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: contentKeyText, Text: "msg"},
+		{Type: "thinking", Text: "hidden"},
+		{Type: "warning", Text: "also hidden"},
+	}
+	parts := extractMessageParts(blocks, nil)
+	assert.Equal(t, []string{"msg"}, parts)
+}
+
+func TestExtractMessageParts_EmptyBlocks(t *testing.T) {
+	parts := extractMessageParts(nil, nil)
+	assert.Nil(t, parts)
 }
 
 // ============================================================================

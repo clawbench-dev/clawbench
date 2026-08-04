@@ -36,7 +36,8 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 	if dbRead == nil {
 		return nil, fmt.Errorf("database not initialized")
 	}
-	rows, err := dbRead.QueryContext(context.Background(),
+	rows, err := dbRead.QueryContext(
+		context.Background(),
 		`SELECT id, title, project_path, backend, agent_id, model
 		 FROM chat_sessions
 		 WHERE LOWER(id) LIKE LOWER(?) AND archived = 0 AND session_type = 'chat'
@@ -59,7 +60,8 @@ func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := dbRead.QueryContext(context.Background(),
+	rows, err := dbRead.QueryContext(
+		context.Background(),
 		`SELECT id, title, project_path, backend, agent_id, model
 		 FROM chat_sessions
 		 WHERE archived = 0 AND session_type = 'chat'
@@ -106,7 +108,8 @@ func FindRunningSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 		args[i] = id
 	}
 
-	rows, err := dbRead.QueryContext(context.Background(),
+	rows, err := dbRead.QueryContext(
+		context.Background(),
 		fmt.Sprintf(
 			`SELECT id, title, project_path, backend, agent_id, model
 			 FROM chat_sessions
@@ -258,7 +261,8 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 // handleSessionPanic recovers from panics in the session goroutine.
 func handleSessionPanic(cfg LaunchConfig, sessionID string, cancel context.CancelFunc) {
 	if r := recover(); r != nil {
-		slog.Error("session goroutine panicked",
+		slog.Error(
+			"session goroutine panicked",
 			slog.String("session", sessionID),
 			slog.Any("panic", r),
 			slog.String("stack", string(debug.Stack())),
@@ -446,21 +450,7 @@ func BuildForkContext(sessionID string) string {
 		}
 
 		// Collect all non-skipped block outputs for this message
-		var msgParts []string
-		for _, b := range content.Blocks {
-			switch b.Type {
-			case contentKeyText:
-				if b.Text != "" {
-					msgParts = append(msgParts, b.Text)
-				}
-			case "tool_use":
-				tcJSON := FormatToolUseBlock(b, toolCallMap)
-				if tcJSON != "" {
-					msgParts = append(msgParts, tcJSON)
-				}
-			// thinking, warning, error: skipped
-			}
-		}
+		msgParts := extractMessageParts(content.Blocks, toolCallMap)
 		if len(msgParts) == 0 {
 			continue
 		}
@@ -475,6 +465,26 @@ func BuildForkContext(sessionID string) string {
 		sb.WriteString("\n\n")
 	}
 	return sb.String()
+}
+
+// extractMessageParts collects non-skipped block outputs from content blocks.
+func extractMessageParts(blocks []model.ContentBlock, toolCallMap map[string]*ToolCallRecord) []string {
+	var parts []string
+	for _, b := range blocks {
+		switch b.Type {
+		case contentKeyText:
+			if b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		case eventTypeToolUse:
+			tcJSON := FormatToolUseBlock(b, toolCallMap)
+			if tcJSON != "" {
+				parts = append(parts, tcJSON)
+			}
+			// thinking, warning, error: skipped
+		}
+	}
+	return parts
 }
 
 // FormatToolUseBlock renders a tool_use ContentBlock as structured JSON wrapped

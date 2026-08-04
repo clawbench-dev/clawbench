@@ -393,7 +393,7 @@ func (e *SessionExecutor) upsertToolCallToDB(event ai.StreamEvent) {
 	}
 	// Find the matching block in accumulated blocks
 	for i := len(e.blocks) - 1; i >= 0; i-- {
-		if e.blocks[i].Type == "tool_use" && e.blocks[i].ID == event.Tool.ID {
+		if e.blocks[i].Type == eventTypeToolUse && e.blocks[i].ID == event.Tool.ID {
 			block := &e.blocks[i]
 			inputJSON, _ := json.Marshal(block.Input)
 			if err := UpsertToolCall(

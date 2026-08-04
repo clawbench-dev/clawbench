@@ -954,7 +954,7 @@ func buildForkContext(sessionID string) string {
 				if tcJSON != "" {
 					msgParts = append(msgParts, tcJSON)
 				}
-			// thinking, warning, error: skipped
+				// thinking, warning, error: skipped
 			}
 		}
 		if len(msgParts) == 0 {
