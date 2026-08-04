@@ -80,6 +80,60 @@ func TestThinkingCRUD(t *testing.T) {
 	})
 }
 
+func TestGetThinkingBySessionAll(t *testing.T) {
+	dbDir := t.TempDir()
+	if err := initTestDB(dbDir); err != nil {
+		t.Fatalf("initTestDB: %v", err)
+	}
+	defer func() {
+		db.Close()
+		dbRead.Close()
+	}()
+
+	sessionID := "thinking-all-sess"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+		sessionID, "/test", "test", "Test Session")
+	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
+	if err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+	msgID, _ := res.LastInsertId()
+
+	t.Run("returns empty for session with no thinking", func(t *testing.T) {
+		records, err := GetThinkingBySessionAll(sessionID)
+		if err != nil {
+			t.Fatalf("GetThinkingBySessionAll: %v", err)
+		}
+		if len(records) != 0 {
+			t.Errorf("expected 0 records, got %d", len(records))
+		}
+	})
+
+	t.Run("returns all thinking records for session", func(t *testing.T) {
+		if err := UpsertThinking(msgID, sessionID, "th_001", "first thought"); err != nil {
+			t.Fatalf("UpsertThinking: %v", err)
+		}
+		if err := UpsertThinking(msgID, sessionID, "th_002", "second thought"); err != nil {
+			t.Fatalf("UpsertThinking: %v", err)
+		}
+		records, err := GetThinkingBySessionAll(sessionID)
+		if err != nil {
+			t.Fatalf("GetThinkingBySessionAll: %v", err)
+		}
+		if len(records) != 2 {
+			t.Fatalf("expected 2 records, got %d", len(records))
+		}
+		got := map[string]string{}
+		for _, r := range records {
+			got[r.ThinkID] = r.Text
+		}
+		if got["th_001"] != "first thought" || got["th_002"] != "second thought" {
+			t.Errorf("mismatch: %+v", got)
+		}
+	})
+}
+
 func TestGenerateThinkingID(t *testing.T) {
 	a, b := generateThinkingID(), generateThinkingID()
 	if a == "" || b == "" {

@@ -173,6 +173,62 @@ func TestUpsertAndGetToolCall(t *testing.T) {
 	})
 }
 
+func TestGetToolCallsBySession(t *testing.T) {
+	dbDir := t.TempDir()
+	if err := initTestDB(dbDir); err != nil {
+		t.Fatalf("initTestDB: %v", err)
+	}
+	defer func() {
+		db.Close()
+		dbRead.Close()
+	}()
+
+	sessionID := "tc-session-all"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+		sessionID, "/test", "test", "Test Session")
+	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
+	if err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+	msgID, _ := res.LastInsertId()
+
+	t.Run("returns empty for session with no tool calls", func(t *testing.T) {
+		records, err := GetToolCallsBySession(sessionID)
+		if err != nil {
+			t.Fatalf("GetToolCallsBySession: %v", err)
+		}
+		if len(records) != 0 {
+			t.Errorf("expected 0 records, got %d", len(records))
+		}
+	})
+
+	t.Run("returns all tool calls for session", func(t *testing.T) {
+		input1 := json.RawMessage(`{"file_path":"/a.go"}`)
+		input2 := json.RawMessage(`{"command":"ls"}`)
+		if err := UpsertToolCall(msgID, sessionID, "toolu_s1", "Read", input1, "content-a", "success", "", true, 100); err != nil {
+			t.Fatalf("UpsertToolCall 1: %v", err)
+		}
+		if err := UpsertToolCall(msgID, sessionID, "toolu_s2", "Bash", input2, "output", "success", "", true, 200); err != nil {
+			t.Fatalf("UpsertToolCall 2: %v", err)
+		}
+		records, err := GetToolCallsBySession(sessionID)
+		if err != nil {
+			t.Fatalf("GetToolCallsBySession: %v", err)
+		}
+		if len(records) != 2 {
+			t.Fatalf("expected 2 records, got %d", len(records))
+		}
+		got := map[string]string{}
+		for _, r := range records {
+			got[r.ToolID] = r.Name
+		}
+		if got["toolu_s1"] != "Read" || got["toolu_s2"] != "Bash" {
+			t.Errorf("mismatch: %+v", got)
+		}
+	})
+}
+
 // initTestDB creates a test database in the given directory
 func initTestDB(dbDir string) error {
 	origBinDir := model.BinDir
