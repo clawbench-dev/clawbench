@@ -154,7 +154,6 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
                     sel === ':root' ||
                     sel.startsWith('[data-theme') ||
                     sel.includes('.markdown-content') ||
-                    sel.includes('.diff-marker') ||
                     sel.includes('.hljs') ||
                     sel.includes('.katex') ||
                     sel.includes('.code-line') ||
@@ -207,7 +206,6 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
                     name.includes('line-flash') ||
                     name.includes('copy-flash') ||
                     name.includes('char-flash') ||
-                    name.includes('diff-marker') ||
                     name.includes('url-btn-spin')
                 ) {
                     rules.push(rule.cssText)
@@ -574,6 +572,12 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
         mathml.remove()
     }
 
+    // 1e. Remove diff markers — interactive UI elements (colored side-bar buttons)
+    //     that open the diff drawer in the app. Meaningless in a standalone export.
+    for (const marker of Array.from(clone.querySelectorAll('.diff-marker'))) {
+        marker.remove()
+    }
+
     // 1e. Note: <foreignObject> elements in Mermaid SVGs are kept as-is.
     //     Chrome may log "Unsafe attempt to load URL" warnings on file:// URLs,
     //     but this does NOT affect rendering — the content displays correctly.
@@ -597,6 +601,51 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
 
     // 6. Build code block interaction JS
     const codeBlockJs = buildCodeBlockJs()
+
+    // 7. Lightbox JS for exported HTML — opens full-screen image/SVG viewer
+    const lightboxJs = `
+(function() {
+    function openLightbox(content, isSvg) {
+        var overlay = document.createElement('div');
+        overlay.className = 'export-lightbox';
+        if (isSvg) {
+            var div = document.createElement('div');
+            div.innerHTML = content;
+            var svg = div.querySelector('svg');
+            if (svg) { svg.style.maxWidth = '95vw'; svg.style.maxHeight = '95vh'; }
+            overlay.appendChild(svg || div);
+        } else {
+            var img = document.createElement('img');
+            img.src = content;
+            overlay.appendChild(img);
+        }
+        var closeBtn = document.createElement('button');
+        closeBtn.className = 'lb-close-btn';
+        closeBtn.textContent = '\\u00d7';
+        closeBtn.onclick = function(e) { e.stopPropagation(); overlay.remove(); };
+        overlay.appendChild(closeBtn);
+        overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+        document.addEventListener('keydown', function handler(e) {
+            if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', handler); }
+        });
+        document.body.appendChild(overlay);
+    }
+    document.addEventListener('click', function(e) {
+        var expandIcon = e.target.closest('.lightbox-expand-icon');
+        if (expandIcon) {
+            var wrap = expandIcon.closest('.lightbox-img-wrap');
+            var img = wrap ? wrap.querySelector('.lightbox-img') : null;
+            if (img) { e.preventDefault(); openLightbox(img.src, false); }
+            return;
+        }
+        var mermaid = e.target.closest('.mermaid');
+        if (mermaid) {
+            var svg = mermaid.querySelector('svg');
+            if (svg) { e.preventDefault(); openLightbox(svg.outerHTML, true); }
+            return;
+        }
+    });
+})();`
 
     // 7. Assemble HTML
     const title = escapeHtml(fileName.replace(/\.md$/i, ''))
@@ -672,6 +721,23 @@ body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'S
 
 /* ─── TOC + FAB buttons ─── */
 ${tocCss}
+
+/* ─── Lightbox expand icon (hover overlay on images/mermaid) ─── */
+.markdown-body .lightbox-img-wrap { position: relative; display: inline-block; }
+.markdown-body .lightbox-img-wrap .lightbox-img { cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; }
+.markdown-body .lightbox-img-wrap:hover .lightbox-img { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+.markdown-body .lightbox-img-wrap .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; cursor: pointer; z-index: 2; pointer-events: auto; }
+.markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon { display: flex; align-items: center; justify-content: center; }
+.markdown-body .lightbox-img-wrap .lightbox-expand-icon::after { content: '\\2922'; font-size: 14px; line-height: 1; }
+.markdown-body .mermaid { position: relative; }
+.markdown-body .mermaid::after { content: '\\2922'; display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; font-size: 14px; line-height: 24px; text-align: center; cursor: pointer; z-index: 2; }
+.markdown-body .mermaid:hover::after { display: block; }
+
+/* ─── Lightbox overlay ─── */
+.export-lightbox { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+.export-lightbox img, .export-lightbox svg { max-width: 95vw; max-height: 95vh; object-fit: contain; }
+.export-lightbox .lb-close-btn { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%; border: none; background: rgba(255,255,255,0.2); color: #fff; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.export-lightbox .lb-close-btn:hover { background: rgba(255,255,255,0.4); }
 </style>
 </head>
 <body>
@@ -683,6 +749,7 @@ ${bodyContent}
 ${themeToggleJs}
 ${tocJs}
 ${codeBlockJs}
+${lightboxJs}
 </script>
 </body>
 </html>`
