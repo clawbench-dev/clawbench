@@ -646,6 +646,218 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     expect(wrapper.vm.multiSelectState.active).toBe(true)
   })
 
+  it('Alt+ArrowUp emits navigateBack (parent directory)', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.emitted('navigateBack')).toBeTruthy()
+  })
+
+  it('F2 emits rename for the current file', async () => {
+    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.emitted('rename')).toBeTruthy()
+    expect(wrapper.emitted('rename')![0]).toEqual([{ path: 'test.ts', name: 'test.ts' }])
+  })
+
+  it('Ctrl+R emits refresh', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', ctrlKey: true, bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+  })
+
+  it('Ctrl+Shift+H emits toggleHidden', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', ctrlKey: true, shiftKey: true, bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.emitted('toggleHidden')).toBeTruthy()
+  })
+
+  it('Ctrl+Shift+M toggles multi-select mode', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+  })
+
+  it('Escape exits multi-select mode', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }))
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.active).toBe(false)
+  })
+
+  it('Enter opens the selected entry (file → selectFile)', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    // Select test.ts by clicking it (also emits selectFile once)
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await nextTick()
+
+    const selects = wrapper.emitted('selectFile')
+    expect(selects).toBeTruthy()
+    expect(selects!.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('Enter on a focused button is not hijacked', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    // Click the item to select it, then simulate Enter while a button is the target
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    await nextTick()
+    const selectsBefore = wrapper.emitted('selectFile')?.length ?? 0
+
+    const btn = document.createElement('button')
+    document.body.appendChild(btn)
+    // Dispatch on the button so e.target is the button (real focused-button scenario)
+    btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await nextTick()
+
+    expect((wrapper.emitted('selectFile')?.length ?? 0)).toBe(selectsBefore)
+
+    document.body.removeChild(btn)
+  })
+
+  it('Space toggles the selected item in multi-select mode', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    // Enter multi-select via Ctrl+Shift+M, then click test.ts to select it
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }))
+    await nextTick()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(1)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(0)
+  })
+
+  it('ArrowDown moves the highlighted selection to the next entry', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    // Click the first entry (src) to select it
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.file-item[data-path="src"]').classes()).toContain('active')
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.find('.file-item[data-path="src"]').classes()).not.toContain('active')
+    expect(wrapper.find('.file-item[data-path="test.ts"]').classes()).toContain('active')
+  })
+
+  it('End moves the highlighted selection to the last entry', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.find('.file-item[data-path="readme.md"]').classes()).toContain('active')
+  })
+
+  it('Backspace emits navigateBack (parent directory)', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.emitted('navigateBack')).toBeTruthy()
+  })
+
+  it('Ctrl+1 / Ctrl+2 switch list/grid view', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '2', ctrlKey: true, bubbles: true }))
+    await nextTick()
+    expect(wrapper.find('.file-grid').exists()).toBe(true)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '1', ctrlKey: true, bubbles: true }))
+    await nextTick()
+    expect(wrapper.find('.file-list').exists()).toBe(true)
+  })
+
+  it('Shift+ArrowDown extends multi-select to the next entry', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }))
+    await nextTick()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(1)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true }))
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(2)
+  })
+
+  it('Shift+Delete force-deletes the multi-selection without confirm', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }))
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', shiftKey: true, bubbles: true }))
+    await nextTick()
+
+    expect(wrapper.emitted('batchDelete')).toBeTruthy()
+    // 3 sample entries all selected → all force-deleted
+    expect(wrapper.emitted('batchDelete')![0][0]).toHaveLength(3)
+  })
+
+  it('ignores shortcuts while a text field holds focus (e.g. the chat input)', async () => {
+    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    await nextTick()
+
+    // Focus is in a textarea (chat input on the right) — Ctrl+C must NOT copy a file
+    const ta = document.createElement('textarea')
+    document.body.appendChild(ta)
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }))
+    await nextTick()
+
+    expect(mockToastShow).not.toHaveBeenCalled()
+    document.body.removeChild(ta)
+  })
+
   describe('doShareExternal', () => {
     const mockShareFile = vi.fn()
     const origAndroidNative = (window as any).AndroidNative
