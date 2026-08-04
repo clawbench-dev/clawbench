@@ -704,11 +704,13 @@ function handleCopyMessage() {
 .chat-message.user a {
     word-break: break-all;
     overflow-wrap: break-word;
-    color: #b8daff;
+    color: white;
+    text-decoration: underline;
+    text-underline-offset: 2px;
 }
 
 .chat-message.user a:hover {
-    color: #9dc5f0;
+    color: rgba(255, 255, 255, 0.85);
 }
 
 .chat-message.user img {
