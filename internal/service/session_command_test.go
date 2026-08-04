@@ -933,6 +933,32 @@ func TestBuildForkContext_MultipleTextBlocks(t *testing.T) {
 	assert.NotContains(t, result, "thinking part")
 }
 
+func TestGetToolCallsBySession_ClosedDB(t *testing.T) {
+	dbDir := t.TempDir()
+	if err := initTestDB(dbDir); err != nil {
+		t.Fatalf("initTestDB: %v", err)
+	}
+	// Close the database to trigger error in GetToolCallsBySession
+	db.Close()
+	dbRead.Close()
+
+	_, err := GetToolCallsBySession("any-session")
+	assert.Error(t, err)
+}
+
+func TestGetThinkingBySessionAll_ClosedDB(t *testing.T) {
+	dbDir := t.TempDir()
+	if err := initTestDB(dbDir); err != nil {
+		t.Fatalf("initTestDB: %v", err)
+	}
+	// Close the database to trigger error in GetThinkingBySessionAll
+	db.Close()
+	dbRead.Close()
+
+	_, err := GetThinkingBySessionAll("any-session")
+	assert.Error(t, err)
+}
+
 // ============================================================================
 // handleACPCleanup tests
 // ============================================================================
@@ -2238,6 +2264,56 @@ func TestExtractMessageParts_SkipsThinkingAndWarning(t *testing.T) {
 func TestExtractMessageParts_EmptyBlocks(t *testing.T) {
 	parts := extractMessageParts(nil, nil)
 	assert.Nil(t, parts)
+}
+
+func TestFormatToolUseBlock_InlineInputFallback(t *testing.T) {
+	t.Run("uses Input from content block when no toolCallMap entry", func(t *testing.T) {
+		b := model.ContentBlock{
+			Type:  eventTypeToolUse,
+			Name:  "AskUserQuestion",
+			ID:    "ask-001",
+			Input: map[string]any{"question": "Continue?"},
+		}
+		result := FormatToolUseBlock(b, nil)
+		assert.Contains(t, result, "<tool_use>")
+		assert.Contains(t, result, "AskUserQuestion")
+		assert.Contains(t, result, `"input"`)
+	})
+
+	t.Run("uses Output from content block as fallback", func(t *testing.T) {
+		b := model.ContentBlock{
+			Type:   eventTypeToolUse,
+			Name:   "Bash",
+			ID:     "ask-002",
+			Input:  map[string]any{"command": "ls"},
+			Output: "file1.txt\nfile2.txt",
+		}
+		result := FormatToolUseBlock(b, nil)
+		assert.Contains(t, result, "<tool_use>")
+		assert.Contains(t, result, `"input"`)
+		assert.Contains(t, result, `"output"`)
+		assert.Contains(t, result, "file1.txt")
+	})
+
+	t.Run("prefers toolCallMap over inline input", func(t *testing.T) {
+		b := model.ContentBlock{
+			Type:   eventTypeToolUse,
+			Name:   "Read",
+			ID:     "toolu_map",
+			Input:  map[string]any{"file_path": "/inline.go"},
+			Output: "inline output",
+		}
+		tc := ToolCallRecord{
+			ToolID: "toolu_map",
+			Input:  json.RawMessage(`{"file_path":"/db.go"}`),
+			Output: "db output",
+		}
+		toolCallMap := map[string]*ToolCallRecord{"toolu_map": &tc}
+		result := FormatToolUseBlock(b, toolCallMap)
+		assert.Contains(t, result, "/db.go")
+		assert.Contains(t, result, "db output")
+		assert.NotContains(t, result, "/inline.go")
+	})
 }
 
 // ============================================================================
