@@ -193,19 +193,21 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
         const parentRow = shaToRow.get(pSha)
         const parentLane = shaToLane.get(pSha)
         if (rowLane !== parentLane) {
-          // Extend child lane to include parent row
-          if (!laneFirstRow.has(rowLane) || parentRow < laneFirstRow.get(rowLane)) {
-            laneFirstRow.set(rowLane, parentRow)
-          }
-          if (!laneLastRow.has(rowLane) || parentRow > laneLastRow.get(rowLane)) {
-            laneLastRow.set(rowLane, parentRow)
-          }
-          // Extend parent lane to include child row
-          if (!laneFirstRow.has(parentLane) || row < laneFirstRow.get(parentLane)) {
-            laneFirstRow.set(parentLane, row)
-          }
-          if (!laneLastRow.has(parentLane) || row > laneLastRow.get(parentLane)) {
-            laneLastRow.set(parentLane, row)
+          // For a merge-in (first-parent on another lane) the connection is
+          // drawn as a vertical line on the child lane running down to the
+          // parent row, so extend the child lane to include it. Fork curves
+          // (non-first parents) stay between the two lanes and only reach
+          // the parent lane at the parent node's own row, so they extend
+          // neither lane. Extending a lane beyond its real occupied rows
+          // would push a later branch to a farther lane and leave an empty
+          // lane between it and the mainline.
+          if (pi === 0) {
+            if (!laneFirstRow.has(rowLane) || parentRow < laneFirstRow.get(rowLane)) {
+              laneFirstRow.set(rowLane, parentRow)
+            }
+            if (!laneLastRow.has(rowLane) || parentRow > laneLastRow.get(rowLane)) {
+              laneLastRow.set(rowLane, parentRow)
+            }
           }
         }
       }

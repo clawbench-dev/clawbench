@@ -760,6 +760,47 @@ describe('lane compression for non-overlapping branches', () => {
   })
 })
 
+describe('lane compression does not leave empty lanes next to the mainline', () => {
+  // Regression: a long branch forked off the mainline must land on the lane
+  // immediately adjacent to the mainline (lane 1), even when a short branch
+  // occupied lane 1 earlier. The fork connection only reaches the branch lane
+  // at the branch tip's own row, so the branch's occupied range must NOT be
+  // extended up to the fork's merge-commit row — otherwise the later branch
+  // is pushed to lane 2 and an empty lane appears between it and the main.
+  //
+  // Graph:
+  //   m3 → mergeS ──→ base ──→ m2 → m1 → root
+  //          │   ↘                 │   ↗
+  //          │     s1              lb1 → lb2
+  const BRANCH_AFTER_FORK = [
+    { sha: 'm3', parents: ['mergeS'], msg: 'main: 3' },
+    { sha: 'mergeS', parents: ['base', 's1'], msg: 'merge: short' },
+    { sha: 's1', parents: ['base'], msg: 'short: work 1' },
+    { sha: 'base', parents: ['m2', 'lb1'], msg: 'merge: long' },
+    { sha: 'lb1', parents: ['lb2'], msg: 'long: work 1' },
+    { sha: 'lb2', parents: ['m2'], msg: 'long: work 2' },
+    { sha: 'm2', parents: ['m1'], msg: 'main: 2' },
+    { sha: 'm1', parents: ['root'], msg: 'main: 1' },
+    { sha: 'root', parents: [], msg: 'root' },
+  ]
+
+  it('long branch forked off the mainline sits on lane 1 (adjacent), not lane 2', () => {
+    const { nodes } = getConnections(BRANCH_AFTER_FORK)
+    // Short branch (s1) is above the fork, long branch (lb1/lb2) below it.
+    // Both share lane 1: the long branch must NOT be pushed to lane 2.
+    expect(nodes[2].lane).toBe(1) // s1
+    expect(nodes[4].lane).toBe(1) // lb1
+    expect(nodes[5].lane).toBe(1) // lb2
+    expect(nodes[3].lane).toBe(0) // base (merge commit) on mainline
+    expect(nodes[6].lane).toBe(0) // m2 on mainline
+  })
+
+  it('uses only 2 lanes (no empty lane between main and the long branch)', () => {
+    const { laneCount } = getConnections(BRANCH_AFTER_FORK)
+    expect(laneCount).toBe(2)
+  })
+})
+
 describe('branchNames on nodes', () => {
   it('attaches branch names to nodes by walking first-parent chain from branch refs', () => {
     const { nodes } = getConnections(SINGLE_MERGE) as any
