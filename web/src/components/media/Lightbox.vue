@@ -653,7 +653,15 @@ onMounted(() => {
         const isMermaidClick = !!e.target.closest('.mermaid')
         if (!isExpandIcon && !isMermaidClick && e.pointerType !== 'touch') return
 
-        const img = e.target.closest('.lightbox-img')
+        // When clicking the expand icon, find the image from the wrapper
+        // (the icon is a sibling of the img, not a child)
+        let img
+        if (isExpandIcon) {
+            const wrap = e.target.closest('.lightbox-img-wrap')
+            img = wrap ? wrap.querySelector('.lightbox-img') : null
+        } else {
+            img = e.target.closest('.lightbox-img')
+        }
         if (img) {
             e.preventDefault()
             // Check if the image is inside a markdown body — collect sibling images for navigation

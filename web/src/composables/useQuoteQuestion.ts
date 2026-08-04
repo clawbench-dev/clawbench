@@ -159,6 +159,12 @@ export function useQuoteQuestion() {
     const animFrom = sendBtn?.getBoundingClientRect() ?? null
     const animTo = dockChatBtn?.getBoundingClientRect() ?? null
 
+    // Clear quoteData BEFORE sending — ChatPanelContent.sendMessage also checks
+    // quoteData and would double-embed the quote if it's still set.
+    clearAll()
+    barVisible.value = false
+    barPinned.value = false
+
     // Delegate to session identity singleton — it routes to ChatPanel's
     // sendMessage if registered, otherwise falls back to a direct API call.
     try {
@@ -176,11 +182,6 @@ export function useQuoteQuestion() {
     } catch (err: unknown) {
       toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error' })
     }
-
-    // Clear all chat context (attachedFiles + quoteData) and close the bar.
-    clearAll()
-    barVisible.value = false
-    barPinned.value = false
   }
 
   return {
