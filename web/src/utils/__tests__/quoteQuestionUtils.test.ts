@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closestElement, getFileInfo, getLineInfo } from '@/utils/quoteQuestionUtils'
+import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage } from '@/utils/quoteQuestionUtils'
 
 // --- closestElement ---
 
@@ -290,5 +290,38 @@ describe('getFileInfo', () => {
     office.appendChild(md)
     // .markdown-body is checked before .office-preview-body
     expect(getFileInfo(container)).toEqual({ filePath: '/from-markdown.md', language: '' })
+  })
+})
+
+// --- buildQuoteMessage ---
+describe('buildQuoteMessage', () => {
+  it('embeds quoted code with language and line range', () => {
+    const result = buildQuoteMessage('explain this', 'func main()', '/cmd/main.go', 'go', 10, 25)
+    expect(result).toBe('explain this\n\n```go:/cmd/main.go:10-25\nfunc main()\n```')
+  })
+
+  it('embeds quoted code with single line number', () => {
+    const result = buildQuoteMessage('what is this?', 'return nil', '/internal/handler.go', 'go', 42, 42)
+    expect(result).toBe('what is this?\n\n```go:/internal/handler.go:42\nreturn nil\n```')
+  })
+
+  it('embeds quoted code without line numbers', () => {
+    const result = buildQuoteMessage('explain', 'some text', '/README.md', '', 0, 0)
+    expect(result).toBe('explain\n\n' + '```' + ':/README.md\nsome text\n' + '```')
+  })
+
+  it('uses empty language prefix when language is empty', () => {
+    const result = buildQuoteMessage('question', 'plain text', '/notes.txt', '', 5, 5)
+    expect(result).toBe('question\n\n' + '```' + ':/notes.txt:5\nplain text\n' + '```')
+  })
+
+  it('trims user message whitespace', () => {
+    const result = buildQuoteMessage('  explain this  ', 'code', '/f.go', 'go', 1, 2)
+    expect(result).toBe('explain this\n\n```go:/f.go:1-2\ncode\n```')
+  })
+
+  it('embeds quoted code with language but no line numbers', () => {
+    const result = buildQuoteMessage('explain', 'some code', '/main.go', 'go', 0, 0)
+    expect(result).toBe('explain\n\n```go:/main.go\nsome code\n```')
   })
 })

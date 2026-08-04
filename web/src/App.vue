@@ -40,7 +40,7 @@
             @update:ratio="onSplitRatioChange"
           >
             <template #left>
-              <div class="col-left" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="setActivePane('left')" @focusin="setActivePane('left')">
+              <div class="col-left" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="onLeftPanePointerDown" @focusin="setActivePane('left')">
                 <!-- File Browse Tab (合一：目录浏览 + 文件覆盖预览) -->
                 <TabPanel tabId="browse" :activeTab="leftPanelActive" :noHeader="true">
                   <div class="browse-panel">
@@ -183,8 +183,9 @@
         @select-file="handleRecentFileSelect"
       />
 
-      <!-- Quote question floating bar -->
+      <!-- Quote question floating bar (narrow mode only; wide-screen uses ChatInputBar quote tag) -->
       <QuoteQuestionBar
+        v-if="!isWideScreen"
         :visible="quoteQuestion.visible.value"
         :quoteData="quoteQuestion.quoteData.value"
         @send="quoteQuestion.sendMessage($event)"
@@ -349,7 +350,7 @@ import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
-import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
+import { useQuoteQuestion, restoreBarVisibility } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
@@ -513,6 +514,18 @@ const fileManagerShortcutActive = computed(() => (isWideScreen.value ? activePan
 
 function onSplitRatioChange(ratio) {
   setSplitRatio(ratio)
+}
+
+// Clicking into the left pane must also move keyboard focus out of any text
+// field (e.g. the chat input on the right). Otherwise the focused INPUT/TEXTAREA
+// stays the event target and the file manager's input-focus guard swallows all
+// its keyboard shortcuts even though the user has clearly clicked into it.
+function onLeftPanePointerDown() {
+  setActivePane('left')
+  const el = document.activeElement
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+    el.blur()
+  }
 }
 
 // Dock active indicator — water-drop sliding highlight
@@ -1323,7 +1336,15 @@ watch(isWideScreen, (val) => {
   if (val) {
     // Continuity-first (Q1A): adopt activeTab if non-chat, else keep persisted leftTab
     const next = resolveLeftTabOnEnter(activeTab.value, leftTab.value)
-    if (leftTab.value !== next) switchLeftTab(next)
+    if (leftTab.value !== next) {
+      switchLeftTab(next) // updates leftTab + activeTab + side effects
+    } else if (activeTab.value !== next) {
+      // leftTab already matches but activeTab is stale (e.g. entered wide-screen
+      // from chat while leftTab was persisted as browse). Sync it so tab-gated
+      // logic — like the file manager's `activeTab !== 'browse'` shortcut gate —
+      // isn't blocked by a stale 'chat' activeTab.
+      activeTab.value = next
+    }
     onTabSwitch('chat')
     overflowMenuOpen.value = false
     // Focus continuity: the pane the user was working in becomes the active one.
@@ -1333,6 +1354,10 @@ watch(isWideScreen, (val) => {
     document.documentElement.style.setProperty('--dock-height', '0px')
   } else {
     onTabSwitch(activeTab.value)
+    // Restore QuoteQuestionBar visibility if a pinned quote exists
+    // (wide-screen auto-pin sets barVisible=false because the floating bar
+    // is hidden there; switching to narrow needs the bar back).
+    restoreBarVisibility()
     // Bottom dock visible again — re-measure (ResizeObserver may miss the
     // display:none → visible transition, see the keyboard safety-net comment).
     nextTick(() => {

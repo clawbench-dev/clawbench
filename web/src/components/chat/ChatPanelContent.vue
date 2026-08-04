@@ -92,7 +92,7 @@
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
       @remove-attached-by-path="removeAttachedFileByPath"
-      @remove-quote="setQuoteData(null)"
+      @remove-quote="setQuoteData(null); resetQuotePin()"
       @quote-click="handleQuoteClick"
       @open-session-tab="identity.openSessionTab"
       @open-session-search="$emit('open-session-search')"
@@ -173,6 +173,8 @@ import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate } from '@/utils/chatSessionUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
+import { buildQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
+import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
 import { dedupeFiles } from '@/utils/fileAttachmentUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
 import { playNotificationSound } from '@/composables/useNotificationSound.ts'
@@ -627,7 +629,20 @@ function persistSessionUpdate(fields) {
 }
 
 async function sendMessage(text) {
-    const inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
+    let inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
+
+    // Embed quote context into message body (wide-screen sends via ChatInputBar
+    // don't go through QuoteQuestionBar.sendMessage, so we must embed here).
+    if (quoteData.value) {
+      const q = quoteData.value
+      if (q.filePath) {
+        addAttachedFile(q.filePath, false, q.startLine, q.endLine)
+      }
+      // Always embed the quoted code block — even without typed text,
+      // the AI needs the code context from the quote.
+      inputText = buildQuoteMessage(inputText || '', q.text, q.filePath, q.language, q.startLine, q.endLine)
+    }
+
     const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quoteData.value
 
     if ((!inputText && !hasFiles) || inputDisabled.value) return
@@ -644,6 +659,7 @@ async function sendMessage(text) {
       const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       // Clear input state synchronously so user sees immediate feedback
       clearAll()
+      resetQuotePin()
       inputBarRef.value?.clearInput()
       clearPendingFiles()
       // Push a pending user message directly into messages.value
@@ -680,6 +696,7 @@ async function sendMessage(text) {
 
     // Clear input state before async request
     clearAll()
+    resetQuotePin()
     inputBarRef.value?.clearInput()
     clearPendingFiles()
 

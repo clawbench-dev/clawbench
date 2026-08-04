@@ -65,11 +65,10 @@
       </Transition>
       <!-- Attachment tags (horizontal scrollable cards — only quote + attached file refs) -->
       <div v-if="quoteData || attachedFiles.length > 0" class="chat-attachment-tags">
-        <!-- Quote selection card -->
+        <!-- Quote selection card (same size as file cards, accent-colored) -->
         <span v-if="quoteData" class="chat-file-attachment attachment-quote" :title="quoteData.filePath" @click="$emit('quote-click')">
-          <MessageSquare :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
-          <span class="attachment-filename">{{ truncateQuoteText(quoteData.text, 20) }}</span>
-          <span v-if="quoteData.startLine" class="attachment-filesize">L{{ quoteData.startLine }}</span>
+          <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
+          <span class="attachment-filename">{{ quoteFileName }}{{ quoteLineRange }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-quote')" :title="t('common.remove')">×</button>
         </span>
         <!-- Attached file reference cards (shared component) -->
@@ -241,7 +240,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, ClipboardPaste, Minimize2 } from 'lucide-vue-next'
+import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, ClipboardPaste, Minimize2 } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -672,11 +671,18 @@ async function handleArchive() {
   }
 }
 
-function truncateQuoteText(text, maxLen) {
-  if (!text) return ''
-  const oneLine = text.replace(/\n/g, ' ')
-  return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '...' : oneLine
-}
+const quoteFileName = computed(() => {
+  if (!props.quoteData?.filePath) return ''
+  return props.quoteData.filePath.split('/').pop() || props.quoteData.filePath
+})
+
+const quoteLineRange = computed(() => {
+  if (!props.quoteData?.startLine) return ''
+  const s = props.quoteData.startLine
+  const e = props.quoteData.endLine
+  if (e && e !== s) return `:${s}-${e}`
+  return `:${s}`
+})
 
 function autoResizeTextarea() {
   const el = textareaRef.value
@@ -1530,7 +1536,7 @@ defineExpose({
   background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
 }
 
-/* Quote card */
+/* Quote card — accent-colored, same size as file cards */
 .chat-attachment-tags .attachment-quote {
   background: color-mix(in srgb, var(--accent-color, #4f9cf7) 8%, transparent);
   border: 1px dashed var(--accent-color, #4f9cf7);
@@ -1540,10 +1546,6 @@ defineExpose({
 
 .chat-attachment-tags .attachment-quote .attachment-filename {
   color: var(--accent-color, #4f9cf7);
-}
-
-.chat-attachment-tags .attachment-quote .attachment-filesize {
-  color: color-mix(in srgb, var(--accent-color, #4f9cf7) 60%, transparent);
 }
 
 .chat-attachment-tags .attachment-quote:hover {

@@ -2,32 +2,16 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
-import { closestElement, getLineInfo, getFileInfo } from '@/utils/quoteQuestionUtils.ts'
+import { closestElement, getLineInfo, getFileInfo, buildQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
-
-function buildQuoteMessage(
-  userMessage: string,
-  text: string,
-  filePath: string,
-  language: string,
-  startLine: number,
-  endLine: number,
-): string {
-  const langPrefix = language ? `${language}:` : ':'
-  let lineSuffix = ''
-  if (startLine && endLine && startLine !== endLine) {
-    lineSuffix = `:${startLine}-${endLine}`
-  } else if (startLine) {
-    lineSuffix = `:${startLine}`
-  }
-  return `${userMessage.trim()}\n\n\`\`\`${langPrefix}${filePath}${lineSuffix}\n${text}\n\`\`\``
-}
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 
 // Module-level singleton: bar visibility state shared across all consumers.
 // quoteData is stored in useChatContext (global singleton) so ChatInputBar
 // can render a quote chip in any tab.
 const { quoteData, setQuoteData, addAttachedFile, clearAll } = useChatContext()
+const { isWideScreen } = useWideScreenLayout()
 const barVisible = ref(false)
 const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the bar
 const sheetOpen = ref(false)
@@ -39,7 +23,16 @@ function onSelectionChange() {
   debounceTimer = setTimeout(() => {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.toString().trim()) {
-      // When the selection is gone, drop the quote (both modes) — unless the
+      // Wide-screen mode: auto-pin so the ChatInputBar quote tag survives
+      // focus switches (e.g. clicking the input textarea clears selection).
+      // There is no QuoteQuestionBar in wide-screen, so the quote tag in
+      // ChatInputBar is the only UI surface — losing it would be confusing.
+      if (isWideScreen.value && quoteData.value) {
+        barPinned.value = true
+        barVisible.value = false
+        return
+      }
+      // Narrow mode: when the selection is gone, drop the quote — unless the
       // user explicitly pinned it via "引用提问". A stale quote chip must not
       // linger in the chat input after the user deselects the text.
       if (!barPinned.value) {
@@ -71,11 +64,27 @@ function onSelectionChange() {
 
     setQuoteData({ text, filePath, language, startLine, endLine })
     barVisible.value = true
+    // Wide-screen: auto-pin so the quote tag persists when user focuses input
+    if (isWideScreen.value) {
+      barPinned.value = true
+    }
   }, 150)
 }
 
 // Global listener management
 let listenerCount = 0
+
+/** Reset the bar pinned state (for use when quoteData is cleared externally). */
+export function resetQuotePin() {
+  barPinned.value = false
+}
+
+/** Restore bar visibility when transitioning from wide-screen to narrow. */
+export function restoreBarVisibility() {
+  if (quoteData.value && barPinned.value) {
+    barVisible.value = true
+  }
+}
 
 export function useQuoteQuestion() {
   const toast = useToast()
@@ -121,6 +130,9 @@ export function useQuoteQuestion() {
     setTimeout(() => {
       setQuoteData(data)
       barVisible.value = true
+      if (isWideScreen.value) {
+        barPinned.value = true
+      }
     }, 400)
   }
 

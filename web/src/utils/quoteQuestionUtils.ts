@@ -68,3 +68,26 @@ export function truncateQuoteText(text: string, maxLen = 150): string {
 export function canSendInput(inputText: string): boolean {
   return inputText.trim().length > 0
 }
+
+/**
+ * Build a message that embeds quoted code as a fenced code block.
+ * The code block includes language prefix, file path, and optional line range
+ * so the AI can identify the source context precisely.
+ */
+export function buildQuoteMessage(
+  userMessage: string,
+  text: string,
+  filePath: string,
+  language: string,
+  startLine: number,
+  endLine: number,
+): string {
+  const langPrefix = language ? `${language}:` : ':'
+  let lineSuffix = ''
+  if (startLine && endLine && startLine !== endLine) {
+    lineSuffix = `:${startLine}-${endLine}`
+  } else if (startLine) {
+    lineSuffix = `:${startLine}`
+  }
+  return `${userMessage.trim()}\n\n\`\`\`${langPrefix}${filePath}${lineSuffix}\n${text}\n\`\`\``
+}
