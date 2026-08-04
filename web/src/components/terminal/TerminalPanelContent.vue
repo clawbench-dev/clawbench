@@ -74,7 +74,7 @@
     </div>
 
     <!-- Virtual key toolbar -->
-    <div class="terminal-toolbar">
+    <div class="terminal-toolbar" v-show="!isPC">
       <!-- Symbol bar (toggleable, above main toolbar) -->
       <Transition name="symbol-bar">
         <div v-if="showSymbolBar" class="symbol-bar">
@@ -188,6 +188,7 @@ import { shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composa
 import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
 import { useAppMode } from '@/composables/useAppMode'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useKeyConfig } from '@/composables/useKeyConfig'
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
@@ -463,6 +464,7 @@ watch(activeTabId, () => {
 
 // Volume keys (Android)
 const { isAppMode } = useAppMode()
+const { isPC } = usePlatformDetect()
 
 function enableVolumeKeys() {
   if (!isAppMode.value) return

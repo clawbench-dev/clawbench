@@ -184,7 +184,7 @@
         <div
           v-long-press="(e) => onLongPress(entry, e)"
           class="file-item"
-          :draggable="isBigScreen"
+          :draggable="isWideScreen"
           @dragstart="onItemDragStart(entry, $event)"
           :class="{
             'dir-item': entry.type === 'dir',
@@ -246,7 +246,7 @@
       <div v-for="entry in visibleEntries" :key="entry.name"
         v-long-press="(e) => onLongPress(entry, e)"
         class="grid-item"
-        :draggable="isBigScreen"
+        :draggable="isWideScreen"
         @dragstart="onItemDragStart(entry, $event)"
         :class="{
           'grid-dir': entry.type === 'dir',
@@ -401,7 +401,7 @@ import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
-import { useBigScreenLayout } from '@/composables/useBigScreenLayout'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { setAttachDragData, hasAttachDragData } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack'
@@ -465,7 +465,7 @@ async function onDrop(e) {
 
 /** Start an internal drag of a file/dir so it can be dropped onto the chat column. */
 function onItemDragStart(entry, e) {
-  if (!isBigScreen.value) return
+  if (!isWideScreen.value) return
   const path = itemPath(entry.name)
   setAttachDragData(e.dataTransfer, path, entry.type === 'dir')
   e.dataTransfer.effectAllowed = 'copy'
@@ -519,7 +519,7 @@ const dialog = useDialog()
 const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
-const { isBigScreen } = useBigScreenLayout()
+const { isWideScreen } = useWideScreenLayout()
 
 const activeTab = inject('activeTab', ref(''))
 
@@ -1259,7 +1259,7 @@ function doDelete() {
 function handleKeydown(e) {
     // Only active when browse tab is focused
     if (activeTab.value !== 'browse') return
-    // Focus-aware: in big-screen mode also require the left pane to be focused
+    // Focus-aware: in wide-screen mode also require the left pane to be focused
     if (props.keyboardActive === false) return
     // Skip in Android app mode
     if (isAppMode.value) return

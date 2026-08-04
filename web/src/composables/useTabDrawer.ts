@@ -1,8 +1,8 @@
 import { ref, computed, watch, onUnmounted, getCurrentInstance, type Ref, type ComputedRef, readonly } from 'vue'
 import { appLog } from '@/utils/appLog'
-import { getBigScreenState } from './useBigScreenLayout'
+import { getWideScreenState } from './useWideScreenLayout'
 
-const { isBigScreen, leftTab } = getBigScreenState()
+const { isWideScreen, leftTab } = getWideScreenState()
 
 /**
  * Tab-drawer declarative binding registry.
@@ -114,18 +114,18 @@ export function useTabDrawer(tabId: string, openRefOrOptions?: Ref<boolean> | Ta
 
   const isTabActive = () =>
     currentTab.value === tabId ||
-    (isBigScreen.value && (tabId === 'chat' || tabId === leftTab.value))
+    (isWideScreen.value && (tabId === 'chat' || tabId === leftTab.value))
 
   const effectiveOpen = computed(() => isTabActive() && openRef.value)
 
   // For autoRestore: false, close the drawer when its tab is no longer active
-  // (narrow: currentTab changed; big-screen: leftTab changed away)
+  // (narrow: currentTab changed; wide-screen: leftTab changed away)
   if (!autoRestore) {
     const closeIfInactive = () => {
       if (!openRef.value) return
       if (!isTabActive()) openRef.value = false
     }
-    watch(() => [currentTab.value, isBigScreen.value, leftTab.value], closeIfInactive)
+    watch(() => [currentTab.value, isWideScreen.value, leftTab.value], closeIfInactive)
   }
 
   return {

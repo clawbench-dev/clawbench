@@ -1,14 +1,14 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import { nextTick } from 'vue'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer'
-import { _setBigScreenForTest, resetBigScreenState as resetBigScreen, switchLeftTab } from '@/composables/useBigScreenLayout'
+import { _setWideScreenForTest, resetWideScreenState as resetWideScreen, switchLeftTab } from '@/composables/useWideScreenLayout'
 
 beforeEach(() => {
   resetTabDrawerState()
-  // Narrow-mode default: jsdom's innerWidth (1024) makes useBigScreenLayout's
-  // physical-width detection init to big-screen — force it off so the plain
+  // Narrow-mode default: jsdom's innerWidth (1024) makes useWideScreenLayout's
+  // physical-width detection init to wide-screen — force it off so the plain
   // drawer tests exercise narrow behavior.
-  _setBigScreenForTest(false)
+  _setWideScreenForTest(false)
 })
 
 describe('useTabDrawer', () => {
@@ -134,14 +134,14 @@ describe('useTabDrawer', () => {
   })
 })
 
-describe('useTabDrawer big-screen awareness', () => {
+describe('useTabDrawer wide-screen awareness', () => {
   beforeEach(() => {
-    resetBigScreen()
-    _setBigScreenForTest(false)
+    resetWideScreen()
+    _setWideScreenForTest(false)
   })
 
-  it('big-screen: chat and leftTab drawers both open simultaneously', () => {
-    _setBigScreenForTest(true)
+  it('wide-screen: chat and leftTab drawers both open simultaneously', () => {
+    _setWideScreenForTest(true)
     switchLeftTab('browse')
     const chatDrawer = useTabDrawer('chat')
     const browseDrawer = useTabDrawer('browse')
@@ -156,8 +156,8 @@ describe('useTabDrawer big-screen awareness', () => {
     expect(chatDrawer.effectiveOpen.value).toBe(true)
   })
 
-  it('big-screen: autoRestore:false closes when leftTab switches away', async () => {
-    _setBigScreenForTest(true)
+  it('wide-screen: autoRestore:false closes when leftTab switches away', async () => {
+    _setWideScreenForTest(true)
     switchLeftTab('browse')
     const drawer = useTabDrawer('browse', { autoRestore: false })
     drawer.open()

@@ -19,28 +19,28 @@
       />
       <ConnectionOverlay />
 
-      <main class="main-content" :class="{ 'big-screen': isBigScreen }">
-        <!-- Big-screen vertical dock (non-chat tabs only) -->
-        <div v-show="isBigScreen" class="big-dock">
-          <div class="big-dock-center">
-            <div class="dock-active-indicator big-dock-active-indicator" :style="bigDockIndicatorStyle"></div>
-            <div v-for="tab in BIG_SCREEN_DOCK_TABS" :key="tab" class="dock-btn-wrap">
-              <button class="dock-btn" :class="bigDockBtnClass(tab)" @click.stop="handleBigDockTabClick(tab)" :title="bigDockTabTitle(tab)">
-                <component :is="bigDockTabIcon(tab)" />
+      <main class="main-content" :class="{ 'wide-screen': isWideScreen }">
+        <!-- Wide-screen vertical dock (non-chat tabs only) -->
+        <div v-show="isWideScreen" class="wide-dock">
+          <div class="wide-dock-center">
+            <div class="dock-active-indicator wide-dock-active-indicator" :style="wideDockIndicatorStyle"></div>
+            <div v-for="tab in WIDE_SCREEN_DOCK_TABS" :key="tab" class="dock-btn-wrap">
+              <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
+                <component :is="wideDockTabIcon(tab)" />
               </button>
-              <span v-if="bigDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': bigDockBadgeAnim(tab) }" @animationend="bigDockBadgeAnimEnd(tab)">{{ formatBadgeCount(bigDockBadgeCount(tab)) }}</span>
+              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(tab) }" @animationend="wideDockBadgeAnimEnd(tab)">{{ formatBadgeCount(wideDockBadgeCount(tab)) }}</span>
             </div>
           </div>
         </div>
 
         <div class="content-area" id="contentArea">
           <SplitView
-            :enabled="isBigScreen"
+            :enabled="isWideScreen"
             :ratio="splitRatio"
             @update:ratio="onSplitRatioChange"
           >
             <template #left>
-              <div class="col-left" v-show="isBigScreen || activeTab !== 'chat'" @pointerdown="setActivePane('left')" @focusin="setActivePane('left')">
+              <div class="col-left" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="setActivePane('left')" @focusin="setActivePane('left')">
                 <!-- File Browse Tab (合一：目录浏览 + 文件覆盖预览) -->
                 <TabPanel tabId="browse" :activeTab="leftPanelActive" :noHeader="true">
                   <div class="browse-panel">
@@ -132,7 +132,7 @@
             </template>
 
             <template #right>
-              <div class="col-right" v-show="isBigScreen || activeTab === 'chat'" :class="{ 'chat-drop-active': chatDropActive }" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
+              <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" :class="{ 'chat-drop-active': chatDropActive }" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
                 <!-- Chat Tab -->
                 <TabPanel tabId="chat" :activeTab="chatActive">
                   <template #header>
@@ -142,7 +142,7 @@
                     </div>
                   </template>
                   <ChatPanelContent
-                    :active="isBigScreen || activeTab === 'chat'"
+                    :active="isWideScreen || activeTab === 'chat'"
                     :keyboard-active="chatShortcutActive"
                     :current-file="currentFile"
                     :current-dir="currentDir"
@@ -226,7 +226,7 @@
       />
 
       <!-- Bottom dock (tab bar) -->
-      <div v-if="isAuthenticated" v-show="!anyKeyboardActive && !isBigScreen" class="bottom-dock-wrapper">
+      <div v-if="isAuthenticated" v-show="!anyKeyboardActive && !isWideScreen" class="bottom-dock-wrapper">
         <div ref="dockRef" class="bottom-dock">
           <div class="dock-center">
             <div class="dock-active-indicator" :style="dockIndicatorStyle"></div>
@@ -383,15 +383,15 @@ import { useChatContext } from './composables/useChatContext.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
 import {
-  useBigScreenLayout,
+  useWideScreenLayout,
   resolveLeftTabOnEnter,
   setActivePane,
   resolveActivePaneOnEnter,
   switchLeftTab,
   setSplitRatio,
-  registerBigScreenCallbacks,
-  BIG_SCREEN_DOCK_TABS,
-} from './composables/useBigScreenLayout'
+  registerWideScreenCallbacks,
+  WIDE_SCREEN_DOCK_TABS,
+} from './composables/useWideScreenLayout'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
@@ -498,18 +498,18 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
 
 const activeTab = ref('chat')
 
-// ── Big-screen layout state ──
-const { isBigScreen, leftTab, splitRatio, activePane } = useBigScreenLayout()
+// ── Wide-screen layout state ──
+const { isWideScreen, leftTab, splitRatio, activePane } = useWideScreenLayout()
 
-const chatActive = computed(() => (isBigScreen.value ? 'chat' : activeTab.value))
-const leftPanelActive = computed(() => (isBigScreen.value ? leftTab.value : activeTab.value))
+const chatActive = computed(() => (isWideScreen.value ? 'chat' : activeTab.value))
+const leftPanelActive = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
 const panelIsActive = (tabId) =>
-  isBigScreen.value ? leftTab.value === tabId : activeTab.value === tabId
+  isWideScreen.value ? leftTab.value === tabId : activeTab.value === tabId
 
 // Focus-aware keyboard gating: a panel's global shortcuts only fire when the
-// user is actually working in that pane (big-screen) or that tab (narrow).
-const chatShortcutActive = computed(() => (isBigScreen.value ? activePane.value === 'right' : activeTab.value === 'chat'))
-const fileManagerShortcutActive = computed(() => (isBigScreen.value ? activePane.value === 'left' : activeTab.value === 'browse'))
+// user is actually working in that pane (wide-screen) or that tab (narrow).
+const chatShortcutActive = computed(() => (isWideScreen.value ? activePane.value === 'right' : activeTab.value === 'chat'))
+const fileManagerShortcutActive = computed(() => (isWideScreen.value ? activePane.value === 'left' : activeTab.value === 'browse'))
 
 function onSplitRatioChange(ratio) {
   setSplitRatio(ratio)
@@ -535,8 +535,8 @@ const dockIndicatorStyle = computed(() => ({
 }))
 
 function switchTab(tab) {
-  if (isBigScreen.value) {
-    // Big-screen: chat is always visible; non-chat tabs route to the left column
+  if (isWideScreen.value) {
+    // Wide-screen: chat is always visible; non-chat tabs route to the left column
     if (tab === 'chat') return
     switchLeftTab(tab)
     return
@@ -693,14 +693,14 @@ const isPlatformUnsupported = computed(() => platformSupported.value === false)
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 watch(isSSHDisabled, (disabled) => {
   if (disabled && panelIsActive('proxy')) {
-    switchTab(isBigScreen.value ? 'browse' : 'chat')
+    switchTab(isWideScreen.value ? 'browse' : 'chat')
   }
 })
 watch(isTerminalDisabled, (disabled) => {
   // Only force-switch when terminal is config-disabled (not platform unsupported).
   // Platform unsupported shows a dedicated empty state — user can stay on the tab.
   if (disabled && !isPlatformUnsupported.value && panelIsActive('terminal')) {
-    switchTab(isBigScreen.value ? 'browse' : 'chat')
+    switchTab(isWideScreen.value ? 'browse' : 'chat')
   }
 })
 const { navigateToTaskSettings, navigateToTaskHistory, openExecDetail, loadTasks } = useTaskTab()
@@ -1317,9 +1317,9 @@ function handleInlineOverflowClick(tab) {
   }
 }
 
-// Big-screen mode transitions: keep useTabDrawer's currentTab coherent
+// Wide-screen mode transitions: keep useTabDrawer's currentTab coherent
 // (chat drawers work in wide mode; collapse returns to the last active tab).
-watch(isBigScreen, (val) => {
+watch(isWideScreen, (val) => {
   if (val) {
     // Continuity-first (Q1A): adopt activeTab if non-chat, else keep persisted leftTab
     const next = resolveLeftTabOnEnter(activeTab.value, leftTab.value)
@@ -1328,7 +1328,7 @@ watch(isBigScreen, (val) => {
     overflowMenuOpen.value = false
     // Focus continuity: the pane the user was working in becomes the active one.
     setActivePane(resolveActivePaneOnEnter(activeTab.value))
-    // Big-screen: the bottom dock is hidden, so bottom-sheet drawers must sit
+    // Wide-screen: the bottom dock is hidden, so bottom-sheet drawers must sit
     // flush with the screen bottom — don't let a stale --dock-height leave a gap.
     document.documentElement.style.setProperty('--dock-height', '0px')
   } else {
@@ -1347,7 +1347,7 @@ watch(isBigScreen, (val) => {
 }, { immediate: true })
 
 // Route leftTab side-effects (reuse narrow-mode behaviors) and sync activeTab (Q3B)
-registerBigScreenCallbacks({
+registerWideScreenCallbacks({
   setActiveTab: (tab) => { activeTab.value = tab },
   sideEffects: (tab) => {
     if (tab === 'browse') store.loadFiles(store.state.currentDir)
@@ -1355,27 +1355,27 @@ registerBigScreenCallbacks({
   },
 })
 
-// ── Big-screen vertical dock helpers ──
-function handleBigDockTabClick(tab) {
+// ── Wide-screen vertical dock helpers ──
+function handleWideDockTabClick(tab) {
   // Clicking a dock item means the user intends to work in the left pane.
   setActivePane('left')
   switchLeftTab(tab)
 }
 
-// ── Drag file/dir from the left panel → attach to chat (big-screen only) ──
+// ── Drag file/dir from the left panel → attach to chat (wide-screen only) ──
 const { addAttachedFile } = useChatContext()
 const chatDropActive = ref(false)
 let chatDropCounter = 0
 
 function onChatColDragEnter(e) {
-  if (!isBigScreen.value || !hasAttachDragData(e.dataTransfer)) return
+  if (!isWideScreen.value || !hasAttachDragData(e.dataTransfer)) return
   chatDropCounter++
   chatDropActive.value = true
 }
 
 function onChatColDragOver(e) {
   // Allow the drop only for internal attach drags (don't hijack OS file drops)
-  if (isBigScreen.value && hasAttachDragData(e.dataTransfer)) e.preventDefault()
+  if (isWideScreen.value && hasAttachDragData(e.dataTransfer)) e.preventDefault()
 }
 
 function onChatColDragLeave() {
@@ -1389,7 +1389,7 @@ function onChatColDragLeave() {
 function onChatColDrop(e) {
   chatDropCounter = 0
   chatDropActive.value = false
-  if (!isBigScreen.value) return
+  if (!isWideScreen.value) return
   const data = readAttachDragData(e.dataTransfer)
   if (!data) return
   e.preventDefault()
@@ -1397,7 +1397,7 @@ function onChatColDrop(e) {
   toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
 }
 
-const bigScreenTabMeta = {
+const wideScreenTabMeta = {
   browse: { icon: FolderOpen, titleKey: 'nav.fileManager' },
   history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
   tasks: overflowTabMeta.tasks,
@@ -1406,13 +1406,13 @@ const bigScreenTabMeta = {
   settings: overflowTabMeta.settings,
 }
 
-function bigDockTabIcon(tab) {
-  return bigScreenTabMeta[tab]?.icon ?? FolderOpen
+function wideDockTabIcon(tab) {
+  return wideScreenTabMeta[tab]?.icon ?? FolderOpen
 }
-function bigDockTabTitle(tab) {
-  return bigScreenTabMeta[tab] ? t(bigScreenTabMeta[tab].titleKey) : ''
+function wideDockTabTitle(tab) {
+  return wideScreenTabMeta[tab] ? t(wideScreenTabMeta[tab].titleKey) : ''
 }
-function bigDockBtnClass(tab) {
+function wideDockBtnClass(tab) {
   return {
     active: leftTab.value === tab,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && leftTab.value !== 'tasks',
@@ -1420,7 +1420,7 @@ function bigDockBtnClass(tab) {
     'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
   }
 }
-function bigDockBadgeCount(tab) {
+function wideDockBadgeCount(tab) {
   switch (tab) {
     case 'history': return store.state.gitWorkingTreeChangeCount
     case 'tasks': return store.state.taskUnreadCount
@@ -1429,10 +1429,10 @@ function bigDockBadgeCount(tab) {
     default: return 0
   }
 }
-function bigDockBadgeVisible(tab) {
-  return bigDockBadgeCount(tab) > 0 && leftTab.value !== tab
+function wideDockBadgeVisible(tab) {
+  return wideDockBadgeCount(tab) > 0 && leftTab.value !== tab
 }
-function bigDockBadgeAnim(tab) {
+function wideDockBadgeAnim(tab) {
   switch (tab) {
     case 'history': return historyBadgeAnim.value
     case 'tasks': return taskBadgeAnim.value
@@ -1441,7 +1441,7 @@ function bigDockBadgeAnim(tab) {
     default: return false
   }
 }
-function bigDockBadgeAnimEnd(tab) {
+function wideDockBadgeAnimEnd(tab) {
   switch (tab) {
     case 'history': historyBadgeAnim.value = false; break
     case 'tasks': taskBadgeAnim.value = false; break
@@ -1449,12 +1449,12 @@ function bigDockBadgeAnimEnd(tab) {
     case 'proxy': proxyBadgeAnim.value = false; break
   }
 }
-const bigDockActiveIndex = computed(() => {
-  const i = BIG_SCREEN_DOCK_TABS.indexOf(leftTab.value)
+const wideDockActiveIndex = computed(() => {
+  const i = WIDE_SCREEN_DOCK_TABS.indexOf(leftTab.value)
   return i >= 0 ? i : 0
 })
-const bigDockIndicatorStyle = computed(() => ({
-  transform: `translateY(${bigDockActiveIndex.value * DOCK_STEP}px)`,
+const wideDockIndicatorStyle = computed(() => ({
+  transform: `translateY(${wideDockActiveIndex.value * DOCK_STEP}px)`,
 }))
 
 const isOverflowTabActive = computed(() => popupOverflowTabs.value.includes(activeTab.value))
@@ -1863,7 +1863,7 @@ function handleCtrlF(e) {
     // Skip when modal dialog or project dialog is open
     if (_dlg.state.value.visible || projectDialogOpen.value) return
 
-    if (isBigScreen.value) {
+    if (isWideScreen.value) {
         // Focus-aware: route Ctrl+F to the pane the user is working in
         if (activePane.value === 'right') {
             e.preventDefault()
@@ -1925,14 +1925,14 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* Big-screen split panes — positioned ancestors for the absolute TabPanels */
+/* Wide-screen split panes — positioned ancestors for the absolute TabPanels */
 .col-left,
 .col-right {
     position: relative;
     height: 100%;
 }
 
-/* Drag file/dir onto the chat column (big-screen) — highlight the drop target */
+/* Drag file/dir onto the chat column (wide-screen) — highlight the drop target */
 .chat-drop-active::after {
     content: '';
     position: absolute;
@@ -1984,8 +1984,8 @@ onUnmounted(() => {
     user-select: none;
 }
 
-/* Big-screen vertical dock (left edge) — VS Code activity-bar style */
-.big-dock {
+/* Wide-screen vertical dock (left edge) — VS Code activity-bar style */
+.wide-dock {
     flex-shrink: 0;
     width: 48px;
     display: flex;
@@ -1997,7 +1997,7 @@ onUnmounted(() => {
     user-select: none;
 }
 
-.big-dock-center {
+.wide-dock-center {
     position: relative;
     width: 100%;
     display: flex;
@@ -2008,10 +2008,10 @@ onUnmounted(() => {
 
 /* VS Code activity-bar style active highlight: faint translucent theme tint
    spanning the dock width + a thin theme-colored bar on the left edge.
-   Scoped under .big-dock so it outranks the base .dock-active-indicator
-   (same single-class specificity — a bare .big-dock-active-indicator would
+   Scoped under .wide-dock so it outranks the base .dock-active-indicator
+   (same single-class specificity — a bare .wide-dock-active-indicator would
    lose to the later base rule and render as the circular water-drop). */
-.big-dock .big-dock-active-indicator {
+.wide-dock .wide-dock-active-indicator {
     position: absolute;
     left: 0;
     top: 0;
@@ -2023,7 +2023,7 @@ onUnmounted(() => {
        ease-out reads better on a full-width highlight. */
     transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.big-dock .big-dock-active-indicator::before {
+.wide-dock .wide-dock-active-indicator::before {
     content: '';
     position: absolute;
     left: 0;
@@ -2034,10 +2034,10 @@ onUnmounted(() => {
 }
 
 /* Active icon follows the theme color (VS Code activity bar) */
-.big-dock .dock-btn.active {
+.wide-dock .dock-btn.active {
     color: var(--accent-color);
 }
-.big-dock .dock-btn.active:hover {
+.wide-dock .dock-btn.active:hover {
     color: var(--accent-color);
 }
 

@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { useAppMode } from './useAppMode'
+import { isAndroidUA, isIOSUA } from './usePlatformDetect'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'PwaInstall'
@@ -11,11 +12,6 @@ interface BeforeInstallPromptEvent extends Event {
 // Module-level singleton — all consumers share the same deferred prompt & installed state
 const deferredPrompt = ref<BeforeInstallPromptEvent | null>(null)
 const installed = ref(false)
-
-// UA detection (only meaningful in web browser — not APP mode)
-const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
-const isAndroidUA = /Android/i.test(ua) && !/Windows Phone/i.test(ua)
-const isIOSUA = /iPhone|iPad|iPod/i.test(ua)
 
 // Listen for beforeinstallprompt / appinstalled (once, module-level)
 if (typeof window !== 'undefined') {
