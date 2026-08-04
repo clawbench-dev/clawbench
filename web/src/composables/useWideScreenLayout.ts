@@ -13,13 +13,14 @@ export const WIDE_SCREEN_DOCK_TABS = ['browse', 'history', 'proxy', 'terminal', 
 /**
  * Wide-screen detection. Active when the CSS viewport is ≥1024px (desktop), or
  * when the device's physical width (CSS width × devicePixelRatio) is ≥1280px
- * AND the viewport is landscape. The landscape gate keeps high-DPR phones in
- * portrait (e.g. 430×3 = 1290) from accidentally splitting.
+ * AND the screen is landscape. Uses screen.width/screen.height (not window
+ * inner dimensions) for the landscape check so that soft-keyboard resizing on
+ * Android adjustResize cannot flip a portrait tablet into wide-screen mode.
  */
-export function computeIsWideScreen(cssWidth: number, cssHeight: number, devicePixelRatio: number): boolean {
+export function computeIsWideScreen(cssWidth: number, screenWidth: number, screenHeight: number, devicePixelRatio: number): boolean {
   const physicalWidth = cssWidth * (devicePixelRatio || 1)
   return cssWidth >= WIDE_SCREEN_MIN_WIDTH
-    || (physicalWidth >= WIDE_SCREEN_MIN_PHYSICAL_WIDTH && cssWidth > cssHeight)
+    || (physicalWidth >= WIDE_SCREEN_MIN_PHYSICAL_WIDTH && screenWidth > screenHeight)
 }
 
 const isWideScreen = ref(false)
@@ -58,7 +59,8 @@ function initWideScreen() {
     const recompute = () => {
       isWideScreen.value = computeIsWideScreen(
         window.innerWidth,
-        window.innerHeight,
+        window.screen.width,
+        window.screen.height,
         window.devicePixelRatio || 1,
       )
     }

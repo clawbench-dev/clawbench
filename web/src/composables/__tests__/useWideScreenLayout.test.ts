@@ -25,27 +25,35 @@ beforeEach(() => {
 
 describe('computeIsWideScreen', () => {
   it('desktop: CSS width ≥1024 → wide screen', () => {
-    expect(computeIsWideScreen(1280, 800, 1)).toBe(true)
-    expect(computeIsWideScreen(1024, 768, 1)).toBe(true)
+    expect(computeIsWideScreen(1280, 1280, 800, 1)).toBe(true)
+    expect(computeIsWideScreen(1024, 1024, 768, 1)).toBe(true)
   })
 
   it('high-DPR tablet landscape (CSS <1024) → wide screen via physical width', () => {
     // 2400 physical px at DPR 2.5 → CSS 960 (the user's tablet case)
-    expect(computeIsWideScreen(960, 600, 2.5)).toBe(true)
+    expect(computeIsWideScreen(960, 960, 600, 2.5)).toBe(true)
   })
 
   it('high-DPR phone portrait → NOT wide screen (landscape gate)', () => {
     // 430×3 = 1290 physical ≥1280, but portrait
-    expect(computeIsWideScreen(430, 900, 3)).toBe(false)
+    expect(computeIsWideScreen(430, 430, 900, 3)).toBe(false)
   })
 
   it('high-DPR phone landscape → wide screen (wide physical viewport)', () => {
-    expect(computeIsWideScreen(844, 390, 3)).toBe(true)
+    expect(computeIsWideScreen(844, 844, 390, 3)).toBe(true)
   })
 
   it('small CSS width and small physical width → NOT wide screen', () => {
-    expect(computeIsWideScreen(800, 1280, 1)).toBe(false)
-    expect(computeIsWideScreen(360, 800, 2)).toBe(false) // 720 physical
+    expect(computeIsWideScreen(800, 800, 1280, 1)).toBe(false)
+    expect(computeIsWideScreen(360, 360, 800, 2)).toBe(false) // 720 physical
+  })
+
+  it('keyboard opening on portrait tablet does NOT trigger wide screen', () => {
+    // Portrait tablet: screen 960×1600, DPR 2.5 → physical width 2400 ≥ 1280
+    // Without keyboard: cssWidth(960) < cssHeight(1600) → not wide
+    // With keyboard: window.innerHeight shrinks to 900, but screen stays 960×1600
+    // The landscape check uses screen dimensions, so it stays portrait
+    expect(computeIsWideScreen(960, 960, 1600, 2.5)).toBe(false)
   })
 })
 
@@ -164,12 +172,16 @@ describe('useWideScreenLayout viewport wiring', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 960 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2.5 })
+    Object.defineProperty(window.screen, 'width', { configurable: true, value: 960 })
+    Object.defineProperty(window.screen, 'height', { configurable: true, value: 600 })
     const mod = await import('@/composables/useWideScreenLayout')
     expect(mod.getWideScreenState().isWideScreen.value).toBe(true)
 
     // Rotate to portrait → back to single column
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 960 })
+    Object.defineProperty(window.screen, 'width', { configurable: true, value: 600 })
+    Object.defineProperty(window.screen, 'height', { configurable: true, value: 960 })
     window.dispatchEvent(new Event('resize'))
     expect(mod.getWideScreenState().isWideScreen.value).toBe(false)
 
@@ -177,6 +189,25 @@ describe('useWideScreenLayout viewport wiring', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 430 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 3 })
+    Object.defineProperty(window.screen, 'width', { configurable: true, value: 430 })
+    Object.defineProperty(window.screen, 'height', { configurable: true, value: 900 })
+    window.dispatchEvent(new Event('resize'))
+    expect(mod.getWideScreenState().isWideScreen.value).toBe(false)
+  })
+
+  it('keyboard opening on portrait tablet does NOT trigger wide screen', async () => {
+    vi.resetModules()
+    // Portrait tablet: screen 960×1600, DPR 2.5
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 960 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1600 })
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2.5 })
+    Object.defineProperty(window.screen, 'width', { configurable: true, value: 960 })
+    Object.defineProperty(window.screen, 'height', { configurable: true, value: 1600 })
+    const mod = await import('@/composables/useWideScreenLayout')
+    expect(mod.getWideScreenState().isWideScreen.value).toBe(false)
+
+    // Keyboard opens: window.innerHeight shrinks, but screen stays the same
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
     window.dispatchEvent(new Event('resize'))
     expect(mod.getWideScreenState().isWideScreen.value).toBe(false)
   })
