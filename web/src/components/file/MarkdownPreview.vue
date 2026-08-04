@@ -214,7 +214,7 @@ function fixLocalImagePaths(html: string): string {
     // Add lightbox-img class to all <img> tags for lightbox activation
     result = result.replace(/<img(\s+[^>]*?)>/gi, (_match: string, attrs: string) => {
       const clean = attrs.replace(/\s*class="[^"]*"/i, '')
-      return `<img${clean} class="lightbox-img">`
+      return `<span class="lightbox-img-wrap"><img${clean} class="lightbox-img"><span class="lightbox-expand-icon"></span></span>`
     })
     return result
 }
@@ -385,5 +385,75 @@ defineExpose({
     width: 20px;
     height: auto;
     z-index: 2;
+}
+
+/* Lightbox image wrapper — positions the expand icon overlay */
+.markdown-body .lightbox-img-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.markdown-body .lightbox-img-wrap .lightbox-img {
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.markdown-body .lightbox-img-wrap:hover .lightbox-img {
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.markdown-body .lightbox-img-wrap .lightbox-expand-icon {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+.markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.markdown-body .lightbox-img-wrap .lightbox-expand-icon::after {
+  content: '⤢';
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Mermaid expand icon — top-right corner, visible on hover (PC mode) */
+.markdown-body .mermaid {
+  position: relative;
+}
+
+.markdown-body .mermaid::after {
+  content: '⤢';
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 14px;
+  line-height: 24px;
+  text-align: center;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.markdown-body .mermaid:hover::after {
+  display: block;
 }
 </style>

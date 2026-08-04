@@ -232,18 +232,52 @@ function handleCopyMessage() {
 
 /* Image thumbnail style */
 .chat-message .chat-img {
-  cursor: pointer;
   vertical-align: middle;
 }
 
-.chat-message .lightbox-img {
+/* Lightbox image wrapper — positions the expand icon overlay */
+.chat-message .lightbox-img-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.chat-message .lightbox-img-wrap .lightbox-img {
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s;
 }
 
-.chat-message .lightbox-img:hover {
+.chat-message .lightbox-img-wrap:hover .lightbox-img {
   transform: scale(1.02);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Expand icon — top-right corner, visible on hover (PC mode) */
+.chat-message .lightbox-img-wrap .lightbox-expand-icon {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+.chat-message .lightbox-img-wrap:hover .lightbox-expand-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Use a simple "+" character as the expand icon (no SVG dependency in HTML strings) */
+.chat-message .lightbox-img-wrap .lightbox-expand-icon::after {
+  content: '⤢';
+  font-size: 14px;
+  line-height: 1;
 }
 
 /* ── Message content wrapper ── */
@@ -902,11 +936,35 @@ function handleCopyMessage() {
   transition: transform 0.15s, box-shadow 0.15s;
   background: var(--bg-secondary);
   padding: 8px;
+  position: relative;
 }
 
 .chat-message .mermaid:hover {
   transform: scale(1.02);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Mermaid expand icon — top-right corner, visible on hover (PC mode) */
+.chat-message .mermaid::after {
+  content: '⤢';
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 14px;
+  line-height: 24px;
+  text-align: center;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.chat-message .mermaid:hover::after {
+  display: block;
 }
 
 .chat-message .mermaid svg {

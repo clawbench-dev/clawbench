@@ -188,7 +188,7 @@ watch(
     // Add lightbox-img class to all <img> tags for lightbox activation
     const finalHtml = html.replace(/<img(\s+[^>]*?)>/gi, (_match, attrs) => {
       const clean = attrs.replace(/\s*class="[^"]*"/i, '')
-      return `<img${clean} class="lightbox-img">`
+      return `<span class="lightbox-img-wrap"><img${clean} class="lightbox-img"><span class="lightbox-expand-icon"></span></span>`
     })
 
     renderedPrompt.value = finalHtml
