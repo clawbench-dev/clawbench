@@ -1,6 +1,7 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useGlobalEvents } from './useGlobalEvents'
 import { useSettingsNavigation } from './useSettingsNavigation'
+import { appLog } from '@/utils/appLog'
 
 // Delay before showing the reconnect mask, so transient blips that recover
 // within this window never flash a fullscreen overlay.
@@ -18,6 +19,10 @@ export type ConnectionOverlayMode = 'restart' | 'reconnect' | null
  * - null        → overlay hidden.
  *
  * Restart takes priority over reconnect.
+ *
+ * When the app returns to foreground, the reconnect timer is reset so that
+ * the overlay won't flash immediately — the 5s grace period restarts from
+ * zero, giving the WS a fresh window to reconnect.
  */
 export function useConnectionOverlay() {
     const { wsStatus, hasConnectedOnce } = useGlobalEvents()
@@ -30,6 +35,20 @@ export function useConnectionOverlay() {
         if (reconnectTimer) {
             clearTimeout(reconnectTimer)
             reconnectTimer = null
+        }
+    }
+
+    /** Reset the reconnect timer so the 5s grace period restarts from zero. */
+    function resetTimer() {
+        clearTimer()
+        showReconnect.value = false
+        // If WS is not connected and we've connected before, restart the timer
+        if (wsStatus.value !== 'connected' && hasConnectedOnce.value) {
+            appLog.d('ConnectionOverlay', 'foreground reset: restarting reconnect timer')
+            reconnectTimer = setTimeout(() => {
+                showReconnect.value = true
+                reconnectTimer = null
+            }, RECONNECT_OVERLAY_DELAY_MS)
         }
     }
 
@@ -51,7 +70,18 @@ export function useConnectionOverlay() {
         { immediate: true },
     )
 
-    onUnmounted(clearTimer)
+    // On foreground: reset the timer so the overlay doesn't flash immediately
+    // after resuming from background (the old timer may have nearly expired
+    // during pauseTimers).
+    function onForeground() {
+        resetTimer()
+    }
+    window.addEventListener('clawbench-foreground', onForeground)
+
+    onUnmounted(() => {
+        clearTimer()
+        window.removeEventListener('clawbench-foreground', onForeground)
+    })
 
     const mode = computed<ConnectionOverlayMode>(() => {
         if (restartingOverlay.value) return 'restart'

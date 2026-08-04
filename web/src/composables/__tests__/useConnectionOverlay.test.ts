@@ -121,4 +121,53 @@ describe('useConnectionOverlay', () => {
         restartingOverlayRef.value = false
         expect(overlay.mode.value).toBeNull()
     })
+
+    it('resets timer on foreground event so overlay does not flash immediately', async () => {
+        hasConnectedOnceRef.value = true
+        const overlay = make()
+        // Disconnect triggers the 5s timer
+        wsStatusRef.value = 'disconnected'
+        await nextTick()
+        // Advance 4s — timer has 1s remaining
+        await vi.advanceTimersByTimeAsync(RECONNECT_OVERLAY_DELAY_MS - 1000)
+        expect(overlay.mode.value).toBeNull()
+        // Foreground event resets the timer from zero
+        window.dispatchEvent(new CustomEvent('clawbench-foreground'))
+        await nextTick()
+        // The old 1s remainder is gone — overlay still hidden
+        await vi.advanceTimersByTimeAsync(1500)
+        expect(overlay.mode.value).toBeNull()
+        // Only after the full fresh 5s does the overlay appear
+        await vi.advanceTimersByTimeAsync(RECONNECT_OVERLAY_DELAY_MS - 1500 + 100)
+        expect(overlay.mode.value).toBe('reconnect')
+    })
+
+    it('foreground event clears an already-visible reconnect overlay', async () => {
+        hasConnectedOnceRef.value = true
+        const overlay = make()
+        wsStatusRef.value = 'disconnected'
+        await nextTick()
+        // Let the timer expire — overlay is showing
+        await vi.advanceTimersByTimeAsync(RECONNECT_OVERLAY_DELAY_MS + 100)
+        expect(overlay.mode.value).toBe('reconnect')
+        // Foreground resets: overlay hidden, fresh 5s timer started
+        window.dispatchEvent(new CustomEvent('clawbench-foreground'))
+        await nextTick()
+        expect(overlay.mode.value).toBeNull()
+        // Overlay re-appears only after another full 5s
+        await vi.advanceTimersByTimeAsync(RECONNECT_OVERLAY_DELAY_MS + 100)
+        expect(overlay.mode.value).toBe('reconnect')
+    })
+
+    it('foreground event does nothing when WS is connected', async () => {
+        hasConnectedOnceRef.value = true
+        const overlay = make()
+        expect(overlay.mode.value).toBeNull()
+        window.dispatchEvent(new CustomEvent('clawbench-foreground'))
+        await nextTick()
+        expect(overlay.mode.value).toBeNull()
+        // Advance time — no timer was started, overlay stays hidden
+        await vi.advanceTimersByTimeAsync(RECONNECT_OVERLAY_DELAY_MS + 100)
+        expect(overlay.mode.value).toBeNull()
+    })
 })
