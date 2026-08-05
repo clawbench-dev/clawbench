@@ -211,13 +211,11 @@ function onSvgMounted() {
         const padding = 56
         const availH = vh - padding * 2
         if (w > 0 && h > 0) {
-            const s = Math.min(vw / w, availH / h, 1)
-            if (s < 1) {
-                svg.setAttribute('width', Math.round(w * s) + 'px')
-                svg.setAttribute('height', Math.round(h * s) + 'px')
-                svg.style.maxWidth = 'none'
-                svg.style.maxHeight = 'none'
-            }
+            const s = Math.min(vw / w, availH / h)
+            svg.setAttribute('width', Math.round(w * s) + 'px')
+            svg.setAttribute('height', Math.round(h * s) + 'px')
+            svg.style.maxWidth = 'none'
+            svg.style.maxHeight = 'none'
         }
         fitScale.value = 1
         scale.value = 1
