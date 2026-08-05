@@ -295,9 +295,9 @@ async function handleChatClick(event) {
 }
 
 /** Handle keyboard events on annotation elements with role="button" */
-function handleChatKeydown(event: KeyboardEvent) {
+function handleChatKeydown(event) {
   if (event.key === 'Enter' || event.key === ' ') {
-    const imgPreview = (event.target as HTMLElement).closest('.chat-file-img-preview')
+    const imgPreview = event.target.closest('.chat-file-img-preview')
     if (imgPreview) {
       event.preventDefault()
       imgPreview.classList.toggle('expanded')
