@@ -8,7 +8,7 @@
       <!-- Brand section -->
       <div class="login-brand">
         <div class="login-logo-wrapper">
-          <img class="login-logo" src="/assets/logo-128.png" alt="ClawBench">
+          <img class="login-logo" src="/logo-128.png" alt="ClawBench">
           <div class="login-logo-ring"></div>
         </div>
         <h1 class="login-title">ClawBench</h1>
