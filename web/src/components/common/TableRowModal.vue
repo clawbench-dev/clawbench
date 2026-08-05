@@ -65,33 +65,41 @@ function handleValueDblClick(event) {
 async function handleValueClick(event) {
   const target = event.target
 
-  // 0. Lightbox image click (ModalDialog @click.stop prevents bubbling to Lightbox's global listener)
-  const lightboxImg = target.closest('.lightbox-img')
-  if (lightboxImg) {
-    if (openLightbox) {
-      event.preventDefault()
-      // Collect sibling images in the modal for navigation
-      const modalBody = lightboxImg.closest('.table-row-form')
-      if (modalBody && openMdImages) {
-        const allImgs = modalBody.querySelectorAll('img.lightbox-img')
-        if (allImgs.length > 1) {
-          const list = []
-          let startIdx = 0
-          allImgs.forEach((img) => {
-            const src = img.src
-            if (!src) return
-            const name = img.alt || extractImageName(src)
-            list.push({ src, name })
-            if (img === lightboxImg) startIdx = list.length - 1
-          })
-          if (list.length > 1) {
-            openMdImages(list, startIdx)
-            return
-          }
+  // 0. Lightbox (ModalDialog @click.stop prevents bubbling to Lightbox's global listener).
+  //    PC mode: only the expand icon opens the lightbox — a bare image click does nothing.
+  //    The icon is a sibling of the img, so resolve the wrapped image from the icon.
+  const expandIcon = target.closest('.lightbox-expand-icon')
+  const isLightboxImgClick = !!target.closest('.lightbox-img')
+  if (expandIcon || isLightboxImgClick) {
+    if (isLightboxImgClick && !expandIcon) {
+      return // PC mode: bare image click does not open the lightbox
+    }
+    if (!openLightbox) return
+    event.preventDefault()
+    const wrap = expandIcon ? expandIcon.closest('.lightbox-img-wrap') : target.closest('.lightbox-img-wrap')
+    const lightboxImg = wrap ? wrap.querySelector('.lightbox-img') : null
+    if (!lightboxImg) return
+    // Collect sibling images in the modal for navigation
+    const modalBody = lightboxImg.closest('.table-row-form')
+    if (modalBody && openMdImages) {
+      const allImgs = modalBody.querySelectorAll('img.lightbox-img')
+      if (allImgs.length > 1) {
+        const list = []
+        let startIdx = 0
+        allImgs.forEach((img) => {
+          const src = img.src
+          if (!src) return
+          const name = img.alt || extractImageName(src)
+          list.push({ src, name })
+          if (img === lightboxImg) startIdx = list.length - 1
+        })
+        if (list.length > 1) {
+          openMdImages(list, startIdx)
+          return
         }
       }
-      openLightbox(lightboxImg.src)
     }
+    openLightbox(lightboxImg.src)
     return
   }
 
