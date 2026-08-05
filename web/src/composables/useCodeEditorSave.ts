@@ -1,0 +1,33 @@
+import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useToast } from '@/composables/useToast.ts'
+import { store } from '@/stores/app.ts'
+
+export function useCodeEditorSave() {
+    const { show } = useToast()
+    const { t } = useI18n()
+    const saving = ref(false)
+
+    async function saveFile(path: string, content: string): Promise<boolean> {
+        if (!path) return false
+        saving.value = true
+        try {
+            const resp = await fetch('/api/file/write', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path, content }),
+            })
+            if (!resp.ok) throw new Error('write failed')
+            await store.selectFile(path, false, false, false)
+            show(t('file.editor.saved'), { icon: '✅', type: 'success', duration: 2000 })
+            return true
+        } catch {
+            show(t('file.editor.saveFailed'), { icon: '❌', type: 'error', duration: 2000 })
+            return false
+        } finally {
+            saving.value = false
+        }
+    }
+
+    return { saving, saveFile }
+}
