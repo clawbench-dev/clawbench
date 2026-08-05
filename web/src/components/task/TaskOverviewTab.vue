@@ -263,6 +263,12 @@ function handlePromptClick(event: MouseEvent) {
     }
     return
   }
+  // Image preview toggle
+  const imgPreview = target?.closest('.chat-file-img-preview')
+  if (imgPreview) {
+    imgPreview.classList.toggle('expanded')
+    return
+  }
 }
 
 </script>

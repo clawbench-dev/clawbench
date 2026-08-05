@@ -443,15 +443,24 @@ function handleContentClick(event) {
 
   // 5. Handle file-open buttons
   const btn = event.target.closest('.chat-file-open-btn')
-  if (!btn) return
-  event.preventDefault()
-  event.stopPropagation()
-  const filePath = btn.getAttribute('data-file-path')
-  const lineStart = btn.getAttribute('data-line-start')
-  const lineEnd = btn.getAttribute('data-line-end')
-  if (filePath) {
-    openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
-    emit('open-file', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
+  if (btn) {
+    event.preventDefault()
+    event.stopPropagation()
+    const filePath = btn.getAttribute('data-file-path')
+    const lineStart = btn.getAttribute('data-line-start')
+    const lineEnd = btn.getAttribute('data-line-end')
+    if (filePath) {
+      openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
+      emit('open-file', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
+    }
+    return
+  }
+
+  // 5b. Image preview toggle
+  const imgPreview = event.target.closest('.chat-file-img-preview')
+  if (imgPreview) {
+    imgPreview.classList.toggle('expanded')
+    return
   }
 }
 
