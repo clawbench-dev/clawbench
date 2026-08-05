@@ -734,6 +734,16 @@ export default {
       zoomOut: '缩小',
       fitWidth: '适合宽度',
       openDirectory: '打开目录',
+      edit: '编辑',
+      finishEditing: '完成编辑',
+    },
+    editor: {
+      save: '保存',
+      saving: '保存中...',
+      cancel: '取消',
+      saved: '保存成功',
+      saveFailed: '保存失败',
+      dirty: '未保存的修改',
     },
     overlay: {
       back: '返回',

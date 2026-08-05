@@ -733,6 +733,16 @@ export default {
       zoomOut: 'Zoom out',
       fitWidth: 'Fit width',
       openDirectory: 'Open directory',
+      edit: 'Edit',
+      finishEditing: 'Finish editing',
+    },
+    editor: {
+      save: 'Save',
+      saving: 'Saving...',
+      cancel: 'Cancel',
+      saved: 'Saved',
+      saveFailed: 'Save failed',
+      dirty: 'Unsaved changes',
     },
     overlay: {
       back: 'Back',
