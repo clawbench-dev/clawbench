@@ -16,7 +16,7 @@
       </div>
       <div
         class="lightbox-content"
-        :class="{ grabbing: isDragging, 'slide-left': slideDirection === 'left', 'slide-right': slideDirection === 'right' }"
+        :class="{ grabbing: isDragging, 'slide-left': slideDirection === 'left', 'slide-right': slideDirection === 'right', 'can-drag': canDrag }"
         ref="contentRef"
         @click="handleContentClick"
         @wheel.prevent="handleWheel"
@@ -338,6 +338,7 @@ function open(url, svg = '') {
     currentUrl.value = svg ? '' : url + (url.includes('?') ? '&' : '?') + 't=' + Date.now()
     currentSvg.value = svg
     lightboxVisible.value = true
+    imageLoading.value = !svg
     fitScale.value = 1
     naturalW.value = 0
     naturalH.value = 0
@@ -380,6 +381,7 @@ function openMdImages(imgs, startIndex) {
     currentFilePath.value = ''
 
     lightboxVisible.value = true
+    imageLoading.value = true
     fitScale.value = 1
     naturalW.value = 0
     naturalH.value = 0
@@ -485,9 +487,13 @@ function handleWheel(e) {
     scale.value = newScale
 }
 
+// Can drag only when zoomed in beyond fit-to-screen
+const canDrag = computed(() => scale.value > fitScale.value)
+
 // Mouse events
 function handleMouseDown(e) {
     if (e.button !== 0) return // Only left click
+    if (!canDrag.value) return
     e.preventDefault()
     isDragging.value = true
     dragStartX.value = e.clientX - lastTx.value
@@ -526,9 +532,11 @@ function handleTouchStart(e) {
         touchLastY.value = e.touches[0].clientY
         hasMoved.value = false
 
-        isDragging.value = true
-        dragStartX.value = e.touches[0].clientX - lastTx.value
-        dragStartY.value = e.touches[0].clientY - lastTy.value
+        if (canDrag.value) {
+            isDragging.value = true
+            dragStartX.value = e.touches[0].clientX - lastTx.value
+            dragStartY.value = e.touches[0].clientY - lastTy.value
+        }
     }
 }
 
@@ -815,6 +823,9 @@ onUnmounted(() => {
     height: 100%;
     touch-action: none;
     overscroll-behavior: none;
+}
+
+.lightbox-content.can-drag {
     cursor: grab;
 }
 
