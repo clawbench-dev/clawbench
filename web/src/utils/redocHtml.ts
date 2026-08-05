@@ -5,16 +5,17 @@
  * the generated HTML contains literal <script> and </script> tags that
  * would confuse the Vue SFC compiler's HTML parser.
  *
- * The redoc standalone bundle (~1MB) is loaded dynamically so it is
- * split into a separate chunk and only fetched when the user actually
- * opens an OpenAPI preview.
+ * The redoc standalone bundle (~1MB) is loaded via static ?raw import so
+ * Vite inlines it as a string. Combined with defineAsyncComponent for
+ * OpenApiPreview and manualChunks split, the redoc code is only fetched
+ * when the user actually opens an OpenAPI preview.
  */
 
-/** Construct the full srcdoc HTML for ReDoc */
-export async function buildRedocSrcdoc(specJson: string, scrollbarThumb: string = '#c1c1c1', scrollbarTrack: string = 'transparent'): Promise<string> {
-  if (!specJson) return ''
+import redocStandalone from 'redoc/bundles/redoc.standalone.js?raw'
 
-  const { default: redocStandalone } = await import('redoc/bundles/redoc.standalone.js?raw')
+/** Construct the full srcdoc HTML for ReDoc */
+export function buildRedocSrcdoc(specJson: string, scrollbarThumb: string = '#c1c1c1', scrollbarTrack: string = 'transparent'): string {
+  if (!specJson) return ''
 
   return `<!DOCTYPE html>
 <html><head>

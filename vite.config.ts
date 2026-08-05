@@ -169,6 +169,7 @@ export default defineConfig({
           'vendor-pdf': ['pdfjs-dist'],
           'vendor-diff': ['diff'],
           'vendor-purify': ['dompurify'],
+          'vendor-redoc': ['redoc'],
         },
       },
     },

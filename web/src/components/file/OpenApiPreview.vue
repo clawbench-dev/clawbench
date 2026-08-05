@@ -15,7 +15,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { buildRedocSrcdoc } from '@/utils/redocHtml.ts'
 
 const props = defineProps({
@@ -25,33 +25,25 @@ const props = defineProps({
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const loading = ref(true)
-const redocSrcdoc = ref('')
 
 // Determine the spec data for ReDoc:
 // - YAML files: backend returns specJson (YAML→JSON conversion)
 // - JSON files: use content directly
-function getSpecData() {
+const specData = computed(() => {
   if (props.file?.specJson) return props.file.specJson
   return props.file?.content || ''
-}
+})
 
 // Read scrollbar colors from CSS variables (same as project-wide scrollbar style)
 const scrollbarThumb = getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-thumb').trim() || '#c1c1c1'
 const scrollbarTrack = getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-track').trim() || 'transparent'
 
-async function updateRedocSrcdoc() {
-  const spec = getSpecData()
-  if (!spec) {
-    redocSrcdoc.value = ''
-    return
-  }
-  loading.value = true
-  redocSrcdoc.value = await buildRedocSrcdoc(spec, scrollbarThumb, scrollbarTrack)
-}
+const redocSrcdoc = computed(() => buildRedocSrcdoc(specData.value, scrollbarThumb, scrollbarTrack))
 
+// Reset loading when spec changes
 watch(() => [props.file?.content, props.file?.specJson], () => {
-  updateRedocSrcdoc()
-}, { immediate: true })
+  loading.value = true
+})
 
 function onIframeLoad() {
   loading.value = false
