@@ -30,7 +30,6 @@ const LAZY_CHUNKS = [
     'mermaid.core',
     'OfficePreview',
     'TerminalPanelContent',
-    'redoc.standalone',
     'vendor-pdf',
 ]
 
@@ -38,7 +37,7 @@ const LAZY_CHUNKS = [
 const EXPECTED_SPLIT_CHUNKS = [
     'mermaid.core',
     'OfficePreview',
-    'redoc.standalone',
+    'vendor-redoc',
     'vendor-vue',
     'vendor-pdf',
     'vendor-diff',
