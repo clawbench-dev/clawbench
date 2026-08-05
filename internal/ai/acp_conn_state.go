@@ -107,6 +107,14 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 			ext.models = modelList.Models
 			ext.modelCurrentID = modelList.CurrentModelID
 			slog.Info("acp: extracted model list", "current", modelList.CurrentModelID, "available", len(modelList.Models))
+		} else if c.stdoutFilter != nil {
+			if cached := c.stdoutFilter.GetAndClearCachedModels(); cached != nil {
+				ext.models = cached.Models
+				ext.modelCurrentID = cached.CurrentModelID
+				slog.Info("acp: extracted model list from SessionModelState extension", "current", cached.CurrentModelID, "available", len(cached.Models))
+			} else {
+				slog.Info("acp: no model list from configOptions or SessionModelState extension")
+			}
 		} else {
 			slog.Info("acp: no model list from configOptions")
 		}
@@ -126,6 +134,12 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 		if modelList := extractACPModelListFromResume(resumeResp); modelList != nil {
 			ext.models = modelList.Models
 			ext.modelCurrentID = modelList.CurrentModelID
+		} else if c.stdoutFilter != nil {
+			if cached := c.stdoutFilter.GetAndClearCachedModels(); cached != nil {
+				ext.models = cached.Models
+				ext.modelCurrentID = cached.CurrentModelID
+				slog.Info("acp: extracted model list from resumed SessionModelState extension", "current", cached.CurrentModelID, "available", len(cached.Models))
+			}
 		}
 	}
 

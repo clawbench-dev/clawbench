@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"regexp"
 	"sync"
+
+	"clawbench/internal/model"
 )
 
 // acpStdoutFilter wraps an io.Reader (agent stdout) and produces a filtered
@@ -22,6 +24,11 @@ import (
 //  2. Non-JSON lines: Some agents emit terminal escape sequences (e.g., "\x1b[?1004l")
 //     on stdout during ACP stdio mode. These are silently stripped.
 //
+//  3. SessionModelState extraction: Some agents (e.g., kimi) return a "models" field
+//     in NewSessionResponse/ResumeSessionResponse that is not part of the ACP Go SDK
+//     v0.13.5 schema. The SDK's json.Unmarshal silently drops this field. This filter
+//     intercepts the raw JSON and caches the models for later retrieval.
+//
 // The filter runs a background goroutine that reads from the underlying source and
 // writes filtered output to an io.Pipe. Closing the filter (via Close) unblocks any
 // pending reads, preventing the ACP connection cleanup from hanging when the agent
@@ -31,6 +38,13 @@ type acpStdoutFilter struct {
 	pw     *io.PipeWriter
 	closed bool
 	mu     sync.Mutex
+
+	// cachedModels holds the models extracted from the SessionModelState extension
+	// in a session/new or session/resume response. The ACP Go SDK v0.13.5 does not
+	// include the "models" field in NewSessionResponse/ResumeSessionResponse, so we
+	// extract it from the raw JSON here. Thread-safe via modelsMu.
+	modelsMu    sync.Mutex
+	cachedModels *ModelListState
 }
 
 // newACPStdoutFilter creates a new filtered reader that fixes protocol violations.
@@ -60,6 +74,14 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 
 		// Fix string-number ID mismatch
 		fixed := fixStringNumericID(line)
+
+		// Extract SessionModelState from session/new or session/resume responses.
+		// Some agents (e.g., kimi) return a "models" field that the ACP Go SDK
+		// v0.13.5 does not include in its NewSessionResponse type, so it gets
+		// silently dropped by json.Unmarshal. We intercept it here.
+		if bytes.Contains(fixed, []byte("availableModels")) {
+			f.cacheModelsFromResponse(fixed)
+		}
 
 		if _, err := f.pw.Write(fixed); err != nil {
 			return // pipe closed (Close() called or reader side gone)
@@ -160,4 +182,77 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// GetAndClearCachedModels returns the cached SessionModelState and clears it.
+// Returns nil if no models were cached. Thread-safe.
+func (f *acpStdoutFilter) GetAndClearCachedModels() *ModelListState {
+	f.modelsMu.Lock()
+	defer f.modelsMu.Unlock()
+	ml := f.cachedModels
+	f.cachedModels = nil
+	return ml
+}
+
+// cacheModelsFromResponse extracts the "models" field from a JSON-RPC response
+// and caches it. The response is expected to have a "result.models" structure
+// matching the ACP SessionModelState extension used by kimi and similar agents.
+func (f *acpStdoutFilter) cacheModelsFromResponse(line []byte) {
+	// Parse as generic JSON-RPC to get the "result" field
+	var msg struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(line, &msg); err != nil || len(msg.Result) == 0 {
+		return
+	}
+
+	// Extract the "models" field from the result
+	var result struct {
+		Models json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(msg.Result, &result); err != nil || len(result.Models) == 0 {
+		return
+	}
+
+	// Parse the SessionModelState
+	var state acpSessionModelState
+	if err := json.Unmarshal(result.Models, &state); err != nil {
+		return
+	}
+
+	// Convert to ModelListState. Return nil for empty state, consistent
+	// with buildModelListStateFromSelect in acp_state_extract.go.
+	if len(state.AvailableModels) == 0 && state.CurrentModelID == "" {
+		return
+	}
+
+	ml := &ModelListState{
+		CurrentModelID: state.CurrentModelID,
+	}
+	for _, m := range state.AvailableModels {
+		ml.Models = append(ml.Models, model.AgentModel{
+			ID:   m.ModelID,
+			Name: m.Name,
+		})
+	}
+
+	f.modelsMu.Lock()
+	f.cachedModels = ml
+	f.modelsMu.Unlock()
+
+	slog.Info("acp stdout filter: cached SessionModelState extension", "current", state.CurrentModelID, "available", len(state.AvailableModels))
+}
+
+// acpSessionModelState mirrors the ACP SessionModelState extension that some
+// agents (e.g., kimi) return in NewSessionResponse / ResumeSessionResponse.
+// The ACP Go SDK v0.13.5 does not include this field, so we extract it from
+// raw JSON in the stdout filter.
+type acpSessionModelState struct {
+	AvailableModels []acpModelInfo `json:"availableModels"`
+	CurrentModelID  string         `json:"currentModelId"`
+}
+
+type acpModelInfo struct {
+	ModelID string `json:"model_id"`
+	Name    string `json:"name"`
 }

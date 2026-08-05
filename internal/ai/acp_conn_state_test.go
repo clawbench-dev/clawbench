@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strings"
 	"testing"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -318,4 +319,141 @@ func TestApplyExtractedState_NoCachedUsage(t *testing.T) {
 	conn.applyExtractedState(ext)
 
 	assert.Equal(t, "code", conn.GetCurrentModeID())
+}
+
+// ---------------------------------------------------------------------------
+// extractSessionState — stdoutFilter fallback for SessionModelState extension
+// ---------------------------------------------------------------------------
+
+func TestExtractSessionState_NewResp_StdoutFilterFallback(t *testing.T) {
+	// When extractACPModelList returns nil (no model ConfigOptions in the SDK response),
+	// the stdoutFilter's cached models should be used as a fallback.
+	agent := &model.Agent{ID: "test-stdout-filter-fallback", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-stdout-filter-fallback")
+
+	// Pre-populate the stdoutFilter's cached models (simulates kimi ACP returning
+	// models via SessionModelState extension that the SDK doesn't parse).
+	filter := newACPStdoutFilter(strings.NewReader(""))
+	defer filter.Close()
+	filter.modelsMu.Lock()
+	filter.cachedModels = &ModelListState{
+		CurrentModelID: "kimi-code/k3",
+		Models: []model.AgentModel{
+			{ID: "kimi-code/k3", Name: "Kimi K3"},
+			{ID: "kimi-code/kimi-for-coding", Name: "Kimi K2.7 Code"},
+		},
+	}
+	filter.modelsMu.Unlock()
+	conn.stdoutFilter = filter
+
+	// NewSessionResponse with no model ConfigOptions
+	newResp := &acp.NewSessionResponse{
+		SessionId: acp.SessionId("acp-filter-test"),
+		Modes: &acp.SessionModeState{
+			CurrentModeId: "default",
+			AvailableModes: []acp.SessionMode{
+				{Id: "default", Name: "Default"},
+			},
+		},
+	}
+
+	ext := conn.extractSessionState(func() (*acp.NewSessionResponse, *acp.ResumeSessionResponse) {
+		return newResp, nil
+	})
+
+	assert.Equal(t, "default", ext.modeCurrentID)
+	assert.Equal(t, "kimi-code/k3", ext.modelCurrentID)
+	require.Len(t, ext.models, 2)
+	assert.Equal(t, "kimi-code/k3", ext.models[0].ID)
+	assert.Equal(t, "Kimi K2.7 Code", ext.models[1].Name)
+
+	// Verify the cache was cleared after reading
+	filter.modelsMu.Lock()
+	cached := filter.cachedModels
+	filter.modelsMu.Unlock()
+	assert.Nil(t, cached, "cached models should be cleared after reading")
+}
+
+func TestExtractSessionState_ResumeResp_StdoutFilterFallback(t *testing.T) {
+	// Same as above but for the resume path.
+	agent := &model.Agent{ID: "test-stdout-filter-resume", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-stdout-filter-resume")
+
+	filter := newACPStdoutFilter(strings.NewReader(""))
+	defer filter.Close()
+	filter.modelsMu.Lock()
+	filter.cachedModels = &ModelListState{
+		CurrentModelID: "kimi-code/k3",
+		Models: []model.AgentModel{
+			{ID: "kimi-code/k3", Name: "Kimi K3"},
+		},
+	}
+	filter.modelsMu.Unlock()
+	conn.stdoutFilter = filter
+
+	resumeResp := &acp.ResumeSessionResponse{
+		Modes: &acp.SessionModeState{
+			CurrentModeId: "default",
+			AvailableModes: []acp.SessionMode{
+				{Id: "default", Name: "Default"},
+			},
+		},
+	}
+
+	ext := conn.extractSessionState(func() (*acp.NewSessionResponse, *acp.ResumeSessionResponse) {
+		return nil, resumeResp
+	})
+
+	assert.Equal(t, "kimi-code/k3", ext.modelCurrentID)
+	require.Len(t, ext.models, 1)
+}
+
+func TestExtractSessionState_NewResp_ConfigOptionsTakePrecedence(t *testing.T) {
+	// When both ConfigOptions and stdoutFilter have models,
+	// ConfigOptions should take precedence (the SDK path is tried first).
+	agent := &model.Agent{ID: "test-stdout-filter-precedence", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-stdout-filter-precedence")
+
+	modelCat := acp.SessionConfigOptionCategoryModel
+
+	// Populate stdoutFilter with different models
+	filter := newACPStdoutFilter(strings.NewReader(""))
+	defer filter.Close()
+	filter.modelsMu.Lock()
+	filter.cachedModels = &ModelListState{
+		CurrentModelID: "filter-model",
+		Models: []model.AgentModel{
+			{ID: "filter-model", Name: "Filter Model"},
+		},
+	}
+	filter.modelsMu.Unlock()
+	conn.stdoutFilter = filter
+
+	// ConfigOptions also has model
+	newResp := &acp.NewSessionResponse{
+		ConfigOptions: []acp.SessionConfigOption{
+			{
+				Select: &acp.SessionConfigOptionSelect{
+					Category:     &modelCat,
+					Id:           "model",
+					Name:         "Model",
+					CurrentValue: "sdk-model",
+					Options: acp.SessionConfigSelectOptions{
+						Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
+							{Value: "sdk-model", Name: "SDK Model"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ext := conn.extractSessionState(func() (*acp.NewSessionResponse, *acp.ResumeSessionResponse) {
+		return newResp, nil
+	})
+
+	// SDK ConfigOptions should take precedence
+	assert.Equal(t, "sdk-model", ext.modelCurrentID)
+	require.Len(t, ext.models, 1)
+	assert.Equal(t, "sdk-model", ext.models[0].ID)
 }

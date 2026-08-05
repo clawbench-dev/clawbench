@@ -20,6 +20,7 @@ func TestKimiDefaultModels_Structure(t *testing.T) {
 			defaultCount++
 		}
 	}
+	assert.Equal(t, 1, defaultCount, "exactly one model should be marked as default")
 }
 
 func TestDiscoverKimiModels_DefensiveCopy(t *testing.T) {
@@ -39,6 +40,19 @@ func TestKimiDefaultModels_ContainsKnownModels(t *testing.T) {
 	for _, m := range kimiDefaultModels {
 		ids[m.ID] = true
 	}
+	assert.True(t, ids["kimi-k3"], "should contain Kimi K3")
 	assert.True(t, ids["kimi-k2-0711-chat"], "should contain Kimi K2")
+	assert.True(t, ids["kimi-for-coding"], "should contain Kimi K2.7 Code")
+	assert.True(t, ids["kimi-for-coding-highspeed"], "should contain Kimi K2.7 Code Highspeed")
 	assert.True(t, ids["moonshot-v1-128k"], "should contain Moonshot v1 128K")
+}
+
+func TestKimiDefaultModels_K3IsDefault(t *testing.T) {
+	found := false
+	for _, m := range kimiDefaultModels {
+		if m.ID == "kimi-k3" && m.Default {
+			found = true
+		}
+	}
+	assert.True(t, found, "kimi-k3 should be the default model")
 }

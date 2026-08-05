@@ -158,3 +158,99 @@ func TestFixStringNumericID(t *testing.T) {
 		})
 	}
 }
+
+func TestACPStdoutFilter_ExtractsModelsFromSessionNewResponse(t *testing.T) {
+	// Simulates a kimi ACP session/new response with SessionModelState
+	input := `{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[{"model_id":"kimi-code/k3","name":"Kimi K3"},{"model_id":"kimi-code/k3,thinking","name":"Kimi K3 (thinking)"},{"model_id":"kimi-code/kimi-for-coding","name":"Kimi K2.7 Code"}],"currentModelId":"kimi-code/k3"},"modes":{"availableModes":[{"id":"default","name":"Default"}],"currentModeId":"default"},"sessionId":"test-123"}}
+`
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+
+	// Read all output to ensure pump processes the line
+	var buf bytes.Buffer
+	io.Copy(&buf, f)
+
+	// Check that models were cached
+	cached := f.GetAndClearCachedModels()
+	if cached == nil {
+		t.Fatal("expected cached models to be non-nil")
+	}
+	if cached.CurrentModelID != "kimi-code/k3" {
+		t.Errorf("expected currentModelId 'kimi-code/k3', got %q", cached.CurrentModelID)
+	}
+	if len(cached.Models) != 3 {
+		t.Fatalf("expected 3 models, got %d", len(cached.Models))
+	}
+	if cached.Models[0].ID != "kimi-code/k3" {
+		t.Errorf("expected first model ID 'kimi-code/k3', got %q", cached.Models[0].ID)
+	}
+	if cached.Models[0].Name != "Kimi K3" {
+		t.Errorf("expected first model name 'Kimi K3', got %q", cached.Models[0].Name)
+	}
+	if cached.Models[2].Name != "Kimi K2.7 Code" {
+		t.Errorf("expected third model name 'Kimi K2.7 Code', got %q", cached.Models[2].Name)
+	}
+
+	// Verify the JSON was still passed through to the reader (not consumed)
+	output := buf.String()
+	if !strings.Contains(output, "availableModels") {
+		t.Errorf("expected output to still contain the original JSON, got: %q", output)
+	}
+}
+
+func TestACPStdoutFilter_ExtractsModelsEmptyList(t *testing.T) {
+	// kimi ACP returns empty availableModels when not logged in.
+	// Empty models with empty currentModelId should not be cached (nil),
+	// consistent with buildModelListStateFromSelect behavior.
+	input := `{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[],"currentModelId":""},"sessionId":"test-456"}}
+`
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, f)
+
+	cached := f.GetAndClearCachedModels()
+	if cached != nil {
+		t.Fatal("expected nil cached models when availableModels is empty and currentModelId is empty")
+	}
+}
+
+func TestACPStdoutFilter_GetAndClearCachedModels_ClearsAfterRead(t *testing.T) {
+	input := `{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[{"model_id":"m1","name":"Model 1"}],"currentModelId":"m1"},"sessionId":"test"}}
+`
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, f)
+
+	// First read should return the cached models
+	cached := f.GetAndClearCachedModels()
+	if cached == nil {
+		t.Fatal("expected cached models to be non-nil on first read")
+	}
+
+	// Second read should return nil (cleared)
+	cached2 := f.GetAndClearCachedModels()
+	if cached2 != nil {
+		t.Fatal("expected cached models to be nil after clearing")
+	}
+}
+
+func TestACPStdoutFilter_NoModelsInResponse(t *testing.T) {
+	// Response without models field should not cache anything
+	input := `{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}
+{"jsonrpc":"2.0","id":2,"result":{"modes":{"availableModes":[{"id":"default","name":"Default"}],"currentModeId":"default"},"sessionId":"test"}}
+`
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, f)
+
+	cached := f.GetAndClearCachedModels()
+	if cached != nil {
+		t.Fatal("expected no cached models when response has no models field")
+	}
+}

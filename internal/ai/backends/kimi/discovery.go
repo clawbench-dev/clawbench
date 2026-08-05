@@ -13,7 +13,10 @@ func init() {
 
 // kimiDefaultModels lists known models for Kimi CLI.
 var kimiDefaultModels = []model.AgentModel{
+	{ID: "kimi-k3", Name: "Kimi K3", Default: true},
 	{ID: "kimi-k2-0711-chat", Name: "Kimi K2"},
+	{ID: "kimi-for-coding", Name: "Kimi K2.7 Code"},
+	{ID: "kimi-for-coding-highspeed", Name: "Kimi K2.7 Code Highspeed"},
 	{ID: "moonshot-v1-128k", Name: "Moonshot v1 128K"},
 	{ID: "moonshot-v1-32k", Name: "Moonshot v1 32K"},
 	{ID: "moonshot-v1-8k", Name: "Moonshot v1 8K"},
