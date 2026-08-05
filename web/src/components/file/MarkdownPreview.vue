@@ -400,13 +400,7 @@ defineExpose({
 }
 
 .markdown-body .lightbox-img-wrap .lightbox-img {
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-
-.markdown-body .lightbox-img-wrap:hover .lightbox-img {
-  transform: scale(1.02);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  cursor: default;
 }
 
 .markdown-body .lightbox-img-wrap .lightbox-expand-icon {
@@ -424,10 +418,12 @@ defineExpose({
   pointer-events: auto;
 }
 
-.markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+@media (hover: hover) {
+  .markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 .markdown-body .lightbox-img-wrap .lightbox-expand-icon::after {
@@ -441,8 +437,7 @@ defineExpose({
   position: relative;
 }
 
-.markdown-body .mermaid::after {
-  content: '⤢';
+.markdown-body .mermaid .lightbox-expand-icon {
   display: none;
   position: absolute;
   top: 4px;
@@ -457,9 +452,17 @@ defineExpose({
   text-align: center;
   cursor: pointer;
   z-index: 2;
+  align-items: center;
+  justify-content: center;
 }
 
-.markdown-body .mermaid:hover::after {
-  display: block;
+.markdown-body .mermaid .lightbox-expand-icon::after {
+  content: '⤢';
+}
+
+@media (hover: hover) {
+  .markdown-body .mermaid:hover .lightbox-expand-icon {
+    display: flex;
+  }
 }
 </style>

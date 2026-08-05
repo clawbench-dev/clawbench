@@ -584,3 +584,44 @@ function handlePromptClick(event: MouseEvent) {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-secondary, #f1f3f5));
 }
 </style>
+
+<style>
+/* Lightbox image wrapper and expand icon (non-scoped for v-html content) */
+.task-overview .lightbox-img-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.task-overview .lightbox-img-wrap .lightbox-img {
+  cursor: default;
+}
+
+.task-overview .lightbox-img-wrap .lightbox-expand-icon {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+@media (hover: hover) {
+  .task-overview .lightbox-img-wrap:hover .lightbox-expand-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.task-overview .lightbox-img-wrap .lightbox-expand-icon::after {
+  content: '⤢';
+  font-size: 14px;
+  line-height: 1;
+}
+</style>

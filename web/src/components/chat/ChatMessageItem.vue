@@ -242,13 +242,7 @@ function handleCopyMessage() {
 }
 
 .chat-message .lightbox-img-wrap .lightbox-img {
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-
-.chat-message .lightbox-img-wrap:hover .lightbox-img {
-  transform: scale(1.02);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  cursor: default;
 }
 
 /* Expand icon — top-right corner, visible on hover (PC mode) */
@@ -267,10 +261,12 @@ function handleCopyMessage() {
   pointer-events: auto;
 }
 
-.chat-message .lightbox-img-wrap:hover .lightbox-expand-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+@media (hover: hover) {
+  .chat-message .lightbox-img-wrap:hover .lightbox-expand-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 /* Use a simple "+" character as the expand icon (no SVG dependency in HTML strings) */
@@ -932,21 +928,13 @@ function handleCopyMessage() {
   overflow: hidden;
   border-radius: 6px;
   margin: 4px 0;
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
   background: var(--bg-secondary);
   padding: 8px;
   position: relative;
 }
 
-.chat-message .mermaid:hover {
-  transform: scale(1.02);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
 /* Mermaid expand icon — top-right corner, visible on hover (PC mode) */
-.chat-message .mermaid::after {
-  content: '⤢';
+.chat-message .mermaid .lightbox-expand-icon {
   display: none;
   position: absolute;
   top: 4px;
@@ -961,10 +949,18 @@ function handleCopyMessage() {
   text-align: center;
   cursor: pointer;
   z-index: 2;
+  align-items: center;
+  justify-content: center;
 }
 
-.chat-message .mermaid:hover::after {
-  display: block;
+.chat-message .mermaid .lightbox-expand-icon::after {
+  content: '⤢';
+}
+
+@media (hover: hover) {
+  .chat-message .mermaid:hover .lightbox-expand-icon {
+    display: flex;
+  }
 }
 
 .chat-message .mermaid svg {

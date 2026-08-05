@@ -84,7 +84,8 @@ describe('mermaid', () => {
             // A <div class="mermaid"> should exist with the SVG
             const rendered = el.querySelector('div.mermaid')
             expect(rendered).not.toBeNull()
-            expect(rendered?.innerHTML).toBe('<svg>rendered</svg>')
+            expect(rendered?.innerHTML).toContain('<svg>rendered</svg>')
+            expect(rendered?.querySelector('.lightbox-expand-icon')).not.toBeNull()
             expect(rendered?.dataset.mermaid).toBe('graph TD; A-->B')
         })
 

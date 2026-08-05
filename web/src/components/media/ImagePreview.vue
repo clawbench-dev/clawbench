@@ -203,7 +203,7 @@ watch(() => props.file, () => {
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
-    cursor: zoom-in;
+    cursor: default;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
     will-change: transform;
 }

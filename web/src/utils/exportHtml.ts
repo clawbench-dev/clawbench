@@ -331,6 +331,11 @@ async function renderDualThemeMermaid(clone: HTMLElement): Promise<void> {
                 wrapper.appendChild(currentDiv)
                 wrapper.appendChild(oppositeDiv)
 
+                // Add expand icon for lightbox (real DOM element)
+                const expandIcon = clone.ownerDocument.createElement('span')
+                expandIcon.className = 'lightbox-expand-icon'
+                wrapper.appendChild(expandIcon)
+
                 block.parentNode?.replaceChild(wrapper, block)
             } catch {
                 // Failed to render opposite theme — keep only the current theme SVG
@@ -633,15 +638,17 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
     document.addEventListener('click', function(e) {
         var expandIcon = e.target.closest('.lightbox-expand-icon');
         if (expandIcon) {
+            // Check if the expand icon is inside a mermaid/mermaid-dual container
+            var mermaidContainer = expandIcon.closest('.mermaid, .mermaid-dual');
+            if (mermaidContainer) {
+                var svg = mermaidContainer.querySelector('svg');
+                if (svg) { e.preventDefault(); openLightbox(svg.outerHTML, true); }
+                return;
+            }
+            // Otherwise, it's an image expand icon
             var wrap = expandIcon.closest('.lightbox-img-wrap');
             var img = wrap ? wrap.querySelector('.lightbox-img') : null;
             if (img) { e.preventDefault(); openLightbox(img.src, false); }
-            return;
-        }
-        var mermaid = e.target.closest('.mermaid');
-        if (mermaid) {
-            var svg = mermaid.querySelector('svg');
-            if (svg) { e.preventDefault(); openLightbox(svg.outerHTML, true); }
             return;
         }
     });
@@ -724,14 +731,14 @@ ${tocCss}
 
 /* ─── Lightbox expand icon (hover overlay on images/mermaid) ─── */
 .markdown-body .lightbox-img-wrap { position: relative; display: inline-block; }
-.markdown-body .lightbox-img-wrap .lightbox-img { cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; }
-.markdown-body .lightbox-img-wrap:hover .lightbox-img { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+.markdown-body .lightbox-img-wrap .lightbox-img { cursor: default; }
 .markdown-body .lightbox-img-wrap .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; cursor: pointer; z-index: 2; pointer-events: auto; }
-.markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon { display: flex; align-items: center; justify-content: center; }
+@media (hover: hover) { .markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon { display: flex; align-items: center; justify-content: center; } }
 .markdown-body .lightbox-img-wrap .lightbox-expand-icon::after { content: '\\2922'; font-size: 14px; line-height: 1; }
 .markdown-body .mermaid { position: relative; }
-.markdown-body .mermaid::after { content: '\\2922'; display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; font-size: 14px; line-height: 24px; text-align: center; cursor: pointer; z-index: 2; }
-.markdown-body .mermaid:hover::after { display: block; }
+.markdown-body .mermaid .lightbox-expand-icon, .markdown-body .mermaid-dual .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; font-size: 14px; line-height: 24px; text-align: center; cursor: pointer; z-index: 2; align-items: center; justify-content: center; }
+.markdown-body .mermaid .lightbox-expand-icon::after, .markdown-body .mermaid-dual .lightbox-expand-icon::after { content: '\\2922'; }
+@media (hover: hover) { .markdown-body .mermaid:hover .lightbox-expand-icon, .markdown-body .mermaid-dual:hover .lightbox-expand-icon { display: flex; } }
 
 /* ─── Lightbox overlay ─── */
 .export-lightbox { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }

@@ -74,6 +74,10 @@ export async function renderMermaidInElement(
             const result = await mermaid.render(id, source)
             container.innerHTML = result.svg
             container.dataset.mermaid = source
+            // Add expand icon for lightbox (real DOM element so PC clicks can target it)
+            const expandIcon = document.createElement('span')
+            expandIcon.className = 'lightbox-expand-icon'
+            container.appendChild(expandIcon)
             ;(block as Element).replaceWith(container)
         } catch (err: unknown) {
             const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -97,6 +101,10 @@ export async function reRenderMermaid(): Promise<void> {
         mermaid.render(id, source).then(result => {
             container.innerHTML = result.svg
             container.id = id
+            // Re-add expand icon after innerHTML replaces content
+            const expandIcon = document.createElement('span')
+            expandIcon.className = 'lightbox-expand-icon'
+            container.appendChild(expandIcon)
         }).catch(err => {
             appLog.w('Mermaid', 'Re-render failed', err)
         })

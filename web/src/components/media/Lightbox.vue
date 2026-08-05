@@ -644,12 +644,10 @@ onMounted(() => {
     // Listen for clicks on images and mermaid diagrams to open lightbox
     document.addEventListener('click', (e) => {
         // Touch mode: direct click on .lightbox-img or .mermaid opens lightbox
-        // PC mode: click on .lightbox-expand-icon (hover overlay) opens lightbox;
-        //   mermaid diagrams always respond to click (they have ::after expand icon
-        //   as a visual hint, but ::after pseudo-elements aren't real DOM targets).
+        // PC mode: only click on .lightbox-expand-icon opens lightbox
         const isExpandIcon = !!e.target.closest('.lightbox-expand-icon')
-        const isMermaidClick = !!e.target.closest('.mermaid')
-        if (!isExpandIcon && !isMermaidClick && e.pointerType !== 'touch') return
+        // PC mode: only expand icon opens lightbox (not the image/mermaid itself)
+        if (!isExpandIcon && e.pointerType !== 'touch') return
 
         // When clicking the expand icon, find the image from the wrapper
         // (the icon is a sibling of the img, not a child)

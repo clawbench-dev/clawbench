@@ -338,12 +338,40 @@ describe('TableRowModal', () => {
     }
   })
 
-  it('opens lightbox on image click', async () => {
+  it('opens lightbox on expand icon click (PC mode)', async () => {
     const mockOpenLightbox = vi.fn()
     const mockOpenMdImages = vi.fn()
     const data = {
       headers: ['Preview'],
-      rows: [['<img class="chat-img lightbox-img" src="/api/local-file/img.png" alt="test">']],
+      rows: [['<span class="lightbox-img-wrap"><img class="chat-img lightbox-img" src="/api/local-file/img.png" alt="test"><span class="lightbox-expand-icon"></span></span>']],
+      currentIndex: 0,
+    }
+    wrapper = mount(TableRowModal, {
+      props: { data },
+      global: {
+        provide: {
+          toast: { show: vi.fn() },
+          switchTab: vi.fn(),
+          hotSwitchProject: vi.fn(),
+          openLightbox: mockOpenLightbox,
+          openMdImages: mockOpenMdImages,
+        },
+      },
+    })
+    const expandIcon = wrapper.element.querySelector('.lightbox-expand-icon') as HTMLElement
+    expect(expandIcon).toBeTruthy()
+    expandIcon.click()
+    await nextTick()
+    expect(mockOpenLightbox).toHaveBeenCalled()
+    expect(mockOpenMdImages).not.toHaveBeenCalled()
+  })
+
+  it('does not open lightbox on image click in PC mode', async () => {
+    const mockOpenLightbox = vi.fn()
+    const mockOpenMdImages = vi.fn()
+    const data = {
+      headers: ['Preview'],
+      rows: [['<span class="lightbox-img-wrap"><img class="chat-img lightbox-img" src="/api/local-file/img.png" alt="test"><span class="lightbox-expand-icon"></span></span>']],
       currentIndex: 0,
     }
     wrapper = mount(TableRowModal, {
@@ -362,8 +390,7 @@ describe('TableRowModal', () => {
     expect(img).toBeTruthy()
     img.click()
     await nextTick()
-    expect(mockOpenLightbox).toHaveBeenCalled()
-    expect(mockOpenMdImages).not.toHaveBeenCalled()
+    expect(mockOpenLightbox).not.toHaveBeenCalled()
   })
 
   it('opens lightbox with md images navigation when multiple images exist', async () => {
@@ -371,7 +398,7 @@ describe('TableRowModal', () => {
     const mockOpenMdImages = vi.fn()
     const data = {
       headers: ['Preview'],
-      rows: [['<img class="chat-img lightbox-img" src="/api/local-file/a.png" alt="A"><img class="chat-img lightbox-img" src="/api/local-file/b.png" alt="B">']],
+      rows: [['<span class="lightbox-img-wrap"><img class="chat-img lightbox-img" src="/api/local-file/a.png" alt="A"><span class="lightbox-expand-icon"></span></span><span class="lightbox-img-wrap"><img class="chat-img lightbox-img" src="/api/local-file/b.png" alt="B"><span class="lightbox-expand-icon"></span></span>']],
       currentIndex: 0,
     }
     wrapper = mount(TableRowModal, {
@@ -386,10 +413,10 @@ describe('TableRowModal', () => {
         },
       },
     })
-    const imgs = wrapper.element.querySelectorAll('.lightbox-img')
-    expect(imgs.length).toBe(2)
-    // Click the second image
-    imgs[1].click()
+    const expandIcons = wrapper.element.querySelectorAll('.lightbox-expand-icon')
+    expect(expandIcons.length).toBe(2)
+    // Click the second expand icon
+    expandIcons[1].click()
     await nextTick()
     expect(mockOpenMdImages).toHaveBeenCalled()
     const [list, startIdx] = mockOpenMdImages.mock.calls[0]
