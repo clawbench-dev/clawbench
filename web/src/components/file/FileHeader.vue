@@ -58,6 +58,11 @@
         <Pin :size="14" />
       </button>
 
+      <!-- Edit toggle button -->
+      <button v-if="toolbarInlineIds.includes('edit')" class="file-header-btn" :class="{ active: editing }" @click.stop="handleToggleEdit" :title="editing ? t('file.header.finishEditing') : t('file.header.edit')">
+        <Pencil :size="14" />
+      </button>
+
       <!-- Open as text button (binary files only) -->
       <button v-if="file.isBinary && toolbarInlineIds.includes('openAsText')" class="file-header-btn" @click.stop="handleOpenAsText" :title="t('file.header.openAsText')">
         <Code2 :size="14" />
@@ -145,6 +150,10 @@
               {{ t('file.header.stickyScroll') }}
               <span v-if="stickyScroll" class="wrap-check">✓</span>
             </button>
+            <button v-if="toolbarCollapsedIds.includes('edit')" class="dropdown-item" :class="{ active: editing }" @click="handleToggleEdit">
+              <Pencil :size="14" />
+              {{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}
+            </button>
             <!-- Collapsible extra items (shown inline when space allows) -->
             <button v-if="file.isBinary && toolbarCollapsedIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText; menuOpen = false">
               <Code2 :size="14" />
@@ -195,7 +204,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, FileStack, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, FileStack, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -215,8 +224,9 @@ const props = defineProps({
     stickyScroll: Boolean,
     overlayOpen: Boolean,
     recentFilesAvailable: { type: Number, default: 0 },
+    editing: Boolean,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'openRecentFiles', 'shareExternal', 'exportHtml', 'fitWidth'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'openRecentFiles', 'shareExternal', 'exportHtml', 'fitWidth', 'toggleEdit'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -247,6 +257,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('wordWrap')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('lineNumbers')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('stickyScroll')
+    if (isEditable.value) ids.push('edit')
     // Extra actions demote to the More dropdown when space runs out.
     // Order = left-to-right display priority; delete is kept last.
     if (props.file?.isBinary) ids.push('openAsText')
@@ -291,6 +302,8 @@ const isMediaFile = computed(() => {
 })
 // File has usable text content for code-specific features
 const hasTextContent = computed(() => !!props.file?.content && !props.file?.tooLarge && !props.file?.isBinary)
+// Editable: text/source files in raw view (excludes markdown & media)
+const isEditable = computed(() => hasTextContent.value && !isMediaFile.value && !isMarkdown.value && !isMarkdownRendered.value)
 const hasToc = computed(() => {
     if (!props.file) return false
     const ft = fileType.value
@@ -321,6 +334,11 @@ const hasFitWidth = computed(() => {
 function handleToggleView() {
     menuOpen.value = false
     emit('toggleView')
+}
+
+function handleToggleEdit() {
+    menuOpen.value = false
+    emit('toggleEdit')
 }
 
 function handleToggleWordWrap() {
