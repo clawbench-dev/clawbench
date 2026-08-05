@@ -506,21 +506,21 @@ func FormatToolUseBlock(b model.ContentBlock, toolCallMap map[string]*ToolCallRe
 		obj["duration_ms"] = b.DurationMs
 	}
 	if b.Summary != "" {
-		obj["summary"] = truncateString(b.Summary, 500)
+		obj["summary"] = b.Summary
 	}
 
 	// Enrich with input/output from chat_tool_calls detail table
 	tc, found := toolCallMap[b.ID]
 	if found {
 		inputStr := string(tc.Input)
-		obj["input"] = truncateString(inputStr, 500)
-		obj["output"] = truncateString(tc.Output, 1000)
+		obj["input"] = inputStr
+		obj["output"] = tc.Output
 	} else if b.Input != nil {
 		// Fallback: use input from content block (interactive tools keep input inline)
 		inputJSON, _ := json.Marshal(b.Input)
-		obj["input"] = truncateString(string(inputJSON), 500)
+		obj["input"] = string(inputJSON)
 		if b.Output != "" {
-			obj["output"] = truncateString(b.Output, 1000)
+			obj["output"] = b.Output
 		}
 	}
 
@@ -529,14 +529,6 @@ func FormatToolUseBlock(b model.ContentBlock, toolCallMap map[string]*ToolCallRe
 		return ""
 	}
 	return "<tool_use>" + string(jsonBytes) + "</tool_use>"
-}
-
-// truncateString truncates s to maxLen bytes, appending "...(truncated)" if exceeded.
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "...(truncated)"
 }
 
 type streamRunResultShared struct {

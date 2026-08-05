@@ -2191,8 +2191,8 @@ func TestBuildForkContext_ThinkingExcluded(t *testing.T) {
 	assert.NotContains(t, result, "I should think about this")
 }
 
-func TestFormatToolUseBlock_Truncation(t *testing.T) {
-	// Test truncation of long input/output/summary
+func TestFormatToolUseBlock_NoTruncation(t *testing.T) {
+	// Test that long input/output/summary are NOT truncated
 	longInput := strings.Repeat("a", 600)
 	longOutput := strings.Repeat("b", 1100)
 	longSummary := strings.Repeat("c", 600)
@@ -2214,12 +2214,13 @@ func TestFormatToolUseBlock_Truncation(t *testing.T) {
 	toolCallMap := map[string]*ToolCallRecord{"toolu_trunc": &tc}
 
 	result := FormatToolUseBlock(b, toolCallMap)
-	assert.Contains(t, result, "...(truncated)")
-	// Input truncated at 500
-	assert.Contains(t, result, strings.Repeat("a", 500))
-	assert.NotContains(t, result, strings.Repeat("a", 600))
-	// Summary truncated at 500
-	assert.Contains(t, result, strings.Repeat("c", 500))
+	assert.NotContains(t, result, "...(truncated)")
+	// Full input should be present
+	assert.Contains(t, result, longInput)
+	// Full output should be present
+	assert.Contains(t, result, longOutput)
+	// Full summary should be present
+	assert.Contains(t, result, longSummary)
 }
 
 func TestExtractMessageParts_TextBlocks(t *testing.T) {

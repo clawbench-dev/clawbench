@@ -902,13 +902,9 @@ func buildForkContext(sessionID string) string {
 		toolCallMap[toolCalls[i].ToolID] = &toolCalls[i]
 	}
 
-	const maxPerMsg = 4000
-	const maxTotal = 20000
-
 	var sb strings.Builder
 	sb.WriteString("[Below is the conversation history from before this session. Continue based on this context.]\n\n")
 
-	total := 0
 	for _, m := range msgs {
 		role := "User"
 		if m.Role == "assistant" {
@@ -928,16 +924,7 @@ func buildForkContext(sessionID string) string {
 			if content == "" {
 				continue
 			}
-			if len(content) > maxPerMsg {
-				content = content[:maxPerMsg] + "...(truncated)"
-			}
-			line := fmt.Sprintf("%s: %s\n\n", role, content)
-			if total+len(line) > maxTotal {
-				sb.WriteString("...(history too long, remaining messages omitted)\n\n")
-				break
-			}
-			sb.WriteString(line)
-			total += len(line)
+			sb.WriteString(fmt.Sprintf("%s: %s\n\n", role, content))
 			continue
 		}
 
@@ -962,16 +949,7 @@ func buildForkContext(sessionID string) string {
 		}
 
 		content := strings.Join(msgParts, "\n\n")
-		if len(content) > maxPerMsg {
-			content = content[:maxPerMsg] + "...(truncated)"
-		}
-		line := fmt.Sprintf("%s: %s\n\n", role, content)
-		if total+len(line) > maxTotal {
-			sb.WriteString("...(history too long, remaining messages omitted)\n\n")
-			break
-		}
-		sb.WriteString(line)
-		total += len(line)
+		sb.WriteString(fmt.Sprintf("%s: %s\n\n", role, content))
 	}
 
 	sb.WriteString("[End of conversation history. Now answer the user's new question.]\n\n")
