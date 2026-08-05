@@ -21,6 +21,15 @@ vi.mock('@/composables/useLocale', () => ({
   gt: (key: string, params?: Record<string, string>) => key + (params ? JSON.stringify(params) : ''),
 }))
 
+// Mock useWideScreenLayout: force narrow-screen so selection-collapse tests
+// exercise the narrow-mode quote-bar behavior. jsdom defaults to a 1024px-wide
+// viewport, which the real singleton treats as wide-screen (isWideScreen=true),
+// and the wide-screen branch hides the bar on selection collapse — the opposite
+// of what these tests assert.
+vi.mock('@/composables/useWideScreenLayout', () => ({
+  useWideScreenLayout: () => ({ isWideScreen: { value: false } }),
+}))
+
 // Keep real quoteQuestionUtils for selectionchange tests (closestElement, getLineInfo, getFileInfo)
 
 // Import the real useChatContext (not mocked) — it's a singleton

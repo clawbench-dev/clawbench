@@ -536,8 +536,10 @@ describe('ChatInputBar — quoteData chip', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.attachment-quote .attachment-filesize').exists()).toBe(true)
-    expect(wrapper.find('.attachment-quote .attachment-filesize').text()).toBe('L5')
+    const name = wrapper.find('.attachment-quote .attachment-filename')
+    expect(name.exists()).toBe(true)
+    expect(name.text()).toContain('bar.ts')
+    expect(name.text()).toContain(':5-10')
   })
 
   it('hides line number when startLine is 0', async () => {
@@ -546,7 +548,7 @@ describe('ChatInputBar — quoteData chip', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.attachment-quote .attachment-filesize').exists()).toBe(false)
+    expect(wrapper.find('.attachment-quote .attachment-filename').text()).toBe('bar.ts')
   })
 
   it('emits remove-quote when quote remove button is clicked', async () => {
@@ -585,31 +587,6 @@ describe('ChatInputBar — quoteData chip', () => {
     await nextTick()
 
     expect(wrapper.find('.chat-attachment-tags').exists()).toBe(true)
-  })
-
-  it('truncateQuoteText truncates long text with ellipsis', () => {
-    const wrapper = mountInputBar()
-    const result = wrapper.vm.truncateQuoteText('a very long text that exceeds the max length', 20)
-    expect(result.length).toBeLessThanOrEqual(23) // 20 chars + '...'
-    expect(result.endsWith('...')).toBe(true)
-  })
-
-  it('truncateQuoteText returns empty string for null/undefined', () => {
-    const wrapper = mountInputBar()
-    expect(wrapper.vm.truncateQuoteText(null, 20)).toBe('')
-    expect(wrapper.vm.truncateQuoteText(undefined, 20)).toBe('')
-  })
-
-  it('truncateQuoteText replaces newlines with spaces', () => {
-    const wrapper = mountInputBar()
-    const result = wrapper.vm.truncateQuoteText('line1\nline2\nline3', 50)
-    expect(result).toBe('line1 line2 line3')
-  })
-
-  it('truncateQuoteText keeps short text unchanged', () => {
-    const wrapper = mountInputBar()
-    const result = wrapper.vm.truncateQuoteText('short', 20)
-    expect(result).toBe('short')
   })
 
   it('hasInputContent is true when quoteData is set', () => {

@@ -13,7 +13,7 @@ import (
 	"clawbench/internal/model"
 )
 
-// AgentDDL creates the agents and agent_api_keys tables.
+// AgentDDL creates the agents table.
 // Exported so handler tests and other external packages can create these tables
 // in their test databases.
 const AgentDDL = `
@@ -45,20 +45,6 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 CREATE INDEX IF NOT EXISTS idx_agents_backend ON agents(backend);
 CREATE INDEX IF NOT EXISTS idx_agents_sort ON agents(sort_order);
-
-CREATE TABLE IF NOT EXISTS agent_api_keys (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	agent_id TEXT NOT NULL,
-	provider TEXT NOT NULL,
-	custom_url TEXT NOT NULL DEFAULT '',
-	encrypted_key TEXT NOT NULL,
-	key_nonce TEXT NOT NULL,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_api_keys_agent_provider
-	ON agent_api_keys(agent_id, provider);
 `
 
 // LoadAgentsFromDB loads all agents from the database and returns them sorted by ID.
@@ -186,7 +172,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 	return nil
 }
 
-// DeleteAgent deletes an agent by ID. Cascades to agent_api_keys (requires PRAGMA foreign_keys=ON).
+// DeleteAgent deletes an agent by ID (requires PRAGMA foreign_keys=ON).
 // Returns nil even if the agent doesn't exist.
 func DeleteAgent(id string) error {
 	// Ensure foreign keys are enforced for cascade delete

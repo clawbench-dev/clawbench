@@ -703,35 +703,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// On Linux, scans /proc for CLAWBENCH_CHILD=1 env marker.
 	ai.CleanupOrphans()
 
-	// Resolve summarize API key from agent_api_keys table if not in config.
-	// New setups write the key directly to config.yaml. This fallback resolves
-	// the key from DB for legacy configs that have key="" and agent_id set.
-	if cfg.Summarize.Backend == summarizeBackendAPI && cfg.Summarize.API.Key == "" && cfg.Summarize.API.AgentID != "" {
-		if _, _, ak, err := service.LoadAgentAnyAPIKey(cfg.Summarize.API.AgentID); err == nil && ak != "" {
-			cfg.Summarize.API.Key = ak
-			slog.Info("resolved summarize API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.API.AgentID))
-		} else if err != nil {
-			slog.Warn("failed to resolve summarize API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.API.AgentID), slog.String("err", err.Error()))
-		}
-	}
-	if cfg.Summarize.TTSBackend == summarizeBackendAPI && cfg.Summarize.TTSAPI.Key == "" && cfg.Summarize.TTSAPI.AgentID != "" {
-		if _, _, ak, err := service.LoadAgentAnyAPIKey(cfg.Summarize.TTSAPI.AgentID); err == nil && ak != "" {
-			cfg.Summarize.TTSAPI.Key = ak
-			slog.Info("resolved summarize TTS API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.TTSAPI.AgentID))
-		} else if err != nil {
-			slog.Warn("failed to resolve summarize TTS API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.TTSAPI.AgentID), slog.String("err", err.Error()))
-		}
-	}
-
-	// Inject API key loader for Pi CLI runtime (avoids import cycle between ai and service packages)
-	ai.SetAgentAPIKeyLoader(func(agentID string) (provider, customURL, apiKey string, found bool) {
-		p, cu, ak, err := service.LoadAgentAnyAPIKey(agentID)
-		if err != nil || ak == "" {
-			return "", "", "", false
-		}
-		return p, cu, ak, true
-	})
-
 	// Inject external session ID getter for ResumeSession recovery
 	ai.SetExternalSessionIDGetter(service.GetExternalSessionID)
 

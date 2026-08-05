@@ -5,8 +5,8 @@ import (
 	"database/sql"
 )
 
-// InitInMemoryDB creates an in-memory SQLite database with the agents and
-// agent_api_keys tables. Returns the db handle. The caller is responsible
+// InitInMemoryDB creates an in-memory SQLite database with the agents table.
+// Returns the db handle. The caller is responsible
 // for closing it and for setting/restoring service.db and service.dbRead.
 // This is exported for use by handler tests and other external test packages.
 func InitInMemoryDB() (*sql.DB, error) {

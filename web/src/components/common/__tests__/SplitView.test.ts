@@ -19,6 +19,17 @@ function mountSplit(props = {}) {
 }
 
 let wrapper: VueWrapper | null = null
+
+// jsdom does not load SFC scoped `<style>` blocks, so getComputedStyle() returns
+// the browser default ('block') for the disabled-mode wrappers. Inject the
+// relevant rule so the disabled (non-active) wrappers resolve to display:contents.
+const splitCss = document.createElement('style')
+splitCss.textContent = `
+.split-view:not(.split-view--active) .split-view__left,
+.split-view:not(.split-view--active) .split-view__right { display: contents; }
+`
+document.head.appendChild(splitCss)
+
 afterEach(() => {
   wrapper?.unmount()
   wrapper = null

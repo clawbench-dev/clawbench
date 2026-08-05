@@ -22,7 +22,6 @@ type CLIBackend struct {
 	NewParserFn   func() LineParser
 	FilterLineFn  func(line string) (string, bool)     // nil = skip empty lines only
 	PreStartFn    func(cmd *exec.Cmd, req ChatRequest) // optional, e.g. Claude stdin
-	PreExecHookFn func(cmd *exec.Cmd, req ChatRequest) // optional, e.g. Pi API key injection
 }
 
 // truncatePrompt returns a truncated version of the prompt for logging.
@@ -82,12 +81,6 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		cmd.Env = append(cmd.Env, "CLAWBENCH_SCHEDULED=1")
 	}
 
-	// Inject API key from agent_api_keys table if available.
-	// This is handled by the backend's PreExecHookFn (e.g. Pi's injectPiAPIKey).
-	// Legacy injectAgentAPIKey has been replaced by per-backend PreExecHookFn.
-	if b.PreExecHookFn != nil {
-		b.PreExecHookFn(cmd, req)
-	}
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
@@ -282,30 +275,6 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	}()
 
 	return ch, nil
-}
-
-// AgentAPIKeyLoader loads an API key for an agent+provider combination.
-// AgentAPIKeyLoader loads the API key for a Pi agent.
-// Returns (provider, customURL, apiKey, true) on success, or ("", "", "", false) if not found.
-// This is injected from the handler/service layer to avoid import cycles.
-type AgentAPIKeyLoader func(agentID string) (provider, customURL, apiKey string, found bool)
-
-// agentAPIKeyLoader is the global function for loading agent API keys.
-// Set by the application startup via SetAgentAPIKeyLoader.
-var agentAPIKeyLoader AgentAPIKeyLoader
-
-// SetAgentAPIKeyLoader sets the function used to load encrypted API keys
-// for agents. Must be called once during application startup, after
-// service.InitDB(). This avoids import cycles between internal/ai and
-// internal/service packages.
-func SetAgentAPIKeyLoader(loader AgentAPIKeyLoader) {
-	agentAPIKeyLoader = loader
-}
-
-// GetAgentAPIKeyLoader returns the current agent API key loader function.
-// Used by backend sub-packages (e.g. backends/pi) for PreExecHookFn injection.
-func GetAgentAPIKeyLoader() AgentAPIKeyLoader {
-	return agentAPIKeyLoader
 }
 
 // filterSkipNonJSON returns a line filter that discards lines

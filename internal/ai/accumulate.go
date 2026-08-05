@@ -41,6 +41,12 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 
 	switch event.Type {
 	case "content":
+		// GLM-5.1 (ACP) emits a standalone "!" text chunk between tool
+		// call completions and the next text paragraph. Drop it here so
+		// it doesn't prefix the next text block as "!Now let me check…".
+		if event.Content == "!" {
+			break
+		}
 		// Coalesce incremental content deltas into the most recent text block.
 		if idx, found := findLastBlockOfType("text"); found {
 			(*blocks)[idx].Text += event.Content

@@ -1,28 +1,21 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { ref, nextTick, type Ref } from 'vue'
+import { nextTick, type Ref } from 'vue'
 import ConnectionOverlay from '@/components/common/ConnectionOverlay.vue'
+import type { ConnectionOverlayMode } from '@/composables/useConnectionOverlay'
 
-// Ref holder read by the mocked composables AT CALL TIME. The refs are created with
-// the same ESM `vue` instance the component uses, so cross-module reactivity works.
-const holder = vi.hoisted(() => ({} as {
-    wsStatusRef?: Ref<string>
-    hasConnectedOnceRef?: Ref<boolean>
-    restartingOverlayRef?: Ref<boolean>
-}))
-
-vi.mock('@/composables/useGlobalEvents', () => ({
-    useGlobalEvents: () => ({
-        wsStatus: holder.wsStatusRef,
-        hasConnectedOnce: holder.hasConnectedOnceRef,
-    }),
-}))
-
-vi.mock('@/composables/useSettingsNavigation', () => ({
-    useSettingsNavigation: () => ({
-        restartingOverlay: holder.restartingOverlayRef,
-    }),
+// Mock useConnectionOverlay so the component test focuses purely on RENDERING
+// given a mode. The mode-computation logic (restart/reconnect/null + the
+// reconnect delay) is covered by the composable's own test
+// (__tests__/useConnectionOverlay.test.ts).
+const mockMode = vi.hoisted(() => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { ref } = require('vue') as typeof import('vue')
+    return ref<ConnectionOverlayMode>(null)
+})
+vi.mock('@/composables/useConnectionOverlay', () => ({
+    useConnectionOverlay: () => ({ mode: mockMode }),
 }))
 
 const i18n = createI18n({
@@ -59,14 +52,10 @@ describe('ConnectionOverlay', () => {
     let activeContainer: HTMLDivElement | null = null
 
     beforeEach(() => {
-        holder.wsStatusRef = ref('connected')
-        holder.hasConnectedOnceRef = ref(false)
-        holder.restartingOverlayRef = ref(false)
-        vi.useFakeTimers()
+        mockMode.value = null
     })
 
     afterEach(() => {
-        vi.useRealTimers()
         document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
         if (activeContainer?.parentNode) {
             document.body.removeChild(activeContainer)
@@ -81,19 +70,15 @@ describe('ConnectionOverlay', () => {
         return mounted.wrapper
     }
 
-    it('renders nothing while connected', async () => {
-        holder.hasConnectedOnceRef!.value = true
+    it('renders nothing when mode is null', async () => {
+        mockMode.value = null
         await mountAndWait()
         expect($('.connection-overlay')).toBeNull()
     })
 
-    it('renders reconnect mask with server icon and text after delay', async () => {
-        holder.hasConnectedOnceRef!.value = true
+    it('renders reconnect mask with server icon, spinner and text', async () => {
+        mockMode.value = 'reconnect'
         await mountAndWait()
-        holder.wsStatusRef!.value = 'disconnected'
-        await nextTick()
-        await vi.advanceTimersByTimeAsync(1600)
-        await nextTick()
         const overlay = $('.connection-overlay')
         expect(overlay).not.toBeNull()
         expect($('.connection-overlay__icon')).not.toBeNull()
@@ -101,36 +86,24 @@ describe('ConnectionOverlay', () => {
         expect($('.connection-overlay__text')?.textContent).toContain('连接断开，正在重连…')
     })
 
-    it('does not render on cold start (never connected before)', async () => {
-        await mountAndWait()
-        holder.wsStatusRef!.value = 'disconnected'
-        await nextTick()
-        await vi.advanceTimersByTimeAsync(1600)
-        await nextTick()
-        expect($('.connection-overlay')).toBeNull()
-    })
-
     it('renders restart mask immediately with restart text, taking priority', async () => {
-        holder.hasConnectedOnceRef!.value = true
+        mockMode.value = 'restart'
         await mountAndWait()
-        holder.restartingOverlayRef!.value = true
-        holder.wsStatusRef!.value = 'reconnecting'
-        await nextTick()
         const overlay = $('.connection-overlay')
         expect(overlay).not.toBeNull()
         expect($('.connection-overlay__text')?.textContent).toContain('正在重启，请稍候…')
     })
 
-    it('hides the mask once connection is restored', async () => {
-        holder.hasConnectedOnceRef!.value = true
+    it('shows the reconnect overlay only while mode is reconnect', async () => {
+        mockMode.value = 'reconnect'
         await mountAndWait()
-        holder.wsStatusRef!.value = 'disconnected'
-        await nextTick()
-        await vi.advanceTimersByTimeAsync(1600)
-        await nextTick()
         expect($('.connection-overlay')).not.toBeNull()
-        holder.wsStatusRef!.value = 'connected'
+
+        // Mount a second instance with a null mode and verify it stays hidden.
+        mockMode.value = null
+        const second = mountOverlay()
         await nextTick()
-        expect($('.connection-overlay')).toBeNull()
+        expect(second.wrapper.find('.connection-overlay').exists()).toBe(false)
+        if (second.container.parentNode) document.body.removeChild(second.container)
     })
 })

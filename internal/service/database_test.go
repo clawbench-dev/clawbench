@@ -2102,12 +2102,6 @@ func TestInitDB_CreatesAgentTables(t *testing.T) {
 	assert.Contains(t, tables, "id", "agents table should exist with id column")
 	assert.Contains(t, tables, "name", "agents table should exist with name column")
 	assert.Contains(t, tables, "backend", "agents table should exist with backend column")
-
-	// Verify agent_api_keys table was created by AgentDDL
-	tables = getTableColumns(t, UnsafeDBForTest(), "agent_api_keys")
-	assert.Contains(t, tables, "agent_id", "agent_api_keys table should exist with agent_id column")
-	assert.Contains(t, tables, "provider", "agent_api_keys table should exist with provider column")
-	assert.Contains(t, tables, "encrypted_key", "agent_api_keys table should exist with encrypted_key column")
 }
 
 // ---------- ReorderQuickCommands: db.Begin error path ----------

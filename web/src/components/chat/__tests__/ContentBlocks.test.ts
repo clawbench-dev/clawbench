@@ -668,6 +668,10 @@ describe('ContentBlocks', () => {
       await flushPromises()
       await nextTick()
 
+      // Force a re-render before asserting the error state's retry button (jsdom quirk).
+      await wrapper.vm.$forceUpdate()
+      await nextTick()
+
       // Click the actual retry button rendered inside the error state.
       const retryBtn = wrapper.find('.thinking-retry-btn')
       expect(retryBtn.exists()).toBe(true)

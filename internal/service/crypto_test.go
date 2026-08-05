@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"testing"
 
-	"clawbench/internal/model"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -98,131 +97,6 @@ func TestDeriveEncryptionKey_Length(t *testing.T) {
 	assert.Len(t, key, 32)
 }
 
-func TestSaveAndLoadAgentAPIKey(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	// Insert agent first
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	// Save API key
-	err = service.SaveAgentAPIKey(db, "pi", "openai", "https://api.openai.com", "sk-test-key-12345")
-	require.NoError(t, err)
-
-	// Load API key
-	customURL, apiKey, err := service.LoadAgentAPIKey("pi", "openai")
-	require.NoError(t, err)
-	assert.Equal(t, "https://api.openai.com", customURL)
-	assert.Equal(t, "sk-test-key-12345", apiKey)
-}
-
-func TestSaveAndLoadAgentAPIKey_NoCustomURL(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	// Save without custom URL
-	err = service.SaveAgentAPIKey(db, "pi", "anthropic", "", "sk-ant-test-key")
-	require.NoError(t, err)
-
-	customURL, apiKey, err := service.LoadAgentAPIKey("pi", "anthropic")
-	require.NoError(t, err)
-	assert.Equal(t, "", customURL)
-	assert.Equal(t, "sk-ant-test-key", apiKey)
-}
-
-func TestLoadAgentAPIKey_NotFound(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	_, _, err = service.LoadAgentAPIKey("pi", "nonexistent-provider")
-	assert.Error(t, err)
-}
-
-func TestSaveAgentAPIKey_Upsert(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	// Save first time
-	err = service.SaveAgentAPIKey(db, "pi", "openai", "", "sk-old-key")
-	require.NoError(t, err)
-
-	// Upsert with new key
-	err = service.SaveAgentAPIKey(db, "pi", "openai", "", "sk-new-key")
-	require.NoError(t, err)
-
-	// Should have the new key
-	_, apiKey, err := service.LoadAgentAPIKey("pi", "openai")
-	require.NoError(t, err)
-	assert.Equal(t, "sk-new-key", apiKey)
-
-	// Should still be only one record
-	var count int
-	db.QueryRow("SELECT COUNT(*) FROM agent_api_keys WHERE agent_id = 'pi' AND provider = 'openai'").Scan(&count)
-	assert.Equal(t, 1, count)
-}
-
-func TestRotateAPIKeyEncryption_NoKeys(t *testing.T) {
-	_ = setupTestDBForAgents(t)
-
-	// No API keys stored — rotation should succeed with no-op
-	err := service.RotateAPIKeyEncryption("old-password")
-	assert.NoError(t, err)
-}
-
-func TestLoadAgentAnyAPIKey_Found(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	err = service.SaveAgentAPIKey(db, "pi", "openai", "https://api.openai.com", "sk-test-any-key")
-	require.NoError(t, err)
-
-	provider, customURL, apiKey, err := service.LoadAgentAnyAPIKey("pi")
-	require.NoError(t, err)
-	assert.Equal(t, "openai", provider)
-	assert.Equal(t, "https://api.openai.com", customURL)
-	assert.Equal(t, "sk-test-any-key", apiKey)
-}
-
-func TestLoadAgentAnyAPIKey_NotFound(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	// No API keys stored for this agent
-	provider, customURL, apiKey, err := service.LoadAgentAnyAPIKey("pi")
-	require.NoError(t, err)
-	assert.Equal(t, "", provider)
-	assert.Equal(t, "", customURL)
-	assert.Equal(t, "", apiKey)
-}
-
-func TestLoadAgentAnyAPIKey_MultipleProviders(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	err = service.SaveAgentAPIKey(db, "pi", "openai", "", "sk-openai-key")
-	require.NoError(t, err)
-	err = service.SaveAgentAPIKey(db, "pi", "anthropic", "", "sk-ant-key")
-	require.NoError(t, err)
-
-	// Should return one of the providers (LIMIT 1)
-	provider, _, apiKey, err := service.LoadAgentAnyAPIKey("pi")
-	require.NoError(t, err)
-	assert.NotEmpty(t, provider)
-	assert.NotEmpty(t, apiKey)
-}
-
 func TestDecryptAPIKey_InvalidNonceSize(t *testing.T) {
 	// Create a valid encrypted value, then try decrypting with a wrong-size nonce
 	key := "sk-test-key"
@@ -240,18 +114,6 @@ func TestDecryptAPIKey_InvalidNonceBase64(t *testing.T) {
 	// Valid base64 ciphertext but invalid nonce
 	_, err := service.DecryptAPIKey("dGVzdA==", "!!!invalid!!!")
 	assert.Error(t, err)
-}
-
-func TestSaveAgentAPIKey_EncryptError(t *testing.T) {
-	// SaveAgentAPIKey calls EncryptAPIKey internally which should work in normal cases.
-	// This test just verifies the happy path with a non-empty key.
-	db := setupTestDBForAgents(t)
-
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	err = service.SaveAgentAPIKey(db, "pi", "openai", "", "valid-api-key")
-	require.NoError(t, err)
 }
 
 func TestDeriveEncryptionKey_Cached(t *testing.T) {
@@ -277,50 +139,4 @@ func TestDecryptAPIKey_TamperedCiphertext(t *testing.T) {
 
 	_, err = service.DecryptAPIKey(tampered, nonce)
 	assert.Error(t, err)
-}
-
-func TestRotateAPIKeyEncryption_WithKeys(t *testing.T) {
-	db := setupTestDBForAgents(t)
-	service.ResetEncryptionKeyCache()
-
-	// Create agent and save API keys
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	err = service.SaveAgentAPIKey(db, "pi", "openai", "", "sk-test-key-1")
-	require.NoError(t, err)
-
-	err = service.SaveAgentAPIKey(db, "pi", "anthropic", "https://custom.api", "sk-ant-key-2")
-	require.NoError(t, err)
-
-	// Verify keys can be decrypted before rotation
-	customURL, apiKey, err := service.LoadAgentAPIKey("pi", "openai")
-	require.NoError(t, err)
-	assert.Equal(t, "", customURL)
-	assert.Equal(t, "sk-test-key-1", apiKey)
-
-	customURL, apiKey, err = service.LoadAgentAPIKey("pi", "anthropic")
-	require.NoError(t, err)
-	assert.Equal(t, "https://custom.api", customURL)
-	assert.Equal(t, "sk-ant-key-2", apiKey)
-
-	// Simulate password change by resetting the encryption key cache
-	// (In production, the auto-password file would have changed before calling RotateAPIKeyEncryption)
-	service.ResetEncryptionKeyCache()
-
-	// Rotate — since the auto-password hasn't actually changed in this test env,
-	// DeriveEncryptionKey will return the same key. This test validates the
-	// round-trip works: decrypt → reset cache → re-encrypt → decrypt.
-	err = service.RotateAPIKeyEncryption("old-password")
-	require.NoError(t, err)
-
-	// Verify keys can still be decrypted after rotation
-	_, apiKey, err = service.LoadAgentAPIKey("pi", "openai")
-	require.NoError(t, err)
-	assert.Equal(t, "sk-test-key-1", apiKey)
-
-	customURL, apiKey, err = service.LoadAgentAPIKey("pi", "anthropic")
-	require.NoError(t, err)
-	assert.Equal(t, "https://custom.api", customURL)
-	assert.Equal(t, "sk-ant-key-2", apiKey)
 }

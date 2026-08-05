@@ -21,7 +21,6 @@ import (
 	"unicode/utf8"
 
 	"clawbench/internal/model"
-	"clawbench/internal/service"
 	"clawbench/internal/speech"
 	"clawbench/internal/version"
 
@@ -1476,19 +1475,7 @@ func ServeConfigPassword(w http.ResponseWriter, r *http.Request) { //nolint:gocy
 
 	// Also remove the auto-password file (if any) since user has set an explicit password
 	autoPasswordFile := filepath.Join(model.DataDir, "auto-password")
-	// Read the old auto-password before deleting it (needed for API key rotation)
-	oldAutoPassword, _ := os.ReadFile(autoPasswordFile)
 	_ = os.Remove(autoPasswordFile)
-
-	// Rotate API key encryption: the auto-password is being removed, which changes
-	// the encryption key derivation. Re-encrypt all stored API keys with the new key
-	// (which will fall back to deriveFallbackKey since auto-password is gone).
-	if service.DBReady() && len(oldAutoPassword) > 0 {
-		if err := service.RotateAPIKeyEncryption(string(oldAutoPassword)); err != nil {
-			slog.Error("failed to rotate API key encryption after password change", "error", err)
-			// Don't fail the password change — the user can re-enter API keys later
-		}
-	}
 
 	// Update in-memory auth state so the change takes effect immediately
 	// (ISS-197 partial fix: password change should not require restart for auth)

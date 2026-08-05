@@ -1766,7 +1766,7 @@ defineExpose({
 
 .at-menu-item:hover,
 .at-menu-item.at-menu-selected {
-  background: var(--bg-secondary, #f1f3f5);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
 .at-menu-label {

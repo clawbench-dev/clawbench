@@ -2,7 +2,6 @@
 package handler
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -570,33 +569,11 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	var models []model.AgentModel
 	canDiscover := false // whether any discovery method is available
 
-	// Find provider spec early — used for filtering
-	providerSpec := findProviderSpecForAgent(r.Context(), agentID)
-
 	// CLI model discovery via BackendSpec
 	spec := model.FindSpecByBackend(agent.Backend)
 	if spec != nil && model.CanDiscoverModels(*spec) {
 		canDiscover = true
-		discovered := model.DiscoverModels(*spec)
-
-		// If agent has a provider (from initial setup), filter to that provider's models.
-		// Pi --list-models returns all providers' models in "provider/model" format.
-		if providerSpec != nil && len(discovered) > 0 {
-			prefix := providerSpec.ID + "/"
-			for _, m := range discovered {
-				if strings.HasPrefix(m.ID, prefix) {
-					m.ID = strings.TrimPrefix(m.ID, prefix)
-					m.Name = strings.TrimPrefix(m.Name, prefix)
-					models = append(models, m)
-				}
-			}
-			if len(models) == 0 {
-				// No models matched the prefix — use all discovered models
-				models = discovered
-			}
-		} else {
-			models = discovered
-		}
+		models = model.DiscoverModels(*spec)
 	}
 
 	if len(models) == 0 {
@@ -630,19 +607,6 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"models": models,
 	})
-}
-
-// findProviderSpecForAgent looks up the provider for an agent from the agent_api_keys table
-// and returns the corresponding ProviderSpec. Used for provider prefix filtering during model refresh.
-func findProviderSpecForAgent(ctx context.Context, agentID string) *model.ProviderSpec {
-	if !service.DBReady() {
-		return nil
-	}
-	var providerID string
-	if err := service.ReadDB().QueryRowContext(ctx, "SELECT provider FROM agent_api_keys WHERE agent_id = ?", agentID).Scan(&providerID); err != nil {
-		return nil
-	}
-	return model.FindProviderSpec(providerID)
 }
 
 // ServeACPSessions handles GET /api/agents/{id}/acp-sessions — lists ACP sessions

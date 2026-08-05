@@ -104,6 +104,7 @@ vi.mock('@/composables/useQuoteQuestion.ts', () => ({
 vi.mock('@/composables/useFileUpload.ts', () => ({
   useFileUpload: () => ({
     pendingFiles: { value: [] },
+    attachedFiles: { value: [] },
     uploadingFiles: { value: [] },
     isDragOver: { value: false },
     onDragEnter: vi.fn(),
@@ -111,6 +112,7 @@ vi.mock('@/composables/useFileUpload.ts', () => ({
     onDragLeave: vi.fn(),
     onDrop: vi.fn(),
     onFileSelect: vi.fn(),
+    handleFileDrop: vi.fn(),
     triggerUpload: vi.fn(),
     removePendingFile: vi.fn(),
   }),

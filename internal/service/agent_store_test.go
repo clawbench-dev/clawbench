@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// setupTestDBForAgents creates an in-memory SQLite with the agents and agent_api_keys tables.
+// setupTestDBForAgents creates an in-memory SQLite with the agents table.
 func setupTestDBForAgents(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
@@ -49,20 +49,6 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 		);
 		CREATE INDEX IF NOT EXISTS idx_agents_backend ON agents(backend);
 		CREATE INDEX IF NOT EXISTS idx_agents_sort ON agents(sort_order);
-
-		CREATE TABLE IF NOT EXISTS agent_api_keys (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			agent_id TEXT NOT NULL,
-			provider TEXT NOT NULL,
-			custom_url TEXT NOT NULL DEFAULT '',
-			encrypted_key TEXT NOT NULL,
-			key_nonce TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
-		);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_api_keys_agent_provider
-			ON agent_api_keys(agent_id, provider);
 	`)
 	require.NoError(t, err)
 
@@ -317,32 +303,6 @@ func TestLoadAgentsFromDB_EmptyModelsAndLevels(t *testing.T) {
 	assert.Empty(t, agents[0].ThinkingEffortLevels)
 }
 
-func TestDeleteAgent_CascadesAPIKeys(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	// Insert agent
-	err := service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"})
-	require.NoError(t, err)
-
-	// Insert API key (directly, since encryption is in Task 2)
-	_, err = db.Exec(`INSERT INTO agent_api_keys (agent_id, provider, encrypted_key, key_nonce)
-		VALUES ('pi', 'openai', 'encrypted-value', 'nonce-value')`)
-	require.NoError(t, err)
-
-	// Verify API key exists
-	var count int
-	db.QueryRow("SELECT COUNT(*) FROM agent_api_keys WHERE agent_id = 'pi'").Scan(&count)
-	assert.Equal(t, 1, count)
-
-	// Delete agent should cascade to API keys
-	err = service.DeleteAgent("pi")
-	require.NoError(t, err)
-
-	// Verify API keys are deleted
-	db.QueryRow("SELECT COUNT(*) FROM agent_api_keys WHERE agent_id = 'pi'").Scan(&count)
-	assert.Equal(t, 0, count)
-}
-
 // Verify that the DDL in setupTestDBForAgents matches the production DDL in database.go.
 // This test ensures we don't drift between test and production schemas.
 func TestAgentSchemaMatchesProduction(t *testing.T) {
@@ -379,31 +339,6 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 	for col := range foundColumns {
 		assert.True(t, expectedColumns[col], "unexpected column in agents table: %s", col)
 	}
-
-	// Check agent_api_keys table columns
-	expectedKeyColumns := map[string]bool{
-		"id": true, "agent_id": true, "provider": true, "custom_url": true,
-		"encrypted_key": true, "key_nonce": true, "created_at": true, "updated_at": true,
-	}
-
-	rows2, err := db.Query("SELECT name FROM pragma_table_info('agent_api_keys')")
-	require.NoError(t, err)
-	defer func() { _ = rows2.Close() }()
-
-	foundKeyColumns := make(map[string]bool)
-	for rows2.Next() {
-		var name string
-		require.NoError(t, rows2.Scan(&name))
-		foundKeyColumns[name] = true
-	}
-	require.NoError(t, rows2.Err())
-
-	for col := range expectedKeyColumns {
-		assert.True(t, foundKeyColumns[col], "missing column in agent_api_keys table: %s", col)
-	}
-	for col := range foundKeyColumns {
-		assert.True(t, expectedKeyColumns[col], "unexpected column in agent_api_keys table: %s", col)
-	}
 }
 
 // Verify indexes exist
@@ -411,9 +346,8 @@ func TestAgentIndexes(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	expectedIndexes := map[string]bool{
-		"idx_agents_backend":                true,
-		"idx_agents_sort":                   true,
-		"idx_agent_api_keys_agent_provider": true,
+		"idx_agents_backend": true,
+		"idx_agents_sort":    true,
 	}
 
 	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_agent%'")

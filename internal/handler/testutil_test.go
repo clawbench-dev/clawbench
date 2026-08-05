@@ -267,7 +267,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		t.Fatalf("failed to create tables: %v", err)
 	}
 
-	// Create agent store tables (agents + agent_api_keys)
+	// Create agent store tables
 	if _, err := db.Exec(service.AgentDDL); err != nil {
 		t.Fatalf("failed to create agent tables: %v", err)
 	}

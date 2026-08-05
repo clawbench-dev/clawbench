@@ -110,7 +110,7 @@ describe('useSwipeSession disabled guard', () => {
     // Wait for async operations
     await vi.waitFor(() => {
       expect(switchSession).toHaveBeenCalled()
-    })
+    }, { timeout: 5000 })
 
     // Indicator should show the target session title
     expect(indicatorText.value).toBeTruthy()

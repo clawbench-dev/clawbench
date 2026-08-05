@@ -1281,7 +1281,7 @@ describe('SettingsGroupPanel', () => {
   describe('RAG progress refresh button', () => {
     it('renders refresh button for RAG progress fields', () => {
       const wrapper = mountPanel(makeRagConfig())
-      const refreshButtons = wrapper.findAll('.group-panel__refresh-btn')
+      const refreshButtons = wrapper.findAll('.settings-item__refresh')
       expect(refreshButtons).toHaveLength(2) // index_progress + embed_progress
     })
 
@@ -1296,14 +1296,14 @@ describe('SettingsGroupPanel', () => {
 
     it('does not render refresh button for non-RAG panels', () => {
       const wrapper = mountPanel(makeSimpleConfig())
-      const refreshButtons = wrapper.findAll('.group-panel__refresh-btn')
+      const refreshButtons = wrapper.findAll('.settings-item__refresh')
       expect(refreshButtons).toHaveLength(0)
     })
 
     it('calls refreshRagStatus when refresh button is clicked', async () => {
       const wrapper = mountPanel(makeRagConfig())
       mockRagRefresh.mockClear() // clear the auto-fetch from onMounted
-      const refreshBtn = wrapper.find('.group-panel__refresh-btn')
+      const refreshBtn = wrapper.find('.settings-item__refresh')
       await refreshBtn.trigger('click')
       expect(mockRagRefresh).toHaveBeenCalledOnce()
     })

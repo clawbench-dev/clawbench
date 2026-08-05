@@ -6,9 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,7 +14,6 @@ import (
 	"path/filepath"
 	"sync"
 
-	"clawbench/internal/dbutil"
 	"clawbench/internal/model"
 
 	"golang.org/x/crypto/hkdf"
@@ -195,175 +192,4 @@ func ResetEncryptionKeyCache() {
 	encryptionKeyCache = nil
 	encryptionKeyOnce = sync.Once{}
 	encryptionKeyMu.Unlock()
-}
-
-// SaveAgentAPIKey encrypts and stores an API key for an agent+provider combination.
-// Uses upsert (ON CONFLICT) to update existing keys.
-func SaveAgentAPIKey(db dbutil.Writer, agentID, provider, customURL, apiKey string) error {
-	encrypted, nonce, err := EncryptAPIKey(apiKey)
-	if err != nil {
-		return fmt.Errorf("encrypt API key: %w", err)
-	}
-
-	_, err = db.Exec(`
-		INSERT INTO agent_api_keys (agent_id, provider, custom_url, encrypted_key, key_nonce)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(agent_id, provider) DO UPDATE SET
-			custom_url = excluded.custom_url,
-			encrypted_key = excluded.encrypted_key,
-			key_nonce = excluded.key_nonce,
-			updated_at = CURRENT_TIMESTAMP
-	`, agentID, provider, customURL, encrypted, nonce)
-	if err != nil {
-		return fmt.Errorf("save API key for agent %s/%s: %w", agentID, provider, err)
-	}
-	return nil
-}
-
-// LoadAgentAPIKey decrypts and returns the API key for an agent+provider combination.
-// Returns error if not found.
-func LoadAgentAPIKey(agentID, provider string) (customURL, apiKey string, err error) {
-	var encKey, nonce string
-	err = dbRead.QueryRow(`
-		SELECT custom_url, encrypted_key, key_nonce
-		FROM agent_api_keys
-		WHERE agent_id = ? AND provider = ?
-	`, agentID, provider).Scan(&customURL, &encKey, &nonce)
-	if err != nil {
-		return "", "", fmt.Errorf("load API key for agent %s/%s: %w", agentID, provider, err)
-	}
-
-	apiKey, err = DecryptAPIKey(encKey, nonce)
-	if err != nil {
-		return "", "", fmt.Errorf("decrypt API key: %w", err)
-	}
-
-	return customURL, apiKey, nil
-}
-
-// LoadAgentAnyAPIKey decrypts and returns the first API key found for an agent
-// (across all providers). Returns the provider, customURL, and apiKey.
-// Returns ("", "", "", nil) if no keys exist for this agent.
-func LoadAgentAnyAPIKey(agentID string) (provider, customURL, apiKey string, err error) {
-	var encKey, nonce string
-	err = dbRead.QueryRow(`
-		SELECT provider, custom_url, encrypted_key, key_nonce
-		FROM agent_api_keys
-		WHERE agent_id = ?
-		LIMIT 1
-	`, agentID).Scan(&provider, &customURL, &encKey, &nonce)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", "", nil
-	}
-	if err != nil {
-		return "", "", "", fmt.Errorf("load API key for agent %s: %w", agentID, err)
-	}
-
-	apiKey, err = DecryptAPIKey(encKey, nonce)
-	if err != nil {
-		return "", "", "", fmt.Errorf("decrypt API key: %w", err)
-	}
-
-	return provider, customURL, apiKey, nil
-}
-
-// DecryptedAPIKey holds a decrypted API key loaded from the database.
-type DecryptedAPIKey struct {
-	AgentID      string
-	Provider     string
-	CustomURL    string
-	PlaintextKey string
-}
-
-// loadAllAPIKeys loads and decrypts all API keys from the database.
-func loadAllAPIKeys() ([]DecryptedAPIKey, error) {
-	rows, err := dbRead.Query("SELECT agent_id, provider, custom_url, encrypted_key, key_nonce FROM agent_api_keys")
-	if err != nil {
-		return nil, fmt.Errorf("query API keys: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var keys []DecryptedAPIKey
-	for rows.Next() {
-		var agentID, provider, customURL, encKey, nonce string
-		if err := rows.Scan(&agentID, &provider, &customURL, &encKey, &nonce); err != nil {
-			return nil, fmt.Errorf("scan API key: %w", err)
-		}
-
-		plaintext, err := DecryptAPIKey(encKey, nonce)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt API key for agent %s/%s: %w", agentID, provider, err)
-		}
-
-		keys = append(keys, DecryptedAPIKey{
-			AgentID:      agentID,
-			Provider:     provider,
-			CustomURL:    customURL,
-			PlaintextKey: plaintext,
-		})
-	}
-
-	return keys, rows.Err()
-}
-
-// RotateAPIKeyEncryption re-encrypts all API keys after a password change.
-// The encryption key is derived from the auto-password, so when it changes,
-// all existing encrypted keys become undecryptable unless re-encrypted.
-//
-// Steps:
-// 1. Decrypt all API keys with the CURRENT (old) key
-// 2. Save the old key as previousEncryptionKey for crash recovery (ISS-225)
-// 3. Reset the key cache so the next DeriveEncryptionKey uses the new password
-// 4. Re-encrypt all API keys with the new key
-// 5. Clear the previousEncryptionKey after successful rotation
-//
-// If any step fails, attempts to roll back by restoring the old password.
-// The previousEncryptionKey fallback ensures that if the process crashes
-// mid-rotation, DecryptAPIKey can still decrypt keys using the old key.
-func RotateAPIKeyEncryption(oldAutoPassword string) error {
-	// 1. Decrypt all keys with the CURRENT (old) key
-	keys, err := loadAllAPIKeys()
-	if err != nil {
-		return fmt.Errorf("load API keys for rotation: %w", err)
-	}
-
-	if len(keys) == 0 {
-		return nil // Nothing to rotate
-	}
-
-	// 2. Save the current (old) key as fallback for crash recovery (ISS-225).
-	// If the process crashes mid-rotation, DecryptAPIKey can try this key
-	// to decrypt keys that haven't been re-encrypted yet.
-	oldKey := DeriveEncryptionKey()
-	previousKeyMu.Lock()
-	previousEncryptionKey = make([]byte, len(oldKey))
-	copy(previousEncryptionKey, oldKey)
-	previousKeyMu.Unlock()
-
-	// 3. Reset key cache — the auto-password file has already been updated by the caller,
-	// so DeriveEncryptionKey will now use the new password
-	ResetEncryptionKeyCache()
-
-	// 3. Re-encrypt all keys with the new key
-	for _, k := range keys {
-		if err := SaveAgentAPIKey(WriteDB(), k.AgentID, k.Provider, k.CustomURL, k.PlaintextKey); err != nil {
-			// CRITICAL: password was updated but re-encryption failed.
-			// Attempt rollback: restore the old auto-password
-			slog.Error("API key rotation failed, attempting rollback", "agent_id", k.AgentID, "provider", k.Provider, "error", err)
-			if writeErr := os.WriteFile(filepath.Join(model.DataDir, "auto-password"), []byte(oldAutoPassword), 0o600); writeErr != nil {
-				slog.Error("CRITICAL: failed to rollback auto-password during key rotation", "error", writeErr)
-			}
-			ResetEncryptionKeyCache()
-			return fmt.Errorf("re-encrypt API key for agent %s/%s: %w (password rolled back)", k.AgentID, k.Provider, err)
-		}
-	}
-
-	slog.Info("API key encryption rotated successfully", "keys", len(keys))
-
-	// 5. Clear previous key — rotation complete, no more fallback needed (ISS-225)
-	previousKeyMu.Lock()
-	previousEncryptionKey = nil
-	previousKeyMu.Unlock()
-	return nil
 }
