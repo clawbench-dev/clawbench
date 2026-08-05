@@ -58,7 +58,9 @@ async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; exte
     const pathToImg: Map<string, HTMLImageElement[]> = new Map()
 
     for (const img of imgs) {
-        const src = img.getAttribute('src') || ''
+        // Prefer the original full-size URL when present (inline src may be a
+        // low-res /api/file/thumb thumbnail); fall back to the visible src.
+        const src = img.getAttribute('data-full-src') || img.getAttribute('src') || ''
 
         // Skip data URIs (already self-contained)
         if (src.startsWith('data:')) continue
@@ -111,6 +113,7 @@ async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; exte
             if (!imgsForPath) continue
             for (const img of imgsForPath) {
                 img.setAttribute('src', `data:${result.mime};base64,${result.data}`)
+                img.removeAttribute('data-full-src')
             }
             pathToImg.delete(imgPath)
         }

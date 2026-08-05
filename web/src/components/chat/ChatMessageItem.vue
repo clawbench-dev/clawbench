@@ -221,6 +221,20 @@ function handleCopyMessage() {
   outline: none;
 }
 
+/* Video player in chat */
+.chat-video-wrapper {
+  margin: 8px 0;
+}
+
+.chat-video-player {
+  width: 100%;
+  max-width: 400px;
+  max-height: 225px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: #000;
+}
+
 /* Image thumbnails in user messages */
 .chat-image-thumb {
   max-width: 80px;

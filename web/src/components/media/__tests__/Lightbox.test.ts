@@ -877,4 +877,50 @@ describe('Lightbox', () => {
       document.body.removeChild(container)
     })
   })
+
+  // ── data-full-src (thumbnail inline, full-size in lightbox) ──
+
+  describe('data-full-src', () => {
+    it('navigateMdImage opens the data-full-src original when present', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      const img = document.createElement('img')
+      img.src = '/api/file/thumb?path=photo.png&w=800'
+      img.setAttribute('data-full-src', '/api/local-file/photo.png')
+      vm.mdImages = [img]
+
+      vm.navigateMdImage(0, 'next')
+      await nextTick()
+
+      expect(vm.currentUrl).toContain('/api/local-file/photo.png')
+      expect(vm.currentUrl).not.toContain('/api/file/thumb')
+    })
+
+    it('navigateMdImage falls back to img.src when no data-full-src', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      const img = document.createElement('img')
+      img.src = '/api/local-file/photo.png'
+      vm.mdImages = [img]
+
+      vm.navigateMdImage(0, 'next')
+      await nextTick()
+
+      expect(vm.currentUrl).toContain('/api/local-file/photo.png')
+    })
+
+    it('openMdImages uses data-full-src for the first image', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      const img = document.createElement('img')
+      img.src = '/api/file/thumb?path=photo.jpg&w=800'
+      img.setAttribute('data-full-src', '/api/local-file/photo.jpg')
+
+      vm.openMdImages([img], 0)
+      await nextTick()
+
+      expect(vm.currentUrl).toContain('/api/local-file/photo.jpg')
+      expect(vm.currentUrl).not.toContain('/api/file/thumb')
+    })
+  })
 })

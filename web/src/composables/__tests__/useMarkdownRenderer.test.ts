@@ -53,6 +53,7 @@ vi.mock('@/composables/useCodeBlockHeader', () => ({
 vi.mock('@/utils/chatRenderUtils', () => ({
   rewriteImageUrls: (html: string) => html,
   convertAudioLinks: (html: string) => html,
+  convertVideoLinks: (html: string) => html,
   parseAskQuestionContent: vi.fn(),
 }))
 

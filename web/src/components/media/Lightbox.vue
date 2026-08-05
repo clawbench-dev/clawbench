@@ -310,10 +310,18 @@ function navigateToIndex(newIdx, direction) {
     store.selectFile(entryPath)
 }
 
+/**
+ * Resolve the full-size image URL for the lightbox.
+ * Inline images may use a low-res thumbnail src with the original stored in
+ * data-full-src; the lightbox must always show the original.
+ */
+function fullImgSrc(img) {
+    return (img && img.dataset && img.dataset.fullSrc) || (img ? img.src : '')
+}
+
 function navigateMdImage(newIdx, direction) {
     const img = mdImages.value[newIdx]
     if (!img) return
-
     // Show loading immediately
     imageLoading.value = true
     slideDirection.value = direction
@@ -330,7 +338,7 @@ function navigateMdImage(newIdx, direction) {
     lastTy.value = 0
 
     mdCurrentIndex.value = newIdx
-    currentUrl.value = img.src + (img.src.includes('?') ? '&' : '?') + 't=' + Date.now()
+    currentUrl.value = fullImgSrc(img) + (fullImgSrc(img).includes('?') ? '&' : '?') + 't=' + Date.now()
     currentSvg.value = ''
 }
 
@@ -376,7 +384,7 @@ function openMdImages(imgs, startIndex) {
     mdCurrentIndex.value = startIndex
 
     const img = imgs[startIndex]
-    currentUrl.value = img.src + (img.src.includes('?') ? '&' : '?') + 't=' + Date.now()
+    currentUrl.value = fullImgSrc(img) + (fullImgSrc(img).includes('?') ? '&' : '?') + 't=' + Date.now()
     currentSvg.value = ''
     currentFilePath.value = ''
 
@@ -680,7 +688,7 @@ onMounted(() => {
                     }
                 }
             }
-            open(img.src)
+            open(fullImgSrc(img))
             return
         }
         const mermaidDiv = e.target.closest('.markdown-body .mermaid, .chat-message .mermaid')

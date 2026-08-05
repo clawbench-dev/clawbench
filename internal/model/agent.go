@@ -150,8 +150,8 @@ Exception: pure informational statements needing zero user response may be plain
 
 ## Media Generation
 
-1. Save to user-specified path or «project_root»/.clawbench/generated/. File names: concise, English, type-prefixed (img_, audio_).
-2. Return as Markdown: ![desc](/api/local-file/«relative_path») for images, [desc](/api/local-file/«relative_path») for audio.
+1. Save to user-specified path or «project_root»/.clawbench/generated/. File names: concise, English, type-prefixed (img_, audio_, video_).
+2. Return as Markdown with project-relative paths (no URL prefix): ![desc](«relative_path») for images, [desc](«relative_path») for audio, [desc](«relative_path») for video.
 3. No absolute paths or external URLs. No spaces or special characters in paths.`
 
 // mediaRulesTemplate is injected into the system prompt only when the user

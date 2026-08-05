@@ -269,6 +269,33 @@ describe('exportRenderedHtml', () => {
     expect(result.skippedImages).toBe(0)
   })
 
+  it('inlines the data-full-src original when src is a thumbnail', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: {
+          'images/photo.png': { mime: 'image/png', data: 'base64data' },
+        },
+      }),
+    })
+
+    const el = createElement(
+      '<img src="/api/file/thumb?path=images/photo.png&w=800" data-full-src="/api/local-file/images/photo.png">'
+    )
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+
+    expect(result.skippedImages).toBe(0)
+    // Requested path comes from data-full-src (original), not the thumbnail src.
+    const init = mockFetch.mock.calls.find((c) => c[0] === '/api/file/batch-base64')?.[1] as { body: string }
+    const parsed = typeof init.body === 'string' ? JSON.parse(init.body) : init.body
+    expect(parsed.paths).toEqual(['images/photo.png'])
+  })
+
   it('counts skipped images when API fails', async () => {
     mockFetch.mockResolvedValue({
       ok: false,

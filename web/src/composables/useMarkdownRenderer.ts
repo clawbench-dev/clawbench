@@ -2,7 +2,7 @@ import { marked, katex, DOMPurify } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
 import { annotateCodeBlockHeaders, annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
-import { rewriteImageUrls, convertAudioLinks } from '@/utils/chatRenderUtils.ts'
+import { rewriteImageUrls, convertAudioLinks, convertVideoLinks } from '@/utils/chatRenderUtils.ts'
 import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { annotateCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { annotateWorktreePaths } from '@/composables/useWorktreeAnnotation.ts'
@@ -106,7 +106,7 @@ const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-pat
  *
  * 管线：marked.parse → [KaTeX] → DOMPurify → fixImagePaths → table-wrap
  *       → injectTableRowAttrs → annotateCodeBlockHeaders → annotateTableBlockHeaders
- *       → [rewriteImageUrls → convertAudioLinks → annotateWorktreePaths
+ *       → [rewriteImageUrls → convertAudioLinks → convertVideoLinks → annotateWorktreePaths
  *          → annotateFilePaths → annotateCommitHashes → annotateLocalhostUrls]
  *
  * 方括号内的步骤在 skipEnhancements=true 时跳过（流式模式用）。
@@ -169,7 +169,8 @@ export function renderMarkdown(
         const homeDir = store.state.homeDir
 
         html = rewriteImageUrls(html, projectRoot)
-        html = convertAudioLinks(html)
+        html = convertAudioLinks(html, projectRoot)
+        html = convertVideoLinks(html, projectRoot)
 
         // Annotate worktree paths BEFORE file paths — prevents file-path regex from
         // partially matching worktree directory paths
