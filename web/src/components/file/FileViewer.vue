@@ -12,8 +12,10 @@
       :sticky-scroll="stickyScroll"
       :overlay-open="fileNav.overlayOpen.value"
       :recent-files-available="recentFilesAvailable"
+      :editing="editing"
       @delete="emit('delete', file.path)"
       @toggle-view="emit('toggleView')"
+      @toggle-edit="handleToggleEdit"
       @show-details="emit('showDetails')"
       @open-git-history="emit('openGitHistory')"
       @toggle-toc="emit('toggleToc')"
@@ -182,7 +184,18 @@
           <AlertTriangle :size="14" />
           {{ t('file.viewer.truncated') }}
         </div>
+        <CodeEditor
+          v-if="editing"
+          :file="file"
+          :content="file.content"
+          :language="rawFileLanguage"
+          :word-wrap="wordWrap"
+          :saving="saving"
+          @save="handleSave"
+          @cancel="editing = false"
+        />
         <CodePreview
+          v-else
           :content="file.content"
           :language="rawFileLanguage"
           :file-path="file.path"
@@ -220,6 +233,7 @@ import VideoPreview from '@/components/media/VideoPreview.vue'
 const OfficePreview = defineAsyncComponent(() => import('@/components/media/OfficePreview.vue'))
 import MarkdownPreview from './MarkdownPreview.vue'
 import CodePreview from './CodePreview.vue'
+import CodeEditor from './CodeEditor.vue'
 const OpenApiPreview = defineAsyncComponent(() => import('./OpenApiPreview.vue'))
 import DiffDrawer from './DiffDrawer.vue'
 import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
@@ -234,6 +248,7 @@ import { useRecentFiles } from '@/composables/useRecentFiles'
 import { exportRenderedHtml } from '@/utils/exportHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToast } from '@/composables/useToast.ts'
+import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
@@ -265,6 +280,19 @@ const contentRef = ref(null)
 const pdfPreviewRef = ref(null)
 const officePreviewRef = ref(null)
 const htmlPreviewRef = ref(null)
+
+// Edit mode (source text editing via CodeEditor)
+const editing = ref(false)
+const { saving, saveFile } = useCodeEditorSave()
+
+async function handleSave(content) {
+    const ok = await saveFile(props.file?.path || '', content)
+    if (ok) editing.value = false
+}
+
+function handleToggleEdit() {
+    editing.value = !editing.value
+}
 
 // Expose PDF outline and scrollToPage for TOC integration
 const pdfOutline = computed(() => pdfPreviewRef.value?.outline || [])
@@ -393,6 +421,8 @@ onMounted(() => {
 watch(() => props.file, (f, oldF) => {
     // Stop listening on old scroll container
     detachScrollListener()
+
+    editing.value = false
 
     clearRestoreTimer()
     if (!f) { currentFilePath = null; loading.value = true; return }
