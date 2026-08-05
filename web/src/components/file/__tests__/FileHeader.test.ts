@@ -30,6 +30,8 @@ const i18n = createI18n({
           fileHistory: 'File history',
           shareExternal: 'Share',
           exportHtml: 'Export HTML',
+          edit: 'Edit',
+          finishEditing: 'Finish editing',
         },
         overlay: { back: 'Back' },
       },
@@ -337,6 +339,36 @@ describe('FileHeader', () => {
       expect(ids).toContain('wordWrap')
       expect(ids).toContain('lineNumbers')
       expect(ids).toContain('stickyScroll')
+    })
+  })
+
+  describe('edit button', () => {
+    it('shows edit button for editable text file', () => {
+      const wrapper = mountHeader()
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isEditable).toBe(true)
+      expect(vm.$.setupState.toolbarInlineIds).toContain('edit')
+    })
+
+    it('hides edit button for markdown files', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' } })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isEditable).toBe(false)
+      expect(vm.$.setupState.toolbarInlineIds).not.toContain('edit')
+    })
+
+    it('emits toggleEdit when edit button is clicked', async () => {
+      const wrapper = mountHeader()
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleToggleEdit()
+      await nextTick()
+      expect(wrapper.emitted('toggleEdit')).toBeTruthy()
+    })
+
+    it('applies active class on edit button when editing', async () => {
+      const wrapper = mountHeader({ editing: true })
+      const activeBtn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.classes().includes('active'))
+      expect(activeBtn).toBeTruthy()
     })
   })
 })
