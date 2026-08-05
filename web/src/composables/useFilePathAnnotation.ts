@@ -220,59 +220,18 @@ export function resolveFilePath(path: string, projectRoot: string, homeDir?: str
 
 // ── SVG icon & button HTML ─────────────────────────────────────────────────────
 
-// ── Image file detection ────────────────────────────────────────────────────────
-
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.avif', '.tiff', '.tif'])
-
-function isImagePath(path: string): boolean {
-    const lower = path.toLowerCase()
-    // Strip line info suffix (e.g. ":10-20") before checking extension
-    const bare = lower.replace(/:\d+(-\d+)?$/, '')
-    const dotIdx = bare.lastIndexOf('.')
-    if (dotIdx === -1) return false
-    return IMAGE_EXTENSIONS.has(bare.slice(dotIdx))
-}
-
-/**
- * Encode a project-relative path for use in /api/local-file/ URLs.
- * Each path segment is encoded individually to handle CJK/special characters.
- */
-function encodeLocalFileUrl(path: string): string {
-    return path.split('/').map(s => encodeURIComponent(s)).join('/')
-}
-
-/**
- * Generate inline image preview HTML for an image file path.
- * The image is rendered below the path annotation as a thumbnail.
- * Returns empty string for external paths (outside project root) since
- * /api/local-file/ only serves project-internal files.
- */
-function inlineImagePreviewHtml(resolvedPath: string): string {
-    if (resolvedPath.startsWith('/')) return ''
-    const encoded = encodeLocalFileUrl(resolvedPath)
-    return `<div class="chat-file-img-preview" data-file-path="${escapeHtml(resolvedPath)}" role="button" tabindex="0" aria-label="Toggle image preview"><img src="/api/local-file/${encoded}" class="chat-file-img-thumb" loading="lazy" alt=""></div>`
-}
-
-// ── SVG icons & button HTML ─────────────────────────────────────────────────────
-
 export const FILE_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
-
-export const IMAGE_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>'
 
 /**
  * Generate HTML for the small open-file button.
- * For image files, uses a different icon and adds data-is-image attribute.
+ * Optionally includes line range attributes and a fallback path for dual-candidate verification.
  */
 export function fileOpenButtonHtml(resolvedPath: string, lineStart?: number, lineEnd?: number, fallbackPath?: string): string {
     const isExternal = resolvedPath.startsWith('/')
-    const isImage = isImagePath(resolvedPath)
     const lineAttrs = lineStart ? ` data-line-start="${lineStart}"${lineEnd ? ` data-line-end="${lineEnd}"` : ''}` : ''
     const externalClass = isExternal ? ' external' : ''
-    const imageClass = isImage ? ' image' : ''
-    const imageAttr = isImage ? ' data-is-image="true"' : ''
     const fallbackAttr = fallbackPath && fallbackPath !== resolvedPath ? ` data-fallback-path="${escapeHtml(fallbackPath)}"` : ''
-    const icon = isImage ? IMAGE_ICON_SVG : FILE_OPEN_ICON_SVG
-    return `<button class="chat-file-open-btn${externalClass}${imageClass}" data-file-path="${escapeHtml(resolvedPath)}"${fallbackAttr}${lineAttrs}${imageAttr} title="${escapeHtml(isImage ? gt('chat.attach.openImage') : gt('chat.attach.openFile'))}">${icon}</button>`
+    return `<button class="chat-file-open-btn${externalClass}" data-file-path="${escapeHtml(resolvedPath)}"${fallbackAttr}${lineAttrs} title="${escapeHtml(gt('chat.attach.openFile'))}">${FILE_OPEN_ICON_SVG}</button>`
 }
 
 // ── Line info extraction ────────────────────────────────────────────────────────
@@ -380,7 +339,7 @@ export function annotateFilePaths(
             : resolveFilePath(href, projectRoot, homeDir)
         if (!resolved) continue
         detectedPaths.push(resolved)
-        a.insertAdjacentHTML('afterend', fileOpenButtonHtml(resolved) + (isImagePath(resolved) ? inlineImagePreviewHtml(resolved) : ''))
+        a.insertAdjacentHTML('afterend', fileOpenButtonHtml(resolved))
     }
 
     // ── Step 2: <code> tags whose content is purely a file path ──
@@ -398,7 +357,7 @@ export function annotateFilePaths(
         if (result.primary.startsWith('/')) code.setAttribute('data-external', 'true')
         if (lineStart) code.setAttribute('data-line-start', String(lineStart))
         if (lineEnd) code.setAttribute('data-line-end', String(lineEnd))
-        code.insertAdjacentHTML('afterend', fileOpenButtonHtml(result.primary, lineStart, lineEnd, result.fallback !== result.primary ? result.fallback : undefined) + (isImagePath(result.primary) ? inlineImagePreviewHtml(result.primary) : ''))
+        code.insertAdjacentHTML('afterend', fileOpenButtonHtml(result.primary, lineStart, lineEnd, result.fallback !== result.primary ? result.fallback : undefined))
     }
 
     // ── Step 3: Text nodes → regex match paths ──
@@ -468,7 +427,6 @@ export function annotateFilePaths(
                 frag.appendChild(span)
                 const btnContainer = doc.createElement('span')
                 btnContainer.innerHTML = fileOpenButtonHtml(part.result.primary, part.lineStart, part.lineEnd, part.result.fallback !== part.result.primary ? part.result.fallback : undefined)
-                    + (isImagePath(part.result.primary) ? inlineImagePreviewHtml(part.result.primary) : '')
                 while (btnContainer.firstChild) frag.appendChild(btnContainer.firstChild)
             } else {
                 frag.appendChild(doc.createTextNode(part.text))
@@ -607,12 +565,6 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
                     el.removeAttribute('data-external')
                     el.classList.remove('external')
                 }
-                // Update image preview src if present
-                if (el.classList.contains('chat-file-img-preview')) {
-                    const img = el.querySelector('img')
-                    if (img) img.setAttribute('src', `/api/local-file/${encodeLocalFileUrl(fallback)}`)
-                    el.setAttribute('data-file-path', fallback)
-                }
                 swapped = true
             }
         }
@@ -621,9 +573,6 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
         // No fallback available — remove annotation
         containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"]`).forEach(btn => {
             btn.remove()
-        })
-        containerEl.querySelectorAll(`.chat-file-img-preview[data-file-path="${CSS.escape(path)}"]`).forEach(preview => {
-            preview.remove()
         })
         containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(span => {
             span.replaceWith(...span.childNodes)

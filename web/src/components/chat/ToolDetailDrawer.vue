@@ -111,12 +111,6 @@ function handleBodyClick(event) {
     if (filePath) emit('file-open', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
     return
   }
-  // Handle image preview toggle
-  const imgPreview = event.target.closest('.chat-file-img-preview')
-  if (imgPreview) {
-    imgPreview.classList.toggle('expanded')
-    return
-  }
   // Handle worktree action buttons
   const wtBtn = event.target.closest('.chat-worktree-btn')
   if (wtBtn) {

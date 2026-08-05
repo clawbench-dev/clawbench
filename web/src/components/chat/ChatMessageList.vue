@@ -1,6 +1,6 @@
 <template>
   <div class="chat-messages-wrapper">
-  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @keydown="handleChatKeydown" @mousedown="onTableMouseDown" @touchstart="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @scroll="handleScroll">
+  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onTableMouseDown" @touchstart="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @scroll="handleScroll">
     <!-- Lazy load feedback -->
     <div class="chat-load-area">
       <Transition name="load-hint-fade">
@@ -281,28 +281,10 @@ async function handleChatClick(event) {
     return
   }
 
-  // 5b. Image preview toggle handler
-  const imgPreview = event.target.closest('.chat-file-img-preview')
-  if (imgPreview) {
-    imgPreview.classList.toggle('expanded')
-    return
-  }
-
   handleDblClick(event, async (href) => {
     const ok = await openFilePath(href)
     if (ok) chatUI.navigateToFileViewer?.()
   })
-}
-
-/** Handle keyboard events on annotation elements with role="button" */
-function handleChatKeydown(event) {
-  if (event.key === 'Enter' || event.key === ' ') {
-    const imgPreview = event.target.closest('.chat-file-img-preview')
-    if (imgPreview) {
-      event.preventDefault()
-      imgPreview.classList.toggle('expanded')
-    }
-  }
 }
 
 let loadMorePending = false

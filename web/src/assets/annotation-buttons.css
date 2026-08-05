@@ -48,45 +48,6 @@
   color: #d35400;
 }
 
-/* Image file open button — distinct icon */
-.chat-file-open-btn.image {
-  color: var(--accent-color, #4a90d9);
-}
-
-.chat-file-open-btn.image:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
-}
-
-/* ── Inline image preview ── */
-
-.chat-file-img-preview {
-  display: block;
-  margin-top: 4px;
-  max-width: 200px;
-  max-height: 150px;
-  overflow: hidden;
-  cursor: pointer;
-  transition: max-width 0.3s ease, max-height 0.3s ease;
-}
-
-.chat-file-img-preview:focus-visible {
-  outline: 2px solid var(--accent-color, #4a90d9);
-  outline-offset: 2px;
-}
-
-.chat-file-img-preview.expanded {
-  max-width: 100%;
-  max-height: none;
-}
-
-.chat-file-img-thumb {
-  display: block;
-  width: 100%;
-  height: auto;
-  object-fit: contain;
-}
-
 /* ── Commit hash annotation ── */
 
 /* Pending state — neutral styling, no interactive affordance until verified */
