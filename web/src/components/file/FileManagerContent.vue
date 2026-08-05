@@ -402,7 +402,7 @@ import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipe
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
-import { setAttachDragData, hasAttachDragData } from '@/utils/attachDrag'
+import { setAttachDragData, hasAttachDragData, buildAttachDragImage } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
@@ -469,6 +469,10 @@ function onItemDragStart(entry, e) {
   const path = itemPath(entry.name)
   setAttachDragData(e.dataTransfer, path, entry.type === 'dir')
   e.dataTransfer.effectAllowed = 'copy'
+  // Use a flat, semi-transparent chip as the ghost instead of the OS snapshot,
+  // which bleeds the item's selected/accent background into a gradient fade.
+  const ghost = buildAttachDragImage(entry.name, entry.type === 'dir')
+  e.dataTransfer.setDragImage(ghost, 14, 16)
 }
 
 // ── Clipboard paste handler ──

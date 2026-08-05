@@ -1976,9 +1976,9 @@ onUnmounted(() => {
 .chat-drop-active::after {
     content: '';
     position: absolute;
-    inset: 4px;
+    inset: 0;
     border: 2px dashed var(--accent-color, #0066cc);
-    border-radius: 12px;
+    border-radius: 0;
     background: color-mix(in srgb, var(--accent-color, #0066cc) 6%, transparent);
     pointer-events: none;
     z-index: 10;

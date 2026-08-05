@@ -4,6 +4,9 @@ import {
   setAttachDragData,
   readAttachDragData,
   hasAttachDragData,
+  estimateTextWidth,
+  computeAttachDragImageSize,
+  toRgba,
 } from '@/utils/attachDrag'
 
 /** Minimal DataTransfer stand-in that mirrors jsdom/browser behavior for set/getData + types. */
@@ -65,5 +68,30 @@ describe('attachDrag helpers', () => {
     const missingPath = makeDataTransfer()
     missingPath.setData(ATTACH_DRAG_MIME, JSON.stringify({ isDir: true }))
     expect(readAttachDragData(missingPath)).toBe(null)
+  })
+
+  it('estimateTextWidth treats CJK chars as double-width vs latin', () => {
+    // 'abc' = 3 latin (~6.5px each) ≈ 19.5; '文件' = 2 CJK (~13px each) = 26
+    expect(estimateTextWidth('abc')).toBeCloseTo(19.5)
+    expect(estimateTextWidth('文件')).toBeCloseTo(26)
+    expect(estimateTextWidth('')).toBe(0)
+  })
+
+  it('computeAttachDragImageSize scales with name and enforces a min width', () => {
+    const empty = computeAttachDragImageSize('')
+    expect(empty.w).toBeGreaterThanOrEqual(64)
+    expect(empty.h).toBe(38)
+
+    const long = computeAttachDragImageSize('报告文件报告文件报告.txt')
+    expect(long.w).toBeGreaterThan(empty.w)
+    expect(long.h).toBe(38)
+  })
+
+  it('toRgba converts hex and rgb() to rgba with the requested alpha', () => {
+    expect(toRgba('#4a90d9', 0.5)).toBe('rgba(74, 144, 217, 0.5)')
+    expect(toRgba('#0af', 1)).toBe('rgba(0, 170, 255, 1)')
+    expect(toRgba('rgb(255, 0, 0)', 0.25)).toBe('rgba(255, 0, 0, 0.25)')
+    // Unknown/unparsable colors fall back to the default accent
+    expect(toRgba('color-mix(...)', 0.5)).toBe('rgba(74, 144, 217, 0.5)')
   })
 })
