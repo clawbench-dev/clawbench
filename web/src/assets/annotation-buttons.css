@@ -66,8 +66,6 @@
   max-width: 200px;
   max-height: 150px;
   overflow: hidden;
-  border-radius: 6px;
-  border: 1px solid var(--border-color, #e0e0e0);
   cursor: pointer;
   transition: max-width 0.3s ease, max-height 0.3s ease;
 }
