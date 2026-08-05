@@ -2,7 +2,7 @@
   <Teleport to="body">
   <header class="header">
     <!-- Logo: hidden in APP mode -->
-    <img class="header-logo" src="/logo.png" alt="ClawBench">
+    <img class="header-logo" src="/assets/logo-64.png" alt="ClawBench">
 
     <div class="badge-capsule">
       <div class="project-dropdown-wrapper" ref="dropdownRef">
