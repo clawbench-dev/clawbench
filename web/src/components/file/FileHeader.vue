@@ -58,6 +58,41 @@
         <Pin :size="14" />
       </button>
 
+      <!-- Open as text button (binary files only) -->
+      <button v-if="file.isBinary && toolbarInlineIds.includes('openAsText')" class="file-header-btn" @click.stop="handleOpenAsText" :title="t('file.header.openAsText')">
+        <Code2 :size="14" />
+      </button>
+
+      <!-- Share external button (app mode only) -->
+      <button v-if="isAppMode && toolbarInlineIds.includes('shareExternal')" class="file-header-btn" @click.stop="handleShareExternal" :title="t('file.header.shareExternal')">
+        <Share2 :size="14" />
+      </button>
+
+      <!-- Download button -->
+      <button v-if="toolbarInlineIds.includes('download')" class="file-header-btn" @click.stop="handleDownload" :title="t('common.download')">
+        <Download :size="14" />
+      </button>
+
+      <!-- Export HTML button (markdown rendered only) -->
+      <button v-if="isMarkdown && viewMode === 'rendered' && toolbarInlineIds.includes('exportHtml')" class="file-header-btn" @click.stop="handleExportHtml" :title="t('file.header.exportHtml')">
+        <FileOutput :size="14" />
+      </button>
+
+      <!-- Open directory button -->
+      <button v-if="toolbarInlineIds.includes('openDirectory')" class="file-header-btn" @click.stop="handleOpenDirectory" :title="t('file.header.openDirectory')">
+        <FolderOpen :size="14" />
+      </button>
+
+      <!-- Git history button -->
+      <button v-if="toolbarInlineIds.includes('gitHistory')" class="file-header-btn" @click.stop="handleGitHistory" :title="t('file.header.fileHistory')">
+        <GitBranch :size="14" />
+      </button>
+
+      <!-- Delete button (last action) -->
+      <button v-if="toolbarInlineIds.includes('delete')" class="file-header-btn danger" @click.stop="handleDelete" :title="t('common.delete')">
+        <Trash2 :size="14" />
+      </button>
+
       <!-- More actions dropdown -->
       <div class="dropdown-wrapper" ref="dropdownRef">
         <button class="file-header-btn" @click.stop="toggleMenu" :title="t('file.header.more')">
@@ -110,38 +145,38 @@
               {{ t('file.header.stickyScroll') }}
               <span v-if="stickyScroll" class="wrap-check">✓</span>
             </button>
-            <!-- Always-in-dropdown items -->
-            <button v-if="file.isBinary" class="dropdown-item" @click="handleOpenAsText">
+            <!-- Collapsible extra items (shown inline when space allows) -->
+            <button v-if="file.isBinary && toolbarCollapsedIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText; menuOpen = false">
               <Code2 :size="14" />
               {{ t('file.header.openAsText') }}
             </button>
-            <button v-if="isAppMode" class="dropdown-item" @click="handleShareExternal">
+            <button v-if="isAppMode && toolbarCollapsedIds.includes('shareExternal')" class="dropdown-item" @click="handleShareExternal">
               <Share2 :size="14" />
               {{ t('file.header.shareExternal') }}
             </button>
-            <a v-if="!isAppMode" class="dropdown-item" :href="buildLocalFileUrl(file.path, { download: true })" :download="file.name" @click="menuOpen = false">
+            <a v-if="!isAppMode && toolbarCollapsedIds.includes('download')" class="dropdown-item" :href="buildLocalFileUrl(file.path, { download: true })" :download="file.name" @click="menuOpen = false">
               <Download :size="14" />
               {{ t('common.download') }}
             </a>
-            <button v-else class="dropdown-item" @click="handleDownload">
+            <button v-else-if="toolbarCollapsedIds.includes('download')" class="dropdown-item" @click="handleDownload">
               <Download :size="14" />
               {{ t('common.download') }}
             </button>
-            <button v-if="isMarkdown && viewMode === 'rendered'" class="dropdown-item" @click="handleExportHtml">
+            <button v-if="isMarkdown && viewMode === 'rendered' && toolbarCollapsedIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml; menuOpen = false">
               <FileOutput :size="14" />
               {{ t('file.header.exportHtml') }}
             </button>
-            <button class="dropdown-item" @click="handleOpenDirectory">
+            <button v-if="toolbarCollapsedIds.includes('openDirectory')" class="dropdown-item" @click="handleOpenDirectory">
               <FolderOpen :size="14" />
               {{ t('file.header.openDirectory') }}
             </button>
-            <button class="dropdown-item danger" @click="handleDelete">
-              <Trash2 :size="14" />
-              {{ t('common.delete') }}
-            </button>
-            <button class="dropdown-item" @click="handleGitHistory">
+            <button v-if="toolbarCollapsedIds.includes('gitHistory')" class="dropdown-item" @click="handleGitHistory">
               <GitBranch :size="14" />
               {{ t('file.header.fileHistory') }}
+            </button>
+            <button v-if="toolbarCollapsedIds.includes('delete')" class="dropdown-item danger" @click="handleDelete; menuOpen = false">
+              <Trash2 :size="14" />
+              {{ t('common.delete') }}
             </button>
           </div>
         </Teleport>
@@ -212,6 +247,15 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('wordWrap')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('lineNumbers')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('stickyScroll')
+    // Extra actions demote to the More dropdown when space runs out.
+    // Order = left-to-right display priority; delete is kept last.
+    if (props.file?.isBinary) ids.push('openAsText')
+    if (isAppMode.value) ids.push('shareExternal')
+    ids.push('download')
+    if (isMarkdown.value && props.viewMode === 'rendered') ids.push('exportHtml')
+    ids.push('openDirectory')
+    ids.push('gitHistory')
+    ids.push('delete')
     return ids
   },
   { inlineCount: 1, gap: 8 },
@@ -495,6 +539,16 @@ onBeforeUnmount(() => {
 .file-header-btn.active {
     background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
     color: var(--accent-color);
+}
+.file-header-btn.danger {
+    color: #ef4444;
+}
+.file-header-btn.danger:hover {
+    background: #fef2f2;
+    color: #dc2626;
+}
+[data-theme="dark"] .file-header-btn.danger:hover {
+    background: #2d1b1b;
 }
 
 /* Dropdown */
