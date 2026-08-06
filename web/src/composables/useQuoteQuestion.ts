@@ -42,6 +42,12 @@ function onSelectionChange() {
       return
     }
 
+    // CodeMirror viewers (CodeMirrorViewer) manage their own selection + quote
+    // bar via an internal selection listener. This DOM selection is only a
+    // shadow of CM's internal one, so skip it — otherwise it would hide/show
+    // the bar in parallel with the editor's own handler.
+    if (closestElement(sel.anchorNode, '.cm-editor')) return
+
     // Check if selection is within a code, markdown, or office preview area
     const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body')
     if (!container) {
@@ -123,6 +129,16 @@ export function useQuoteQuestion() {
   }
 
   /**
+   * Programmatically hide the quote bar (used by CodeMirror-based viewers whose
+   * selection is internal and never reaches the global selectionchange handler).
+   */
+  function hideBar() {
+    barVisible.value = false
+    barPinned.value = false
+    setQuoteData(null)
+  }
+
+  /**
    * 编程式显示引用问答栏（供双击复制后调用，不依赖 selectionchange 事件）
    * 延迟 400ms 显示，避免双击的 pointerdown 事件触发"点击外部关闭"
    */
@@ -193,6 +209,7 @@ export function useQuoteQuestion() {
     pinBar,
     unpinBar,
     showBar,
+    hideBar,
     sendMessage,
   }
 }

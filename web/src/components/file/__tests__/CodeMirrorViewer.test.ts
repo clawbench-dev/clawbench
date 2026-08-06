@@ -9,10 +9,12 @@ const i18n = createI18n({
   messages: { en: { file: { editor: { save: 'Save', saving: 'Saving', cancel: 'Cancel', dirty: 'Unsaved' } } } },
 })
 
+const quoteMocks = vi.hoisted(() => ({ showBar: vi.fn(), hideBar: vi.fn() }))
+
 vi.mock('@/composables/useMarkdownDiff.ts', () => ({ diffMarkers: ref([]), openDiffDrawer: vi.fn() }))
 vi.mock('@/composables/useFileRefresh.ts', () => ({ flashRanges: ref([]), flashType: ref('add') }))
 vi.mock('@/stores/app.ts', () => ({ store: { state: { projectRoot: '/p', homeDir: '/home' } } }))
-vi.mock('@/composables/useQuoteQuestion.ts', () => ({ useQuoteQuestion: () => ({ showBar: vi.fn() }) }))
+vi.mock('@/composables/useQuoteQuestion.ts', () => ({ useQuoteQuestion: () => quoteMocks }))
 
 import CodeMirrorViewer from '../CodeMirrorViewer.vue'
 
@@ -25,6 +27,8 @@ function gutterClasses() {
 describe('CodeMirrorViewer (real CodeMirror)', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    quoteMocks.showBar.mockClear()
+    quoteMocks.hideBar.mockClear()
   })
 
   function mountViewer(props = {}) {
@@ -98,5 +102,28 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     await wrapper.setProps({ content: 'line two' })
     await sleep(50)
     expect(document.body.textContent).toContain('line two')
+  })
+
+  it('shows quote question on selection in read-only mode', async () => {
+    const wrapper = mountViewer({ content: 'aaa\nbbb\nccc', file: { path: '/p/main.go' } })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    view.dispatch({ selection: { anchor: 0, head: 7 } }) // selects "aaa\nbb"
+    await sleep(700) // debounce 200ms + showBar 400ms
+    expect(quoteMocks.showBar).toHaveBeenCalledTimes(1)
+    const data = quoteMocks.showBar.mock.calls[0][0]
+    expect(data.filePath).toBe('/p/main.go')
+    expect(data.startLine).toBe(1)
+    expect(data.endLine).toBe(2)
+    expect(data.text).toContain('aaa')
+  })
+
+  it('does not show quote question on selection in editable mode', async () => {
+    const wrapper = mountViewer({ content: 'aaa\nbbb', editable: true })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    view.dispatch({ selection: { anchor: 0, head: 4 } })
+    await sleep(700)
+    expect(quoteMocks.showBar).not.toHaveBeenCalled()
   })
 })

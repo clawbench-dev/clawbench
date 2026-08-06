@@ -151,6 +151,21 @@ describe('useQuoteQuestion', () => {
     })
   })
 
+  describe('hideBar', () => {
+    it('hides the bar and clears quoteData immediately', () => {
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'hello', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 })
+      vi.advanceTimersByTime(400)
+      qq.pinBar()
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value).not.toBeNull()
+
+      qq.hideBar()
+      expect(qq.visible.value).toBe(false)
+      expect(ctx.quoteData.value).toBeNull()
+    })
+  })
+
   describe('closeSheet', () => {
     it('clears visible, pinned, and quoteData', () => {
       const qq = useQuoteQuestion()

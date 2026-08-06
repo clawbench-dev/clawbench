@@ -194,6 +194,37 @@ const interactionExtension = EditorView.domEventHandlers({
     dblclick(event, editor) { handleEditorDblClick(event, editor) },
 })
 
+// ─── Selection-based quote question (read-only mode) ───
+// CodeMirror keeps its selection internally, so the global selectionchange handler
+// never fires for it. Watch selection changes here and surface the quote bar with
+// accurate line numbers from the editor state.
+let selDebounceTimer = null
+function handleSelectionChange(update) {
+    if (props.editable) return // only read-only browse
+    if (!update.selectionSet && !update.docChanged) return
+    const sel = update.state.selection.main
+    if (selDebounceTimer) clearTimeout(selDebounceTimer)
+    if (sel.empty) {
+        selDebounceTimer = setTimeout(() => quoteQuestion.hideBar(), 200)
+        return
+    }
+    const text = update.state.sliceDoc(sel.from, sel.to).trim()
+    if (!text) return
+    const startLine = update.state.doc.lineAt(sel.from).number
+    const endLine = update.state.doc.lineAt(sel.to).number
+    selDebounceTimer = setTimeout(() => {
+        quoteQuestion.showBar({
+            text,
+            filePath: props.file?.path || '',
+            language: props.language,
+            startLine,
+            endLine,
+        })
+    }, 200)
+}
+
+const selectionExtension = EditorView.updateListener.of(handleSelectionChange)
+
 // ─── Overlay decorations (diff lines + flash + clickable paths) ───
 function recomputeOverlay() {
     const editor = view.value
@@ -255,6 +286,7 @@ function buildAllExtensions() {
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         interactionExtension,
+        selectionExtension,
         jumpFlashCompartment.of([]),
         overlayCompartment.of([]),
     ]
@@ -278,6 +310,7 @@ onMounted(() => {
 onUnmounted(() => {
     window.removeEventListener('cm-scroll-to-line', onScrollToLine)
     if (flashTimer) clearTimeout(flashTimer)
+    if (selDebounceTimer) clearTimeout(selDebounceTimer)
     view.value?.destroy()
     view.value = null
 })
@@ -305,7 +338,7 @@ function getValue() {
     return view.value ? view.value.state.doc.toString() : (props.content || '')
 }
 
-defineExpose({ getValue, scrollToLine })
+defineExpose({ getValue, scrollToLine, getView: () => view.value })
 </script>
 
 <style scoped>
