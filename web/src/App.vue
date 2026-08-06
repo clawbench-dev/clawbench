@@ -397,6 +397,7 @@ import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
 import './assets/annotation-buttons.css'
+import './assets/code-viewer.css'
 import './assets/mono-icon-colors.css'
 import './assets/chat-actions.css'
 

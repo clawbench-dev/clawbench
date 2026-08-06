@@ -24,7 +24,7 @@ const FileViewerStub = {
           <div class="markdown-body" />
         </div>
         <div v-else class="raw-content-viewer">
-          <pre class="raw-content-pre" />
+          <div class="cm-viewer" />
         </div>
       </div>
     </div>
@@ -41,10 +41,10 @@ const MarkdownPreviewStub = {
   `,
 }
 
-const CodePreviewStub = {
-  name: 'CodePreview',
+const CodeMirrorViewerStub = {
+  name: 'CodeMirrorViewer',
   props: ['content', 'language', 'editable'],
-  template: '<pre class="raw-content-pre" />',
+  template: '<div class="cm-viewer" />',
 }
 
 describe('preview layout contract', () => {
@@ -75,13 +75,13 @@ describe('preview layout contract', () => {
     expect(wrapper.find('.markdown-body').exists()).toBe(true)
   })
 
-  it('renders code preview with raw content', () => {
-    const wrapper = shallowMount(CodePreviewStub, {
+  it('renders code viewer with raw content', () => {
+    const wrapper = shallowMount(CodeMirrorViewerStub, {
       props: { content: 'const x = 1', language: 'typescript', editable: false },
       global: { plugins: [i18n] },
     })
 
-    expect(wrapper.find('.raw-content-pre').exists()).toBe(true)
+    expect(wrapper.find('.cm-viewer').exists()).toBe(true)
   })
 
   it('renders file viewer child content for markdown files', () => {
@@ -104,7 +104,7 @@ describe('preview layout contract', () => {
       global: { plugins: [i18n] },
     })
 
-    // CodePreview should render inside .raw-content-viewer for code files
+    // CodeMirrorViewer should render inside .raw-content-viewer for code files
     expect(wrapper.find('.file-viewer-content .raw-content-viewer').exists()).toBe(true)
   })
 })

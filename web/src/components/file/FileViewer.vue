@@ -141,7 +141,6 @@
           :view-mode="markdownViewMode"
           :word-wrap="wordWrap"
           :show-line-numbers="showLineNumbers"
-          :sticky-scroll="stickyScroll"
           @delete="emit('delete', file.path)"
           @show-details="emit('showDetails')"
           @open-git-history="emit('openGitHistory')"

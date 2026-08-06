@@ -18,16 +18,14 @@
     </div>
 
     <!-- Raw markdown -->
-    <CodePreview
+    <CodeMirrorViewer
       v-else
+      :file="file"
       :content="file?.content ?? ''"
       language="markdown"
-      :file-path="file?.path ?? ''"
       :word-wrap="wordWrap"
       :show-line-numbers="showLineNumbers"
-      :flash-ranges="flashRanges"
-      :flash-type="flashType"
-      :sticky-scroll="stickyScroll"
+      :editable="false"
     />
   </div>
 
@@ -41,8 +39,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
-import CodePreview from './CodePreview.vue'
+import { ref, watch, nextTick, onBeforeUnmount, defineAsyncComponent } from 'vue'
+const CodeMirrorViewer = defineAsyncComponent(() => import('./CodeMirrorViewer.vue'))
 import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
@@ -50,7 +48,6 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store } from '@/stores/app.ts'
 import { dirName, splitPath, joinPath } from '@/utils/path.ts'
-import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import {
@@ -68,7 +65,6 @@ const props = defineProps<{
     viewMode?: string
     wordWrap?: boolean
     showLineNumbers?: boolean
-    stickyScroll?: boolean
 }>()
 
 const renderedHtml = ref('')

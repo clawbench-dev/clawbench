@@ -1,0 +1,84 @@
+/* Shared code-viewer global styles.
+   Originally lived in the now-removed CodePreview.vue; these classes are still
+   consumed by CodeMirrorViewer (char flash / line flash / clickable paths) and
+   MarkdownPreview (diff marker positioning), so they must stay global. */
+
+/* Line flash animation for TOC jump and search jump */
+@keyframes line-flash {
+    0%, 100% { background: transparent; }
+    10%, 30%  { background: rgba(255, 230, 0, 0.4); }
+    20%, 40%  { background: transparent; }
+    50%, 70%  { background: rgba(255, 230, 0, 0.3); }
+    60%, 80%  { background: transparent; }
+    90%       { background: rgba(255, 230, 0, 0.2); }
+}
+.line-flash {
+    animation: line-flash 1.2s ease-out forwards;
+}
+
+/* Copy flash animation for block elements — used by useDoubleClickCopy */
+@keyframes copy-flash {
+    0%, 100% { background: transparent; }
+    50%      { background: rgba(255, 230, 0, 0.4); }
+}
+.copy-flash {
+    animation: copy-flash 0.4s ease-out forwards;
+    border-radius: 4px;
+}
+
+/* Red flash for deleted characters (CodeMirrorViewer char-flash) */
+@keyframes char-flash-delete-anim {
+    0%, 100% { background: transparent; }
+    8%, 28%  { background: rgba(255, 80, 80, 0.45); }
+    18%, 38% { background: transparent; }
+    48%, 68% { background: rgba(255, 80, 80, 0.3); }
+    58%, 78% { background: transparent; }
+    88%      { background: rgba(255, 80, 80, 0.15); }
+}
+.char-flash-delete {
+    animation: char-flash-delete-anim 1.2s ease-out forwards;
+    border-radius: 2px;
+    text-decoration: line-through;
+    text-decoration-color: rgba(255, 80, 80, 0.6);
+}
+
+/* Blue flash for added characters (CodeMirrorViewer char-flash) */
+@keyframes char-flash-add-anim {
+    0%, 100% { background: transparent; }
+    8%, 28%  { background: rgba(100, 200, 255, 0.45); }
+    18%, 38% { background: transparent; }
+    48%, 68% { background: rgba(100, 200, 255, 0.3); }
+    58%, 78% { background: transparent; }
+    88%      { background: rgba(100, 200, 255, 0.15); }
+}
+.char-flash-add {
+    animation: char-flash-add-anim 1.5s ease-out forwards;
+    border-radius: 2px;
+}
+
+/* Diff marker inline structural positioning (visual styles in diff-marker.css) */
+.diff-marker-inline {
+    position: absolute;
+    right: 0;
+    width: 20px;
+    height: 100%;
+    z-index: 2;
+}
+
+/* Clickable file path in code strings */
+.code-file-path {
+    cursor: pointer;
+    border-bottom: 1px dashed var(--accent-color);
+    transition: background 0.15s;
+    border-radius: 2px;
+}
+.code-file-path:hover {
+    background: rgba(255, 230, 0, 0.2);
+}
+/* Project-external file path — orange underline */
+.code-file-path.external {
+    border-bottom-color: #e67e22;
+}
+.code-file-path.external:hover {
+    background: rgba(230, 126, 34, 0.2);
+}

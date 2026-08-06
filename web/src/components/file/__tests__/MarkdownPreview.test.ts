@@ -13,7 +13,6 @@ vi.mock('../MarkdownPreview.vue', () => ({
     props: {
       file: { type: Object, default: () => ({}) },
       viewMode: { type: String, default: 'rendered' },
-      stickyScroll: { type: Boolean, default: undefined },
       wordWrap: { type: Boolean, default: true },
       showLineNumbers: { type: Boolean, default: true },
     },
@@ -23,7 +22,7 @@ vi.mock('../MarkdownPreview.vue', () => ({
       return () => {
         if (props.viewMode === 'source') {
           return h('div', { class: 'markdown-preview' }, [
-            h('pre', { class: 'raw-content-pre' }),
+            h('div', { class: 'cm-viewer' }),
           ])
         }
         return h('div', { class: 'markdown-preview' }, [
@@ -67,10 +66,10 @@ describe('MarkdownPreview', () => {
     expect(wrapper.find('.markdown-body').exists()).toBe(true)
   })
 
-  it('renders CodePreview in source mode', async () => {
+  it('renders CodeMirrorViewer in source mode', async () => {
     const wrapper = mountPreview({ viewMode: 'source' })
     await nextTick()
-    expect(wrapper.find('.raw-content-pre').exists()).toBe(true)
+    expect(wrapper.find('.cm-viewer').exists()).toBe(true)
   })
 
   it('renders file path as data attribute on markdown body', async () => {
