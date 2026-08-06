@@ -856,6 +856,30 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   /**
+   * Handle WS reconnection: if the AI finished during the disconnection,
+   * the frontend's loading state is stale. After loadSessionsOnce refreshes
+   * runningSessions, check whether the current session is still running.
+   * If not, clean up the stuck streaming state and reload history.
+   */
+  async function handleWsReconnect() {
+    if (!loading.value || !currentSessionId.value) return
+    // Wait for loadSessionsOnce (called by App.vue handleReconnect) to
+    // refresh runningSessions from the backend.
+    await loadSessionsOnceInner()
+    if (!runningSessions.value.has(currentSessionId.value)) {
+      appLog.w(TAG, `WS reconnect: session ${currentSessionId.value} no longer running — cleaning up stuck loading state`)
+      onDisconnectStream()
+      forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
+      loading.value = false
+      // forceNotRunning=true prevents loadHistory from re-connecting the stream
+      // if the server's in-memory running state hasn't been updated yet.
+      loadHistory(false, false, true, true).catch(() => {
+        loading.value = false
+      })
+    }
+  }
+
+  /**
    * Check whether a continued session already exists for a task execution.
    * Returns { exists, sessionId } — does not create anything.
    */
@@ -994,6 +1018,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     onSessionEvent,
     loadSessionsOnce: loadSessionsOnceInner,
     handleVisibilityChange,
+    handleWsReconnect,
     continueFromExecution,
     forkSession,
     checkContinueSession,

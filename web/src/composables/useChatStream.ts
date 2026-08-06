@@ -689,6 +689,11 @@ export function useChatStream(options: UseChatStreamOptions) {
   }
 
   // Re-subscribe on WS reconnect
+  // NOTE: After this watch fires, App.vue's handleReconnect runs
+  // loadSessionsOnce() which refreshes runningSessions. If the session
+  // finished during disconnection, handleReconnect (via useChatSession)
+  // will detect the stale loading state and clean it up. The re-subscribe
+  // here is a fallback for the case where the session IS still running.
   const stopConnectedWatch = watch(connected, (isConnected) => {
     if (isConnected && isStreaming && currentSessionId.value) {
       appLog.i(TAG, 'WS reconnected, re-subscribing to session stream')

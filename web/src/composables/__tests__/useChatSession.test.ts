@@ -3129,6 +3129,178 @@ describe('handleVisibilityChange', () => {
 })
 
 // ───────────────────────────────────────────────────────────
+// handleWsReconnect
+// ───────────────────────────────────────────────────────────
+
+describe('handleWsReconnect', () => {
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(() => {
+    resetMockState()
+    resetChatSessionState()
+    resetAdditionalMocks()
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('when loading=true and session no longer running: disconnects stream, cleans up, reloads history', async () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onExtractScheduledTasks = vi.fn()
+    const onRenderUpdate = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks,
+      onRenderUpdate,
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // Mock loadSessionsOnce to NOT include s1 in runningSessions
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: [{ id: 's1', running: false }],
+        totalCount: 1,
+      }),
+    })
+
+    // Mock loadHistory fetch
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        // First call: loadSessionsOnce
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's1', running: false }],
+          totalCount: 1,
+        }),
+      })
+      .mockResolvedValueOnce({
+        // Second call: loadHistory
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's1', messages: [], total: 0, running: false,
+        }),
+      })
+
+    await session.handleWsReconnect()
+
+    expect(onDisconnectStream).toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState).toHaveBeenCalled()
+    expect(loading.value).toBe(false)
+
+    vi.restoreAllMocks()
+  })
+
+  it('when loading=true and session still running: does nothing', async () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // Mock loadSessionsOnce to include s1 in runningSessions
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: [{ id: 's1', running: true }],
+        totalCount: 1,
+      }),
+    })
+
+    await session.handleWsReconnect()
+
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(loading.value).toBe(true)
+
+    vi.restoreAllMocks()
+  })
+
+  it('when loading=false: does nothing', async () => {
+    const loading = ref(false)
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    await session.handleWsReconnect()
+
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+
+    vi.restoreAllMocks()
+  })
+
+  it('when no currentSessionId: does nothing', async () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref(''),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    await session.handleWsReconnect()
+
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+
+    vi.restoreAllMocks()
+  })
+})
+
+// ───────────────────────────────────────────────────────────
 // syncModelFromData (tested indirectly through loadHistory)
 // ───────────────────────────────────────────────────────────
 
