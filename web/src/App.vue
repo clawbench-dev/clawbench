@@ -1613,6 +1613,8 @@ function handleOpenTerminal(cwd) {
 function scrollToLine(line, lineEnd) {
     const startLine = Math.max(1, line)
     const endLine = Math.min(lineEnd && lineEnd > startLine ? lineEnd : startLine, startLine + 200)
+    // CodeMirror-based viewers (code/raw files) scroll internally via this event
+    window.dispatchEvent(new CustomEvent('cm-scroll-to-line', { detail: { line: startLine, lineEnd } }))
     const selector = `.code-line[data-line="${startLine}"]`
     const maxAttempts = 30
     let attempts = 0

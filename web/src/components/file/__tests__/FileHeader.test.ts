@@ -350,11 +350,11 @@ describe('FileHeader', () => {
       expect(vm.$.setupState.toolbarInlineIds).toContain('edit')
     })
 
-    it('hides edit button for markdown files', () => {
+    it('shows edit button for markdown files', () => {
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' } })
       const vm = wrapper.vm as any
-      expect(vm.$.setupState.isEditable).toBe(false)
-      expect(vm.$.setupState.toolbarInlineIds).not.toContain('edit')
+      expect(vm.$.setupState.isEditable).toBe(true)
+      expect(vm.$.setupState.toolbarInlineIds).toContain('edit')
     })
 
     it('emits toggleEdit when edit button is clicked', async () => {

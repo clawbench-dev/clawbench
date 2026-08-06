@@ -302,8 +302,14 @@ const isMediaFile = computed(() => {
 })
 // File has usable text content for code-specific features
 const hasTextContent = computed(() => !!props.file?.content && !props.file?.tooLarge && !props.file?.isBinary)
-// Editable: text/source files in raw view (excludes markdown & media)
-const isEditable = computed(() => hasTextContent.value && !isMediaFile.value && !isMarkdown.value && !isMarkdownRendered.value)
+// Editable: text/source files in raw view (excludes media).
+// Markdown is always editable (even in rendered view) so users can edit the source.
+const isEditable = computed(() => {
+    if (!hasTextContent.value || isMediaFile.value) return false
+    if (isMarkdown.value) return true
+    // Other templated types (HTML/OpenAPI) are only editable in source view
+    return !isMarkdownRendered.value
+})
 const hasToc = computed(() => {
     if (!props.file) return false
     const ft = fileType.value

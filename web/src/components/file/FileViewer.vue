@@ -121,17 +121,32 @@
       </div>
 
       <!-- Markdown file -->
-      <MarkdownPreview
-        v-else-if="isMarkdown"
-        :file="file"
-        :view-mode="markdownViewMode"
-        :word-wrap="wordWrap"
-        :show-line-numbers="showLineNumbers"
-        :sticky-scroll="stickyScroll"
-        @delete="emit('delete', file.path)"
-        @show-details="emit('showDetails')"
-        @open-git-history="emit('openGitHistory')"
-      />
+      <template v-else-if="isMarkdown">
+        <CodeMirrorViewer
+          v-if="editing"
+          :file="file"
+          :content="file.content"
+          :language="rawFileLanguage"
+          :word-wrap="wordWrap"
+          :show-line-numbers="showLineNumbers"
+          :editable="true"
+          :saving="saving"
+          @save="handleSave"
+          @cancel="editing = false"
+          @open-file="emit('openFile', $event)"
+        />
+        <MarkdownPreview
+          v-else
+          :file="file"
+          :view-mode="markdownViewMode"
+          :word-wrap="wordWrap"
+          :show-line-numbers="showLineNumbers"
+          :sticky-scroll="stickyScroll"
+          @delete="emit('delete', file.path)"
+          @show-details="emit('showDetails')"
+          @open-git-history="emit('openGitHistory')"
+        />
+      </template>
 
       <!-- HTML file -->
       <template v-else-if="isHtml">
@@ -142,16 +157,14 @@
           :srcdoc="file.content"
           sandbox="allow-scripts"
         />
-        <CodePreview
+        <CodeMirrorViewer
           v-else
+          :file="file"
           :content="file.content"
           language="xml"
-          :file-path="file.path"
           :word-wrap="wordWrap"
           :show-line-numbers="showLineNumbers"
-          :sticky-scroll="stickyScroll"
-          :flash-ranges="flashRanges"
-          :flash-type="flashType"
+          :editable="false"
           @open-file="emit('openFile', $event)"
         />
       </template>
@@ -164,15 +177,13 @@
           :view-mode="markdownViewMode"
         />
         <div v-else class="raw-content-viewer">
-          <CodePreview
+          <CodeMirrorViewer
+            :file="file"
             :content="file.content"
             :language="rawFileLanguage"
-            :file-path="file.path"
             :word-wrap="wordWrap"
             :show-line-numbers="showLineNumbers"
-            :sticky-scroll="stickyScroll"
-            :flash-ranges="flashRanges"
-            :flash-type="flashType"
+            :editable="false"
             @open-file="emit('openFile', $event)"
           />
         </div>
@@ -184,26 +195,16 @@
           <AlertTriangle :size="14" />
           {{ t('file.viewer.truncated') }}
         </div>
-        <CodeEditor
-          v-if="editing"
+        <CodeMirrorViewer
           :file="file"
           :content="file.content"
           :language="rawFileLanguage"
           :word-wrap="wordWrap"
+          :show-line-numbers="showLineNumbers"
+          :editable="editing"
           :saving="saving"
           @save="handleSave"
           @cancel="editing = false"
-        />
-        <CodePreview
-          v-else
-          :content="file.content"
-          :language="rawFileLanguage"
-          :file-path="file.path"
-          :word-wrap="wordWrap"
-          :show-line-numbers="showLineNumbers"
-          :sticky-scroll="stickyScroll"
-          :flash-ranges="flashRanges"
-          :flash-type="flashType"
           @open-file="emit('openFile', $event)"
         />
       </div>
@@ -232,13 +233,11 @@ import AudioPreview from '@/components/media/AudioPreview.vue'
 import VideoPreview from '@/components/media/VideoPreview.vue'
 const OfficePreview = defineAsyncComponent(() => import('@/components/media/OfficePreview.vue'))
 import MarkdownPreview from './MarkdownPreview.vue'
-import CodePreview from './CodePreview.vue'
-const CodeEditor = defineAsyncComponent(() => import('./CodeEditor.vue'))
+const CodeMirrorViewer = defineAsyncComponent(() => import('./CodeMirrorViewer.vue'))
 const OpenApiPreview = defineAsyncComponent(() => import('./OpenApiPreview.vue'))
 import DiffDrawer from './DiffDrawer.vue'
 import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
 import { diffDrawer } from '@/composables/useMarkdownDiff.ts'
-import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import FileHeader from './FileHeader.vue'
 import { getFileType, formatFileSize } from '@/utils/fileType.ts'
 import { store } from '@/stores/app.ts'
@@ -353,7 +352,8 @@ function getScrollEl() {
     if (isOpenapi.value && props.markdownViewMode === 'rendered') {
         return null // ReDoc iframe handles its own scrolling
     }
-    return el.querySelector('.raw-content-pre')
+    // CodeMirror-based viewers scroll inside .cm-scroller
+    return el.querySelector('.cm-scroller')
 }
 
 // Listen for scroll events on the actual scroll container and save position

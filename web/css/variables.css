@@ -46,6 +46,22 @@
 
     /* Bold text — slightly more saturated than --text-primary for visual distinction */
     --text-bold: #0d1117;
+
+    /* CodeMirror editor syntax colors (GitHub light) — kept in sync with browse mode */
+    --code-syntax-comment: #6a737d;
+    --code-syntax-keyword: #d73a49;
+    --code-syntax-string: #032f62;
+    --code-syntax-number: #005cc5;
+    --code-syntax-function: #6f42c1;
+    --code-syntax-type: #22863a;
+    --code-syntax-variable: #e36209;
+    --code-syntax-property: #005cc5;
+    --code-syntax-operator: #d73a49;
+    --code-syntax-tag: #22863a;
+    --code-syntax-attribute: #6f42c1;
+    --code-syntax-meta: #24292e;
+    --code-syntax-heading: #005cc5;
+    --code-syntax-link: #005cc5;
 }
 
 [data-theme="dark"] {
@@ -86,4 +102,20 @@
 
     /* Bold text — pure white stands out against dimmed --text-primary */
     --text-bold: #e6edf3;
+
+    /* CodeMirror editor syntax colors (GitHub dark) — kept in sync with browse mode */
+    --code-syntax-comment: #8b949e;
+    --code-syntax-keyword: #ff7b72;
+    --code-syntax-string: #a5d6ff;
+    --code-syntax-number: #79c0ff;
+    --code-syntax-function: #d2a8ff;
+    --code-syntax-type: #7ee787;
+    --code-syntax-variable: #ffa657;
+    --code-syntax-property: #79c0ff;
+    --code-syntax-operator: #ff7b72;
+    --code-syntax-tag: #7ee787;
+    --code-syntax-attribute: #d2a8ff;
+    --code-syntax-meta: #e6edf3;
+    --code-syntax-heading: #79c0ff;
+    --code-syntax-link: #79c0ff;
 }

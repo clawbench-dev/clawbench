@@ -163,8 +163,7 @@ const stubs = {
   VideoPreview: true,
   OfficePreview: true,
   MarkdownPreview: true,
-  CodePreview: true,
-  CodeEditor: true,
+  CodeMirrorViewer: true,
   DiffDrawer: true,
 }
 
@@ -332,6 +331,33 @@ describe('FileViewer', () => {
       await ss.handleSave('const x = 2')
       expect(mockSaveFile).toHaveBeenCalledWith('/tmp/main.ts', 'const x = 2')
       expect(ss.editing).toBe(true)
+    })
+
+    it('renders CodeMirrorViewer for markdown when editing is toggled on', async () => {
+      const mdFile = {
+        name: 'readme.md',
+        path: '/tmp/readme.md',
+        content: '# Title\n\nsome text',
+        isMarkdown: true,
+        isHtml: false,
+        isImage: false,
+        isAudio: false,
+        isVideo: false,
+        isPdf: false,
+        isOffice: false,
+        isBinary: false,
+        tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: mdFile })
+      // Not editing → rendered markdown preview
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(false)
+      expect(wrapper.findComponent({ name: 'MarkdownPreview' }).exists()).toBe(true)
+
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'MarkdownPreview' }).exists()).toBe(false)
     })
   })
 })
