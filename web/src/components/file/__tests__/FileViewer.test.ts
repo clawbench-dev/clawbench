@@ -84,10 +84,10 @@ vi.mock('@/composables/useFileNavStack.ts', () => ({
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
-    localConfig: { wordWrap: true, lineNumbers: true, stickyScroll: true },
+    localConfig: { wordWrap: true, lineNumbers: true },
     setLocalConfig: vi.fn(),
   }),
-  localConfig: { wordWrap: true, lineNumbers: true, stickyScroll: true, recentFilesCount: 10 },
+  localConfig: { wordWrap: true, lineNumbers: true, recentFilesCount: 10 },
   setLocalConfig: vi.fn(),
 }))
 

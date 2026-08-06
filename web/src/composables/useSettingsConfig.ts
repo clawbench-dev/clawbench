@@ -113,10 +113,6 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
   },
-  stickyScroll: {
-    key: '',
-    format: 'raw',
-  },
   preventScreenLock: {
     key: '',
     format: 'raw',
@@ -243,7 +239,6 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   showHidden: false,
   wordWrap: true,
   lineNumbers: false,
-  stickyScroll: true,
   fileView: 'list',
   terminalFontSize: 12,
   logCapture: false,

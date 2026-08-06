@@ -53,10 +53,6 @@
         <Hash :size="14" />
       </button>
 
-      <!-- Sticky scroll toggle button -->
-      <button v-if="toolbarInlineIds.includes('stickyScroll')" class="file-header-btn" :class="{ active: stickyScroll }" @click.stop="handleToggleStickyScroll" :title="t('file.header.stickyScroll')">
-        <Pin :size="14" />
-      </button>
 
       <!-- Edit toggle button -->
       <button v-if="toolbarInlineIds.includes('edit')" class="file-header-btn" :class="{ active: editing }" @click.stop="handleToggleEdit" :title="editing ? t('file.header.finishEditing') : t('file.header.edit')">
@@ -145,11 +141,6 @@
               {{ t('file.header.lineNumbers') }}
               <span v-if="showLineNumbers" class="wrap-check">✓</span>
             </button>
-            <button v-if="toolbarCollapsedIds.includes('stickyScroll')" class="dropdown-item" @click="handleToggleStickyScroll">
-              <Pin :size="14" />
-              {{ t('file.header.stickyScroll') }}
-              <span v-if="stickyScroll" class="wrap-check">✓</span>
-            </button>
             <button v-if="toolbarCollapsedIds.includes('edit')" class="dropdown-item" :class="{ active: editing }" @click="handleToggleEdit">
               <Pencil :size="14" />
               {{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}
@@ -204,7 +195,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, FileStack, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, FileStack, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -221,12 +212,11 @@ const props = defineProps({
     searchOpen: Boolean,
     wordWrap: Boolean,
     showLineNumbers: Boolean,
-    stickyScroll: Boolean,
     overlayOpen: Boolean,
     recentFilesAvailable: { type: Number, default: 0 },
     editing: Boolean,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'openRecentFiles', 'shareExternal', 'exportHtml', 'fitWidth', 'toggleEdit'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'refresh', 'overlayClose', 'openRecentFiles', 'shareExternal', 'exportHtml', 'fitWidth', 'toggleEdit'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -256,7 +246,6 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value)) ids.push('toggleView')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('wordWrap')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('lineNumbers')
-    if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('stickyScroll')
     if (isEditable.value) ids.push('edit')
     // Extra actions demote to the More dropdown when space runs out.
     // Order = left-to-right display priority; delete is kept last.
@@ -355,11 +344,6 @@ function handleToggleWordWrap() {
 function handleToggleLineNumbers() {
     menuOpen.value = false
     emit('toggleLineNumbers')
-}
-
-function handleToggleStickyScroll() {
-    menuOpen.value = false
-    emit('toggleStickyScroll')
 }
 
 function handleFitWidth() {

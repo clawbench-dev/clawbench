@@ -26,7 +26,6 @@ const i18n = createI18n({
           renderedView: 'Rendered',
           wordWrap: 'Word Wrap',
           lineNumbers: 'Line Numbers',
-          stickyScroll: 'Sticky Scroll',
           fileHistory: 'File history',
           shareExternal: 'Share',
           exportHtml: 'Export HTML',
@@ -103,7 +102,6 @@ describe('FileHeader', () => {
         searchOpen: false,
         wordWrap: true,
         showLineNumbers: true,
-        stickyScroll: true,
         overlayOpen: false,
         recentFilesAvailable: 0,
         ...props,
@@ -133,14 +131,6 @@ describe('FileHeader', () => {
     expect(getMenuOpen(wrapper)).toBe(false)
   })
 
-  it('emits toggleStickyScroll when handler is called', async () => {
-    const wrapper = mountHeader({ viewMode: 'source' })
-    const vm = wrapper.vm as any
-    vm.$.setupState.handleToggleStickyScroll()
-    await nextTick()
-    expect(wrapper.emitted('toggleStickyScroll')).toBeTruthy()
-    expect(getMenuOpen(wrapper)).toBe(false)
-  })
 
   it('emits toggleWordWrap when handler is called', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
@@ -270,26 +260,15 @@ describe('FileHeader', () => {
     expect(mockAddAttachedFile).not.toHaveBeenCalled()
   })
 
-  it('closes menu after toggling sticky scroll', async () => {
-    const wrapper = mountHeader({ viewMode: 'source' })
-    await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
-    expect(getMenuOpen(wrapper)).toBe(true)
-    const vm = wrapper.vm as any
-    vm.$.setupState.handleToggleStickyScroll()
-    await nextTick()
-    expect(getMenuOpen(wrapper)).toBe(false)
-  })
-
   describe('media file filtering', () => {
     it('hides code-only toolbar items for image files', async () => {
       const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: '' } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
-      // wordWrap, lineNumbers, stickyScroll should not be in toolbar IDs
+      // wordWrap, lineNumbers should not be in toolbar IDs
       const ids = vm.$.setupState.toolbarInlineIds
       expect(ids).not.toContain('wordWrap')
       expect(ids).not.toContain('lineNumbers')
-      expect(ids).not.toContain('stickyScroll')
       expect(ids).not.toContain('toggleView')
       // attach should still be available
       expect(ids).toContain('attach')
@@ -304,7 +283,6 @@ describe('FileHeader', () => {
       const ids = vm.$.setupState.toolbarInlineIds
       expect(ids).not.toContain('wordWrap')
       expect(ids).not.toContain('lineNumbers')
-      expect(ids).not.toContain('stickyScroll')
     })
 
     it('hides code-only toolbar items for video files', async () => {
@@ -314,7 +292,6 @@ describe('FileHeader', () => {
       const ids = vm.$.setupState.toolbarInlineIds
       expect(ids).not.toContain('wordWrap')
       expect(ids).not.toContain('lineNumbers')
-      expect(ids).not.toContain('stickyScroll')
     })
 
     it('hides code-only toolbar items for PDF files', async () => {
@@ -324,7 +301,6 @@ describe('FileHeader', () => {
       const ids = vm.$.setupState.toolbarInlineIds
       expect(ids).not.toContain('wordWrap')
       expect(ids).not.toContain('lineNumbers')
-      expect(ids).not.toContain('stickyScroll')
       expect(ids).not.toContain('toggleView')
       // PDF keeps TOC and search
       expect(ids).toContain('toc')
@@ -338,7 +314,6 @@ describe('FileHeader', () => {
       const ids = vm.$.setupState.toolbarInlineIds
       expect(ids).toContain('wordWrap')
       expect(ids).toContain('lineNumbers')
-      expect(ids).toContain('stickyScroll')
     })
   })
 
