@@ -529,10 +529,12 @@ function onSplitRatioChange(ratio) {
 // field (e.g. the chat input on the right). Otherwise the focused INPUT/TEXTAREA
 // stays the event target and the file manager's input-focus guard swallows all
 // its keyboard shortcuts even though the user has clearly clicked into it.
+// Skip blur for CodeMirror .cm-content — blurring it on mobile causes the
+// soft keyboard to dismiss then re-appear when CM re-focuses on mousedown.
 function onLeftPanePointerDown() {
   setActivePane('left')
   const el = document.activeElement
-  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el.isContentEditable && !el.classList.contains('cm-content')))) {
     el.blur()
   }
 }

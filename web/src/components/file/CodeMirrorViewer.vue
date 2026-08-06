@@ -281,11 +281,22 @@ function reconfigure(compartment, ext) {
     }
 }
 
+/** Set inputmode="none" on .cm-content to suppress mobile soft keyboard in read-only mode. */
+function updateInputMode() {
+    const editor = view.value
+    if (!editor) return
+    const contentEl = editor.contentDOM
+    if (contentEl) {
+        contentEl.inputMode = props.editable ? '' : 'none'
+    }
+}
+
 onMounted(() => {
     view.value = new EditorView({
         parent: editorHost.value,
         state: EditorState.create({ doc: props.content || '', extensions: buildAllExtensions() }),
     })
+    updateInputMode()
     recomputeOverlay()
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
 })
@@ -299,7 +310,10 @@ onUnmounted(() => {
 })
 
 // Reconfigure toggleable compartments when their props change.
-watch([() => props.editable], () => reconfigure(readonlyCompartment, props.editable ? [] : [EditorState.readOnly.of(true)]))
+watch([() => props.editable], () => {
+    reconfigure(readonlyCompartment, props.editable ? [] : [EditorState.readOnly.of(true)])
+    updateInputMode()
+})
 watch([() => props.showLineNumbers], () => reconfigure(lineNumbersCompartment, props.showLineNumbers ? [lineNumbers()] : []))
 watch([() => props.wordWrap], () => reconfigure(wrapCompartment, props.wordWrap ? [EditorView.lineWrapping] : []))
 watch([() => props.language], () => reconfigure(langCompartment, buildLangExtension(props.language)))
