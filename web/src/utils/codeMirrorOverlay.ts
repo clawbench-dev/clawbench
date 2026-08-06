@@ -1,15 +1,13 @@
 /**
  * codeMirrorOverlay — pure helpers to build CodeMirror 6 decorations that mirror
- * the code browse-mode overlays (diff markers, char-level flash, clickable file
- * paths). Kept framework-free so the logic is unit-testable.
+ * the code browse-mode overlays (diff markers, char-level flash).
+ * Kept framework-free so the logic is unit-testable.
  */
 import { RangeSetBuilder } from '@codemirror/state'
 import { Decoration, type DecorationSet } from '@codemirror/view'
 import type { EditorState } from '@codemirror/state'
-import { syntaxTree } from '@codemirror/language'
 import type { DiffMarker } from '@/composables/useMarkdownDiff.ts'
 import type { FlashRange, FlashType } from '@/composables/useFileRefresh.ts'
-import { tryResolveCodeString } from '@/composables/useFilePathAnnotation.ts'
 
 /** Decoration class applied to changed lines, per marker type. */
 export function diffLineClass(type: string): string {
@@ -83,65 +81,3 @@ export function buildOverlayDecorations(
     return { decorations: builder.finish(), diffLines }
 }
 
-/** A resolved path segment ready to be turned into a clickable decoration. */
-export interface PathMark {
-    from: number
-    to: number
-    /** raw string content (may include quotes) */
-    text: string
-    /** resolved path to open on click */
-    path: string
-}
-
-/**
- * Find string literal tokens that resolve to file paths so they can be made
- * clickable (mirrors CodePreview's annotateFilePaths).
- */
-export function buildPathMarks(
-    state: EditorState,
-    projectRoot: string,
-    homeDir: string,
-    baseDir?: string,
-): PathMark[] {
-    const marks: PathMark[] = []
-    const tree = syntaxTree(state)
-    const cursor = tree.cursor()
-    do {
-        const name = cursor.type.name
-        const isString = name === 'String' || name === 'TemplateString' || name.toLowerCase().includes('string')
-        if (!isString) continue
-        const text = state.sliceDoc(cursor.from, cursor.to)
-        if (text.length < 3) continue
-        const result = tryResolveCodeString(text, projectRoot, homeDir, baseDir)
-        if (!result) continue
-        marks.push({ from: cursor.from, to: cursor.to, text, path: result.primary })
-    } while (cursor.next())
-    return marks
-}
-
-/** Convert PathMark[] into a DecorationSet (sorted ascending). */
-export function pathMarksToDecorations(marks: PathMark[]): DecorationSet {
-    const sorted = [...marks].sort((a, b) => a.from - b.from || a.to - b.to)
-    const builder = new RangeSetBuilder<Decoration>()
-    for (const m of sorted) {
-        if (m.from >= m.to) continue
-        builder.add(m.from, m.to, Decoration.mark({ class: 'code-file-path', attributes: { 'data-path': m.path } }))
-    }
-    return builder.finish()
-}
-
-/** Merge several DecorationSets into one (inputs must be sorted/valid). */
-export function mergeDecorationSets(sets: DecorationSet[]): DecorationSet {
-    const items: Array<{ from: number; to: number; dec: Decoration }> = []
-    for (const set of sets) {
-        const iter = set.iter()
-        while (iter.value) {
-            items.push({ from: iter.from, to: iter.to, dec: iter.value })
-            iter.next()
-        }
-    }
-    items.sort((a, b) => a.from - b.from || a.to - b.to)
-    const builder = new RangeSetBuilder<Decoration>()
-    for (const it of items) builder.add(it.from, it.to, it.dec)
-    return builder.finish()
-}

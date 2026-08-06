@@ -133,7 +133,6 @@
           :saving="saving"
           @save="handleSave"
           @cancel="editing = false"
-          @open-file="emit('openFile', $event)"
         />
         <MarkdownPreview
           v-else
@@ -164,7 +163,6 @@
           :word-wrap="wordWrap"
           :show-line-numbers="showLineNumbers"
           :editable="false"
-          @open-file="emit('openFile', $event)"
         />
       </template>
 
@@ -183,7 +181,6 @@
             :word-wrap="wordWrap"
             :show-line-numbers="showLineNumbers"
             :editable="false"
-            @open-file="emit('openFile', $event)"
           />
         </div>
       </template>
@@ -204,7 +201,6 @@
           :saving="saving"
           @save="handleSave"
           @cancel="editing = false"
-          @open-file="emit('openFile', $event)"
         />
       </div>
     </div>

@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
-import { Decoration } from '@codemirror/view'
 import { javascript } from '@codemirror/lang-javascript'
 import {
   buildOverlayDecorations,
-  buildPathMarks,
-  pathMarksToDecorations,
-  mergeDecorationSets,
   diffLineClass,
 } from '@/utils/codeMirrorOverlay.ts'
 
@@ -74,37 +70,5 @@ describe('buildOverlayDecorations', () => {
     const { decorations, diffLines } = buildOverlayDecorations(state, [marker], [], 'add')
     expect(diffLines.get(1)).toBe(marker)
     expect(collectClasses(decorations)).toContain('cm-diff-line-D')
-  })
-})
-
-describe('buildPathMarks / pathMarksToDecorations', () => {
-  it('marks string literals that resolve to file paths', () => {
-    const state = makeState("import './src/main.js'\n")
-    const marks = buildPathMarks(state, '/home/user/proj', '/home/user', '')
-    expect(marks.length).toBeGreaterThan(0)
-    const deco = pathMarksToDecorations(marks)
-    // data-path attribute should be set for click handling
-    const iter = deco.iter()
-    expect(iter.value).toBeTruthy()
-  })
-
-  it('produces clickable decorations with data-path attribute', () => {
-    const state = makeState('x')
-    const deco = pathMarksToDecorations([{ from: 0, to: 1, text: 'a.ts', path: '/home/user/proj/a.ts' }])
-    const iter = deco.iter()
-    const spec = (iter.value as any).spec
-    expect(spec.class).toContain('code-file-path')
-    expect(spec.attributes['data-path']).toBe('/home/user/proj/a.ts')
-  })
-})
-
-describe('mergeDecorationSets', () => {
-  it('merges multiple sets preserving order', () => {
-    const state = makeState('aaaa\nbbbb\ncccc\n')
-    const a = Decoration.set([Decoration.mark({ class: 'A' }).range(0, 4)])
-    const b = Decoration.set([Decoration.mark({ class: 'B' }).range(10, 14)])
-    const merged = mergeDecorationSets([b, a])
-    const classes = collectClasses(merged)
-    expect(classes).toEqual(['A', 'B'])
   })
 })

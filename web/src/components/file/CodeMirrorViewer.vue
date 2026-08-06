@@ -22,15 +22,9 @@ import { tags } from '@lezer/highlight'
 import { buildLangExtension } from '@/utils/codeEditorLang'
 import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
-import { store } from '@/stores/app.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
-import {
-    buildOverlayDecorations,
-    buildPathMarks,
-    pathMarksToDecorations,
-    mergeDecorationSets,
-} from '@/utils/codeMirrorOverlay.ts'
+import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
 
 const props = defineProps({
     file: Object,
@@ -42,7 +36,7 @@ const props = defineProps({
     editable: { type: Boolean, default: false },
     saving: { type: Boolean, default: false },
 })
-const emit = defineEmits(['save', 'cancel', 'openFile'])
+const emit = defineEmits(['save', 'cancel'])
 
 const { t } = useI18n()
 const editorHost = ref(null)
@@ -161,14 +155,6 @@ function handleEditorClick(event) {
         if (marker) openDiffDrawer(marker)
         return true
     }
-    const pathEl = target.closest?.('.code-file-path')
-    if (pathEl) {
-        event.preventDefault()
-        event.stopPropagation()
-        const path = pathEl.getAttribute('data-path')
-        if (path) emit('openFile', { path })
-        return true
-    }
     return false
 }
 
@@ -232,14 +218,11 @@ function recomputeOverlay() {
     const state = editor.state
     const { decorations, diffLines } = buildOverlayDecorations(state, diffMarkers.value, flashRanges.value, flashType.value)
     diffLineMap.value = diffLines
-    const baseDir = props.file?.path ? props.file.path.substring(0, props.file.path.lastIndexOf('/')) : undefined
-    const pathMarks = buildPathMarks(state, store.state.projectRoot || '', store.state.homeDir || '', baseDir)
-    const all = mergeDecorationSets([decorations, pathMarksToDecorations(pathMarks)])
     // Only mount the diff gutter while diff markers exist; otherwise it would
     // occupy a gutter column even when line numbers are hidden.
     const ext = diffMarkers.value.length > 0 ? [diffGutter] : []
     editor.dispatch({
-        effects: overlayCompartment.reconfigure([...ext, EditorView.decorations.of(all)]),
+        effects: overlayCompartment.reconfigure([...ext, EditorView.decorations.of(decorations)]),
     })
 }
 
@@ -439,17 +422,6 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value })
 .cm-diff-line-M { background: color-mix(in srgb, var(--color-yellow) 8%, transparent); }
 .cm-diff-line-D { background: color-mix(in srgb, var(--color-red) 8%, transparent); }
 .cm-diff-line-A { background: color-mix(in srgb, var(--color-green) 8%, transparent); }
-
-/* Clickable file path inside string literals (reuses browse-mode look) */
-.cm-viewer .code-file-path {
-    cursor: pointer;
-    border-bottom: 1px dashed var(--accent-color);
-    border-radius: 2px;
-    transition: background 0.15s;
-}
-.cm-viewer .code-file-path:hover {
-    background: rgba(255, 230, 0, 0.2);
-}
 
 /* Word-wrap mode */
 .cm-viewer .cm-lineWrapping { word-break: break-all; }
