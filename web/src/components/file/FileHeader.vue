@@ -94,8 +94,8 @@
         <Trash2 :size="14" />
       </button>
 
-      <!-- More actions dropdown -->
-      <div class="dropdown-wrapper" ref="dropdownRef">
+      <!-- More actions dropdown (only when collapsed items exist) -->
+      <div v-if="toolbarCollapsedIds.length > 0" class="dropdown-wrapper" ref="dropdownRef">
         <button class="file-header-btn" @click.stop="toggleMenu" :title="t('file.header.more')">
           <MoreVertical :size="14" />
         </button>
@@ -482,6 +482,7 @@ onBeforeUnmount(() => {
     gap: 4px;
     flex: 0 1 auto;
     min-width: 80px;
+    max-width: 40%;
     overflow: hidden;
 }
 
