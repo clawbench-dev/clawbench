@@ -16,17 +16,6 @@
         :aria-label="pm.ariaLabel"
       >{{ pm.label }}</button>
     </div>
-
-    <!-- Raw markdown -->
-    <CodeMirrorViewer
-      v-else
-      :file="file"
-      :content="file?.content ?? ''"
-      language="markdown"
-      :word-wrap="wordWrap"
-      :show-line-numbers="showLineNumbers"
-      :editable="false"
-    />
   </div>
 
   <!-- Table row expand modal -->
@@ -39,8 +28,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onBeforeUnmount, defineAsyncComponent } from 'vue'
-const CodeMirrorViewer = defineAsyncComponent(() => import('./CodeMirrorViewer.vue'))
+import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'

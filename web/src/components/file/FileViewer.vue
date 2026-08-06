@@ -120,20 +120,9 @@
 
       <!-- Markdown file -->
       <template v-else-if="isMarkdown">
-        <CodeMirrorViewer
-          v-if="editing"
-          :file="file"
-          :content="file.content"
-          :language="rawFileLanguage"
-          :word-wrap="wordWrap"
-          :show-line-numbers="showLineNumbers"
-          :editable="true"
-          :saving="saving"
-          @save="handleSave"
-          @cancel="editing = false"
-        />
+        <!-- Rendered browse (not editing) -->
         <MarkdownPreview
-          v-else
+          v-if="!editing && markdownViewMode === 'rendered'"
           :file="file"
           :view-mode="markdownViewMode"
           :word-wrap="wordWrap"
@@ -141,6 +130,20 @@
           @delete="emit('delete', file.path)"
           @show-details="emit('showDetails')"
           @open-git-history="emit('openGitHistory')"
+        />
+        <!-- Source/raw mode: a single CodeMirrorViewer for both browse and edit
+             (editable toggles), so scroll survives the edit toggle. -->
+        <CodeMirrorViewer
+          v-else
+          :file="file"
+          :content="file.content"
+          :language="rawFileLanguage"
+          :word-wrap="wordWrap"
+          :show-line-numbers="showLineNumbers"
+          :editable="editing"
+          :saving="saving"
+          @save="handleSave"
+          @cancel="editing = false"
         />
       </template>
 
@@ -278,27 +281,36 @@ const editing = ref(false)
 const { saving, saveFile } = useCodeEditorSave()
 
 async function handleSave(content) {
+    const saved = captureScrollRatio()
     const ok = await saveFile(props.file?.path || '', content)
-    if (ok) editing.value = false
+    if (ok) {
+        editing.value = false
+        // Save reloads the file content (which can reset scroll), so restore it.
+        restoreScrollAfter(saved)
+    }
 }
 
 function handleToggleEdit() {
     const saved = captureScrollRatio()
     editing.value = !editing.value
-    if (saved) {
-        // The edit/browse view can swap to a different scroll container that
-        // mounts async (CodeMirror is lazy-loaded), so retry until it is ready.
-        let attempts = 0
-        const timer = setInterval(() => {
-            const el = getScrollEl()
-            if (el && el.scrollHeight > el.clientHeight) {
-                clearInterval(timer)
-                restoreScrollRatio(saved)
-            } else if (++attempts > 60) {
-                clearInterval(timer)
-            }
-        }, 50)
-    }
+    restoreScrollAfter(saved)
+}
+
+// Restore the previously captured scroll ratio once the current scroll container
+// is ready. The browse/edit view can swap scroll containers that mount async
+// (CodeMirror is lazy-loaded), so retry until it is laid out and scrollable.
+function restoreScrollAfter(saved) {
+    if (!saved) return
+    let attempts = 0
+    const timer = setInterval(() => {
+        const el = getScrollEl()
+        if (el && el.scrollHeight > el.clientHeight) {
+            clearInterval(timer)
+            restoreScrollRatio(saved)
+        } else if (++attempts > 60) {
+            clearInterval(timer)
+        }
+    }, 50)
 }
 
 // Expose PDF outline and scrollToPage for TOC integration
