@@ -886,9 +886,8 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 // that can be prepended to the user's prompt. This gives the AI context from the
 // parent session when the forked session sends its first message.
 //
-// Limits: each message is truncated to 2000 bytes; total context is capped at
-// 10000 bytes to avoid token explosion. Assistant message content in JSON block
-// format is converted to plain text via ExtractPlainText before inclusion.
+// Tool output fields are truncated to 500 runes (see
+// service.forkToolOutputMaxLen) to avoid token explosion.
 func buildForkContext(sessionID string) string {
 	msgs, err := service.GetMessagesBySessionID(sessionID)
 	if err != nil || len(msgs) == 0 {

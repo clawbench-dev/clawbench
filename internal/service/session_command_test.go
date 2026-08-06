@@ -2191,36 +2191,140 @@ func TestBuildForkContext_ThinkingExcluded(t *testing.T) {
 	assert.NotContains(t, result, "I should think about this")
 }
 
-func TestFormatToolUseBlock_NoTruncation(t *testing.T) {
-	// Test that long input/output/summary are NOT truncated
-	longInput := strings.Repeat("a", 600)
-	longOutput := strings.Repeat("b", 1100)
-	longSummary := strings.Repeat("c", 600)
+func TestBuildForkContext_ToolUseBlockOutputTruncated(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
 
-	b := model.ContentBlock{
-		Type:       "tool_use",
-		Name:       "Bash",
-		ID:         "toolu_trunc",
-		Status:     "success",
-		Done:       true,
-		DurationMs: 100,
-		Summary:    longSummary,
-	}
-	tc := ToolCallRecord{
-		ToolID: "toolu_trunc",
-		Input:  json.RawMessage(longInput),
-		Output: longOutput,
-	}
-	toolCallMap := map[string]*ToolCallRecord{"toolu_trunc": &tc}
+	sessionID := "fork-tooluse-trunc"
+	longOutput := strings.Repeat("x", 600)
+	// Insert assistant message with tool_use block
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"tool_use","name":"Read","id":"toolu_trunc","status":"success","done":true}]}`, sessionID,
+	)
+	require.NoError(t, err)
+	// Insert tool call detail with long output
+	_, err = WriteExec(
+		"INSERT INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output, status, done) VALUES (?, ?, 'toolu_trunc', 'Read', ?, ?, 'success', 1)",
+		1, sessionID, `{"file_path":"/big/file.go"}`, longOutput,
+	)
+	require.NoError(t, err)
 
-	result := FormatToolUseBlock(b, toolCallMap)
-	assert.NotContains(t, result, "...(truncated)")
-	// Full input should be present
-	assert.Contains(t, result, longInput)
-	// Full output should be present
-	assert.Contains(t, result, longOutput)
-	// Full summary should be present
-	assert.Contains(t, result, longSummary)
+	result := BuildForkContext(sessionID)
+	assert.Contains(t, result, "...(truncated)")
+	// Should contain the first 500 chars of output
+	assert.Contains(t, result, strings.Repeat("x", 500))
+	// Should NOT contain the full output
+	assert.NotContains(t, result, longOutput)
+}
+
+func TestTruncateRunes(t *testing.T) {
+	t.Run("short string unchanged", func(t *testing.T) {
+		assert.Equal(t, "hello", truncateRunes("hello", 10))
+	})
+	t.Run("exact length unchanged", func(t *testing.T) {
+		assert.Equal(t, "hello", truncateRunes("hello", 5))
+	})
+	t.Run("truncated with suffix", func(t *testing.T) {
+		assert.Equal(t, "hel...(truncated)", truncateRunes("hello world", 3))
+	})
+	t.Run("unicode aware", func(t *testing.T) {
+		s := "你好世界测试"
+		assert.Equal(t, "你好...(truncated)", truncateRunes(s, 2))
+	})
+	t.Run("zero maxRunes returns unchanged", func(t *testing.T) {
+		assert.Equal(t, "hello", truncateRunes("hello", 0))
+	})
+	t.Run("empty string returns empty", func(t *testing.T) {
+		assert.Equal(t, "", truncateRunes("", 5))
+	})
+}
+
+func TestFormatToolUseBlock_OutputTruncation(t *testing.T) {
+	t.Run("truncates long output from toolCallMap", func(t *testing.T) {
+		longOutput := strings.Repeat("b", 600)
+		b := model.ContentBlock{
+			Type:   "tool_use",
+			Name:   "Bash",
+			ID:     "toolu_trunc",
+			Status: "success",
+			Done:   true,
+		}
+		tc := ToolCallRecord{
+			ToolID: "toolu_trunc",
+			Input:  json.RawMessage(`{"command":"ls"}`),
+			Output: longOutput,
+		}
+		toolCallMap := map[string]*ToolCallRecord{"toolu_trunc": &tc}
+
+		result := FormatToolUseBlock(b, toolCallMap)
+		assert.Contains(t, result, "...(truncated)")
+		// Should contain first 500 chars of output
+		assert.Contains(t, result, strings.Repeat("b", 500))
+		// Should NOT contain the full output
+		assert.NotContains(t, result, longOutput)
+	})
+
+	t.Run("truncates long output from content block fallback", func(t *testing.T) {
+		longOutput := strings.Repeat("x", 600)
+		b := model.ContentBlock{
+			Type:   "tool_use",
+			Name:   "Bash",
+			ID:     "ask-002",
+			Input:  map[string]any{"command": "ls"},
+			Output: longOutput,
+		}
+		result := FormatToolUseBlock(b, nil)
+		assert.Contains(t, result, "...(truncated)")
+		assert.NotContains(t, result, longOutput)
+	})
+
+	t.Run("does not truncate short output", func(t *testing.T) {
+		shortOutput := "file1.txt\nfile2.txt"
+		b := model.ContentBlock{
+			Type:   "tool_use",
+			Name:   "Bash",
+			ID:     "toolu_short",
+			Status: "success",
+			Done:   true,
+		}
+		tc := ToolCallRecord{
+			ToolID: "toolu_short",
+			Input:  json.RawMessage(`{"command":"ls"}`),
+			Output: shortOutput,
+		}
+		toolCallMap := map[string]*ToolCallRecord{"toolu_short": &tc}
+
+		result := FormatToolUseBlock(b, toolCallMap)
+		assert.NotContains(t, result, "...(truncated)")
+		// JSON encodes \n as \\n
+		assert.Contains(t, result, "file1.txt\\nfile2.txt")
+	})
+
+	t.Run("does not truncate input or summary", func(t *testing.T) {
+		longInput := strings.Repeat("a", 600)
+		longSummary := strings.Repeat("c", 600)
+		b := model.ContentBlock{
+			Type:       "tool_use",
+			Name:       "Bash",
+			ID:         "toolu_ni",
+			Status:     "success",
+			Done:       true,
+			DurationMs: 100,
+			Summary:    longSummary,
+		}
+		tc := ToolCallRecord{
+			ToolID: "toolu_ni",
+			Input:  json.RawMessage(longInput),
+			Output: strings.Repeat("b", 600),
+		}
+		toolCallMap := map[string]*ToolCallRecord{"toolu_ni": &tc}
+
+		result := FormatToolUseBlock(b, toolCallMap)
+		assert.Contains(t, result, "...(truncated)") // output truncated
+		assert.Contains(t, result, longInput)        // input NOT truncated
+		assert.Contains(t, result, longSummary)      // summary NOT truncated
+	})
 }
 
 func TestExtractMessageParts_TextBlocks(t *testing.T) {

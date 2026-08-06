@@ -220,11 +220,11 @@ func TestServeForkSession_WithBeforeMessageID(t *testing.T) {
 	assert.Equal(t, "First", msgs[0].Content)
 	assert.Equal(t, "Answer 1", msgs[1].Content)
 
-	// Title should be based on the user message content
+	// Title should be based on the source session title (auto-set from first message)
 	title, err := service.GetSessionTitle(newSessID)
 	require.NoError(t, err)
+	assert.Contains(t, title, "🔀")
 	assert.Contains(t, title, "First")
-	assert.Equal(t, "First", msgs[0].Content)
 }
 
 func TestServeForkSession_BeforeMessageID_LongContentTruncated(t *testing.T) {

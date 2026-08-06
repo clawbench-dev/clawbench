@@ -420,7 +420,7 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	title := buildForkTitle(r, sourceID, req.BeforeMessageID)
+	title := buildForkTitle(r, sourceID)
 
 	newSessionID, err := service.ForkSession(sourceID, projectPath, title, req.BeforeMessageID)
 	if err != nil {
@@ -434,31 +434,8 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildForkTitle builds the title for a forked session.
-func buildForkTitle(r *http.Request, sourceID string, beforeMessageID int64) string {
-	if beforeMessageID > 0 {
-		msgContent, err := service.GetMessageContent(beforeMessageID, sourceID)
-		if err != nil {
-			slog.Warn("handler: failed to get message content for fork title", "message_id", beforeMessageID, "error", err)
-		}
-		// If the fork point is an assistant message, prefer the preceding user message for a more meaningful title
-		if msgContent == "" || service.IsMessageRole(beforeMessageID, sourceID, "assistant") {
-			userContent, userErr := service.GetPrecedingUserMessageContent(beforeMessageID, sourceID)
-			if userErr != nil {
-				slog.Warn("handler: failed to get preceding user message for fork title", "message_id", beforeMessageID, "error", userErr)
-			}
-			if userContent != "" {
-				msgContent = userContent
-			}
-		}
-		if msgContent != "" {
-			// Truncate long message content for title
-			runes := []rune(msgContent)
-			if len(runes) > 50 {
-				msgContent = string(runes[:50]) + "..."
-			}
-			return T(r, "ForkPrefix") + msgContent
-		}
-	}
+// It uses the original session title with a fork emoji prefix.
+func buildForkTitle(r *http.Request, sourceID string) string {
 	sourceTitle, _ := service.GetSessionTitle(sourceID)
 	if sourceTitle == "" {
 		sourceTitle = T(r, "Session")
