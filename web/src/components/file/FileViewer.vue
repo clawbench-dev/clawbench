@@ -283,7 +283,22 @@ async function handleSave(content) {
 }
 
 function handleToggleEdit() {
+    const saved = captureScrollRatio()
     editing.value = !editing.value
+    if (saved) {
+        // The edit/browse view can swap to a different scroll container that
+        // mounts async (CodeMirror is lazy-loaded), so retry until it is ready.
+        let attempts = 0
+        const timer = setInterval(() => {
+            const el = getScrollEl()
+            if (el && el.scrollHeight > el.clientHeight) {
+                clearInterval(timer)
+                restoreScrollRatio(saved)
+            } else if (++attempts > 60) {
+                clearInterval(timer)
+            }
+        }, 50)
+    }
 }
 
 // Expose PDF outline and scrollToPage for TOC integration
@@ -330,8 +345,15 @@ function clearRestoreTimer() {
 function getScrollEl() {
     const el = contentRef.value
     if (!el) return null
+    // Edit mode always renders the CodeMirror editor
+    if (editing.value) {
+        return el.querySelector('.cm-scroller')
+    }
     if (isMarkdown.value) {
-        return el.querySelector('.markdown-body')
+        // Rendered markdown scrolls in .markdown-body; source view uses CM
+        return props.markdownViewMode === 'rendered'
+            ? el.querySelector('.markdown-body')
+            : el.querySelector('.cm-scroller')
     }
     /* v8 ignore next - trivial prop access fix, tested via integration */
     if (isHtml.value && props.markdownViewMode === 'rendered') {
@@ -342,6 +364,25 @@ function getScrollEl() {
     }
     // CodeMirror-based viewers scroll inside .cm-scroller
     return el.querySelector('.cm-scroller')
+}
+
+// Capture the current scroll position as a ratio so it survives a component
+// switch (rendered markdown ↔ CodeMirror source/edit) with different heights.
+function captureScrollRatio() {
+    const el = getScrollEl()
+    if (!el) return null
+    const max = el.scrollHeight - el.clientHeight
+    if (max <= 0) return null
+    return { top: el.scrollTop, ratio: el.scrollTop / max }
+}
+
+function restoreScrollRatio(saved) {
+    if (!saved) return
+    const el = getScrollEl()
+    if (!el) return
+    const max = el.scrollHeight - el.clientHeight
+    if (max <= 0) return
+    el.scrollTop = Math.round(saved.ratio * max)
 }
 
 // Listen for scroll events on the actual scroll container and save position
