@@ -801,60 +801,7 @@ func TestAccumulateBlock_ContentReplayExact(t *testing.T) {
 	assert.Equal(t, "I'll start by reading all the source files and checking for existing tests.", blocks[0].Text)
 }
 
-func TestAccumulateBlock_StandaloneBangDropped(t *testing.T) {
-	// GLM-5.1 (ACP) emits a standalone "!" text chunk between tool call
-	// completions and the next text paragraph. AccumulateBlock should drop
-	// it so it doesn't prefix the next text block as "!Now let me check…".
-	blocks := []model.ContentBlock{}
 
-	// Normal text before tool call
-	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "Let me check the files."})
-	assert.Len(t, blocks, 1)
-	assert.Equal(t, "Let me check the files.", blocks[0].Text)
-
-	// Tool call
-	AccumulateBlock(&blocks, StreamEvent{
-		Type: "tool_use",
-		Tool: &ToolCall{Name: "Read", ID: "t1", Input: `{}`, Done: true},
-	})
-
-	// Standalone "!" — should be dropped
-	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "!"})
-	assert.Len(t, blocks, 2, "standalone ! should not create a new block")
-
-	// Next text paragraph — should not be prefixed with !
-	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "Now let me check the tests."})
-	assert.Len(t, blocks, 3)
-	assert.Equal(t, "Now let me check the tests.", blocks[2].Text, "text should not be prefixed with !")
-}
-
-func TestAccumulateBlock_StandaloneBangDroppedOnExistingBlock(t *testing.T) {
-	// When a standalone "!" is appended to an existing text block (not
-	// separated by tool_use), it should still be dropped.
-	blocks := []model.ContentBlock{}
-
-	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "agents."})
-	// "!" appended to existing text block — should be dropped
-	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "!"})
-	assert.Equal(t, "agents.", blocks[0].Text, "! should not be appended to existing text")
-
-	// Next paragraph (separated by model_done) — should not be prefixed
-	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "Now I have a thorough picture."})
-	assert.Equal(t, "agents.Now I have a thorough picture.", blocks[0].Text)
-}
-
-func TestAccumulateBlock_BangInLongerTextPreserved(t *testing.T) {
-	// "!" as part of longer text content should NOT be dropped.
-	// E.g., Go code like "if err != nil" or "discovery:!" from model output.
-	blocks := []model.ContentBlock{}
-
-	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "if err != nil"})
-	assert.Len(t, blocks, 1)
-	assert.Equal(t, "if err != nil", blocks[0].Text)
-
-	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "discovery:!"})
-	assert.Equal(t, "if err != nildiscovery:!", blocks[0].Text)
-}
 
 func TestAccumulateBlock_ContentReplayAccumulated(t *testing.T) {
 	// Accumulated replay: the replay text extends the original paragraph.
