@@ -43,7 +43,7 @@ type acpStdoutFilter struct {
 	// in a session/new or session/resume response. The ACP Go SDK v0.13.5 does not
 	// include the "models" field in NewSessionResponse/ResumeSessionResponse, so we
 	// extract it from the raw JSON here. Thread-safe via modelsMu.
-	modelsMu    sync.Mutex
+	modelsMu     sync.Mutex
 	cachedModels *ModelListState
 }
 

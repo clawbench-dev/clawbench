@@ -16,12 +16,12 @@ import (
 // JSON output. It implements the AIBackend interface via callbacks for
 // backend-specific behavior.
 type CLIBackend struct {
-	BackendName   string // exported for sub-package construction; Name() method returns this
-	Cmd           string // default CLI command
-	BuildArgsFn   func(req ChatRequest) []string
-	NewParserFn   func() LineParser
-	FilterLineFn  func(line string) (string, bool)     // nil = skip empty lines only
-	PreStartFn    func(cmd *exec.Cmd, req ChatRequest) // optional, e.g. Claude stdin
+	BackendName  string // exported for sub-package construction; Name() method returns this
+	Cmd          string // default CLI command
+	BuildArgsFn  func(req ChatRequest) []string
+	NewParserFn  func() LineParser
+	FilterLineFn func(line string) (string, bool)     // nil = skip empty lines only
+	PreStartFn   func(cmd *exec.Cmd, req ChatRequest) // optional, e.g. Claude stdin
 }
 
 // truncatePrompt returns a truncated version of the prompt for logging.

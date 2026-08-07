@@ -1,4 +1,3 @@
-//nolint:noctx // DB parameter, context not applicable
 package service
 
 import (

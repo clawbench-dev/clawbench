@@ -36,8 +36,8 @@ func newPiBackend() ai.AIBackend {
 		NewParserFn: func() ai.LineParser {
 			return &ai.PiStreamParser{InputRemaps: PiInputRemaps}
 		},
-		FilterLineFn:  nil,
-		PreStartFn:    nil,
+		FilterLineFn: nil,
+		PreStartFn:   nil,
 	}
 }
 

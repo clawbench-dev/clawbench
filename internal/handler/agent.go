@@ -553,8 +553,6 @@ func containsPromptOverride(prompt string) bool {
 // the agent's current model list (both in memory and in the cache file).
 //
 // Refresh strategy: CLI model discovery via BackendSpec (e.g., pi --list-models)
-//
-//nolint:gocyclo // refresh logic has multiple discovery paths, each with error handling
 func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")

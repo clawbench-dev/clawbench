@@ -923,7 +923,7 @@ func buildForkContext(sessionID string) string {
 			if content == "" {
 				continue
 			}
-			sb.WriteString(fmt.Sprintf("%s: %s\n\n", role, content))
+			fmt.Fprintf(&sb, "%s: %s\n\n", role, content)
 			continue
 		}
 
@@ -948,7 +948,7 @@ func buildForkContext(sessionID string) string {
 		}
 
 		content := strings.Join(msgParts, "\n\n")
-		sb.WriteString(fmt.Sprintf("%s: %s\n\n", role, content))
+		fmt.Fprintf(&sb, "%s: %s\n\n", role, content)
 	}
 
 	sb.WriteString("[End of conversation history. Now answer the user's new question.]\n\n")

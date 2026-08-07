@@ -801,8 +801,6 @@ func TestAccumulateBlock_ContentReplayExact(t *testing.T) {
 	assert.Equal(t, "I'll start by reading all the source files and checking for existing tests.", blocks[0].Text)
 }
 
-
-
 func TestAccumulateBlock_ContentReplayAccumulated(t *testing.T) {
 	// Accumulated replay: the replay text extends the original paragraph.
 	// The original block should be replaced and duplicate text blocks removed.
