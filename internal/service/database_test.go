@@ -41,6 +41,7 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 			target_type TEXT NOT NULL,
 			target_id   INTEGER NOT NULL,
 			summary     TEXT NOT NULL,
+			summary_cards TEXT NOT NULL DEFAULT '',
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(target_type, target_id)
 		);
@@ -1208,6 +1209,7 @@ func setupTestDBForSummaries(t *testing.T) func() {
 			target_type TEXT NOT NULL,
 			target_id   INTEGER NOT NULL,
 			summary     TEXT NOT NULL,
+			summary_cards TEXT NOT NULL DEFAULT '',
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(target_type, target_id)
 		);
@@ -1516,7 +1518,7 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, target_type TEXT NOT NULL,
 			target_id INTEGER NOT NULL, summary TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(target_type, target_id)
+			summary_cards TEXT NOT NULL DEFAULT '', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(target_type, target_id)
 		);
 		CREATE TABLE IF NOT EXISTS tts_summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL,
@@ -2891,4 +2893,44 @@ func TestGetQuickSendCommands_Empty(t *testing.T) {
 
 	commands := GetQuickSendCommands()
 	assert.Nil(t, commands)
+}
+
+func TestSaveGetSummaryWithCards(t *testing.T) {
+	writeDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open in-memory db: %v", err)
+	}
+	defer writeDB.Close()
+	writeDB.SetMaxOpenConns(1)
+	_, err = writeDB.Exec(`
+		CREATE TABLE IF NOT EXISTS summaries (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			target_type TEXT NOT NULL,
+			target_id   INTEGER NOT NULL,
+			summary     TEXT NOT NULL,
+			summary_cards TEXT NOT NULL DEFAULT '',
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(target_type, target_id)
+		);
+	`)
+	if err != nil {
+		t.Fatalf("failed to create summaries table: %v", err)
+	}
+	cleanup := SetDBForTest(writeDB, writeDB)
+	defer cleanup()
+
+	cards := &model.SummaryCards{TaskIDs: []int64{7, 8}}
+	if err := SaveSummaryWithCards("chat_message", 9001, "summary text", cards); err != nil {
+		t.Fatalf("SaveSummaryWithCards: %v", err)
+	}
+	gotSummary, gotCards, found := GetSummaryWithCards("chat_message", 9001)
+	if !found {
+		t.Fatalf("expected found")
+	}
+	if gotSummary != "summary text" {
+		t.Fatalf("summary mismatch: %q", gotSummary)
+	}
+	if gotCards == nil || len(gotCards.TaskIDs) != 2 {
+		t.Fatalf("cards mismatch: %+v", gotCards)
+	}
 }

@@ -345,6 +345,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			target_type TEXT NOT NULL,
 			target_id   INTEGER NOT NULL,
 			summary     TEXT NOT NULL,
+			summary_cards TEXT NOT NULL DEFAULT '',
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(target_type, target_id)
 		);
@@ -497,6 +498,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasSummary == 0 {
 		if _, err := WriteExec("ALTER TABLE task_executions ADD COLUMN summary TEXT"); err != nil {
 			return fmt.Errorf("failed to add summary column: %w", err)
+		}
+	}
+
+	// Migrate: add summary_cards column for structured summary card metadata
+	var hasSummaryCards int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('summaries') WHERE name='summary_cards'").Scan(&hasSummaryCards)
+	if hasSummaryCards == 0 {
+		if _, err := WriteExec("ALTER TABLE summaries ADD COLUMN summary_cards TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add summary_cards column: %w", err)
 		}
 	}
 
@@ -1261,23 +1271,51 @@ func CloseDB() {
 // GetSummary looks up a reading summary by target type and target ID.
 // Returns (summary, found). Empty summary = text was too short.
 func GetSummary(targetType string, targetID int64) (string, bool) {
-	var summary string
-	err := dbRead.QueryRow(
-		"SELECT summary FROM summaries WHERE target_type = ? AND target_id = ?",
-		targetType, targetID,
-	).Scan(&summary)
-	if err != nil {
-		return "", false
-	}
-	return summary, true
+	s, _, ok := GetSummaryWithCards(targetType, targetID)
+	return s, ok
 }
 
 // SaveSummary persists a reading summary for a target (chat message or task execution).
 // summary = "" means text was too short; non-empty is the actual summary.
 func SaveSummary(targetType string, targetID int64, summary string) error {
+	return SaveSummaryWithCards(targetType, targetID, summary, nil)
+}
+
+// GetSummaryWithCards returns summary text and card metadata.
+// Returns (summary, cards, found). cards is nil when no cards persisted.
+func GetSummaryWithCards(targetType string, targetID int64) (string, *model.SummaryCards, bool) {
+	var summary string
+	var cardsJSON string
+	err := dbRead.QueryRow(
+		"SELECT summary, COALESCE(summary_cards, '') FROM summaries WHERE target_type = ? AND target_id = ?",
+		targetType, targetID,
+	).Scan(&summary, &cardsJSON)
+	if err != nil {
+		return "", nil, false
+	}
+	var cards *model.SummaryCards
+	if cardsJSON != "" {
+		cards = &model.SummaryCards{}
+		if jerr := json.Unmarshal([]byte(cardsJSON), cards); jerr != nil {
+			cards = nil
+		}
+	}
+	return summary, cards, true
+}
+
+// SaveSummaryWithCards persists summary text and card metadata.
+func SaveSummaryWithCards(targetType string, targetID int64, summary string, cards *model.SummaryCards) error {
+	cardsJSON := ""
+	if cards != nil {
+		raw, err := json.Marshal(cards)
+		if err != nil {
+			return err
+		}
+		cardsJSON = string(raw)
+	}
 	_, err := WriteExec(
-		"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-		targetType, targetID, summary,
+		"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, summary_cards, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+		targetType, targetID, summary, cardsJSON,
 	)
 	return err
 }

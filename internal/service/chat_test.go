@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS summaries (
 	target_type TEXT NOT NULL,
 	target_id   INTEGER NOT NULL,
 	summary     TEXT NOT NULL,
+	summary_cards TEXT NOT NULL DEFAULT '',
 	created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(target_type, target_id)
 );
