@@ -88,8 +88,9 @@
 
       <!-- Main toolbar row -->
       <div class="main-toolbar-row">
-        <button class="toolbar-btn modifier gesture-toggle" :class="{ active: gestures.enabled.value }" @click="handleGestureToggle" @contextmenu.prevent :title="t('terminal.gestures')">
-          <HandIcon :size="14" />
+        <button class="toolbar-btn modifier gesture-toggle" :class="{ active: gestures.mode.value === 'gesture', 'mode-selection': gestures.mode.value === 'selection' }" @click="handleModeCycle" @contextmenu.prevent :title="t('terminal.modes')">
+          <HandIcon v-if="gestures.mode.value !== 'selection'" :size="14" />
+          <TextCursorInputIcon v-else :size="14" />
         </button>
         <button class="toolbar-btn modifier gesture-toggle" :class="{ active: showSymbolBar }" @click="toggleSymbolBar()" @contextmenu.prevent :title="t('terminal.symbols')">
           <HashIcon :size="14" />
@@ -202,7 +203,7 @@ import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/us
 import { shouldAutoRefocusTerminal } from '@/utils/terminalBlurUtils'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Copy as CopyIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Copy as CopyIcon, TextCursorInput as TextCursorInputIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -304,7 +305,7 @@ const keyConfigDrawer = useTabDrawer('terminal')
 /** Keys visible in the toolbar, filtered by gesture mode (Tab/PgUp/PgDn/arrows hidden when gestures on) */
 const GESTURE_HIDDEN_KEYS = new Set(['tab', 'pgup', 'pgdn', 'arrow_up', 'arrow_down', 'arrow_left', 'arrow_right'])
 const visibleKeys = computed(() => {
-  if (!gestures.enabled.value) return selectedKeys.value
+  if (gestures.mode.value !== 'gesture') return selectedKeys.value
   return selectedKeys.value.filter(def => !GESTURE_HIDDEN_KEYS.has(def.id))
 })
 
@@ -322,9 +323,11 @@ function onKeyConfigSaved() {
   keyConfigDrawer.close()
 }
 
-function handleGestureToggle() {
-  gestures.toggle()
-  toast.show(gestures.enabled.value ? t('terminal.gesturesOn') : t('terminal.gesturesOff'), { icon: '✋', type: 'info', duration: 1200 })
+function handleModeCycle() {
+  gestures.cycleMode()
+  const m = gestures.mode.value
+  const label = m === 'browse' ? t('terminal.modeBrowse') : m === 'gesture' ? t('terminal.modeGesture') : t('terminal.modeSelection')
+  toast.show(label, { icon: m === 'selection' ? '✂️' : '✋', type: 'info', duration: 1200 })
   focusTerminal()
 }
 
@@ -455,7 +458,7 @@ const gestures = useTerminalGestures(
 )
 
 // Re-evaluate fade when gesture toggle changes visible buttons
-watch(() => gestures.enabled.value, () => nextTick(refreshToolbarFade))
+watch(() => gestures.mode.value, () => nextTick(refreshToolbarFade))
 
 // Re-bind gesture listeners when switching/creating tabs (container element changes).
 // Use double nextTick to ensure mountTabToContainer has already run.
@@ -563,7 +566,7 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
 
   // Context menu handler — suppress long-press context menu while gestures are enabled
   const contextMenuHandler = (e: Event) => {
-    if (shouldPreventTerminalContextMenu(gestures.enabled.value)) {
+    if (shouldPreventTerminalContextMenu(gestures.mode.value !== 'browse')) {
       e.preventDefault()
     }
   }
@@ -1321,6 +1324,12 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 }
 
 .gesture-toggle { flex-shrink: 0; }
+
+.gesture-toggle.mode-selection {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
 
 .toolbar-scroll {
   display: flex;
