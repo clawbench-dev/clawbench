@@ -36,6 +36,7 @@ import { copyText } from '@/utils/clipboard.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
 import { useDialog } from '@/composables/useDialog.ts'
+import { useCodeStickyScroll } from '@/composables/useCodeStickyScroll.ts'
 
 const props = defineProps({
     file: Object,
@@ -43,6 +44,8 @@ const props = defineProps({
     language: { type: String, default: 'plaintext' },
     wordWrap: { type: Boolean, default: false },
     showLineNumbers: { type: Boolean, default: true },
+    /** VS Code-style sticky scroll: pin enclosing scope definition lines to the top. */
+    stickyScroll: { type: Boolean, default: true },
     /** false = read-only browse (default); true = source editing */
     editable: { type: Boolean, default: false },
     saving: { type: Boolean, default: false },
@@ -130,6 +133,13 @@ const codeHighlightStyle = HighlightStyle.define([
     { tag: [tags.strong], fontWeight: 'bold' },
     { tag: [tags.quote], color: 'var(--code-syntax-comment)', fontStyle: 'italic' },
 ])
+
+// Sticky scroll (browse mode only): pin enclosing scope definition lines to the top.
+const stickyScrollEnabled = () => props.stickyScroll && !props.editable
+const sticky = useCodeStickyScroll({
+    highlighter: codeHighlightStyle,
+    onStickyClick: (lineNum) => scrollToLine(lineNum),
+})
 
 // ─── Compartments for dynamically toggled extensions ───
 const readonlyCompartment = new Compartment()
@@ -231,6 +241,13 @@ function handleSelectionChange(update) {
 
 const selectionExtension = EditorView.updateListener.of(handleSelectionChange)
 
+// Re-measure the sticky overlay whenever the editor geometry changes (resize,
+// line-number toggle, wrap toggle, doc height shifts) so its content offset and
+// full-width row stay aligned with the code lines.
+const geometryExtension = EditorView.updateListener.of((update) => {
+    if (update.geometryChanged) sticky.refresh()
+})
+
 // ─── Edit state tracking (undo/redo availability, dirty) ───
 // Track the saved content snapshot so dirty = current doc differs from saved version.
 let savedSnapshot = ''
@@ -329,6 +346,7 @@ function buildAllExtensions() {
         interactionExtension,
         selectionExtension,
         editStateExtension,
+        geometryExtension,
         jumpFlashCompartment.of([]),
         overlayCompartment.of([]),
     ]
@@ -367,6 +385,7 @@ onMounted(() => {
     savedSnapshot = props.content || ''
     recomputeOverlay()
     mountLang()
+    sticky.init(view.value, props.file?.path, stickyScrollEnabled())
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
 })
 
@@ -375,6 +394,7 @@ onUnmounted(() => {
     if (scrollRAF) cancelAnimationFrame(scrollRAF)
     if (flashTimer) clearTimeout(flashTimer)
     if (selDebounceTimer) clearTimeout(selDebounceTimer)
+    sticky.teardown()
     view.value?.destroy()
     view.value = null
 })
@@ -389,9 +409,26 @@ watch([() => props.editable], () => {
     dirty.value = false
     savedSnapshot = props.content || ''
 })
-watch([() => props.showLineNumbers], () => reconfigure(lineNumbersCompartment, props.showLineNumbers ? [lineNumbers()] : []))
-watch([() => props.wordWrap], () => reconfigure(wrapCompartment, props.wordWrap ? [EditorView.lineWrapping] : []))
+watch([() => props.showLineNumbers], () => {
+    reconfigure(lineNumbersCompartment, props.showLineNumbers ? [lineNumbers()] : [])
+    // Line numbers shift the content right; re-measure the sticky overlay offset.
+    sticky.refresh()
+})
+watch([() => props.wordWrap], () => {
+    reconfigure(wrapCompartment, props.wordWrap ? [EditorView.lineWrapping] : [])
+    sticky.refresh()
+})
 watch([() => props.language], () => mountLang())
+
+// Sticky scroll: enable/disable when browse/edit mode or the toggle changes.
+// Re-init on enabling so definition lines are re-fetched against the current doc.
+watch(stickyScrollEnabled, (on) => {
+    if (on) {
+        sticky.init(view.value, props.file?.path, true)
+    } else {
+        sticky.setEnabled(false)
+    }
+})
 
 // Rebuild overlay decorations whenever diff/flash/path inputs change.
 watch([diffMarkers, flashRanges, flashType, () => props.content], recomputeOverlay)
@@ -410,6 +447,13 @@ watch(() => props.content, (c) => {
         dirty.value = false
     }
     savedSnapshot = next
+    // Sticky def lines may have shifted; clear the highlight cache and recompute.
+    if (view.value) sticky.refresh()
+})
+
+// Re-init sticky scroll when switching to a different file (new symbol set).
+watch(() => props.file?.path, (path) => {
+    if (view.value) sticky.init(view.value, path, stickyScrollEnabled())
 })
 
 function getValue() {
@@ -580,4 +624,57 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value })
 
 /* Word-wrap mode */
 .cm-viewer .cm-lineWrapping { word-break: break-all; }
+
+/* Sticky scroll overlay (VS Code-style pinned scope definition lines).
+   The overlay is injected into .cm-scroller as a sibling of .cm-content, so
+   position:sticky pins it to the scroller's top while the code scrolls beneath.
+   height:0 keeps it from pushing content; rows overflow above it. */
+.cm-viewer .sticky-scroll-overlay {
+    position: sticky;
+    top: 0;
+    left: 0;
+    height: 0;
+    width: 0;
+    overflow: visible;
+    /* .cm-scroller is display:flex; a sticky overlay in the flex row must take no
+       width so it doesn't shrink the .cm-content. Rows overflow to full width via
+       --sticky-width. */
+    flex: 0 0 0;
+    /* Must sit above CodeMirror's line-number gutter, which is position:sticky
+       with z-index:200 — otherwise the gutter numbers cover the sticky rows. */
+    z-index: 210;
+    pointer-events: none;
+}
+.cm-viewer .sticky-line {
+    position: absolute;
+    left: 0;
+    width: var(--sticky-width, 100%);
+    min-width: 0;
+    background: var(--code-bg);
+    border-bottom: 1px solid var(--border-color);
+    opacity: 0.94;
+    cursor: pointer;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
+    font-size: 13px;
+    line-height: 20.8px;
+    pointer-events: auto;
+}
+.cm-viewer .sticky-line:hover {
+    opacity: 1;
+    background: var(--bg-tertiary);
+}
+/* Code text fills the row from the editor's left edge (no gutter offset/number). */
+.cm-viewer .sticky-line-code {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    overflow: hidden;
+    white-space: pre;
+}
+.cm-viewer .cm-lineWrapping .sticky-line-code {
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: break-word;
+}
 </style>

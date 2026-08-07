@@ -17,6 +17,8 @@ vi.mock('@/stores/app.ts', () => ({ store: { state: { projectRoot: '/p', homeDir
 vi.mock('@/composables/useQuoteQuestion.ts', () => ({ useQuoteQuestion: () => quoteMocks }))
 const dialogMocks = vi.hoisted(() => ({ confirm: vi.fn() }))
 vi.mock('@/composables/useDialog.ts', () => ({ useDialog: () => ({ confirm: dialogMocks.confirm, prompt: vi.fn(), alert: vi.fn(), resolve: vi.fn(), state: ref({ visible: false }) }) }))
+const fetchSymbolsMock = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useCodeSymbols.ts', () => ({ fetchCodeSymbols: (...a: unknown[]) => fetchSymbolsMock(...a) }))
 
 import CodeMirrorViewer from '../CodeMirrorViewer.vue'
 
@@ -32,6 +34,8 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     quoteMocks.showBar.mockClear()
     quoteMocks.hideBar.mockClear()
     dialogMocks.confirm.mockReset()
+    fetchSymbolsMock.mockReset()
+    fetchSymbolsMock.mockResolvedValue(null)
   })
 
   function mountViewer(props = {}) {
@@ -123,6 +127,20 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     mountViewer({ content: 'hello world' })
     await sleep(50)
     expect(document.body.textContent).toContain('hello world')
+  })
+
+  it('fetches scope symbols for sticky scroll in browse mode and disables it in edit mode', async () => {
+    fetchSymbolsMock.mockResolvedValue({ lang: 'ts', symbols: [{ name: 'a', kind: 'function', line: 1, endLine: 2, level: 1 }] })
+    const wrapper = mountViewer({ file: { path: '/tmp/main.ts' }, content: 'function a(){}\nfunction b(){}\n' })
+    await sleep(80)
+    // browse mode: sticky scroll fetches symbols from the backend
+    expect(fetchSymbolsMock).toHaveBeenCalled()
+    // edit mode: sticky scroll is disabled (no further fetch, no overlay)
+    fetchSymbolsMock.mockClear()
+    await wrapper.setProps({ editable: true })
+    await sleep(50)
+    expect(fetchSymbolsMock).not.toHaveBeenCalled()
+    expect(document.querySelector('.sticky-scroll-overlay')).toBeNull()
   })
 
   it('updates the document when content prop changes', async () => {

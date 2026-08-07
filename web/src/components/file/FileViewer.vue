@@ -9,6 +9,7 @@
       :search-open="searchOpen"
       :word-wrap="wordWrap"
       :show-line-numbers="showLineNumbers"
+      :sticky-scroll="stickyScroll"
       :overlay-open="fileNav.overlayOpen.value"
       :recent-files-available="recentFilesAvailable"
       :editing="editing"
@@ -22,6 +23,7 @@
       @open-as-text="handleOpenAsText"
       @toggle-word-wrap="toggleWordWrap"
       @toggle-line-numbers="toggleLineNumbers"
+      @toggle-sticky-scroll="toggleStickyScroll"
       @refresh="emit('refresh')"
       @overlay-close="emit('overlayClose')"
       @open-recent-files="emit('openRecentFiles')"
@@ -140,6 +142,7 @@
           :language="rawFileLanguage"
           :word-wrap="wordWrap"
           :show-line-numbers="showLineNumbers"
+          :sticky-scroll="stickyScroll"
           :editable="editing"
           :saving="saving"
           @save="handleSave"
@@ -164,6 +167,7 @@
           language="xml"
           :word-wrap="wordWrap"
           :show-line-numbers="showLineNumbers"
+          :sticky-scroll="stickyScroll"
           :editable="false"
         />
       </template>
@@ -182,6 +186,7 @@
             :language="rawFileLanguage"
             :word-wrap="wordWrap"
             :show-line-numbers="showLineNumbers"
+            :sticky-scroll="stickyScroll"
             :editable="false"
           />
         </div>
@@ -199,6 +204,7 @@
           :language="rawFileLanguage"
           :word-wrap="wordWrap"
           :show-line-numbers="showLineNumbers"
+          :sticky-scroll="stickyScroll"
           :editable="editing"
           :saving="saving"
           @save="handleSave"
@@ -332,6 +338,7 @@ function handleFitWidth() {
 const { localConfig, setLocalConfig } = useSettingsConfig()
 const wordWrap = computed(() => !!localConfig.wordWrap)
 const showLineNumbers = computed(() => localConfig.lineNumbers !== false)
+const stickyScroll = computed(() => localConfig.stickyScroll !== false)
 
 function toggleWordWrap() {
     setLocalConfig('wordWrap', !wordWrap.value)
@@ -339,6 +346,10 @@ function toggleWordWrap() {
 
 function toggleLineNumbers() {
     setLocalConfig('lineNumbers', !showLineNumbers.value)
+}
+
+function toggleStickyScroll() {
+    setLocalConfig('stickyScroll', !stickyScroll.value)
 }
 
 // Per-file scroll position cache

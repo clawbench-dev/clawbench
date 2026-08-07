@@ -26,6 +26,7 @@ const i18n = createI18n({
           renderedView: 'Rendered',
           wordWrap: 'Word Wrap',
           lineNumbers: 'Line Numbers',
+          stickyScroll: 'Sticky Scroll',
           fileHistory: 'File history',
           shareExternal: 'Share',
           exportHtml: 'Export HTML',
@@ -102,6 +103,7 @@ describe('FileHeader', () => {
         searchOpen: false,
         wordWrap: true,
         showLineNumbers: true,
+        stickyScroll: true,
         overlayOpen: false,
         recentFilesAvailable: 0,
         ...props,
@@ -147,6 +149,15 @@ describe('FileHeader', () => {
     vm.$.setupState.handleToggleLineNumbers()
     await nextTick()
     expect(wrapper.emitted('toggleLineNumbers')).toBeTruthy()
+    expect(getMenuOpen(wrapper)).toBe(false)
+  })
+
+  it('emits toggleStickyScroll when handler is called', async () => {
+    const wrapper = mountHeader({ viewMode: 'source' })
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleToggleStickyScroll()
+    await nextTick()
+    expect(wrapper.emitted('toggleStickyScroll')).toBeTruthy()
     expect(getMenuOpen(wrapper)).toBe(false)
   })
 
@@ -265,10 +276,11 @@ describe('FileHeader', () => {
       const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
-      // wordWrap, lineNumbers should not be in toolbar IDs
+      // wordWrap, lineNumbers, stickyScroll should not be in toolbar IDs
       const ids = vm.$.setupState.toolbarInlineIds
       expect(ids).not.toContain('wordWrap')
       expect(ids).not.toContain('lineNumbers')
+      expect(ids).not.toContain('stickyScroll')
       expect(ids).not.toContain('toggleView')
       // attach should still be available
       expect(ids).toContain('attach')

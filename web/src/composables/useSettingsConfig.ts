@@ -14,6 +14,7 @@ function migrateLegacyKeys() {
     showHidden: { key: 'clawbenchShowHidden', format: 'json' },
     wordWrap: { key: 'clawbench-word-wrap', format: 'raw' },
     lineNumbers: { key: 'clawbench-line-numbers', format: 'raw' },
+    stickyScroll: { key: 'clawbench-sticky-scroll', format: 'raw' },
     fileView: { key: 'clawbench-file-view', format: 'raw' },
     terminalFontSize: { key: 'clawbench-terminal-font-size', format: 'raw' },
   }
@@ -95,6 +96,10 @@ const legacyKeys: Record<string, {
   },
   lineNumbers: {
     key: 'clawbench-line-numbers',
+    format: 'raw',
+  },
+  stickyScroll: {
+    key: 'clawbench-sticky-scroll',
     format: 'raw',
   },
   fileView: {
@@ -239,6 +244,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   showHidden: false,
   wordWrap: true,
   lineNumbers: false,
+  stickyScroll: true,
   fileView: 'list',
   terminalFontSize: 12,
   logCapture: false,
