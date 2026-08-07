@@ -768,7 +768,6 @@ function handleReconnect(tab: TerminalTab) {
 }
 
 // Rebuild (re-create) the active tab's session
-// Copy output from active tab
 function executeCommand(cmd: { id: number; label: string; command: string }) {
   activeTab.value?.session.sendInput(cmd.command + '\r')
   showCommands.value = false
