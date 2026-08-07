@@ -354,16 +354,20 @@ export function useTerminalGestures(
     resetDisabledScrollState()
   }
 
-  function onSelectionTouchStart(e: TouchEvent) {
-    if (e.touches.length !== 1) return
-    preventNativeTouch(e)
+  function viewportRowForY(clientY: number): number {
     const el = elementRef.value
-    if (!el) return
-    const touch = e.touches[0]
+    if (!el) return 0
     const rect = el.getBoundingClientRect()
     const cellH = callbacks.getCellHeight?.() ?? 0
     const viewportRows = cellH > 0 ? Math.max(1, Math.floor(rect.height / cellH)) : 1
-    selectionAnchorRow = clientYToViewportRow(touch.clientY, rect.top, cellH, viewportRows)
+    return clientYToViewportRow(clientY, rect.top, cellH, viewportRows)
+  }
+
+  function onSelectionTouchStart(e: TouchEvent) {
+    if (e.touches.length !== 1) return
+    preventNativeTouch(e)
+    const touch = e.touches[0]
+    selectionAnchorRow = viewportRowForY(touch.clientY)
     selectionActive = true
     callbacks.onSelectionStart?.(selectionAnchorRow)
   }
@@ -371,20 +375,16 @@ export function useTerminalGestures(
   function onSelectionTouchMove(e: TouchEvent) {
     if (e.touches.length !== 1 || !selectionActive) return
     preventNativeTouch(e)
-    const el = elementRef.value
-    if (!el) return
     const touch = e.touches[0]
-    const rect = el.getBoundingClientRect()
-    const cellH = callbacks.getCellHeight?.() ?? 0
-    const viewportRows = cellH > 0 ? Math.max(1, Math.floor(rect.height / cellH)) : 1
-    const current = clientYToViewportRow(touch.clientY, rect.top, cellH, viewportRows)
+    const current = viewportRowForY(touch.clientY)
     callbacks.onSelectionExtend?.(selectionAnchorRow, current)
   }
 
   function onSelectionTouchEnd(_e: TouchEvent) {
+    const wasActive = selectionActive
     selectionActive = false
     selectionAnchorRow = -1
-    callbacks.onSelectionEnd?.()
+    if (wasActive) callbacks.onSelectionEnd?.()
   }
 
   function onSelectionTouchCancel() {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
-import { TerminalMode, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
+import { shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 
 function makeTouch(clientX: number, clientY: number): Touch {
   return { clientX, clientY } as Touch
