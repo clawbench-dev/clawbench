@@ -89,6 +89,28 @@ export function findEnclosingScopes(symbols: ScopeSymbol[], lineNumber: number):
     .sort((a, b) => (b.endLine - b.line) - (a.endLine - a.line))
 }
 
+export interface StickyOffsets {
+  /** left offset of the code text relative to the sticky overlay */
+  left: number
+  /** width of the sticky row so it fills the whole content container */
+  width: number
+}
+
+/**
+ * Resolve the sticky row's horizontal geometry. The sticky overlay is a flex item
+ * whose left offset varies depending on whether the line-number gutter was present
+ * at initial layout or toggled later (it can sit at x=0 or x=gutterWidth). Offsets
+ * are therefore measured relative to the overlay so the code text always aligns with
+ * the content's left edge and the row fills the content's right edge — avoiding a
+ * phantom "extra line-number column" when the gutter is on from initial load.
+ */
+export function computeStickyOffsets(overlayLeft: number, contentLeft: number, contentRight: number): StickyOffsets {
+  return {
+    left: Math.max(0, contentLeft - overlayLeft),
+    width: Math.max(0, contentRight - overlayLeft),
+  }
+}
+
 /**
  * Compute the sticky lines to pin for a given scroll position.
  *

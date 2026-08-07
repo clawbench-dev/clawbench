@@ -3,7 +3,7 @@ import { highlightTree, type Highlighter } from '@lezer/highlight'
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
 import type { EditorView } from '@codemirror/view'
 import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
-import { buildHighlightedHtml, buildStickyLines, type ScopeSymbol, type StickyLine } from '@/utils/codeStickyScroll'
+import { buildHighlightedHtml, buildStickyLines, computeStickyOffsets, type ScopeSymbol, type StickyLine } from '@/utils/codeStickyScroll'
 
 /**
  * VS Code-style sticky scroll for the CodeMirror viewer.
@@ -112,8 +112,9 @@ export function useCodeStickyScroll(options: StickyOptions = {}) {
     const contentEl = scroller.querySelector('.cm-content') as HTMLElement | null
     const contentLeft = contentEl ? contentEl.getBoundingClientRect().left - scrollerRect.left : overlayLeft
     const contentRight = contentEl ? contentEl.getBoundingClientRect().right - scrollerRect.left : overlayLeft + scroller.clientWidth
-    overlayEl.style.setProperty('--sticky-left', `${Math.max(0, contentLeft - overlayLeft)}px`)
-    overlayEl.style.setProperty('--sticky-width', `${Math.max(0, contentRight - overlayLeft)}px`)
+    const { left, width } = computeStickyOffsets(overlayLeft, contentLeft, contentRight)
+    overlayEl.style.setProperty('--sticky-left', `${left}px`)
+    overlayEl.style.setProperty('--sticky-width', `${width}px`)
     overlayEl.textContent = ''
     for (const s of rows) {
       const row = document.createElement('div')

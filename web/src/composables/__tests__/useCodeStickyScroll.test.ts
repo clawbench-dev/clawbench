@@ -5,6 +5,7 @@ import {
   firstVisibleLineNumber,
   findEnclosingScopes,
   buildStickyLines,
+  computeStickyOffsets,
   type ScopeSymbol,
   type StickyView,
 } from '@/utils/codeStickyScroll'
@@ -86,6 +87,38 @@ describe('buildHighlightedHtml', () => {
 
   it('returns fully escaped text when there are no ranges', () => {
     expect(buildHighlightedHtml('<x>', [])).toBe('&lt;x&gt;')
+  })
+
+  it('renders the exact highlighted HTML for a function line using line-relative ranges', () => {
+    // Regression: highlightTree reports absolute doc offsets; ranges must be shifted
+    // to be relative to the line start so buildHighlightedHtml slices the 0-based text
+    // correctly. Otherwise the whole line renders as plain text plus empty spans.
+    const text = 'func Foo(x int, y string) {'
+    const ranges = [
+      { from: 0, to: 4, classes: 'ͼ6' },
+      { from: 5, to: 8, classes: 'ͼ9' },
+      { from: 9, to: 10, classes: 'ͼb' },
+      { from: 11, to: 14, classes: 'ͼb' },
+      { from: 16, to: 17, classes: 'ͼb' },
+      { from: 18, to: 24, classes: 'ͼb' },
+    ]
+    expect(buildHighlightedHtml(text, ranges)).toBe(
+      '<span class="ͼ6">func</span> <span class="ͼ9">Foo</span>(<span class="ͼb">x</span> <span class="ͼb">int</span>, <span class="ͼb">y</span> <span class="ͼb">string</span>) {',
+    )
+  })
+
+  it('emits plain text for gaps and empty spans when ranges use absolute offsets into a short slice', () => {
+    // Guards against the previous bug where absolute doc offsets (>> text length) were
+    // passed as range positions: the leading plain text is emitted once and the rest are
+    // empty spans. Documents that ranges must be line-relative.
+    const text = 'func Foo(x int) {'
+    const ranges = [
+      { from: 300, to: 304, classes: 'ͼ6' },
+      { from: 305, to: 308, classes: 'ͼ9' },
+    ]
+    expect(buildHighlightedHtml(text, ranges)).toBe(
+      'func Foo(x int) {<span class="ͼ6"></span><span class="ͼ9"></span>',
+    )
   })
 })
 
@@ -174,5 +207,35 @@ describe('buildStickyLines', () => {
     expect(rows.map((r) => r.lineNum)).toEqual([1, 10, 20, 30])
     // tops stack contiguously
     expect(rows.map((r) => r.top)).toEqual([0, 20, 40, 60])
+  })
+})
+
+// ─── computeStickyOffsets ─────────────────────────────────────────────────────
+describe('computeStickyOffsets', () => {
+  it('aligns the code text to the content left when the overlay sits at x=0 (gutter toggled on later)', () => {
+    // content spans [33, 616], overlay at 0 -> code offset = 33, row fills to 616.
+    const o = computeStickyOffsets(0, 33, 616)
+    expect(o).toEqual({ left: 33, width: 616 })
+  })
+
+  it('produces no phantom gutter offset when the overlay is pushed right by the gutter (gutter on from initial load)', () => {
+    // Regression: with line numbers on from the start, the overlay is a flex item at
+    // x=gutterWidth (33). The code offset relative to the overlay must be 0 (so its
+    // absolute position is 33, aligned with content) — NOT 33 again, which caused an
+    // extra ghost line-number column (code at 66).
+    const o = computeStickyOffsets(33, 33, 616)
+    expect(o.left).toBe(0)
+    expect(o.width).toBe(583)
+  })
+
+  it('fills the whole content container width regardless of overlay offset', () => {
+    expect(computeStickyOffsets(0, 0, 616).width).toBe(616)
+    expect(computeStickyOffsets(33, 33, 616).width).toBe(583)
+  })
+
+  it('clamps negative offsets to zero (no horizontal overflow)', () => {
+    const o = computeStickyOffsets(40, 33, 616) // overlay somehow right of content
+    expect(o.left).toBe(0)
+    expect(o.width).toBe(576)
   })
 })
