@@ -14,7 +14,7 @@
       <button v-if="dirty" class="editor-btn icon-btn primary" :disabled="saving" @mousedown.prevent @click="emit('save', getValue())" :title="t('file.editor.save')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       </button>
-      <button class="editor-btn icon-btn" @mousedown.prevent @click="emit('exitEdit')" :title="t('file.editor.exitEdit')">
+      <button class="editor-btn icon-btn" @mousedown.prevent @click="handleExit" :title="t('file.editor.exitEdit')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
@@ -35,6 +35,7 @@ import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
+import { useDialog } from '@/composables/useDialog.ts'
 
 const props = defineProps({
     file: Object,
@@ -58,6 +59,7 @@ const editorHost = ref(null)
 const view = shallowRef(null)
 const diffLineMap = ref(new Map())
 const quoteQuestion = useQuoteQuestion()
+const dialog = useDialog()
 const canUndo = ref(false)
 const canRedo = ref(false)
 const dirty = ref(false)
@@ -386,6 +388,30 @@ function handleUndo() {
 
 function handleRedo() {
     if (view.value) redo(view.value)
+}
+
+// Exit edit mode. If there are unsaved changes, confirm whether to save,
+// discard, or cancel (stay editing) instead of silently exiting.
+async function handleExit() {
+    if (!dirty.value) {
+        emit('exitEdit')
+        return
+    }
+    const choice = await dialog.confirm(t('file.editor.confirmExit'), {
+        confirmText: t('file.editor.save'),
+        cancelText: t('common.cancel'),
+        extraText: t('file.editor.dontSave'),
+        extraPrimedText: t('common.confirm'),
+        onExtraAction: () => {},
+    })
+    if (choice === true) {
+        // Save and exit (FileViewer's handleSave reloads content and leaves edit mode).
+        emit('save', getValue())
+    } else if (choice === null) {
+        // Discard changes and exit.
+        emit('exitEdit')
+    }
+    // choice === false → user cancelled; stay in edit mode.
 }
 
 defineExpose({ getValue, scrollToLine, getView: () => view.value })

@@ -742,6 +742,11 @@ export default {
       saved: 'Saved',
       saveFailed: 'Save failed',
       dirty: 'Unsaved changes',
+      undo: 'Undo',
+      redo: 'Redo',
+      exitEdit: 'Exit edit',
+      confirmExit: 'You have unsaved changes. Do you want to save them before leaving?',
+      dontSave: "Don't save",
     },
     overlay: {
       back: 'Back',

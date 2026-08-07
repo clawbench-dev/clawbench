@@ -15,6 +15,8 @@ vi.mock('@/composables/useMarkdownDiff.ts', () => ({ diffMarkers: ref([]), openD
 vi.mock('@/composables/useFileRefresh.ts', () => ({ flashRanges: ref([]), flashType: ref('add') }))
 vi.mock('@/stores/app.ts', () => ({ store: { state: { projectRoot: '/p', homeDir: '/home' } } }))
 vi.mock('@/composables/useQuoteQuestion.ts', () => ({ useQuoteQuestion: () => quoteMocks }))
+const dialogMocks = vi.hoisted(() => ({ confirm: vi.fn() }))
+vi.mock('@/composables/useDialog.ts', () => ({ useDialog: () => ({ confirm: dialogMocks.confirm, prompt: vi.fn(), alert: vi.fn(), resolve: vi.fn(), state: ref({ visible: false }) }) }))
 
 import CodeMirrorViewer from '../CodeMirrorViewer.vue'
 
@@ -29,6 +31,7 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     document.body.innerHTML = ''
     quoteMocks.showBar.mockClear()
     quoteMocks.hideBar.mockClear()
+    dialogMocks.confirm.mockReset()
   })
 
   function mountViewer(props = {}) {
@@ -161,5 +164,56 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(redo(view)).toBe(true)
     await sleep(30)
     expect(view.state.doc.toString()).toBe('const ab = 1\n')
+  })
+
+  // ── Exit confirmation when dirty ──
+  async function clickExit(wrapper: ReturnType<typeof mountViewer>) {
+    const btns = wrapper.findAll('.editor-btn.icon-btn')
+    await btns[btns.length - 1].trigger('click')
+    await sleep(30)
+  }
+
+  it('does not prompt on exit when not dirty', async () => {
+    const wrapper = mountViewer({ content: 'clean\n', editable: true })
+    await sleep(80)
+    await clickExit(wrapper)
+    expect(dialogMocks.confirm).not.toHaveBeenCalled()
+    expect(wrapper.emitted('exitEdit')).toBeTruthy()
+  })
+
+  it('prompts on exit when dirty and saves on confirm', async () => {
+    dialogMocks.confirm.mockResolvedValue(true)
+    const wrapper = mountViewer({ content: 'hello\n', editable: true })
+    await sleep(80)
+    wrapper.vm.getView().dispatch({ changes: { from: 5, to: 5, insert: '!' } }) // make dirty -> "hello!\n"
+    await sleep(30)
+    await clickExit(wrapper)
+    expect(dialogMocks.confirm).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('exitEdit')).toBeFalsy()
+    expect(wrapper.emitted('save')?.[0][0]).toBe('hello!\n')
+  })
+
+  it('prompts on exit when dirty and discards on dont-save', async () => {
+    dialogMocks.confirm.mockResolvedValue(null)
+    const wrapper = mountViewer({ content: 'hello\n', editable: true })
+    await sleep(80)
+    wrapper.vm.getView().dispatch({ changes: { from: 5, to: 5, insert: '!' } }) // make dirty
+    await sleep(30)
+    await clickExit(wrapper)
+    expect(dialogMocks.confirm).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('exitEdit')).toBeTruthy()
+    expect(wrapper.emitted('save')).toBeFalsy()
+  })
+
+  it('stays in edit mode when exit confirmation is cancelled', async () => {
+    dialogMocks.confirm.mockResolvedValue(false)
+    const wrapper = mountViewer({ content: 'hello\n', editable: true })
+    await sleep(80)
+    wrapper.vm.getView().dispatch({ changes: { from: 5, to: 5, insert: '!' } }) // make dirty
+    await sleep(30)
+    await clickExit(wrapper)
+    expect(dialogMocks.confirm).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('exitEdit')).toBeFalsy()
+    expect(wrapper.emitted('save')).toBeFalsy()
   })
 })

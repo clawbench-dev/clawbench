@@ -743,6 +743,11 @@ export default {
       saved: '保存成功',
       saveFailed: '保存失败',
       dirty: '未保存的修改',
+      undo: '撤销',
+      redo: '重做',
+      exitEdit: '退出编辑',
+      confirmExit: '你有未保存的修改，退出前是否保存？',
+      dontSave: '不保存',
     },
     overlay: {
       back: '返回',
