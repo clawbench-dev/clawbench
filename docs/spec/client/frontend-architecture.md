@@ -53,7 +53,7 @@ flowchart LR
 - **摘要切换**：`SummaryToggle` 组件在聊天消息中提供按钮模式切换摘要/原文，在任务执行详情中提供标签页模式——两种场景共享同一摘要数据源
 - **首次访问欢迎面板**：`WelcomeOverlay` 组件在用户首次访问时显示，展示后端检测状态与安装入口。不是 5 步分步向导——Agent 创建通过自动发现或 `AgentInstallDialog` 完成
 - **Android 硬件返回键**：全局 `useBackHandler` 注册表管理返回导航，Android `onBackPressed` 委托给 JS 层——注册了返回处理器则拦截（不退出 App），未注册则传递给原生处理。处理器按显式优先级排序（overlay 级 1000 > page 级 100），同一优先级内最近注册的优先，确保覆盖层返回不被页面级处理器截获
-- **Sticky Scroll**：`useStickyScroll` 为多级标题提供粘性定位，支持范围过期和点击遮挡处理。长文档浏览时保持上下文可见
+- **Sticky Scroll**：`useStickyScroll` 为多级标题提供粘性定位，支持范围过期和点击遮挡处理。`useCodeStickyScroll` 为 CodeMirror 代码浏览器提供 VS Code 风格的 sticky scroll，将外层作用域定义行钉顶显示（最多 5 行），点击可平滑滚动到定义位置。长文档浏览时保持上下文可见
 - **系统资源监控**：`useSystemResources` composable 周期轮询 `GET /api/system/resources` 获取 CPU、内存、磁盘、网络和负载指标，引用计数共享轮询定时器；`SystemResourcesPanel` 组件在 AppHeader 的 Gauge 图标弹出菜单中展示实时资源状态。页面可见时自动轮询，隐藏时暂停；WS 断线时隐藏资源数据，改为展示连接状态指示器（disconnected/reconnecting）。详见 [系统资源监控](../infra/system-resources.md)
 - **消息聚类抽屉**：`useMessageClusters` composable 封装消息聚类计算 API（含 WS 进度监听），`MessageClustersDrawer` 展示聚类结果和进度条，聚类中的消息变体可直接一键添加为快捷发送
 - **键盘交互**：`DialogOverlay` 支持 Esc 关闭和 Enter 确认；`BottomSheet` 支持 Esc 关闭（焦点在输入框时跳过，避免干扰 IME/原生输入行为）。覆盖层自动聚焦以立即接收键盘事件
@@ -66,6 +66,9 @@ flowchart LR
 - **thinking 惰性加载**：`useThinkingContent` composable 封装 thinking Block 的按需加载逻辑。流结束后 thinking Block 只显示缩略信息（`think_id`），用户点击展开时通过 `GET /api/ai/chat/thinking` 加载完整文本。缓存按 `think_id` 存储，会话切换时自动清空
 - **Read 工具行范围展示**：Read 工具调用结果中包含行范围（`startLine-endLine`）时，前端将路径展示为 `path:start-end` 格式，帮助用户快速定位 AI 关注的代码区域
 - **统一 Markdown 渲染器**：`useMarkdownRenderer` 为所有 Markdown 渲染场景（聊天、文件预览等）提供统一管线：`marked.parse` → KaTeX 字符级渲染（`renderToString`，避免与 Vue `v-html` 冲突）→ DOMPurify → 图片路径修正 → 表格包装 → 代码块/表格标注头 → 文件路径/commit hash/localhost URL/worktree 路径标注。`skipEnhancements=true` 用于流式期间。返回 `RenderResult { html, detectedPaths[], detectedSHAs[] }` 供异步验证
+- **代码编辑器**：CodeMirrorViewer 统一代码浏览与编辑，通过 `editable` prop 切换模式。`codeEditorLang` 工具支持 30+ 语言扩展（高频语言静态导入，低频语言懒加载），含 Markdown 代码围栏嵌套语法高亮。编辑模式使用 `shallowRef` 管理 EditorView 防止 Vue reactive proxy 破坏 undo/redo
+- **终端选择模式**：`useTerminalGestures` 实现三模式手势系统（浏览/手势/选择），选择模式下触摸坐标映射到 xterm 单元格进行文本选取，浮动复制栏提供一键复制。`terminalBlurUtils` 处理 Android WebView 键盘焦点稳定性
+- **搜索工具集**：`searchUtils` 提供纯搜索工具函数：文本高亮、语法感知标记、原始内容搜索、基于 rune 的位置匹配（RAG 搜索）和 Markdown 图片布局稳定性检测（搜索跳转修正）。`markdownScroll` 提供 Markdown 渲染预览与源码编辑间的标题锚定滚动同步
 
 ### appLog 统一日志（强制规范）
 

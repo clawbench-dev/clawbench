@@ -53,14 +53,16 @@ sequenceDiagram
 
 ### 功能清单
 
-- **WebSocket 单通道**：所有实时推送走 `GET /api/ai/events/ws`（`internal/handler/handler.go`），无独立聊天流 SSE
+- **WebSocket 单通道**：所有实时推送走 `GET /api/ai/events/ws`，无独立聊天流 SSE
   - 聊天内容事件：`ChatStreamData` 携带 `event_type`（`content`/`thinking`/`tool_use` 等子事件），通过 `StreamHub.EmitToSession` 推送
-  - 系统事件信封：`{type:"event", event:"session_update"|"task_update"|"summary_update"}`（`internal/ws/protocol.go`）
+  - 系统事件信封：`{type:"event", event:"session_update"|"task_update"|"summary_update"}`
   - 信号事件：`replay_done`（LoadSession 异步回放完成，空 payload）、`thinking_done`、`done`（均为空 payload）
-  - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong` 六种客户端消息（`internal/ws/protocol.go`）
+  - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong` 六种客户端消息
 - **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`
-- **订阅超时清理**：客户端超过 `staleTimeout = 120s` 无活动（`manager.go`）即清理订阅，避免僵尸连接
+- **订阅超时清理**：客户端超过 120s 无活动即清理订阅，避免僵尸连接
 - **重连时 ACP 状态重发**：`StreamHub` 在客户端重新订阅时，重新推送该会话缓存的 ACP 状态（mode/effort/config/commands），使断线后状态保持一致
+- **前端重连状态同步**：WS 重连后前端主动检查当前会话是否仍在运行（通过 `loadSessionsOnce` 刷新状态）。若会话在断线期间完成，清理卡住的流式状态并重新加载历史。页面可见性恢复时若仍在流式中，断开并重连以重新同步状态。`session_update` 事件到达时若流式状态不一致（如 `completed` 但 `loading` 仍为 true），强制清理并重载历史——防止因 WS 事件丢失导致界面卡死
+- **subscribeOnly 模式**：前端在回放等待中的会话使用 `subscribeOnly` 模式连接 WS 流——仅接收事件，不触发流式 assistant 消息创建。适用于 LoadSession 异步回放尚未完成的场景
 - **HTTP cancel 兜底**：`StreamHub` 还提供 `POST /api/ai/cancel` HTTP 端点作为 cancel 备选通道——WS 不可达时仍能取消（来自 `handler.go`，由 `SessionExecutor` 监听）
 
 ### 旁注：独立小通道（与聊天无关）
@@ -76,6 +78,6 @@ sequenceDiagram
 ### 设计要点
 
 - **WS 单通道统一推送**：聊天流和系统事件共用 `/api/ai/events/ws`，由 `StreamHub` 做会话级扇出（多客户端订阅同一 session）；避免双通道带来的状态同步问题
-- **断线缓冲只是减震**：缓冲窗口（10s / 50 条）有限，**不是持久化方案**。重连超时（>120s）后通过 `fullStateSync` REST 端点恢复完整状态
+- **断线缓冲只是减震**：缓冲窗口（10s / 50 条）有限，**不是持久化方案**。重连超时（>120s）后客户端通过 REST API 重新加载会话完整状态
 - **客户端 ack 用 `permission_respond`**：WS 客户端消息支持 `permission_respond`（替代旧 HTTP `/api/ai/permission`），ACP 权限待审场景下前端用此消息回传决策
 - **HTTP cancel 兜底**：WS 不可达时（弱网），HTTP cancel 端点仍可工作——`SessionExecutor` 同时监听 WS cancel 消息和 HTTP cancel 调用
