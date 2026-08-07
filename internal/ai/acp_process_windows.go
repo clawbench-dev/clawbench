@@ -5,18 +5,23 @@ package ai
 import (
 	"os"
 	"os/exec"
+	"strconv"
 )
 
 // setProcessGroup is a no-op on Windows. POSIX process groups don't exist;
-// Job Objects would be needed for proper child cleanup. For now, Kill() on
-// the parent process is sufficient for most cases.
+// process-tree cleanup is handled by killProcessGroup via taskkill /T.
 func setProcessGroup(cmd *exec.Cmd) {
 	// Windows: no POSIX process groups
 }
 
-// killProcessGroup kills the process. On Windows, there are no POSIX process
-// groups, so we can only kill the parent. Child processes spawned by npx may
-// survive; cmd.Wait() should still complete once the parent exits.
+// killProcessGroup kills the process and its entire process tree.
+// ACP agents like Claude are spawned via npx (npx → node → claude); killing
+// only the npx parent leaves node and claude alive — leaking memory and
+// holding the stdout/stderr pipes open, which makes cmd.Wait() hang.
+// taskkill /T terminates the process and all its descendants recursively.
 func killProcessGroup(proc *os.Process) {
+	// /F force-terminates, /T kills the whole tree, /PID targets the process.
+	_ = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(proc.Pid)).Run()
+	// Fallback: kill the parent directly if taskkill failed or already exited.
 	_ = proc.Kill()
 }
