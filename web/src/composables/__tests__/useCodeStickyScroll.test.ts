@@ -162,4 +162,17 @@ describe('buildStickyLines', () => {
     const rows = buildStickyLines(view, symbols, 300, 5)
     expect(rows[0]).toMatchObject({ lineNum: 5, height: 60 })
   })
+
+  it('sticks an inner scope once it reaches the bottom of the already-stuck rows, not only past the viewport top', () => {
+    // Four nested scopes, all 20px lines, all enclosing the visible line 27.
+    const view = makeView(40)
+    const symbols = [sym(1, 40), sym(10, 40), sym(20, 40), sym(30, 40)]
+    // scrollTop 530 -> first visible line 27. The 4th def line (line 30, top 580)
+    // is at relative top 50, still BELOW the viewport top (580 > 530) but within the
+    // stack height (50 <= 20+20+20=60), so it must stick rather than wait to leave view.
+    const rows = buildStickyLines(view, symbols, 530, 5)
+    expect(rows.map((r) => r.lineNum)).toEqual([1, 10, 20, 30])
+    // tops stack contiguously
+    expect(rows.map((r) => r.top)).toEqual([0, 20, 40, 60])
+  })
 })

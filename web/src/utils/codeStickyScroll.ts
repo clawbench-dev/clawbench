@@ -91,22 +91,39 @@ export function findEnclosingScopes(symbols: ScopeSymbol[], lineNumber: number):
 
 /**
  * Compute the sticky lines to pin for a given scroll position.
- * Only scopes whose definition line has scrolled above the viewport top are kept,
- * capped at `maxSticky`. `top` accumulates by each previous row's rendered height.
+ *
+ * Nested scopes stack at the top. A scope's definition line sticks as soon as it
+ * reaches the bottom of the already-stuck rows (its relative top is within the
+ * accumulated stack height), NOT only once it has scrolled past the viewport top —
+ * otherwise inner definition lines would slide up underneath the outer stuck rows
+ * before sticking.
+ *
+ * The sticky stack covers the top `accTop` px of the viewport, so the first visible
+ * CONTENT line is below it. Each iteration re-derives that line at `scrollTop + accTop`
+ * to reveal the next inner scope (whose def line may not enclose the raw viewport-top
+ * line). Capped at `maxSticky`. `top` accumulates each row's rendered height.
  */
 export function buildStickyLines(view: StickyView, symbols: ScopeSymbol[], scrollTop: number, maxSticky = 5): StickyLine[] {
-  const firstVisible = firstVisibleLineNumber(view, scrollTop)
-  const enclosing = findEnclosingScopes(symbols, firstVisible)
   const result: StickyLine[] = []
   let accTop = 0
-  for (const sym of enclosing) {
-    if (result.length >= maxSticky) break
-    const from = view.state.doc.line(sym.line).from
-    const block = view.lineBlockAt(from)
-    if (block.top < scrollTop) {
-      result.push({ lineNum: sym.line, top: accTop, height: block.height })
-      accTop += block.height
+  while (result.length < maxSticky) {
+    const firstVisible = firstVisibleLineNumber(view, scrollTop + accTop)
+    const enclosing = findEnclosingScopes(symbols, firstVisible)
+    // Outermost scope not yet stuck whose definition line has reached the stack bottom.
+    let candidate: ScopeSymbol | null = null
+    let candBlock: { top: number; height: number } | null = null
+    for (const sym of enclosing) {
+      if (result.some((r) => r.lineNum === sym.line)) continue
+      const block = view.lineBlockAt(view.state.doc.line(sym.line).from)
+      if (block.top - scrollTop <= accTop) {
+        candidate = sym
+        candBlock = block
+        break
+      }
     }
+    if (!candidate || !candBlock) break
+    result.push({ lineNum: candidate.line, top: accTop, height: candBlock.height })
+    accTop += candBlock.height
   }
   return result
 }

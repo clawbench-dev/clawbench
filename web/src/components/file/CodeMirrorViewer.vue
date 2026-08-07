@@ -630,9 +630,11 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value })
    position:sticky pins it to the scroller's top while the code scrolls beneath.
    height:0 keeps it from pushing content; rows overflow above it. */
 .cm-viewer .sticky-scroll-overlay {
+    /* Vertically sticky only (top:0). NO left constraint — on the horizontal axis it
+       stays in the flex row's normal flow, so it scrolls left/right with the content
+       lines just like a normal line. */
     position: sticky;
     top: 0;
-    left: 0;
     height: 0;
     width: 0;
     overflow: visible;
@@ -640,12 +642,15 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value })
        width so it doesn't shrink the .cm-content. Rows overflow to full width via
        --sticky-width. */
     flex: 0 0 0;
-    /* Must sit above CodeMirror's line-number gutter, which is position:sticky
-       with z-index:200 — otherwise the gutter numbers cover the sticky rows. */
-    z-index: 210;
+    /* Below the line-number gutter (z-index:200): when the sticky rows slide left on
+       horizontal scroll, the fixed line numbers stay on top instead of being covered.
+       Still above the code content so the sticky rows are visible over it. */
+    z-index: 5;
     pointer-events: none;
 }
 .cm-viewer .sticky-line {
+    /* Full-width row from the editor's left edge (covers the gutter region like
+       VS Code), so the bar isn't pushed right by the line-number column. */
     position: absolute;
     left: 0;
     width: var(--sticky-width, 100%);
@@ -663,10 +668,11 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value })
     opacity: 1;
     background: var(--bg-tertiary);
 }
-/* Code text fills the row from the editor's left edge (no gutter offset/number). */
+/* Code text starts after the line-number gutter (--sticky-left), so it aligns with
+   the content text and doesn't overlap the fixed line numbers. */
 .cm-viewer .sticky-line-code {
     position: absolute;
-    left: 0;
+    left: var(--sticky-left, 0px);
     top: 0;
     height: 100%;
     overflow: hidden;

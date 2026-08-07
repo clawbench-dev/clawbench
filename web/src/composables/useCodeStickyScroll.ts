@@ -44,21 +44,27 @@ export function useCodeStickyScroll(options: StickyOptions = {}) {
   let fetchToken = 0
   const highlightCache = new Map<number, string>()
 
-  function computeHighlightRanges(from: number, to: number) {
+  /**
+   * Collect highlight ranges for the given line. `highlightTree` reports absolute
+   * document offsets, so they're shifted to be relative to the line start, matching
+   * the 0-based slice passed to buildHighlightedHtml. Uses the same HighlightStyle
+   * instance as the editor, so the sticky line matches the target line exactly.
+   */
+  function computeHighlightRanges(lineFrom: number, lineTo: number) {
     if (!view) return []
     const ranges: Array<{ from: number; to: number; classes: string }> = []
-    const tree = ensureSyntaxTree(view.state, to) || syntaxTree(view.state)
+    const tree = ensureSyntaxTree(view.state, lineTo) || syntaxTree(view.state)
     if (!tree || !highlighter) return ranges
     highlightTree(
       tree,
       highlighter,
       (f, t, classes) => {
-        if (f < from) f = from
-        if (t > to) t = to
-        if (t > f) ranges.push({ from: f, to: t, classes })
+        if (f < lineFrom) f = lineFrom
+        if (t > lineTo) t = lineTo
+        if (t > f) ranges.push({ from: f - lineFrom, to: t - lineFrom, classes })
       },
-      from,
-      to,
+      lineFrom,
+      lineTo,
     )
     return ranges
   }
@@ -94,10 +100,20 @@ export function useCodeStickyScroll(options: StickyOptions = {}) {
       if (content) scroller.insertBefore(overlayEl, content)
       else scroller.appendChild(overlayEl)
     }
-    // Rows span the full visible editor width (the scroller is flex; width:0 overlay
-    // lets them overflow to this width). No line number and no gutter offset — the
-    // sticky text starts at the editor's left edge.
-    overlayEl.style.setProperty('--sticky-width', `${scroller.clientWidth}px`)
+    // The sticky overlay is a flex item whose horizontal offset varies depending on
+    // whether the line-number gutter was present at initial layout or toggled later
+    // (it can sit at x=0 or x=gutterWidth). To avoid a double gutter offset, measure
+    // both the overlay and the content each render and align the code text to the
+    // content's left edge, while the row spans from the overlay to the content's
+    // right edge (filling the whole container, not just the visible viewport).
+    const scrollerRect = scroller.getBoundingClientRect()
+    const overlayRect = overlayEl.getBoundingClientRect()
+    const overlayLeft = overlayRect.left - scrollerRect.left
+    const contentEl = scroller.querySelector('.cm-content') as HTMLElement | null
+    const contentLeft = contentEl ? contentEl.getBoundingClientRect().left - scrollerRect.left : overlayLeft
+    const contentRight = contentEl ? contentEl.getBoundingClientRect().right - scrollerRect.left : overlayLeft + scroller.clientWidth
+    overlayEl.style.setProperty('--sticky-left', `${Math.max(0, contentLeft - overlayLeft)}px`)
+    overlayEl.style.setProperty('--sticky-width', `${Math.max(0, contentRight - overlayLeft)}px`)
     overlayEl.textContent = ''
     for (const s of rows) {
       const row = document.createElement('div')
