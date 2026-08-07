@@ -1596,7 +1596,6 @@ export default {
     connected: 'Connected',
     disconnected: 'Disconnected',
     resetFontSize: 'Reset font size',
-    gestures: 'Gestures',
     modes: 'Terminal mode',
     modeBrowse: 'Browse mode',
     modeGesture: 'Gesture mode',
