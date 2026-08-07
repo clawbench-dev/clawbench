@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
-import { shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
+import { TerminalMode, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 
 function makeTouch(clientX: number, clientY: number): Touch {
   return { clientX, clientY } as Touch
@@ -42,7 +42,7 @@ afterEach(() => {
 
 let activeGestures: ReturnType<typeof useTerminalGestures> | null = null
 
-function setupGestures() {
+function setupGestures(initialMode: TerminalMode = 'gesture') {
   const el = document.createElement('div')
   document.body.appendChild(el)
 
@@ -63,6 +63,7 @@ function setupGestures() {
     onTouchScroll: (deltaY: number) => scrollDeltas.push(deltaY),
   })
   gestures.attach()
+  if (initialMode !== 'browse') gestures.setMode(initialMode)
   activeGestures = gestures
 
   return { el, sent, hints, zoomDeltas, scrollDeltas, gestures }
@@ -79,6 +80,11 @@ describe('shouldPreventTerminalContextMenu', () => {
 })
 
 describe('useTerminalGestures', () => {
+  it('defaults to browse mode', () => {
+    const { gestures } = setupGestures('browse')
+    expect(gestures.mode.value).toBe('browse')
+  })
+
   it('prevents the native double-tap selection side effect when sending Tab', () => {
     const { el, sent, hints } = setupGestures()
 
@@ -176,15 +182,14 @@ describe('useTerminalGestures', () => {
   })
 
   it('scrolls terminal output with one-finger vertical drags when gestures are disabled', () => {
-    const { el, sent, scrollDeltas, gestures } = setupGestures()
+    const { el, sent, scrollDeltas, gestures } = setupGestures('browse')
 
-    gestures.toggle()
     dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
     const smallMove = dispatchTouch(el, 'touchmove', [makeTouch(82, 108)])
     const firstScrollMove = dispatchTouch(el, 'touchmove', [makeTouch(84, 140)])
     const secondScrollMove = dispatchTouch(el, 'touchmove', [makeTouch(84, 155)])
 
-    expect(gestures.enabled.value).toBe(false)
+    expect(gestures.mode.value === 'gesture').toBe(false)
     expect(sent).toEqual([])
     expect(scrollDeltas).toEqual([40, 15])
     expect(smallMove.preventDefault).not.toHaveBeenCalled()
@@ -193,9 +198,8 @@ describe('useTerminalGestures', () => {
   })
 
   it('stops a disabled-mode scroll sequence when a second finger is added', () => {
-    const { el, scrollDeltas, gestures } = setupGestures()
+    const { el, scrollDeltas } = setupGestures('browse')
 
-    gestures.toggle()
     dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
     dispatchTouch(el, 'touchmove', [makeTouch(84, 140)])
     dispatchTouch(el, 'touchmove', [makeTouch(84, 140), makeTouch(120, 140)])
@@ -205,27 +209,24 @@ describe('useTerminalGestures', () => {
   })
 
   it('restores native touch behavior when gestures are disabled before a scroll starts', () => {
-    const { el, gestures } = setupGestures()
+    const { el, gestures } = setupGestures('browse')
 
-    gestures.toggle()
-
-    expect(gestures.enabled.value).toBe(false)
+    expect(gestures.mode.value === 'gesture').toBe(false)
     expect(el.style.touchAction).toBe('auto')
   })
 
   it('does not disable native touch selection when gestures are toggled back on', () => {
-    const { el, gestures } = setupGestures()
+    const { el, gestures } = setupGestures('browse')
 
-    gestures.toggle()
-    expect(gestures.enabled.value).toBe(false)
-    gestures.toggle()
+    expect(gestures.mode.value === 'gesture').toBe(false)
+    gestures.setMode('gesture')
 
-    expect(gestures.enabled.value).toBe(true)
+    expect(gestures.mode.value === 'gesture').toBe(true)
     expect(el.style.touchAction).not.toBe('none')
   })
 
   it('cycles through browse → gesture → selection → browse by default', () => {
-    const { gestures } = setupGestures()
+    const { gestures } = setupGestures('browse')
     expect(gestures.mode.value).toBe('browse')
     gestures.cycleMode()
     expect(gestures.mode.value).toBe('gesture')
@@ -391,9 +392,8 @@ describe('useTerminalGestures — uncovered branches', () => {
   })
 
   it('does not send scroll deltas when movement is primarily horizontal in disabled mode', () => {
-    const { el, scrollDeltas, gestures } = setupGestures()
+    const { el, scrollDeltas } = setupGestures('browse')
 
-    gestures.toggle()
     dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
     dispatchTouch(el, 'touchmove', [makeTouch(150, 108)]) // mostly horizontal
 
@@ -401,9 +401,8 @@ describe('useTerminalGestures — uncovered branches', () => {
   })
 
   it('resets disabled scroll state on touchend after scrolling', () => {
-    const { el, scrollDeltas, gestures } = setupGestures()
+    const { el, scrollDeltas } = setupGestures('browse')
 
-    gestures.toggle()
     dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
     dispatchTouch(el, 'touchmove', [makeTouch(84, 140)])
     expect(scrollDeltas).toEqual([40])
@@ -414,9 +413,8 @@ describe('useTerminalGestures — uncovered branches', () => {
   })
 
   it('resets disabled scroll state on touchcancel', () => {
-    const { el, scrollDeltas, gestures } = setupGestures()
+    const { el, scrollDeltas } = setupGestures('browse')
 
-    gestures.toggle()
     dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
     dispatchTouch(el, 'touchmove', [makeTouch(84, 140)])
     expect(scrollDeltas).toEqual([40])
@@ -431,17 +429,15 @@ describe('useTerminalGestures — uncovered branches', () => {
   })
 
   it('does not preventDefault on touchend when disabled scroll was not active', () => {
-    const { el, gestures } = setupGestures()
+    const { el } = setupGestures('browse')
 
-    gestures.toggle()
     const touchEnd = dispatchTouch(el, 'touchend', [], [makeTouch(80, 100)])
     expect(touchEnd.preventDefault).not.toHaveBeenCalled()
   })
 
   it('allows second finger to disable scroll in disabled mode via touchstart', () => {
-    const { el, scrollDeltas, gestures } = setupGestures()
+    const { el, scrollDeltas } = setupGestures('browse')
 
-    gestures.toggle()
     dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
     dispatchTouch(el, 'touchmove', [makeTouch(84, 140)])
     expect(scrollDeltas).toEqual([40])
