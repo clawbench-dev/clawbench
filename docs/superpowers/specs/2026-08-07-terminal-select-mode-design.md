@@ -32,7 +32,7 @@ xterm 用 canvas 渲染，系统原生长按选区不可用，因此需要一个
   - `onSelectionExtend?(anchorRow: number, currentRow: number)`
   - `onSelectionEnd?()`
 - 选区监听：touchstart 记录锚点行；touchmove 用容器 rect + `term.dimensions.css.cell.height` 把触摸坐标换算成 buffer 行号，触发 `onSelectionExtend`；touchend 触发 `onSelectionEnd`。
-- 双指捏合缩放在三态都保留（低成本、体验一致）。
+- 双指捏合缩放仅在 `gesture` 态可用（现状如此，`browse`/`selection` 态不挂手势监听，保持一致）。
 
 ## 手势按钮（TerminalPanelContent.vue）
 
