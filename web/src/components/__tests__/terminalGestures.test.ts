@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
-import { shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
+import { TerminalMode, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 
 function makeTouch(clientX: number, clientY: number): Touch {
   return { clientX, clientY } as Touch
@@ -222,6 +222,25 @@ describe('useTerminalGestures', () => {
 
     expect(gestures.enabled.value).toBe(true)
     expect(el.style.touchAction).not.toBe('none')
+  })
+
+  it('cycles through browse → gesture → selection → browse by default', () => {
+    const { gestures } = setupGestures()
+    expect(gestures.mode.value).toBe('browse')
+    gestures.cycleMode()
+    expect(gestures.mode.value).toBe('gesture')
+    gestures.cycleMode()
+    expect(gestures.mode.value).toBe('selection')
+    gestures.cycleMode()
+    expect(gestures.mode.value).toBe('browse')
+  })
+
+  it('setMode switches and no-ops when identical', () => {
+    const { gestures } = setupGestures()
+    gestures.setMode('selection')
+    expect(gestures.mode.value).toBe('selection')
+    gestures.setMode('selection')
+    expect(gestures.mode.value).toBe('selection')
   })
 })
 
@@ -477,5 +496,61 @@ describe('useTerminalGestures — uncovered branches', () => {
     vi.advanceTimersByTime(150)
     expect(sent.length).toBe(3)
     expect(sent[2]).toBe('down')
+  })
+})
+
+describe('selection mode', () => {
+  function setupSelection() {
+    const el = document.createElement('div')
+    Object.defineProperty(el, 'getBoundingClientRect', {
+      value: () => ({ top: 100, bottom: 700, height: 600, left: 0, width: 0, right: 0, x: 0, y: 100, toJSON: () => ({}) }),
+    })
+    document.body.appendChild(el)
+
+    const starts: number[] = []
+    const extends_: Array<[number, number]> = []
+    const ends: number[] = []
+    const gestures = useTerminalGestures(ref(el), {
+      getCellHeight: () => 20,
+      onSelectionStart: (row) => starts.push(row),
+      onSelectionExtend: (a, c) => extends_.push([a, c]),
+      onSelectionEnd: () => ends.push(1),
+    })
+    gestures.setMode('selection')
+    gestures.attach()
+    activeGestures = gestures
+
+    return { el, starts, extends_, ends, gestures }
+  }
+
+  it('maps a vertical drag into viewport row selection callbacks', () => {
+    const { el, starts, extends_, ends } = setupSelection()
+    dispatchTouch(el, 'touchstart', [makeTouch(50, 120)])   // (120-100)/20 = row 1
+    expect(starts).toEqual([1])
+    dispatchTouch(el, 'touchmove', [makeTouch(50, 240)])    // row 7
+    expect(extends_).toEqual([[1, 7]])
+    dispatchTouch(el, 'touchend', [], [makeTouch(50, 240)])
+    expect(ends).toEqual([1])
+  })
+
+  it('clamps rows into the viewport bounds', () => {
+    const { el, starts, extends_ } = setupSelection()
+    dispatchTouch(el, 'touchstart', [makeTouch(50, 120)]) // row 1
+    dispatchTouch(el, 'touchmove', [makeTouch(50, 800)])  // row 35 → clamp 29
+    expect(extends_).toEqual([[1, 29]])
+  })
+
+  it('sets touchAction none and attaches selection listeners in selection mode', () => {
+    const { el, gestures } = setupSelection()
+    expect(gestures.mode.value).toBe('selection')
+    expect(el.style.touchAction).toBe('none')
+  })
+
+  it('switching away from selection clears the selection anchor', () => {
+    const { el, extends_, gestures } = setupSelection()
+    gestures.setMode('browse')
+    dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
+    dispatchTouch(el, 'touchmove', [makeTouch(84, 140)])
+    expect(extends_).toEqual([])
   })
 })
