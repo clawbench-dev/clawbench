@@ -166,7 +166,7 @@ export default {
       destroyCurrentSession: 'Permanently delete current session',
       scheduledTasks: 'Scheduled tasks',
       scheduled: 'Schedule',
-      autoSpeech: 'Auto speech',
+      autoSpeech: 'Read aloud',
       readAloud: 'Read',
       sessionSettings: 'Session settings',
       switchThinkingEffort: 'Switch thinking effort',

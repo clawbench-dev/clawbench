@@ -15,7 +15,7 @@ const i18n = createI18n({
           userMsgIndex: 'Index',
           archiveCurrentSession: 'Archive',
           noSessionToArchive: 'No session',
-          autoSpeech: 'Auto speech',
+          autoSpeech: 'Read aloud',
           attachment: 'Attach',
         },
         create: { selectAgentOrLongPress: 'New' },

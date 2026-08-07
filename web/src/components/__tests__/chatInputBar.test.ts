@@ -68,7 +68,7 @@ const i18n = createI18n({
         actions: {
           session: '会话',
           attachment: '附件',
-          autoSpeech: '自动朗读',
+          autoSpeech: '朗读',
           sessionSettings: '会话设置',
           switchThinkingEffort: '切换思考强度',
           archiveCurrentSession: '归档当前会话',

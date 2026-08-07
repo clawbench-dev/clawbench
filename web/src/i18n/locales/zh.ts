@@ -166,7 +166,7 @@ export default {
       destroyCurrentSession: '永久删除当前会话',
       scheduledTasks: '定时任务',
       scheduled: '定时',
-      autoSpeech: '自动朗读',
+      autoSpeech: '朗读',
       readAloud: '朗读',
       sessionSettings: '会话设置',
       switchThinkingEffort: '切换思考档位',
