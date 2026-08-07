@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
-import { TerminalMode, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
+import { TerminalMode, selectionCellsToSelect, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 
 function makeTouch(clientX: number, clientY: number): Touch {
   return { clientX, clientY } as Touch
@@ -499,17 +499,18 @@ describe('selection mode', () => {
   function setupSelection() {
     const el = document.createElement('div')
     Object.defineProperty(el, 'getBoundingClientRect', {
-      value: () => ({ top: 100, bottom: 700, height: 600, left: 0, width: 0, right: 0, x: 0, y: 100, toJSON: () => ({}) }),
+      value: () => ({ top: 100, bottom: 700, height: 600, left: 50, right: 450, width: 400, x: 50, y: 100, toJSON: () => ({}) }),
     })
     document.body.appendChild(el)
 
-    const starts: number[] = []
-    const extends_: Array<[number, number]> = []
+    const starts: Array<[number, number]> = []
+    const extends_: Array<[number, number, number, number]> = []
     const ends: number[] = []
     const gestures = useTerminalGestures(ref(el), {
       getCellHeight: () => 20,
-      onSelectionStart: (row) => starts.push(row),
-      onSelectionExtend: (a, c) => extends_.push([a, c]),
+      getCellWidth: () => 10,
+      onSelectionStart: (col, row) => starts.push([col, row]),
+      onSelectionExtend: (ac, ar, cc, cr) => extends_.push([ac, ar, cc, cr]),
       onSelectionEnd: () => ends.push(1),
     })
     gestures.setMode('selection')
@@ -519,21 +520,23 @@ describe('selection mode', () => {
     return { el, starts, extends_, ends, gestures }
   }
 
-  it('maps a vertical drag into viewport row selection callbacks', () => {
+  it('maps a diagonal drag into viewport cell selection callbacks', () => {
     const { el, starts, extends_, ends } = setupSelection()
-    dispatchTouch(el, 'touchstart', [makeTouch(50, 120)])   // (120-100)/20 = row 1
-    expect(starts).toEqual([1])
-    dispatchTouch(el, 'touchmove', [makeTouch(50, 240)])    // row 7
-    expect(extends_).toEqual([[1, 7]])
-    dispatchTouch(el, 'touchend', [], [makeTouch(50, 240)])
+    // clientX 90 → (90-50)/10 = col 4; clientY 120 → (120-100)/20 = row 1
+    dispatchTouch(el, 'touchstart', [makeTouch(90, 120)])
+    expect(starts).toEqual([[4, 1]])
+    // clientX 110 → col 6; clientY 240 → row 7
+    dispatchTouch(el, 'touchmove', [makeTouch(110, 240)])
+    expect(extends_).toEqual([[4, 1, 6, 7]])
+    dispatchTouch(el, 'touchend', [], [makeTouch(110, 240)])
     expect(ends).toEqual([1])
   })
 
-  it('clamps rows into the viewport bounds', () => {
+  it('clamps cells into the viewport bounds', () => {
     const { el, starts, extends_ } = setupSelection()
-    dispatchTouch(el, 'touchstart', [makeTouch(50, 120)]) // row 1
-    dispatchTouch(el, 'touchmove', [makeTouch(50, 800)])  // row 35 → clamp 29
-    expect(extends_).toEqual([[1, 29]])
+    dispatchTouch(el, 'touchstart', [makeTouch(90, 120)])   // (4, 1)
+    dispatchTouch(el, 'touchmove', [makeTouch(500, 800)])   // col 45 → clamp 39, row 35 → clamp 29
+    expect(extends_).toEqual([[4, 1, 39, 29]])
   })
 
   it('sets touchAction none and attaches selection listeners in selection mode', () => {
@@ -548,5 +551,33 @@ describe('selection mode', () => {
     dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
     dispatchTouch(el, 'touchmove', [makeTouch(84, 140)])
     expect(extends_).toEqual([])
+  })
+})
+
+describe('selectionCellsToSelect', () => {
+  it('selects a partial single-line range inclusive of the end cell', () => {
+    // start (col 2, row 0) → end (col 5, row 0), cols=80
+    expect(selectionCellsToSelect(2, 0, 5, 0, 0, 80)).toEqual({ col: 2, row: 0, length: 4 })
+  })
+
+  it('selects a multi-row range with partial columns', () => {
+    // start (col 2, row 0) → end (col 3, row 1), cols=80
+    // length = (1-0)*80 - 2 + 3 + 1 = 82
+    expect(selectionCellsToSelect(2, 0, 3, 1, 0, 80)).toEqual({ col: 2, row: 0, length: 82 })
+  })
+
+  it('applies the viewport offset to rows', () => {
+    // viewportY=100 shifts both rows into buffer coordinates
+    expect(selectionCellsToSelect(0, 0, 9, 2, 100, 80)).toEqual({ col: 0, row: 100, length: 170 })
+  })
+
+  it('normalizes a reversed (upward/left) drag to the earlier cell', () => {
+    // dragging from lower/right back to upper/left — anchor must be normalized first
+    const reversed = selectionCellsToSelect(5, 3, 2, 0, 0, 80)
+    expect(reversed).toEqual({ col: 2, row: 0, length: (3) * 80 - 2 + 5 + 1 })
+  })
+
+  it('handles a same-cell selection as length 1', () => {
+    expect(selectionCellsToSelect(4, 1, 4, 1, 0, 80)).toEqual({ col: 4, row: 1, length: 1 })
   })
 })

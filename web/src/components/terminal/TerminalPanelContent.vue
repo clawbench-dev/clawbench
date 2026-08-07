@@ -77,6 +77,7 @@
       <div v-if="selectionActive" class="selection-copy-bar">
         <span class="selection-copy-count">{{ t('terminal.selectedChars', { n: selectedText.length }) }}</span>
         <button class="selection-copy-btn" @click="handleCopySelection" @contextmenu.prevent>{{ t('common.copy') }}</button>
+        <button class="selection-copy-close" @click="handleDismissSelection" @contextmenu.prevent :aria-label="t('terminal.close')">✕</button>
       </div>
     </Transition>
 
@@ -96,7 +97,8 @@
       <!-- Main toolbar row -->
       <div class="main-toolbar-row">
         <button class="toolbar-btn modifier gesture-toggle" :class="{ active: gestures.mode.value === 'gesture', 'mode-selection': gestures.mode.value === 'selection' }" @click="handleModeCycle" @contextmenu.prevent :title="t('terminal.modes')">
-          <HandIcon v-if="gestures.mode.value !== 'selection'" :size="14" />
+          <EyeIcon v-if="gestures.mode.value === 'browse'" :size="14" />
+          <HandIcon v-else-if="gestures.mode.value === 'gesture'" :size="14" />
           <TextCursorInputIcon v-else :size="14" />
         </button>
         <button class="toolbar-btn modifier gesture-toggle" :class="{ active: showSymbolBar }" @click="toggleSymbolBar()" @contextmenu.prevent :title="t('terminal.symbols')">
@@ -182,7 +184,7 @@ import { copyText } from '@/utils/clipboard.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys'
-import { shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
+import { selectionCellsToSelect, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
 import { useAppMode } from '@/composables/useAppMode'
@@ -200,7 +202,7 @@ import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/us
 import { shouldAutoRefocusTerminal } from '@/utils/terminalBlurUtils'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, TextCursorInput as TextCursorInputIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -324,7 +326,8 @@ function handleModeCycle() {
   gestures.cycleMode()
   const m = gestures.mode.value
   const label = m === 'browse' ? t('terminal.modeBrowse') : m === 'gesture' ? t('terminal.modeGesture') : t('terminal.modeSelection')
-  toast.show(label, { icon: m === 'selection' ? '✂️' : '✋', type: 'info', duration: 1200 })
+  const icon = m === 'browse' ? '👁️' : m === 'gesture' ? '✋' : '✂️'
+  toast.show(label, { icon, type: 'info', duration: 1200 })
   focusTerminal()
 }
 
@@ -398,15 +401,28 @@ function getXtermCellHeight(term: TerminalType | null): number {
   return fontSize * lineHeight
 }
 
-function handleSelectionExtend(anchorRow: number, currentRow: number) {
+/** Read the real CSS cell width from xterm's renderer, falling back to a font-size estimate. */
+function getXtermCellWidth(term: TerminalType | null): number {
+  if (!term) return 0
+  const core = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number } } } } } })._core
+  const w = core?._renderService?.dimensions?.css?.cell?.width
+  if (w && w > 0) return w
+  const fontSize = typeof term.options.fontSize === 'number' ? term.options.fontSize : 14
+  return fontSize * 0.6
+}
+
+function handleSelectionExtend(anchorCol: number, anchorRow: number, currentCol: number, currentRow: number) {
   const term = activeTab.value?.xterm
   if (!term) return
-  const buffer = term.buffer.active
-  const viewportY = buffer.viewportY
-  const startLine = Math.max(0, viewportY + Math.min(anchorRow, currentRow))
-  const endLine = Math.min(buffer.length - 1, viewportY + Math.max(anchorRow, currentRow))
-  term.selectLines(startLine, endLine)
+  const sel = selectionCellsToSelect(anchorCol, anchorRow, currentCol, currentRow, term.buffer.active.viewportY, term.cols)
+  term.select(sel.col, sel.row, sel.length)
   updateSelectionFromTerm(term)
+}
+
+function handleDismissSelection() {
+  activeTab.value?.xterm?.clearSelection()
+  selectionActive.value = false
+  selectedText.value = ''
 }
 
 function handleCopySelection() {
@@ -492,6 +508,7 @@ const gestures = useTerminalGestures(
     onPinchZoom: (delta: number) => applyFontSize(fontSize.value + delta),
     onTouchScroll: handleTerminalTouchScroll,
     getCellHeight: () => getXtermCellHeight(activeTab.value?.xterm ?? null),
+    getCellWidth: () => getXtermCellWidth(activeTab.value?.xterm ?? null),
     onSelectionExtend: handleSelectionExtend,
     onGestureHint: (symbol: string) => {
       gestureHint.value = symbol
@@ -1464,6 +1481,18 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
+}
+.selection-copy-close {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.selection-copy-close:active {
+  background: rgba(255, 255, 255, 0.2);
 }
 .copy-bar-enter-active,
 .copy-bar-leave-active {

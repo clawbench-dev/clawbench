@@ -15,6 +15,42 @@ export function clientYToViewportRow(
   return Math.max(0, Math.min(viewportRows - 1, row))
 }
 
+/** Convert an absolute touch X coordinate to a viewport column (0..viewportCols-1), clamped. */
+export function clientXToViewportCol(
+  clientX: number,
+  containerLeft: number,
+  cellWidth: number,
+  viewportCols: number,
+): number {
+  if (cellWidth <= 0 || viewportCols <= 0) return 0
+  const col = Math.floor((clientX - containerLeft) / cellWidth)
+  return Math.max(0, Math.min(viewportCols - 1, col))
+}
+
+/**
+ * Convert an anchor/current viewport cell pair into the args for xterm's
+ * `select(col, row, length)`. `select` is exclusive of the end cell, so the
+ * length adds 1 to include the end. Returns the normalized (earlier-first) start.
+ */
+export function selectionCellsToSelect(
+  anchorCol: number,
+  anchorRow: number,
+  currentCol: number,
+  currentRow: number,
+  viewportY: number,
+  cols: number,
+): { col: number; row: number; length: number } {
+  const aRow = viewportY + anchorRow
+  const cRow = viewportY + currentRow
+  const forward = cRow > aRow || (cRow === aRow && currentCol >= anchorCol)
+  const sRow = forward ? aRow : cRow
+  const sCol = forward ? anchorCol : currentCol
+  const eRow = forward ? cRow : aRow
+  const eCol = forward ? currentCol : anchorCol
+  const length = (eRow - sRow) * cols - sCol + eCol + 1
+  return { col: sCol, row: sRow, length }
+}
+
 export interface GestureCallbacks {
   sendArrowUp: () => void
   sendArrowDown: () => void
@@ -28,10 +64,12 @@ export interface GestureCallbacks {
   onTouchScroll?: (deltaY: number) => void
   /** Selection mode: read the current terminal cell height (px) for coord→row conversion. */
   getCellHeight?: () => number
-  /** Selection mode: finger down, report the anchor viewport row. */
-  onSelectionStart?: (row: number) => void
-  /** Selection mode: dragging, report [anchorRow, currentRow] (viewport rows). */
-  onSelectionExtend?: (anchorRow: number, currentRow: number) => void
+  /** Selection mode: read the current terminal cell width (px) for coord→col conversion. */
+  getCellWidth?: () => number
+  /** Selection mode: finger down, report the anchor viewport cell (col, row). */
+  onSelectionStart?: (col: number, row: number) => void
+  /** Selection mode: dragging, report [anchorCol, anchorRow, currentCol, currentRow] (viewport cells). */
+  onSelectionExtend?: (anchorCol: number, anchorRow: number, currentCol: number, currentRow: number) => void
   /** Selection mode: finger up. */
   onSelectionEnd?: () => void
 }
@@ -77,6 +115,7 @@ export function useTerminalGestures(
   let disabledScrollListenersAttached = false
   let selectionListenersAttached = false
   let selectionActive = false
+  let selectionAnchorCol = -1
   let selectionAnchorRow = -1
 
   let touchStartX = 0
@@ -354,41 +393,50 @@ export function useTerminalGestures(
     resetDisabledScrollState()
   }
 
-  function viewportRowForY(clientY: number): number {
+  function viewportCellForXY(clientX: number, clientY: number): { col: number; row: number } {
     const el = elementRef.value
-    if (!el) return 0
+    if (!el) return { col: 0, row: 0 }
     const rect = el.getBoundingClientRect()
     const cellH = callbacks.getCellHeight?.() ?? 0
+    const cellW = callbacks.getCellWidth?.() ?? 0
     const viewportRows = cellH > 0 ? Math.max(1, Math.floor(rect.height / cellH)) : 1
-    return clientYToViewportRow(clientY, rect.top, cellH, viewportRows)
+    const viewportCols = cellW > 0 ? Math.max(1, Math.floor(rect.width / cellW)) : 1
+    return {
+      col: clientXToViewportCol(clientX, rect.left, cellW, viewportCols),
+      row: clientYToViewportRow(clientY, rect.top, cellH, viewportRows),
+    }
   }
 
   function onSelectionTouchStart(e: TouchEvent) {
     if (e.touches.length !== 1) return
     preventNativeTouch(e)
     const touch = e.touches[0]
-    selectionAnchorRow = viewportRowForY(touch.clientY)
+    const cell = viewportCellForXY(touch.clientX, touch.clientY)
+    selectionAnchorCol = cell.col
+    selectionAnchorRow = cell.row
     selectionActive = true
-    callbacks.onSelectionStart?.(selectionAnchorRow)
+    callbacks.onSelectionStart?.(cell.col, cell.row)
   }
 
   function onSelectionTouchMove(e: TouchEvent) {
     if (e.touches.length !== 1 || !selectionActive) return
     preventNativeTouch(e)
     const touch = e.touches[0]
-    const current = viewportRowForY(touch.clientY)
-    callbacks.onSelectionExtend?.(selectionAnchorRow, current)
+    const cell = viewportCellForXY(touch.clientX, touch.clientY)
+    callbacks.onSelectionExtend?.(selectionAnchorCol, selectionAnchorRow, cell.col, cell.row)
   }
 
   function onSelectionTouchEnd(_e: TouchEvent) {
     const wasActive = selectionActive
     selectionActive = false
+    selectionAnchorCol = -1
     selectionAnchorRow = -1
     if (wasActive) callbacks.onSelectionEnd?.()
   }
 
   function onSelectionTouchCancel() {
     selectionActive = false
+    selectionAnchorCol = -1
     selectionAnchorRow = -1
   }
 
@@ -541,6 +589,7 @@ export function useTerminalGestures(
     resetDisabledScrollState()
     lastTapTime = 0
     selectionActive = false
+    selectionAnchorCol = -1
     selectionAnchorRow = -1
     applyState()
   }
