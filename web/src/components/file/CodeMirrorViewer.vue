@@ -319,7 +319,7 @@ function onScrollToLine(e) {
 function buildAllExtensions() {
     return [
         readonlyCompartment.of(props.editable ? [] : [EditorState.readOnly.of(true)]),
-        langCompartment.of(buildLangExtension(props.language)),
+        langCompartment.of([]), // placeholder; loaded async in mountLang()
         lineNumbersCompartment.of(props.showLineNumbers ? [lineNumbers()] : []),
         wrapCompartment.of(props.wordWrap ? [EditorView.lineWrapping] : []),
         codeMirrorTheme,
@@ -332,6 +332,14 @@ function buildAllExtensions() {
         jumpFlashCompartment.of([]),
         overlayCompartment.of([]),
     ]
+}
+
+/** Load the language extension asynchronously and apply it to the lang compartment. */
+async function mountLang() {
+    const ext = await buildLangExtension(props.language)
+    if (view.value) {
+        view.value.dispatch({ effects: langCompartment.reconfigure(ext) })
+    }
 }
 
 function reconfigure(compartment, ext) {
@@ -358,6 +366,7 @@ onMounted(() => {
     updateInputMode()
     savedSnapshot = props.content || ''
     recomputeOverlay()
+    mountLang()
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
 })
 
@@ -382,7 +391,7 @@ watch([() => props.editable], () => {
 })
 watch([() => props.showLineNumbers], () => reconfigure(lineNumbersCompartment, props.showLineNumbers ? [lineNumbers()] : []))
 watch([() => props.wordWrap], () => reconfigure(wrapCompartment, props.wordWrap ? [EditorView.lineWrapping] : []))
-watch([() => props.language], () => reconfigure(langCompartment, buildLangExtension(props.language)))
+watch([() => props.language], () => mountLang())
 
 // Rebuild overlay decorations whenever diff/flash/path inputs change.
 watch([diffMarkers, flashRanges, flashType, () => props.content], recomputeOverlay)
