@@ -367,6 +367,19 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 					break
 				}
 			}
+			// Accept models reported by the ACP runtime even if they aren't in
+			// the CLI-discovered agent.Models list (runtime union of both sources).
+			if !found {
+				reg := ai.GetAgentCapabilityRegistry()
+				if mls := reg.GetModelListState(agentID, ""); mls != nil {
+					for _, m := range mls.Models {
+						if m.ID == modelID {
+							found = true
+							break
+						}
+					}
+				}
+			}
 			if !found {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidModelForAgent")
 				return

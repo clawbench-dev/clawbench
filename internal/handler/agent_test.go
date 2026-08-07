@@ -138,6 +138,37 @@ func TestAgentPatch_InvalidPreferredModel(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestAgentPatch_PreferredModel_ACPReportedModel(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Simulate ACP reporting a model that is NOT in the CLI-discovered
+	// agent.Models list (e.g. a model only exposed by the ACP runtime).
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.Update("codebuddy", &ai.AgentCapability{
+		AvailableModels: []model.AgentModel{
+			{ID: "claude-opus-4-5", Name: "Claude Opus 4.5", Default: true},
+		},
+	})
+
+	// ACP-only model should be accepted (runtime union of CLI + ACP models)
+	body := map[string]any{
+		"id":              "codebuddy",
+		"preferred_model": "claude-opus-4-5",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "claude-opus-4-5", model.Agents["codebuddy"].PreferredModel)
+
+	// DB should reflect the update
+	var preferredModel string
+	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_model FROM agents WHERE id = ?", "codebuddy").Scan(&preferredModel)
+	require.NoError(t, err)
+	assert.Equal(t, "claude-opus-4-5", preferredModel)
+}
+
 // ── install command preparation tests ──
 
 func TestPrepareInstallCmd_NpmInstallWithChinaMirror(t *testing.T) {
