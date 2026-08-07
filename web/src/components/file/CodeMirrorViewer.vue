@@ -243,13 +243,6 @@ function handleEditStateChange(update) {
 
 const editStateExtension = EditorView.updateListener.of(handleEditStateChange)
 
-/** Mark the current document as the saved baseline (clears dirty). */
-function markSaved() {
-    const editor = view.value
-    savedSnapshot = editor ? editor.state.doc.toString() : ''
-    dirty.value = false
-}
-
 // ─── Overlay decorations (diff lines + flash + clickable paths) ───
 function recomputeOverlay() {
     const editor = view.value
@@ -395,7 +388,7 @@ function handleRedo() {
     if (view.value) redo(view.value)
 }
 
-defineExpose({ getValue, scrollToLine, getView: () => view.value, markSaved })
+defineExpose({ getValue, scrollToLine, getView: () => view.value })
 </script>
 
 <style scoped>
