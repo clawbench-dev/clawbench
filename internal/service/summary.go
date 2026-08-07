@@ -57,21 +57,16 @@ func AsyncSummarize(targetType string, targetID int64, blocks []model.ContentBlo
 
 		summary, err := taskSummarizerInstance.Summarize(sumCtx, text, "")
 		if err != nil {
+			// Fallback: use the extracted text directly (same as simple mode).
+			// text already contains ExtractLastAnswerFromBlocks result, which
+			// is the last substantive answer — no truncation needed.
 			slog.Warn(
-				"summarization failed, falling back to simple summarizer",
+				"summarization failed, using extracted text as summary",
 				slog.String("target_type", targetType),
 				slog.Int64("target_id", targetID),
 				slog.String("err", err.Error()),
 			)
-			// Fallback: use SimpleSummarizer with preserveMarkdown for display summaries.
-			// This truncates rather than saving the full raw text that would make
-			// the summary toggle meaningless, while preserving formatting (code blocks etc.).
-			var fallbackErr error
-			summary, fallbackErr = summarize.NewSimplePreserveMarkdown().Summarize(context.Background(), text, "")
-			if fallbackErr != nil || summary == "" {
-				// SimpleSummarizer should never fail, but last resort: save raw text
-				summary = text
-			}
+			summary = text
 		}
 
 		if err := SaveSummary(targetType, targetID, summary); err != nil {
