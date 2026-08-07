@@ -63,7 +63,7 @@ function setupGestures(initialMode: TerminalMode = 'gesture') {
     onTouchScroll: (deltaY: number) => scrollDeltas.push(deltaY),
   })
   gestures.attach()
-  if (initialMode !== 'browse') gestures.setMode(initialMode)
+  gestures.setMode(initialMode)
   activeGestures = gestures
 
   return { el, sent, hints, zoomDeltas, scrollDeltas, gestures }
@@ -189,7 +189,7 @@ describe('useTerminalGestures', () => {
     const firstScrollMove = dispatchTouch(el, 'touchmove', [makeTouch(84, 140)])
     const secondScrollMove = dispatchTouch(el, 'touchmove', [makeTouch(84, 155)])
 
-    expect(gestures.mode.value === 'gesture').toBe(false)
+    expect(gestures.mode.value).toBe('browse')
     expect(sent).toEqual([])
     expect(scrollDeltas).toEqual([40, 15])
     expect(smallMove.preventDefault).not.toHaveBeenCalled()
@@ -211,17 +211,17 @@ describe('useTerminalGestures', () => {
   it('restores native touch behavior when gestures are disabled before a scroll starts', () => {
     const { el, gestures } = setupGestures('browse')
 
-    expect(gestures.mode.value === 'gesture').toBe(false)
+    expect(gestures.mode.value).toBe('browse')
     expect(el.style.touchAction).toBe('auto')
   })
 
-  it('does not disable native touch selection when gestures are toggled back on', () => {
+  it('does not disable native touch selection when gestures are re-enabled', () => {
     const { el, gestures } = setupGestures('browse')
 
-    expect(gestures.mode.value === 'gesture').toBe(false)
+    expect(gestures.mode.value).toBe('browse')
     gestures.setMode('gesture')
 
-    expect(gestures.mode.value === 'gesture').toBe(true)
+    expect(gestures.mode.value).toBe('gesture')
     expect(el.style.touchAction).not.toBe('none')
   })
 
