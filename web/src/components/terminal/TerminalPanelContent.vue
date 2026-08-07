@@ -121,10 +121,6 @@
             <button ref="cmdBtnRef" class="toolbar-btn btn-action" @click="showCommands = !showCommands" :title="t('terminal.quickCommands')">
               <ZapIcon :size="14" />
             </button>
-            <!-- Copy output button -->
-            <button class="toolbar-btn btn-action" @click="handleCopyOutput" :title="t('terminal.copyOutput')">
-              <CopyIcon :size="14" />
-            </button>
             <!-- Settings button (always present) -->
             <button class="toolbar-btn btn-action" @click="keyConfigDrawer.open()" :title="t('terminal.keyConfigTitle')">
               <Settings :size="14" />
@@ -168,13 +164,6 @@
       @saved="onKeyConfigSaved"
     />
 
-    <!-- Output text drawer — copy visible terminal output -->
-    <OutputDrawer
-      :open="outputDrawer.effectiveOpen.value"
-      :output-text="outputDrawerText"
-      :font-size="fontSize"
-      @close="outputDrawer.close()"
-    />
   </div>
 </template>
 
@@ -186,7 +175,6 @@ import '@xterm/xterm/css/xterm.css'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
-import OutputDrawer from '@/components/terminal/OutputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import type { Terminal as TerminalType } from '@xterm/xterm'
@@ -212,7 +200,7 @@ import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/us
 import { shouldAutoRefocusTerminal } from '@/utils/terminalBlurUtils'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Copy as CopyIcon, TextCursorInput as TextCursorInputIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, TextCursorInput as TextCursorInputIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -256,8 +244,6 @@ function applyFontSize(size: number) {
 // Refs
 const gestureHint = ref('')
 let gestureHintTimer: ReturnType<typeof setTimeout> | null = null
-const outputDrawer = useTabDrawer('terminal')
-const outputDrawerText = ref('')
 const selectionActive = ref(false)
 const selectedText = ref('')
 const showCommands = ref(false)
@@ -762,35 +748,6 @@ function handleTabMenuClose() {
 
 function handleTabMenuCopyPath() {
   // Already handled by TerminalTabMenu
-}
-
-function handleCopyOutput() {
-  const xterm = activeTab.value?.xterm
-  if (!xterm) return
-  const buffer = xterm.buffer.active
-  const viewportY = buffer.viewportY
-  const rows = xterm.rows
-  const lines: string[] = []
-  for (let i = viewportY; i < viewportY + rows && i < buffer.length; i++) {
-    const line = buffer.getLine(i)
-    if (!line) continue
-    const text = line.translateToString(true)
-    if (line.isWrapped && lines.length > 0) {
-      lines[lines.length - 1] += text
-    } else {
-      lines.push(text)
-    }
-  }
-  // Trim trailing empty lines
-  while (lines.length > 0 && lines[lines.length - 1] === '') {
-    lines.pop()
-  }
-  if (lines.length === 0) {
-    toast.show(t('terminal.noOutput'), { icon: 'ℹ️', type: 'info', duration: 1500 })
-    return
-  }
-  outputDrawerText.value = lines.join('\n')
-  outputDrawer.open()
 }
 
 async function handleTabMenuCloseAll() {

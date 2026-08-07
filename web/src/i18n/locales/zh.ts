@@ -1604,8 +1604,6 @@ export default {
     selectedChars: '已选 {n} 字符',
     copied: '已复制',
     copyFailed: '复制失败',
-    copyOutput: '复制输出',
-    noOutput: '没有可复制的输出',
     symbols: '符号',
     rebuildSession: '重建会话',
     rebuilding: '正在切换目录...',
