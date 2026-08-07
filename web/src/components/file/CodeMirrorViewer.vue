@@ -452,6 +452,13 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value })
     background: var(--code-bg);
     position: relative;
 }
+/* Edit mode: tint the whole code area with the accent color and frame the top
+   with an accent line so browse vs edit are clearly distinct at a glance. */
+.cm-viewer.is-editable {
+    --code-bg-editing: color-mix(in srgb, var(--accent-color) 6%, var(--code-bg));
+    background: var(--code-bg-editing);
+    border-top: 2px solid var(--accent-color);
+}
 .cm-host {
     flex: 1;
     min-height: 0;
@@ -514,6 +521,12 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value })
 .cm-host .cm-editor {
     height: 100% !important;
     overflow: hidden;
+}
+/* In edit mode, tint the CodeMirror editor background and gutters to match the
+   tinted container so the whole editable region reads as one distinct block. */
+.cm-viewer.is-editable .cm-editor,
+.cm-viewer.is-editable .cm-gutters {
+    background: var(--code-bg-editing);
 }
 .cm-host .cm-editor .cm-scroller {
     height: 100% !important;

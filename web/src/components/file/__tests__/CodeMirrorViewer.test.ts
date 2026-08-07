@@ -232,4 +232,24 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(wrapper.emitted('exitEdit')).toBeFalsy()
     expect(wrapper.emitted('save')).toBeFalsy()
   })
+
+  it('distinguishes edit mode with an accent top border and tinted background', async () => {
+    const browse = mountViewer({ content: 'x', editable: false })
+    await sleep(50)
+    const edit = mountViewer({ content: 'x', editable: true })
+    await sleep(50)
+
+    expect(browse.find('.cm-viewer').classes()).toContain('cm-readonly')
+    expect(browse.find('.cm-viewer').classes()).not.toContain('is-editable')
+
+    expect(edit.find('.cm-viewer').classes()).toContain('is-editable')
+    expect(edit.find('.cm-viewer').classes()).not.toContain('cm-readonly')
+
+    // The edit-mode stylesheet must define the accent top border and the
+    // accent-tinted code background that visually separate edit from browse.
+    const css = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n')
+    expect(css).toMatch(/\.cm-viewer\.is-editable\b/)
+    expect(css).toMatch(/border-top:\s*2px\s+solid/)
+    expect(css).toMatch(/--code-bg-editing/)
+  })
 })
