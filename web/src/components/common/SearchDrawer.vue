@@ -36,13 +36,13 @@
 
 <script setup>
 import { Search } from 'lucide-vue-next'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from './BottomSheet.vue'
 import HeaderMarquee from './HeaderMarquee.vue'
 import SearchInput from './SearchInput.vue'
 import { getFileType } from '@/utils/fileType.ts'
-import { searchRawContent, highlightText, BLOCK_TAGS } from '@/utils/searchUtils.ts'
+import { searchRawContent, highlightText, BLOCK_TAGS, shouldCorrectAfterSettle } from '@/utils/searchUtils.ts'
 
 const { t } = useI18n()
 
@@ -176,17 +176,20 @@ function scrollToRenderedMatch(result) {
     anchor.className = 'search-match-anchor'
     range.surroundContents(anchor)
 
-    anchor.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const scroller = getScrollParent(anchor)
+    // Instant scroll: a smooth scroll keeps animating toward a stale position
+    // and fights the settle-correction below, so we jump directly.
+    anchor.scrollIntoView({ behavior: 'auto', block: 'center' })
     anchor.classList.add('line-flash')
-    anchor.addEventListener('animationend', () => {
+
+    // Images render with `max-height: 60dvh` (dynamic viewport height) and load
+    // asynchronously, so the document height — and the match's position — can
+    // change after this scroll (images above the target push it down). Watch
+    // until the layout settles, then re-center with a direct scrollTop set.
+    correctAfterSettle(anchor, scroller, () => {
       anchor.classList.remove('line-flash')
-      // Restore the text node by unwrapping the span
-      const parent = anchor.parentNode
-      if (parent) {
-        while (anchor.firstChild) parent.insertBefore(anchor.firstChild, anchor)
-        parent.removeChild(anchor)
-      }
-    }, { once: true })
+      unwrapAnchor(anchor)
+    })
   } catch {
     // Fallback: if range manipulation fails (e.g., cross-element match),
     // scroll to the text node's parent element
@@ -195,6 +198,83 @@ function scrollToRenderedMatch(result) {
     el.classList.add('line-flash')
     el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
   }
+}
+
+// ── Layout-settle re-centering for rendered-mode search jumps ───────────────
+
+// Track active correction timers so they're cleared on unmount.
+const correctionTimers = new Set()
+
+onBeforeUnmount(() => {
+  correctionTimers.forEach((t) => clearInterval(t))
+  correctionTimers.clear()
+})
+
+// Nearest scrollable ancestor (the element scrollIntoView actually scrolls).
+function getScrollParent(node) {
+  let el = node.parentElement
+  while (el) {
+    const s = getComputedStyle(el)
+    if (/(auto|scroll|overlay)/.test(s.overflowY) && el.scrollHeight > el.clientHeight) return el
+    el = el.parentElement
+  }
+  return null
+}
+
+// Restore the DOM by moving the anchor's children back into its parent.
+function unwrapAnchor(anchor) {
+  const parent = anchor.parentNode
+  if (!parent) return
+  while (anchor.firstChild) parent.insertBefore(anchor.firstChild, anchor)
+  parent.removeChild(anchor)
+}
+
+// Vertical offset (px) of the anchor's center from the scroll container's
+// viewport center. Positive = anchor below center.
+function centerDelta(anchor, scroller) {
+  const a = anchor.getBoundingClientRect()
+  const s = scroller.getBoundingClientRect()
+  return a.top + a.height / 2 - (s.top + scroller.clientHeight / 2)
+}
+
+// Poll the anchor's offset from the scroll-container center and re-center it
+// whenever the layout drifts, until the match stays centered for a sustained
+// period. Handles drift from async image load or viewport-driven image reflow
+// (`max-height: 60dvh`) that can happen a moment after the initial jump.
+// `onDone` is called exactly once (on settle or timeout) to clean up the anchor.
+function correctAfterSettle(anchor, scroller, onDone) {
+  if (!anchor || !scroller) { onDone?.(); return }
+  const deltas = []
+  let attempts = 0
+  let centeredStreak = 0
+  const MAX_ATTEMPTS = 25 // ~2s at 80ms — covers sheet close + viewport settle
+  const CENTERED_TICKS = 8 // ~640ms sustained centered => layout settled
+  const timer = setInterval(() => {
+    if (!anchor.isConnected || attempts++ >= MAX_ATTEMPTS) {
+      clearInterval(timer)
+      correctionTimers.delete(timer)
+      onDone?.()
+      return
+    }
+    const delta = centerDelta(anchor, scroller)
+    deltas.push(delta)
+    const decision = shouldCorrectAfterSettle(deltas)
+    if (decision.index !== -1) {
+      if (decision.corrected) {
+        // Direct scrollTop set (no smooth animation to fight) re-centers the match.
+        scroller.scrollTop += delta
+        deltas.length = 0 // re-arm to catch any further layout drift
+        centeredStreak = 0
+      } else if (++centeredStreak >= CENTERED_TICKS) {
+        clearInterval(timer)
+        correctionTimers.delete(timer)
+        onDone?.()
+      }
+    } else {
+      centeredStreak = 0
+    }
+  }, 80)
+  correctionTimers.add(timer)
 }
 
 function jumpToFirst() {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { highlightText, highlightLineSyntax, markInHighlighted, searchRawContent, BLOCK_TAGS } from '../searchUtils'
+import { highlightText, highlightLineSyntax, markInHighlighted, searchRawContent, BLOCK_TAGS, shouldCorrectAfterSettle } from '../searchUtils'
 
 describe('highlightText', () => {
   it('escapes HTML without query', () => {
@@ -263,4 +263,43 @@ describe('BLOCK_TAGS', () => {
   it('is a Set instance', () => {
     expect(BLOCK_TAGS).toBeInstanceOf(Set)
   })
+})
+
+describe('shouldCorrectAfterSettle', () => {
+    it('returns corrected=true when the recent window is stable off-center', () => {
+        const deltas = [0, 0, 0, -400, -400, -400] // layout shifted: target 400px below center
+        const d = shouldCorrectAfterSettle(deltas)
+        expect(d.corrected).toBe(true)
+        expect(d.index).toBe(5)
+    })
+
+    it('returns corrected=false when the recent window is stable within tolerance', () => {
+        const deltas = [2, 1, 2, 2]
+        const d = shouldCorrectAfterSettle(deltas)
+        expect(d.corrected).toBe(false)
+        expect(d.index).toBe(3)
+    })
+
+    it('returns index -1 while the recent window is unstable (still drifting)', () => {
+        const deltas = [0, -50, -120, -200] // still moving
+        const d = shouldCorrectAfterSettle(deltas)
+        expect(d.index).toBe(-1)
+    })
+
+    it('returns index -1 when there are fewer than stableTicks samples', () => {
+        expect(shouldCorrectAfterSettle([0, 0]).index).toBe(-1)
+        expect(shouldCorrectAfterSettle([]).index).toBe(-1)
+    })
+
+    it('respects a custom tolerance', () => {
+        const d = shouldCorrectAfterSettle([30, 30, 30], 50, 3)
+        expect(d.corrected).toBe(false) // |30| < 50
+        expect(d.index).toBe(2)
+    })
+
+    it('returns index -1 when a drift breaks the recent window stability', () => {
+        // old stable window [0,0,0] is overridden by the later drift
+        const d = shouldCorrectAfterSettle([0, 0, 0, 160, 160, 80])
+        expect(d.index).toBe(-1)
+    })
 })

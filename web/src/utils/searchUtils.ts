@@ -126,3 +126,37 @@ export function highlightTextByPositions(text: string, positions: { start: numbe
 
   return result
 }
+
+/**
+ * Decide, from a sequence of measured anchor-center offsets (px, relative to
+ * the scroll container center), whether the *most recent* layout is stable
+ * enough to re-center a search-jump target.
+ *
+ * Markdown images render with `max-height: 60dvh` (`dvh` = dynamic viewport
+ * height) and load asynchronously, so the document height can change after the
+ * initial scroll — making the match drift off-center. This inspects only the
+ * last `stableTicks` samples: if they are within 1px of each other the layout
+ * is settled, and `corrected` reports whether the latest offset needs fixing
+ * (|offset| > tolerance). Returns index -1 until the recent window is stable.
+ */
+export interface CorrectionDecision {
+    corrected: boolean
+    index: number // -1 = recent window not yet stable
+}
+
+export function shouldCorrectAfterSettle(
+    deltas: number[],
+    tolerance = 8,
+    stableTicks = 3,
+): CorrectionDecision {
+    if (deltas.length < stableTicks) return { corrected: false, index: -1 }
+    const window = deltas.slice(-stableTicks)
+    const max = Math.max(...window)
+    const min = Math.min(...window)
+    const stable = max - min <= 1
+    if (!stable) return { corrected: false, index: -1 }
+    return {
+        corrected: Math.abs(deltas[deltas.length - 1]) > tolerance,
+        index: deltas.length - 1,
+    }
+}
