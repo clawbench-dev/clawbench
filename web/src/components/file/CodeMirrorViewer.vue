@@ -261,13 +261,37 @@ function recomputeOverlay() {
 }
 
 // ─── Scroll-to-line (search/TOC jump) with flash ───
+// CodeMirror's EditorView.scrollIntoView snaps instantly, so we animate
+// scrollDOM.scrollTop toward the target line to give a smooth scroll instead.
 let flashTimer = null
+let scrollRAF = null
+function smoothScrollToLine(editor, pos) {
+    const scroller = editor.scrollDOM
+    const block = editor.lineBlockAt(pos)
+    const viewportHeight = scroller.clientHeight
+    const targetTop = Math.max(0, block.top - (viewportHeight - block.height) / 2)
+    const startTop = scroller.scrollTop
+    const delta = targetTop - startTop
+    if (Math.abs(delta) < 0.5) return
+    const duration = 300
+    const startTime = performance.now()
+    if (scrollRAF) cancelAnimationFrame(scrollRAF)
+    function step(now) {
+        const t = Math.min(1, (now - startTime) / duration)
+        // easeInOutCubic
+        const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+        scroller.scrollTop = startTop + delta * eased
+        if (t < 1) scrollRAF = requestAnimationFrame(step)
+        else scrollRAF = null
+    }
+    scrollRAF = requestAnimationFrame(step)
+}
 function scrollToLine(line, lineEnd) {
     const editor = view.value
     if (!editor) return
     const target = Math.min(Math.max(1, line || 1), editor.state.doc.lines)
     const pos = editor.state.doc.line(target).from
-    editor.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) })
+    smoothScrollToLine(editor, pos)
     const builder = new RangeSetBuilder()
     const last = Math.min(lineEnd || target, editor.state.doc.lines)
     for (let n = target; n <= last; n++) {
@@ -339,6 +363,7 @@ onMounted(() => {
 
 onUnmounted(() => {
     window.removeEventListener('cm-scroll-to-line', onScrollToLine)
+    if (scrollRAF) cancelAnimationFrame(scrollRAF)
     if (flashTimer) clearTimeout(flashTimer)
     if (selDebounceTimer) clearTimeout(selDebounceTimer)
     view.value?.destroy()

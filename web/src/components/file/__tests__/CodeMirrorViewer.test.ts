@@ -82,6 +82,22 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(document.querySelector('.cm-foldGutter')).toBeNull()
   })
 
+  it('scrollToLine animates scroll via requestAnimationFrame instead of instant jump', async () => {
+    const wrapper = mountViewer({ content: 'line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\n' })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame')
+    const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame')
+    view.scrollDOM.scrollTop = 0
+    wrapper.vm.scrollToLine(8)
+    await nextTick()
+    // The smooth path schedules animation frames rather than snapping the scroller.
+    expect(rafSpy).toHaveBeenCalled()
+    expect(view.scrollDOM.scrollTop).toBe(0)
+    rafSpy.mockRestore()
+    cancelSpy.mockRestore()
+  })
+
   it('toggles line numbers via prop', async () => {
     const wrapper = mountViewer({ showLineNumbers: true })
     await sleep(50)
