@@ -1601,6 +1601,8 @@ export default {
     modeBrowse: '浏览模式',
     modeGesture: '手势模式',
     modeSelection: '选区模式',
+    selectedChars: '已选 {n} 字符',
+    copied: '已复制',
     copyOutput: '复制输出',
     noOutput: '没有可复制的输出',
     symbols: '符号',

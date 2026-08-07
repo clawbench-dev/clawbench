@@ -73,6 +73,13 @@
       </div>
     </div>
 
+    <Transition name="copy-bar">
+      <div v-if="selectionActive" class="selection-copy-bar">
+        <span class="selection-copy-count">{{ t('terminal.selectedChars', { n: selectedText.length }) }}</span>
+        <button class="selection-copy-btn" @click="handleCopySelection" @contextmenu.prevent>{{ t('common.copy') }}</button>
+      </div>
+    </Transition>
+
     <!-- Virtual key toolbar -->
     <div class="terminal-toolbar" v-show="!isPC">
       <!-- Symbol bar (toggleable, above main toolbar) -->
@@ -182,6 +189,8 @@ import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import OutputDrawer from '@/components/terminal/OutputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
+import type { Terminal as TerminalType } from '@xterm/xterm'
+import { copyText } from '@/utils/clipboard.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys'
@@ -249,6 +258,8 @@ const gestureHint = ref('')
 let gestureHintTimer: ReturnType<typeof setTimeout> | null = null
 const outputDrawer = useTabDrawer('terminal')
 const outputDrawerText = ref('')
+const selectionActive = ref(false)
+const selectedText = ref('')
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
 const showSymbolBar = ref(false)
@@ -384,6 +395,46 @@ const terminalKeys = useTerminalKeys((data: string) => {
   activeTab.value?.session.sendInput(data)
 })
 
+function updateSelectionFromTerm(term: TerminalType) {
+  const text = term.getSelection() ?? ''
+  selectionActive.value = text.length > 0
+  selectedText.value = text
+}
+
+/** Read the real CSS cell height from xterm's renderer, falling back to font-size×line-height. */
+function getXtermCellHeight(term: TerminalType | null): number {
+  if (!term) return 0
+  const core = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { height?: number } } } } } })._core
+  const h = core?._renderService?.dimensions?.css?.cell?.height
+  if (h && h > 0) return h
+  const lineHeight = typeof term.options.lineHeight === 'number' ? term.options.lineHeight : 1
+  const fontSize = typeof term.options.fontSize === 'number' ? term.options.fontSize : 14
+  return fontSize * lineHeight
+}
+
+function handleSelectionExtend(anchorRow: number, currentRow: number) {
+  const term = activeTab.value?.xterm
+  if (!term) return
+  const buffer = term.buffer.active
+  const viewportY = buffer.viewportY
+  const startLine = Math.max(0, viewportY + Math.min(anchorRow, currentRow))
+  const endLine = Math.min(buffer.length - 1, viewportY + Math.max(anchorRow, currentRow))
+  term.selectLines(startLine, endLine)
+  updateSelectionFromTerm(term)
+}
+
+function handleCopySelection() {
+  const text = selectedText.value
+  if (!text) return
+  copyText(text, () => {
+    toast.show(t('terminal.copied'), { icon: '✅', type: 'success' })
+    activeTab.value?.xterm?.clearSelection()
+    selectionActive.value = false
+    selectedText.value = ''
+    gestures.setMode('browse')
+  })
+}
+
 const tabManager = useTerminalTabs(getWsUrl, {
   fontSize,
   getXtermTheme,
@@ -391,6 +442,9 @@ const tabManager = useTerminalTabs(getWsUrl, {
     shellStartFailed: t('terminal.shellStartFailed'),
     websocketFailed: t('terminal.websocketFailed'),
     platformUnsupported: t('terminal.platformUnsupported'),
+  },
+  onTermCreated: (term) => {
+    term.onSelectionChange(() => updateSelectionFromTerm(term))
   },
   onCloseSessionViaHttp: (sessionId: string) => {
     fetch(`/api/terminal/close?session=${encodeURIComponent(sessionId)}`, { method: 'POST' }).catch(() => {})
@@ -449,6 +503,10 @@ const gestures = useTerminalGestures(
     sendTab: terminalKeys.sendTab,
     onPinchZoom: (delta: number) => applyFontSize(fontSize.value + delta),
     onTouchScroll: handleTerminalTouchScroll,
+    getCellHeight: () => getXtermCellHeight(activeTab.value?.xterm ?? null),
+    onSelectionStart: () => {},
+    onSelectionExtend: handleSelectionExtend,
+    onSelectionEnd: () => {},
     onGestureHint: (symbol: string) => {
       gestureHint.value = symbol
       if (gestureHintTimer) clearTimeout(gestureHintTimer)
@@ -458,11 +516,21 @@ const gestures = useTerminalGestures(
 )
 
 // Re-evaluate fade when gesture toggle changes visible buttons
-watch(() => gestures.mode.value, () => nextTick(refreshToolbarFade))
+watch(() => gestures.mode.value, (m) => {
+  nextTick(refreshToolbarFade)
+  if (m !== 'selection') {
+    activeTab.value?.xterm?.clearSelection()
+    selectionActive.value = false
+    selectedText.value = ''
+  }
+})
 
 // Re-bind gesture listeners when switching/creating tabs (container element changes).
 // Use double nextTick to ensure mountTabToContainer has already run.
 watch(activeTabId, () => {
+  activeTab.value?.xterm?.clearSelection()
+  selectionActive.value = false
+  selectedText.value = ''
   nextTick(() => nextTick(() => gestures.attach()))
 })
 
@@ -1408,6 +1476,48 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 
 .toolbar-btn.btn-modifier, .toolbar-btn.btn-nav, .toolbar-btn.btn-arrow, .toolbar-btn.btn-symbol, .toolbar-btn.btn-action { background: transparent; }
 .toolbar-btn.btn-symbol { color: var(--toolbar-key-text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; font-weight: 700; }
+
+.selection-copy-bar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-color) 90%, black);
+  color: #fff;
+  font-size: 12px;
+  z-index: 20;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+.selection-copy-count {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selection-copy-btn {
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 4px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.copy-bar-enter-active,
+.copy-bar-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.copy-bar-enter-from,
+.copy-bar-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
 </style>
 
 <style>

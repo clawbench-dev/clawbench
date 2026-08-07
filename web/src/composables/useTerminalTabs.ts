@@ -36,6 +36,8 @@ export function useTerminalTabs(
   opts: {
     fontSize: Ref<number>
     getXtermTheme: () => Record<string, unknown>
+    /** xterm 实例创建后回调（用于订阅选区变化等）。 */
+    onTermCreated?: (term: TerminalType) => void
     errorMessages: TerminalErrorMessages
     /** Called when a tab is closed but the WS was already disconnected.
      *  The backend PTY session needs to be killed via HTTP API. */
@@ -95,6 +97,8 @@ export function useTerminalTabs(
       fitAddon: markRaw(fit),
       container: null,
     })
+
+    opts.onTermCreated?.(term)
 
     // Wire session callbacks
     // On reconnect, the backend sends a replay buffer and suppresses output

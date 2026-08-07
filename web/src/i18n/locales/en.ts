@@ -1600,6 +1600,8 @@ export default {
     modeBrowse: 'Browse mode',
     modeGesture: 'Gesture mode',
     modeSelection: 'Selection mode',
+    selectedChars: '{n} chars selected',
+    copied: 'Copied',
     copyOutput: 'Copy Output',
     noOutput: 'No output to copy',
     symbols: 'Symbols',

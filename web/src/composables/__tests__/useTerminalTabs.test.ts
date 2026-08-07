@@ -105,6 +105,7 @@ function createTabManager(overrides?: {
   onCloseSessionViaHttp?: (sessionId: string) => void
   onExit?: (tabId: string) => void
   onError?: (tabId: string, message: string, code: string) => void
+  onTermCreated?: (term: unknown) => void
 }) {
   return useTerminalTabs(
     (cwd?: string) => `ws://localhost:8080/api/terminal/ws${cwd ? `?cwd=${cwd}` : ''}`,
@@ -115,6 +116,7 @@ function createTabManager(overrides?: {
       onCloseSessionViaHttp: overrides?.onCloseSessionViaHttp,
       onExit: overrides?.onExit,
       onError: overrides?.onError,
+      onTermCreated: overrides?.onTermCreated,
       toast: vi.fn(),
     },
   )
@@ -227,6 +229,16 @@ describe('useTerminalTabs', () => {
       const tab = mgr.createTab()
       const rawSession = getRawSession(tabIndex(mgr, tab))
       expect(rawSession.setCallbacks).toHaveBeenCalled()
+    })
+
+    it('calls onTermCreated with the xterm instance when a tab is created', () => {
+      const created: unknown[] = []
+      const mgr = createTabManager({ onTermCreated: (term) => created.push(term) })
+      // useTerminalTabs creates an initial default tab on init
+      expect(created).toHaveLength(1)
+
+      mgr.createTab()
+      expect(created).toHaveLength(2)
     })
   })
 
