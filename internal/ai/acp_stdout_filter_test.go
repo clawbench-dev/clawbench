@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestACPStdoutFilter_PassesValidJSON(t *testing.T) {
@@ -253,4 +256,183 @@ func TestACPStdoutFilter_NoModelsInResponse(t *testing.T) {
 	if cached != nil {
 		t.Fatal("expected no cached models when response has no models field")
 	}
+}
+
+func TestFixStringNumericID_InvalidJSON(t *testing.T) {
+	// When line contains "id" but is not valid JSON, return as-is
+	input := `{"id":"1" this is not valid json`
+	result := fixStringNumericID([]byte(input))
+	assert.Equal(t, input, string(result), "invalid JSON should be returned as-is")
+}
+
+func TestFixStringNumericID_NoIdField(t *testing.T) {
+	// When JSON has no "id" field at all, return as-is
+	input := `{"jsonrpc":"2.0","result":{"status":"ok"}}`
+	result := fixStringNumericID([]byte(input))
+	assert.Equal(t, input, string(result))
+}
+
+func TestFixStringNumericID_IdNotString(t *testing.T) {
+	// When "id" is already a number, return as-is
+	input := `{"jsonrpc":"2.0","id":42,"result":{}}`
+	result := fixStringNumericID([]byte(input))
+	assert.Equal(t, input, string(result))
+}
+
+func TestFixStringNumericID_IdStringNotNumeric(t *testing.T) {
+	// When "id" is a string but not numeric, return as-is
+	input := `{"jsonrpc":"2.0","id":"abc","result":{}}`
+	result := fixStringNumericID([]byte(input))
+	assert.Equal(t, input, string(result))
+}
+
+func TestFixStringNumericID_RegexMatchButNotNumeric(t *testing.T) {
+	// When regex matches "id":"<digits>" but the actual JSON id field is not
+	// a string (e.g., edge case where another field has "id" in it)
+	input := `{"jsonrpc":"2.0","method":"someMethod","params":{"id":"123"},"result":{}}`
+	result := fixStringNumericID([]byte(input))
+	// The top-level "id" field doesn't exist, so the check at msg["id"] fails
+	assert.Equal(t, input, string(result))
+}
+
+func TestIsDigits(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"123", true},
+		{"0", true},
+		{"", false},
+		{"12a", false},
+		{" 1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isDigits([]byte(tt.input)))
+		})
+	}
+}
+
+func TestMinInt(t *testing.T) {
+	assert.Equal(t, 1, minInt(1, 2))
+	assert.Equal(t, 3, minInt(5, 3))
+	assert.Equal(t, 0, minInt(0, 0))
+}
+
+func TestACPStdoutFilter_CacheModelsFromResponse_InvalidJSON(t *testing.T) {
+	// When the line is not valid JSON, cacheModelsFromResponse should return without caching
+	f := newACPStdoutFilter(strings.NewReader(""))
+	defer f.Close()
+
+	// Directly call cacheModelsFromResponse with invalid JSON
+	f.cacheModelsFromResponse([]byte(`not valid json at all`))
+
+	cached := f.GetAndClearCachedModels()
+	assert.Nil(t, cached, "invalid JSON should not cache models")
+}
+
+func TestACPStdoutFilter_CacheModelsFromResponse_NoResultField(t *testing.T) {
+	// When JSON has no "result" field, should not cache
+	f := newACPStdoutFilter(strings.NewReader(""))
+	defer f.Close()
+
+	f.cacheModelsFromResponse([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"Internal error"}}`))
+
+	cached := f.GetAndClearCachedModels()
+	assert.Nil(t, cached, "no result field should not cache models")
+}
+
+func TestACPStdoutFilter_CacheModelsFromResponse_NoModelsField(t *testing.T) {
+	// When result has no "models" field, should not cache
+	f := newACPStdoutFilter(strings.NewReader(""))
+	defer f.Close()
+
+	f.cacheModelsFromResponse([]byte(`{"jsonrpc":"2.0","id":2,"result":{"sessionId":"test-123"}}`))
+
+	cached := f.GetAndClearCachedModels()
+	assert.Nil(t, cached, "no models field should not cache models")
+}
+
+func TestACPStdoutFilter_CacheModelsFromResponse_InvalidModelsJSON(t *testing.T) {
+	// When "models" field is not valid SessionModelState, should not cache
+	f := newACPStdoutFilter(strings.NewReader(""))
+	defer f.Close()
+
+	f.cacheModelsFromResponse([]byte(`{"jsonrpc":"2.0","id":2,"result":{"models":"not an object"}}`))
+
+	cached := f.GetAndClearCachedModels()
+	assert.Nil(t, cached, "invalid models JSON should not cache models")
+}
+
+func TestACPStdoutFilter_CacheModelsFromResponse_EmptyModelsNotCached(t *testing.T) {
+	// When availableModels is empty and currentModelId is empty, should not cache
+	f := newACPStdoutFilter(strings.NewReader(""))
+	defer f.Close()
+
+	f.cacheModelsFromResponse([]byte(`{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[],"currentModelId":""}}}`))
+
+	cached := f.GetAndClearCachedModels()
+	assert.Nil(t, cached, "empty models should not be cached")
+}
+
+func TestACPStdoutFilter_CacheModelsFromResponse_CurrentModelIDOnly(t *testing.T) {
+	// When there's a currentModelId but no availableModels, should still cache
+	f := newACPStdoutFilter(strings.NewReader(""))
+	defer f.Close()
+
+	f.cacheModelsFromResponse([]byte(`{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[],"currentModelId":"kimi-code/k3"}}}`))
+
+	cached := f.GetAndClearCachedModels()
+	require.NotNil(t, cached, "currentModelId with empty availableModels should be cached")
+	assert.Equal(t, "kimi-code/k3", cached.CurrentModelID)
+	assert.Empty(t, cached.Models)
+}
+
+func TestACPStdoutFilter_PumpSourceEOF(t *testing.T) {
+	// When source reaches EOF, the pipe writer should be closed
+	// so the reader side gets EOF too
+	input := `{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}
+`
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+
+	var buf bytes.Buffer
+	n, err := io.Copy(&buf, f)
+	assert.NoError(t, err)
+	assert.Greater(t, n, int64(0))
+	assert.Contains(t, buf.String(), `"status":"ok"`)
+}
+
+func TestACPStdoutFilter_EmptyLinesStripped(t *testing.T) {
+	// Empty lines should be stripped
+	input := "\n\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, f)
+
+	lines := strings.Count(buf.String(), "\n")
+	assert.Equal(t, 1, lines, "only one JSON line should remain")
+}
+
+func TestACPStdoutFilter_MultipleLinesWithModels(t *testing.T) {
+	// Multiple lines where one contains availableModels
+	input := `{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}
+{"jsonrpc":"2.0","id":2,"result":{"models":{"availableModels":[{"model_id":"m1","name":"Model 1"}],"currentModelId":"m1"},"sessionId":"s1"}}
+`
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, f)
+
+	// Both lines should be passed through
+	assert.Contains(t, buf.String(), `"status":"ok"`)
+	assert.Contains(t, buf.String(), "availableModels")
+
+	// Models should be cached
+	cached := f.GetAndClearCachedModels()
+	require.NotNil(t, cached)
+	assert.Equal(t, "m1", cached.CurrentModelID)
 }
