@@ -319,3 +319,55 @@ func TestPathsFromFileEntries(t *testing.T) {
 		t.Error("expected nil for nil input")
 	}
 }
+
+func TestSummaryCardsRoundTrip(t *testing.T) {
+	cards := SummaryCards{
+		Tools: []SummaryTool{{
+			Name:  "Bash",
+			ID:    "tool-1",
+			Input: map[string]any{"command": "ls"},
+		}},
+		TaskIDs: []int64{42},
+		AskQuestions: []AskQuestionCard{{
+			Text:    "Continue?",
+			Options: []string{"Yes", "No"},
+		}},
+	}
+	raw, err := json.Marshal(cards)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back SummaryCards
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(back.Tools) != 1 || back.Tools[0].Name != "Bash" {
+		t.Fatalf("tools mismatch: %+v", back.Tools)
+	}
+	if len(back.TaskIDs) != 1 || back.TaskIDs[0] != 42 {
+		t.Fatalf("taskIDs mismatch: %+v", back.TaskIDs)
+	}
+	if len(back.AskQuestions) != 1 || back.AskQuestions[0].Text != "Continue?" {
+		t.Fatalf("askQuestions mismatch: %+v", back.AskQuestions)
+	}
+}
+
+func TestChatMessageSummaryCardsMarshal(t *testing.T) {
+	m := ChatMessage{ID: 1, Role: "assistant", Summary: strPtr("hi"), SummaryCards: &SummaryCards{TaskIDs: []int64{1}}}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["summary"] != "hi" {
+		t.Fatalf("summary missing: %v", obj["summary"])
+	}
+	if obj["summaryCards"] == nil {
+		t.Fatalf("summaryCards missing: %v", obj["summaryCards"])
+	}
+}
+
+func strPtr(s string) *string { return &s }

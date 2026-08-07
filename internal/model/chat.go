@@ -52,17 +52,45 @@ func PathsFromFileEntries(entries []FileEntry) []string {
 
 // ChatMessage represents a single message in the chat history
 type ChatMessage struct {
-	ID          int64       `json:"id,omitempty"`
-	Role        string      `json:"role"`
-	Content     string      `json:"content"`
-	Files       []FileEntry `json:"files,omitempty"`
-	SessionID   string      `json:"sessionId,omitempty"`
-	Backend     string      `json:"backend,omitempty"`
-	ProjectPath string      `json:"projectPath,omitempty"`
-	Streaming   bool        `json:"streaming,omitempty"`
-	Indexed     bool        `json:"indexed,omitempty"`
-	CreatedAt   time.Time   `json:"createdAt"`
-	Summary     *string     `json:"summary,omitempty"` // reading summary (nil=not summarized, ""=too short, non-empty=summary)
+	ID           int64         `json:"id,omitempty"`
+	Role         string        `json:"role"`
+	Content      string        `json:"content"`
+	Files        []FileEntry   `json:"files,omitempty"`
+	SessionID    string        `json:"sessionId,omitempty"`
+	Backend      string        `json:"backend,omitempty"`
+	ProjectPath  string        `json:"projectPath,omitempty"`
+	Streaming    bool          `json:"streaming,omitempty"`
+	Indexed      bool          `json:"indexed,omitempty"`
+	CreatedAt    time.Time     `json:"createdAt"`
+	Summary      *string       `json:"summary,omitempty"`      // reading summary (nil=not summarized, ""=too short, non-empty=summary)
+	SummaryCards *SummaryCards `json:"summaryCards,omitempty"` // structured card metadata for summary view
+}
+
+// SummaryTool is a compact record of a tool_use block present in a reading
+// summary view. input is included for interactive tools (AskUserQuestion,
+// PermissionApproval) that need it for card rendering.
+type SummaryTool struct {
+	Name  string         `json:"name"`
+	ID    string         `json:"id,omitempty"`
+	Input map[string]any `json:"input,omitempty"`
+}
+
+// AskQuestionCard is a compact representation of an <ask-question> block
+// detected in a text block, used to render the question card in summary view.
+type AskQuestionCard struct {
+	Text    string   `json:"text"`
+	Options []string `json:"options"`
+}
+
+// SummaryCards holds the structured card metadata persisted alongside the
+// reading summary text. Tools are auto-expand tool_use blocks; TaskIDs are the
+// scheduled-task IDs referenced by <scheduled-task> tags; AskQuestions are
+// <ask-question> XML cards. Populated at summarization time and stored in the
+// summaries.summary_cards column.
+type SummaryCards struct {
+	Tools        []SummaryTool     `json:"tools,omitempty"`
+	TaskIDs      []int64           `json:"taskIDs,omitempty"`
+	AskQuestions []AskQuestionCard `json:"askQuestions,omitempty"`
 }
 
 // UnmarshalJSON implements custom deserialization for ChatMessage.
