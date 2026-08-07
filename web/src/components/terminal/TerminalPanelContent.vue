@@ -432,6 +432,8 @@ function handleCopySelection() {
     selectionActive.value = false
     selectedText.value = ''
     gestures.setMode('browse')
+  }, () => {
+    toast.show(t('terminal.copyFailed'), { icon: '⚠️', type: 'error' })
   })
 }
 
@@ -504,9 +506,7 @@ const gestures = useTerminalGestures(
     onPinchZoom: (delta: number) => applyFontSize(fontSize.value + delta),
     onTouchScroll: handleTerminalTouchScroll,
     getCellHeight: () => getXtermCellHeight(activeTab.value?.xterm ?? null),
-    onSelectionStart: () => {},
     onSelectionExtend: handleSelectionExtend,
-    onSelectionEnd: () => {},
     onGestureHint: (symbol: string) => {
       gestureHint.value = symbol
       if (gestureHintTimer) clearTimeout(gestureHintTimer)

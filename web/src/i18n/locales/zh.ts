@@ -1603,6 +1603,7 @@ export default {
     modeSelection: '选区模式',
     selectedChars: '已选 {n} 字符',
     copied: '已复制',
+    copyFailed: '复制失败',
     copyOutput: '复制输出',
     noOutput: '没有可复制的输出',
     symbols: '符号',

@@ -1602,6 +1602,7 @@ export default {
     modeSelection: 'Selection mode',
     selectedChars: '{n} chars selected',
     copied: 'Copied',
+    copyFailed: 'Copy failed',
     copyOutput: 'Copy Output',
     noOutput: 'No output to copy',
     symbols: 'Symbols',
