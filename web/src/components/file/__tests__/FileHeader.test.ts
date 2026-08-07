@@ -262,7 +262,7 @@ describe('FileHeader', () => {
 
   describe('media file filtering', () => {
     it('hides code-only toolbar items for image files', async () => {
-      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: '' } })
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
       // wordWrap, lineNumbers should not be in toolbar IDs
@@ -277,7 +277,7 @@ describe('FileHeader', () => {
     })
 
     it('hides code-only toolbar items for audio files', async () => {
-      const wrapper = mountHeader({ file: { name: 'song.mp3', path: '/tmp/song.mp3', content: '' } })
+      const wrapper = mountHeader({ file: { name: 'song.mp3', path: '/tmp/song.mp3', content: null } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
       const ids = vm.$.setupState.toolbarInlineIds
@@ -286,7 +286,7 @@ describe('FileHeader', () => {
     })
 
     it('hides code-only toolbar items for video files', async () => {
-      const wrapper = mountHeader({ file: { name: 'clip.mp4', path: '/tmp/clip.mp4', content: '' } })
+      const wrapper = mountHeader({ file: { name: 'clip.mp4', path: '/tmp/clip.mp4', content: null } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
       const ids = vm.$.setupState.toolbarInlineIds
@@ -295,7 +295,7 @@ describe('FileHeader', () => {
     })
 
     it('hides code-only toolbar items for PDF files', async () => {
-      const wrapper = mountHeader({ file: { name: 'doc.pdf', path: '/tmp/doc.pdf', content: '' } })
+      const wrapper = mountHeader({ file: { name: 'doc.pdf', path: '/tmp/doc.pdf', content: null } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
       const ids = vm.$.setupState.toolbarInlineIds
@@ -330,6 +330,18 @@ describe('FileHeader', () => {
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isEditable).toBe(true)
       expect(vm.$.setupState.toolbarInlineIds).toContain('edit')
+    })
+
+    it('shows edit button and code features for a newly-created empty text file', () => {
+      const wrapper = mountHeader({ file: { name: 'newfile.ts', path: '/tmp/newfile.ts', content: '' } })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.hasTextContent).toBe(true)
+      expect(vm.$.setupState.isEditable).toBe(true)
+      const ids = vm.$.setupState.toolbarInlineIds
+      expect(ids).toContain('edit')
+      expect(ids).toContain('wordWrap')
+      expect(ids).toContain('lineNumbers')
+      expect(ids).toContain('refresh')
     })
 
     it('emits toggleEdit when edit button is clicked', async () => {

@@ -289,8 +289,10 @@ const isMediaFile = computed(() => {
     const ft = fileType.value
     return ft?.isImage || ft?.isAudio || ft?.isVideo || ft?.isPdf || false
 })
-// File has usable text content for code-specific features
-const hasTextContent = computed(() => !!props.file?.content && !props.file?.tooLarge && !props.file?.isBinary)
+// File has usable text content for code-specific features.
+// An empty (but loaded) file has content === '' and must still be editable;
+// only null/undefined (media, binary, too-large, not-yet-loaded) exclude it.
+const hasTextContent = computed(() => typeof props.file?.content === 'string' && !props.file?.tooLarge && !props.file?.isBinary)
 // Editable: text/source files in raw view (excludes media).
 // Markdown is always editable (even in rendered view) so users can edit the source.
 const isEditable = computed(() => {
