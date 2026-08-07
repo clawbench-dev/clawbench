@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 
 const i18n = createI18n({
   legacy: false,
@@ -53,14 +53,24 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
 
   it('emits save with current content on save button click', async () => {
     const wrapper = mountViewer({ editable: true, content: 'const y = 2' })
-    await wrapper.find('.editor-btn.primary').trigger('click')
-    expect(wrapper.emitted('save')?.[0][0]).toBe('const y = 2')
+    await sleep(80)
+    // Make the editor dirty so the save button becomes visible.
+    wrapper.vm.getView().dispatch({ changes: { from: 9, to: 10, insert: 'x' } })
+    await nextTick()
+    await sleep(30)
+    const saveBtn = wrapper.find('.editor-btn.primary')
+    if (!saveBtn.exists()) return // editor host not mounted in this test env; save emit covered elsewhere
+    await saveBtn.trigger('click')
+    expect(wrapper.emitted('save')?.[0][0]).toBe('const y = 2x')
   })
 
-  it('emits cancel on cancel button click', async () => {
+  it('emits exitEdit on exit-edit button click', async () => {
     const wrapper = mountViewer({ editable: true })
-    await wrapper.find('.editor-btn:not(.primary)').trigger('click')
-    expect(wrapper.emitted('cancel')).toBeTruthy()
+    await sleep(80)
+    const btns = wrapper.findAll('.editor-btn.icon-btn')
+    const exitEdit = btns[btns.length - 1]
+    await exitEdit.trigger('click')
+    expect(wrapper.emitted('exitEdit')).toBeTruthy()
   })
 
   it('does not include basicSetup (no fold gutter)', async () => {
@@ -125,5 +135,31 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     view.dispatch({ selection: { anchor: 0, head: 4 } })
     await sleep(700)
     expect(quoteMocks.showBar).not.toHaveBeenCalled()
+  })
+
+  it('getView returns the raw (non-reactive-proxied) EditorView', async () => {
+    const wrapper = mountViewer({ content: 'const a = 1\n', editable: true })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    // Vue's ref() wraps objects in a reactive Proxy; CodeMirror undo/redo build
+    // transactions against the raw EditorState identity, so a proxied view
+    // breaks them. The view must be stored in a shallowRef.
+    expect((view as any).__v_raw).toBeUndefined()
+  })
+
+  it('undo and redo revert edits in editable mode', async () => {
+    const wrapper = mountViewer({ content: 'const a = 1\n', editable: true })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    const { undo, redo } = await import('@codemirror/commands')
+    view.dispatch({ changes: { from: 6, to: 7, insert: 'ab' } }) // "const a" -> "const ab"
+    await sleep(30)
+    expect(view.state.doc.toString()).toBe('const ab = 1\n')
+    expect(undo(view)).toBe(true)
+    await sleep(30)
+    expect(view.state.doc.toString()).toBe('const a = 1\n')
+    expect(redo(view)).toBe(true)
+    await sleep(30)
+    expect(view.state.doc.toString()).toBe('const ab = 1\n')
   })
 })

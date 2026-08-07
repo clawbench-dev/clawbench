@@ -144,6 +144,7 @@
           :saving="saving"
           @save="handleSave"
           @cancel="editing = false"
+          @exit-edit="editing = false"
         />
       </template>
 
@@ -202,6 +203,7 @@
           :saving="saving"
           @save="handleSave"
           @cancel="editing = false"
+          @exit-edit="editing = false"
         />
       </div>
     </div>

@@ -2,21 +2,31 @@
   <div class="cm-viewer" :class="{ 'is-editable': editable, 'cm-readonly': !editable }">
     <div ref="editorHost" class="cm-host"></div>
     <div v-if="editable" class="code-editor-actions">
-      <span class="code-editor-status">{{ t('file.editor.dirty') }}</span>
-      <button class="editor-btn" :disabled="saving" @click="emit('cancel')">{{ t('file.editor.cancel') }}</button>
-      <button class="editor-btn primary" :disabled="saving" @click="emit('save', getValue())">
-        {{ saving ? t('file.editor.saving') : t('file.editor.save') }}
+      <span class="code-editor-status">
+        <span class="dirty-dot" v-if="dirty"></span>
+      </span>
+      <button class="editor-btn icon-btn" :disabled="!canUndo || saving" @mousedown.prevent @click="handleUndo" :title="t('file.editor.undo')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 10h13a4 4 0 0 1 0 8H9"/><path d="M3 10l5-5M3 10l5 5"/></svg>
+      </button>
+      <button class="editor-btn icon-btn" :disabled="!canRedo || saving" @mousedown.prevent @click="handleRedo" :title="t('file.editor.redo')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 10H8a4 4 0 0 0 0 8h7"/><path d="M21 10l-5-5M21 10l-5 5"/></svg>
+      </button>
+      <button v-if="dirty" class="editor-btn icon-btn primary" :disabled="saving" @mousedown.prevent @click="emit('save', getValue())" :title="t('file.editor.save')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      </button>
+      <button class="editor-btn icon-btn" @mousedown.prevent @click="emit('exitEdit')" :title="t('file.editor.exitEdit')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state'
 import { EditorView, lineNumbers, Decoration, gutter, GutterMarker, keymap } from '@codemirror/view'
-import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap, history, undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { buildLangExtension } from '@/utils/codeEditorLang'
@@ -36,13 +46,21 @@ const props = defineProps({
     editable: { type: Boolean, default: false },
     saving: { type: Boolean, default: false },
 })
-const emit = defineEmits(['save', 'cancel'])
+const emit = defineEmits(['save', 'cancel', 'exitEdit'])
 
 const { t } = useI18n()
 const editorHost = ref(null)
-const view = ref(null)
+// EditorView must be stored in a shallowRef: Vue's ref() wraps objects in a
+// reactive Proxy, and CodeMirror's undo/redo build transactions against the
+// raw EditorState identity. Operating on the proxied view/state yields a
+// "transaction doesn't start from the previous state" RangeError that silently
+// breaks the Undo/Redo buttons.
+const view = shallowRef(null)
 const diffLineMap = ref(new Map())
 const quoteQuestion = useQuoteQuestion()
+const canUndo = ref(false)
+const canRedo = ref(false)
+const dirty = ref(false)
 
 const MONO_FONT = "'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace"
 
@@ -211,6 +229,27 @@ function handleSelectionChange(update) {
 
 const selectionExtension = EditorView.updateListener.of(handleSelectionChange)
 
+// ─── Edit state tracking (undo/redo availability, dirty) ───
+// Track the saved content snapshot so dirty = current doc differs from saved version.
+let savedSnapshot = ''
+function handleEditStateChange(update) {
+    if (!props.editable) return
+    if (!update.docChanged && !update.selectionSet) return
+    const state = update.state
+    canUndo.value = undoDepth(state) > 0
+    canRedo.value = redoDepth(state) > 0
+    dirty.value = state.doc.toString() !== savedSnapshot
+}
+
+const editStateExtension = EditorView.updateListener.of(handleEditStateChange)
+
+/** Mark the current document as the saved baseline (clears dirty). */
+function markSaved() {
+    const editor = view.value
+    savedSnapshot = editor ? editor.state.doc.toString() : ''
+    dirty.value = false
+}
+
 // ─── Overlay decorations (diff lines + flash + clickable paths) ───
 function recomputeOverlay() {
     const editor = view.value
@@ -270,6 +309,7 @@ function buildAllExtensions() {
         keymap.of([...defaultKeymap, ...historyKeymap]),
         interactionExtension,
         selectionExtension,
+        editStateExtension,
         jumpFlashCompartment.of([]),
         overlayCompartment.of([]),
     ]
@@ -297,6 +337,7 @@ onMounted(() => {
         state: EditorState.create({ doc: props.content || '', extensions: buildAllExtensions() }),
     })
     updateInputMode()
+    savedSnapshot = props.content || ''
     recomputeOverlay()
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
 })
@@ -313,6 +354,11 @@ onUnmounted(() => {
 watch([() => props.editable], () => {
     reconfigure(readonlyCompartment, props.editable ? [] : [EditorState.readOnly.of(true)])
     updateInputMode()
+    // Reset edit state when entering edit mode
+    canUndo.value = false
+    canRedo.value = false
+    dirty.value = false
+    savedSnapshot = props.content || ''
 })
 watch([() => props.showLineNumbers], () => reconfigure(lineNumbersCompartment, props.showLineNumbers ? [lineNumbers()] : []))
 watch([() => props.wordWrap], () => reconfigure(wrapCompartment, props.wordWrap ? [EditorView.lineWrapping] : []))
@@ -322,20 +368,34 @@ watch([() => props.language], () => reconfigure(langCompartment, buildLangExtens
 watch([diffMarkers, flashRanges, flashType, () => props.content], recomputeOverlay)
 
 // Update the document when the file content changes (file switch / refresh).
+// Re-create the editor state to clear undo history so the dirty indicator resets.
 watch(() => props.content, (c) => {
     const editor = view.value
     if (!editor) return
     const next = c || ''
     if (editor.state.doc.toString() !== next) {
-        editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: next } })
+        editor.setState(EditorState.create({ doc: next, extensions: buildAllExtensions() }))
+        updateInputMode()
+        canUndo.value = false
+        canRedo.value = false
+        dirty.value = false
     }
+    savedSnapshot = next
 })
 
 function getValue() {
     return view.value ? view.value.state.doc.toString() : (props.content || '')
 }
 
-defineExpose({ getValue, scrollToLine, getView: () => view.value })
+function handleUndo() {
+    if (view.value) undo(view.value)
+}
+
+function handleRedo() {
+    if (view.value) redo(view.value)
+}
+
+defineExpose({ getValue, scrollToLine, getView: () => view.value, markSaved })
 </script>
 
 <style scoped>
@@ -366,8 +426,23 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value })
 }
 .code-editor-status {
     margin-right: auto;
-    font-size: 12px;
-    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+}
+.dirty-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    flex-shrink: 0;
+    transition: opacity 0.2s;
+}
+.editor-btn.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 8px;
+    line-height: 1;
 }
 .editor-btn {
     padding: 5px 14px;
