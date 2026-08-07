@@ -199,6 +199,7 @@ import {
   showErrorOverlay as showErrorOverlayUtil,
 } from '@/utils/terminalFontUtils'
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
+import { shouldAutoRefocusTerminal } from '@/utils/terminalBlurUtils'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 
 import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Copy as CopyIcon } from 'lucide-vue-next'
@@ -546,11 +547,6 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
     container.removeEventListener('contextmenu', oldCtx)
     delete (container as unknown as { __terminalContextMenuHandler?: ((e: Event) => void) | null }).__terminalContextMenuHandler
   }
-  const oldTouch = (container as unknown as { __terminalTouchStartHandler?: ((e: TouchEvent) => void) | null }).__terminalTouchStartHandler
-  if (oldTouch) {
-    container.removeEventListener('touchstart', oldTouch)
-    delete (container as unknown as { __terminalTouchStartHandler?: ((e: TouchEvent) => void) | null }).__terminalTouchStartHandler
-  }
 
   tabManager.mountTabXterm(tab, container)
 
@@ -574,21 +570,42 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   container.addEventListener('contextmenu', contextMenuHandler)
   ;(container as unknown as { __terminalContextMenuHandler?: ((e: Event) => void) | null }).__terminalContextMenuHandler = contextMenuHandler
 
-  // Mobile: prevent the native tap default (which would blur the focused xterm
-  // textarea and collapse the soft keyboard) when the terminal is already
-  // focused. xterm's own mousedown preventDefault() is ineffective on touch
-  // devices because the blur fires at the touch level, before the synthesized
-  // mousedown — so the keyboard collapses then reopens on every tap. Gating on
-  // "already focused" keeps long-press text selection (which needs an
-  // unprevented touchstart while unfocused), swipes, and double-tap gestures.
-  const touchStartHandler = (e: TouchEvent) => {
-    const textarea = tab.xterm?.textarea
-    if (textarea && document.activeElement === textarea) {
-      e.preventDefault()
-    }
+  // Mobile keyboard stability: on Android WebView, touching the terminal surface
+  // blurs the focused xterm textarea BEFORE touchstart is dispatched, collapsing
+  // the soft keyboard; xterm then re-focuses on the synthesized mousedown,
+  // reopening it — a visible collapse-then-reopen on every tap. The blur happens
+  // before the touch event so it can't be blocked with preventDefault(). Instead,
+  // restore focus the moment the textarea blurs to body/document while the
+  // terminal panel is still active, keeping the keyboard up. If a real control
+  // (toolbar/dock button, input) takes focus, we leave it alone.
+  //
+  // NOTE: this is a deliberate workaround for a platform quirk (blur fires before
+  // touchstart and is uncancellable). It re-acquires focus rather than preventing
+  // the blur, so it is safe only while the terminal panel is active. Residual
+  // risk: if the panel is active but the user genuinely intends to dismiss the
+  // keyboard by tapping the surface (e.g. a future in-panel "collapse keyboard"
+  // interaction), this guard will fight that intent by re-showing it. The
+  // decision logic lives in shouldAutoRefocusTerminal() (utils/terminalBlurUtils.ts)
+  // and is unit-tested; keep any new "should dismiss" exceptions gated there.
+  const installBlurRefocus = () => {
+    const textareaEl = tab.xterm?.textarea
+    if (!textareaEl || (textareaEl as unknown as { __blurRefocus?: boolean }).__blurRefocus) return
+    ;(textareaEl as unknown as { __blurRefocus?: boolean }).__blurRefocus = true
+    textareaEl.addEventListener('blur', () => {
+      const next = document.activeElement
+      if (!shouldAutoRefocusTerminal(!!props.active, next)) return
+      // Refocus as a microtask: runs after the current event (and the browser's
+      // touch-down default that blurred us) but before the next paint, so the
+      // keyboard never visibly collapses. Faster than requestAnimationFrame.
+      queueMicrotask(() => {
+        const ta = tab.xterm?.textarea
+        if (ta && document.activeElement !== ta && !!props.active) {
+          ta.focus()
+        }
+      })
+    })
   }
-  container.addEventListener('touchstart', touchStartHandler, { passive: false })
-  ;(container as unknown as { __terminalTouchStartHandler?: ((e: TouchEvent) => void) | null }).__terminalTouchStartHandler = touchStartHandler
+  installBlurRefocus()
 
   // Fit the terminal after mounting
   requestAnimationFrame(() => {

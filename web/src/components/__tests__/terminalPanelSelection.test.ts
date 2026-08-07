@@ -32,18 +32,18 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('handleToolbarKeyClick(def)')
   })
 
-  it('guards the terminal tap so an already-focused textarea does not blur and collapse the soft keyboard', () => {
+  it('re-focuses the xterm textarea on blur to keep the soft keyboard open on tap', () => {
     const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
 
-    // Non-passive touchstart listener prevents the native tap default only when
-    // the xterm textarea is already focused (keyboard up), avoiding the
-    // collapse-then-reopen flicker without blocking long-press selection.
-    expect(source).toContain("container.addEventListener('touchstart', touchStartHandler, { passive: false })")
-    expect(source).toContain('document.activeElement === textarea')
-    expect(source).toContain('e.preventDefault()')
-    // It must be gated on focus, not a blanket preventDefault, so long-press
-    // selection still works when the terminal is unfocused.
-    expect(source).toContain("if (textarea && document.activeElement === textarea)")
+    // The Android WebView blurs the textarea before touchstart (uncancellable),
+    // so the fix restores focus on blur instead of trying to preventDefault.
+    expect(source).toContain("textareaEl.addEventListener('blur'")
+    expect(source).toContain('shouldAutoRefocusTerminal(!!props.active, next)')
+    // Only restores when focus fell to body/document (tap on the surface), and
+    // defers focus() out of the blur dispatch via a microtask so the keyboard
+    // never visibly collapses.
+    expect(source).toContain('queueMicrotask(() => {')
+    expect(source).toContain('ta.focus()')
   })
 
   it('keeps terminal virtual keys in a borderless, transparent overlay system', () => {
