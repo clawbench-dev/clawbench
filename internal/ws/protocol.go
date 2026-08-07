@@ -1,5 +1,7 @@
 package ws
 
+import "clawbench/internal/model"
+
 // MessageTypeEvent is the type field for event messages sent from server to client.
 const MessageTypeEvent = "event"
 
@@ -58,9 +60,10 @@ type ChatStreamData struct {
 
 // SummaryUpdateData is the data payload for "summary_update" events.
 type SummaryUpdateData struct {
-	TargetType  string `json:"targetType"` // "chat_message" (legacy: "task_execution" may exist from older versions)
-	TargetID    int64  `json:"targetID"`   // chat_history.id
-	Summary     string `json:"summary"`    // empty = too short, non-empty = summary content
-	ProjectPath string `json:"projectPath,omitempty"`
-	SessionID   string `json:"sessionID,omitempty"`
+	TargetType   string              `json:"targetType"` // "chat_message" (legacy: "task_execution" may exist from older versions)
+	TargetID     int64               `json:"targetID"`   // chat_history.id
+	Summary      string              `json:"summary"`    // empty = too short, non-empty = summary content
+	SummaryCards *model.SummaryCards `json:"summaryCards,omitempty"`
+	ProjectPath  string              `json:"projectPath,omitempty"`
+	SessionID    string              `json:"sessionID,omitempty"`
 }

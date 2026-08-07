@@ -57,7 +57,8 @@ func summarizeSimple(targetType string, targetID int64, blocks []model.ContentBl
 	if text == "" {
 		return
 	}
-	if err := SaveSummary(targetType, targetID, text); err != nil {
+	cards := extractSummaryCards(blocks)
+	if err := SaveSummaryWithCards(targetType, targetID, text, cards); err != nil {
 		slog.Warn(
 			"failed to save simple summary",
 			slog.String("target_type", targetType),
@@ -66,11 +67,11 @@ func summarizeSimple(targetType string, targetID int64, blocks []model.ContentBl
 		)
 		return
 	}
-	broadcastSummaryUpdate(targetType, targetID, text, projectPath, sessionID)
+	broadcastSummaryUpdate(targetType, targetID, text, cards, projectPath, sessionID)
 }
 
 // broadcastSummaryUpdate emits a summary_update WebSocket event for a target.
-func broadcastSummaryUpdate(targetType string, targetID int64, summary, projectPath, sessionID string) {
+func broadcastSummaryUpdate(targetType string, targetID int64, summary string, cards *model.SummaryCards, projectPath, sessionID string) {
 	mgr := ws.GetManager()
 	if mgr == nil {
 		return
@@ -80,11 +81,12 @@ func broadcastSummaryUpdate(targetType string, targetID int64, summary, projectP
 		ID:    ws.GenerateEventID(),
 		Event: "summary_update",
 		Data: ws.SummaryUpdateData{
-			TargetType:  targetType,
-			TargetID:    targetID,
-			Summary:     summary,
-			ProjectPath: projectPath,
-			SessionID:   sessionID,
+			TargetType:   targetType,
+			TargetID:     targetID,
+			Summary:      summary,
+			SummaryCards: cards,
+			ProjectPath:  projectPath,
+			SessionID:    sessionID,
 		},
 	})
 }
@@ -111,7 +113,8 @@ func AsyncSummarize(targetType string, targetID int64, blocks []model.ContentBlo
 		text := summarize.ExtractLastAnswerFromBlocks(blocks)
 		if utf8.RuneCountInString(text) < summarize.ShortTextThreshold {
 			// Text too short, mark as empty (frontend shows original)
-			if err := SaveSummary(targetType, targetID, ""); err != nil {
+			cards := extractSummaryCards(blocks)
+			if err := SaveSummaryWithCards(targetType, targetID, "", cards); err != nil {
 				slog.Warn(
 					"failed to save summary (short text)",
 					slog.String("target_type", targetType),
@@ -136,7 +139,8 @@ func AsyncSummarize(targetType string, targetID int64, blocks []model.ContentBlo
 			summary = text
 		}
 
-		if err := SaveSummary(targetType, targetID, summary); err != nil {
+		cards := extractSummaryCards(blocks)
+		if err := SaveSummaryWithCards(targetType, targetID, summary, cards); err != nil {
 			slog.Warn(
 				"failed to save summary",
 				slog.String("target_type", targetType),
@@ -153,6 +157,6 @@ func AsyncSummarize(targetType string, targetID int64, blocks []model.ContentBlo
 		)
 
 		// Broadcast summary_update via WebSocket
-		broadcastSummaryUpdate(targetType, targetID, summary, projectPath, sessionID)
+		broadcastSummaryUpdate(targetType, targetID, summary, cards, projectPath, sessionID)
 	}()
 }
