@@ -546,6 +546,11 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
     container.removeEventListener('contextmenu', oldCtx)
     delete (container as unknown as { __terminalContextMenuHandler?: ((e: Event) => void) | null }).__terminalContextMenuHandler
   }
+  const oldTouch = (container as unknown as { __terminalTouchStartHandler?: ((e: TouchEvent) => void) | null }).__terminalTouchStartHandler
+  if (oldTouch) {
+    container.removeEventListener('touchstart', oldTouch)
+    delete (container as unknown as { __terminalTouchStartHandler?: ((e: TouchEvent) => void) | null }).__terminalTouchStartHandler
+  }
 
   tabManager.mountTabXterm(tab, container)
 
@@ -568,6 +573,22 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   }
   container.addEventListener('contextmenu', contextMenuHandler)
   ;(container as unknown as { __terminalContextMenuHandler?: ((e: Event) => void) | null }).__terminalContextMenuHandler = contextMenuHandler
+
+  // Mobile: prevent the native tap default (which would blur the focused xterm
+  // textarea and collapse the soft keyboard) when the terminal is already
+  // focused. xterm's own mousedown preventDefault() is ineffective on touch
+  // devices because the blur fires at the touch level, before the synthesized
+  // mousedown — so the keyboard collapses then reopens on every tap. Gating on
+  // "already focused" keeps long-press text selection (which needs an
+  // unprevented touchstart while unfocused), swipes, and double-tap gestures.
+  const touchStartHandler = (e: TouchEvent) => {
+    const textarea = tab.xterm?.textarea
+    if (textarea && document.activeElement === textarea) {
+      e.preventDefault()
+    }
+  }
+  container.addEventListener('touchstart', touchStartHandler, { passive: false })
+  ;(container as unknown as { __terminalTouchStartHandler?: ((e: TouchEvent) => void) | null }).__terminalTouchStartHandler = touchStartHandler
 
   // Fit the terminal after mounting
   requestAnimationFrame(() => {

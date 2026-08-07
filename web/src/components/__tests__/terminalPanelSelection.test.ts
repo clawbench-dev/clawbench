@@ -32,6 +32,20 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('handleToolbarKeyClick(def)')
   })
 
+  it('guards the terminal tap so an already-focused textarea does not blur and collapse the soft keyboard', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // Non-passive touchstart listener prevents the native tap default only when
+    // the xterm textarea is already focused (keyboard up), avoiding the
+    // collapse-then-reopen flicker without blocking long-press selection.
+    expect(source).toContain("container.addEventListener('touchstart', touchStartHandler, { passive: false })")
+    expect(source).toContain('document.activeElement === textarea')
+    expect(source).toContain('e.preventDefault()')
+    // It must be gated on focus, not a blanket preventDefault, so long-press
+    // selection still works when the terminal is unfocused.
+    expect(source).toContain("if (textarea && document.activeElement === textarea)")
+  })
+
   it('keeps terminal virtual keys in a borderless, transparent overlay system', () => {
     for (const path of terminalComponentPaths) {
       const source = readTerminalComponent(path)
