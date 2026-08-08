@@ -55,7 +55,7 @@ func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 				for _, im := range askItemRe.FindAllStringSubmatch(inner, -1) {
 					item := im[1]
 					card := model.AskQuestionCard{
-						Header:   firstMatch(askHeaderRe, inner),
+						Header:   firstMatch(askHeaderRe, item),
 						Question: firstMatch(askQuestionRe, item),
 					}
 					mm := askMultiRe.FindStringSubmatch(item)

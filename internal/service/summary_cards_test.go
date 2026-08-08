@@ -11,7 +11,7 @@ func TestExtractSummaryCards(t *testing.T) {
 		{Type: "thinking", Text: "reasoning"},
 		{Type: "tool_use", Name: "Bash", ID: "t1", Input: map[string]any{"command": "ls"}},
 		{Type: "tool_use", Name: "AskUserQuestion", ID: "t2", Input: map[string]any{"question": "go?"}},
-		{Type: "text", Text: "Answer <scheduled-task id=\"42\">x</scheduled-task> <ask-question><header>Q</header><item><question>continue?</question><option><label>Yes</label></option></item></ask-question>"},
+		{Type: "text", Text: "Answer <scheduled-task id=\"42\">x</scheduled-task> <ask-question><item><header>Q</header><question>continue?</question><option><label>Yes</label></option></item></ask-question>"},
 	}
 	cards := extractSummaryCards(blocks)
 	if len(cards.Tools) != 1 {
@@ -37,7 +37,7 @@ func TestExtractSummaryCards(t *testing.T) {
 func TestExtractSummaryCardsAskQuestion(t *testing.T) {
 	blocks := []model.ContentBlock{{
 		Type: "text",
-		Text: `<ask-question><header>Setup</header><item><multi-select>true</multi-select><question>score < 5 ok?</question><option><label>Yes</label><description>confirm</description></option><option><label>No</label></option></item></ask-question>`,
+		Text: `<ask-question><item><header>Setup</header><multi-select>true</multi-select><question>score < 5 ok?</question><option><label>Yes</label><description>confirm</description></option><option><label>No</label></option></item></ask-question>`,
 	}}
 	cards := extractSummaryCards(blocks)
 	if len(cards.AskQuestions) != 1 {
@@ -55,5 +55,22 @@ func TestExtractSummaryCardsAskQuestion(t *testing.T) {
 	}
 	if aq.Options[1].Label != "No" || aq.Options[1].Description != "" {
 		t.Fatalf("option[1] mismatch: %+v", aq.Options[1])
+	}
+}
+
+func TestExtractSummaryCardsAskQuestionPerItemHeader(t *testing.T) {
+	blocks := []model.ContentBlock{{
+		Type: "text",
+		Text: `<ask-question><item><header>First</header><question>q1?</question><option><label>A</label></option></item><item><header>Second</header><question>q2?</question><option><label>B</label></option></item></ask-question>`,
+	}}
+	cards := extractSummaryCards(blocks)
+	if len(cards.AskQuestions) != 2 {
+		t.Fatalf("expected 2 ask-questions, got %d: %+v", len(cards.AskQuestions), cards.AskQuestions)
+	}
+	if cards.AskQuestions[0].Header != "First" || cards.AskQuestions[1].Header != "Second" {
+		t.Fatalf("per-item headers mismatch: %+v", cards.AskQuestions)
+	}
+	if cards.AskQuestions[0].Question != "q1?" || cards.AskQuestions[1].Question != "q2?" {
+		t.Fatalf("per-item questions mismatch: %+v", cards.AskQuestions)
 	}
 }
