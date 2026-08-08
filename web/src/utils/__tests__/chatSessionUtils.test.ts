@@ -3,6 +3,7 @@ import {
   buildMessageSnapshot,
   parseMessages,
   applySummaryUpdate,
+  shouldShowSummary,
 } from '@/utils/chatSessionUtils.ts'
 
 // ── buildMessageSnapshot ──
@@ -229,43 +230,20 @@ describe('parseMessages', () => {
     expect(result[0].blocks).toEqual([{ type: 'text', text: 42 }])
   })
 
-  // ── showingSummary auto-set for assistant messages with summary ──
+  // ── parseMessages: showingSummary only stores the user's explicit preference ──
+  // The field stays undefined until the user toggles; parseMessages preserves an
+  // existing preference but never derives a default boolean. The render decision
+  // is made by shouldShowSummary().
 
-  it('sets showingSummary=true for assistant messages with non-empty summary', () => {
+  it('leaves showingSummary undefined when no existing preference and summary exists', () => {
     const msgs = [
-      { role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }), summary: 'A brief summary' },
+      { id: 'm1', role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }), summary: 'A brief summary' },
     ]
     const result = parseMessages(msgs, mockParser)
-    expect(result[0].showingSummary).toBe(true)
+    expect(result[0].showingSummary).toBeUndefined()
   })
 
-  it('sets showingSummary=false for assistant messages with empty summary', () => {
-    const msgs = [
-      { role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }), summary: '' },
-    ]
-    const result = parseMessages(msgs, mockParser)
-    expect(result[0].showingSummary).toBe(false)
-  })
-
-  it('sets showingSummary=false for assistant messages with null summary', () => {
-    const msgs = [
-      { role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }), summary: null },
-    ]
-    const result = parseMessages(msgs, mockParser)
-    expect(result[0].showingSummary).toBe(false)
-  })
-
-  it('sets showingSummary=false for assistant messages without summary field', () => {
-    const msgs = [
-      { role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }) },
-    ]
-    const result = parseMessages(msgs, mockParser)
-    expect(result[0].showingSummary).toBe(false)
-  })
-
-  // ── parseMessages preserves existing showingSummary state ──
-
-  it('preserves showingSummary=false from existingMessages when summary exists', () => {
+  it('preserves showingSummary=false from existingMessages', () => {
     const rawMsgs = [
       { id: 'm1', role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }), summary: 'A summary' },
     ]
@@ -277,21 +255,7 @@ describe('parseMessages', () => {
     expect(result[0].showingSummary).toBe(false)
   })
 
-  it('forces showingSummary=true when existing=false, summary exists, and blocks are empty (stripped content)', () => {
-    // Regression: after streaming is interrupted, a summary is generated asynchronously
-    // AFTER the message was marked showingSummary=false. On reload, view=summary strips
-    // content (blocks=[]), so forcing original view would render an empty bubble.
-    const rawMsgs = [
-      { id: 'm1', role: 'assistant', content: '', blocks: [], summary: 'A late summary' },
-    ]
-    const existing = [
-      { id: 'm1', showingSummary: false },
-    ]
-    const result = parseMessages(rawMsgs, mockParser, existing)
-    expect(result[0].showingSummary).toBe(true)
-  })
-
-  it('preserves showingSummary=true from existingMessages when summary exists', () => {
+  it('preserves showingSummary=true from existingMessages', () => {
     const rawMsgs = [
       { id: 'm1', role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }), summary: 'A summary' },
     ]
@@ -299,27 +263,6 @@ describe('parseMessages', () => {
       { id: 'm1', showingSummary: true },
     ]
     const result = parseMessages(rawMsgs, mockParser, existing)
-    expect(result[0].showingSummary).toBe(true)
-  })
-
-  it('sets default showingSummary=true when no existingMessages and summary exists', () => {
-    const rawMsgs = [
-      { id: 'm1', role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }), summary: 'A summary' },
-    ]
-    const result = parseMessages(rawMsgs, mockParser)
-    expect(result[0].showingSummary).toBe(true)
-  })
-
-  it('sets default showingSummary when existingMessages has undefined showingSummary', () => {
-    const rawMsgs = [
-      { id: 'm1', role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }), summary: 'A summary' },
-    ]
-    // existingMessages exists but this message has no showingSummary set yet
-    const existing = [
-      { id: 'm1' },
-    ]
-    const result = parseMessages(rawMsgs, mockParser, existing)
-    // showingSummary is undefined in existing, so use default (true for messages with summary)
     expect(result[0].showingSummary).toBe(true)
   })
 
@@ -332,12 +275,37 @@ describe('parseMessages', () => {
     const existing = [
       { id: 'm1', showingSummary: false },  // User toggled to original
       { id: 'm2', showingSummary: true },   // Still showing summary
-      // m3 not in existing (new message)
+      // m3 not in existing (new message) → stays undefined
     ]
     const result = parseMessages(rawMsgs, mockParser, existing)
     expect(result[0].showingSummary).toBe(false)  // Preserved user toggle
     expect(result[1].showingSummary).toBe(true)   // Preserved
-    expect(result[2].showingSummary).toBe(true)   // Default for new message with summary
+    expect(result[2].showingSummary).toBeUndefined() // No explicit preference
+  })
+
+  // ── shouldShowSummary: the render decision ──
+
+  it('shouldShowSummary returns false when there is no summary', () => {
+    expect(shouldShowSummary({ summary: '', blocks: [{ type: 'text', text: 'x' }] })).toBe(false)
+    expect(shouldShowSummary({ summary: null, blocks: [{ type: 'text', text: 'x' }] })).toBe(false)
+    expect(shouldShowSummary({ blocks: [{ type: 'text', text: 'x' }] })).toBe(false)
+  })
+
+  it('shouldShowSummary returns true when summary exists and user has no explicit preference (content present)', () => {
+    expect(shouldShowSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }] })).toBe(true)
+  })
+
+  it('shouldShowSummary respects explicit preference to view original when content present', () => {
+    expect(shouldShowSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }], showingSummary: false })).toBe(false)
+    expect(shouldShowSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }], showingSummary: true })).toBe(true)
+  })
+
+  it('shouldShowSummary forces true when content stripped (blocks empty) even if user preferred original', () => {
+    // Regression: after a stream is interrupted, the summary is generated
+    // asynchronously AFTER the message was marked showingSummary=false. On reload
+    // with view=summary the content is stripped (blocks empty), so forcing original
+    // view would render an empty bubble.
+    expect(shouldShowSummary({ summary: 'late sum', blocks: [], showingSummary: false })).toBe(true)
   })
 
   // ── sessionRunning parameter: strip stale streaming for completed sessions ──
@@ -418,35 +386,35 @@ describe('applySummaryUpdate', () => {
     expect(msg.summary).toBeNull()
   })
 
-  it('sets showingSummary=true when non-empty summary arrives and showingSummary is undefined', () => {
-    const msg = { id: '1', showingSummary: undefined }
+  it('does not set showingSummary when summary arrives and it is undefined', () => {
+    // applySummaryUpdate stores the summary but never touches showingSummary,
+    // which records only the user's explicit preference. The render decision is
+    // made by shouldShowSummary().
+    const msg: any = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, 'Summary text', null, true)
-    expect(msg.showingSummary).toBe(true)
+    expect(msg.summary).toBe('Summary text')
+    expect(msg.showingSummary).toBeUndefined()
   })
 
-  it('sets showingSummary=false when summary is empty and showingSummary is undefined', () => {
-    const msg = { id: '1', showingSummary: undefined }
+  it('keeps showingSummary undefined when summary is empty', () => {
+    const msg: any = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, '', null, true)
-    expect(msg.showingSummary).toBe(false)
+    expect(msg.summary).toBe('')
+    expect(msg.showingSummary).toBeUndefined()
   })
 
-  it('sets showingSummary=false when summary is null and showingSummary is undefined', () => {
-    const msg = { id: '1', showingSummary: undefined }
+  it('keeps showingSummary undefined when summary is null', () => {
+    const msg: any = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, null, null, true)
-    expect(msg.showingSummary).toBe(false)
-  })
-
-  it('does not depend on atBottom', () => {
-    const msg = { id: '1', showingSummary: undefined }
-    applySummaryUpdate(msg, 'Summary text', null, false)
-    expect(msg.showingSummary).toBe(true)
+    expect(msg.summary).toBeNull()
+    expect(msg.showingSummary).toBeUndefined()
   })
 
   it('handles undefined summary', () => {
     const msg: any = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, undefined, null, true)
-    expect(msg.showingSummary).toBe(false)
     expect(msg.summary).toBeUndefined()
+    expect(msg.showingSummary).toBeUndefined()
   })
 
   it('does not override showingSummary when already set to true', () => {

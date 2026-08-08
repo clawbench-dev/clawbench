@@ -18,7 +18,7 @@
         :cancelled="msg.cancelled"
         :summary="msg.summary"
         :summaryCards="msg.summaryCards"
-        :showingSummary="msg.showingSummary"
+        :showingSummary="showSummary"
         :renderTextBlock="renderTextBlock"
         :formatToolInput="formatToolInput"
         :toolCallSummary="toolCallSummary"
@@ -63,7 +63,7 @@
         <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
       </span>
       <div class="chat-meta-actions">
-        <SummaryToggle v-if="msg.summary && !msg.streaming" mode="button" :showing-summary="msg.showingSummary" i18n-prefix="chat.message" @toggle="$emit('toggle-summary', msg.id)" />
+        <SummaryToggle v-if="msg.summary && !msg.streaming" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="$emit('toggle-summary', msg.id)" />
         <span v-if="msg._loadingOriginal" class="chat-loading-original">{{ t('chat.message.loadingOriginal') }}</span>
         <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
@@ -114,6 +114,7 @@ import { formatDuration } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
+import { shouldShowSummary } from '@/utils/chatSessionUtils.ts'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import ContentBlocks from './ContentBlocks.vue'
@@ -148,6 +149,11 @@ const msgText = computed(() => {
   if (props.msg?.role !== 'assistant') return ''
   return extractSpeakableText(props.msg?.blocks || [])
 })
+
+// Whether to render the summary view. Computed from message state (summary
+// exists, content stripped) plus the user's explicit preference, rather than
+// reading the raw showingSummary field which only stores the user's choice.
+const showSummary = computed(() => !!props.msg && shouldShowSummary(props.msg))
 
 // Handle speak button click: play or stop (no popover)
 function handleSpeak() {

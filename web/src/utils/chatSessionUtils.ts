@@ -56,26 +56,15 @@ export function parseMessages(
           msg.fromDB = true
         }
       }
-      // Preserve existing showingSummary state if the user explicitly toggled it.
-      // Only set the default (true when summary exists) for messages not yet seen.
+      // `showingSummary` stores only the USER's explicit preference, preserved
+      // across loadHistory refreshes. It is undefined until the user toggles.
+      // The actual render decision is computed by shouldShowSummary(msg), which
+      // accounts for whether a summary exists and whether content was stripped
+      // by view=summary. We must NOT derive a default boolean here, otherwise
+      // the raw field would conflate "user chose original" with "no choice yet".
       const existingState = existingSummaryState?.get(msg.id)
-      const hasSummary = msg.summary != null && msg.summary !== ''
-      const blocksArr = msg.blocks as unknown as Array<unknown> | undefined
-      const blocksEmpty = !blocksArr || blocksArr.length === 0
-      if (existingState === true) {
-        // User toggled to summary — keep it
-        msg.showingSummary = true
-      } else if (existingState === false) {
-        // User toggled to original. If the message now has a summary but its content
-        // was stripped by view=summary (blocks empty), forcing original view would
-        // render an empty bubble. In that case show the summary instead. This can
-        // happen after streaming is interrupted: a summary is generated asynchronously
-        // AFTER the message was marked showingSummary=false.
-        msg.showingSummary = hasSummary && blocksEmpty
-      } else if (hasSummary) {
-        msg.showingSummary = true
-      } else {
-        msg.showingSummary = false
+      if (existingState === true || existingState === false) {
+        msg.showingSummary = existingState
       }
     } else if (msg.role === 'user') {
       // User messages should never have streaming flag — strip if present
@@ -97,6 +86,32 @@ export function parseMessages(
 }
 
 /**
+ * Decide whether a message should render its summary view.
+ *
+ * The `showingSummary` field stores only the USER's explicit preference
+ * (true = show summary, false = show original, undefined = no explicit choice).
+ * Rendering must NOT be driven by that raw field alone, because it can be
+ * stale relative to message state:
+ *
+ *  - A message with no summary can never show one.
+ *  - When content was stripped by view=summary (blocks empty), there is nothing
+ *    to show in original view — we must fall back to the summary even if the
+ *    user previously toggled to original. This happens after a stream is
+ *    interrupted: the summary is generated asynchronously AFTER the message
+ *    was already marked showingSummary=false.
+ *  - Otherwise (content present), respect the user's preference, defaulting
+ *    to summary when a summary exists and the user has not chosen.
+ */
+export function shouldShowSummary(msg: Record<string, unknown> | { summary?: unknown; blocks?: unknown; showingSummary?: unknown }): boolean {
+  const hasSummary = msg.summary != null && msg.summary !== ''
+  if (!hasSummary) return false
+  const blocksArr = msg.blocks as unknown as Array<unknown> | undefined
+  const blocksEmpty = !blocksArr || blocksArr.length === 0
+  if (blocksEmpty) return true // content stripped — only summary is available
+  return msg.showingSummary !== false // undefined → default to summary
+}
+
+/**
  * Apply a summary update to a message object.
  * Auto-switches to summary view only when the user is at the bottom of the chat.
  * If the user has scrolled up to read earlier messages, the summary is stored
@@ -112,9 +127,8 @@ export function applySummaryUpdate(msg: Record<string, unknown>, summary: string
   if (summaryCards !== undefined && summaryCards !== null) {
     msg.summaryCards = summaryCards
   }
-  // Only set default when showingSummary hasn't been set yet.
-  // If the user has already toggled (or parseMessages initialized it), don't override.
-  if (msg.showingSummary === undefined) {
-    msg.showingSummary = summary != null && summary !== ''
-  }
+  // Do NOT touch showingSummary here. It stores the user's explicit preference
+  // only; the render decision is computed by shouldShowSummary(msg). Leaving it
+  // undefined (until the user toggles) means "default to summary when one
+  // exists", which is the correct behavior for both live and reloaded messages.
 }

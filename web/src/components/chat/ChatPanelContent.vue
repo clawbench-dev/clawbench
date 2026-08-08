@@ -170,7 +170,7 @@ import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
-import { applySummaryUpdate } from '@/utils/chatSessionUtils.ts'
+import { applySummaryUpdate, shouldShowSummary } from '@/utils/chatSessionUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { buildQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
@@ -888,11 +888,14 @@ function handleSummaryUpdate(e) {
 async function handleToggleSummary(msgId) {
     const msg = messages.value.find(m => m.id === msgId)
     if (!msg) return
+    const showingNow = shouldShowSummary(msg)
     // Switching FROM summary TO original: if blocks weren't loaded (content omitted in view=summary), fetch the full message.
-    if (msg.showingSummary && (!msg.blocks || msg.blocks.length === 0)) {
+    if (showingNow && (!msg.blocks || msg.blocks.length === 0)) {
         await ensureMessageContent(msg)
     }
-    msg.showingSummary = !msg.showingSummary
+    // Record the user's explicit preference. If they were showing the summary,
+    // toggle to original; otherwise toggle to summary.
+    msg.showingSummary = !showingNow
 }
 
 // Lazily fetch the full message content when the original view is requested but
