@@ -42,44 +42,57 @@ func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 				})
 			}
 		case contentKeyText:
-			for _, m := range scheduledTaskIDRe.FindAllStringSubmatch(b.Text, -1) {
-				var id int64
-				for _, c := range m[1] {
-					id = id*10 + int64(c-'0')
-				}
-				cards.TaskIDs = append(cards.TaskIDs, id)
-			}
-			for _, block := range askQuestionBlockRe.FindAllStringSubmatch(b.Text, -1) {
-				inner := block[1]
-				// Each <item> is one question card
-				for _, im := range askItemRe.FindAllStringSubmatch(inner, -1) {
-					item := im[1]
-					card := model.AskQuestionCard{
-						Header:   firstMatch(askHeaderRe, item),
-						Question: firstMatch(askQuestionRe, item),
-					}
-					mm := askMultiRe.FindStringSubmatch(item)
-					if len(mm) == 2 {
-						card.MultiSelect = strings.TrimSpace(mm[1]) == "true"
-					}
-					for _, om := range askOptionRe.FindAllStringSubmatch(item, -1) {
-						optText := om[1]
-						opt := model.AskQuestionOption{Label: firstMatch(askLabelRe, optText)}
-						if d := firstMatch(askDescRe, optText); d != "" {
-							opt.Description = d
-						}
-						if opt.Label != "" {
-							card.Options = append(card.Options, opt)
-						}
-					}
-					if card.Question != "" && len(card.Options) > 0 {
-						cards.AskQuestions = append(cards.AskQuestions, card)
-					}
-				}
-			}
+			extractFromText(cards, b.Text)
 		}
 	}
 	return cards
+}
+
+// extractFromText parses scheduled-task IDs and ask-question cards from a text block.
+func extractFromText(cards *model.SummaryCards, text string) {
+	for _, m := range scheduledTaskIDRe.FindAllStringSubmatch(text, -1) {
+		var id int64
+		for _, c := range m[1] {
+			id = id*10 + int64(c-'0')
+		}
+		cards.TaskIDs = append(cards.TaskIDs, id)
+	}
+	for _, block := range askQuestionBlockRe.FindAllStringSubmatch(text, -1) {
+		parseAskQuestionItems(cards, block[1])
+	}
+}
+
+// parseAskQuestionItems extracts individual <item> cards from an <ask-question> block.
+func parseAskQuestionItems(cards *model.SummaryCards, inner string) {
+	for _, im := range askItemRe.FindAllStringSubmatch(inner, -1) {
+		item := im[1]
+		card := model.AskQuestionCard{
+			Header:   firstMatch(askHeaderRe, item),
+			Question: firstMatch(askQuestionRe, item),
+		}
+		mm := askMultiRe.FindStringSubmatch(item)
+		if len(mm) == 2 {
+			card.MultiSelect = strings.TrimSpace(mm[1]) == "true"
+		}
+		parseAskOptions(&card, item)
+		if card.Question != "" && len(card.Options) > 0 {
+			cards.AskQuestions = append(cards.AskQuestions, card)
+		}
+	}
+}
+
+// parseAskOptions extracts <option> entries from an <item> block.
+func parseAskOptions(card *model.AskQuestionCard, item string) {
+	for _, om := range askOptionRe.FindAllStringSubmatch(item, -1) {
+		optText := om[1]
+		opt := model.AskQuestionOption{Label: firstMatch(askLabelRe, optText)}
+		if d := firstMatch(askDescRe, optText); d != "" {
+			opt.Description = d
+		}
+		if opt.Label != "" {
+			card.Options = append(card.Options, opt)
+		}
+	}
 }
 
 // firstMatch returns the trimmed text of the first subexpression match, or "".

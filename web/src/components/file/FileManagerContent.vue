@@ -705,6 +705,8 @@ defineExpose({
     searchDrawer: props.searchDrawer,
     viewMode,
     _setViewMode(val) { viewMode.value = val },
+    _setSelectedPath(val) { selectedPath.value = val },
+    _getSelectedPath() { return selectedPath.value },
     _getFilteredEntries() { return filteredEntries.value },
     _setIsDragOver(val) { isDragOver.value = val },
     focusSearchInput() { fileSearchDrawerRef.value?.focusSearchInput() },
