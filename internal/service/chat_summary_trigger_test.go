@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/summarize"
 
 	"github.com/stretchr/testify/assert"
@@ -290,4 +291,167 @@ func TestTriggerChatSummarization_Success(t *testing.T) {
 	summary, found := GetSummary("chat_message", msgID)
 	assert.True(t, found)
 	assert.Contains(t, summary, "总结")
+}
+
+// --- summarizeTarget (shared entry point for chat + scheduled tasks) ---
+
+func TestSummarizeTarget_SimpleMode_ShortTextGetsSummary(t *testing.T) {
+	_, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	origMode := GetChatSummaryMode()
+	origEnabled := chatSummaryEnabled.Load()
+	origInstance := taskSummarizerInstance
+	defer func() {
+		SetChatSummaryMode(origMode)
+		chatSummaryEnabled.Store(origEnabled)
+		taskSummarizerInstance = origInstance
+	}()
+
+	SetChatSummaryMode("simple")
+	chatSummaryEnabled.Store(true)
+	taskSummarizerInstance = nil // simple mode must not need an AI summarizer
+
+	// Short answer (< ShortTextThreshold) — simple mode must still produce a summary.
+	blocks := []model.ContentBlock{{Type: "text", Text: "Short answer"}}
+
+	summarizeTarget("chat_message", 1001, blocks, "/test", "sess-sum")
+
+	summary, found := GetSummary("chat_message", 1001)
+	assert.True(t, found, "simple mode should save a summary even for short text")
+	assert.Equal(t, "Short answer", summary)
+}
+
+func TestSummarizeTarget_SimpleMode_EmptyTextSkips(t *testing.T) {
+	_, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	origMode := GetChatSummaryMode()
+	origEnabled := chatSummaryEnabled.Load()
+	defer func() {
+		SetChatSummaryMode(origMode)
+		chatSummaryEnabled.Store(origEnabled)
+	}()
+
+	SetChatSummaryMode("simple")
+	chatSummaryEnabled.Store(true)
+
+	// No text blocks → no summary saved
+	summarizeTarget("chat_message", 1002, []model.ContentBlock{{Type: "tool_use", Text: "read_file"}}, "/test", "sess-sum2")
+
+	_, found := GetSummary("chat_message", 1002)
+	assert.False(t, found, "no text block should produce no summary")
+}
+
+func TestSummarizeTarget_AIMode_ShortTextSkips(t *testing.T) {
+	_, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	origMode := GetChatSummaryMode()
+	origEnabled := chatSummaryEnabled.Load()
+	origInstance := taskSummarizerInstance
+	defer func() {
+		SetChatSummaryMode(origMode)
+		chatSummaryEnabled.Store(origEnabled)
+		taskSummarizerInstance = origInstance
+	}()
+
+	SetChatSummaryMode("ai")
+	chatSummaryEnabled.Store(true)
+
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "AI总结", nil
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
+
+	// Short answer → AsyncSummarize saves empty (frontend falls back to original).
+	summarizeTarget("chat_message", 1003, []model.ContentBlock{{Type: "text", Text: "short"}}, "/test", "sess-sum3")
+	time.Sleep(200 * time.Millisecond)
+
+	summary, found := GetSummary("chat_message", 1003)
+	assert.True(t, found, "AsyncSummarize records an empty summary for short AI-mode text")
+	assert.Equal(t, "", summary)
+}
+
+func TestSummarizeTarget_AIMode_NilSummarizer(t *testing.T) {
+	_, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	origMode := GetChatSummaryMode()
+	origEnabled := chatSummaryEnabled.Load()
+	origInstance := taskSummarizerInstance
+	defer func() {
+		SetChatSummaryMode(origMode)
+		chatSummaryEnabled.Store(origEnabled)
+		taskSummarizerInstance = origInstance
+	}()
+
+	SetChatSummaryMode("ai")
+	chatSummaryEnabled.Store(true)
+	taskSummarizerInstance = nil
+
+	// AI mode with no summarizer → no summary produced.
+	summarizeTarget("chat_message", 1004, []model.ContentBlock{{Type: "text", Text: "Some answer text"}}, "/test", "sess-sum4")
+
+	_, found := GetSummary("chat_message", 1004)
+	assert.False(t, found, "AI mode without summarizer should not produce a summary")
+}
+
+func TestSummarizeTarget_DisabledMode(t *testing.T) {
+	_, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	origMode := GetChatSummaryMode()
+	origEnabled := chatSummaryEnabled.Load()
+	defer func() {
+		SetChatSummaryMode(origMode)
+		chatSummaryEnabled.Store(origEnabled)
+	}()
+
+	SetChatSummaryMode("")
+	chatSummaryEnabled.Store(true)
+
+	summarizeTarget("chat_message", 1005, []model.ContentBlock{{Type: "text", Text: "Some answer"}}, "/test", "sess-sum5")
+
+	_, found := GetSummary("chat_message", 1005)
+	assert.False(t, found, "disabled mode should not produce a summary")
+}
+
+func TestSummarizeTarget_AIFailure_FallsBackToText(t *testing.T) {
+	_, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	origMode := GetChatSummaryMode()
+	origEnabled := chatSummaryEnabled.Load()
+	origInstance := taskSummarizerInstance
+	defer func() {
+		SetChatSummaryMode(origMode)
+		chatSummaryEnabled.Store(origEnabled)
+		taskSummarizerInstance = origInstance
+	}()
+
+	SetChatSummaryMode("ai")
+	chatSummaryEnabled.Store(true)
+
+	// Mock pipeline that errors → AsyncSummarize falls back to extracted text.
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "", context.DeadlineExceeded
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
+
+	conclusion := strings.Repeat("这是最终结论内容，比较长。", 30)
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "让我检查一下..."},
+		{Type: "tool_use", Text: "read_file"},
+		{Type: "text", Text: conclusion},
+	}
+
+	summarizeTarget("chat_message", 1006, blocks, "/test", "sess-sum6")
+	time.Sleep(200 * time.Millisecond)
+
+	summary, found := GetSummary("chat_message", 1006)
+	assert.True(t, found, "AI failure should still produce a fallback summary")
+	assert.Equal(t, conclusion, summary, "fallback should use the extracted last answer")
 }

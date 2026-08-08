@@ -22,6 +22,73 @@ func SetTaskSummarizerInstance(s *summarize.TaskSummarizer) {
 	taskSummarizerInstance = s
 }
 
+// summarizeTarget is the single shared entry point for generating a reading
+// summary for a chat message or task execution. Both interactive chat
+// (triggerChatSummarization) and scheduled tasks (executeTask) route through
+// this function so they follow the exact same strategy:
+//
+//   - "" / "disabled" → no summarization
+//   - "simple" → extract the last answer text and save it directly (no AI, no threshold)
+//   - "ai" → use the configured AI summarizer via AsyncSummarize, which falls
+//     back to the extracted text on AI failure. If no AI summarizer is
+//     configured, no summary is produced.
+func summarizeTarget(targetType string, targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) { //nolint:unparam // targetType always "chat_message"; kept generic to mirror AsyncSummarize's signature
+	if !chatSummaryEnabled.Load() {
+		return
+	}
+	switch GetChatSummaryMode() {
+	case "", "disabled":
+		return
+	case "simple":
+		summarizeSimple(targetType, targetID, blocks, projectPath, sessionID)
+	default: // "ai"
+		if taskSummarizerInstance == nil {
+			return
+		}
+		AsyncSummarize(targetType, targetID, blocks, projectPath, sessionID)
+	}
+}
+
+// summarizeSimple extracts the last answer text and saves it as a summary
+// without any AI call or length threshold. Shared by interactive chat and
+// scheduled tasks via summarizeTarget.
+func summarizeSimple(targetType string, targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) {
+	text := summarize.ExtractLastAnswerFromBlocks(blocks)
+	if text == "" {
+		return
+	}
+	if err := SaveSummary(targetType, targetID, text); err != nil {
+		slog.Warn(
+			"failed to save simple summary",
+			slog.String("target_type", targetType),
+			slog.Int64("target_id", targetID),
+			slog.String("err", err.Error()),
+		)
+		return
+	}
+	broadcastSummaryUpdate(targetType, targetID, text, projectPath, sessionID)
+}
+
+// broadcastSummaryUpdate emits a summary_update WebSocket event for a target.
+func broadcastSummaryUpdate(targetType string, targetID int64, summary, projectPath, sessionID string) {
+	mgr := ws.GetManager()
+	if mgr == nil {
+		return
+	}
+	mgr.BroadcastEvent(ws.ServerMessage{
+		Type:  ws.MessageTypeEvent,
+		ID:    ws.GenerateEventID(),
+		Event: "summary_update",
+		Data: ws.SummaryUpdateData{
+			TargetType:  targetType,
+			TargetID:    targetID,
+			Summary:     summary,
+			ProjectPath: projectPath,
+			SessionID:   sessionID,
+		},
+	})
+}
+
 // AsyncSummarize generates a reading summary asynchronously for a target
 // (chat message or task execution). It runs in a goroutine with an
 // independent context and 5-minute timeout.
@@ -86,20 +153,6 @@ func AsyncSummarize(targetType string, targetID int64, blocks []model.ContentBlo
 		)
 
 		// Broadcast summary_update via WebSocket
-		mgr := ws.GetManager()
-		if mgr != nil {
-			mgr.BroadcastEvent(ws.ServerMessage{
-				Type:  ws.MessageTypeEvent,
-				ID:    ws.GenerateEventID(),
-				Event: "summary_update",
-				Data: ws.SummaryUpdateData{
-					TargetType:  targetType,
-					TargetID:    targetID,
-					Summary:     summary,
-					ProjectPath: projectPath,
-					SessionID:   sessionID,
-				},
-			})
-		}
+		broadcastSummaryUpdate(targetType, targetID, summary, projectPath, sessionID)
 	}()
 }

@@ -464,9 +464,10 @@ func GetChatSummaryMode() string {
 // triggerChatSummarization triggers async summarization for the last assistant
 // message(s) in a session when it completes normally.
 // Skipped for cancelled/disconnected sessions (those use skipEvent=true in SetSessionRunning).
+// Delegates the mode-specific strategy to the shared summarizeTarget so that
+// interactive chat and scheduled tasks behave identically.
 func triggerChatSummarization(sessionID string) {
-	mode := GetChatSummaryMode()
-	if mode == "" || !chatSummaryEnabled.Load() {
+	if GetChatSummaryMode() == "" || !chatSummaryEnabled.Load() {
 		return
 	}
 
@@ -482,17 +483,7 @@ func triggerChatSummarization(sessionID string) {
 	}
 
 	projectPath := GetSessionProjectPath(sessionID)
-
-	if mode == "simple" {
-		summarizeChatSimple(lastAssistant, blocks, projectPath, sessionID)
-		return
-	}
-
-	// AI mode: use existing AsyncSummarize path
-	if taskSummarizerInstance == nil {
-		return
-	}
-	AsyncSummarize("chat_message", lastAssistant.ID, blocks, projectPath, sessionID)
+	summarizeTarget("chat_message", lastAssistant.ID, blocks, projectPath, sessionID)
 }
 
 // getLastAssistantBlocks returns the last assistant message and its parsed content blocks.
@@ -523,35 +514,10 @@ func getLastAssistantBlocks(sessionID string) (*model.ChatMessage, []model.Conte
 }
 
 // summarizeChatSimple extracts the last answer text and saves it as a summary.
+// Kept as a thin wrapper over the shared summarizeSimple for the existing simple-mode
+// tests; new callers should use summarizeTarget directly.
 func summarizeChatSimple(msg *model.ChatMessage, blocks []model.ContentBlock, projectPath, sessionID string) {
-	text := summarize.ExtractLastAnswerFromBlocks(blocks)
-	if text == "" {
-		return
-	}
-	if err := SaveSummary("chat_message", msg.ID, text); err != nil {
-		slog.Warn(
-			"failed to save simple summary",
-			slog.String("target_type", "chat_message"),
-			slog.Int64("target_id", msg.ID),
-			slog.String("err", err.Error()),
-		)
-		return
-	}
-	mgr := ws.GetManager()
-	if mgr != nil {
-		mgr.BroadcastEvent(ws.ServerMessage{
-			Type:  ws.MessageTypeEvent,
-			ID:    ws.GenerateEventID(),
-			Event: "summary_update",
-			Data: ws.SummaryUpdateData{
-				TargetType:  "chat_message",
-				TargetID:    msg.ID,
-				Summary:     text,
-				ProjectPath: projectPath,
-				SessionID:   sessionID,
-			},
-		})
-	}
+	summarizeSimple("chat_message", msg.ID, blocks, projectPath, sessionID)
 }
 
 // RespondPermission delivers a user's approval/rejection response to a pending
