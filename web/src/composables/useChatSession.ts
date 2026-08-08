@@ -397,7 +397,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         // Load agents in parallel with recovery fetch
         const agentsPromise = agents.value.length === 0 ? loadAgents() : Promise.resolve()
         try {
-          recoverResp = await fetch(`/api/ai/chat?limit=${limit}`, { signal: recoverCtrl.signal })
+          recoverResp = await fetch(`/api/ai/chat?limit=${limit}&view=summary`, { signal: recoverCtrl.signal })
         } catch (e) {
           clearTimeout(recoverTimer)
           if (recoverCtrl.signal.aborted) {
@@ -442,7 +442,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       }
       // Load agents in parallel with the main fetch when not in recovery path
       const agentsPromise = agents.value.length === 0 ? loadAgents() : Promise.resolve()
-      const url = `/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${limit}`
+      const url = `/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${limit}&view=summary`
       const fetchCtrl = new AbortController()
       const fetchTimer = setTimeout(() => fetchCtrl.abort(), 60000)
       let resp: Response
@@ -552,7 +552,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Use cursor-based pagination: pass the id of the oldest loaded message
       const oldestMsg = messages.value[0]
       const beforeId = (oldestMsg?.id as string) || ''
-      const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${pageSize}&before_id=${encodeURIComponent(beforeId)}`)
+      const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${pageSize}&before_id=${encodeURIComponent(beforeId)}&view=summary`)
       if (!resp.ok) return
       const data = await resp.json()
       const olderMsgs = parseMessages(data.messages || [], onParseAssistantContent, undefined, data.running)

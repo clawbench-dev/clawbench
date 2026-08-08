@@ -614,6 +614,27 @@ describe('onSessionEvent', () => {
     })
   })
 
+  it('requests view=summary in loadHistory URL', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+
+    session.onSessionEvent({ session_id: 'current-s1', has_new_messages: true, status: 'completed' })
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('view=summary'),
+        expect.any(Object)
+      )
+    })
+  })
+
   it('calls loadHistory when current session completes', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
