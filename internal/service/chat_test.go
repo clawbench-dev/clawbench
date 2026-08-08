@@ -3626,3 +3626,23 @@ func TestGetChatHistoryPagedViewSummaryKeepsStreamingContent(t *testing.T) {
 	assert.NotEqual(t, "", msgs[0].Content, "streaming messages must keep content even in summary view")
 	assert.NotNil(t, msgs[0].Summary)
 }
+
+func TestGetChatHistoryPagedViewSummaryKeepsEmptySummaryContent(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Summary View Empty Summary")
+
+	asstID, err := service.AddChatMessage("/project", "claude", sid, "assistant",
+		`{"blocks":[{"type":"text","text":"too short to summarize"}]}`, nil, false, "")
+	assert.NoError(t, err)
+
+	// Empty summary = text too short. This is what AsyncSummarize persists for short replies.
+	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "", nil))
+
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0, true)
+	assert.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.NotEqual(t, "", msgs[0].Content, "messages with an empty summary must keep content so they remain visible")
+	require.NotNil(t, msgs[0].Summary)
+	assert.Equal(t, "", *msgs[0].Summary)
+}

@@ -1598,7 +1598,7 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage, summaryView bool)
 			if cards, ok := cardMap[messages[i].ID]; ok {
 				messages[i].SummaryCards = cards
 			}
-			if summaryView && messages[i].Summary != nil && !messages[i].Streaming {
+			if summaryView && messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
 				messages[i].Content = ""
 			}
 		}
