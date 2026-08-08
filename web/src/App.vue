@@ -1204,14 +1204,6 @@ async function handleAppHeaderRecentFileSelect(path) {
     }
 }
 
-async function handleAppHeaderRecentFileSelect(path) {
-    const ok = await store.selectFile(path)
-    if (ok) {
-        switchTab('browse')
-        fileNav.openFile(path)
-    }
-}
-
 function handleOpenFileOverlay(e) {
     const { path, lineStart, lineEnd } = e.detail || {}
     if (!path) return
