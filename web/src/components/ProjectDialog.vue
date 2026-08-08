@@ -34,7 +34,7 @@
         :class="{ selected: selectedPath === item.path }"
         @click="enterDir(item)"
       >
-        <Folder :size="28" class="item-icon-svg" />
+        <FileIcon :path="item.name" :is-dir="true" :size="28" class="item-icon" />
         <span class="item-name">{{ item.name }}</span>
         <template v-if="!isRootLevel">
           <button class="item-action-btn" @click.stop="doRename(item)" :title="t('common.rename')">
@@ -63,6 +63,7 @@ import { useI18n } from 'vue-i18n'
 import ModalDialog from './common/ModalDialog.vue'
 import SearchInput from './common/SearchInput.vue'
 import DirBreadcrumb from './file/DirBreadcrumb.vue'
+import FileIcon from './common/FileIcon.vue'
 import { useDialog } from '@/composables/useDialog.ts'
 import { store } from '@/stores/app.ts'
 
@@ -329,9 +330,8 @@ async function confirm() {
 .dialog-item.selected { background: var(--accent-color, #0066cc); color: #fff; }
 .dialog-item.selected .item-name { color: #fff; }
 
-.item-icon-svg { flex-shrink: 0; width: 28px; height: 28px; color: var(--accent-color, #0066cc); }
-.dialog-item.selected .item-icon-svg { color: #fff; }
-.item-name { flex: 1; font-size: 13px; color: var(--text-primary, #1a1a1a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item-icon { flex-shrink: 0; width: 28px; height: 28px; }
+.item-name { flex: 1; font-size: 13px; font-weight: 500; color: var(--text-primary, #1a1a1a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Item action buttons */
 .item-action-btn {
