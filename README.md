@@ -19,7 +19,7 @@
 </p>
 
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA
-- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi
+- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build
 
 ---
 
@@ -158,13 +158,16 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **文件预览覆盖层**：点击文件直接在浏览页上方弹出预览覆盖层，无需切换标签页；支持导航栈（多文件切换 + 返回），关闭即回到文件列表
 - **二进制文件预览**：二进制文件显示占位界面，支持"以文本方式打开"；大文件自动截断（64KB 二进制 / 512KB 文本），截断时显示提示横幅
 
-### 🎨 代码预览
-- 语法高亮，粘性行号，自动换行切换
-- **Sticky Scroll**：VS Code 风格的粘性滚动，滚动时自动显示当前所在的作用域上下文（函数/类/结构体等）
+### 🎨 代码预览与编辑
+- 基于 CodeMirror 的代码浏览/编辑双模式，只读模式默认，一键切换编辑模式
+- 语法高亮，粘性行号，自动换行切换，30+ 语言扩展（高频语言静态导入，低频语言懒加载）
+- **Sticky Scroll**：VS Code 风格的粘性滚动，基于后端 tree-sitter 符号数据，滚动时自动显示当前所在的作用域上下文（函数/类/结构体等）
 - 双击复制代码行内容（闪烁动画反馈）
 - **文件改动闪烁高亮**：文件被外部修改时，删除字符红色脉冲闪烁，新增字符蓝色脉冲闪烁，快速定位改动
 - **引用提问**：选中代码片段后，一键向 AI 提问，自动附上文件路径和行号
 - **文件路径跳转**：代码预览中的文件路径可点击跳转，支持 import 路径解析（如 @/composables/useFoo 解析为实际文件路径）；支持行范围导航（如 `file.go:42-50`），高亮闪烁指定行范围
+- **编辑模式**：undo/redo、保存退出、未保存变更确认对话框、编辑模式视觉区分（强调色背景+顶部边框）
+- **Markdown 标题锚定滚动同步**：在渲染视图和源码编辑之间切换时，根据标题锚点同步滚动位置
 - 滑动手势：左右滑动切换文件
 
 ### 📝 Markdown
@@ -177,8 +180,8 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 ### 🤖 AI 智能体
 - **流式响应**：WebSocket 实时推送，思维过程、工具调用全程可见
 - **多 Agent 支持**：全能助手、编码专家、勤杂工等；自定义 Agent 可通过 `config/agents/*.yaml` 加载（非常规 Agent 的补充方式）
-- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi，会话级隔离
-- **深度思考档位**：支持按智能体选择思考深度（Low / Medium / High 等），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi 八后端支持，选择自动持久化
+- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build，会话级隔离
+- **深度思考档位**：支持按智能体选择思考深度（Low / Medium / High 等），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok 十后端支持，选择自动持久化
 - **模型选择模态框**：统一模型切换与思考深度选择，双 Tab 界面，搜索过滤，一键刷新模型列表（支持自动发现的智能体），长按设为默认模型
 - **模型选择持久化**：每个智能体的模型选择和思考档位自动保存到 localStorage，刷新/切换会话自动恢复
 - **定时任务**：AI 通过 CLI 子命令创建 Cron 调度，定时自动执行；独立标签页管理，4 级面包屑导航；频率预设（每小时/每天/每周/每月）+ 自定义 Cron 表达式；任务卡片内嵌聊天消息；执行级别已读追踪 + TTS 朗读；执行完成后自动摘要 + 完成通知（音效/震动/Toast）
@@ -251,13 +254,14 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **交互式终端**：基于 PTY + WebSocket + xterm.js，浏览器内直接操作服务器终端
 - **多会话并发**：每个客户端拥有独立 PTY 会话，互不干扰
 - **多标签管理**：支持关闭所有标签页，空状态显示创建按钮，Dock 图标显示活跃会话数
+- **三模式手势系统**：浏览（默认，支持触摸滚动）、手势（Termius 风格滑动→方向键、长按重复、双击→Tab、捏合缩放）、选择（拖拽选择文本+浮动复制栏）
 - **虚拟按键栏**：按类型分组的颜色编码按键（修饰键、快捷键、导航键、方向键、操作键），修饰键支持三态切换
 - **按键/符号配置**：全屏配置抽屉，按键和符号双标签页，支持点选添加、拖拽排序、手势模式自动隐藏部分按键，配置持久化到数据库
 - **符号栏**：可展开的符号输入行，19 个终端高频符号，过渡动画
-- **触摸手势**：Termius 风格手势（滑动→方向键、长按重复、双击→Tab、捏合缩放），手势关闭时支持触摸滚动，切换时 Toast 提示
 - **选中文本自动复制**：选中终端文本自动复制到剪贴板，Toast 反馈
 - **快捷命令**：CRUD 管理常用命令，支持拖拽排序、隐藏、自动执行（每次连接自动运行）
 - **Android 音量键**：App 内终端打开时，音量键映射为方向键上下
+- **Android 软键盘稳定性**：只读模式下阻止软键盘弹出，点击终端时避免键盘收起再弹出的闪烁
 - 详见 [Web 终端使用指南](docs/TERMINAL.md)
 
 ### 🌐 国际化
@@ -286,7 +290,6 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 
 ### 🔒 安全
 - 可选密码保护（SHA-256 加盐哈希存储，设置面板支持修改密码）
-- API Key 加密存储（AES-256-GCM + HKDF-SHA256 密钥派生，修改密码自动轮换加密密钥）
 - 多实例部署安全隔离（Cookie 按端口自动前缀，同域名不同端口互不干扰）
 - 路径穿越防护，所有操作限制在项目目录内
 - Git 参数注入防护（SHA/分支名/标签名校验，`--` 分隔符）

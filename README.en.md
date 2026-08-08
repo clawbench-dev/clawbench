@@ -15,7 +15,7 @@ Brings the full power of AI coding agents to browsers and mobile apps, creating 
 Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. Unlike other mobile AI tools that are merely "remote controllers," ClawBench is a full-featured mobile workstation — files, code, Git, AI, scheduled tasks, TTS, get real work done on your phone without needing a PC online.
 
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
-- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi
+- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build
 
 <p align="center">
   <img src="assets/architecture.en.svg" alt="ClawBench Deployment Architecture" width="640">
@@ -155,13 +155,16 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **File Preview Overlay**: Click a file to open a preview overlay on top of the browse tab, no tab switching needed; supports navigation stack (multi-file switching + back), close to return to file list
 - **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
 
-### 🎨 Code Preview
-- Syntax highlighting, sticky line numbers, word wrap toggle
-- **Sticky Scroll**: VS Code-style sticky scroll that shows enclosing scope context (functions, classes, structs, etc.) as you scroll
+### 🎨 Code Preview & Editing
+- CodeMirror-based code browsing and editing dual mode, read-only by default, one-click switch to edit mode
+- Syntax highlighting, sticky line numbers, word wrap toggle, 30+ language extensions (high-frequency static imports, low-frequency lazy loading)
+- **Sticky Scroll**: VS Code-style sticky scroll based on backend tree-sitter symbol data, showing enclosing scope context (functions, classes, structs, etc.) as you scroll
 - Double-click to copy code line content (flash animation feedback)
 - **File Change Flash Highlight**: When files are modified externally, deleted characters flash red and new characters flash blue for quick change identification
 - **Quote & Ask**: Select a code snippet, one-click ask AI, auto-attaches file path and line number
 - **File Path Navigation**: Clickable file paths in code previews with import path resolution (e.g., @/composables/useFoo resolves to the actual file path); line range navigation support (e.g., `file.go:42-50`) with flash highlight
+- **Edit Mode**: undo/redo, save & exit, unsaved changes confirmation dialog, visual distinction for edit mode (accent-tinted background + top border)
+- **Markdown Heading-Anchored Scroll Sync**: Scroll position synchronized between rendered view and source edit based on heading anchors
 - Swipe gestures: swipe left/right to switch files
 
 ### 📝 Markdown
@@ -174,8 +177,8 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 ### 🤖 AI Agents
 - **Streaming Response**: Real-time WebSocket push, thinking process and tool calls fully visible
 - **Multi-Agent Support**: General assistant, coding expert, handyman, etc.; custom agents can be loaded via `config/agents/*.yaml` (supplementary method for non-standard agents)
-- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi — session-level isolation
-- **Thinking Effort Levels**: Per-agent thinking depth selection (Low / Medium / High, etc.), supported by 8 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi), selection auto-persisted
+- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build — session-level isolation
+- **Thinking Effort Levels**: Per-agent thinking depth selection (Low / Medium / High, etc.), supported by 10 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok), selection auto-persisted
 - **Model Selection Modal**: Unified model switching and thinking effort selection in a dual-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
 - **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch
 - **Scheduled Tasks**: AI creates Cron schedules via CLI subcommands, executes automatically; independent tab with 4-level breadcrumb navigation; task cards embedded in chat messages; frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)
@@ -248,13 +251,14 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Interactive Terminal**: PTY + WebSocket + xterm.js, operate server terminal directly in browser
 - **Concurrent Sessions**: Each client gets an independent PTY session, no interference
 - **Multi-Tab Management**: Close all tabs, empty state with create button, dock icon shows active session count
+- **Three-Mode Gesture System**: Browse (default, touch scroll), Gesture (Termius-style swipe→arrow keys, hold-to-repeat, double-tap→Tab, pinch-to-zoom), Selection (drag-to-select text + floating copy bar)
 - **Virtual Key Toolbar**: Color-coded key groups (modifiers, shortcuts, navigation, arrows, actions), three-state modifier toggle
 - **Key/Symbol Configuration**: Full-screen configuration drawer with keys and symbols dual tabs; supports tap-to-add, drag-to-reorder, gesture mode auto-hides certain keys; configuration persisted to database
 - **Symbol Bar**: Expandable symbol input row with 19 high-frequency terminal symbols, smart sorting using exponential decay (balances frequency and recency)
-- **Touch Gestures**: Termius-style gestures (swipe→arrow keys, hold-to-repeat, double-tap→Tab, pinch-to-zoom), touch scroll when gestures disabled
 - **Selected Text Auto-Copy**: Selected terminal text automatically copied to clipboard with toast feedback
 - **Quick Commands**: CRUD management of common commands with drag reorder, hidden flag, auto-execute (auto-run on every connect/reconnect)
 - **Android Volume Keys**: Volume up/down remapped to arrow keys when terminal is open in the app
+- **Android Soft Keyboard Stability**: Read-only mode prevents soft keyboard popup; tapping terminal avoids keyboard collapse-then-reopen flicker
 - See [Web Terminal User Guide](docs/TERMINAL.en.md)
 
 ### 🌐 Internationalization
@@ -283,7 +287,6 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 
 ### 🔒 Security
 - Optional password protection (SHA-256 salted hash storage, password change available in settings panel)
-- API Key encrypted storage (AES-256-GCM + HKDF-SHA256 key derivation, encryption key auto-rotation on password change)
 - Multi-instance cookie isolation (cookies auto-prefixed by port, no collisions on same domain)
 - Path traversal protection, all operations restricted to project directory
 - Git parameter injection protection (SHA/branch name/tag name validation, `--` separator)
