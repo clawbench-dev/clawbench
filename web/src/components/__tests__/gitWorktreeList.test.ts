@@ -25,10 +25,6 @@ const i18n = createI18n({
 
 // ── Stubs ──
 const LucideStub = { template: '<span class="lucide-stub" />' }
-const SwipeToDeleteRowStub = {
-  template: '<div class="swipe-to-delete-stub"><slot /></div>',
-  props: ['deletable'],
-}
 
 // ── localStorage mock ──
 beforeEach(() => {
@@ -45,7 +41,6 @@ function mountList(props: Record<string, unknown> = {}) {
       plugins: [i18n],
       stubs: {
         'lucide-vue-next': LucideStub,
-        SwipeToDeleteRow: SwipeToDeleteRowStub,
       },
     },
   })

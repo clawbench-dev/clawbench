@@ -9,15 +9,13 @@
     </div>
     <div v-else-if="tags.length === 0" class="section-empty">{{ t('git.manage.noTags') }}</div>
     <template v-else>
-      <SwipeToDeleteRow
+      <div
         v-for="tag in tags"
         :key="tag.name"
-        @delete="$emit('delete-tag', tag)"
+        class="tag-row"
+        @click="$emit('switch-tag', tag)"
       >
-        <div
-          class="tag-row"
-          @click="$emit('switch-tag', tag)"
-        >
+        <div class="tag-info">
           <div class="tag-main">
             <Tag :size="14" class="tag-icon" />
             <span class="tag-name">{{ tag.name }}</span>
@@ -27,15 +25,21 @@
             <span v-if="tag.date" class="tag-date">{{ shortDate(tag.date) }}</span>
           </div>
         </div>
-      </SwipeToDeleteRow>
+        <button
+          class="tag-action-btn"
+          :title="t('git.manage.deleteTag')"
+          @click.stop="$emit('delete-tag', tag)"
+        >
+          <Trash2 :size="15" />
+        </button>
+      </div>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { Tag } from 'lucide-vue-next'
-import SwipeToDeleteRow from './SwipeToDeleteRow.vue'
+import { Tag, Trash2 } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -98,11 +102,44 @@ function shortDate(dateStr: string) {
 
 .tag-row {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
   transition: background 0.15s;
+}
+
+.tag-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.tag-action-btn {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  margin-top: -2px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+@media (hover: hover) {
+  .tag-action-btn:hover {
+    color: var(--danger-color, #dc3545);
+    background: var(--danger-bg, rgba(220, 53, 69, 0.1));
+  }
+}
+
+.tag-action-btn:active {
+  background: var(--danger-bg, rgba(220, 53, 69, 0.15));
 }
 
 @media (hover: hover) {

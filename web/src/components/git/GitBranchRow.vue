@@ -1,34 +1,36 @@
 <template>
-  <SwipeToDeleteRow
-    :deletable="!branch.isCurrent && !branch.isDefault"
-    @delete="$emit('delete', branch)"
+  <div
+    class="git-branch-row"
+    :class="{ current: branch.isCurrent, switching }"
+    @click="handleClick"
   >
-    <div
-      class="git-branch-row"
-      :class="{ current: branch.isCurrent, switching }"
-      @click="handleClick"
-    >
-      <div class="branch-main">
-        <GitBranch :size="14" class="branch-icon" />
-        <span class="branch-name">{{ branch.name }}</span>
-      </div>
-      <div class="branch-right">
-        <span v-if="branch.isDefault" class="branch-default-badge">{{ t('git.manage.default') }}</span>
-        <span v-if="branch.ahead > 0" class="track-ahead">{{ t('git.manage.ahead') }}{{ branch.ahead }}</span>
-        <span v-if="branch.behind > 0" class="track-behind">{{ t('git.manage.behind') }}{{ branch.behind }}</span>
-      </div>
-      <div v-if="switching" class="branch-spinner">
-        <div class="spinner" style="width:14px;height:14px;border-width:2px;" />
-      </div>
+    <div class="branch-main">
+      <GitBranch :size="14" class="branch-icon" />
+      <span class="branch-name">{{ branch.name }}</span>
     </div>
-  </SwipeToDeleteRow>
+    <div class="branch-right">
+      <span v-if="branch.isDefault" class="branch-default-badge">{{ t('git.manage.default') }}</span>
+      <span v-if="branch.ahead > 0" class="track-ahead">{{ t('git.manage.ahead') }}{{ branch.ahead }}</span>
+      <span v-if="branch.behind > 0" class="track-behind">{{ t('git.manage.behind') }}{{ branch.behind }}</span>
+    </div>
+    <div v-if="switching" class="branch-spinner">
+      <div class="spinner" style="width:14px;height:14px;border-width:2px;" />
+    </div>
+    <button
+      v-if="!branch.isCurrent && !branch.isDefault"
+      class="branch-action-btn"
+      :title="t('git.manage.deleteBranch')"
+      @click.stop="$emit('delete', branch)"
+    >
+      <Trash2 :size="15" />
+    </button>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { GitBranch } from 'lucide-vue-next'
-import SwipeToDeleteRow from './SwipeToDeleteRow.vue'
+import { GitBranch, Trash2 } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -53,6 +55,8 @@ function handleClick() {
 .git-branch-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   min-height: 44px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-color, #dee2e6);
@@ -140,6 +144,32 @@ function handleClick() {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+}
+
+.branch-action-btn {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+@media (hover: hover) {
+  .branch-action-btn:hover {
+    color: var(--danger-color, #dc3545);
+    background: var(--danger-bg, rgba(220, 53, 69, 0.1));
+  }
+}
+
+.branch-action-btn:active {
+  background: var(--danger-bg, rgba(220, 53, 69, 0.15));
 }
 
 .spinner {

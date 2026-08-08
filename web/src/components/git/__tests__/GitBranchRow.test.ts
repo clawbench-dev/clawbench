@@ -7,15 +7,6 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
-vi.mock('@/components/git/SwipeToDeleteRow.vue', () => ({
-  default: {
-    name: 'SwipeToDeleteRow',
-    template: '<div class="swipe-stub"><slot /></div>',
-    props: ['deletable'],
-    emits: ['delete'],
-  },
-}))
-
 const makeBranch = (overrides: Record<string, unknown> = {}) => ({
   name: 'feature',
   isCurrent: false,
@@ -34,12 +25,7 @@ function mountRow(props: Record<string, unknown> = {}) {
     global: {
       stubs: {
         GitBranch: true,
-        SwipeToDeleteRow: {
-          name: 'SwipeToDeleteRow',
-          template: '<div class="swipe-stub"><slot /></div>',
-          props: ['deletable'],
-          emits: ['delete'],
-        },
+        Trash2: true,
       },
     },
   })
@@ -87,23 +73,29 @@ describe('GitBranchRow', () => {
     })
   })
 
-  describe('deletable logic', () => {
-    it('passes deletable=true when branch is not current and not default', () => {
+  describe('delete button', () => {
+    it('shows delete button when branch is not current and not default', () => {
       const wrapper = mountRow({ branch: makeBranch() })
-      const swipe = wrapper.findComponent({ name: 'SwipeToDeleteRow' })
-      expect(swipe.props('deletable')).toBe(true)
+      expect(wrapper.find('.branch-action-btn').exists()).toBe(true)
     })
 
-    it('passes deletable=false when branch is current', () => {
+    it('hides delete button when branch is current', () => {
       const wrapper = mountRow({ branch: makeBranch({ isCurrent: true }) })
-      const swipe = wrapper.findComponent({ name: 'SwipeToDeleteRow' })
-      expect(swipe.props('deletable')).toBe(false)
+      expect(wrapper.find('.branch-action-btn').exists()).toBe(false)
     })
 
-    it('passes deletable=false when branch is default', () => {
+    it('hides delete button when branch is default', () => {
       const wrapper = mountRow({ branch: makeBranch({ isDefault: true }) })
-      const swipe = wrapper.findComponent({ name: 'SwipeToDeleteRow' })
-      expect(swipe.props('deletable')).toBe(false)
+      expect(wrapper.find('.branch-action-btn').exists()).toBe(false)
+    })
+
+    it('emits delete without switching when the delete button is clicked', async () => {
+      const branch = makeBranch({ name: 'dev' })
+      const wrapper = mountRow({ branch })
+      await wrapper.find('.branch-action-btn').trigger('click')
+      expect(wrapper.emitted('delete')).toBeTruthy()
+      expect(wrapper.emitted('delete')![0][0]).toEqual(branch)
+      expect(wrapper.emitted('switch')).toBeFalsy()
     })
   })
 

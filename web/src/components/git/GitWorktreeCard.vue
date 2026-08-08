@@ -1,34 +1,46 @@
 <template>
-  <SwipeToDeleteRow
-    :deletable="!worktree.isCurrent"
-    @delete="$emit('delete', worktree)"
+  <div
+    class="git-worktree-row"
+    :class="{ current: worktree.isCurrent, locked: worktree.locked, missing: worktree.missing }"
+    @click="!worktree.isCurrent && !worktree.missing && $emit('switch', worktree)"
   >
-    <div
-      class="git-worktree-row"
-      :class="{ current: worktree.isCurrent, locked: worktree.locked, missing: worktree.missing }"
-      @click="!worktree.isCurrent && !worktree.missing && $emit('switch', worktree)"
-    >
-      <div class="wt-row-main">
-        <div class="wt-row-name">
-          <FolderTree :size="14" class="wt-row-icon" />
-          <span>{{ worktree.branch || '—' }}</span>
-        </div>
-        <div class="wt-row-path">{{ worktree.path }}</div>
+    <div class="wt-row-main">
+      <div class="wt-row-name">
+        <FolderTree :size="14" class="wt-row-icon" />
+        <span>{{ worktree.branch || '—' }}</span>
       </div>
-      <div class="wt-row-badges">
-        <span v-if="worktree.dirty" class="wt-badge wt-badge-dirty">{{ t('git.manage.dirty', { count: worktree.changeCount || worktree.untrackedCount }) }}</span>
-        <span v-else class="wt-badge wt-badge-clean">{{ t('git.manage.clean') }}</span>
-        <span v-if="worktree.locked" class="wt-badge wt-badge-locked">{{ t('git.manage.locked') }}</span>
-        <span v-if="worktree.missing" class="wt-badge wt-badge-missing">{{ t('git.manage.pathMissing') }}</span>
-      </div>
+      <div class="wt-row-path">{{ worktree.path }}</div>
     </div>
-  </SwipeToDeleteRow>
+    <div class="wt-row-badges">
+      <span v-if="worktree.dirty" class="wt-badge wt-badge-dirty">{{ t('git.manage.dirty', { count: worktree.changeCount || worktree.untrackedCount }) }}</span>
+      <span v-else class="wt-badge wt-badge-clean">{{ t('git.manage.clean') }}</span>
+      <span v-if="worktree.locked" class="wt-badge wt-badge-locked">{{ t('git.manage.locked') }}</span>
+      <span v-if="worktree.missing" class="wt-badge wt-badge-missing">{{ t('git.manage.pathMissing') }}</span>
+    </div>
+    <div class="wt-row-actions">
+      <button
+        v-if="!worktree.isCurrent && !worktree.missing"
+        class="wt-action-btn"
+        :title="t('git.manage.switchWorktree')"
+        @click.stop="$emit('switch', worktree)"
+      >
+        <LogIn :size="15" />
+      </button>
+      <button
+        v-if="!worktree.isCurrent"
+        class="wt-action-btn wt-action-delete"
+        :title="t('git.manage.deleteWorktree')"
+        @click.stop="$emit('delete', worktree)"
+      >
+        <Trash2 :size="15" />
+      </button>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { FolderTree } from 'lucide-vue-next'
-import SwipeToDeleteRow from './SwipeToDeleteRow.vue'
+import { FolderTree, LogIn, Trash2 } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -44,12 +56,13 @@ defineEmits(['switch', 'delete'])
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   min-height: 44px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
   transition: background 0.15s;
-  gap: 8px;
 }
 
 @media (hover: hover) {
@@ -115,6 +128,43 @@ defineEmits(['switch', 'delete'])
   flex-wrap: wrap;
   gap: 4px;
   flex-shrink: 0;
+}
+
+.wt-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.wt-action-btn {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+@media (hover: hover) {
+  .wt-action-btn:hover {
+    color: var(--accent-color, #4a90d9);
+    background: var(--bg-secondary, #e9ecef);
+  }
+  .wt-action-btn:hover.wt-action-delete {
+    color: var(--danger-color, #dc3545);
+    background: var(--danger-bg, rgba(220, 53, 69, 0.1));
+  }
+}
+
+.wt-action-btn:active {
+  background: var(--bg-tertiary, #e9ecef);
 }
 
 .wt-badge {
