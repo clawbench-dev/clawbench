@@ -79,7 +79,7 @@ func TestEnrichMessagesWithSummaries_NoAssistantMessages(t *testing.T) {
 		{ID: 1, Role: "user", Content: "hello"},
 		{ID: 2, Role: "user", Content: "world"},
 	}
-	enrichMessagesWithSummaries(messages)
+	enrichMessagesWithSummaries(messages, false)
 	assert.Nil(t, messages[0].Summary)
 	assert.Nil(t, messages[1].Summary)
 }
@@ -96,7 +96,7 @@ func TestEnrichMessagesWithSummaries_WithSummary(t *testing.T) {
 		{ID: 5, Role: "user", Content: "question"},
 		{ID: 10, Role: "assistant", Content: "long answer"},
 	}
-	enrichMessagesWithSummaries(messages)
+	enrichMessagesWithSummaries(messages, false)
 	assert.Nil(t, messages[0].Summary)
 	assert.NotNil(t, messages[1].Summary)
 	assert.Equal(t, "这是摘要", *messages[1].Summary)
@@ -110,7 +110,7 @@ func TestEnrichMessagesWithSummaries_NoSummarySaved(t *testing.T) {
 	messages := []model.ChatMessage{
 		{ID: 20, Role: "assistant", Content: "answer without summary"},
 	}
-	enrichMessagesWithSummaries(messages)
+	enrichMessagesWithSummaries(messages, false)
 	assert.Nil(t, messages[0].Summary)
 }
 
@@ -125,7 +125,7 @@ func TestEnrichMessagesWithSummaries_EmptySummary(t *testing.T) {
 	messages := []model.ChatMessage{
 		{ID: 30, Role: "assistant", Content: "short"},
 	}
-	enrichMessagesWithSummaries(messages)
+	enrichMessagesWithSummaries(messages, false)
 	assert.NotNil(t, messages[0].Summary)
 	assert.Equal(t, "", *messages[0].Summary)
 }
@@ -146,7 +146,7 @@ func TestEnrichMessagesWithSummaries_MultipleAssistantMessages(t *testing.T) {
 		{ID: 41, Role: "user", Content: "q2"},
 		{ID: 42, Role: "assistant", Content: "a2"},
 	}
-	enrichMessagesWithSummaries(messages)
+	enrichMessagesWithSummaries(messages, false)
 	assert.Nil(t, messages[0].Summary)
 	assert.NotNil(t, messages[1].Summary)
 	assert.Equal(t, "摘要一", *messages[1].Summary)
@@ -166,7 +166,7 @@ func TestEnrichMessagesWithSummaries_DifferentTargetType(t *testing.T) {
 	messages := []model.ChatMessage{
 		{ID: 50, Role: "assistant", Content: "answer"},
 	}
-	enrichMessagesWithSummaries(messages)
+	enrichMessagesWithSummaries(messages, false)
 	assert.Nil(t, messages[0].Summary) // Different target_type, should not match
 }
 

@@ -20,7 +20,7 @@ import (
 
 // GetChatHistory retrieves all chat messages for a given project path, backend, and session.
 func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage, error) {
-	msgs, _, err := GetChatHistoryPaged(projectPath, backend, sessionID, 0, 0)
+	msgs, _, err := GetChatHistoryPaged(projectPath, backend, sessionID, 0, 0, false)
 	return msgs, err
 }
 
@@ -30,7 +30,7 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 // When beforeID == 0 and limit > 0, returns the most recent (limit) messages.
 // Returns messages in chronological (ASC) order.
 // Also returns the total message count for the session to avoid a separate COUNT query.
-func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int) ([]model.ChatMessage, int, error) {
+func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int, summaryView bool) ([]model.ChatMessage, int, error) {
 	messages := []model.ChatMessage{}
 	totalCount := GetChatMessageCount(sessionID)
 
@@ -46,7 +46,7 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 			return messages, totalCount, err
 		}
 		defer rows.Close()
-		msgs, err := scanMessages(rows, sessionID)
+		msgs, err := scanMessagesView(rows, sessionID, summaryView)
 		return msgs, totalCount, err
 	}
 
@@ -62,7 +62,7 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 			return messages, totalCount, err
 		}
 		defer rows.Close()
-		msgs, err := scanMessages(rows, sessionID)
+		msgs, err := scanMessagesView(rows, sessionID, summaryView)
 		return msgs, totalCount, err
 	}
 
@@ -73,12 +73,18 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 		return messages, totalCount, err
 	}
 	defer rows.Close()
-	msgs, err := scanMessages(rows, sessionID)
+	msgs, err := scanMessagesView(rows, sessionID, summaryView)
 	return msgs, totalCount, err
 }
 
 // scanMessages scans rows into ChatMessage slice.
 func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error) {
+	return scanMessagesView(rows, sessionID, false)
+}
+
+// scanMessagesView scans rows and, when summaryView is true, strips the heavy
+// content from messages that have a reading summary and are not streaming.
+func scanMessagesView(rows *sql.Rows, sessionID string, summaryView bool) ([]model.ChatMessage, error) {
 	messages := []model.ChatMessage{}
 	for rows.Next() {
 		var msg model.ChatMessage
@@ -99,8 +105,7 @@ func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Enrich assistant messages with reading summaries
-	enrichMessagesWithSummaries(messages)
+	enrichMessagesWithSummaries(messages, summaryView)
 	return messages, nil
 }
 
@@ -1531,11 +1536,13 @@ func HardDeleteSession(sessionID string) error {
 	return tx.Commit()
 }
 
-// enrichMessagesWithSummaries populates the Summary field for assistant messages
-// by batch-querying the summaries table. Only messages with role "assistant" are queried.
-func enrichMessagesWithSummaries(messages []model.ChatMessage) {
+// enrichMessagesWithSummaries populates the Summary and SummaryCards fields for
+// assistant messages by batch-querying the summaries table. Only messages with
+// role "assistant" are queried. When summaryView is true, the heavy content of
+// messages that have a reading summary and are not streaming is stripped.
+func enrichMessagesWithSummaries(messages []model.ChatMessage, summaryView bool) {
 	// Collect IDs of assistant messages
-	var assistantIDs []int64
+	assistantIDs := make([]int64, 0, len(messages))
 	for _, msg := range messages {
 		if msg.Role == "assistant" {
 			assistantIDs = append(assistantIDs, msg.ID)
@@ -1546,7 +1553,7 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 	}
 
 	// Batch query summaries for all assistant messages
-	query := "SELECT target_id, summary FROM summaries WHERE target_type = 'chat_message' AND target_id IN ("
+	query := "SELECT target_id, summary, COALESCE(summary_cards, '') FROM summaries WHERE target_type = 'chat_message' AND target_id IN ("
 	args := make([]any, len(assistantIDs))
 	for i, id := range assistantIDs {
 		if i > 0 {
@@ -1565,13 +1572,21 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 
 	// Build map of message ID -> summary
 	summaryMap := make(map[int64]string)
+	cardMap := make(map[int64]*model.SummaryCards)
 	for rows.Next() {
 		var targetID int64
 		var summary string
-		if err := rows.Scan(&targetID, &summary); err != nil {
+		var cardsJSON string
+		if err := rows.Scan(&targetID, &summary, &cardsJSON); err != nil {
 			continue
 		}
 		summaryMap[targetID] = summary
+		if cardsJSON != "" {
+			var cards model.SummaryCards
+			if jerr := json.Unmarshal([]byte(cardsJSON), &cards); jerr == nil {
+				cardMap[targetID] = &cards
+			}
+		}
 	}
 
 	// Enrich messages
@@ -1579,6 +1594,12 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 		if messages[i].Role == "assistant" {
 			if summary, ok := summaryMap[messages[i].ID]; ok {
 				messages[i].Summary = &summary
+			}
+			if cards, ok := cardMap[messages[i].ID]; ok {
+				messages[i].SummaryCards = cards
+			}
+			if summaryView && messages[i].Summary != nil && !messages[i].Streaming {
+				messages[i].Content = ""
 			}
 		}
 	}
