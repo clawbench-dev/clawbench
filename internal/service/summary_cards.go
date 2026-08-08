@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	scheduledTaskIDRe = regexp.MustCompile(`<scheduled-task\s+id="(\d+)"`)
+	scheduledTaskIDRe  = regexp.MustCompile(`<scheduled-task\s+id="(\d+)"`)
 	askQuestionBlockRe = regexp.MustCompile(`(?s)<ask-question>(.*?)</ask-question>`)
 	askItemRe          = regexp.MustCompile(`(?s)<item>(.*?)</item>`)
 	askHeaderRe        = regexp.MustCompile(`(?s)<header>(.*?)</header>`)
@@ -17,7 +17,6 @@ var (
 	askOptionRe        = regexp.MustCompile(`(?s)<option>(.*?)</option>`)
 	askLabelRe         = regexp.MustCompile(`(?s)<label>(.*?)</label>`)
 	askDescRe          = regexp.MustCompile(`(?s)<description>(.*?)</description>`)
-	xmlTagRe           = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
 )
 
 // isAutoExpandTool reports whether a tool_use block should be shown as a card
@@ -90,10 +89,4 @@ func firstMatch(re *regexp.Regexp, s string) string {
 		return strings.TrimSpace(m[1])
 	}
 	return ""
-}
-
-// stripXMLTags removes well-formed XML tags from s, keeping bare < and >
-// (e.g. comparison operators like "score < 5") intact.
-func stripXMLTags(s string) string {
-	return strings.TrimSpace(xmlTagRe.ReplaceAllString(s, ""))
 }
