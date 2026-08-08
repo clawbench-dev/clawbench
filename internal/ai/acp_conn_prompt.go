@@ -140,7 +140,10 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, streamCh chan<- Stre
 		"clawbench_sid", c.clawbenchSID,
 		"input_tokens", usage.InputTokens,
 		"output_tokens", usage.OutputTokens,
-		"total_tokens", usage.TotalTokens)
+		"total_tokens", usage.TotalTokens,
+		"cached_read_tokens", usage.CachedReadTokens,
+		"cached_write_tokens", usage.CachedWriteTokens,
+		"thought_tokens", usage.ThoughtTokens)
 
 	// Emit metadata event for persistence (SessionExecutor captures these)
 	forwardACPEvent(streamCh, StreamEvent{Type: "metadata", Meta: meta})
@@ -150,15 +153,27 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, streamCh chan<- Stre
 	cached := c.cachedUsageState
 	c.mu.Unlock()
 	usageState := &UsageState{
-		Used:         cached.Used,
-		Size:         cached.Size,
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
-		Cost:         cached.Cost,
-		Currency:     cached.Currency,
+		Used:              cached.Used,
+		Size:              cached.Size,
+		InputTokens:       usage.InputTokens,
+		OutputTokens:      usage.OutputTokens,
+		TotalTokens:       usage.TotalTokens,
+		CachedReadTokens:  ptrIntVal(usage.CachedReadTokens),
+		CachedWriteTokens: ptrIntVal(usage.CachedWriteTokens),
+		ThoughtTokens:     ptrIntVal(usage.ThoughtTokens),
+		Cost:              cached.Cost,
+		Currency:          cached.Currency,
 	}
 	forwardACPEvent(streamCh, StreamEvent{Type: "usage_update", Usage: usageState})
 	c.SetCachedUsageState(usageState)
+}
+
+// ptrIntVal dereferences a *int, returning 0 for nil.
+func ptrIntVal(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // setConfigOptionWithCrashCheck sets a config option, checking whether it killed

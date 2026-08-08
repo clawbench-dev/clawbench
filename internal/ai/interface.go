@@ -246,12 +246,16 @@ type PlanState struct {
 
 // UsageState carries context window usage information from an ACP UsageUpdate.
 type UsageState struct {
-	Used         int     `json:"used"`                   // Tokens currently in context
-	Size         int     `json:"size"`                   // Total context window size in tokens
-	InputTokens  int     `json:"inputTokens,omitempty"`  // Total input tokens across all turns (from PromptResponse.Usage)
-	OutputTokens int     `json:"outputTokens,omitempty"` // Total output tokens across all turns (from PromptResponse.Usage)
-	Cost         float64 `json:"cost,omitempty"`         // Cumulative session cost (0 = not set)
-	Currency     string  `json:"currency,omitempty"`     // ISO 4217 currency code (e.g., "USD")
+	Used              int     `json:"used"`                              // Tokens currently in context
+	Size              int     `json:"size"`                              // Total context window size in tokens
+	InputTokens       int     `json:"inputTokens,omitempty"`             // Total input tokens across all turns (from PromptResponse.Usage)
+	OutputTokens      int     `json:"outputTokens,omitempty"`            // Total output tokens across all turns (from PromptResponse.Usage)
+	TotalTokens       int     `json:"totalTokens,omitempty"`             // Sum of all token types (from PromptResponse.Usage)
+	CachedReadTokens  int     `json:"cachedReadTokens,omitempty"`        // Cache read tokens (from PromptResponse.Usage)
+	CachedWriteTokens int     `json:"cachedWriteTokens,omitempty"`       // Cache write tokens (from PromptResponse.Usage)
+	ThoughtTokens     int     `json:"thoughtTokens,omitempty"`           // Reasoning/thinking tokens (from PromptResponse.Usage)
+	Cost              float64 `json:"cost,omitempty"`                    // Cumulative session cost (0 = not set)
+	Currency          string  `json:"currency,omitempty"`                // ISO 4217 currency code (e.g., "USD")
 }
 
 // StreamEvent represents a single event in the streaming output

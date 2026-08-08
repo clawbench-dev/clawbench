@@ -53,6 +53,10 @@ interface UsageState {
   size: number
   inputTokens: number
   outputTokens: number
+  totalTokens: number
+  cachedReadTokens: number
+  cachedWriteTokens: number
+  thoughtTokens: number
   cost: number
   currency: string
 }
@@ -64,6 +68,10 @@ const contextUsed = computed(() => { void usageStateVersion.value /* reactivity:
 const contextSize = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.size ?? 0 })
 const contextInputTokens = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.inputTokens ?? 0 })
 const contextOutputTokens = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.outputTokens ?? 0 })
+const contextTotalTokens = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.totalTokens ?? 0 })
+const contextCachedReadTokens = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.cachedReadTokens ?? 0 })
+const contextCachedWriteTokens = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.cachedWriteTokens ?? 0 })
+const contextThoughtTokens = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.thoughtTokens ?? 0 })
 const contextCost = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.cost ?? 0 })
 const contextCurrency = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.currency ?? '' })
 export const runningSessions = ref(new Set<string>())
@@ -260,10 +268,10 @@ export function clearThinkingEffortState() {
 /** Update context usage state for a session (from SSE or REST).
  *  Writes to the per-session cache — does not affect the displayed
  *  values unless the target session is the current one. */
-export function updateUsageState(used: number, size: number, cost?: number, currency?: string, sessionId?: string, inputTokens?: number, outputTokens?: number) {
+export function updateUsageState(used: number, size: number, cost?: number, currency?: string, sessionId?: string, inputTokens?: number, outputTokens?: number, totalTokens?: number, cachedReadTokens?: number, cachedWriteTokens?: number, thoughtTokens?: number) {
   const key = sessionId || currentSessionId.value
   if (!key) return
-  usageStateCache.set(key, { used, size, inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0, cost: cost ?? 0, currency: currency ?? '' })
+  usageStateCache.set(key, { used, size, inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0, totalTokens: totalTokens ?? 0, cachedReadTokens: cachedReadTokens ?? 0, cachedWriteTokens: cachedWriteTokens ?? 0, thoughtTokens: thoughtTokens ?? 0, cost: cost ?? 0, currency: currency ?? '' })
   usageStateVersion.value++
 }
 
@@ -672,6 +680,10 @@ export function useSessionIdentity() {
     contextSize,
     contextInputTokens,
     contextOutputTokens,
+    contextTotalTokens,
+    contextCachedReadTokens,
+    contextCachedWriteTokens,
+    contextThoughtTokens,
     contextCost,
     contextCurrency,
     agentHeaderTitle,

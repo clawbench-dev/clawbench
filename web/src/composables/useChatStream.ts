@@ -577,9 +577,9 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'usage_update': {
         if (sessionChanged()) return
-        const usageData = payload as { size?: number; used?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }
+        const usageData = payload as { size?: number; used?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedReadTokens?: number; cachedWriteTokens?: number; thoughtTokens?: number }
         if ((usageData.size ?? 0) > 0) {
-          updateUsageState(usageData.used ?? 0, usageData.size!, usageData.cost, usageData.currency, sessionId, usageData.inputTokens, usageData.outputTokens)
+          updateUsageState(usageData.used ?? 0, usageData.size!, usageData.cost, usageData.currency, sessionId, usageData.inputTokens, usageData.outputTokens, usageData.totalTokens, usageData.cachedReadTokens, usageData.cachedWriteTokens, usageData.thoughtTokens)
         }
         break
       }

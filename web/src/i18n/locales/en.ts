@@ -196,6 +196,10 @@ export default {
       remaining: 'Remaining',
       inputTokens: 'Input',
       outputTokens: 'Output',
+      totalTokens: 'Total',
+      cachedReadTokens: 'Cache Read',
+      cachedWriteTokens: 'Cache Write',
+      thoughtTokens: 'Thought',
       compact: 'Compact context',
     },
     create: {

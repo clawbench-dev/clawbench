@@ -171,7 +171,7 @@
         </button>
       </PopupMenu>
       <!-- Context usage detail popup -->
-      <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="280" :menu-items-count="6">
+      <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="320" :menu-items-count="10">
         <div class="usage-popup">
           <div class="usage-popup-header">
             <Activity :size="14" />
@@ -202,6 +202,22 @@
           <div v-if="contextOutputTokens > 0" class="usage-popup-row">
             <span class="usage-popup-label">{{ t('chat.sessionInfo.outputTokens') }}</span>
             <span class="usage-popup-value">{{ contextOutputTokens.toLocaleString() }}</span>
+          </div>
+          <div v-if="contextTotalTokens > 0" class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.totalTokens') }}</span>
+            <span class="usage-popup-value">{{ contextTotalTokens.toLocaleString() }}</span>
+          </div>
+          <div v-if="contextCachedReadTokens > 0" class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.cachedReadTokens') }}</span>
+            <span class="usage-popup-value">{{ contextCachedReadTokens.toLocaleString() }}</span>
+          </div>
+          <div v-if="contextCachedWriteTokens > 0" class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.cachedWriteTokens') }}</span>
+            <span class="usage-popup-value">{{ contextCachedWriteTokens.toLocaleString() }}</span>
+          </div>
+          <div v-if="contextThoughtTokens > 0" class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.thoughtTokens') }}</span>
+            <span class="usage-popup-value">{{ contextThoughtTokens.toLocaleString() }}</span>
           </div>
           <div v-if="contextCost > 0" class="usage-popup-row">
             <span class="usage-popup-label">{{ t('chat.sessionInfo.contextCost') }}</span>
@@ -260,7 +276,7 @@ import { useToast } from '@/composables/useToast'
 import { useFileUpload } from '@/composables/useFileUpload'
 
 const { t } = useI18n()
-const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
+const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency } = useSessionIdentity()
 const { supportsACP, hasPreferredMode, agentCanResume } = useAgents()
 const toast = useToast()
 const { uploadAndAttach } = useFileUpload()

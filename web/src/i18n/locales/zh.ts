@@ -196,6 +196,10 @@ export default {
       remaining: '剩余',
       inputTokens: '输入',
       outputTokens: '输出',
+      totalTokens: '总Token',
+      cachedReadTokens: '缓存读',
+      cachedWriteTokens: '缓存写',
+      thoughtTokens: '思考',
       compact: '压缩上下文',
     },
     create: {
