@@ -815,25 +815,23 @@ onUnmounted(() => {
 }
 
 .app-menu-item .item-label {
-    flex-shrink: 0;
-    font-weight: 500;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
+    font-weight: 500;
 }
 
 .app-menu-item .item-path {
     flex: 1 1 auto;
+    min-width: 0;
     color: var(--text-muted);
     font-size: 11px;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     cursor: default;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-}
-
-.app-menu-item .item-path::-webkit-scrollbar {
-    display: none;
 }
 
 .app-menu-item.other-item .item-icon {
