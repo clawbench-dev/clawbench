@@ -42,12 +42,12 @@ flowchart TD
 - **i18n 本地化**：从 `X-Locale` header → `clawbench-locale` Cookie → `Accept-Language` header 优先级链解析语言偏好，错误响应使用用户语言显示。推送通知场景使用 `LocalizerForLocale()` 独立解析语言。详见[国际化](i18n.md)
 - **NoCache 响应头**：全局中间件为所有 API 响应设置 `Cache-Control: no-store`，确保浏览器刷新时总是获取最新数据，而非使用缓存的旧状态
 - **按路由认证**：`Auth` 不在全局 `Chain` 中；路由注册时明确决定是否包裹认证。健康检查、最小状态等公开接口可以保持可达，包含配置、项目或用户数据的 API 必须受保护
-- **密码修改**：`POST /api/settings/password` 验证当前密码后写入新的 SHA-256 哈希，并即时更新内存中的认证状态——修改密码不需要重启服务
+- **密码修改**：`POST /api/settings/password` 验证当前密码后写入新的 SHA-256 哈希，并即时更新内存中的认证状态——修改密码不需要重启服务。密码修改不再触发 API Key 加密轮换
 
 ### 设计要点
 
 - **localhost 旁路默认开启但可收紧**：默认值优先保证本地 CLI 零配置可用；高安全环境可以关闭 `localhost_auth_exempt`，接受 CLI 需要认证的代价
 - **常量时间比较防时序攻击**：密码比较使用常量时间算法，不泄露密码长度和内容信息。即使攻击者能测量响应时间也无法推断密码
 - **自动密码降低部署门槛**：首次启动自动生成密码，用户不改也能安全使用。这是"零配置启动"理念的体现
-- **API 密钥加密与密码联动**：LLM 供应商的 API 密钥使用 AES-256-GCM 加密存储，加密密钥由登录密码经 HKDF-SHA256 派生。此功能用于自定义 Agent 的 API Key 加密——`agent_api_keys` 表已废弃，不再存储加密密钥
+- **API 密钥加密与密码联动**：LLM 供应商的 API 密钥使用 AES-256-GCM 加密存储，加密密钥由登录密码经 HKDF-SHA256 派生。`agent_api_keys` 表和 `crypto.go` 已移除，Pi 后端不再运行时注入 API 密钥，模型刷新不再按 provider 过滤
 - **全局链与路由认证分层**：`Chain(A, B, C)` 的执行顺序是 A→B→C→handler→C→B→A；RecoverPanic 位于最外层，NoCache 在全局链最内层（WithLocalizer 之后）。Auth 不在全局链中，由具体路由单独包裹——避免为了少数公开接口在 Auth 内维护例外清单
