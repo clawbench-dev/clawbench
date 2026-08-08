@@ -277,6 +277,20 @@ describe('parseMessages', () => {
     expect(result[0].showingSummary).toBe(false)
   })
 
+  it('forces showingSummary=true when existing=false, summary exists, and blocks are empty (stripped content)', () => {
+    // Regression: after streaming is interrupted, a summary is generated asynchronously
+    // AFTER the message was marked showingSummary=false. On reload, view=summary strips
+    // content (blocks=[]), so forcing original view would render an empty bubble.
+    const rawMsgs = [
+      { id: 'm1', role: 'assistant', content: '', blocks: [], summary: 'A late summary' },
+    ]
+    const existing = [
+      { id: 'm1', showingSummary: false },
+    ]
+    const result = parseMessages(rawMsgs, mockParser, existing)
+    expect(result[0].showingSummary).toBe(true)
+  })
+
   it('preserves showingSummary=true from existingMessages when summary exists', () => {
     const rawMsgs = [
       { id: 'm1', role: 'assistant', content: JSON.stringify({ blocks: [{ type: 'text', text: 'Hello' }] }), summary: 'A summary' },

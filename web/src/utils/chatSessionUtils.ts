@@ -59,10 +59,20 @@ export function parseMessages(
       // Preserve existing showingSummary state if the user explicitly toggled it.
       // Only set the default (true when summary exists) for messages not yet seen.
       const existingState = existingSummaryState?.get(msg.id)
-      if (existingState === true || existingState === false) {
-        // User has explicitly toggled this message — preserve their choice
-        msg.showingSummary = existingState
-      } else if (msg.summary != null && msg.summary !== '') {
+      const hasSummary = msg.summary != null && msg.summary !== ''
+      const blocksArr = msg.blocks as unknown as Array<unknown> | undefined
+      const blocksEmpty = !blocksArr || blocksArr.length === 0
+      if (existingState === true) {
+        // User toggled to summary — keep it
+        msg.showingSummary = true
+      } else if (existingState === false) {
+        // User toggled to original. If the message now has a summary but its content
+        // was stripped by view=summary (blocks empty), forcing original view would
+        // render an empty bubble. In that case show the summary instead. This can
+        // happen after streaming is interrupted: a summary is generated asynchronously
+        // AFTER the message was marked showingSummary=false.
+        msg.showingSummary = hasSummary && blocksEmpty
+      } else if (hasSummary) {
         msg.showingSummary = true
       } else {
         msg.showingSummary = false

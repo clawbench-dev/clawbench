@@ -879,9 +879,6 @@ function handleSummaryUpdate(e) {
     if (!data?.targetID) return
     const msgId = String(data.targetID)
     const msg = messages.value.find(m => String(m.id) === msgId)
-    if (import.meta.env.DEV) {
-      appLog.d(TAG, `[summary_update] targetID=${msgId} found=${!!msg} ${msg ? `showSum=${msg.showingSummary} blocks=${msg.blocks?.length ?? 0} sum="${String(msg.summary || '').slice(0, 30)}"` : ''} newSum="${String(data.summary || '').slice(0, 30)}"`)
-    }
     if (!msg) return
     const atBottom = messageListRef.value?.isAtBottom() ?? true
     applySummaryUpdate(msg, data.summary, data.summaryCards, atBottom)

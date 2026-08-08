@@ -398,19 +398,17 @@ export function useChatStream(options: UseChatStreamOptions) {
 
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
 
-        const doneSummary = messages.value.map((m, i: number) => {
-          const mm = m as unknown as Record<string, unknown>
-          return `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0} showSum=${mm.showingSummary} sum=${String(mm.summary || '').slice(0, 30)}`
-        }).join(' | ')
+        const doneSummary = messages.value.map((m, i: number) =>
+          `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+        ).join(' | ')
         const pendingCount = messages.value.filter((m) => m.pending).length
         appLog.d(TAG, `[done] pending msgs: ${pendingCount}; messages: ${doneSummary}`)
 
         disconnectStream()
         onLoadHistory().then(() => {
-          const afterSummary = messages.value.map((m, i: number) => {
-            const mm = m as unknown as Record<string, unknown>
-            return `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0} showSum=${mm.showingSummary} sum=${String(mm.summary || '').slice(0, 30)}`
-          }).join(' | ')
+          const afterSummary = messages.value.map((m, i: number) =>
+            `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+          ).join(' | ')
           appLog.d(TAG, `[done→loadHistory] messages(${messages.value.length}): ${afterSummary}`)
         }).finally(() => {
           loading.value = false
