@@ -169,7 +169,7 @@ function toggleFileDropdown() {
     branchDropdownOpen.value = false
     dropdownOpen.value = false
     fileDropdownOpen.value = true
-    nextTick(() => updateFileDropdownPosition())
+    deferPosition(updateFileDropdownPosition)
 }
 
 function updateFileDropdownPosition() {
@@ -203,7 +203,7 @@ function toggleBranchDropdown() {
     dropdownOpen.value = false
     branchDropdownOpen.value = true
     loadBranches()
-    nextTick(() => updateBranchDropdownPosition())
+    deferPosition(updateBranchDropdownPosition)
 }
 
 function updateBranchDropdownPosition() {
@@ -220,6 +220,10 @@ async function loadBranches() {
         branchList.value = []
     } finally {
         branchDropdownLoading.value = false
+        // Re-center after content settles (loading state → loaded list changes width)
+        if (branchDropdownOpen.value) {
+            deferPosition(updateBranchDropdownPosition)
+        }
     }
 }
 
@@ -245,6 +249,21 @@ async function selectBranch(b) {
     } catch {
         toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: '⚠️', type: 'error', duration: 3000 })
     }
+}
+
+/**
+ * Position a dropdown after the current render + a double rAF so that
+ * the panel's content width/layout is stable before measuring it. Without
+ * this, the panel width read on first open (e.g. while branch/project lists
+ * are still loading) differs from the settled width, causing the horizontally
+ * centered position to jump between opens.
+ */
+function deferPosition(update) {
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            update()
+        })
+    })
 }
 
 function positionDropdown(anchorEl, panelRef, styleRef) {
@@ -344,7 +363,7 @@ function toggleDropdown() {
         branchDropdownOpen.value = false
         loadRecentProjects()
         dropdownOpen.value = true
-        nextTick(() => updateDropdownPosition())
+        deferPosition(updateDropdownPosition)
     }
 }
 
@@ -369,6 +388,10 @@ async function loadRecentProjects() {
         recentItems.value = []
     } finally {
         loadingRecent.value = false
+        // Re-center after content settles (loading → loaded list changes width)
+        if (dropdownOpen.value) {
+            deferPosition(updateDropdownPosition)
+        }
     }
 }
 
