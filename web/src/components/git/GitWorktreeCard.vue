@@ -19,14 +19,6 @@
     </div>
     <div class="wt-row-actions">
       <button
-        v-if="!worktree.isCurrent && !worktree.missing"
-        class="wt-action-btn"
-        :title="t('git.manage.switchWorktree')"
-        @click.stop="$emit('switch', worktree)"
-      >
-        <LogIn :size="15" />
-      </button>
-      <button
         v-if="!worktree.isCurrent"
         class="wt-action-btn wt-action-delete"
         :title="t('git.manage.deleteWorktree')"
@@ -40,7 +32,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { FolderTree, LogIn, Trash2 } from 'lucide-vue-next'
+import { FolderTree, Trash2 } from 'lucide-vue-next'
 
 const { t } = useI18n()
 

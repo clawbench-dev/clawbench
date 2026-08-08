@@ -231,6 +231,11 @@ onMounted(() => {
 })
 
 async function onSwitchWorktree(wt: GitWorktree) {
+  const confirmed = await dialog.confirm(
+    t('git.manage.openWorktreeAsProject', { name: wt.branch || wt.path }),
+    { title: t('git.manage.switchWorktree'), confirmText: t('common.ok') },
+  )
+  if (!confirmed) return
   if (hotSwitchProject) {
     await hotSwitchProject(wt.path)
   } else {

@@ -984,6 +984,7 @@ export default {
       switchBranch: 'Switch Branch',
       switchWorktree: 'Switch Worktree',
       switchWorktreeConfirm: 'Switch to worktree "{name}"?',
+      openWorktreeAsProject: 'Open worktree "{name}" as a project?',
       branches: 'Branches',
       default: 'Default',
       current: 'Current',

@@ -985,6 +985,7 @@ export default {
       switchBranch: '切换分支',
       switchWorktree: '切换工作树',
       switchWorktreeConfirm: '切换到工作树「{name}」？',
+      openWorktreeAsProject: '将工作树「{name}」作为项目打开？',
       branches: '分支',
       default: '默认',
       current: '当前',

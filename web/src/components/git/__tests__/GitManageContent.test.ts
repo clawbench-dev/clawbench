@@ -140,17 +140,18 @@ describe('GitManageContent', () => {
   })
 
   describe('onSwitchWorktree', () => {
-    it('calls store.setProject when no hotSwitchProject', async () => {
+    it('calls store.setProject when no hotSwitchProject after confirm', async () => {
       const wrapper = mountContent()
       await flushPromises()
 
       await wrapper.vm.onSwitchWorktree({ path: '/worktree/path' })
 
       const { store } = await import('@/stores/app')
+      expect(mockDialogConfirm).toHaveBeenCalled()
       expect(store.setProject).toHaveBeenCalledWith('/worktree/path')
     })
 
-    it('calls hotSwitchProject when injected', async () => {
+    it('calls hotSwitchProject when injected after confirm', async () => {
       const mockHotSwitch = vi.fn().mockResolvedValue(undefined)
       const wrapper = mount(GitManageContent, {
         global: {
@@ -164,7 +165,29 @@ describe('GitManageContent', () => {
 
       await wrapper.vm.onSwitchWorktree({ path: '/worktree/path' })
 
+      expect(mockDialogConfirm).toHaveBeenCalled()
       expect(mockHotSwitch).toHaveBeenCalledWith('/worktree/path')
+    })
+
+    it('does not switch when confirmation is cancelled', async () => {
+      mockDialogConfirm.mockResolvedValue(false)
+      const mockHotSwitch = vi.fn().mockResolvedValue(undefined)
+      const wrapper = mount(GitManageContent, {
+        global: {
+          stubs: { Teleport: { template: '<div><slot /></div>' } },
+          provide: {
+            hotSwitchProject: mockHotSwitch,
+          },
+        },
+      })
+      await flushPromises()
+
+      await wrapper.vm.onSwitchWorktree({ path: '/worktree/path' })
+
+      expect(mockDialogConfirm).toHaveBeenCalled()
+      expect(mockHotSwitch).not.toHaveBeenCalled()
+      const { store } = await import('@/stores/app')
+      expect(store.setProject).not.toHaveBeenCalled()
     })
   })
 
