@@ -1656,7 +1656,7 @@ describe('useChatStream', () => {
 
         simulateWsEvent('usage_update', { size: 200000, used: 50000, cost: 0.5, currency: 'USD', inputTokens: 100, outputTokens: 200 })
 
-        expect(updateUsageState).toHaveBeenCalledWith(50000, 200000, 0.5, 'USD', 'test-session-1', 100, 200)
+        expect(updateUsageState).toHaveBeenCalledWith(50000, 200000, 0.5, 'USD', 'test-session-1', 100, 200, undefined, undefined, undefined, undefined)
       })
 
       it('should skip when size is 0', async () => {

@@ -1007,12 +1007,16 @@ func PersistContextStateFromEvent(sessionID string, event ai.StreamEvent) {
 			return
 		}
 		usageJSON, err := json.Marshal(UsageStatePersist{
-			Used:         event.Usage.Used,
-			Size:         event.Usage.Size,
-			InputTokens:  event.Usage.InputTokens,
-			OutputTokens: event.Usage.OutputTokens,
-			Cost:         event.Usage.Cost,
-			Currency:     event.Usage.Currency,
+			Used:              event.Usage.Used,
+			Size:              event.Usage.Size,
+			InputTokens:       event.Usage.InputTokens,
+			OutputTokens:      event.Usage.OutputTokens,
+			TotalTokens:       event.Usage.TotalTokens,
+			CachedReadTokens:  event.Usage.CachedReadTokens,
+			CachedWriteTokens: event.Usage.CachedWriteTokens,
+			ThoughtTokens:     event.Usage.ThoughtTokens,
+			Cost:              event.Usage.Cost,
+			Currency:          event.Usage.Currency,
 		})
 		if err != nil {
 			slog.Warn("persist context state: marshal usage", "session", sessionID, "error", err)
