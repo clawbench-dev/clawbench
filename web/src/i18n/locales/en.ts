@@ -307,6 +307,7 @@ export default {
       summaryViewOriginal: 'Original',
       summaryViewSummary: 'Summary',
       deepThinking: 'Thinking',
+      loadingOriginal: 'Loading original...',
     },
     fileChanges: {
       title: 'View Changed Files',
@@ -394,7 +395,6 @@ export default {
       thinkingLoadFailed: 'Failed to load thinking',
       summaryViewOriginal: 'AI summarized · View original',
       summaryViewSummary: 'View summary',
-      loadingOriginal: 'Loading original...',
       loading: 'Loading...',
       pause: 'Disable',
       resume: 'Enable',
