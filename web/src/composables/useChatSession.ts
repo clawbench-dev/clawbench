@@ -151,13 +151,11 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
     messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, isRunning)
-    if (import.meta.env.DEV) {
-      const parsedSummary = messages.value.map((m: Record<string, unknown>, i: number) => {
-        const blocks = (m.blocks as unknown as Array<unknown> | undefined) || []
-        return `[${i}] ${String(m.role)}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} blocks=${blocks.length} showSum=${String(m.showingSummary)} sum=${String(m.summary || '').slice(0, 30)}`
-      }).join(' | ')
-      appLog.d(TAG, `[loadHistory→parse] running=${isRunning} messages(${messages.value.length}): ${parsedSummary}`)
-    }
+    const parsedSummary = messages.value.map((m: Record<string, unknown>, i: number) => {
+      const blocks = (m.blocks as unknown as Array<unknown> | undefined) || []
+      return `[${i}] ${String(m.role)}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} blocks=${blocks.length} showSum=${String(m.showingSummary)} sum=${String(m.summary || '').slice(0, 30)}`
+    }).join(' | ')
+    appLog.d(TAG, `[loadHistory→parse] running=${isRunning} messages(${messages.value.length}): ${parsedSummary}`)
     appendQueueItems(sessionData.queue as Array<Record<string, unknown>> | undefined)
     totalMessages.value = (sessionData.total as number) || messages.value.length
 

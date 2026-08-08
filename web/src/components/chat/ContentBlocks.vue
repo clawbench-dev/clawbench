@@ -360,15 +360,13 @@ const summaryTools = computed(() => props.summaryCards?.tools || [])
 const summaryTaskIDs = computed(() => props.summaryCards?.taskIDs || [])
 const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [])
 
-if (import.meta.env.DEV) {
-  watch(
-    () => [props.msgId, props.showingSummary, props.summary, props.blocks?.length],
-    () => {
-      appLog.d('ContentBlocks', `[render] msgId=${props.msgId} showSum=${props.showingSummary} summaryLen=${String(props.summary || '').length} summaryHead="${String(props.summary || '').slice(0, 30)}" blocks=${props.blocks?.length ?? 0}`)
-    },
-    { immediate: true },
-  )
-}
+watch(
+  () => [props.msgId, props.showingSummary, props.summary, props.blocks?.length],
+  () => {
+    appLog.d('ContentBlocks', `[render] msgId=${props.msgId} showSum=${props.showingSummary} summaryLen=${String(props.summary || '').length} summaryHead="${String(props.summary || '').slice(0, 30)}" blocks=${props.blocks?.length ?? 0}`)
+  },
+  { immediate: true },
+)
 
 // Local map of scheduled-task data keyed by task id, fetched in real time when the
 // summary is visible with taskIDs. Unlike blockTasks (which scans text blocks), summary
