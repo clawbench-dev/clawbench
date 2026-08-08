@@ -3606,3 +3606,23 @@ func TestGetChatHistoryPagedViewSummaryOmitsContent(t *testing.T) {
 	require.Len(t, msgs, 1)
 	assert.NotEqual(t, "", msgs[0].Content, "full view must keep content")
 }
+
+func TestGetChatHistoryPagedViewSummaryKeepsStreamingContent(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Summary View Streaming")
+
+	asstID, err := service.AddChatMessage("/project", "claude", sid, "assistant",
+		`{"blocks":[{"type":"text","text":"in-flight streaming answer"}]}`, nil, true, "")
+	assert.NoError(t, err)
+
+	cards := &model.SummaryCards{TaskIDs: []int64{7}}
+	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", cards))
+
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0, true)
+	assert.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.True(t, msgs[0].Streaming)
+	assert.NotEqual(t, "", msgs[0].Content, "streaming messages must keep content even in summary view")
+	assert.NotNil(t, msgs[0].Summary)
+}
