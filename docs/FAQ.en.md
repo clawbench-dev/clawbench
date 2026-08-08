@@ -8,7 +8,7 @@ A: Linux (x86_64 / ARM64) and Windows (x86_64) are supported. The backend is wri
 
 **Q: Which AI backends are supported?**
 
-A: Nine CLI backends are supported: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, and Pi, plus Gemini/Kimi (ACP mode). You can switch between them in real time via the Web UI, with isolated session data. CLI backends require the corresponding CLI to be installed and available in your PATH.
+A: Thirteen backends are supported: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, and Grok Build, all supporting CLI and/or ACP transport modes. You can switch between them in real time via the Web UI, with isolated session data. CLI backends require the corresponding CLI to be installed and available in your PATH.
 
 **Q: How do I add a new agent?**
 
@@ -55,4 +55,4 @@ A: Back up the `~/.clawbench/ClawBench.db` database file.
 
 **Q: How are agents managed?**
 
-A: All agents are stored in the database (`agents` table), created via welcome screen install or auto-discovered on first launch. API keys are encrypted and stored in the `agent_api_keys` table (AES-256-GCM), managed automatically by the system.
+A: All agents are stored in the database (`agents` table), installed via the welcome panel or auto-discovered on first launch.

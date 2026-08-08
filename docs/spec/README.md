@@ -8,8 +8,8 @@ ClawBench 是移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy�
 
 | 模块 | 说明 |
 |------|------|
-| [聊天流程](core/chat-flow.md) | 用户发消息到 AI 回复的完整链路：handler → SessionExecutor → AI 后端 → WebSocket StreamHub → 前端；含 ACP 权限审批、@chatsearch/@task 命令注入、文件附件行范围、自动摘要、thinking 惰性加载、工具调用耗时 |
-| [AI 后端抽象](core/ai-backend.md) | 双传输后端（CLI shell-out + ACP stdio）、流式事件累加（AccumulateBlock + 回放检测 + 连续 thinking 合并 + AskQuestion 转换）、ACP 状态提取（mode/thinking/model）、ACP 崩溃诊断、acpStdoutFilter 协议修复、ACP context_state 持久化、thinking 惰性加载、CodeWhale 字段重映射、共享规则模板、连接管理、LoadSession 异步回放 |
+| [聊天流程](core/chat-flow.md) | 用户发消息到 AI 回复的完整链路：handler → SessionExecutor → AI 后端 → WebSocket StreamHub → 前端；含 ACP 权限审批、@chatsearch/@task 命令注入、文件附件行范围、自动摘要（AI 失败降级结论文本）、分叉上下文仅截断工具输出、thinking 惰性加载、工具调用耗时 |
+| [AI 后端抽象](core/ai-backend.md) | 双传输后端（CLI shell-out + ACP stdio）、流式事件累加（AccumulateBlock + 回放检测 + 连续 thinking 合并 + AskQuestion 转换）、ACP 状态提取（mode/thinking/model）、ACP 崩溃诊断、acpStdoutFilter 协议修复（含 SessionModelState 提取）、ACP context_state 持久化、thinking 惰性加载、CodeWhale 字段重映射、共享规则模板、连接管理、LoadSession 异步回放 |
 | [流式传输体系](core/streaming.md) | 单一 WebSocket StreamHub（含断线 ≤10s 缓冲重放、≤50 条上限、>120s 清理订阅）+ 旁注小 SSE/WS 通道；含前端重连状态同步、subscribeOnly 模式、replay_done 事件 |
 | [会话生命周期](core/session-lifecycle.md) | 聊天会话的创建、执行、排队、取消、归档（软删除）、物理删除（Destroy）、续接对话、分叉（含 beforeMessageId）、设置即时持久化、过期归档自动清理 |
 | [摘要管线](core/summarization.md) | 双管线（TTS vs 阅读摘要）、多 pass 压缩、Block 提取算法、降级链（AI 失败使用结论文本）、热重载 |
@@ -18,7 +18,7 @@ ClawBench 是移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy�
 
 | 模块 | 说明 |
 |------|------|
-| [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；27 个 LLM 供应商规格 |
+| [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；13 个后端规格 |
 | [定时任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话 |
 | [语音合成](features/tts.md) | 多引擎 TTS（云/本地），文本清理，缓存策略 |
 | [Web 终端](features/terminal.md) | PTY 多标签会话、三模式手势系统（浏览/手势/选择）、拖拽选择+浮动复制栏、虚拟修饰键、键位/符号配置、TUI 应用支持 |
@@ -36,12 +36,12 @@ ClawBench 是移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy�
 
 | 模块 | 说明 |
 |------|------|
-| [认证与中间件](infra/auth-and-middleware.md) | SHA-256 密码认证、可配置 localhost 旁路、按路由认证、API 密钥加密、请求链（含 NoCache）、panic 恢复 |
+| [认证与中间件](infra/auth-and-middleware.md) | SHA-256 密码认证、可配置 localhost 旁路、按路由认证、API 密钥加密（`agent_api_keys` 已废弃）、请求链（含 NoCache）、panic 恢复 |
 | [国际化](infra/i18n.md) | go-i18n bundle、嵌入式 YAML 翻译、X-Locale/Cookie/Accept-Language 优先级链、推送通知独立 Localizer |
 | [SSH 隧道](infra/ssh-tunnel.md) | direct-tcpip 端口转发、密码认证、自动 host key、暴力破解防护、端口白名单默认 1024-65535（ISS-186 修复）、状态查询走 `/api/ssh/info` |
 | [FRP 隧道](infra/frp-tunnel.md) | 进程内 FRP 客户端、状态机生命周期、代理配置热重载 vs 通用配置重启、自动端口分配、WS 事件广播、双认证级别 API |
 | [Proxy 注册表](infra/proxy.md) | 反向代理、Host 头重写、特权端口映射、前端端口展示 |
-| [配置与自动发现](infra/config-and-discovery.md) | 零配置启动、DB-backed Agent 存储、双传输选择、供应商注册表、Model 自动发现、多实例 Cookie 隔离、Schema 迁移、默认项目持久化、配置连通性测试、覆盖率门禁 |
+| [配置与自动发现](infra/config-and-discovery.md) | 零配置启动、DB-backed Agent 存储、双传输选择、供应商注册表、Model 自动发现（含 Kimi 模型发现函数）、ACP 运行时模型验证、多实例 Cookie 隔离、Schema 迁移、默认项目持久化、配置连通性测试、覆盖率门禁 |
 | [事件体系](infra/event-system.md) | ws.Manager 系统广播、StreamHub 会话扇出、断线缓冲重放、摘要与权限事件推送 |
 | [应用自升级](infra/self-upgrade.md) | 版本检查、备份替换、进度推送、服务重启与断线轮询 |
 | [本地文件服务](infra/local-file-serving.md) | `/api/local-file/` 路径编码、媒体预览、下载与访问边界 |
@@ -67,5 +67,5 @@ ClawBench 是移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy�
 | 前端 | Vue 3 + TypeScript、Vite、CodeMirror（代码浏览+编辑）、xterm.js、marked + hljs（选择性语言注册）、KaTeX（字符串级渲染）、vue-draggable-plus |
 | AI 集成 | Shell-out 到 CLI 工具、ACP JSON-RPC over stdio、stream-json 解析 |
 | 实时通信 | WebSocket `/api/ai/events/ws`（统一推送：聊天 + 系统事件 + 摘要 + 权限待审 + replay_done + cluster_progress，`StreamHub` 会话级扇出）、旁注小通道（`/api/file/watch`、`/api/dir/search` SSE；`/api/tts/audio/ws` WS）、SSH（端口转发） |
-| 安全 | SHA-256 密码存储、AES-256-GCM API 密钥加密、HKDF-SHA256 密钥派生 |
+| 安全 | SHA-256 密码存储、AES-256-GCM API 密钥加密（`agent_api_keys` 表已废弃）、HKDF-SHA256 密钥派生 |
 | 移动端 | Android WebView、原生后台服务 |

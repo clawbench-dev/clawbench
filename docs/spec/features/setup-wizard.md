@@ -21,7 +21,7 @@ sequenceDiagram
     participant DB
 
     F->>H: GET /api/backends
-    H-->>F: 12 个后端规格 (含 install_cmd)
+    H-->>F: 13 个后端规格 (含 install_cmd)
     F->>H: GET /api/agents
     H->>DB: 查询 agents 表
     DB-->>H: 已注册 Agent 列表
@@ -58,7 +58,7 @@ sequenceDiagram
 
 ### 功能清单
 
-- **后端检测面板**：显示所有 12 个注册后端（`internal/model/BackendRegistry`），每项标注：
+- **后端检测面板**：显示所有 13 个注册后端（`internal/model/BackendRegistry`），每项标注：
   - 后端名称 + 描述
   - 是否已检测到 CLI（来自 `agents` 表）
   - 安装命令（`BackendSpec.InstallCmd`，如 `"npm install -g @anthropic-ai/claude-code"`）
