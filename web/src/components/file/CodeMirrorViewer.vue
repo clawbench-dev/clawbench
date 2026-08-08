@@ -492,7 +492,7 @@ async function handleExit() {
     // choice === false → user cancelled; stay in edit mode.
 }
 
-defineExpose({ getValue, scrollToLine, getView: () => view.value })
+defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit })
 </script>
 
 <style scoped>

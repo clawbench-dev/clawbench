@@ -11,7 +11,6 @@
       :show-line-numbers="showLineNumbers"
       :sticky-scroll="stickyScroll"
       :overlay-open="fileNav.overlayOpen.value"
-      :recent-files-available="recentFilesAvailable"
       :editing="editing"
       @delete="emit('delete', file.path)"
       @toggle-view="emit('toggleView')"
@@ -26,7 +25,6 @@
       @toggle-sticky-scroll="toggleStickyScroll"
       @refresh="emit('refresh')"
       @overlay-close="emit('overlayClose')"
-      @open-recent-files="emit('openRecentFiles')"
       @share-external="emit('shareExternal')"
       @export-html="handleExportHtml"
       @fit-width="handleFitWidth"
@@ -137,6 +135,7 @@
              (editable toggles), so scroll survives the edit toggle. -->
         <CodeMirrorViewer
           v-else
+          ref="cmEditorRef"
           :file="file"
           :content="file.content"
           :language="rawFileLanguage"
@@ -199,6 +198,7 @@
           {{ t('file.viewer.truncated') }}
         </div>
         <CodeMirrorViewer
+          ref="cmEditorRef"
           :file="file"
           :content="file.content"
           :language="rawFileLanguage"
@@ -250,7 +250,7 @@ import { pickPreviewAnchor, pickCmAnchor, relTopFor, scrollTopFor } from '@/util
 import { store } from '@/stores/app.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack.ts'
-import { useRecentFiles } from '@/composables/useRecentFiles'
+import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { exportRenderedHtml } from '@/utils/exportHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToast } from '@/composables/useToast.ts'
@@ -269,12 +269,9 @@ const props = defineProps({
     markdownViewMode: String,
     externalLoading: Boolean,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'openRecentFiles', 'shareExternal'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'shareExternal'])
 
 const fileNav = useFileNavStack()
-const { recentFilesExcluding } = useRecentFiles()
-const filteredRecentFiles = recentFilesExcluding(computed(() => props.file?.path ?? null))
-const recentFilesAvailable = computed(() => filteredRecentFiles.value.length)
 
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')
@@ -287,9 +284,30 @@ const pdfPreviewRef = ref(null)
 const officePreviewRef = ref(null)
 const htmlPreviewRef = ref(null)
 
-// Edit mode (source text editing via CodeEditor)
-const editing = ref(false)
+// Edit mode (source text editing via CodeEditor).
+// Shared at module level so the global back gesture (App.vue) can exit edit
+// mode first instead of navigating back / closing the file while editing.
+const fileEditor = useFileEditor()
+const editing = fileEditor.editing
 const { saving, saveFile } = useCodeEditorSave()
+const cmEditorRef = ref(null)
+
+// The global back handler calls exitEdit() → run CodeMirrorViewer's exit flow,
+// which confirms save/discard/cancel when there are unsaved changes.
+function handleExitEditRequest() {
+    cmEditorRef.value?.handleExit?.()
+}
+
+let unregisterExitEdit = null
+onMounted(() => {
+    unregisterExitEdit = fileEditor.registerExitEditHandler(handleExitEditRequest)
+})
+onBeforeUnmount(() => {
+    if (unregisterExitEdit) {
+        unregisterExitEdit()
+        unregisterExitEdit = null
+    }
+})
 
 async function handleSave(content) {
     const saved = captureScrollFrom(getScrollEl())

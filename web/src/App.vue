@@ -58,7 +58,6 @@
                       :sort-dir="sortDir"
                       :dir-loading="store.state.dirLoading"
                       :search-drawer="fileSearchDrawer"
-                      :recent-drawer="recentFilesDrawer"
                       :keyboard-active="fileManagerShortcutActive"
                       @navigate-dir="handleNavigateDir"
                       @navigate-back="handleNavigateBack"
@@ -94,7 +93,6 @@
                       @close-git-history="fileHistoryDrawer.close()"
                       @open-file="handleOverlayOpenFile"
                       @overlay-close="handleOverlayClose"
-                      @open-recent-files="recentFilesDrawer.open()"
                     />
                   </div>
                 </TabPanel>
@@ -178,13 +176,6 @@
         :file="currentFile"
         :open="detailsDrawer.effectiveOpen.value && fileNav.overlayOpen.value"
         @close="detailsDrawer.close()"
-      />
-
-      <RecentFilesDrawer
-        :open="recentFilesDrawer.effectiveOpen.value"
-        :current-file-path="fileNav.overlayOpen.value ? currentFile?.path : null"
-        @close="recentFilesDrawer.close()"
-        @select-file="handleRecentFileSelect"
       />
 
       <!-- Quote question floating bar (narrow mode only; wide-screen uses ChatInputBar quote tag) -->
@@ -343,7 +334,6 @@ import VersionMismatchOverlay from './components/VersionMismatchOverlay.vue'
 import UpgradePromptOverlay from './components/UpgradePromptOverlay.vue'
 import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
-import RecentFilesDrawer from './components/file/RecentFilesDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
@@ -373,6 +363,7 @@ import { usePortForward } from './composables/usePortForward.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
+import { useFileEditor } from './composables/useFileEditor'
 import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
@@ -667,7 +658,6 @@ const tocDrawer = useTabDrawer('browse')
 const searchDrawer = useTabDrawer('browse')
 const fileHistoryDrawer = useTabDrawer('browse')
 const fileSearchDrawer = useTabDrawer('browse', { autoRestore: false })
-const recentFilesDrawer = useTabDrawer('browse', { autoRestore: false })
 
 function openFileHistory() {
   fileHistoryDrawer.open()
@@ -698,10 +688,11 @@ useFileWatch({
 })
 
 const fileNav = useFileNavStack()
+const fileEditor = useFileEditor()
 
 function closeOverlayAndSync() {
   fileNav.closeOverlay()
-  clearOpenFile()
+  store.closeCurrentFile()
   tocDrawer.close()
   detailsDrawer.close()
   searchDrawer.close()
@@ -777,6 +768,12 @@ useFeatureBackHandler(
   'file-overlay',
   () => panelIsActive('browse') && fileNav.overlayOpen.value,
   () => {
+    // 编辑模式下，屏幕边缘向内滑应先退出编辑（有未保存改动时弹出确认菜单），
+    // 而不是直接返回上一文件或关闭文件。退出手势在此被消费，用户停留在文件浏览态。
+    if (fileEditor.isEditing()) {
+      fileEditor.exitEdit()
+      return
+    }
     if (fileNav.canGoBack.value) {
       const prevPath = fileNav.goBack()
       if (prevPath) store.selectFile(prevPath)
@@ -1199,10 +1196,10 @@ async function handleOverlayOpenFile(payload) {
     }
 }
 
-async function handleRecentFileSelect(path) {
-    recentFilesDrawer.close()
+async function handleAppHeaderRecentFileSelect(path) {
     const ok = await store.selectFile(path)
     if (ok) {
+        switchTab('browse')
         fileNav.openFile(path)
     }
 }
