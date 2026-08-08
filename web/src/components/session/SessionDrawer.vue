@@ -21,18 +21,18 @@
       <div v-if="loading" class="session-loading">{{ t('common.loading') }}</div>
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
-        <SwipeToDeleteRow
+        <div
           v-for="session in sessionsWithStatus"
           :key="session.id"
-          @delete="archiveSession(session.id)"
+          class="session-row"
+          :class="{ active: session.id === currentSessionId, running: session.running }"
         >
+          <span v-if="session.running" class="session-running-line"></span>
           <div
             class="session-item"
-            :class="{ active: session.id === currentSessionId, running: session.running }"
             @click="selectSession(session.id, session.backend)"
           >
             <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-            <span v-if="session.running" class="session-running-line"></span>
             <div class="session-item-info">
               <div class="session-item-header">
                 <span class="session-item-title">{{ session.title }}</span>
@@ -44,7 +44,10 @@
               </div>
             </div>
           </div>
-        </SwipeToDeleteRow>
+          <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
+            <Archive :size="15" />
+          </button>
+        </div>
         <div ref="sentinelRef" class="session-list-sentinel"></div>
         <div v-if="loadingMore" class="session-loading-more">{{ t('common.loading') }}</div>
         <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
@@ -67,12 +70,11 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
-import { Plus, Search } from 'lucide-vue-next'
+import { Plus, Search, Archive } from 'lucide-vue-next'
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
-import SwipeToDeleteRow from '@/components/git/SwipeToDeleteRow.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
@@ -294,6 +296,8 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   align-items: center;
+  flex: 1;
+  min-width: 0;
   min-height: 44px;
   padding: 10px 12px;
   border-top: 1px solid var(--border-color, #dee2e6);
@@ -308,9 +312,16 @@ onUnmounted(() => {
 }
 
 .session-item.active {
-  background: var(--accent-bg, rgba(0, 102, 204, 0.1));
   border-left: 3px solid var(--accent-color, #0066cc);
   padding-left: 9px;
+}
+
+.session-row.active {
+  background: var(--accent-bg, rgba(0, 102, 204, 0.1));
+}
+
+.session-row.running {
+  background: rgba(34, 197, 94, 0.05);
 }
 
 .session-item-info {
@@ -325,13 +336,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1;
+  min-width: 0;
 }
 
 .session-item-meta {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
   min-width: 0;
 }
 
@@ -340,10 +352,10 @@ onUnmounted(() => {
   color: var(--text-primary, #1a1a1a);
   font-weight: 500;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-right: 10px;
 }
 
 .session-item.active .session-item-title {
@@ -385,22 +397,34 @@ onUnmounted(() => {
   100% { left: 100%; }
 }
 
-.session-item.running {
-  background: rgba(34, 197, 94, 0.05);
+.session-row {
+  display: flex;
+  align-items: stretch;
+  position: relative;
 }
 
-/* SwipeToDeleteRow integration */
-:deep(.swipe-to-delete) {
-  border-radius: 0;
+.session-archive-btn {
   flex-shrink: 0;
+  width: 34px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid var(--border-color, #dee2e6);
+  transition: background 0.15s, color 0.15s;
 }
 
-:deep(.swipe-delete-content) {
-  border-radius: 0;
+@media (hover: hover) {
+  .session-archive-btn:hover {
+    color: var(--accent-color, #0066cc);
+  }
 }
 
-:deep(.swipe-delete-bg) {
-  border-radius: 0;
+.session-archive-btn:active {
+  color: var(--accent-color, #0066cc);
 }
 
 .session-item-time {
@@ -429,7 +453,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   background: rgba(100, 100, 100, 0.08);
   color: var(--text-muted, #999);
-  max-width: 100px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

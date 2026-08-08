@@ -85,13 +85,6 @@ vi.mock('@/components/common/ModalDialog.vue', () => ({
   },
 }))
 
-vi.mock('@/components/git/SwipeToDeleteRow.vue', () => ({
-  default: {
-    name: 'SwipeToDeleteRow',
-    template: '<div class="swipe-stub"><slot /></div>',
-  },
-}))
-
 vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: {
     name: 'AgentIcon',
