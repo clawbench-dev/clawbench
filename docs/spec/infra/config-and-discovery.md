@@ -44,7 +44,7 @@ flowchart TD
 - **后台模型刷新**：启动后后台定期刷新模型缓存，更新自动发现的 Agent 的模型列表。新增模型无需重启
 - **运行时连通性与升级**：前端 `useConnectivityTest` 检查服务连通性；`useUpgrade` 调用 `/api/upgrade/check`、`/api/upgrade/start` 和 `/api/upgrade/status` 完成版本检查、启动升级和进度查询，三个端点均要求认证；`useSystemResources` 轮询 `GET /api/system/resources` 获取 CPU、内存、磁盘、网络和负载指标，用于设置页资源监控（详见[系统资源监控](../features/system-resources.md)）
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖，标志区分用户定义和自动发现。用户对配置有最终控制权
-- **供应商注册表**：内置 28 个 LLM 供应商规格（含 minimax / minimax-cn）。已知模型由 `BackendSpec.KnownModels` 静态声明，或由后端通过 `RegisterDiscoverModelsFunc()` 动态注册。运行时可通过 `POST /api/agents/rescan` 重新扫描 PATH；当前实现不依赖外部模型目录生成服务
+- **供应商注册表**：内置 27 个 LLM 供应商规格（含 minimax / minimax-cn）。已知模型由 `BackendSpec.KnownModels` 静态声明，或由后端通过 `RegisterDiscoverModelsFunc()` 动态注册。运行时可通过 `POST /api/agents/rescan` 重新扫描 PATH；当前实现不依赖外部模型目录生成服务
 - **API 密钥加密存储**：LLM 供应商的 API 密钥使用 AES-256-GCM 加密后存储，加密密钥由登录密码经 HKDF-SHA256 派生。`agent_api_keys` 表和 `crypto.go` 已移除，API Key 加密功能保留用于自定义 Agent 的密钥管理
 - **绿色便携部署**：所有运行时数据在 `.clawbench/` 目录下，删除即干净卸载，拷贝二进制目录即可多实例部署。不需要系统级安装
 - **配置连通性测试**：`POST /api/config/test` 端点对设置表单中的各服务做即时连通性验证。支持 8 个类别：FRP、文本摘要、语音摘要、RAG、钉钉、飞书、端口转发、TTS。测试使用表单当前值（可能未保存），无需先保存配置即可验证连接性——降低配置试错成本

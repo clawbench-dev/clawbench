@@ -12,7 +12,7 @@ flowchart TD
     B -->|disabled| Z[不生成摘要]
     B -->|simple| C[summarizeSimple: ExtractLastAnswerFromBlocks]
     C --> D[直接保存为摘要 + SummaryCards]
-    B -->|ai| E[summarizeSimple: ExtractLastAnswerFromBlocks]
+    B -->|ai| E[提取结论文本: ExtractLastAnswerFromBlocks]
     E --> F{文本 < 300 字符?}
     F -->|是| G[保存空摘要<br/>前端显示原文]
     F -->|否| H[AI 摘要调用]
