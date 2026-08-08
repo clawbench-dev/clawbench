@@ -793,3 +793,15 @@ describe('ContentBlocks', () => {
     })
   })
 })
+
+describe('summary mode with empty blocks (view=summary stripped content)', () => {
+  it('renders summary text even when blocks are empty', () => {
+    const wrapper = mountBlocks({
+      blocks: [],
+      summary: 'Service currently serves new bundle index-DVJhC1nf.js',
+      showingSummary: true,
+    })
+    expect(wrapper.html()).toContain('index-DVJhC1nf.js')
+    expect(wrapper.html()).toContain('Service currently')
+  })
+})
