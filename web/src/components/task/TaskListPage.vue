@@ -49,7 +49,7 @@
               </div>
             </div>
             <div v-if="task.nextRunAt" class="task-item-next">
-              <CalendarClock class="meta-icon" :size="12" />
+              <Clock class="meta-icon" :size="12" />
               <span>{{ t('task.nextRun', { time: formatDateTime(task.nextRunAt) }) }}</span>
             </div>
           </div>
@@ -72,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, Loader2, CalendarX, Clock, Repeat, CalendarClock, Eye, RefreshCw, CheckCheck } from 'lucide-vue-next'
+import { Plus, Loader2, CalendarX, Clock, Repeat, Eye, RefreshCw, CheckCheck } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'

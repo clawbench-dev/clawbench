@@ -22,7 +22,7 @@
       <!-- Schedule card -->
       <div class="overview-card">
         <h3 class="card-title">
-          <CalendarClock class="card-icon" :size="14" />
+          <Clock class="card-icon" :size="14" />
           {{ t('task.form.frequency') }}
         </h3>
         <div class="overview-row">
@@ -104,7 +104,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { Pencil, Pause, Play, Zap, Trash2, History, CalendarClock, MessageSquare } from 'lucide-vue-next'
+import { Pencil, Pause, Play, Zap, Trash2, History, Clock, MessageSquare } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useTaskOverview } from '@/composables/useTaskOverview.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer'

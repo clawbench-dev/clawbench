@@ -293,12 +293,12 @@
       <Transition name="dock-popup">
         <div v-if="overflowMenuOpen" class="dock-overflow-popup" :style="overflowPopupStyle" @keydown.escape="overflowMenuOpen = false">
           <button v-if="popupOverflowTabs.includes('tasks')" class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
-            <CalendarClock :size="16" />
+            <Clock :size="16" />
             <span>{{ t('nav.tasks') }}</span>
             <span v-if="store.state.taskUnreadCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
           </button>
           <button v-if="popupOverflowTabs.includes('proxy')" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
-            <EthernetPort :size="16" />
+            <Network :size="16" />
             <span>{{ t('nav.portForward') }}</span>
             <span v-if="store.state.portForwardActiveCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
           </button>
@@ -326,7 +326,7 @@ import { appLog, startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
-import { MessageSquare, FolderOpen, GitBranch, EthernetPort, SquareTerminal as TerminalIcon, CalendarClock, MoreHorizontal, Settings, Paperclip } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -1288,8 +1288,8 @@ const overflowTabs = computed(() => {
   return tabs
 })
 const overflowTabMeta = {
-  tasks:   { icon: CalendarClock, titleKey: 'nav.tasks' },
-  proxy:   { icon: EthernetPort, titleKey: 'nav.portForward' },
+  tasks:   { icon: Clock, titleKey: 'nav.tasks' },
+  proxy:   { icon: Network, titleKey: 'nav.portForward' },
   terminal:{ icon: TerminalIcon, titleKey: 'terminal.title' },
   settings:{ icon: Settings, titleKey: 'nav.settings' },
 }
@@ -1341,7 +1341,7 @@ watch(() => localConfig.uiScale, () => {
 
 // Helpers for dynamic inline overflow buttons
 function dockTabIcon(tab) {
-  return overflowTabMeta[tab]?.icon ?? CalendarClock
+  return overflowTabMeta[tab]?.icon ?? Clock
 }
 function dockTabTitle(tab) {
   return overflowTabMeta[tab] ? t(overflowTabMeta[tab].titleKey) : ''

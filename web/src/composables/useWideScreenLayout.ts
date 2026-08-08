@@ -8,7 +8,7 @@ export const WIDE_SCREEN_MIN_WIDTH = 1024
 export const WIDE_SCREEN_MIN_PHYSICAL_WIDTH = 1280
 export const WIDE_SCREEN_LEFT_TAB_KEY = 'clawbench-widescreen-left-tab'
 export const WIDE_SCREEN_SPLIT_RATIO_KEY = 'clawbench-widescreen-split-ratio'
-export const WIDE_SCREEN_DOCK_TABS = ['browse', 'history', 'proxy', 'terminal', 'tasks', 'settings']
+export const WIDE_SCREEN_DOCK_TABS = ['browse', 'history', 'tasks', 'proxy', 'terminal', 'settings']
 
 /**
  * Wide-screen detection. Active when the CSS viewport is ≥1024px (desktop), or
