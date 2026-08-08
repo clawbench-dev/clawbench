@@ -17,6 +17,7 @@
         :streaming="msg.streaming"
         :cancelled="msg.cancelled"
         :summary="msg.summary"
+        :summaryCards="msg.summaryCards"
         :showingSummary="msg.showingSummary"
         :renderTextBlock="renderTextBlock"
         :formatToolInput="formatToolInput"
@@ -63,6 +64,7 @@
       </span>
       <div class="chat-meta-actions">
         <SummaryToggle v-if="msg.summary && !msg.streaming" mode="button" :showing-summary="msg.showingSummary" i18n-prefix="chat.message" @toggle="$emit('toggle-summary', msg.id)" />
+        <span v-if="msg._loadingOriginal" class="chat-loading-original">{{ t('chat.message.loadingOriginal') }}</span>
         <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
           <template v-if="autoSpeech.isGeneratingText(msg.id)">
@@ -400,6 +402,13 @@ function handleCopyMessage() {
     display: flex;
     align-items: center;
     gap: 2px;
+}
+
+/* Loading hint shown while lazily fetching the original message content */
+.chat-loading-original {
+    font-size: 12px;
+    color: var(--text-secondary, #888);
+    padding: 0 6px;
 }
 
 /* Speak button loading spinner animation */

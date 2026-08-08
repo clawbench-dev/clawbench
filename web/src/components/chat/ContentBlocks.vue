@@ -315,6 +315,7 @@ const props = defineProps({
   streaming: { type: Boolean, default: false },
   cancelled: { type: Boolean, default: false },
   summary: { type: String, default: null },
+  summaryCards: { type: Object, default: null },
   showingSummary: { type: Boolean, default: false },
   // Render functions
   renderTextBlock: { type: Function, required: true },

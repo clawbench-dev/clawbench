@@ -394,6 +394,7 @@ export default {
       thinkingLoadFailed: 'Failed to load thinking',
       summaryViewOriginal: 'AI summarized · View original',
       summaryViewSummary: 'View summary',
+      loadingOriginal: 'Loading original...',
       loading: 'Loading...',
       pause: 'Disable',
       resume: 'Enable',

@@ -394,58 +394,79 @@ function customParser(content: string) {
 describe('applySummaryUpdate', () => {
   it('stores summary on the message', () => {
     const msg: any = { id: '1', showingSummary: undefined }
-    applySummaryUpdate(msg, 'A summary', true)
+    applySummaryUpdate(msg, 'A summary', null, true)
     expect(msg.summary).toBe('A summary')
   })
 
   it('stores null summary on the message', () => {
     const msg: any = { id: '1', showingSummary: true }
-    applySummaryUpdate(msg, null, true)
+    applySummaryUpdate(msg, null, null, true)
     expect(msg.summary).toBeNull()
   })
 
   it('sets showingSummary=true when non-empty summary arrives and showingSummary is undefined', () => {
     const msg = { id: '1', showingSummary: undefined }
-    applySummaryUpdate(msg, 'Summary text', true)
+    applySummaryUpdate(msg, 'Summary text', null, true)
     expect(msg.showingSummary).toBe(true)
   })
 
   it('sets showingSummary=false when summary is empty and showingSummary is undefined', () => {
     const msg = { id: '1', showingSummary: undefined }
-    applySummaryUpdate(msg, '', true)
+    applySummaryUpdate(msg, '', null, true)
     expect(msg.showingSummary).toBe(false)
   })
 
   it('sets showingSummary=false when summary is null and showingSummary is undefined', () => {
     const msg = { id: '1', showingSummary: undefined }
-    applySummaryUpdate(msg, null, true)
+    applySummaryUpdate(msg, null, null, true)
     expect(msg.showingSummary).toBe(false)
   })
 
   it('does not depend on atBottom', () => {
     const msg = { id: '1', showingSummary: undefined }
-    applySummaryUpdate(msg, 'Summary text', false)
+    applySummaryUpdate(msg, 'Summary text', null, false)
     expect(msg.showingSummary).toBe(true)
   })
 
   it('handles undefined summary', () => {
     const msg: any = { id: '1', showingSummary: undefined }
-    applySummaryUpdate(msg, undefined, true)
+    applySummaryUpdate(msg, undefined, null, true)
     expect(msg.showingSummary).toBe(false)
     expect(msg.summary).toBeUndefined()
   })
 
   it('does not override showingSummary when already set to true', () => {
     const msg = { id: '1', showingSummary: true, summary: 'Old' }
-    applySummaryUpdate(msg, 'Updated summary', true)
+    applySummaryUpdate(msg, 'Updated summary', null, true)
     expect(msg.showingSummary).toBe(true)
     expect(msg.summary).toBe('Updated summary')
   })
 
   it('does not override showingSummary when already set to false', () => {
     const msg = { id: '1', showingSummary: false, summary: 'Old' }
-    applySummaryUpdate(msg, 'New summary', true)
+    applySummaryUpdate(msg, 'New summary', null, true)
     expect(msg.showingSummary).toBe(false)
     expect(msg.summary).toBe('New summary')
+  })
+})
+
+// ── summaryCards parsing ──
+
+describe('summaryCards parsing', () => {
+  it('attachs summaryCards from raw message', () => {
+    const raw = [{
+      id: 1, role: 'assistant', content: '{"blocks":[]}',
+      summary: 'sum', summaryCards: { tools: [{ name: 'Bash', id: 't1' }], taskIDs: [1], askQuestions: [] },
+    }]
+    const msgs = parseMessages(raw, () => ({ blocks: [] }), [], true)
+    expect((msgs[0] as any).summaryCards).toBeTruthy()
+    expect((msgs[0] as any).summaryCards.tools[0].name).toBe('Bash')
+  })
+
+  it('applySummaryUpdate stores cards', () => {
+    const msg: any = { id: 1, role: 'assistant', blocks: [] }
+    applySummaryUpdate(msg, 'sum', { tools: [{ name: 'AskUserQuestion' }] }, true)
+    expect(msg.summary).toBe('sum')
+    expect(msg.summaryCards.tools[0].name).toBe('AskUserQuestion')
   })
 })

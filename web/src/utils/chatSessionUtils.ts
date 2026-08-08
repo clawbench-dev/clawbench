@@ -94,10 +94,14 @@ export function parseMessages(
  *
  * @param msg - The message object to update (mutated in place)
  * @param summary - The summary text from the WebSocket event
+ * @param summaryCards - Structured summary metadata (tools, taskIDs, askQuestions) from the WebSocket event
  * @param atBottom - Whether the user is currently at the bottom of the chat
  */
-export function applySummaryUpdate(msg: Record<string, unknown>, summary: string | null | undefined, _atBottom: boolean): void {
+export function applySummaryUpdate(msg: Record<string, unknown>, summary: string | null | undefined, summaryCards: Record<string, unknown> | null | undefined, _atBottom: boolean): void {
   msg.summary = summary
+  if (summaryCards !== undefined && summaryCards !== null) {
+    msg.summaryCards = summaryCards
+  }
   // Only set default when showingSummary hasn't been set yet.
   // If the user has already toggled (or parseMessages initialized it), don't override.
   if (msg.showingSummary === undefined) {

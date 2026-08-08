@@ -394,6 +394,7 @@ export default {
       thinkingLoadFailed: '思考内容加载失败',
       summaryViewOriginal: 'AI 已精简总结 · 查看原文',
       summaryViewSummary: '查看精简总结',
+      loadingOriginal: '加载原文中...',
       loading: '加载中...',
       pause: '禁用',
       resume: '启用',
