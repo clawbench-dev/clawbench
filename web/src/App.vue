@@ -15,7 +15,11 @@
       <AppHeader
         :project-root="projectRoot"
         :home-dir="homeDir"
+        :current-file-name="currentFile?.name"
+        :current-file-path="currentFile?.path"
+        :recent-files-available="recentFilesCount"
         @open-project-dialog="handleOpenProjectDialog"
+        @select-recent-file="handleAppHeaderRecentFileSelect"
       />
       <ConnectionOverlay />
 
@@ -369,7 +373,7 @@ import { usePortForward } from './composables/usePortForward.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
-import { removeRecentFile } from './composables/useRecentFiles'
+import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
@@ -1076,6 +1080,8 @@ const theme = ref(localConfig.theme === 'auto'
 const dirEntries = computed(() => store.state.dirEntries)
 const currentDir = computed(() => store.state.currentDir)
 const currentFile = computed(() => store.state.currentFile)
+const { entries: recentFileEntries } = useRecentFiles()
+const recentFilesCount = computed(() => recentFileEntries.value.length)
 const projectRoot = computed(() => store.state.projectRoot)
 const homeDir = computed(() => store.state.homeDir)
 
@@ -1197,6 +1203,14 @@ async function handleRecentFileSelect(path) {
     recentFilesDrawer.close()
     const ok = await store.selectFile(path)
     if (ok) {
+        fileNav.openFile(path)
+    }
+}
+
+async function handleAppHeaderRecentFileSelect(path) {
+    const ok = await store.selectFile(path)
+    if (ok) {
+        switchTab('browse')
         fileNav.openFile(path)
     }
 }

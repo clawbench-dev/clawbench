@@ -19,7 +19,7 @@ const {
 }))
 
 vi.mock('@/stores/app.ts', () => ({
-  store: { state: mockState, loadGitBranch: loadGitBranchFn },
+  store: { state: mockState, loadGitBranch: loadGitBranchFn, loadFiles: vi.fn() },
 }))
 vi.mock('@/composables/useGlobalEvents', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -46,11 +46,15 @@ vi.mock('@/composables/useCommitNavigation.ts', () => ({
 const i18n = createI18n({
   legacy: false, locale: 'en',
   messages: { en: { common: { loading: 'Loading...' }, appHeader: {
-    switchProject: 'Switch project', selectProject: 'Select project',
+    switchProject: 'Switch project', selectProject: 'Select project', projects: 'Projects',
     noRecentProjects: 'No recent projects', browse: 'Browse...',
     projectPathNotFound: 'Project path does not exist or has been deleted',
     switchProjectFailed: 'Switch project failed: {error}',
     switchProjectNetworkError: 'Switch project failed: network error',
+    recentFiles: 'Recent files', noFileOpen: 'No file open', noRecentFiles: 'No recently opened files',
+    branches: 'Branches', moreBranches: 'Manage branches',
+    switchBranchConfirm: 'Switch to branch "{branch}"?',
+    branchDirtyWorktree: 'dirty', switchBranchFailed: 'Failed: {error}', switchBranchNetworkError: 'network',
   }, login: { logout: 'Logout' }, systemResources: { title: 'System Resources' } } },
 })
 
@@ -92,7 +96,7 @@ describe('AppHeader', () => {
       activeWrapper.unmount()
       activeWrapper = null
     }
-    document.body.querySelectorAll('.header,.server-toggle,.branch-badge,.dropdown-scroll-area,.dropdown-empty').forEach(el => el.remove())
+    document.body.querySelectorAll('.header,.server-toggle,.branch-badge,.current-file-badge,.app-menu,.app-menu-message,.app-menu-item,.app-menu-title').forEach(el => el.remove())
     if (activeContainer?.parentNode) {
       document.body.removeChild(activeContainer)
       activeContainer = null
@@ -513,6 +517,162 @@ describe('AppHeader', () => {
     expect(el?.textContent).toBe('p')
     // overflow:hidden + line-height:1.4 verified in scoped CSS source
     expect(el?.classList.contains('branch-name')).toBe(true)
+  })
+
+  // ── Current file + recent files capsule (5) ──
+
+  it('does not render current-file-badge when no file and no recent files', () => {
+    mountAndTrack({ currentFileName: '', recentFilesAvailable: 0 })
+    expect($('.current-file-badge')).toBeFalsy()
+  })
+
+  it('renders current-file-badge with file name', () => {
+    mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
+    const badge = $('.current-file-badge')
+    expect(badge).toBeTruthy()
+    expect(badge?.classList.contains('no-file')).toBe(false)
+    expect($('.current-file-name')?.textContent).toBe('main.go')
+  })
+
+  it('renders current-file-badge with empty state text when no file name but recent files exist', () => {
+    mountAndTrack({ currentFileName: '', recentFilesAvailable: 3 })
+    const badge = $('.current-file-badge')
+    expect(badge).toBeTruthy()
+    expect(badge?.classList.contains('no-file')).toBe(true)
+    expect($('.current-file-name')?.textContent).toBe('No file open')
+  })
+
+  it('disables current-file-badge when recentFilesAvailable is 0', () => {
+    mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 0 })
+    expect($('.current-file-badge')?.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('toggles file dropdown open on click', async () => {
+    const wrapper = mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
+    expect(wrapper.vm.fileDropdownOpen).toBe(false)
+    $('.current-file-badge')?.click()
+    expect(wrapper.vm.fileDropdownOpen).toBe(true)
+  })
+
+  it('selectRecentFile closes dropdown and emits selectRecentFile', async () => {
+    const wrapper = mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
+    ;(wrapper.vm as any).selectRecentFile({ path: '/home/user/src/a.ts' })
+    expect(wrapper.vm.fileDropdownOpen).toBe(false)
+    expect(wrapper.emitted('selectRecentFile')).toEqual([['/home/user/src/a.ts']])
+  })
+
+  it('opening file dropdown closes branch and project dropdowns', async () => {
+    const wrapper = mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
+    wrapper.vm.fileDropdownOpen = false
+    wrapper.vm.branchDropdownOpen = true
+    wrapper.vm.dropdownOpen = true
+    ;(wrapper.vm as any).toggleFileDropdown()
+    expect(wrapper.vm.branchDropdownOpen).toBe(false)
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+    expect(wrapper.vm.fileDropdownOpen).toBe(true)
+  })
+
+  it('opening branch dropdown closes file and project dropdowns', async () => {
+    const wrapper = mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
+    wrapper.vm.fileDropdownOpen = true
+    wrapper.vm.branchDropdownOpen = false
+    wrapper.vm.dropdownOpen = true
+    ;(wrapper.vm as any).toggleBranchDropdown()
+    expect(wrapper.vm.fileDropdownOpen).toBe(false)
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+    expect(wrapper.vm.branchDropdownOpen).toBe(true)
+  })
+
+  it('renders recent file entries in dropdown', async () => {
+    const wrapper = mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
+    wrapper.vm.recentFileEntries = [
+      { path: '/home/user/src/a.ts', accessedAt: 1 },
+      { path: '/home/user/src/b.ts', accessedAt: 2 },
+    ]
+    ;(wrapper.vm as any).toggleFileDropdown()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const items = document.body.querySelectorAll('.app-menu-item')
+    expect(items.length).toBe(2)
+  })
+
+  it('positionDropdown clamps panel width to viewport on narrow screens', async () => {
+    const wrapper = mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
+    // Simulate a very narrow viewport (e.g. 300px wide device)
+    vi.stubGlobal('innerWidth', 300)
+    const panel = { offsetWidth: 400, offsetHeight: 200 } // content wider than screen
+    const anchor = { getBoundingClientRect: () => ({ left: 20, top: 0, width: 40, height: 24, right: 60, bottom: 24 }) }
+    const styleRef = { value: {} }
+    ;(wrapper.vm as any).positionDropdown(anchor, { value: panel }, styleRef)
+
+    const maxW = parseInt(styleRef.value.maxWidth, 10)
+    expect(maxW).toBeLessThanOrEqual(300)
+    expect(styleRef.value.left).toBeDefined()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows empty state in dropdown when no recent files', async () => {
+    const wrapper = mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 0 })
+    wrapper.vm.recentFileEntries = []
+    ;(wrapper.vm as any).toggleFileDropdown()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(document.body.querySelector('.app-menu-message')).toBeTruthy()
+  })
+
+  // ── Branch dropdown (5) ──
+
+  it('does not render branch-badge when gitBranch is empty', () => {
+    mountAndTrack()
+    expect($('.branch-badge')).toBeFalsy()
+  })
+
+  it('toggleBranchDropdown opens dropdown and loads branches', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    expect(wrapper.vm.branchDropdownOpen).toBe(false)
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.branchDropdownOpen).toBe(true)
+    expect(wrapper.vm.branchList.length).toBe(2)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('highlights current branch as active in dropdown', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const items = document.body.querySelectorAll('.app-menu-item')
+    expect(items[0]?.classList.contains('active')).toBe(true)
+    expect(items[1]?.classList.contains('active')).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('openHistory emits pending navigation and switches tab', () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).openHistory()
+    expect(setPendingManageNavigationFn).toHaveBeenCalled()
+  })
+
+  it('selectBranch does nothing when selecting current branch', async () => {
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).selectBranch({ name: 'main' })
+    expect(wrapper.emitted('selectRecentFile')).toBeFalsy()
+    expect(wrapper.vm.branchDropdownOpen).toBe(false)
   })
 
   // ── handleLogout ──

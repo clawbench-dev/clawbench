@@ -12,22 +12,36 @@
         </button>
       </div>
       <div v-if="gitBranch" class="badge-capsule-divider"></div>
-      <div v-if="gitBranch" class="branch-badge" :class="{ 'branch-switch': branchAnimating }" :title="gitBranch" @click="openHistory" @animationend="branchAnimating = false">
+      <div v-if="gitBranch" class="branch-badge" :class="{ 'branch-switch': branchAnimating }" :title="gitBranch" @click="toggleBranchDropdown" @animationend="branchAnimating = false">
         <GitBranch :size="12" class="branch-icon" />
         <span class="branch-name">{{ gitBranch }}</span>
       </div>
+      <div v-if="currentFileName || recentFilesAvailable > 0" class="badge-capsule-divider"></div>
+      <button
+        v-if="currentFileName || recentFilesAvailable > 0"
+        class="current-file-badge"
+        :class="{ 'no-file': !currentFileName }"
+        :title="currentFileName || t('appHeader.noFileOpen')"
+        :disabled="recentFilesAvailable === 0"
+        @click="toggleFileDropdown"
+      >
+        <FileText :size="12" class="file-icon" />
+        <span v-if="currentFileName" class="current-file-name">{{ currentFileName }}</span>
+        <span v-else class="current-file-name no-file-name">{{ t('appHeader.noFileOpen') }}</span>
+      </button>
     </div>
     <Teleport to="body">
       <Transition name="dropdown">
-        <div v-if="dropdownOpen" class="project-dropdown" :style="dropdownStyle" ref="dropdownPanelRef">
-          <div v-if="loadingRecent" class="dropdown-loading">{{ t('common.loading') }}</div>
+        <div v-if="dropdownOpen" class="app-menu" :style="dropdownStyle" ref="dropdownPanelRef">
+          <div class="app-menu-title">{{ t('appHeader.projects') }}</div>
+          <div v-if="loadingRecent" class="app-menu-message">{{ t('common.loading') }}</div>
           <template v-else>
-            <div v-if="recentItems.length === 0" class="dropdown-empty">{{ t('appHeader.noRecentProjects') }}</div>
-            <div v-else class="dropdown-scroll-area">
+            <div v-if="recentItems.length === 0" class="app-menu-message">{{ t('appHeader.noRecentProjects') }}</div>
+            <div v-else class="app-menu-scroll">
               <div
                 v-for="item in recentItems"
                 :key="item.path"
-                class="dropdown-item"
+                class="app-menu-item"
                 :class="{ active: item.path === projectRoot }"
                 @click="selectRecent(item)"
               >
@@ -36,12 +50,62 @@
                 <span class="item-path" @mousedown.prevent="onPathMouseDown" @click="onPathClick">{{ item.displayPath }}</span>
               </div>
             </div>
-            <div class="dropdown-divider"></div>
-            <div class="dropdown-item other-item" @click="openBrowse">
+            <div class="menu-divider"></div>
+            <div class="app-menu-item other-item" @click="openBrowse">
               <Search :size="14" class="item-icon" />
               <span class="item-label">{{ t('appHeader.browse') }}</span>
             </div>
           </template>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- Recent files quick-index dropdown -->
+    <Teleport to="body">
+      <Transition name="dropdown">
+        <div v-if="fileDropdownOpen" class="app-menu" :style="fileDropdownStyle" ref="fileDropdownPanelRef">
+          <div class="app-menu-title">{{ t('appHeader.recentFiles') }}</div>
+          <div v-if="recentFileEntries.length === 0" class="app-menu-message">{{ t('appHeader.noRecentFiles') }}</div>
+          <div v-else class="app-menu-scroll">
+            <div
+              v-for="entry in recentFileEntries"
+              :key="entry.path"
+              class="app-menu-item"
+              :class="{ active: entry.path === currentFilePath }"
+              @click="selectRecentFile(entry)"
+            >
+              <FileIcon :path="entry.path" :size="16" class="item-icon" />
+              <span class="item-label">{{ baseName(entry.path) }}</span>
+              <span class="item-path">{{ dirName(entry.path) }}</span>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- Branch quick-index dropdown -->
+    <Teleport to="body">
+      <Transition name="dropdown">
+        <div v-if="branchDropdownOpen" class="app-menu" :style="branchDropdownStyle" ref="branchDropdownPanelRef">
+          <div class="app-menu-title">{{ t('appHeader.branches') }}</div>
+          <div v-if="branchDropdownLoading" class="app-menu-message">{{ t('common.loading') }}</div>
+          <div v-else class="app-menu-scroll">
+            <div
+              v-for="b in branchList"
+              :key="b.name"
+              class="app-menu-item"
+              :class="{ active: b.name === gitBranch }"
+              @click="selectBranch(b)"
+            >
+              <GitBranch :size="14" class="item-icon" />
+              <span class="item-label">{{ b.name }}</span>
+            </div>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="app-menu-item other-item" @click="openHistory">
+            <Settings2 :size="14" class="item-icon" />
+            <span class="item-label">{{ t('appHeader.moreBranches') }}</span>
+          </div>
         </div>
       </Transition>
     </Teleport>
@@ -60,7 +124,7 @@
 </template>
 
 <script setup>
-import { Projector, Search, GitBranch, Server } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2 } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -70,6 +134,10 @@ import { store } from '@/stores/app.ts'
 import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
+import FileIcon from '@/components/common/FileIcon.vue'
+import { useRecentFiles } from '@/composables/useRecentFiles'
+import { useDialog } from '@/composables/useDialog.ts'
+import { apiGet, apiPost } from '@/utils/api'
 import { toFixedCSS } from '@/composables/useSettingsConfig'
 
 const { t } = useI18n()
@@ -80,8 +148,140 @@ const switchTab = inject('switchTab')
 const props = defineProps({
     projectRoot: String,
     homeDir: String,
+    currentFileName: String,
+    currentFilePath: String,
+    recentFilesAvailable: { type: Number, default: 0 },
 })
-const emit = defineEmits(['openProjectDialog'])
+const emit = defineEmits(['openProjectDialog', 'selectRecentFile'])
+
+const { entries: recentFileEntries } = useRecentFiles()
+
+// Recent files quick-index dropdown state
+const fileDropdownOpen = ref(false)
+const fileDropdownPanelRef = ref(null)
+const fileDropdownStyle = ref({})
+
+function toggleFileDropdown() {
+    if (fileDropdownOpen.value) {
+        fileDropdownOpen.value = false
+        return
+    }
+    branchDropdownOpen.value = false
+    dropdownOpen.value = false
+    fileDropdownOpen.value = true
+    nextTick(() => updateFileDropdownPosition())
+}
+
+function updateFileDropdownPosition() {
+    const el = document.querySelector('.current-file-badge')
+    positionDropdown(el, fileDropdownPanelRef, fileDropdownStyle)
+}
+
+function selectRecentFile(entry) {
+    fileDropdownOpen.value = false
+    emit('selectRecentFile', entry.path)
+}
+
+function dirName(path) {
+    const idx = path.lastIndexOf('/')
+    return idx > 0 ? path.substring(0, idx) : ''
+}
+
+// Branch quick-index dropdown
+const branchDropdownOpen = ref(false)
+const branchDropdownLoading = ref(false)
+const branchList = ref([])
+const branchDropdownPanelRef = ref(null)
+const branchDropdownStyle = ref({})
+
+function toggleBranchDropdown() {
+    if (branchDropdownOpen.value) {
+        branchDropdownOpen.value = false
+        return
+    }
+    fileDropdownOpen.value = false
+    dropdownOpen.value = false
+    branchDropdownOpen.value = true
+    loadBranches()
+    nextTick(() => updateBranchDropdownPosition())
+}
+
+function updateBranchDropdownPosition() {
+    const el = document.querySelector('.branch-badge')
+    positionDropdown(el, branchDropdownPanelRef, branchDropdownStyle)
+}
+
+async function loadBranches() {
+    branchDropdownLoading.value = true
+    try {
+        const data = await apiGet('/api/git/branches')
+        branchList.value = data.branches || []
+    } catch {
+        branchList.value = []
+    } finally {
+        branchDropdownLoading.value = false
+    }
+}
+
+async function selectBranch(b) {
+    branchDropdownOpen.value = false
+    if (b.name === gitBranch.value) return
+    const ok = await dialog.confirm(
+        t('appHeader.switchBranchConfirm', { branch: b.name }),
+        { title: t('git.manage.switchBranch'), confirmText: t('common.confirm'), cancelText: t('common.cancel') },
+    )
+    if (!ok) return
+    try {
+        const result = await apiPost('/api/git/checkout', { branch: b.name })
+        if (result.success) {
+            await store.loadGitBranch()
+            await store.loadFiles(store.state.currentDir)
+        } else if (result.error === 'dirty_worktree') {
+            toast?.show(t('appHeader.branchDirtyWorktree'), { icon: '⚠️', type: 'error', duration: 3000 })
+            openHistory()
+        } else if (result.error) {
+            toast?.show(t('appHeader.switchBranchFailed', { error: result.errorDetail || result.error }), { icon: '⚠️', type: 'error', duration: 3000 })
+        }
+    } catch {
+        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: '⚠️', type: 'error', duration: 3000 })
+    }
+}
+
+function positionDropdown(anchorEl, panelRef, styleRef) {
+    if (!anchorEl || !panelRef?.value) return
+    const anchorRect = anchorEl.getBoundingClientRect()
+    const margin = 8
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+
+    // Panel width must never exceed the viewport (accounting for margins).
+    // Hard-capped at 320px, but shrinks on narrow screens so content can't overflow.
+    const maxPanelWidth = Math.min(320, vw - 2 * margin)
+    // Use the measured width, clamped to the safe max for position math.
+    const panelWidth = Math.min(panelRef.value.offsetWidth || maxPanelWidth, maxPanelWidth)
+    const panelHeight = panelRef.value.offsetHeight || 320
+
+    // Center horizontally on the anchor, then clamp so the panel stays in view
+    let left = anchorRect.left + anchorRect.width / 2 - panelWidth / 2
+    left = Math.max(margin, Math.min(vw - panelWidth - margin, left))
+
+    let top = anchorRect.bottom + 4
+    // Flip upward if there isn't room below
+    if (top + panelHeight > vh - margin) {
+        top = Math.max(margin, anchorRect.top - panelHeight - 4)
+    }
+    top = Math.max(margin, Math.min(vh - margin - panelHeight, top))
+
+    styleRef.value = {
+        position: 'fixed',
+        top: `${toFixedCSS(top)}px`,
+        left: `${toFixedCSS(left)}px`,
+        minWidth: `${Math.min(Math.max(180, anchorRect.width), maxPanelWidth)}px`,
+        maxWidth: `${toFixedCSS(maxPanelWidth)}px`,
+    }
+}
+
+const dialog = useDialog()
 
 const toast = inject('toast')
 const hotSwitchProject = inject('hotSwitchProject')
@@ -131,24 +331,19 @@ const recentItems = ref([])
 const dropdownStyle = ref({})
 
 function updateDropdownPosition() {
-    if (!dropdownRef.value) return
-    const rect = dropdownRef.value.getBoundingClientRect()
-    dropdownStyle.value = {
-        position: 'fixed',
-        top: `${toFixedCSS(rect.bottom + 4)}px`,
-        left: `${toFixedCSS(rect.left)}px`,
-        minWidth: `${Math.max(220, rect.width)}px`,
-        maxWidth: '280px',
-    }
+    const el = document.querySelector('.project-switch-btn')
+    positionDropdown(el, dropdownPanelRef, dropdownStyle)
 }
 
 function toggleDropdown() {
     if (dropdownOpen.value) {
         dropdownOpen.value = false
     } else {
+        fileDropdownOpen.value = false
+        branchDropdownOpen.value = false
         loadRecentProjects()
-        updateDropdownPosition()
         dropdownOpen.value = true
+        nextTick(() => updateDropdownPosition())
     }
 }
 
@@ -227,7 +422,15 @@ function openBrowse() {
 function onClickOutside(e) {
     if (dropdownRef.value && dropdownRef.value.contains(e.target)) return
     if (dropdownPanelRef.value && dropdownPanelRef.value.contains(e.target)) return
+    if (fileDropdownPanelRef.value && fileDropdownPanelRef.value.contains(e.target)) return
+    if (branchDropdownPanelRef.value && branchDropdownPanelRef.value.contains(e.target)) return
+    const currentFileBadge = document.querySelector('.current-file-badge')
+    if (currentFileBadge && currentFileBadge.contains(e.target)) return
+    const branchBadge = document.querySelector('.branch-badge')
+    if (branchBadge && branchBadge.contains(e.target)) return
     dropdownOpen.value = false
+    fileDropdownOpen.value = false
+    branchDropdownOpen.value = false
 }
 
 // Track whether the path element was dragged, so click can decide to bubble or not
@@ -349,7 +552,7 @@ onUnmounted(() => {
     border: none;
     background: transparent;
     cursor: pointer;
-    color: var(--text-primary);
+    color: #fff;
     border-radius: 0;
     font-size: 12px;
     font-weight: 500;
@@ -361,12 +564,8 @@ onUnmounted(() => {
 }
 
 .project-switch-btn:hover {
-    background: transparent;
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border-color: transparent;
-}
-
-.project-switch-btn:active {
-    transform: scale(0.96);
 }
 
 .project-switch-btn svg:first-child {
@@ -380,6 +579,7 @@ onUnmounted(() => {
     white-space: nowrap;
     min-width: 0;
     line-height: 1.4;
+    color: #fff;
 }
 
 /* Branch badge */
@@ -394,7 +594,7 @@ onUnmounted(() => {
     border-radius: 0;
     font-size: 12px;
     font-weight: 500;
-    color: var(--accent-color);
+    color: #fff;
     flex: 0 1 auto;
     min-width: 0;
     max-width: 100%;
@@ -409,8 +609,58 @@ onUnmounted(() => {
     border-color: transparent;
 }
 
-.branch-badge:active {
-    transform: scale(0.96);
+/* Current file capsule — third segment of the badge capsule */
+.current-file-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    font-size: 12px;
+    font-weight: 500;
+    color: #fff;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    cursor: pointer;
+    transition: background 0.15s, color 0.3s;
+    line-height: 1;
+}
+
+.current-file-badge:hover {
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+    border-color: transparent;
+}
+
+.current-file-badge:disabled {
+    cursor: default;
+    opacity: 0.5;
+    transform: none;
+}
+
+.current-file-badge .file-icon {
+    flex-shrink: 0;
+    color: var(--accent-color);
+}
+
+.current-file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    line-height: 1.4;
+    color: #fff;
+}
+
+/* Empty state text when no file is open — visually distinct from a real file name */
+.current-file-badge .no-file-name {
+    color: color-mix(in srgb, #fff 55%, transparent);
+    font-weight: 400;
+    font-style: italic;
 }
 
 /* Branch switch animation — pulse + glow on the capsule */
@@ -440,6 +690,7 @@ onUnmounted(() => {
 
 .branch-icon {
     flex-shrink: 0;
+    color: var(--accent-color);
 }
 
 .branch-name {
@@ -492,34 +743,45 @@ onUnmounted(() => {
 
 <!-- Unscoped styles for teleported dropdown content (scoped styles won't reach it) -->
 <style>
-/* Project dropdown (teleported to body, positioned via JS) */
-.project-dropdown {
+/* Unified dropdown menu (project / recent files / branches — teleported to body) */
+.app-menu {
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: 8px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.1);
     z-index: 9999;
     overflow: hidden;
+    max-width: calc(100vw - 16px);
     padding: 3px 0;
     display: flex;
     flex-direction: column;
 }
 
-.project-dropdown .dropdown-scroll-area {
+.app-menu-title {
+    padding: 5px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.app-menu-scroll {
     overflow-y: auto;
     overflow-x: hidden;
     max-height: 300px;
 }
 
-.project-dropdown .dropdown-loading,
-.project-dropdown .dropdown-empty {
+.app-menu-message {
     text-align: center;
     padding: 10px 12px;
     color: var(--text-muted);
     font-size: 12px;
 }
 
-.project-dropdown .dropdown-item {
+.app-menu-item {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -529,39 +791,36 @@ onUnmounted(() => {
     font-size: 12px;
 }
 
-.project-dropdown .dropdown-item:hover {
+.app-menu-item:hover {
     background: var(--bg-tertiary);
 }
 
-.project-dropdown .dropdown-item.active {
+.app-menu-item.active {
     background: var(--accent-color);
     color: #fff;
 }
 
-.project-dropdown .dropdown-item.active .item-icon {
-    color: #fff;
-}
-
-.project-dropdown .dropdown-item.active .item-path {
+.app-menu-item.active .item-icon,
+.app-menu-item.active .item-path {
     color: rgba(255,255,255,0.6);
 }
 
-.project-dropdown .item-icon {
+.app-menu-item .item-icon {
     flex-shrink: 0;
     color: var(--accent-color);
 }
 
-.project-dropdown .dropdown-item.active .item-icon {
+.app-menu-item.active .item-icon {
     color: #fff;
 }
 
-.project-dropdown .item-label {
+.app-menu-item .item-label {
     flex-shrink: 0;
     font-weight: 500;
     white-space: nowrap;
 }
 
-.project-dropdown .item-path {
+.app-menu-item .item-path {
     flex: 1 1 auto;
     color: var(--text-muted);
     font-size: 11px;
@@ -573,15 +832,15 @@ onUnmounted(() => {
     -ms-overflow-style: none;
 }
 
-.project-dropdown .item-path::-webkit-scrollbar {
+.app-menu-item .item-path::-webkit-scrollbar {
     display: none;
 }
 
-.project-dropdown .other-item .item-icon {
+.app-menu-item.other-item .item-icon {
     color: var(--text-secondary);
 }
 
-.project-dropdown .dropdown-divider {
+.menu-divider {
     height: 1px;
     background: var(--border-color);
     margin: 2px 0;
