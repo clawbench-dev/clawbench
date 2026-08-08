@@ -495,8 +495,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	summarize.InlineCodeMaxLen = cfg.TTS.InlineCodeMaxLen
 	summarize.MaxSummarizeRunes = cfg.TTS.MaxSummarizeRunes
 
-	// NOTE: TTS summarizer initialization is deferred until after DB init,
-	// because the API key may need to be resolved from agent_api_keys table.
+	// NOTE: TTS summarizer initialization is deferred until after DB init.
 
 	// Initialize TTS synthesis provider from config
 	var ttsProvider speech.SpeechProvider

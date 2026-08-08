@@ -474,7 +474,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
-	// Create agent store tables (agents + agent_api_keys).
+	// Create agent store tables.
 	// Defined in agent_store.go as AgentDDL constant.
 	if _, err := WriteExec(AgentDDL); err != nil {
 		return fmt.Errorf("failed to create agent tables: %w", err)
