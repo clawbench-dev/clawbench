@@ -392,7 +392,10 @@ async function fetchSummaryTaskData() {
 watch(summaryTaskIDs, fetchSummaryTaskData, { immediate: true })
 
 // Keep summary task cards in sync with store.state.tasks (global polling) so status
-// changes refresh in real time.
+// changes refresh in real time. Deletion is owned by fetchSummaryTaskData (which uses
+// the authoritative /api/tasks list); the store watch only syncs status. It must NOT
+// mark tasks deleted when the store list is empty — an empty list can be an app reset
+// or a not-yet-populated store, not an actual deletion.
 watch(
   () => store.state.tasks,
   (tasks) => {
@@ -403,12 +406,7 @@ watch(
       const entry = summaryTaskData[id]
       if (!entry || entry.deleted) continue
       const updated = taskMap.get(id)
-      if (!updated) {
-        if (tasks && tasks.length === 0) {
-          entry.deleted = true
-          entry.loading = false
-        }
-      } else {
+      if (updated) {
         entry.task = updated
         entry.loading = false
       }
