@@ -75,11 +75,21 @@ type SummaryTool struct {
 	Input map[string]any `json:"input,omitempty"`
 }
 
-// AskQuestionCard is a compact representation of an <ask-question> block
-// detected in a text block, used to render the question card in summary view.
+// AskQuestionOption is a single option in an ask-question card.
+type AskQuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// AskQuestionCard is a single question item in an <ask-question> block,
+// shaped to match the frontend AskItem used by renderAskUserQuestion
+// (web/src/utils/xmlParser.ts). A frontend caller renders it via
+// formatToolInput({ questions: summaryCards.askQuestions }, 'AskUserQuestion').
 type AskQuestionCard struct {
-	Text    string   `json:"text"`
-	Options []string `json:"options"`
+	Header      string              `json:"header"`
+	MultiSelect bool                `json:"multiSelect"`
+	Question    string              `json:"question"`
+	Options     []AskQuestionOption `json:"options"`
 }
 
 // SummaryCards holds the structured card metadata persisted alongside the

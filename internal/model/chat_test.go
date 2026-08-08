@@ -329,8 +329,10 @@ func TestSummaryCardsRoundTrip(t *testing.T) {
 		}},
 		TaskIDs: []int64{42},
 		AskQuestions: []AskQuestionCard{{
-			Text:    "Continue?",
-			Options: []string{"Yes", "No"},
+			Header:      "",
+			MultiSelect: false,
+			Question:    "Continue?",
+			Options:     []AskQuestionOption{{Label: "Yes"}, {Label: "No"}},
 		}},
 	}
 	raw, err := json.Marshal(cards)
@@ -347,7 +349,7 @@ func TestSummaryCardsRoundTrip(t *testing.T) {
 	if len(back.TaskIDs) != 1 || back.TaskIDs[0] != 42 {
 		t.Fatalf("taskIDs mismatch: %+v", back.TaskIDs)
 	}
-	if len(back.AskQuestions) != 1 || back.AskQuestions[0].Text != "Continue?" {
+	if len(back.AskQuestions) != 1 || back.AskQuestions[0].Question != "Continue?" {
 		t.Fatalf("askQuestions mismatch: %+v", back.AskQuestions)
 	}
 }
