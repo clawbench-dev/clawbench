@@ -1,12 +1,18 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
 import { handleBackNavigation, canNavigateBack, _resetHandlers, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 // BottomSheet imports useBackHandler directly — no mock needed for the core logic.
 // We mock appLog to avoid Android bridge calls in test.
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
+// Mock wide-screen detection so tests can control the constrained-width class.
+const wideState = { isWideScreen: ref(false) }
+vi.mock('@/composables/useWideScreenLayout', () => ({
+  getWideScreenState: () => wideState,
 }))
 
 // Import BottomSheet after mocks are set up
@@ -471,6 +477,10 @@ describe('BottomSheet unmount cleanup', () => {
 describe('BottomSheet width (all drawers share the same width)', () => {
   let wrapper: VueWrapper<any> | null = null
 
+  beforeEach(() => {
+    wideState.isWideScreen.value = false
+  })
+
   afterEach(() => {
     if (wrapper) {
       wrapper.unmount()
@@ -479,8 +489,22 @@ describe('BottomSheet width (all drawers share the same width)', () => {
     document.body.querySelectorAll('.bs-overlay').forEach(el => el.remove())
   })
 
-  it('renders the panel without a wide-width modifier class', () => {
+  it('does not constrain the panel in narrow (non-wide-screen) mode', () => {
     wrapper = mountSheet({})
-    expect($('.bs-panel')?.classList.contains('bs-wide')).toBe(false)
+    expect($('.bs-panel')?.classList.contains('bs-constrained')).toBe(false)
+  })
+
+  it('constrains the panel to 560px in wide-screen mode', () => {
+    wideState.isWideScreen.value = true
+    wrapper = mountSheet({})
+    expect($('.bs-panel')?.classList.contains('bs-constrained')).toBe(true)
+  })
+
+  it('re-renders the class when wide-screen state changes', async () => {
+    wrapper = mountSheet({})
+    expect($('.bs-panel')?.classList.contains('bs-constrained')).toBe(false)
+    wideState.isWideScreen.value = true
+    await nextTick()
+    expect($('.bs-panel')?.classList.contains('bs-constrained')).toBe(true)
   })
 })

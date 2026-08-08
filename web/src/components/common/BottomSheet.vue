@@ -10,7 +10,7 @@
       @click.self="handleClose"
       @keydown.escape="handleEscapeKey"
     >
-      <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-compact': compact, 'bs-auto': auto, 'bs-handle-only': handleOnly }">
+      <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-compact': compact, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-constrained': isWideScreen }">
         <!-- Header -->
         <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly }" @click="handleClose">
           <div class="bs-handle" />
@@ -34,6 +34,7 @@
 <script setup>
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { appLog } from '@/utils/appLog'
 
 const props = defineProps({
@@ -53,6 +54,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close'])
+
+// Wide-screen detection mirrors useWideScreenLayout (physical-width aware, so
+// high-DPR tablets in landscape are constrained even when CSS width < 1024px).
+const { isWideScreen } = getWideScreenState()
 
 const leaving = ref(false)
 const everOpened = ref(false)
@@ -365,12 +370,12 @@ defineExpose({
   z-index: 1200;
 }
 
-/* Wide-screen (≥1024px): constrain bottom-sheet width and center it.
-   Keep narrow screens full-width. All drawers share the same width. */
-@media (min-width: 1024px) {
-  .bs-panel {
-    max-width: 560px;
-    margin: 0 auto;
-  }
+/* Wide-screen: constrain bottom-sheet width and center it. Driven by the
+   reactive isWideScreen state (physical-width aware) so high-DPR tablets in
+   landscape are constrained even when CSS width < 1024px. Keep narrow screens
+   full-width. */
+.bs-panel.bs-constrained {
+  max-width: 560px;
+  margin: 0 auto;
 }
 </style>
