@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet ref="bottomSheetRef" :open="open" wide @close="handleClose">
+  <BottomSheet ref="bottomSheetRef" :open="open" @close="handleClose">
     <template #header>
       <GitBranch :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ mode === 'file' ? t('git.history.fileHistory') : t('git.history.projectHistory') }}</span>

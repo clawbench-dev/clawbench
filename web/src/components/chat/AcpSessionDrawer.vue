@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto wide :title="drawerTitle" @close="$emit('close')">
+  <BottomSheet :open="open" auto :title="drawerTitle" @close="$emit('close')">
     <template #header>
       <RotateCwIcon v-if="acpSessionsLoading" :size="16" class="bs-header-icon spin" />
       <HistoryIcon v-else :size="16" class="bs-header-icon" />

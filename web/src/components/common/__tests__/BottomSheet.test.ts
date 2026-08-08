@@ -468,7 +468,7 @@ describe('BottomSheet unmount cleanup', () => {
   })
 })
 
-describe('BottomSheet wide prop', () => {
+describe('BottomSheet width (all drawers share the same width)', () => {
   let wrapper: VueWrapper<any> | null = null
 
   afterEach(() => {
@@ -479,12 +479,7 @@ describe('BottomSheet wide prop', () => {
     document.body.querySelectorAll('.bs-overlay').forEach(el => el.remove())
   })
 
-  it('adds bs-wide class to the panel when wide=true', () => {
-    wrapper = mountSheet({ wide: true })
-    expect($('.bs-panel')?.classList.contains('bs-wide')).toBe(true)
-  })
-
-  it('does not add bs-wide class by default', () => {
+  it('renders the panel without a wide-width modifier class', () => {
     wrapper = mountSheet({})
     expect($('.bs-panel')?.classList.contains('bs-wide')).toBe(false)
   })

@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet ref="bottomSheetRef" :open="open" auto wide :title="t('session.title')" @close="$emit('close')">
+  <BottomSheet ref="bottomSheetRef" :open="open" auto :title="t('session.title')" @close="$emit('close')">
     <template #header>
       <Bot :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('session.title') }}</span>

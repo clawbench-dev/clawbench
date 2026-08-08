@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto wide @close="handleClose">
+  <BottomSheet :open="open" auto @close="handleClose">
     <template #header>
       <Bot :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ title }}</span>
