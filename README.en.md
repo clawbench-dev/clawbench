@@ -2,11 +2,11 @@
 
 # ClawBench — AI Workstation Built for Mobile
 
-> 🎬 **Demo Video**: [OpenClaw and Hermes are toys, so I built one that actually works](https://b23.tv/ewACF0h) — Bilibili
-
-<p>
-  <img src="assets/logo.png" alt="ClawBench" width="96" height="96" align="left" style="margin-right:16px;">
+<p align="center">
+  <img src="docs/screenshots/product_hero.png" alt="ClawBench" width="960">
 </p>
+
+> 🎬 **Demo Video**: [OpenClaw and Hermes are toys, so I built one that actually works](https://b23.tv/ewACF0h) — Bilibili
 
 **From Terminal to Palm** — An AI workstation built for mobile.
 

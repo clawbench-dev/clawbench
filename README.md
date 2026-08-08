@@ -2,11 +2,11 @@
 
 # ClawBench —— 为移动端打造的AI工作台
 
-> 🎬 **演示视频**：[OpenClaw 和 Hermes 就是玩具，于是我写了一个能干活的](https://b23.tv/ewACF0h) — Bilibili
-
-<p>
-  <img src="assets/logo.png" alt="ClawBench" width="96" height="96" align="left" style="margin-right:16px;">
+<p align="center">
+  <img src="docs/screenshots/product_hero.png" alt="ClawBench" width="960">
 </p>
+
+> 🎬 **演示视频**：[OpenClaw 和 Hermes 就是玩具，于是我写了一个能干活的](https://b23.tv/ewACF0h) — Bilibili
 
 **从终端到掌心** — 为移动端打造的 AI 工作台。
 
