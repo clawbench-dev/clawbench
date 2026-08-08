@@ -497,12 +497,17 @@ defineExpose({ focusSearchInput })
   background: rgba(0, 102, 204, 0.1);
 }
 
-.detail-header-title {
+/* Higher specificity than .bs-header-title so flex:1 reliably wins, keeping the
+   title an independently shrinkable area (ellipsis) and the archived badge a
+   separate, fixed right-aligned area instead of overlapping the title tail. */
+.bs-header .detail-header-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
+  /* Override .bs-header-title's inline-flex, which breaks text-overflow */
+  display: block;
 }
 
 .detail-archived-badge {
@@ -513,7 +518,7 @@ defineExpose({ focusSearchInput })
   color: var(--color-warning, #e6a23c);
   font-weight: 500;
   flex-shrink: 0;
-  margin-left: auto;
+  margin-left: 6px;
 }
 
 .detail-page {
