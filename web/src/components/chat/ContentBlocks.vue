@@ -363,7 +363,10 @@ const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [
 watch(
   () => [props.msgId, props.showingSummary, props.summary, props.blocks?.length],
   () => {
-    appLog.d('ContentBlocks', `[render] msgId=${props.msgId} showSum=${props.showingSummary} summaryLen=${String(props.summary || '').length} summaryHead="${String(props.summary || '').slice(0, 30)}" blocks=${props.blocks?.length ?? 0}`)
+    const renderedHtml = props.showingSummary && props.summary
+      ? (props.renderTextBlock(String(props.summary), String(props.msgId), 0, false) || '')
+      : ''
+    appLog.d('ContentBlocks', `[render] msgId=${props.msgId} showSum=${props.showingSummary} summaryLen=${String(props.summary || '').length} summaryHead="${String(props.summary || '').slice(0, 30)}" blocks=${props.blocks?.length ?? 0} renderedHtmlLen=${renderedHtml.length} renderedHead="${renderedHtml.slice(0, 40)}"`)
   },
   { immediate: true },
 )
