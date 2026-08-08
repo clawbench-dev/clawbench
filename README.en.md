@@ -79,6 +79,7 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 - Real-time monitoring of server CPU, memory, disk, and network usage
 - Header panel display with WebSocket push updates
+- Auto-switches to connection status indicator (disconnected/reconnecting) when WS is down, replacing the resource panel
 
 ---
 
@@ -183,17 +184,17 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch
 - **Scheduled Tasks**: AI creates Cron schedules via CLI subcommands, executes automatically; independent tab with 4-level breadcrumb navigation; task cards embedded in chat messages; frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)
 - **Continue Conversation**: One-click continue conversation from task execution detail, auto-copies history messages and summaries to a new session, inherits backend/agent/model/thinking effort; sessions originated from scheduled tasks show a purple "Task" badge in session list
-- **Multi-Session Management**: Create, switch, archive independent sessions, swipe to switch; archived sessions recoverable via search, physical delete (irreversible) and archive retention auto-cleanup available
+- **Multi-Session Management**: Create, switch, archive independent sessions, swipe to switch; archived sessions recoverable via search, physical delete (irreversible) and archive retention auto-cleanup available; Ctrl/Cmd+Delete to quick-archive current session
 - **Swipe Session Toggle**: Toggle left/right swipe session switching in Settings → Chat; defaults to off to prevent accidental switches when scrolling wide content
 - **Image Upload**: Upload images for AI conversation (multimodal)
-- **Disconnect Protection**: Messages persist immediately, no data loss on disconnect, 15s heartbeat keep-alive + 30s timeout auto-reconnect (live content updates during polling fallback)
+- **Disconnect Protection**: Messages persist immediately, no data loss on disconnect, 15s heartbeat keep-alive + 30s timeout auto-reconnect (live content updates during polling fallback); on reconnect, auto-checks session state to prevent UI stuck when AI completed during disconnect
 - **Auto Resume**: Automatically sends "continue" after Claude/CodeBuddy/Qoder/CodeWhale/MiMo/Pi/Copilot/Kimi exits Plan Mode
 - **Message Queue**: Messages queue when AI is busy, sent sequentially
 - **Message Clusters**: Auto-analyze chat history patterns, group semantically similar user messages into clusters, one-click add to Quick Send; Union-Find + Sørensen-Dice similarity, on-demand computation with progress tracking
 - **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; toggle between summary/original via bottom banner; TTS playback also uses the summary
 - **@ Commands**: Type `@chatsearch` to search conversation history, `@task` to manage scheduled tasks — autocomplete popup menu, purple command badge in user messages
 - **RAG Results Card**: RAG search results in AI responses rendered as purple-themed cards; click to open detail drawer, one-click resume conversation
-- **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion
+- **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion; thinking content lazy-loaded — after stream ends, only thumbnail is kept, full text loaded on demand when expanded
 - **Session Progress Indicator**: Session drawer shows capsule progress bar with color-coded fill (blue/orange/red) based on usage
 - **ACP Context State Persistence**: Mode, thinking effort, and context usage auto-persisted to database; state survives server restarts
 
