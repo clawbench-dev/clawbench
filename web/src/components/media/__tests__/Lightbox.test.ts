@@ -280,6 +280,7 @@ describe('Lightbox', () => {
 
       vm.resetAndRefresh()
 
+      expect(vm.imageLoading).toBe(true)
       expect(vm.scale).toBe(1)
       expect(vm.fitScale).toBe(1)
       expect(vm.naturalW).toBe(0)

@@ -31,6 +31,7 @@
           v-if="currentUrl && !currentSvg"
           v-show="!imageLoading"
           ref="imgRef"
+          :key="currentUrl"
           :src="currentUrl"
           :style="imgStyle"
           draggable="false"
@@ -428,6 +429,7 @@ function close() {
 }
 
 function resetAndRefresh() {
+    imageLoading.value = true
     fitScale.value = 1
     naturalW.value = 0
     naturalH.value = 0
