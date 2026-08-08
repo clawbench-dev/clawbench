@@ -30,6 +30,7 @@
           <span v-if="session.running" class="session-running-line"></span>
           <div
             class="session-item"
+            :class="{ active: session.id === currentSessionId }"
             @click="selectSession(session.id, session.backend)"
           >
             <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
