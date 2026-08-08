@@ -405,6 +405,7 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID       string `json:"sessionId"`
 		BeforeMessageID int64  `json:"beforeMessageId"`
+		AgentID         string `json:"agentId"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 	if !decodeJSON(w, r, &req) {
@@ -420,9 +421,18 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve agent override: if the user selected a different agent, validate it exists
+	overrideAgentID := req.AgentID
+	if overrideAgentID != "" {
+		if _, _, _, _, ok := resolveAgentConfig(overrideAgentID); !ok {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
+			return
+		}
+	}
+
 	title := buildForkTitle(r, sourceID)
 
-	newSessionID, err := service.ForkSession(sourceID, projectPath, title, req.BeforeMessageID)
+	newSessionID, err := service.ForkSession(sourceID, projectPath, title, req.BeforeMessageID, overrideAgentID)
 	if err != nil {
 		writeForkError(w, r, err)
 		return

@@ -198,11 +198,11 @@ func TestFileThumb(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("TallImage_OutputIsSquareWithDominantColorPadding", func(t *testing.T) {
+	t.Run("TallImage_OutputMaintainsAspectRatio", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		// Create a tall 100x400 image (2:1 height:width ratio)
+		// Create a tall 100x400 image (4:1 height:width ratio)
 		// All pixels are the same solid color (R=255, G=100, B=50)
 		createTestPNG(t, env.ProjectDir, "tall.png", 100, 400)
 
@@ -216,25 +216,17 @@ func TestFileThumb(t *testing.T) {
 		thumb, err := jpeg.Decode(bytes.NewReader(w.Body.Bytes()))
 		assert.NoError(t, err)
 
-		// Thumbnail should be square (50x50) — image fits inside, padded with dominant color
+		// Thumbnail should maintain aspect ratio: 50 wide, 200 tall
 		bounds := thumb.Bounds()
-		assert.Equal(t, 50, bounds.Dx(), "thumbnail should be square (width)")
-		assert.Equal(t, 50, bounds.Dy(), "thumbnail should be square (height)")
-
-		// The top-left corner should be the dominant color (padding area)
-		paddingColor := thumb.At(0, 0)
-		r, g, _, _ := paddingColor.RGBA()
-		// Dominant color is RGB(255, 100, 50) — allow some JPEG compression tolerance
-		assert.Greater(t, r, uint32(60000), "padding red channel should be close to 255")
-		assert.Greater(t, g, uint32(20000), "padding green channel should be close to 100")
-		assert.Less(t, g, uint32(30000), "padding green channel should be close to 100")
+		assert.Equal(t, 50, bounds.Dx(), "thumbnail width should be 50")
+		assert.Equal(t, 200, bounds.Dy(), "thumbnail height should be 200 (4:1 ratio)")
 	})
 
-	t.Run("WideImage_OutputIsSquareWithDominantColorPadding", func(t *testing.T) {
+	t.Run("WideImage_OutputMaintainsAspectRatio", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		// Create a wide 400x100 image
+		// Create a wide 400x100 image (4:1 width:height ratio)
 		createTestPNG(t, env.ProjectDir, "wide.png", 400, 100)
 
 		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=wide.png&w=50", nil)
@@ -246,14 +238,10 @@ func TestFileThumb(t *testing.T) {
 		thumb, err := jpeg.Decode(bytes.NewReader(w.Body.Bytes()))
 		assert.NoError(t, err)
 
+		// Thumbnail should maintain aspect ratio: width=50, height=12 (400:100 → 50:12.5→12)
 		bounds := thumb.Bounds()
-		assert.Equal(t, 50, bounds.Dx(), "thumbnail should be square (width)")
-		assert.Equal(t, 50, bounds.Dy(), "thumbnail should be square (height)")
-
-		// Bottom area is padding with dominant color
-		paddingColor := thumb.At(25, 49)
-		r, _, _, _ := paddingColor.RGBA()
-		assert.Greater(t, r, uint32(60000), "padding red channel should be close to 255")
+		assert.Equal(t, 50, bounds.Dx(), "thumbnail width should be 50")
+		assert.Equal(t, 12, bounds.Dy(), "thumbnail height should be 12 (4:1 ratio)")
 	})
 
 	t.Run("SquareImage_OutputIsSquare_NoPaddingNeeded", func(t *testing.T) {

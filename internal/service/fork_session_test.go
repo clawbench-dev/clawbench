@@ -27,7 +27,7 @@ func TestForkSession_NormalFlow(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Fork with title prefix from handler (i18n would be "[Fork] " in English)
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello AI", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello AI", 0, "")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, newSessID)
 	assert.NotEqual(t, sessID, newSessID)
@@ -69,7 +69,7 @@ func TestForkSession_NoExternalSessionID(t *testing.T) {
 	err := service.UpdateExternalSessionID(sessID, "ext-cli-session-123")
 	assert.NoError(t, err)
 
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Original", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Original", 0, "")
 	assert.NoError(t, err)
 
 	// Forked session should NOT inherit external_session_id
@@ -82,7 +82,7 @@ func TestForkSession_NoExternalSessionID(t *testing.T) {
 func TestForkSession_SessionNotFound(t *testing.T) {
 	setupDB(t)
 
-	_, err := service.ForkSession("nonexistent-session-id", "/project", "[Fork] Session", 0)
+	_, err := service.ForkSession("nonexistent-session-id", "/project", "[Fork] Session", 0, "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -94,7 +94,7 @@ func TestForkSession_ProjectMismatch(t *testing.T) {
 
 	sessID := helperCreateSession(t, "/project", "claude", "Original")
 
-	_, err := service.ForkSession(sessID, "/other-project", "[Fork] Original", 0)
+	_, err := service.ForkSession(sessID, "/other-project", "[Fork] Original", 0, "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "does not belong")
 }
@@ -110,7 +110,7 @@ func TestForkSession_SessionCountLimit(t *testing.T) {
 
 	sessID := helperCreateSession(t, "/project", "claude", "Original")
 
-	_, err := service.ForkSession(sessID, "/project", "[Fork] Original", 0)
+	_, err := service.ForkSession(sessID, "/project", "[Fork] Original", 0, "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "session limit")
 }
@@ -130,7 +130,7 @@ func TestForkSession_SkipsStreamingMessages(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sessID, "assistant", "streaming...", nil, true, "")
 	assert.NoError(t, err)
 
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] prompt", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] prompt", 0, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
@@ -153,7 +153,7 @@ func TestForkSession_ArchivedSource(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Should fail because archived=0 filter
-	_, err = service.ForkSession(sessID, "/project", "[Fork] Original", 0)
+	_, err = service.ForkSession(sessID, "/project", "[Fork] Original", 0, "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -170,7 +170,7 @@ func TestForkSession_InheritsAgentAndModel(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "prompt", nil, false, "")
 	assert.NoError(t, err)
 
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] prompt", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] prompt", 0, "")
 	assert.NoError(t, err)
 
 	info, err := service.GetSessionInfo(newSessID)
@@ -188,7 +188,7 @@ func TestForkSession_EmptySession(t *testing.T) {
 	sessID := helperCreateSession(t, "/project", "claude", "Empty Session")
 
 	// Fork without any messages
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Empty Session", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Empty Session", 0, "")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, newSessID)
 
@@ -212,7 +212,7 @@ func TestForkSession_MessagesWithFiles(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sessID, "assistant", "Looks good", nil, false, "")
 	assert.NoError(t, err)
 
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Review these files", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Review these files", 0, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
@@ -233,11 +233,11 @@ func TestForkSession_ForkOfFork(t *testing.T) {
 	assert.NoError(t, err)
 
 	// First fork
-	fork1ID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0)
+	fork1ID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0, "")
 	assert.NoError(t, err)
 
 	// Fork the forked session
-	fork2ID, err := service.ForkSession(fork1ID, "/project", "[Fork] [Fork] Hello", 0)
+	fork2ID, err := service.ForkSession(fork1ID, "/project", "[Fork] [Fork] Hello", 0, "")
 	assert.NoError(t, err)
 
 	// Both forks should be independent
@@ -267,7 +267,7 @@ func TestForkSession_SessionTypeIsChat(t *testing.T) {
 	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Hi", nil, false, "")
 	assert.NoError(t, err)
 
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hi", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hi", 0, "")
 	assert.NoError(t, err)
 
 	var sessionType string
@@ -285,7 +285,7 @@ func TestForkSession_CopiedMessagesGetNewIDs(t *testing.T) {
 	origMsgID, err := service.AddChatMessage("/project", "claude", sessID, "user", "Hello", nil, false, "")
 	assert.NoError(t, err)
 
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
@@ -313,7 +313,7 @@ func TestForkSession_DoesNotCopyTaskExecutionSummaries(t *testing.T) {
 	err = service.SaveSummary("task_execution", asstID, "Task summary")
 	assert.NoError(t, err)
 
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] prompt", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] prompt", 0, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
@@ -353,7 +353,7 @@ func TestForkSession_BeforeMessageID(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Fork from user2 (second user message) — should include user1, asst1, user2, asst2
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Second question", user2ID)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Second question", user2ID, "")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, newSessID)
 
@@ -390,7 +390,7 @@ func TestForkSession_BeforeMessageID_FirstMessage(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Fork from the first (and only) user message — includes user + assistant reply
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Only user message", user1ID)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Only user message", user1ID, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
@@ -419,7 +419,7 @@ func TestForkSession_BeforeMessageID_LastMessage(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Fork from the last user message — includes all messages (Q1 + A1 + Q2 + A2)
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Q2", user2ID)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Q2", user2ID, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
@@ -436,7 +436,7 @@ func TestForkSession_BeforeMessageID_NotFound(t *testing.T) {
 	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Hello", nil, false, "")
 	assert.NoError(t, err)
 
-	_, err = service.ForkSession(sessID, "/project", "[Fork] Hello", 99999)
+	_, err = service.ForkSession(sessID, "/project", "[Fork] Hello", 99999, "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in session")
 }
@@ -463,7 +463,7 @@ func TestForkSession_BeforeMessageID_AssistantMessage(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Fork from asst2 — should include user1 + asst1 + user2 + asst2
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Second question", asst2ID)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Second question", asst2ID, "")
 	assert.NoError(t, err)
 	assert.NotEmpty(t, newSessID)
 
@@ -497,7 +497,7 @@ func TestForkSession_BeforeMessageID_LastAssistantMessage(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Fork from last assistant message — should include all 4 messages
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Q2", asst2ID)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Q2", asst2ID, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
@@ -523,7 +523,7 @@ func TestForkSession_BeforeMessageID_StreamingMessage(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Fork from a streaming message should fail
-	_, err = service.ForkSession(sessID, "/project", "[Fork] Hello", streamingID)
+	_, err = service.ForkSession(sessID, "/project", "[Fork] Hello", streamingID, "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "streaming message")
 }
@@ -543,7 +543,7 @@ func TestForkSession_CopiesToolCallsAndThinking(t *testing.T) {
 	assert.NoError(t, service.UpsertToolCall(asstID, sessID, "toolu_01", "Read", []byte(`{"file_path":"/a.go"}`), "contents", "success", "a.go", true, 0))
 	assert.NoError(t, service.UpsertThinking(asstID, sessID, "th_01", "deep text"))
 
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
@@ -595,7 +595,7 @@ func TestForkSession_TruncationSkipsDetailRows(t *testing.T) {
 	assert.NoError(t, service.UpsertToolCall(asst2ID, sessID, "toolu_cut", "Bash", []byte(`{"command":"ls"}`), "cut-out", "success", "ls", true, 0))
 	assert.NoError(t, service.UpsertThinking(asst2ID, sessID, "th_cut", "cut text"))
 
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] First", user1ID)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] First", user1ID, "")
 	assert.NoError(t, err)
 
 	// Only the first exchange's rows are copied into the fork.
@@ -644,7 +644,7 @@ func TestForkSession_BeforeMessageID_Zero(t *testing.T) {
 	assert.NoError(t, err)
 
 	// beforeMessageID=0 should copy all messages (backward compatible)
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Q1", 0)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Q1", 0, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
@@ -667,10 +667,100 @@ func TestForkSession_BeforeMessageID_NoAssistantReply(t *testing.T) {
 	// No assistant reply after user2 — this is the last message
 
 	// Fork from user2 — no assistant reply, so cut at user2
-	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Q2", user2ID)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Q2", user2ID, "")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 3) // Q1 + A1 + Q2 (no assistant reply for Q2)
+}
+
+// ---------- ForkSession: overrideAgentID overrides agent/backend/model ----------
+
+func TestForkSession_OverrideAgentID(t *testing.T) {
+	setupDB(t)
+
+	// Ensure model.Agents is initialized
+	model.Agents = make(map[string]*model.Agent)
+	model.AgentList = nil
+	t.Cleanup(func() { model.Agents = nil; model.AgentList = nil })
+
+	// Create source session with agent "claude" and a model
+	sessID := helperCreateSession(t, "/project", "claude", "Original")
+	// Set model on the source session
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET model = 'claude-sonnet-4' WHERE id = ?", sessID)
+	assert.NoError(t, err)
+
+	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "Hello", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "assistant", "Hi!", nil, false, "")
+	assert.NoError(t, err)
+
+	// Register an override agent in model.Agents
+	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "codebuddy"}
+
+	// Fork with override agent
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0, "codebuddy")
+	assert.NoError(t, err)
+
+	// Verify the forked session has the override agent
+	var backend, agentID, agentSource, modelName string
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT backend, agent_id, agent_source, model FROM chat_sessions WHERE id = ?", newSessID,
+	).Scan(&backend, &agentID, &agentSource, &modelName)
+	assert.NoError(t, err)
+	assert.Equal(t, "codebuddy", agentID)
+	assert.Equal(t, "user", agentSource)
+	assert.Equal(t, "codebuddy", backend)
+	assert.Equal(t, "", modelName, "model should be cleared when agent is overridden")
+}
+
+// ---------- ForkSession: overrideAgentID empty preserves source agent ----------
+
+func TestForkSession_OverrideAgentID_Empty(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original")
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Hello", nil, false, "")
+	assert.NoError(t, err)
+
+	// Fork without override — should inherit source session's agent
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0, "")
+	assert.NoError(t, err)
+
+	var backend, agentID, agentSource string
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT backend, agent_id, agent_source FROM chat_sessions WHERE id = ?", newSessID,
+	).Scan(&backend, &agentID, &agentSource)
+	assert.NoError(t, err)
+	// Source session has empty agent_id (created with helperCreateSession which passes "")
+	assert.Equal(t, "claude", backend)
+	assert.Equal(t, "", agentID)
+	assert.Equal(t, "default", agentSource)
+}
+
+// ---------- ForkSession: overrideAgentID unknown agent is ignored ----------
+
+func TestForkSession_OverrideAgentID_Unknown(t *testing.T) {
+	setupDB(t)
+
+	// Ensure model.Agents is initialized (but empty — no "nonexistent-agent")
+	model.Agents = make(map[string]*model.Agent)
+	model.AgentList = nil
+	t.Cleanup(func() { model.Agents = nil; model.AgentList = nil })
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original")
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Hello", nil, false, "")
+	assert.NoError(t, err)
+
+	// Fork with unknown override agent — should be silently ignored (inherits source)
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Hello", 0, "nonexistent-agent")
+	assert.NoError(t, err)
+
+	var backend string
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT backend FROM chat_sessions WHERE id = ?", newSessID,
+	).Scan(&backend)
+	assert.NoError(t, err)
+	assert.Equal(t, "claude", backend, "unknown agent should be ignored, source backend preserved")
 }

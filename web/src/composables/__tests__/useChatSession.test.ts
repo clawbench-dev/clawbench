@@ -3961,6 +3961,46 @@ describe('forkSession', () => {
       expect.objectContaining({ type: 'error' })
     )
   })
+
+  it('sends agentId in fork request body', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-s1', sessionCount: 2 }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-s1'
+    const result = await session.forkSession('source-s1', undefined, 'codebuddy')
+
+    expect(result).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/ai/session/fork',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sessionId: 'source-s1', agentId: 'codebuddy' }),
+      })
+    )
+  })
+
+  it('sends beforeMessageId and agentId together', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-s1', sessionCount: 2 }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-s1'
+    const result = await session.forkSession('source-s1', 42, 'claude')
+
+    expect(result).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/ai/session/fork',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sessionId: 'source-s1', beforeMessageId: 42, agentId: 'claude' }),
+      })
+    )
+  })
 })
 
 // ───────────────────────────────────────────────────────────

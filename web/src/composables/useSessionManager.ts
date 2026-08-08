@@ -28,7 +28,7 @@ export interface UseSessionManagerOptions {
   archiveSessionCore: (sessionId: string, backend?: string) => Promise<void>
   destroySessionCore: (sessionId: string) => Promise<void>
   continueFromExecutionCore: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
-  forkSessionCore: (sessionId: string, beforeMessageId?: number) => Promise<boolean>
+  forkSessionCore: (sessionId: string, beforeMessageId?: number, agentId?: string) => Promise<boolean>
   checkContinueSessionCore: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
 
   // Stream operations (from useChatStream)
@@ -272,11 +272,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   }
 
   /** Fork the current session — create a new session with copied messages. */
-  async function forkSession(sessionId: string, beforeMessageId?: number): Promise<boolean> {
+  async function forkSession(sessionId: string, beforeMessageId?: number, agentId?: string): Promise<boolean> {
     cleanupActiveStream()
     _clearInputState()
     clearPendingMessages()
-    return await forkSessionCore(sessionId, beforeMessageId)
+    return await forkSessionCore(sessionId, beforeMessageId, agentId)
   }
 
   /** Check whether a continued session already exists for a task execution. */

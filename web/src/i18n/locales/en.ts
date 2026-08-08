@@ -368,6 +368,7 @@ export default {
       continued: 'Conversation continued ({count}/{max})',
       forkConfirm: 'Fork this session? A new session will be created with a copy of the conversation history, allowing you to explore a different direction independently.',
       forkFromMessageConfirm: 'Fork from this message? A new session will be created with the conversation history up to this message, allowing you to explore a different direction independently.',
+      selectAgentForFork: 'Select Agent for Fork',
       forkFailed: 'Failed to fork session',
       forked: 'Session forked ({count}/{max})',
       sessionLimitReached: 'Maximum session limit reached',

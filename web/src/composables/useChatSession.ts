@@ -957,11 +957,14 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   /** Fork the current session — create a new session with copied messages.
    *  If beforeMessageId is provided, only messages up to and including that message are copied. */
-  async function forkSession(sessionId: string, beforeMessageId?: number): Promise<boolean> {
+  async function forkSession(sessionId: string, beforeMessageId?: number, agentId?: string): Promise<boolean> {
     try {
       const body: Record<string, unknown> = { sessionId }
       if (beforeMessageId && beforeMessageId > 0) {
         body.beforeMessageId = beforeMessageId
+      }
+      if (agentId) {
+        body.agentId = agentId
       }
       const resp = await fetch('/api/ai/session/fork', {
         method: 'POST',

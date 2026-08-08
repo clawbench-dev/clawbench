@@ -265,7 +265,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 // does NOT copy external_session_id — the forked session starts fresh.
 // If beforeMessageID > 0, only messages up to and including the assistant reply
 // following the specified user message are copied. The title is provided by the caller.
-func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64) (string, error) { //nolint:gocyclo // multi-step session fork with fork-point resolution
+func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64, overrideAgentID string) (string, error) { //nolint:gocyclo // multi-step session fork with fork-point resolution
 	// 1. Get source session metadata
 	var backend, agentID, agentSource, modelName, sessProjectPath string
 	err := dbRead.QueryRow(
@@ -277,6 +277,21 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	}
 	if err != nil {
 		return "", err
+	}
+
+	// 1b. Override agent if specified (user chose a different agent in the fork dialog)
+	if overrideAgentID != "" {
+		if agent, ok := model.Agents[overrideAgentID]; ok {
+			agentID = overrideAgentID
+			agentSource = "user"
+			if agent.Backend != "" {
+				backend = agent.Backend
+			}
+			// Clear model — let the frontend fall back to the global localStorage preference,
+			// same as the create-session flow. The source session's model may not be
+			// compatible with the new agent.
+			modelName = ""
+		}
 	}
 
 	// 2. Validate project ownership

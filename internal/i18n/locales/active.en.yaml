@@ -102,6 +102,7 @@ PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side
 ForkPrefix: "🔀 "
 InvalidForkPoint: Invalid fork point — message not found, not a user or assistant message, or still streaming
+InvalidAgentID: Invalid agent ID
 Session: Untitled Session
 SearchQueryRequired: Search query is required
 UpgradeInProgress: Upgrade already in progress

@@ -368,6 +368,7 @@ export default {
       continued: '已继续对话 ({count}/{max})',
       forkConfirm: '分叉此会话？将创建一个包含当前对话记录副本的新会话，你可以在新会话中独立探索不同方向。',
       forkFromMessageConfirm: '从此消息分叉？将创建一个包含该消息及之前对话记录的新会话，你可以在新会话中独立探索不同方向。',
+      selectAgentForFork: '选择分叉会话的智能体',
       forkFailed: '分叉会话失败',
       forked: '已分叉会话 ({count}/{max})',
       sessionLimitReached: '已达到最大会话数',

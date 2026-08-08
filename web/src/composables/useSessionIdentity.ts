@@ -341,7 +341,7 @@ export interface SessionActions {
   openChatPanel: () => void
   continueFromExecution: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   checkContinueSession: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
-  forkSession: (sessionId: string) => Promise<boolean>
+  forkSession: (sessionId: string, beforeMessageId?: number, agentId?: string) => Promise<boolean>
 }
 
 /**

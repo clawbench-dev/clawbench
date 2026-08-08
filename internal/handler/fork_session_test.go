@@ -70,6 +70,57 @@ func TestServeForkSession_MissingSessionID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestServeForkSession_WithAgentID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Register an agent so resolveAgentConfig succeeds
+	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "codebuddy"}
+	t.Cleanup(func() { delete(model.Agents, "codebuddy") })
+
+	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Original", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "Hello", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "assistant", "Hi!", nil, false, "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "agentId": "codebuddy"})
+	req = withProjectCookie(req, env.ProjectDir)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
+
+	w := callHandler(ServeForkSession, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.True(t, result["ok"].(bool))
+
+	// Verify the forked session has the override agent
+	newSessID := result["sessionId"].(string)
+	var agentID string
+	err = service.UnsafeDBForTest().QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ?", newSessID).Scan(&agentID)
+	require.NoError(t, err)
+	assert.Equal(t, "codebuddy", agentID)
+}
+
+func TestServeForkSession_InvalidAgentID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Original", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "Hello", nil, false, "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "agentId": "nonexistent-agent"})
+	req = withProjectCookie(req, env.ProjectDir)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
+
+	w := callHandler(ServeForkSession, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestServeForkSession_SessionNotFound(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
