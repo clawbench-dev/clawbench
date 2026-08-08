@@ -58,7 +58,7 @@
     <div v-if="msg.cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
 
     <!-- Bottom bar for assistant messages -->
-    <div v-if="msg.role === 'assistant' && !msg.streaming && (msgText || msg.blocks?.length)" class="chat-meta-bar">
+    <div v-if="msg.role === 'assistant' && !msg.streaming && (msgText || msg.blocks?.length || msg.summary)" class="chat-meta-bar">
       <span class="chat-meta-info">
         <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
       </span>

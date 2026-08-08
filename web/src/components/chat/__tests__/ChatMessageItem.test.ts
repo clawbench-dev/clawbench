@@ -18,7 +18,10 @@ vi.mock('@/composables/useLocalhostAnnotation', () => ({
 }))
 
 vi.mock('@/composables/useAutoSpeech', () => ({
-  extractSpeakableText: () => 'test text',
+  extractSpeakableText: (blocks: any[]) => {
+    if (!blocks || blocks.length === 0) return ''
+    return 'test text'
+  },
 }))
 
 vi.mock('@/composables/useDialog', () => ({
@@ -178,6 +181,14 @@ describe('ChatMessageItem', () => {
       msg: { id: '6', role: 'assistant', content: '...', blocks: [{ type: 'text', text: '...' }], streaming: true },
     })
     expect(wrapper.find('.chat-meta-bar').exists()).toBe(false)
+  })
+
+  it('renders meta bar and summary toggle for summarized assistant message with empty blocks', () => {
+    const wrapper = createWrapper({
+      msg: { id: 's1', role: 'assistant', content: '', blocks: [], summary: 'Short summary', showingSummary: true, streaming: false },
+    })
+    expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
+    expect(wrapper.find('.summary-toggle-stub').exists()).toBe(true)
   })
 
   it('applies has-metadata class when assistant message has metadata', () => {
