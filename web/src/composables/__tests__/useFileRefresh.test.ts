@@ -41,6 +41,7 @@ afterEach(() => {
 })
 
 // Mock dependencies before importing
+const closeCurrentFileMock = vi.hoisted(() => vi.fn())
 vi.mock('@/stores/app.ts', () => ({
   store: {
     state: {
@@ -49,6 +50,7 @@ vi.mock('@/stores/app.ts', () => ({
     },
     loadFiles: vi.fn(),
     selectFile: vi.fn().mockResolvedValue(true),
+    closeCurrentFile: closeCurrentFileMock,
   },
 }))
 
@@ -358,6 +360,12 @@ describe('useFileRefresh clearOnError', () => {
     diffOldContent.value = null
     removePathMock = vi.fn()
     vi.mocked(useFileNavStack).mockReturnValue({ removePath: removePathMock })
+    // closeCurrentFile should mirror the real store logic for the assertion below
+    closeCurrentFileMock.mockImplementation((path?: string) => {
+      if (path && store.state.currentFile?.path !== path) return
+      if (store.state.currentFile) removePathMock(store.state.currentFile.path)
+      store.state.currentFile = null
+    })
   })
 
   it('clears currentFile and removes path from nav stack when selectFile fails with clearOnError', async () => {
@@ -379,10 +387,9 @@ describe('useFileRefresh clearOnError', () => {
 
     await refreshCurrentFile({ clearOnError: true })
 
-    // currentFile should be cleared
+    // currentFile should be cleared via the unified closeCurrentFile
     expect(store.state.currentFile).toBeNull()
-    // removePath should be called for the deleted file
-    expect(removePathMock).toHaveBeenCalledWith('src/deleted.go')
+    expect(closeCurrentFileMock).toHaveBeenCalledWith('src/deleted.go')
 
     globalThis.fetch = originalFetch
   })

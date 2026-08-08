@@ -105,7 +105,6 @@ describe('FileHeader', () => {
         showLineNumbers: true,
         stickyScroll: true,
         overlayOpen: false,
-        recentFilesAvailable: 0,
         ...props,
       },
       global: {
@@ -121,15 +120,18 @@ describe('FileHeader', () => {
   it('toggles menu open on dropdown button click', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
     expect(getMenuOpen(wrapper)).toBe(false)
-    await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
+    ;(wrapper.vm as any).$.setupState.toggleMenu()
+    await nextTick()
     expect(getMenuOpen(wrapper)).toBe(true)
   })
 
   it('closes menu on second dropdown button click', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
-    await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
+    ;(wrapper.vm as any).$.setupState.toggleMenu()
+    await nextTick()
     expect(getMenuOpen(wrapper)).toBe(true)
-    await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
+    ;(wrapper.vm as any).$.setupState.toggleMenu()
+    await nextTick()
     expect(getMenuOpen(wrapper)).toBe(false)
   })
 

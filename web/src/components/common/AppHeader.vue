@@ -311,6 +311,7 @@ watch(gitBranch, (newVal, oldVal) => {
 })
 
 function openHistory() {
+    branchDropdownOpen.value = false
     setPendingManageNavigation()
     switchTab?.('history')
 }
@@ -660,7 +661,6 @@ onUnmounted(() => {
 .current-file-badge .no-file-name {
     color: color-mix(in srgb, #fff 55%, transparent);
     font-weight: 400;
-    font-style: italic;
 }
 
 /* Branch switch animation — pulse + glow on the capsule */

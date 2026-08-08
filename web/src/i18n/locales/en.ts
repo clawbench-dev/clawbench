@@ -98,7 +98,7 @@ export default {
     switchProjectFailed: 'Switch project failed: {error}',
     switchProjectNetworkError: 'Switch project failed: network error',
     recentFiles: 'Recent files',
-    noFileOpen: 'No file open',
+    noFileOpen: 'Recent files',
     noRecentFiles: 'No recently opened files',
     branches: 'Branches',
     moreBranches: 'Manage branches',

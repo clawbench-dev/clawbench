@@ -39,6 +39,18 @@ export function clearOpenFile(): void {
     } catch { /* ignore */ }
 }
 
+/**
+ * Close the currently open file in one place.
+ * Clears in-memory state, the persisted "open file" record, and the nav stack entry.
+ * @param path  Only close if the current file matches this path (optional).
+ */
+function closeCurrentFile(path?: string): void {
+    if (path && state.currentFile?.path !== path) return
+    if (state.currentFile) useFileNavStack().removePath(state.currentFile.path)
+    state.currentFile = null
+    clearOpenFile()
+}
+
 // ── Browse directory persistence (per-project) ──
 const BROWSE_DIR_PREFIX = 'clawbench-browse-dir:'
 
@@ -478,9 +490,7 @@ async function deleteFile(filePath: string): Promise<void> {
         }
     }
     if (state.currentFile?.path === filePath) {
-        state.currentFile = null
-        clearOpenFile()
-        useFileNavStack().removePath(filePath)
+        closeCurrentFile(filePath)
     }
     appLog.d(TAG, '[deleteFile] refreshing, currentDir:', state.currentDir, 'loadFilesSeq:', loadFilesSeq)
     await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
@@ -501,9 +511,7 @@ async function deleteFiles(paths: string[]): Promise<void> {
         useToast().show(gt('file.toast.deleteFailed'), { type: 'error', icon: '⚠️' })
     }
     if (state.currentFile && paths.includes(state.currentFile.path)) {
-        useFileNavStack().removePath(state.currentFile.path)
-        state.currentFile = null
-        clearOpenFile()
+        closeCurrentFile()
     }
     await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
     appLog.d(TAG, '[deleteFiles] done, dirEntries count:', state.dirEntries.length)
@@ -555,6 +563,7 @@ export const store = {
     loadGitBranch,
     loadFiles,
     selectFile,
+    closeCurrentFile,
     deleteFile,
     deleteFiles,
     renameFile,

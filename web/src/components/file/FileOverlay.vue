@@ -22,7 +22,6 @@
           @refresh="emit('refresh')"
           @open-file="emit('openFile', $event)"
           @overlay-close="emit('overlayClose')"
-          @open-recent-files="emit('openRecentFiles')"
           @share-external="emit('shareExternal')"
         />
         <!-- File loading mask — same style as chat session-switch -->
@@ -87,7 +86,7 @@ const emit = defineEmits([
   'delete', 'showDetails', 'openGitHistory',
   'toggleToc', 'toggleSearch', 'toggleView', 'refresh',
   'jump', 'jumpPage', 'closeGitHistory', 'openFile',
-  'overlayClose', 'openRecentFiles', 'shareExternal',
+  'overlayClose', 'shareExternal',
 ])
 
 const contentRef = ref(null)

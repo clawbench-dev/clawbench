@@ -51,7 +51,7 @@ const i18n = createI18n({
     projectPathNotFound: 'Project path does not exist or has been deleted',
     switchProjectFailed: 'Switch project failed: {error}',
     switchProjectNetworkError: 'Switch project failed: network error',
-    recentFiles: 'Recent files', noFileOpen: 'No file open', noRecentFiles: 'No recently opened files',
+    recentFiles: 'Recent files', noFileOpen: 'Recent files', noRecentFiles: 'No recently opened files',
     branches: 'Branches', moreBranches: 'Manage branches',
     switchBranchConfirm: 'Switch to branch "{branch}"?',
     branchDirtyWorktree: 'dirty', switchBranchFailed: 'Failed: {error}', switchBranchNetworkError: 'network',
@@ -539,7 +539,7 @@ describe('AppHeader', () => {
     const badge = $('.current-file-badge')
     expect(badge).toBeTruthy()
     expect(badge?.classList.contains('no-file')).toBe(true)
-    expect($('.current-file-name')?.textContent).toBe('No file open')
+    expect($('.current-file-name')?.textContent).toBe('Recent files')
   })
 
   it('disables current-file-badge when recentFilesAvailable is 0', () => {

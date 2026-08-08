@@ -29,7 +29,6 @@ import {
   type DiffResult,
 } from '@/composables/useMarkdownDiff.ts'
 import { getFileType } from '@/utils/fileType.ts'
-import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 
 // ─── Flash state (consumed by CodePreview for code/raw files) ───
 
@@ -315,10 +314,9 @@ async function doRefreshCurrentFile(options: {
 
   // File was deleted or became unavailable — clear viewer and clean nav stack
   if (clearOnError && !selectOk) {
-    store.state.currentFile = null
     if (isMarkdown) clearDiffMarkers()
     else clearFlash()
-    useFileNavStack().removePath(currentFilePath)
+    store.closeCurrentFile(currentFilePath)
     return
   }
 

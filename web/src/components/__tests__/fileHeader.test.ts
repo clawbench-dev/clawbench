@@ -80,7 +80,6 @@ function mountHeader(props = {}) {
       wordWrap: false,
       showLineNumbers: false,
       overlayOpen: false,
-      recentFilesAvailable: 0,
       ...props,
     },
     global: {

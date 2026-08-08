@@ -98,7 +98,7 @@ export default {
     switchProjectFailed: '切换项目失败: {error}',
     switchProjectNetworkError: '切换项目失败: 网络错误',
     recentFiles: '最近文件',
-    noFileOpen: '未打开文件',
+    noFileOpen: '最近文件',
     noRecentFiles: '暂无最近打开的文件',
     branches: '分支',
     moreBranches: '管理分支',

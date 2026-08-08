@@ -7,9 +7,6 @@
           <button class="toolbar-btn" :class="{ 'search-active': props.searchDrawer?.isOpen.value }" @click="props.searchDrawer?.open()" :title="t('file.search.title')">
             <Search :size="16" />
           </button>
-          <button class="toolbar-btn" @click="props.recentDrawer?.open()" :title="t('file.recent.title')">
-            <FileStack :size="16" />
-          </button>
           <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
@@ -387,7 +384,7 @@ import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watc
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search, FileStack } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
@@ -549,7 +546,6 @@ const props = defineProps({
     sortDir: String,
     dirLoading: Boolean,
     searchDrawer: Object, // TabDrawer from useTabDrawer('browse')
-    recentDrawer: Object, // TabDrawer from useTabDrawer('browse')
     keyboardActive: { type: Boolean, default: true }, // focus-aware gating for global file shortcuts
 })
 
@@ -877,7 +873,7 @@ async function doPaste() {
         // refreshCurrentFile hitting 404 and showing "file not found"
         const currentFilePath = store.state.currentFile?.path
         if (currentFilePath && clipboard.entries.some(e => e.path === currentFilePath)) {
-            store.state.currentFile = null
+            store.closeCurrentFile(currentFilePath)
         }
         clipboard.entries = []
     }

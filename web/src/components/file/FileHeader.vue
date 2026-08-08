@@ -7,11 +7,6 @@
 
     <!-- Region 2: Toolbar (ResizeObserver target) -->
     <div ref="headerActionsRef" class="header-actions">
-      <!-- Recent files button (always first) -->
-      <button class="file-header-btn" :disabled="recentFilesAvailable === 0" @click.stop="$emit('openRecentFiles')" :title="t('file.recent.title')">
-        <FileStack :size="14" />
-      </button>
-
       <!-- TOC button (only for file types that support TOC) -->
       <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
         <List :size="14" />
@@ -106,10 +101,6 @@
         <Teleport to="body">
           <div v-if="menuOpen" ref="menuRef" class="file-header-dropdown-menu" :style="menuStyle">
             <!-- Collapsed toolbar items -->
-            <button v-if="toolbarCollapsedIds.includes('recent')" class="dropdown-item" :disabled="recentFilesAvailable === 0" @click="$emit('openRecentFiles'); menuOpen = false">
-              <FileStack :size="14" />
-              {{ t('file.recent.title') }}
-            </button>
             <button v-if="toolbarCollapsedIds.includes('toc')" class="dropdown-item" :class="{ active: tocOpen }" @click="handleToggleToc(); menuOpen = false">
               <List :size="14" />
               {{ t('file.header.toc') }}
@@ -204,7 +195,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, FileStack, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -223,10 +214,9 @@ const props = defineProps({
     showLineNumbers: Boolean,
     stickyScroll: Boolean,
     overlayOpen: Boolean,
-    recentFilesAvailable: { type: Number, default: 0 },
     editing: Boolean,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'openRecentFiles', 'shareExternal', 'exportHtml', 'fitWidth', 'toggleEdit'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'exportHtml', 'fitWidth', 'toggleEdit'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -247,7 +237,6 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
   () => headerActionsRef.value,
   () => {
     const ids = []
-    ids.push('recent')
     if (hasToc.value) ids.push('toc')
     if (hasSearch.value) ids.push('search')
     if (hasFitWidth.value) ids.push('fitWidth')
