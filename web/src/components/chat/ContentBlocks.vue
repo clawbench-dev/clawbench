@@ -8,70 +8,55 @@
          algorithm fails to correctly transition between different Fragment
          structures (summary div vs blocks template v-for). -->
     <div v-show="showingSummary && summary" v-html="renderTextBlock(summary || '', msgId, 0, false)"></div>
-    <!-- In summary mode: still show auto-expand tools (AskUserQuestion, PermissionApproval) and scheduled tasks -->
-    <!-- Keep in sync with original branch below (~line 78) -->
+    <!-- Summary mode: render structured cards (tools / scheduled tasks / ask-questions)
+         directly from summaryCards — NOT by traversing blocks (which may be empty in
+         summary-first loading). -->
     <template v-if="showingSummary && summary">
-    <template v-for="(block, bi) in blocks" :key="'summary-ask-' + stableBlockKey(bi, block)">
-      <!-- Auto-expand tool blocks (AskUserQuestion, PermissionApproval) via tool_use -->
-      <template v-if="block.type === 'tool_use' && shouldAutoExpand(block)">
-        <div class="chat-tool-call" :class="{ done: block.done }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi), bi)">
-          <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
-          <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
-          <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
-          <span v-if="!block.done" class="tool-spinner"></span>
-          <XCircle v-else-if="block.status === 'error'" :size="14" color="#ef4444" class="tool-error-icon" />
-          <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
+      <!-- Tool cards from summaryCards.tools (auto-expand tools render inline detail) -->
+      <template v-for="(tool, ti) in summaryTools" :key="'sum-tool-' + ti">
+        <div class="chat-tool-call done" :data-category="getToolIcon(tool.name).category" @click.stop="handleSummaryToolClick(tool, ti)">
+          <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
+          <span class="tool-name">{{ toolDisplayName(tool.name, tool.input, tool.display_name) }}</span>
+          <CheckCircle2 :size="14" color="#22c55e" class="tool-check" />
         </div>
-        <div class="tool-detail" :data-tool-name="block.name" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick">
-          <div v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
+        <div v-if="shouldAutoExpandTool(tool.name || '')" class="tool-detail" :data-tool-name="tool.name" @click="handleToolDetailClick">
+          <div v-html="formatToolInput(tool.input || {}, tool.name)"></div>
         </div>
       </template>
-      <!-- Scheduled task card(s) — check before ask-question for text blocks (matches original branch order) -->
-      <template v-else-if="block.type === 'text' && hasScheduledTasks(bi)">
-        <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
-        <div v-for="(sKey, sIdx) in scheduledTaskKeys(bi)" :key="sIdx" class="scheduled-task-card" :class="{ deleted: blockTasks[sKey].deleted }" @click="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task && $emit('task-card-click', blockTasks[sKey].taskId)">
+      <!-- Scheduled task cards from summaryCards.taskIDs (task data fetched in real time) -->
+      <template v-for="(tid, ti) in summaryTaskIDs" :key="'sum-task-' + tid">
+        <div class="scheduled-task-card" :class="{ deleted: summaryTaskData[tid]?.deleted }" @click="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task && $emit('task-card-click', tid)">
           <div class="stask-header">
-            <Archive v-if="blockTasks[sKey].deleted" :size="14" class="stask-icon" />
+            <Archive v-if="summaryTaskData[tid]?.deleted" :size="14" class="stask-icon" />
             <Clock v-else :size="14" class="stask-icon" />
-            <template v-if="blockTasks[sKey].deleted">{{ t('chat.contentBlocks.taskDeleted') }}</template>
-            <template v-else-if="blockTasks[sKey].loading">{{ t('chat.contentBlocks.loading') }}</template>
-            <template v-else>{{ blockTasks[sKey].task?.name || t('chat.contentBlocks.scheduledTaskCreated') }}</template>
-            <span v-if="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task" class="stask-status-badge" :class="blockTasks[sKey].task.status">{{ statusLabelSimple(blockTasks[sKey].task) }}</span>
+            <template v-if="summaryTaskData[tid]?.deleted">{{ t('chat.contentBlocks.taskDeleted') }}</template>
+            <template v-else-if="summaryTaskData[tid]?.loading">{{ t('chat.contentBlocks.loading') }}</template>
+            <template v-else>{{ summaryTaskData[tid]?.task?.name || t('chat.contentBlocks.scheduledTaskCreated') }}</template>
+            <span v-if="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task" class="stask-status-badge" :class="summaryTaskData[tid].task.status">{{ statusLabelSimple(summaryTaskData[tid].task) }}</span>
           </div>
-          <div v-if="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task" class="stask-body">
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.frequency') }}</strong>{{ humanizeCron(blockTasks[sKey].task.cronExpr) }}</div>
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(blockTasks[sKey].task.agentId)" :name="getAgentName(blockTasks[sKey].task.agentId)" :size="14" class="stask-agent-icon" /> {{ getAgentName(blockTasks[sKey].task.agentId) }}</div>
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.repeat') }}</strong>{{ repeatLabel(blockTasks[sKey].task.repeatMode, blockTasks[sKey].task.maxRuns) }}</div>
-            <div class="stask-row"><strong>{{ t('chat.contentBlocks.status') }}</strong><span class="stask-status-dot" :class="statusClass(blockTasks[sKey].task)"></span>{{ statusLabel(blockTasks[sKey].task) }}</div>
-            <div v-if="blockTasks[sKey].task.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatTime(blockTasks[sKey].task.lastRunAt) }}</div>
-            <div v-if="blockTasks[sKey].task.nextRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.nextRun') }}</strong>{{ formatTime(blockTasks[sKey].task.nextRunAt) }}</div>
+          <div v-if="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task" class="stask-body">
+            <div class="stask-row"><strong>{{ t('chat.contentBlocks.frequency') }}</strong>{{ humanizeCron(summaryTaskData[tid].task.cronExpr) }}</div>
+            <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(summaryTaskData[tid].task.agentId)" :name="getAgentName(summaryTaskData[tid].task.agentId)" :size="14" class="stask-agent-icon" /> {{ getAgentName(summaryTaskData[tid].task.agentId) }}</div>
+            <div class="stask-row"><strong>{{ t('chat.contentBlocks.repeat') }}</strong>{{ repeatLabel(summaryTaskData[tid].task.repeatMode, summaryTaskData[tid].task.maxRuns) }}</div>
+            <div class="stask-row"><strong>{{ t('chat.contentBlocks.status') }}</strong><span class="stask-status-dot" :class="statusClass(summaryTaskData[tid].task)"></span>{{ statusLabel(summaryTaskData[tid].task) }}</div>
+            <div v-if="summaryTaskData[tid].task.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatTime(summaryTaskData[tid].task.lastRunAt) }}</div>
+            <div v-if="summaryTaskData[tid].task.nextRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.nextRun') }}</strong>{{ formatTime(summaryTaskData[tid].task.nextRunAt) }}</div>
           </div>
-          <div class="stask-view-btn" v-if="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task">
+          <div class="stask-view-btn" v-if="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task">
             {{ t('chat.contentBlocks.viewDetail') }}
             <ChevronRight :size="12" />
           </div>
         </div>
       </template>
-      <!-- AskUserQuestion via <ask-question> XML in text block (ACP backend) — also check
-           block text so ask-question cards appear when message loads with showingSummary=true.
-           detectAskQuestionInText triggers renderTextBlock which fills blockAskQuestions;
-           the card UI only renders when blockAskQuestions[key] has data (avoids empty cards
-           when <ask-question> appears in discussion text but isn't a real structured question). -->
-      <template v-else-if="block.type === 'text' && (blockAskQuestions[blockTaskKey(bi)] || detectAskQuestionInText(block))">
-        <!-- Surrounding text (with ask-question tag stripped) -->
-        <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
-        <template v-if="blockAskQuestions[blockTaskKey(bi)]">
-          <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', key(bi))">
-            <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
-            <span class="tool-name">{{ t('tool.askUser.name') }}</span>
-            <span class="tool-summary">{{ askQuestionSummary(blockAskQuestions[blockTaskKey(bi)]) }}</span>
-            <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
-          </div>
-          <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
-        </template>
+      <!-- Ask-question cards from summaryCards.askQuestions (rendered via formatToolInput) -->
+      <template v-if="summaryAskQuestions.length">
+        <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', 'summary-ask')">
+          <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
+          <span class="tool-name">{{ t('tool.askUser.name') }}</span>
+          <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
+        </div>
+        <div class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput({ questions: summaryAskQuestions }, 'AskUserQuestion')"></div>
       </template>
-
-    </template>
     </template>
     <!-- Original content mode -->
     <template v-if="!showingSummary || !summary">
@@ -205,13 +190,16 @@
 </template>
 
 <script setup>
-import { ref, watch, onUnmounted, computed, onMounted } from 'vue'
+import { ref, watch, onUnmounted, computed, onMounted, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { handleToolAction, shouldAutoExpandTool } from '@/utils/renderToolDetail.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronRight, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, Clock, Archive } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { store } from '@/stores/app.ts'
+import { apiGet } from '@/utils/api'
+import { appLog } from '@/utils/appLog'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
 import {
   isSevereWarning,
@@ -229,6 +217,8 @@ import {
   extractAtCommand,
   extractSlashCommand,
 } from '@/utils/contentBlocks.ts'
+
+const TAG = 'ContentBlocks'
 
 const { t, locale } = useI18n()
 const thinkingContent = useThinkingContent()
@@ -363,6 +353,87 @@ function hasScheduledTasks(bi) {
 // Return all scheduled task keys for a block, sorted by tag index
 function scheduledTaskKeys(bi) {
   return scheduledTaskKeysUtil(taskKeyIndex.value, bi)
+}
+
+// ── Summary-mode structured cards (rendered from summaryCards, no block traversal) ──
+const summaryTools = computed(() => props.summaryCards?.tools || [])
+const summaryTaskIDs = computed(() => props.summaryCards?.taskIDs || [])
+const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [])
+
+// Local map of scheduled-task data keyed by task id, fetched in real time when the
+// summary is visible with taskIDs. Unlike blockTasks (which scans text blocks), summary
+// mode has empty blocks, so we fetch directly from the /api/tasks list API.
+const summaryTaskData = reactive({})
+
+async function fetchSummaryTaskData() {
+  const ids = summaryTaskIDs.value
+  if (!ids || ids.length === 0) return
+  const pending = ids.filter((id) => !summaryTaskData[id]?.task && !summaryTaskData[id]?.loading && !summaryTaskData[id]?.deleted)
+  if (pending.length === 0) return
+  for (const id of pending) {
+    summaryTaskData[id] = { taskId: id, task: null, loading: true, deleted: false }
+  }
+  try {
+    const data = await apiGet('/api/tasks')
+    const taskMap = new Map((data.tasks || []).map((t) => [t.id, t]))
+    for (const id of pending) {
+      const entry = summaryTaskData[id]
+      entry.loading = false
+      const task = taskMap.get(id)
+      if (task) entry.task = task
+      else entry.deleted = true
+    }
+  } catch (error) {
+    appLog.e(TAG, '[ContentBlocks] fetchSummaryTaskData failed', error)
+    for (const id of pending) summaryTaskData[id].loading = false
+  }
+}
+
+watch(summaryTaskIDs, fetchSummaryTaskData, { immediate: true })
+
+// Keep summary task cards in sync with store.state.tasks (global polling) so status
+// changes refresh in real time.
+watch(
+  () => store.state.tasks,
+  (tasks) => {
+    const ids = summaryTaskIDs.value
+    if (!ids || ids.length === 0) return
+    const taskMap = new Map((tasks || []).map((t) => [t.id, t]))
+    for (const id of ids) {
+      const entry = summaryTaskData[id]
+      if (!entry || entry.deleted) continue
+      const updated = taskMap.get(id)
+      if (!updated) {
+        if (tasks && tasks.length === 0) {
+          entry.deleted = true
+          entry.loading = false
+        }
+      } else {
+        entry.task = updated
+        entry.loading = false
+      }
+    }
+  },
+  { deep: true },
+)
+
+function handleSummaryToolClick(tool, ti) {
+  const name = tool.name || ''
+  if (shouldAutoExpandTool(name)) {
+    emit('toggle-tool', `summary-tool-${ti}`)
+    return
+  }
+  emit('show-tool-detail', {
+    name,
+    input: tool.input,
+    output: tool.output,
+    status: 'success',
+    done: true,
+    display_name: tool.display_name,
+    tool_id: tool.id,
+    msgId: props.msgId,
+    blockIdx: ti,
+  })
 }
 
 /** Generate a stable key for a block, used for v-for :key and animation state.
