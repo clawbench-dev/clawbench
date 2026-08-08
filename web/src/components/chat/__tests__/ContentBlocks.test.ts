@@ -4,6 +4,7 @@ import { nextTick, reactive } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 import { apiGet } from '@/utils/api'
+import { store } from '@/stores/app.ts'
 
 // ── Mocks ──
 
@@ -462,6 +463,36 @@ describe('ContentBlocks', () => {
       await card.trigger('click')
       expect(wrapper.emitted('task-card-click')).toBeTruthy()
       expect(wrapper.emitted('task-card-click')![0][0]).toBe(42)
+    })
+
+    it('does NOT mark a summary task deleted when the store list is empty (app reset / not yet populated)', async () => {
+      const apiGetMock = vi.mocked(apiGet)
+      apiGetMock.mockResolvedValue({
+        tasks: [
+          { id: 99, name: 'KeepMe', status: 'active', cronExpr: '0 0 * * *', agentId: 'a1', repeatMode: 'once', maxRuns: 1, lastRunAt: '', nextRunAt: '' },
+        ],
+      })
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: {
+          tools: [],
+          taskIDs: [99],
+          askQuestions: [],
+        },
+      })
+      await flushPromises()
+      await nextTick()
+      expect(wrapper.find('.scheduled-task-card').exists()).toBe(true)
+      expect(wrapper.html()).toContain('KeepMe')
+
+      // Simulate an app reset / empty global store list — must NOT mark the task deleted.
+      store.state.tasks = []
+      await nextTick()
+      await flushPromises()
+      expect(wrapper.html()).toContain('KeepMe')
+      expect(wrapper.html()).not.toContain('taskDeleted')
     })
   })
 
