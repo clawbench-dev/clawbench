@@ -168,20 +168,7 @@ async function loadTasks() {
             }
         }
 
-        // Diff-check to avoid unnecessary watcher triggers
-        if (
-            store.state.tasks.length !== newTasks.length ||
-            newTasks.some(
-                (t, i) =>
-                    t.id !== (store.state.tasks[i] as unknown as TaskItem)?.id ||
-                    t.status !== (store.state.tasks[i] as unknown as TaskItem)?.status ||
-                    t.runCount !== (store.state.tasks[i] as unknown as TaskItem)?.runCount ||
-                    t.unreadCount !== (store.state.tasks[i] as unknown as TaskItem)?.unreadCount ||
-                    t.runningCount !== (store.state.tasks[i] as unknown as TaskItem)?.runningCount
-            )
-        ) {
-            store.state.tasks = newTasks as unknown as Array<Record<string, unknown>>
-        }
+        store.state.tasks = newTasks as unknown as Array<Record<string, unknown>>
     } catch (e: unknown) {
         // AbortError is expected when a newer request supersedes this one
         if (e instanceof Error && e.name === 'AbortError') return
