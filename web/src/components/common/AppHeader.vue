@@ -169,12 +169,15 @@ function toggleFileDropdown() {
     branchDropdownOpen.value = false
     dropdownOpen.value = false
     fileDropdownOpen.value = true
-    deferPosition(updateFileDropdownPosition)
+    // Position synchronously (estimated width) so the panel never flashes at the
+    // default far-left position; refine to the real width after it renders.
+    updateFileDropdownPosition(true)
+    deferPosition(() => updateFileDropdownPosition(false))
 }
 
-function updateFileDropdownPosition() {
+function updateFileDropdownPosition(useEstimate = false) {
     const el = document.querySelector('.current-file-badge')
-    positionDropdown(el, fileDropdownPanelRef, fileDropdownStyle)
+    positionDropdown(el, fileDropdownPanelRef, fileDropdownStyle, useEstimate ? estimatePanelWidth(el) : undefined)
 }
 
 function selectRecentFile(entry) {
@@ -203,12 +206,13 @@ function toggleBranchDropdown() {
     dropdownOpen.value = false
     branchDropdownOpen.value = true
     loadBranches()
-    deferPosition(updateBranchDropdownPosition)
+    updateBranchDropdownPosition(true)
+    deferPosition(() => updateBranchDropdownPosition(false))
 }
 
-function updateBranchDropdownPosition() {
+function updateBranchDropdownPosition(useEstimate = false) {
     const el = document.querySelector('.branch-badge')
-    positionDropdown(el, branchDropdownPanelRef, branchDropdownStyle)
+    positionDropdown(el, branchDropdownPanelRef, branchDropdownStyle, useEstimate ? estimatePanelWidth(el) : undefined)
 }
 
 async function loadBranches() {
@@ -222,7 +226,7 @@ async function loadBranches() {
         branchDropdownLoading.value = false
         // Re-center after content settles (loading state → loaded list changes width)
         if (branchDropdownOpen.value) {
-            deferPosition(updateBranchDropdownPosition)
+            deferPosition(() => updateBranchDropdownPosition(false))
         }
     }
 }
@@ -266,19 +270,26 @@ function deferPosition(update) {
     })
 }
 
-function positionDropdown(anchorEl, panelRef, styleRef) {
-    if (!anchorEl || !panelRef?.value) return
+/**
+ * Position a dropdown centered under its anchor button. Called twice:
+ *  1. Synchronously on open, with an estimated width, so the panel never
+ *     renders at the browser's default (far-left) position — this is what
+ *     caused the visible flash.
+ *  2. After a double rAF, with the measured real width, for a precise fit.
+ */
+function positionDropdown(anchorEl, panelRef, styleRef, estimatedWidth) {
+    if (!anchorEl) return
     const anchorRect = anchorEl.getBoundingClientRect()
     const margin = 8
     const vw = window.innerWidth
     const vh = window.innerHeight
 
     // Panel width must never exceed the viewport (accounting for margins).
-    // Hard-capped at 320px, but shrinks on narrow screens so content can't overflow.
     const maxPanelWidth = Math.min(320, vw - 2 * margin)
-    // Use the measured width, clamped to the safe max for position math.
-    const panelWidth = Math.min(panelRef.value.offsetWidth || maxPanelWidth, maxPanelWidth)
-    const panelHeight = panelRef.value.offsetHeight || 320
+    // Measured width (fall back to an estimate when the panel isn't laid out yet).
+    const measured = panelRef?.value?.offsetWidth || 0
+    const panelWidth = Math.min(measured || estimatedWidth || maxPanelWidth, maxPanelWidth)
+    const panelHeight = panelRef?.value?.offsetHeight || 320
 
     // Center horizontally on the anchor, then clamp so the panel stays in view
     let left = anchorRect.left + anchorRect.width / 2 - panelWidth / 2
@@ -298,6 +309,14 @@ function positionDropdown(anchorEl, panelRef, styleRef) {
         minWidth: `${Math.min(Math.max(180, anchorRect.width), maxPanelWidth)}px`,
         maxWidth: `${toFixedCSS(maxPanelWidth)}px`,
     }
+}
+
+/** Estimated initial width — matches the minWidth set in positionDropdown. */
+function estimatePanelWidth(anchorEl) {
+    if (!anchorEl) return 200
+    const vw = window.innerWidth
+    const maxPanelWidth = Math.min(320, vw - 16)
+    return Math.min(Math.max(180, anchorEl.getBoundingClientRect().width), maxPanelWidth)
 }
 
 const dialog = useDialog()
@@ -350,9 +369,9 @@ const recentItems = ref([])
 // Dynamic dropdown positioning (teleported to body, needs fixed positioning)
 const dropdownStyle = ref({})
 
-function updateDropdownPosition() {
+function updateDropdownPosition(useEstimate = false) {
     const el = document.querySelector('.project-switch-btn')
-    positionDropdown(el, dropdownPanelRef, dropdownStyle)
+    positionDropdown(el, dropdownPanelRef, dropdownStyle, useEstimate ? estimatePanelWidth(el) : undefined)
 }
 
 function toggleDropdown() {
@@ -363,7 +382,8 @@ function toggleDropdown() {
         branchDropdownOpen.value = false
         loadRecentProjects()
         dropdownOpen.value = true
-        deferPosition(updateDropdownPosition)
+        updateDropdownPosition(true)
+        deferPosition(() => updateDropdownPosition(false))
     }
 }
 
@@ -390,7 +410,7 @@ async function loadRecentProjects() {
         loadingRecent.value = false
         // Re-center after content settles (loading → loaded list changes width)
         if (dropdownOpen.value) {
-            deferPosition(updateDropdownPosition)
+            deferPosition(() => updateDropdownPosition(false))
         }
     }
 }
