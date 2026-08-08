@@ -111,8 +111,9 @@
     </Teleport>
 
     <!-- Server button: merged gauge + status dot. Icon color reflects connection status -->
-    <button ref="serverBtnRef" class="server-toggle" :class="statusDotClass" @click="toggleResourcesMenu" :title="t('systemResources.title')">
-      <Server :size="15" />
+    <button ref="serverBtnRef" class="server-toggle" :class="[statusDotClass, { 'pressure-alert': isUnderPressure && showMetricIcon }]" @click="toggleResourcesMenu" :title="t('systemResources.title')">
+      <Server v-if="!isUnderPressure || !showMetricIcon" :size="15" />
+      <component v-else :is="PressureIcon" :size="15" class="pressure-icon" />
     </button>
 
     <!-- Server info + resources popup (both Web and APP mode) -->
@@ -123,8 +124,8 @@
   </Teleport>
 </template>
 
-<script setup>
-import { Projector, Search, GitBranch, Server, FileText, Settings2 } from 'lucide-vue-next'
+<script setup lang="ts">
+import { Projector, Search, GitBranch, Server, FileText, Settings2, Cpu, Activity, MemoryStick, Database } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -139,10 +140,12 @@ import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { toFixedCSS } from '@/composables/useSettingsConfig'
+import { useSystemResources } from '@/composables/useSystemResources'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
 const { isAppMode } = useAppMode()
+const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
 const switchTab = inject('switchTab')
 
 const props = defineProps({
@@ -329,6 +332,75 @@ const statusDotClass = computed(() => {
     if (wsStatus.value === 'disconnected') return 'status-dot-disconnected'
     if (wsStatus.value === 'reconnecting') return 'status-dot-reconnecting'
     return 'status-dot-connected'
+})
+
+// --- System pressure alert ---
+const CRITICAL_THRESHOLD = 90
+
+type MetricKey = 'cpu' | 'memory' | 'disk' | 'load'
+
+const metricIcons: Record<MetricKey, typeof Cpu> = { cpu: Cpu, memory: MemoryStick, disk: Database, load: Activity }
+
+const criticalMetric = computed<MetricKey | null>(() => {
+    const r = resources.value
+    const cores = r.cpu.core_count || 1
+    const loadPercent = (r.load.load1 / cores) * 100
+    const metrics: { key: MetricKey; percent: number }[] = [
+        { key: 'cpu', percent: r.cpu.percent },
+        { key: 'memory', percent: r.memory.percent },
+        { key: 'disk', percent: r.disk.percent },
+        { key: 'load', percent: Math.min(loadPercent, 100) },
+    ]
+    // Filter to metrics at or above threshold
+    const critical = metrics.filter(m => m.percent >= CRITICAL_THRESHOLD)
+    if (critical.length === 0) return null
+    // Pick the one with highest excess ratio (denominator is same, just sort by raw excess)
+    critical.sort((a, b) => (b.percent - CRITICAL_THRESHOLD) - (a.percent - CRITICAL_THRESHOLD))
+    return critical[0].key
+})
+
+const isUnderPressure = computed(() => criticalMetric.value !== null)
+
+// Blinking state: toggles between Server icon and the critical metric icon
+const showMetricIcon = ref(false)
+let blinkTimer: ReturnType<typeof setInterval> | null = null
+
+function startBlinking() {
+    if (blinkTimer) return
+    showMetricIcon.value = false
+    blinkTimer = setInterval(() => {
+        showMetricIcon.value = !showMetricIcon.value
+    }, 1000)
+}
+
+function stopBlinking() {
+    if (blinkTimer) {
+        clearInterval(blinkTimer)
+        blinkTimer = null
+    }
+    showMetricIcon.value = false
+}
+
+watch(isUnderPressure, (under) => {
+    if (under) {
+        startBlinking()
+    } else {
+        stopBlinking()
+    }
+}, { immediate: true })
+
+// Pause blinking when tab is hidden, resume when visible
+function onBlinkVisibilityChange() {
+    if (document.hidden) {
+        stopBlinking()
+    } else if (isUnderPressure.value) {
+        startBlinking()
+    }
+}
+
+const PressureIcon = computed(() => {
+    const key = criticalMetric.value
+    return key ? metricIcons[key] : null
 })
 
 const projectName = computed(() => {
@@ -540,10 +612,15 @@ watch(resourcesMenuOpen, (open) => {
 
 onMounted(() => {
     document.addEventListener('click', onClickOutside)
+    document.addEventListener('visibilitychange', onBlinkVisibilityChange)
+    startBackgroundPolling()
 })
 
 onUnmounted(() => {
     document.removeEventListener('click', onClickOutside)
+    document.removeEventListener('visibilitychange', onBlinkVisibilityChange)
+    stopBackgroundPolling()
+    stopBlinking()
 })
 </script>
 
@@ -781,6 +858,20 @@ onUnmounted(() => {
 @keyframes status-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
+}
+
+/* Pressure alert — red metric icon during blink */
+.server-toggle.pressure-alert {
+    color: var(--color-red, #ef4444) !important;
+}
+
+.server-toggle .pressure-icon {
+    animation: pressure-icon-enter 0.15s ease-out;
+}
+
+@keyframes pressure-icon-enter {
+    from { opacity: 0; transform: scale(0.8); }
+    to { opacity: 1; transform: scale(1); }
 }
 </style>
 

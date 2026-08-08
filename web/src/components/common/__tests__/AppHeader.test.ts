@@ -32,7 +32,32 @@ vi.mock('@/stores/app.ts', () => ({
   },
 }))
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+
+// ── Pressure detection logic (extracted for testing) ──
+
+type MetricKey = 'cpu' | 'memory' | 'disk' | 'load'
+const CRITICAL_THRESHOLD = 90
+
+function getCriticalMetric(resources: {
+  cpu: { percent: number; core_count: number }
+  memory: { percent: number }
+  disk: { percent: number }
+  load: { load1: number }
+}): MetricKey | null {
+  const cores = resources.cpu.core_count || 1
+  const loadPercent = (resources.load.load1 / cores) * 100
+  const metrics: { key: MetricKey; percent: number }[] = [
+    { key: 'cpu', percent: resources.cpu.percent },
+    { key: 'memory', percent: resources.memory.percent },
+    { key: 'disk', percent: resources.disk.percent },
+    { key: 'load', percent: Math.min(loadPercent, 100) },
+  ]
+  const critical = metrics.filter(m => m.percent >= CRITICAL_THRESHOLD)
+  if (critical.length === 0) return null
+  critical.sort((a, b) => (b.percent - CRITICAL_THRESHOLD) - (a.percent - CRITICAL_THRESHOLD))
+  return critical[0].key
+}
 
 describe('AppHeader logic', () => {
   beforeEach(() => {
@@ -149,5 +174,121 @@ describe('AppHeader logic', () => {
     // Simulate branch change
     mockGitBranch.value = 'feature-test'
     expect(mockGitBranch.value).toBe('feature-test')
+  })
+})
+
+describe('Pressure detection logic', () => {
+  it('returns null when no metric is critical', () => {
+    const result = getCriticalMetric({
+      cpu: { percent: 50, core_count: 4 },
+      memory: { percent: 60 },
+      disk: { percent: 70 },
+      load: { load1: 2.0 },
+    })
+    expect(result).toBeNull()
+  })
+
+  it('returns cpu when only cpu is critical', () => {
+    const result = getCriticalMetric({
+      cpu: { percent: 95, core_count: 4 },
+      memory: { percent: 50 },
+      disk: { percent: 60 },
+      load: { load1: 1.0 },
+    })
+    expect(result).toBe('cpu')
+  })
+
+  it('returns memory when only memory is critical', () => {
+    const result = getCriticalMetric({
+      cpu: { percent: 50, core_count: 4 },
+      memory: { percent: 92 },
+      disk: { percent: 60 },
+      load: { load1: 1.0 },
+    })
+    expect(result).toBe('memory')
+  })
+
+  it('returns disk when only disk is critical', () => {
+    const result = getCriticalMetric({
+      cpu: { percent: 50, core_count: 4 },
+      memory: { percent: 60 },
+      disk: { percent: 91 },
+      load: { load1: 1.0 },
+    })
+    expect(result).toBe('disk')
+  })
+
+  it('returns load when load1/core_count >= 90%', () => {
+    const result = getCriticalMetric({
+      cpu: { percent: 50, core_count: 4 },
+      memory: { percent: 60 },
+      disk: { percent: 60 },
+      load: { load1: 3.8 }, // 3.8/4 = 95%
+    })
+    expect(result).toBe('load')
+  })
+
+  it('caps load percent at 100', () => {
+    const result = getCriticalMetric({
+      cpu: { percent: 50, core_count: 2 },
+      memory: { percent: 60 },
+      disk: { percent: 60 },
+      load: { load1: 5.0 }, // 5.0/2 = 250% → capped to 100%
+    })
+    expect(result).toBe('load')
+  })
+
+  it('picks metric with highest excess ratio when multiple are critical', () => {
+    // CPU at 95%: excess = (95-90)/(100-90) = 0.5
+    // Memory at 92%: excess = (92-90)/(100-90) = 0.2
+    const result = getCriticalMetric({
+      cpu: { percent: 95, core_count: 4 },
+      memory: { percent: 92 },
+      disk: { percent: 60 },
+      load: { load1: 1.0 },
+    })
+    expect(result).toBe('cpu')
+  })
+
+  it('picks memory over disk when memory has higher excess', () => {
+    // Memory at 98%: excess = 0.8
+    // Disk at 93%: excess = 0.3
+    const result = getCriticalMetric({
+      cpu: { percent: 50, core_count: 4 },
+      memory: { percent: 98 },
+      disk: { percent: 93 },
+      load: { load1: 1.0 },
+    })
+    expect(result).toBe('memory')
+  })
+
+  it('returns null when all metrics are exactly at threshold - 1', () => {
+    const result = getCriticalMetric({
+      cpu: { percent: 89, core_count: 4 },
+      memory: { percent: 89 },
+      disk: { percent: 89 },
+      load: { load1: 3.55 }, // 3.55/4 = 88.75%
+    })
+    expect(result).toBeNull()
+  })
+
+  it('returns metric when exactly at threshold', () => {
+    const result = getCriticalMetric({
+      cpu: { percent: 90, core_count: 4 },
+      memory: { percent: 50 },
+      disk: { percent: 50 },
+      load: { load1: 0.5 },
+    })
+    expect(result).toBe('cpu')
+  })
+
+  it('handles zero core count by defaulting to 1', () => {
+    const result = getCriticalMetric({
+      cpu: { percent: 50, core_count: 0 },
+      memory: { percent: 50 },
+      disk: { percent: 50 },
+      load: { load1: 0.95 }, // 0.95/1 = 95%
+    })
+    expect(result).toBe('load')
   })
 })

@@ -45,8 +45,11 @@ export interface SystemResources {
 }
 
 const POLL_INTERVAL = 1000 // 1s — fastest rate needed (CPU, network)
+const BACKGROUND_POLL_INTERVAL = 5000 // 5s — background polling when menu is closed
 
 let activeCount = 0
+let backgroundCount = 0
+let currentInterval = 0
 let timer: ReturnType<typeof setInterval> | null = null
 let initTimeout: ReturnType<typeof setTimeout> | null = null
 
@@ -70,9 +73,26 @@ async function fetchResources() {
   }
 }
 
+function getCurrentInterval() {
+  // If any foreground consumer is active, use fast interval; otherwise background
+  return activeCount > 0 ? POLL_INTERVAL : BACKGROUND_POLL_INTERVAL
+}
+
 function startPolling() {
   activeCount++
-  if (activeCount > 1) return // already polling
+  // If this is the first consumer overall, start the timer
+  if (activeCount + backgroundCount > 1) {
+    // Already running — but interval may need to change (background → foreground)
+    if (timer) {
+      const desiredInterval = getCurrentInterval()
+      if (desiredInterval !== currentInterval) {
+        clearInterval(timer)
+        timer = setInterval(fetchResources, desiredInterval)
+        currentInterval = desiredInterval
+      }
+    }
+    return
+  }
 
   // Register visibility handler on first consumer
   document.addEventListener('visibilitychange', onVisibilityChange)
@@ -84,22 +104,80 @@ function startPolling() {
     initTimeout = setTimeout(() => fetchResources(), 200)
   })
 
+  currentInterval = POLL_INTERVAL
   timer = setInterval(fetchResources, POLL_INTERVAL)
 }
 
 function stopPolling() {
   activeCount = Math.max(0, activeCount - 1)
-  if (activeCount > 0) return // still in use
+  // If still has consumers, maybe adjust interval
+  if (activeCount + backgroundCount > 0) {
+    if (timer) {
+      const desiredInterval = getCurrentInterval()
+      if (desiredInterval !== currentInterval) {
+        clearInterval(timer)
+        timer = setInterval(fetchResources, desiredInterval)
+        currentInterval = desiredInterval
+      }
+    }
+    return
+  }
 
+  // No consumers left — stop completely
   if (timer) {
     clearInterval(timer)
     timer = null
+    currentInterval = 0
   }
   if (initTimeout) {
     clearTimeout(initTimeout)
     initTimeout = null
   }
-  // Remove visibility handler when last consumer stops
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+}
+
+function startBackgroundPolling() {
+  backgroundCount++
+  // If this is the first consumer overall, start the timer
+  if (activeCount + backgroundCount > 1) {
+    // Already running — background polling uses same or slower interval
+    return
+  }
+
+  document.addEventListener('visibilitychange', onVisibilityChange)
+
+  fetchResources().then(() => {
+    initTimeout = setTimeout(() => fetchResources(), 200)
+  })
+
+  currentInterval = BACKGROUND_POLL_INTERVAL
+  timer = setInterval(fetchResources, BACKGROUND_POLL_INTERVAL)
+}
+
+function stopBackgroundPolling() {
+  backgroundCount = Math.max(0, backgroundCount - 1)
+  if (activeCount + backgroundCount > 0) {
+    // Adjust interval if needed (e.g. foreground stopped, only background remains)
+    if (timer) {
+      const desiredInterval = getCurrentInterval()
+      if (desiredInterval !== currentInterval) {
+        clearInterval(timer)
+        timer = setInterval(fetchResources, desiredInterval)
+        currentInterval = desiredInterval
+      }
+    }
+    return
+  }
+
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+    currentInterval = 0
+  }
+  if (initTimeout) {
+    clearTimeout(initTimeout)
+    initTimeout = null
+  }
   document.removeEventListener('visibilitychange', onVisibilityChange)
 }
 
@@ -114,20 +192,43 @@ function onVisibilityChange() {
       clearTimeout(initTimeout)
       initTimeout = null
     }
-  } else if (activeCount > 0 && !timer) {
+  } else if (activeCount + backgroundCount > 0 && !timer) {
     fetchResources()
-    timer = setInterval(fetchResources, POLL_INTERVAL)
+    timer = setInterval(fetchResources, getCurrentInterval())
   }
 }
 
 export function useSystemResources() {
+  let isForeground = false
+  let isBackground = false
+
   onUnmounted(() => {
-    stopPolling()
+    if (isForeground) stopPolling()
+    if (isBackground) stopBackgroundPolling()
   })
+
+  const wrappedStartPolling = () => {
+    isForeground = true
+    startPolling()
+  }
+  const wrappedStopPolling = () => {
+    isForeground = false
+    stopPolling()
+  }
+  const wrappedStartBackgroundPolling = () => {
+    isBackground = true
+    startBackgroundPolling()
+  }
+  const wrappedStopBackgroundPolling = () => {
+    isBackground = false
+    stopBackgroundPolling()
+  }
 
   return {
     resources,
-    startPolling,
-    stopPolling,
+    startPolling: wrappedStartPolling,
+    stopPolling: wrappedStopPolling,
+    startBackgroundPolling: wrappedStartBackgroundPolling,
+    stopBackgroundPolling: wrappedStopBackgroundPolling,
   }
 }
