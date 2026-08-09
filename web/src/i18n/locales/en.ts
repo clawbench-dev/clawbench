@@ -924,6 +924,8 @@ export default {
       mergedFrom: 'From {label}',
       loadError: 'Failed to load history',
       workingTreeChanges: 'Working tree changes',
+      prevFile: 'Previous file',
+      nextFile: 'Next file',
     },
     breadcrumb: {
       fileHistory: 'File History',

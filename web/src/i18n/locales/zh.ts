@@ -925,6 +925,8 @@ export default {
       mergedFrom: '来自 {label}',
       loadError: '加载历史记录失败',
       workingTreeChanges: '工作区变更',
+      prevFile: '上一个文件',
+      nextFile: '下一个文件',
     },
     breadcrumb: {
       fileHistory: '文件历史',

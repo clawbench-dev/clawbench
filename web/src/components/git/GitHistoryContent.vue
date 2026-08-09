@@ -121,6 +121,25 @@
           @navigate="drillBack"
           @open-file="onOpenFile"
         />
+        <div v-if="mode === 'project' && diffNavTotal > 0" class="diff-nav">
+          <button
+            class="diff-nav-btn"
+            :disabled="diffNavIndex <= 0"
+            :title="t('git.history.prevFile')"
+            @click="diffNav.prev"
+          >
+            <ChevronUp :size="14" />
+          </button>
+          <span class="diff-nav-count">{{ diffNavIndex + 1 }}/{{ diffNavTotal }}</span>
+          <button
+            class="diff-nav-btn"
+            :disabled="diffNavIndex < 0 || diffNavIndex >= diffNavTotal - 1"
+            :title="t('git.history.nextFile')"
+            @click="diffNav.next"
+          >
+            <ChevronDown :size="14" />
+          </button>
+        </div>
       </div>
       <div class="drilldown-body">
         <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" />
@@ -145,7 +164,7 @@
 </template>
 
 <script setup>
-import { Plus, Minus } from 'lucide-vue-next'
+import { Plus, Minus, ChevronUp, ChevronDown } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -157,6 +176,7 @@ import GitManageContent from './GitManageContent.vue'
 import { renderDiff } from '@/utils/diff.ts'
 import { store } from '@/stores/app.ts'
 import { useCommitNavigation, consumePendingCommitNavigation, pendingSha as pendingCommitSha, consumePendingManageNavigation, pendingManageView } from '@/composables/useCommitNavigation.ts'
+import { useDiffNavigation } from '@/composables/useDiffNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 const { t } = useI18n()
 
@@ -229,6 +249,17 @@ const totalFileCount = computed(() => {
   }
   return files.value.length
 })
+
+// Diff prev/next navigation: flat ordered list + prev/next helpers so the
+// user can hop between file diffs without returning to the file list.
+const diffNav = useDiffNavigation({
+    files,
+    mergeGroups,
+    selectedFilePath,
+    loadDiff,
+})
+const diffNavTotal = diffNav.total
+const diffNavIndex = diffNav.index
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -707,6 +738,48 @@ onMounted(async () => {
   padding: 1px 6px;
   border-radius: 10px;
   flex-shrink: 0;
+}
+
+.diff-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+.diff-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary, #555);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+
+.diff-nav-btn:hover:not(:disabled) {
+  background: var(--bg-tertiary, #e9ecef);
+  color: var(--accent-color, #4a90d9);
+}
+
+.diff-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.diff-nav-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted, #999);
+  padding: 0 4px;
+  white-space: nowrap;
 }
 
 .drilldown-body {
