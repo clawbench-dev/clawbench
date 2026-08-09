@@ -184,7 +184,7 @@ function handleBodyClick(event) {
 
 <style scoped>
 .fd-body {
-  padding: 10px 14px 14px;
+  padding: 6px 10px 10px;
   overflow-y: auto;
   overflow-x: clip;
   font-size: 12px;
@@ -196,13 +196,13 @@ function handleBodyClick(event) {
 .fd-diffs {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .fd-diff-item {
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  padding: 6px 8px;
+  padding: 3px 5px;
   background: var(--bg-secondary);
 }
 
@@ -210,7 +210,7 @@ function handleBodyClick(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .fd-diff-label-name {
