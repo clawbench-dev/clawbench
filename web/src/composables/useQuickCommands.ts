@@ -9,6 +9,7 @@ export interface QuickCommand extends CrudItem {
   hidden: boolean
   auto_execute: boolean
   sort_order: number
+  project_only: boolean
 }
 
 export function useQuickCommands() {
@@ -19,7 +20,13 @@ export function useQuickCommands() {
 
   const commands = items as ReturnType<typeof useCrudList<QuickCommand>>['items']
   const visibleCommands = computed(() => (commands.value as QuickCommand[]).filter(c => !c.hidden))
-  const autoExecCommand = computed(() => (commands.value as QuickCommand[]).find(c => c.auto_execute) || null)
+  // Prefer a project-scoped auto-execute command over a global one when both exist.
+  const autoExecCommand = computed(
+    () =>
+      (commands.value as QuickCommand[]).find(c => c.auto_execute && c.project_only) ||
+      (commands.value as QuickCommand[]).find(c => c.auto_execute) ||
+      null
+  )
 
   async function fetchCommands(force = false) {
     await fetchItems(force)

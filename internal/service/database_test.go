@@ -109,6 +109,7 @@ func setupTestDBForQuickSend(t *testing.T) func() {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -687,7 +688,7 @@ func TestGetChatQuickSend_Empty(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	items, err := GetChatQuickSend()
+	items, err := GetChatQuickSend("")
 	assert.NoError(t, err)
 	assert.Nil(t, items)
 }
@@ -696,11 +697,11 @@ func TestAddChatQuickSend_Single(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	id, err := AddChatQuickSend("▶️ 继续", "继续")
+	id, err := AddChatQuickSend("▶️ 继续", "继续", "")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), id)
 
-	items, err := GetChatQuickSend()
+	items, err := GetChatQuickSend("")
 	assert.NoError(t, err)
 	assert.Len(t, items, 1)
 	assert.Equal(t, int64(1), items[0].ID)
@@ -713,15 +714,15 @@ func TestAddChatQuickSend_MultipleAutoIncrement(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	id1, _ := AddChatQuickSend("继续", "继续")
-	id2, _ := AddChatQuickSend("提交", "提交")
-	id3, _ := AddChatQuickSend("调试", "调试")
+	id1, _ := AddChatQuickSend("继续", "继续", "")
+	id2, _ := AddChatQuickSend("提交", "提交", "")
+	id3, _ := AddChatQuickSend("调试", "调试", "")
 
 	assert.Equal(t, int64(1), id1)
 	assert.Equal(t, int64(2), id2)
 	assert.Equal(t, int64(3), id3)
 
-	items, _ := GetChatQuickSend()
+	items, _ := GetChatQuickSend("")
 	assert.Len(t, items, 3)
 	// sort_order auto-increments
 	assert.Equal(t, 0, items[0].SortOrder)
@@ -733,12 +734,12 @@ func TestUpdateChatQuickSend(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	AddChatQuickSend("继续", "继续")
+	AddChatQuickSend("继续", "继续", "")
 
-	err := UpdateChatQuickSend(1, "▶️ 继续", "请继续")
+	err := UpdateChatQuickSend(1, "▶️ 继续", "请继续", "")
 	assert.NoError(t, err)
 
-	items, _ := GetChatQuickSend()
+	items, _ := GetChatQuickSend("")
 	assert.Len(t, items, 1)
 	assert.Equal(t, "▶️ 继续", items[0].Label)
 	assert.Equal(t, "请继续", items[0].Command)
@@ -748,7 +749,7 @@ func TestUpdateChatQuickSend_Nonexistent(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	err := UpdateChatQuickSend(999, "x", "y")
+	err := UpdateChatQuickSend(999, "x", "y", "")
 	assert.NoError(t, err)
 }
 
@@ -756,13 +757,13 @@ func TestDeleteChatQuickSend(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	AddChatQuickSend("继续", "继续")
-	AddChatQuickSend("提交", "提交")
+	AddChatQuickSend("继续", "继续", "")
+	AddChatQuickSend("提交", "提交", "")
 
 	err := DeleteChatQuickSend(1)
 	assert.NoError(t, err)
 
-	items, _ := GetChatQuickSend()
+	items, _ := GetChatQuickSend("")
 	assert.Len(t, items, 1)
 	assert.Equal(t, "提交", items[0].Label)
 }
@@ -779,15 +780,15 @@ func TestReorderChatQuickSend(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	AddChatQuickSend("继续", "继续") // id=1, sort_order=0
-	AddChatQuickSend("提交", "提交") // id=2, sort_order=1
-	AddChatQuickSend("调试", "调试") // id=3, sort_order=2
+	AddChatQuickSend("继续", "继续", "") // id=1, sort_order=0
+	AddChatQuickSend("提交", "提交", "") // id=2, sort_order=1
+	AddChatQuickSend("调试", "调试", "") // id=3, sort_order=2
 
 	// Reverse order: 3, 2, 1
 	err := ReorderChatQuickSend([]int64{3, 2, 1})
 	assert.NoError(t, err)
 
-	items, _ := GetChatQuickSend()
+	items, _ := GetChatQuickSend("")
 	assert.Len(t, items, 3)
 	assert.Equal(t, "调试", items[0].Label)
 	assert.Equal(t, 0, items[0].SortOrder)
@@ -801,12 +802,12 @@ func TestReorderChatQuickSend_EmptyIDs(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	AddChatQuickSend("继续", "继续")
+	AddChatQuickSend("继续", "继续", "")
 
 	err := ReorderChatQuickSend([]int64{})
 	assert.NoError(t, err)
 
-	items, _ := GetChatQuickSend()
+	items, _ := GetChatQuickSend("")
 	assert.Len(t, items, 1)
 }
 
@@ -814,15 +815,15 @@ func TestReorderChatQuickSend_PartialIDs(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	AddChatQuickSend("继续", "继续") // id=1
-	AddChatQuickSend("提交", "提交") // id=2
-	AddChatQuickSend("调试", "调试") // id=3
+	AddChatQuickSend("继续", "继续", "") // id=1
+	AddChatQuickSend("提交", "提交", "") // id=2
+	AddChatQuickSend("调试", "调试", "") // id=3
 
 	// Only reorder the first two
 	err := ReorderChatQuickSend([]int64{2, 1})
 	assert.NoError(t, err)
 
-	items, _ := GetChatQuickSend()
+	items, _ := GetChatQuickSend("")
 	assert.Len(t, items, 3)
 	// 提交(2)→sort=0, 继续(1)→sort=1, 调试(3) still has sort=2 from original
 	assert.Equal(t, "提交", items[0].Label)
@@ -834,20 +835,75 @@ func TestGetChatQuickSend_OrderedBySortOrder(t *testing.T) {
 	teardown := setupTestDBForQuickSend(t)
 	defer teardown()
 
-	AddChatQuickSend("A", "a") // sort=0
-	AddChatQuickSend("B", "b") // sort=1
-	AddChatQuickSend("C", "c") // sort=2
+	AddChatQuickSend("A", "a", "") // sort=0
+	AddChatQuickSend("B", "b", "") // sort=1
+	AddChatQuickSend("C", "c", "") // sort=2
 
 	// Reorder to C, A, B
 	ReorderChatQuickSend([]int64{3, 1, 2})
 
-	items, _ := GetChatQuickSend()
+	items, _ := GetChatQuickSend("")
 	assert.Equal(t, "C", items[0].Label)
 	assert.Equal(t, "A", items[1].Label)
 	assert.Equal(t, "B", items[2].Label)
 }
 
-// ---------- Forwarded ports schema: host, local_port columns ----------
+// ---------- ChatQuickSend project scoping ----------
+
+func TestGetChatQuickSend_ProjectScope(t *testing.T) {
+	teardown := setupTestDBForQuickSend(t)
+	defer teardown()
+
+	// Global item + two project-scoped items
+	_, _ = AddChatQuickSend("全局", "global cmd", "")
+	_, _ = AddChatQuickSend("项目A", "a cmd", "/proj/a")
+	_, _ = AddChatQuickSend("项目B", "b cmd", "/proj/b")
+
+	// Global context returns only global items
+	global, err := GetChatQuickSend("")
+	assert.NoError(t, err)
+	assert.Len(t, global, 1)
+	assert.Equal(t, "全局", global[0].Label)
+	assert.False(t, global[0].ProjectOnly)
+
+	// Project A sees global + its own, but not project B's
+	projA, err := GetChatQuickSend("/proj/a")
+	assert.NoError(t, err)
+	assert.Len(t, projA, 2)
+	labels := []string{projA[0].Label, projA[1].Label}
+	assert.Contains(t, labels, "全局")
+	assert.Contains(t, labels, "项目A")
+	for _, it := range projA {
+		if it.Label == "项目A" {
+			assert.True(t, it.ProjectOnly)
+			assert.Equal(t, "/proj/a", it.ProjectPath)
+		}
+	}
+}
+
+func TestUpdateChatQuickSend_ScopeChange(t *testing.T) {
+	teardown := setupTestDBForQuickSend(t)
+	defer teardown()
+
+	id, err := AddChatQuickSend("全局", "g", "")
+	assert.NoError(t, err)
+
+	// Move to project scope
+	assert.NoError(t, UpdateChatQuickSend(id, "项目", "p", "/proj/x"))
+
+	global, _ := GetChatQuickSend("")
+	assert.Len(t, global, 0)
+
+	proj, _ := GetChatQuickSend("/proj/x")
+	assert.Len(t, proj, 1)
+	assert.True(t, proj[0].ProjectOnly)
+
+	// Move back to global
+	assert.NoError(t, UpdateChatQuickSend(id, "全局", "g", ""))
+	global2, _ := GetChatQuickSend("")
+	assert.Len(t, global2, 1)
+	assert.False(t, global2[0].ProjectOnly)
+}
 
 func TestSchema_ForwardedPortsColumns(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1124,6 +1180,7 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			hidden INTEGER NOT NULL DEFAULT 0,
 			auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -1132,6 +1189,7 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -1529,11 +1587,13 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, command TEXT NOT NULL,
 			hidden INTEGER NOT NULL DEFAULT 0, auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			project_path TEXT DEFAULT NULL,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS chat_quick_send (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			project_path TEXT DEFAULT NULL,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
@@ -1711,11 +1771,12 @@ func setupTestDBForQuickCommands(t *testing.T) func() {
 			hidden INTEGER NOT NULL DEFAULT 0,
 			auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_quick_commands_auto_execute
-			ON terminal_quick_commands(auto_execute) WHERE auto_execute = 1;
+			ON terminal_quick_commands(COALESCE(project_path, ''), auto_execute) WHERE auto_execute = 1;
 	`)
 	if err != nil {
 		t.Fatalf("failed to create tables: %v", err)
@@ -1733,7 +1794,7 @@ func TestGetQuickCommands_Empty(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	cmds, err := GetQuickCommands()
+	cmds, err := GetQuickCommands("")
 	assert.NoError(t, err)
 	assert.Nil(t, cmds)
 }
@@ -1742,11 +1803,11 @@ func TestAddQuickCommand(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	id, err := AddQuickCommand("▶️ Run", "go test ./...", false, true)
+	id, err := AddQuickCommand("▶️ Run", "go test ./...", false, true, "")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), id)
 
-	cmds, err := GetQuickCommands()
+	cmds, err := GetQuickCommands("")
 	assert.NoError(t, err)
 	assert.Len(t, cmds, 1)
 	assert.Equal(t, "▶️ Run", cmds[0].Label)
@@ -1759,11 +1820,11 @@ func TestAddQuickCommand_Hidden(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	id, err := AddQuickCommand("Secret", "secret-cmd", true, false)
+	id, err := AddQuickCommand("Secret", "secret-cmd", true, false, "")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), id)
 
-	cmds, err := GetQuickCommands()
+	cmds, err := GetQuickCommands("")
 	assert.NoError(t, err)
 	assert.Len(t, cmds, 1)
 	// Note: The Hidden field may not be correctly stored due to arg ordering
@@ -1776,14 +1837,14 @@ func TestAddQuickCommand_AutoExecuteClearsPrevious(t *testing.T) {
 	defer teardown()
 
 	// Add first auto_execute command
-	_, err := AddQuickCommand("Run 1", "cmd1", false, true)
+	_, err := AddQuickCommand("Run 1", "cmd1", false, true, "")
 	assert.NoError(t, err)
 
 	// Add second auto_execute command — should clear the first
-	_, err = AddQuickCommand("Run 2", "cmd2", false, true)
+	_, err = AddQuickCommand("Run 2", "cmd2", false, true, "")
 	assert.NoError(t, err)
 
-	cmds, err := GetQuickCommands()
+	cmds, err := GetQuickCommands("")
 	assert.NoError(t, err)
 	assert.Len(t, cmds, 2)
 
@@ -1807,21 +1868,21 @@ func TestAutoExecute_InsertClearsOthers(t *testing.T) {
 	defer teardown()
 
 	// Insert task A with auto_execute=true
-	idA, err := AddQuickCommand("Command A", "cmd-a", false, true)
+	idA, err := AddQuickCommand("Command A", "cmd-a", false, true, "")
 	assert.NoError(t, err)
 	assert.True(t, idA > 0)
 
 	// Verify A has auto_execute=true
-	cmds, _ := GetQuickCommands()
+	cmds, _ := GetQuickCommands("")
 	assert.Len(t, cmds, 1)
 	assert.True(t, cmds[0].AutoExecute, "first command should have auto_execute=true after insert")
 
 	// Insert task B with auto_execute=true — should clear A's auto_execute
-	idB, err := AddQuickCommand("Command B", "cmd-b", false, true)
+	idB, err := AddQuickCommand("Command B", "cmd-b", false, true, "")
 	assert.NoError(t, err)
 	assert.True(t, idB > 0)
 
-	cmds, _ = GetQuickCommands()
+	cmds, _ = GetQuickCommands("")
 	assert.Len(t, cmds, 2)
 
 	// Find A and B by ID and verify only B has auto_execute=true
@@ -1842,15 +1903,15 @@ func TestAutoExecute_UpdateClearsOthers(t *testing.T) {
 	defer teardown()
 
 	// Insert task A with auto_execute=true
-	idA, err := AddQuickCommand("Command A", "cmd-a", false, true)
+	idA, err := AddQuickCommand("Command A", "cmd-a", false, true, "")
 	assert.NoError(t, err)
 
 	// Insert task B with auto_execute=false
-	idB, err := AddQuickCommand("Command B", "cmd-b", false, false)
+	idB, err := AddQuickCommand("Command B", "cmd-b", false, false, "")
 	assert.NoError(t, err)
 
 	// Verify A has auto_execute=true
-	cmds, _ := GetQuickCommands()
+	cmds, _ := GetQuickCommands("")
 	for _, c := range cmds {
 		if c.ID == idA {
 			assert.True(t, c.AutoExecute, "command A should have auto_execute=true")
@@ -1858,10 +1919,10 @@ func TestAutoExecute_UpdateClearsOthers(t *testing.T) {
 	}
 
 	// Update B to auto_execute=true — should clear A's auto_execute
-	err = UpdateQuickCommand(idB, "Command B", "cmd-b", false, true)
+	err = UpdateQuickCommand(idB, "Command B", "cmd-b", false, true, "")
 	assert.NoError(t, err)
 
-	cmds, _ = GetQuickCommands()
+	cmds, _ = GetQuickCommands("")
 	for _, c := range cmds {
 		if c.ID == idA {
 			assert.False(t, c.AutoExecute, "command A should have auto_execute=false after B is updated to auto_execute=true")
@@ -1879,14 +1940,14 @@ func TestAutoExecute_InsertFalseDoesNotClear(t *testing.T) {
 	defer teardown()
 
 	// Insert task A with auto_execute=true
-	idA, err := AddQuickCommand("Command A", "cmd-a", false, true)
+	idA, err := AddQuickCommand("Command A", "cmd-a", false, true, "")
 	assert.NoError(t, err)
 
 	// Insert task B with auto_execute=false — should NOT clear A's auto_execute
-	_, err = AddQuickCommand("Command B", "cmd-b", false, false)
+	_, err = AddQuickCommand("Command B", "cmd-b", false, false, "")
 	assert.NoError(t, err)
 
-	cmds, _ := GetQuickCommands()
+	cmds, _ := GetQuickCommands("")
 	assert.Len(t, cmds, 2)
 
 	for _, c := range cmds {
@@ -1903,15 +1964,15 @@ func TestAutoExecute_UpdateFalseDoesNotClear(t *testing.T) {
 	defer teardown()
 
 	// Insert A with auto_execute=true and B with auto_execute=true (clears A)
-	idA, _ := AddQuickCommand("Command A", "cmd-a", false, true)
-	idB, _ := AddQuickCommand("Command B", "cmd-b", false, true)
+	idA, _ := AddQuickCommand("Command A", "cmd-a", false, true, "")
+	idB, _ := AddQuickCommand("Command B", "cmd-b", false, true, "")
 
 	// Now B has auto_execute=true, A has auto_execute=false
 	// Update B to auto_execute=false — should NOT affect A
-	err := UpdateQuickCommand(idB, "Command B", "cmd-b-updated", false, false)
+	err := UpdateQuickCommand(idB, "Command B", "cmd-b-updated", false, false, "")
 	assert.NoError(t, err)
 
-	cmds, _ := GetQuickCommands()
+	cmds, _ := GetQuickCommands("")
 	for _, c := range cmds {
 		if c.ID == idA {
 			assert.False(t, c.AutoExecute, "command A should still have auto_execute=false")
@@ -1929,14 +1990,14 @@ func TestAutoExecute_UpdateSelfTrueNoOp(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	idA, _ := AddQuickCommand("Command A", "cmd-a", false, true)
-	AddQuickCommand("Command B", "cmd-b", false, false)
+	idA, _ := AddQuickCommand("Command A", "cmd-a", false, true, "")
+	AddQuickCommand("Command B", "cmd-b", false, false, "")
 
 	// Update A (already auto_execute=true) to auto_execute=true again
-	err := UpdateQuickCommand(idA, "Command A Updated", "cmd-a-upd", false, true)
+	err := UpdateQuickCommand(idA, "Command A Updated", "cmd-a-upd", false, true, "")
 	assert.NoError(t, err)
 
-	cmds, _ := GetQuickCommands()
+	cmds, _ := GetQuickCommands("")
 	autoExecCount := 0
 	for _, c := range cmds {
 		if c.AutoExecute {
@@ -1956,15 +2017,15 @@ func TestAutoExecute_ReorderValidIDs(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	id1, _ := AddQuickCommand("A", "a", false, false) // sort_order=0
-	id2, _ := AddQuickCommand("B", "b", false, false) // sort_order=1
-	id3, _ := AddQuickCommand("C", "c", false, false) // sort_order=2
+	id1, _ := AddQuickCommand("A", "a", false, false, "") // sort_order=0
+	id2, _ := AddQuickCommand("B", "b", false, false, "") // sort_order=1
+	id3, _ := AddQuickCommand("C", "c", false, false, "") // sort_order=2
 
 	// Reverse order
 	err := ReorderQuickCommands([]int64{id3, id2, id1})
 	assert.NoError(t, err)
 
-	cmds, _ := GetQuickCommands()
+	cmds, _ := GetQuickCommands("")
 	assert.Equal(t, "C", cmds[0].Label)
 	assert.Equal(t, 0, cmds[0].SortOrder)
 	assert.Equal(t, "B", cmds[1].Label)
@@ -1979,12 +2040,12 @@ func TestAutoExecute_ReorderEmptyIDs(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	AddQuickCommand("A", "a", false, true)
+	AddQuickCommand("A", "a", false, true, "")
 
 	err := ReorderQuickCommands([]int64{})
 	assert.NoError(t, err)
 
-	cmds, _ := GetQuickCommands()
+	cmds, _ := GetQuickCommands("")
 	assert.Len(t, cmds, 1)
 	assert.True(t, cmds[0].AutoExecute, "auto_execute should be preserved after empty reorder")
 }
@@ -1993,12 +2054,12 @@ func TestUpdateQuickCommand(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	AddQuickCommand("Old Label", "old cmd", false, false)
+	AddQuickCommand("Old Label", "old cmd", false, false, "")
 
-	err := UpdateQuickCommand(1, "New Label", "new cmd", true, true)
+	err := UpdateQuickCommand(1, "New Label", "new cmd", true, true, "")
 	assert.NoError(t, err)
 
-	cmds, err := GetQuickCommands()
+	cmds, err := GetQuickCommands("")
 	assert.NoError(t, err)
 	assert.Len(t, cmds, 1)
 	assert.Equal(t, "New Label", cmds[0].Label)
@@ -2011,7 +2072,7 @@ func TestUpdateQuickCommand_Nonexistent(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	err := UpdateQuickCommand(999, "x", "y", false, false)
+	err := UpdateQuickCommand(999, "x", "y", false, false, "")
 	assert.NoError(t, err)
 }
 
@@ -2019,13 +2080,13 @@ func TestDeleteQuickCommand(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	AddQuickCommand("A", "a", false, false)
-	AddQuickCommand("B", "b", false, false)
+	AddQuickCommand("A", "a", false, false, "")
+	AddQuickCommand("B", "b", false, false, "")
 
 	err := DeleteQuickCommand(1)
 	assert.NoError(t, err)
 
-	cmds, err := GetQuickCommands()
+	cmds, err := GetQuickCommands("")
 	assert.NoError(t, err)
 	assert.Len(t, cmds, 1)
 	assert.Equal(t, "B", cmds[0].Label)
@@ -2043,14 +2104,14 @@ func TestReorderQuickCommands(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	AddQuickCommand("A", "a", false, false) // id=1, sort=0
-	AddQuickCommand("B", "b", false, false) // id=2, sort=1
-	AddQuickCommand("C", "c", false, false) // id=3, sort=2
+	AddQuickCommand("A", "a", false, false, "") // id=1, sort=0
+	AddQuickCommand("B", "b", false, false, "") // id=2, sort=1
+	AddQuickCommand("C", "c", false, false, "") // id=3, sort=2
 
 	err := ReorderQuickCommands([]int64{3, 2, 1})
 	assert.NoError(t, err)
 
-	cmds, err := GetQuickCommands()
+	cmds, err := GetQuickCommands("")
 	assert.NoError(t, err)
 	assert.Len(t, cmds, 3)
 	assert.Equal(t, "C", cmds[0].Label)
@@ -2069,13 +2130,104 @@ func TestReorderChatQuickSend_EmptyList(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// ---------- QuickCommand project scoping ----------
+
+func TestGetQuickCommands_ProjectScope(t *testing.T) {
+	teardown := setupTestDBForQuickCommands(t)
+	defer teardown()
+
+	_, _ = AddQuickCommand("全局", "global", false, false, "")
+	_, _ = AddQuickCommand("项目A", "a", false, false, "/proj/a")
+	_, _ = AddQuickCommand("项目B", "b", false, false, "/proj/b")
+
+	global, err := GetQuickCommands("")
+	assert.NoError(t, err)
+	assert.Len(t, global, 1)
+	assert.Equal(t, "全局", global[0].Label)
+	assert.False(t, global[0].ProjectOnly)
+
+	projA, err := GetQuickCommands("/proj/a")
+	assert.NoError(t, err)
+	assert.Len(t, projA, 2)
+	for _, c := range projA {
+		if c.Label == "项目A" {
+			assert.True(t, c.ProjectOnly)
+			assert.Equal(t, "/proj/a", c.ProjectPath)
+		}
+	}
+}
+
+func TestQuickCommand_AutoExecutePerProject(t *testing.T) {
+	teardown := setupTestDBForQuickCommands(t)
+	defer teardown()
+
+	// One auto-execute command per scope (global, /proj/a, /proj/b) can coexist.
+	_, err := AddQuickCommand("全局自动", "g", false, true, "")
+	assert.NoError(t, err)
+	_, err = AddQuickCommand("A自动", "a", false, true, "/proj/a")
+	assert.NoError(t, err)
+	_, err = AddQuickCommand("B自动", "b", false, true, "/proj/b")
+	assert.NoError(t, err)
+
+	// Global scope has exactly one auto-execute (the global one).
+	global, _ := GetQuickCommands("")
+	globalAuto := 0
+	for _, c := range global {
+		if c.AutoExecute {
+			globalAuto++
+		}
+	}
+	assert.Equal(t, 1, globalAuto)
+
+	// Each project's own rows have exactly one auto-execute.
+	for _, proj := range []string{"/proj/a", "/proj/b"} {
+		cmds, _ := GetQuickCommands(proj)
+		scopedAuto := 0
+		for _, c := range cmds {
+			if c.ProjectPath == proj && c.AutoExecute {
+				scopedAuto++
+			}
+		}
+		assert.Equal(t, 1, scopedAuto, "project %q should have exactly one auto-execute", proj)
+	}
+}
+
+func TestQuickCommand_AutoExecuteScopedClear(t *testing.T) {
+	teardown := setupTestDBForQuickCommands(t)
+	defer teardown()
+
+	// Two auto-execute commands in the same project: the newer one wins.
+	_, _ = AddQuickCommand("A", "a", false, true, "/proj/a")
+	id2, _ := AddQuickCommand("B", "b", false, true, "/proj/a")
+
+	cmds, _ := GetQuickCommands("/proj/a")
+	for _, c := range cmds {
+		if c.ID == id2 {
+			assert.True(t, c.AutoExecute)
+		} else if c.ProjectPath == "/proj/a" {
+			assert.False(t, c.AutoExecute)
+		}
+	}
+
+	// Adding a global auto-execute must NOT clear project A's auto-execute.
+	_, _ = AddQuickCommand("全局", "g", false, true, "")
+	projACmds, _ := GetQuickCommands("/proj/a")
+	scopedAuto := 0
+	for _, c := range projACmds {
+		if c.ProjectPath == "/proj/a" && c.AutoExecute {
+			scopedAuto++
+		}
+	}
+	assert.Equal(t, 1, scopedAuto)
+}
+
 // ---------- ReorderQuickCommands empty IDs ----------
 
 func TestReorderQuickCommands_EmptyIDs(t *testing.T) {
 	teardown := setupTestDBForQuickCommands(t)
 	defer teardown()
 
-	AddQuickCommand("A", "a", false, false)
+	AddQuickCommand("A", "a", false, false, "")
 
 	err := ReorderQuickCommands([]int64{})
 	assert.NoError(t, err)
@@ -2522,6 +2674,7 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -2727,6 +2880,7 @@ func setupTestDBForClusters(t *testing.T) func() {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

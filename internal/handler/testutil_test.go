@@ -175,6 +175,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			hidden INTEGER NOT NULL DEFAULT 0,
 			auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -183,6 +184,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

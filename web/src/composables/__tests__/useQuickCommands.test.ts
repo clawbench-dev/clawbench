@@ -108,6 +108,29 @@ describe('useQuickCommands', () => {
 
       expect(autoExecCommand.value).toBeNull()
     })
+
+    it('prefers project-scoped auto-execute over global', async () => {
+      mockApiGet.mockResolvedValue([
+        makeCommand({ id: 1, label: 'global', command: 'g', auto_execute: true, project_only: false }),
+        makeCommand({ id: 2, label: 'scoped', command: 's', auto_execute: true, project_only: true }),
+      ])
+
+      const { fetchCommands, autoExecCommand } = useQuickCommands()
+      await fetchCommands(true)
+
+      expect(autoExecCommand.value!.id).toBe(2)
+    })
+
+    it('falls back to global auto-execute when no project-scoped one exists', async () => {
+      mockApiGet.mockResolvedValue([
+        makeCommand({ id: 1, label: 'global', command: 'g', auto_execute: true, project_only: false }),
+      ])
+
+      const { fetchCommands, autoExecCommand } = useQuickCommands()
+      await fetchCommands(true)
+
+      expect(autoExecCommand.value!.id).toBe(1)
+    })
   })
 
   describe('addCommand', () => {

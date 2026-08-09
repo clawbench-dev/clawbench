@@ -28,6 +28,11 @@
         <span>{{ t('terminal.commandAutoExecute') }}</span>
       </label>
       <div v-if="form.auto_execute && hasExistingAutoExec" class="form-hint">{{ t('terminal.autoExecuteWarning') }}</div>
+      <label class="form-checkbox">
+        <input type="checkbox" v-model="form.project_only" />
+        <span>{{ t('terminal.commandProjectOnly') }}</span>
+      </label>
+      <div v-if="form.project_only" class="form-hint">{{ t('terminal.commandProjectOnlyHint') }}</div>
     </div>
 
     <template #footer>
@@ -59,7 +64,7 @@ const { t } = useI18n()
 const toast = useToast()
 const { commands, addCommand, updateCommand } = useQuickCommands()
 
-const form = ref({ label: '', command: '', hidden: false, auto_execute: false })
+const form = ref({ label: '', command: '', hidden: false, auto_execute: false, project_only: false })
 const formError = ref('')
 const saving = ref(false)
 
@@ -80,9 +85,10 @@ watch(() => props.open, (isOpen) => {
         command: props.editingCommand.command,
         hidden: props.editingCommand.hidden,
         auto_execute: props.editingCommand.auto_execute,
+        project_only: props.editingCommand.project_only,
       }
     } else {
-      form.value = { label: '', command: '', hidden: false, auto_execute: false }
+      form.value = { label: '', command: '', hidden: false, auto_execute: false, project_only: false }
     }
     formError.value = ''
   }
@@ -101,9 +107,9 @@ async function saveCommand() {
   try {
     let ok: boolean
     if (props.editingCommand) {
-      ok = await updateCommand(props.editingCommand.id, { label, command, hidden: form.value.hidden, auto_execute: form.value.auto_execute })
+      ok = await updateCommand(props.editingCommand.id, { label, command, hidden: form.value.hidden, auto_execute: form.value.auto_execute, project_only: form.value.project_only })
     } else {
-      ok = await addCommand({ label, command, hidden: form.value.hidden, auto_execute: form.value.auto_execute })
+      ok = await addCommand({ label, command, hidden: form.value.hidden, auto_execute: form.value.auto_execute, project_only: form.value.project_only })
     }
 
     if (ok) {

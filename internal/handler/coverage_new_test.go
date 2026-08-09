@@ -1469,9 +1469,9 @@ func TestServeQuickCommands_Reorder(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	id1, err := service.AddQuickCommand("First", "cmd1", false, false)
+	id1, err := service.AddQuickCommand("First", "cmd1", false, false, "")
 	require.NoError(t, err)
-	id2, err := service.AddQuickCommand("Second", "cmd2", false, false)
+	id2, err := service.AddQuickCommand("Second", "cmd2", false, false, "")
 	require.NoError(t, err)
 
 	body := map[string]any{
@@ -1529,7 +1529,7 @@ func TestServeQuickCommandByID_UpdateValidation(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	id, err := service.AddQuickCommand("Old", "old cmd", false, false)
+	id, err := service.AddQuickCommand("Old", "old cmd", false, false, "")
 	require.NoError(t, err)
 
 	tests := []struct {

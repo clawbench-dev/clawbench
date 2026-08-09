@@ -111,7 +111,7 @@ async function saveCommand() {
 }
 
 /** Set form field values directly on the reactive object */
-function setFormValues(values: Partial<{ label: string; command: string; hidden: boolean; auto_execute: boolean }>) {
+function setFormValues(values: Partial<{ label: string; command: string; hidden: boolean; auto_execute: boolean; project_only: boolean }>) {
   const form = getForm()
   Object.assign(form, values)
 }
@@ -137,12 +137,12 @@ describe('QuickCommandEditModal', () => {
       expect(textarea!.getAttribute('rows')).toBe('4')
     })
 
-    it('renders hidden and auto_execute checkboxes', async () => {
+    it('renders hidden, auto_execute and project_only checkboxes', async () => {
       mountModal()
       await nextTick()
 
       const checkboxes = $$('input[type="checkbox"]')
-      expect(checkboxes).toHaveLength(2)
+      expect(checkboxes).toHaveLength(3)
     })
 
     it('does not show auto-execute warning when no existing auto-exec command', async () => {
@@ -227,6 +227,19 @@ describe('QuickCommandEditModal', () => {
       await saveCommand()
 
       expect(mockUpdateCommand).toHaveBeenCalledWith(3, expect.objectContaining({ command: 'ls -la' }))
+    })
+
+    it('sends project_only when checkbox is checked', async () => {
+      mockAddCommand.mockResolvedValue(true)
+      mountModal()
+      await nextTick()
+
+      setFormValues({ label: 'grep', command: 'grep -r "test" .', project_only: true })
+      await saveCommand()
+
+      expect(mockAddCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ label: 'grep', command: 'grep -r "test" .', project_only: true }),
+      )
     })
 
     it('emits saved on successful save', async () => {

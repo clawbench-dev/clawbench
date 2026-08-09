@@ -118,6 +118,16 @@ export function _resetAllForTesting() {
   _state.clear()
 }
 
+/**
+ * Reset all cached CRUD lists so the next fetchItems() refetches from the
+ * server. Called on project switch, since lists (e.g. quick-send, quick
+ * commands) are scoped per project and the cached payload may be stale.
+ */
+export function resetAllCrudLists() {
+  _singletons.clear()
+  _state.clear()
+}
+
 export function useCrudList<T extends CrudItem>(options: UseCrudListOptions) {
   const key = options.apiPrefix
 

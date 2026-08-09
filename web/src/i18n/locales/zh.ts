@@ -297,6 +297,7 @@ export default {
       deleteItem: '删除',
       deleteConfirm: '确认删除此项目？',
       emptyHint: '暂无快捷发送，点击 + 添加',
+      projectOnly: '仅本项目',
     },
     messageClusters: {
       title: '消息推荐',
@@ -1622,7 +1623,9 @@ export default {
     commandText: '命令',
     commandHidden: '隐藏（不在快捷菜单中显示）',
     commandAutoExecute: '自动执行（打开终端时自动运行）',
-    autoExecuteWarning: '将取消其他命令的自动执行标记',
+    autoExecuteWarning: '将取消同项目其他命令的自动执行标记',
+    commandProjectOnly: '仅本项目',
+    commandProjectOnlyHint: '勾选后此命令只在当前项目显示，否则为全局命令',
     commandRequired: '名称和命令不能为空',
     commandSaved: '命令已保存',
     commandDeleted: '命令已删除',

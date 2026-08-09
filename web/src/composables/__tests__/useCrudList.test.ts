@@ -13,7 +13,7 @@ vi.mock('@/utils/api', () => ({
   apiDelete: (...args: any[]) => mockApiDelete(...args),
 }))
 
-import { useCrudList, type CrudItem, _resetAllForTesting } from '@/composables/useCrudList'
+import { useCrudList, type CrudItem, _resetAllForTesting, resetAllCrudLists } from '@/composables/useCrudList'
 
 interface TestItem extends CrudItem {
   id: number
@@ -347,6 +347,27 @@ describe('useCrudList', () => {
       expect(ok).toBe(true)
       // Unknown IDs are filtered out; known IDs are reordered
       expect(crud.items.value.map(i => i.id)).toEqual([2, 1])
+    })
+  })
+
+  describe('resetAllCrudLists', () => {
+    it('clears cached state so the next fetch refetches', async () => {
+      const crud = useCrudList<TestItem>({ apiPrefix: '/api/reset-test' })
+
+      mockApiGet.mockResolvedValueOnce([makeItem({ id: 1 })])
+      await crud.fetchItems(true)
+      expect(crud.loaded.value).toBe(true)
+      expect(mockApiGet).toHaveBeenCalledTimes(1)
+
+      resetAllCrudLists()
+
+      const crud2 = useCrudList<TestItem>({ apiPrefix: '/api/reset-test' })
+      expect(crud2.loaded.value).toBe(false)
+
+      mockApiGet.mockResolvedValueOnce([makeItem({ id: 1 }), makeItem({ id: 2 })])
+      await crud2.fetchItems()
+      expect(mockApiGet).toHaveBeenCalledTimes(2)
+      expect(crud2.items.value).toHaveLength(2)
     })
   })
 

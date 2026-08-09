@@ -317,9 +317,9 @@ func TestServeQuickCommands_ListWithItems(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	_, err := service.AddQuickCommand("Build", "go build ./...", false, false)
+	_, err := service.AddQuickCommand("Build", "go build ./...", false, false, "")
 	require.NoError(t, err)
-	_, err = service.AddQuickCommand("Test", "go test ./...", false, true)
+	_, err = service.AddQuickCommand("Test", "go test ./...", false, true, "")
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/terminal/quick-commands", nil)
@@ -340,13 +340,64 @@ func TestServeQuickCommands_MethodNotAllowed(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
+// ---------- ServeQuickCommands project scoping ----------
+
+func TestServeQuickCommands_ListFiltersByProjectCookie(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, _ = service.AddQuickCommand("全局", "g", false, false, "")
+	_, _ = service.AddQuickCommand("项目A", "a", false, false, "/proj/a")
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/quick-commands", nil)
+	w := callHandler(ServeQuickCommands, req)
+	assertOK(t, w)
+	var global []service.QuickCommand
+	decodeRespJSON(t, w.Body, &global)
+	assert.Len(t, global, 1)
+	assert.Equal(t, "全局", global[0].Label)
+
+	req = withProjectCookie(newRequest(t, http.MethodGet, "/api/terminal/quick-commands", nil), "/proj/a")
+	w = callHandler(ServeQuickCommands, req)
+	assertOK(t, w)
+	var proj []service.QuickCommand
+	decodeRespJSON(t, w.Body, &proj)
+	assert.Len(t, proj, 2)
+}
+
+func TestServeQuickCommands_CreateProjectOnlyRequiresCookie(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	body := map[string]any{"label": "项目", "command": "cmd", "project_only": true}
+	req := newRequest(t, http.MethodPost, "/api/terminal/quick-commands", body)
+	w := callHandler(ServeQuickCommands, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeQuickCommands_CreateProjectOnlyWithCookie(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	body := map[string]any{"label": "项目", "command": "cmd", "project_only": true}
+	req := withProjectCookie(newRequest(t, http.MethodPost, "/api/terminal/quick-commands", body), "/proj/y")
+	w := callHandler(ServeQuickCommands, req)
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	global, _ := service.GetQuickCommands("")
+	assert.Len(t, global, 0)
+	proj, _ := service.GetQuickCommands("/proj/y")
+	assert.Len(t, proj, 1)
+	assert.True(t, proj[0].ProjectOnly)
+}
+
 // ---------- ServeQuickCommandByID ----------
 
 func TestServeQuickCommandByID_Update(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	id, err := service.AddQuickCommand("Old", "old cmd", false, false)
+	id, err := service.AddQuickCommand("Old", "old cmd", false, false, "")
 	require.NoError(t, err)
 
 	body := map[string]any{
@@ -364,13 +415,44 @@ func TestServeQuickCommandByID_Delete(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	id, err := service.AddQuickCommand("Delete", "rm -rf /", false, false)
+	id, err := service.AddQuickCommand("Delete", "rm -rf /", false, false, "")
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodDelete, "/api/terminal/quick-commands/"+fmt.Sprint(id), nil)
 	w := callHandler(ServeQuickCommandByID, req)
 	assertOK(t, w)
 }
+
+func TestServeQuickCommandByID_UpdateProjectOnlyWithoutCookie(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	id, _ := service.AddQuickCommand("Old", "old", false, false, "")
+
+	body := map[string]any{"label": "项目", "command": "cmd", "project_only": true}
+	req := newRequest(t, http.MethodPut, "/api/terminal/quick-commands/"+fmt.Sprint(id), body)
+	w := callHandler(ServeQuickCommandByID, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeQuickCommandByID_UpdateProjectOnlyWithCookie(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	id, _ := service.AddQuickCommand("Old", "old", false, false, "")
+
+	body := map[string]any{"label": "项目", "command": "cmd", "project_only": true}
+	req := withProjectCookie(newRequest(t, http.MethodPut, "/api/terminal/quick-commands/"+fmt.Sprint(id), body), "/proj/w")
+	w := callHandler(ServeQuickCommandByID, req)
+	assertOK(t, w)
+
+	global, _ := service.GetQuickCommands("")
+	assert.Len(t, global, 0)
+	proj, _ := service.GetQuickCommands("/proj/w")
+	assert.Len(t, proj, 1)
+	assert.True(t, proj[0].ProjectOnly)
+}
+
 
 func TestServeQuickCommandByID_InvalidID(t *testing.T) {
 	_, teardown := setupTestEnv(t)

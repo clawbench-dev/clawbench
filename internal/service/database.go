@@ -366,12 +366,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			hidden INTEGER NOT NULL DEFAULT 0,
 			auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		-- One auto_execute command per project scope: COALESCE(NULL->'') lets a
+		-- single global command and one per project coexist.
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_quick_commands_auto_execute
-			ON terminal_quick_commands(auto_execute) WHERE auto_execute = 1;
+			ON terminal_quick_commands(COALESCE(project_path, ''), auto_execute)
+			WHERE auto_execute = 1;
 
 		CREATE TABLE IF NOT EXISTS terminal_key_config (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -388,6 +392,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -791,6 +796,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add project_path to quick-send / quick-command tables for
+	// project-scoped (仅本项目) items. NULL means global; a value scopes the
+	// item to that project only.
+	if err := migrateQuickProjectScope(); err != nil {
+		return err
+	}
+
 	// Migrate: drop source column from agents — no longer used for agent origin tracking.
 	var hasAgentSource int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='source'").Scan(&hasAgentSource)
@@ -830,6 +842,29 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// and rewrite content to slim format (think_id instead of text).
 	MigrateThinkingFromContent()
 
+	return nil
+}
+
+// migrateQuickProjectScope adds the project_path column to the quick-send and
+// quick-command tables (for existing databases) and rebuilds the per-project
+// auto_execute unique index. Idempotent: skips if the column already exists.
+func migrateQuickProjectScope() error {
+	for _, table := range []string{"terminal_quick_commands", "chat_quick_send"} {
+		var hasCol int
+		_ = dbRead.QueryRow("SELECT COUNT(*) FROM pragma_table_info('" + table + "') WHERE name='project_path'").Scan(&hasCol)
+		if hasCol == 0 {
+			if _, err := WriteExec("ALTER TABLE " + table + " ADD COLUMN project_path TEXT DEFAULT NULL"); err != nil {
+				return fmt.Errorf("failed to add project_path column to %s: %w", table, err)
+			}
+		}
+	}
+	// Rebuild the auto_execute unique index to be per-project scope.
+	_, _ = WriteExec("DROP INDEX IF EXISTS idx_quick_commands_auto_execute")
+	if _, err := WriteExec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_quick_commands_auto_execute
+		ON terminal_quick_commands(COALESCE(project_path, ''), auto_execute)
+		WHERE auto_execute = 1`); err != nil {
+		return fmt.Errorf("failed to rebuild auto_execute index: %w", err)
+	}
 	return nil
 }
 
@@ -1355,22 +1390,32 @@ func SaveTTSSummaryByMessageID(messageID int64, ttsSummary string) error {
 
 // quickCommandExtra holds the additional fields needed for terminal_quick_commands
 // beyond the shared (label, command, sort_order) triplet.
-type quickCommandExtra struct{ hidden, autoExec int }
+type quickCommandExtra struct {
+	hidden, autoExec int
+	projectPath      string
+}
+
+// chatQuickSendExtra holds the additional fields needed for chat_quick_send
+// beyond the shared (label, command, sort_order) triplet.
+type chatQuickSendExtra struct{ projectPath string }
 
 // QuickCommandHelpers exposes the shared CRUD helpers for terminal_quick_commands.
 var QuickCommandHelpers = crudHelpers[QuickCommand, quickCommandExtra]{
 	table:     "terminal_quick_commands",
-	scanCols:  "id, label, command, hidden, auto_execute, sort_order",
-	insertSQL: "INSERT INTO terminal_quick_commands (label, command, hidden, auto_execute, sort_order) VALUES (?, ?, ?, ?, ?)",
-	updateSQL: "UPDATE terminal_quick_commands SET label = ?, command = ?, hidden = ?, auto_execute = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+	scanCols:  "id, label, command, hidden, auto_execute, sort_order, project_path",
+	insertSQL: "INSERT INTO terminal_quick_commands (label, command, hidden, auto_execute, sort_order, project_path) VALUES (?, ?, ?, ?, ?, ?)",
+	updateSQL: "UPDATE terminal_quick_commands SET label = ?, command = ?, hidden = ?, auto_execute = ?, project_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 	scanFn: func(rows *sql.Rows) (QuickCommand, error) {
 		var cmd QuickCommand
 		var hidden, autoExec int
-		if err := rows.Scan(&cmd.ID, &cmd.Label, &cmd.Command, &hidden, &autoExec, &cmd.SortOrder); err != nil {
+		var proj sql.NullString
+		if err := rows.Scan(&cmd.ID, &cmd.Label, &cmd.Command, &hidden, &autoExec, &cmd.SortOrder, &proj); err != nil {
 			return cmd, err
 		}
 		cmd.Hidden = hidden == 1
 		cmd.AutoExecute = autoExec == 1
+		cmd.ProjectPath = proj.String
+		cmd.ProjectOnly = proj.Valid && proj.String != ""
 		return cmd, nil
 	},
 	addFn: func(cmd QuickCommand) (label string, command string, sortOrder int, extra quickCommandExtra) {
@@ -1382,22 +1427,28 @@ var QuickCommandHelpers = crudHelpers[QuickCommand, quickCommandExtra]{
 		if cmd.AutoExecute {
 			autoExec = 1
 		}
-		return cmd.Label, cmd.Command, cmd.SortOrder, quickCommandExtra{hidden: hidden, autoExec: autoExec}
+		return cmd.Label, cmd.Command, cmd.SortOrder, quickCommandExtra{hidden: hidden, autoExec: autoExec, projectPath: cmd.ProjectPath}
 	},
 }
 
 // ChatQuickSendHelpers exposes the shared CRUD helpers for chat_quick_send.
-var ChatQuickSendHelpers = crudHelpers[ChatQuickSendItem, struct{}]{
+var ChatQuickSendHelpers = crudHelpers[ChatQuickSendItem, chatQuickSendExtra]{
 	table:     "chat_quick_send",
-	scanCols:  "id, label, command, sort_order",
-	insertSQL: "INSERT INTO chat_quick_send (label, command, sort_order) VALUES (?, ?, ?)",
-	updateSQL: "UPDATE chat_quick_send SET label = ?, command = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+	scanCols:  "id, label, command, sort_order, project_path",
+	insertSQL: "INSERT INTO chat_quick_send (label, command, sort_order, project_path) VALUES (?, ?, ?, ?)",
+	updateSQL: "UPDATE chat_quick_send SET label = ?, command = ?, project_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 	scanFn: func(rows *sql.Rows) (ChatQuickSendItem, error) {
 		var item ChatQuickSendItem
-		return item, rows.Scan(&item.ID, &item.Label, &item.Command, &item.SortOrder)
+		var proj sql.NullString
+		if err := rows.Scan(&item.ID, &item.Label, &item.Command, &item.SortOrder, &proj); err != nil {
+			return item, err
+		}
+		item.ProjectPath = proj.String
+		item.ProjectOnly = proj.Valid && proj.String != ""
+		return item, nil
 	},
-	addFn: func(item ChatQuickSendItem) (label string, command string, sortOrder int, _ struct{}) {
-		return item.Label, item.Command, item.SortOrder, struct{}{}
+	addFn: func(item ChatQuickSendItem) (label string, command string, sortOrder int, extra chatQuickSendExtra) {
+		return item.Label, item.Command, item.SortOrder, chatQuickSendExtra{projectPath: item.ProjectPath}
 	},
 }
 
@@ -1412,9 +1463,20 @@ type crudHelpers[T any, E any] struct {
 	updateSQL string
 }
 
-// list returns all rows from the helper's table ordered by sort_order.
-func (h crudHelpers[T, E]) list() ([]T, error) {
-	rows, err := dbRead.Query("SELECT " + h.scanCols + " FROM " + h.table + " ORDER BY sort_order")
+// list returns all rows from the helper's table for the given project scope,
+// ordered by sort_order. Global rows (project_path IS NULL) are always included;
+// when projectPath is non-empty, that project's scoped rows are included too.
+func (h crudHelpers[T, E]) list(projectPath string) ([]T, error) {
+	query := "SELECT " + h.scanCols + " FROM " + h.table
+	var rows *sql.Rows
+	var err error
+	if projectPath == "" {
+		query += " WHERE project_path IS NULL ORDER BY sort_order"
+		rows, err = dbRead.Query(query)
+	} else {
+		query += " WHERE project_path IS NULL OR project_path = ? ORDER BY sort_order"
+		rows, err = dbRead.Query(query, projectPath)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1430,14 +1492,47 @@ func (h crudHelpers[T, E]) list() ([]T, error) {
 	return items, nil
 }
 
+// extraProjectPath returns the project_path carried by a table-specific extra.
+func extraProjectPath(e any) string {
+	switch v := e.(type) {
+	case quickCommandExtra:
+		return v.projectPath
+	case chatQuickSendExtra:
+		return v.projectPath
+	}
+	return ""
+}
+
+// clearAutoExecuteForScope clears the auto_execute flag on other rows in the
+// same project scope (global scope when projectPath is empty), enforcing the
+// single-auto-execute-per-scope invariant. excludeID>0 skips that row (used by update).
+func clearAutoExecuteForScope(table string, excludeID int64, projectPath string) error {
+	if projectPath == "" {
+		if excludeID > 0 {
+			_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_path IS NULL AND id != ?", excludeID)
+			return err
+		}
+		_, err := WriteExec("UPDATE " + table + " SET auto_execute = 0 WHERE auto_execute = 1 AND project_path IS NULL")
+		return err
+	}
+	if excludeID > 0 {
+		_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_path = ? AND id != ?", projectPath, excludeID)
+		return err
+	}
+	_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_path = ?", projectPath)
+	return err
+}
+
 // insert adds a new row. For tables with an auto_execute column (E=quickCommandExtra),
-// any existing auto_execute=1 rows are cleared first to enforce the single-active invariant.
+// any existing auto_execute=1 rows in the same project scope are cleared first to
+// enforce the single-active-invariant.
 func (h crudHelpers[T, E]) insert(item T) (int64, error) {
 	// Capture addFn result so we can inspect extra (for auto_execute check)
 	// without calling the closure twice.
 	label, command, sortOrder, extra := h.addFn(item)
+	projectPath := extraProjectPath(extra)
 	if e, ok := any(extra).(quickCommandExtra); ok && e.autoExec == 1 {
-		if _, err := WriteExec("UPDATE " + h.table + " SET auto_execute = 0 WHERE auto_execute = 1"); err != nil {
+		if err := clearAutoExecuteForScope(h.table, 0, projectPath); err != nil {
 			return 0, err
 		}
 	}
@@ -1446,11 +1541,15 @@ func (h crudHelpers[T, E]) insert(item T) (int64, error) {
 	if maxOrder.Valid {
 		sortOrder = int(maxOrder.Int64) + 1
 	}
+	var projectArg any
+	if projectPath != "" {
+		projectArg = projectPath
+	}
 	var args []any
 	if e, ok := any(extra).(quickCommandExtra); ok {
-		args = []any{label, command, e.hidden, e.autoExec, sortOrder}
+		args = []any{label, command, e.hidden, e.autoExec, sortOrder, projectArg}
 	} else {
-		args = []any{label, command, sortOrder}
+		args = []any{label, command, sortOrder, projectArg}
 	}
 	result, err := WriteExec(h.insertSQL, args...)
 	if err != nil {
@@ -1460,19 +1559,25 @@ func (h crudHelpers[T, E]) insert(item T) (int64, error) {
 }
 
 // update modifies an existing row by id. For tables with an auto_execute column,
-// clears auto_execute on other rows to enforce the single-active invariant.
+// clears auto_execute on other rows in the same project scope to enforce the
+// single-active-invariant.
 func (h crudHelpers[T, E]) update(id int64, item T) error {
 	label, command, _, extra := h.addFn(item)
+	projectPath := extraProjectPath(extra)
 	if e, ok := any(extra).(quickCommandExtra); ok && e.autoExec == 1 {
-		if _, err := WriteExec("UPDATE "+h.table+" SET auto_execute = 0 WHERE auto_execute = 1 AND id != ?", id); err != nil {
+		if err := clearAutoExecuteForScope(h.table, id, projectPath); err != nil {
 			return err
 		}
 	}
+	var projectArg any
+	if projectPath != "" {
+		projectArg = projectPath
+	}
 	var args []any
 	if e, ok := any(extra).(quickCommandExtra); ok {
-		args = []any{label, command, e.hidden, e.autoExec, id}
+		args = []any{label, command, e.hidden, e.autoExec, projectArg, id}
 	} else {
-		args = []any{label, command, id}
+		args = []any{label, command, projectArg, id}
 	}
 	_, err := WriteExec(h.updateSQL, args...)
 	return err
@@ -1508,23 +1613,28 @@ type QuickCommand struct {
 	Hidden      bool   `json:"hidden"`
 	AutoExecute bool   `json:"auto_execute"`
 	SortOrder   int    `json:"sort_order"`
+	ProjectPath string `json:"project_path"`
+	ProjectOnly bool   `json:"project_only"`
 }
 
-// GetQuickCommands returns all quick commands ordered by sort_order.
-func GetQuickCommands() ([]QuickCommand, error) {
-	return QuickCommandHelpers.list()
+// GetQuickCommands returns quick commands for the given project scope,
+// ordered by sort_order. projectPath=="" returns only global commands.
+func GetQuickCommands(projectPath string) ([]QuickCommand, error) {
+	return QuickCommandHelpers.list(projectPath)
 }
 
 // AddQuickCommand inserts a new quick command and returns its ID.
-// If autoExecute is true, other commands' auto_execute flag is cleared first.
-func AddQuickCommand(label, command string, hidden, autoExecute bool) (int64, error) {
-	return QuickCommandHelpers.insert(QuickCommand{Label: label, Command: command, Hidden: hidden, AutoExecute: autoExecute})
+// If autoExecute is true, other commands' auto_execute flag in the same
+// project scope is cleared first.
+func AddQuickCommand(label, command string, hidden, autoExecute bool, projectPath string) (int64, error) {
+	return QuickCommandHelpers.insert(QuickCommand{Label: label, Command: command, Hidden: hidden, AutoExecute: autoExecute, ProjectPath: projectPath})
 }
 
 // UpdateQuickCommand updates an existing quick command.
-// If autoExecute is true, other commands' auto_execute flag is cleared first.
-func UpdateQuickCommand(id int64, label, command string, hidden, autoExecute bool) error {
-	return QuickCommandHelpers.update(id, QuickCommand{Label: label, Command: command, Hidden: hidden, AutoExecute: autoExecute})
+// If autoExecute is true, other commands' auto_execute flag in the same
+// project scope is cleared first.
+func UpdateQuickCommand(id int64, label, command string, hidden, autoExecute bool, projectPath string) error {
+	return QuickCommandHelpers.update(id, QuickCommand{Label: label, Command: command, Hidden: hidden, AutoExecute: autoExecute, ProjectPath: projectPath})
 }
 
 // DeleteQuickCommand deletes a quick command by ID.
@@ -1539,25 +1649,28 @@ func ReorderQuickCommands(ids []int64) error {
 
 // ChatQuickSendItem represents a chat quick-send item stored in the database.
 type ChatQuickSendItem struct {
-	ID        int64  `json:"id"`
-	Label     string `json:"label"`
-	Command   string `json:"command"`
-	SortOrder int    `json:"sort_order"`
+	ID          int64  `json:"id"`
+	Label       string `json:"label"`
+	Command     string `json:"command"`
+	SortOrder   int    `json:"sort_order"`
+	ProjectPath string `json:"project_path"`
+	ProjectOnly bool   `json:"project_only"`
 }
 
-// GetChatQuickSend returns all quick-send items ordered by sort_order.
-func GetChatQuickSend() ([]ChatQuickSendItem, error) {
-	return ChatQuickSendHelpers.list()
+// GetChatQuickSend returns quick-send items for the given project scope,
+// ordered by sort_order. projectPath=="" returns only global items.
+func GetChatQuickSend(projectPath string) ([]ChatQuickSendItem, error) {
+	return ChatQuickSendHelpers.list(projectPath)
 }
 
 // AddChatQuickSend inserts a new quick-send item and returns its ID.
-func AddChatQuickSend(label, command string) (int64, error) {
-	return ChatQuickSendHelpers.insert(ChatQuickSendItem{Label: label, Command: command})
+func AddChatQuickSend(label, command, projectPath string) (int64, error) {
+	return ChatQuickSendHelpers.insert(ChatQuickSendItem{Label: label, Command: command, ProjectPath: projectPath})
 }
 
 // UpdateChatQuickSend updates an existing quick-send item.
-func UpdateChatQuickSend(id int64, label, command string) error {
-	return ChatQuickSendHelpers.update(id, ChatQuickSendItem{Label: label, Command: command})
+func UpdateChatQuickSend(id int64, label, command, projectPath string) error {
+	return ChatQuickSendHelpers.update(id, ChatQuickSendItem{Label: label, Command: command, ProjectPath: projectPath})
 }
 
 // DeleteChatQuickSend deletes a quick-send item by ID.

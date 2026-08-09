@@ -7,15 +7,18 @@ import (
 	"strconv"
 	"strings"
 
+	"clawbench/internal/middleware"
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
 
 // ServeChatQuickSend handles GET (list) and POST (create) for chat quick-send items,
 // and PUT /reorder for batch reordering.
-func ServeChatQuickSend(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // multi-method quick-send handler
+func ServeChatQuickSend(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocognit // multi-method quick-send handler
 	switch r.Method {
 	case http.MethodGet:
-		items, err := service.GetChatQuickSend()
+		projectPath := middleware.GetProjectFromCookie(r)
+		items, err := service.GetChatQuickSend(projectPath)
 		if err != nil {
 			slog.Error("failed to get chat quick-send items", slog.String("error", err.Error()))
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
@@ -28,8 +31,9 @@ func ServeChatQuickSend(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 
 	case http.MethodPost:
 		var req struct {
-			Label   string `json:"label"`
-			Command string `json:"command"`
+			Label       string `json:"label"`
+			Command     string `json:"command"`
+			ProjectOnly bool   `json:"project_only"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -44,14 +48,22 @@ func ServeChatQuickSend(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
 			return
 		}
-		id, err := service.AddChatQuickSend(req.Label, req.Command)
+		projectPath := ""
+		if req.ProjectOnly {
+			projectPath = middleware.GetProjectFromCookie(r)
+			if projectPath == "" {
+				writeLocalizedError(w, r, model.Forbidden(nil, "NoProjectSelected"))
+				return
+			}
+		}
+		id, err := service.AddChatQuickSend(req.Label, req.Command, projectPath)
 		if err != nil {
 			slog.Error("failed to add chat quick-send item", slog.String("error", err.Error()))
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
-			"id": id, "label": req.Label, "command": req.Command,
+			"id": id, "label": req.Label, "command": req.Command, "project_only": req.ProjectOnly,
 		})
 
 	case http.MethodPut:
@@ -102,8 +114,9 @@ func ServeChatQuickSendByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		var req struct {
-			Label   string `json:"label"`
-			Command string `json:"command"`
+			Label       string `json:"label"`
+			Command     string `json:"command"`
+			ProjectOnly bool   `json:"project_only"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -118,7 +131,15 @@ func ServeChatQuickSendByID(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
 			return
 		}
-		if err := service.UpdateChatQuickSend(id, req.Label, req.Command); err != nil {
+		projectPath := ""
+		if req.ProjectOnly {
+			projectPath = middleware.GetProjectFromCookie(r)
+			if projectPath == "" {
+				writeLocalizedError(w, r, model.Forbidden(nil, "NoProjectSelected"))
+				return
+			}
+		}
+		if err := service.UpdateChatQuickSend(id, req.Label, req.Command, projectPath); err != nil {
 			slog.Error("failed to update chat quick-send item", slog.String("error", err.Error()))
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return

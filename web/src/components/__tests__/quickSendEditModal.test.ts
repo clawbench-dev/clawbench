@@ -168,7 +168,21 @@ describe('QuickSendEditModal', () => {
       saveBtn!.click()
       await nextTick()
 
-      expect(mockAddItem).toHaveBeenCalledWith({ label: '继续', command: '请继续执行' })
+      expect(mockAddItem).toHaveBeenCalledWith({ label: '继续', command: '请继续执行', project_only: false })
+    })
+
+    it('sends project_only when checkbox is checked', async () => {
+      mockAddItem.mockResolvedValue(true)
+      const wrapper = mountModal()
+      await setFormVm(wrapper, '继续', '请继续执行')
+      ;(wrapper.vm as any).form.project_only = true
+      await nextTick()
+
+      const saveBtn = q('.modal-btn.primary') as HTMLElement
+      saveBtn!.click()
+      await nextTick()
+
+      expect(mockAddItem).toHaveBeenCalledWith({ label: '继续', command: '请继续执行', project_only: true })
     })
 
     it('calls updateItem when saving edited item', async () => {

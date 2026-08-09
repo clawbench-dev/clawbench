@@ -161,10 +161,11 @@ func TerminalConfigHandler(w http.ResponseWriter, r *http.Request) {
 
 // ServeQuickCommands handles GET (list) and POST (create) for quick commands,
 // and PUT /reorder for batch reordering.
-func ServeQuickCommands(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // multi-method quick command handler
+func ServeQuickCommands(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocognit // multi-method quick command handler
 	switch r.Method {
 	case http.MethodGet:
-		cmds, err := service.GetQuickCommands()
+		projectPath := middleware.GetProjectFromCookie(r)
+		cmds, err := service.GetQuickCommands(projectPath)
 		if err != nil {
 			slog.Error("failed to get quick commands", slog.String("error", err.Error()))
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
@@ -181,6 +182,7 @@ func ServeQuickCommands(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 			Command     string `json:"command"`
 			Hidden      bool   `json:"hidden"`
 			AutoExecute bool   `json:"auto_execute"`
+			ProjectOnly bool   `json:"project_only"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -195,7 +197,15 @@ func ServeQuickCommands(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
 			return
 		}
-		id, err := service.AddQuickCommand(req.Label, req.Command, req.Hidden, req.AutoExecute)
+		projectPath := ""
+		if req.ProjectOnly {
+			projectPath = middleware.GetProjectFromCookie(r)
+			if projectPath == "" {
+				writeLocalizedError(w, r, model.Forbidden(nil, "NoProjectSelected"))
+				return
+			}
+		}
+		id, err := service.AddQuickCommand(req.Label, req.Command, req.Hidden, req.AutoExecute, projectPath)
 		if err != nil {
 			slog.Error("failed to add quick command", slog.String("error", err.Error()))
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
@@ -203,7 +213,7 @@ func ServeQuickCommands(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"id": id, "label": req.Label, "command": req.Command,
-			"hidden": req.Hidden, "auto_execute": req.AutoExecute,
+			"hidden": req.Hidden, "auto_execute": req.AutoExecute, "project_only": req.ProjectOnly,
 		})
 
 	case http.MethodPut:
@@ -258,6 +268,7 @@ func ServeQuickCommandByID(w http.ResponseWriter, r *http.Request) {
 			Command     string `json:"command"`
 			Hidden      bool   `json:"hidden"`
 			AutoExecute bool   `json:"auto_execute"`
+			ProjectOnly bool   `json:"project_only"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -272,7 +283,15 @@ func ServeQuickCommandByID(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
 			return
 		}
-		if err := service.UpdateQuickCommand(id, req.Label, req.Command, req.Hidden, req.AutoExecute); err != nil {
+		projectPath := ""
+		if req.ProjectOnly {
+			projectPath = middleware.GetProjectFromCookie(r)
+			if projectPath == "" {
+				writeLocalizedError(w, r, model.Forbidden(nil, "NoProjectSelected"))
+				return
+			}
+		}
+		if err := service.UpdateQuickCommand(id, req.Label, req.Command, req.Hidden, req.AutoExecute, projectPath); err != nil {
 			slog.Error("failed to update quick command", slog.String("error", err.Error()))
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return

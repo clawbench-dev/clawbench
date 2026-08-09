@@ -5,6 +5,7 @@ export interface QuickSendItem {
   label: string
   command: string
   sort_order: number
+  project_only: boolean
 }
 
 export function useQuickSend() {

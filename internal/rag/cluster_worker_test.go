@@ -85,6 +85,7 @@ func setupTestDBForClusterWorker(t *testing.T) func() {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

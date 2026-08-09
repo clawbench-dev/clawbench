@@ -17,6 +17,10 @@
         <label class="form-label">{{ t('chat.quickSend.itemCommand') }} <span class="required">*</span></label>
         <textarea class="form-input form-textarea" v-model="form.command" :placeholder="t('chat.quickSend.itemCommand')" rows="8" />
       </div>
+      <label class="form-checkbox">
+        <input type="checkbox" v-model="form.project_only" />
+        <span>{{ t('chat.quickSend.projectOnly') }}</span>
+      </label>
       <div v-if="formError" class="form-error">{{ formError }}</div>
     </div>
 
@@ -41,7 +45,6 @@ const props = defineProps<{
   editingItem: QuickSendItem | null
   initialValues?: { label: string; command: string }
 }>()
-
 const emit = defineEmits<{
   close: []
   saved: []
@@ -51,7 +54,7 @@ const { t } = useI18n()
 const toast = useToast()
 const { addItem, updateItem } = useQuickSend()
 
-const form = ref({ label: '', command: '' })
+const form = ref({ label: '', command: '', project_only: false })
 const formError = ref('')
 const saving = ref(false)
 
@@ -59,11 +62,11 @@ const saving = ref(false)
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     if (props.editingItem) {
-      form.value = { label: props.editingItem.label, command: props.editingItem.command }
+      form.value = { label: props.editingItem.label, command: props.editingItem.command, project_only: props.editingItem.project_only }
     } else if (props.initialValues) {
-      form.value = { label: props.initialValues.label, command: props.initialValues.command }
+      form.value = { label: props.initialValues.label, command: props.initialValues.command, project_only: false }
     } else {
-      form.value = { label: '', command: '' }
+      form.value = { label: '', command: '', project_only: false }
     }
     formError.value = ''
   }
@@ -83,9 +86,9 @@ async function saveItem() {
   try {
     let ok: boolean
     if (props.editingItem) {
-      ok = await updateItem(props.editingItem.id, { label, command })
+      ok = await updateItem(props.editingItem.id, { label, command, project_only: form.value.project_only })
     } else {
-      ok = await addItem({ label, command })
+      ok = await addItem({ label, command, project_only: form.value.project_only })
     }
 
     if (ok) {
@@ -149,6 +152,21 @@ async function saveItem() {
 .form-error {
   font-size: 12px;
   color: #e53e3e;
+}
+
+.form-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.form-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-color, #0066cc);
 }
 
 .modal-btn {

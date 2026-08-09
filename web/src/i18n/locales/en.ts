@@ -297,6 +297,7 @@ export default {
       deleteItem: 'Delete',
       deleteConfirm: 'Delete this item?',
       emptyHint: 'No quick sends yet, tap + to add',
+      projectOnly: 'This project only',
     },
     messageClusters: {
       title: 'Message Recommendations',
@@ -1621,7 +1622,9 @@ export default {
     commandText: 'Command',
     commandHidden: 'Hidden (not shown in quick menu)',
     commandAutoExecute: 'Auto execute (run when terminal opens)',
-    autoExecuteWarning: 'This will disable auto-execute on other commands',
+    autoExecuteWarning: 'This will disable auto-execute on other commands in this project',
+    commandProjectOnly: 'This project only',
+    commandProjectOnlyHint: 'When checked, this command only shows in the current project; otherwise it is global',
     commandRequired: 'Label and command are required',
     commandSaved: 'Command saved',
     commandDeleted: 'Command deleted',
