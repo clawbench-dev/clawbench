@@ -671,55 +671,57 @@ watch(lightboxVisible, (visible) => {
     }
 })
 
+function handleLightboxClick(e) {
+    // Touch mode: direct click on .lightbox-img or .mermaid opens lightbox
+    // PC mode: only click on .lightbox-expand-icon opens lightbox
+    const isExpandIcon = !!e.target.closest('.lightbox-expand-icon')
+    // PC mode: only expand icon opens lightbox (not the image/mermaid itself)
+    if (!isExpandIcon && e.pointerType !== 'touch') return
+
+    // When clicking the expand icon, find the image from the wrapper
+    // (the icon is a sibling of the img, not a child)
+    let img
+    if (isExpandIcon) {
+        const wrap = e.target.closest('.lightbox-img-wrap')
+        img = wrap ? wrap.querySelector('.lightbox-img') : null
+    } else {
+        img = e.target.closest('.lightbox-img')
+    }
+    if (img) {
+        e.preventDefault()
+        // Check if the image is inside a markdown body — collect sibling images for navigation
+        const mdContainer = img.closest('.markdown-body, .chat-message')
+        if (mdContainer) {
+            const allImgs = mdContainer.querySelectorAll('img')
+            if (allImgs.length > 1) {
+                const { list, startIdx } = collectMdImages(mdContainer, img)
+                if (list.length > 1) {
+                    openMdImages(list, startIdx)
+                    return
+                }
+            }
+        }
+        open(fullImgSrc(img))
+        return
+    }
+    const mermaidDiv = e.target.closest('.markdown-body .mermaid, .chat-message .mermaid')
+    if (mermaidDiv) {
+        e.preventDefault()
+        const svg = mermaidDiv.querySelector('svg')
+        if (svg) openSvg(svg.outerHTML)
+    }
+}
+
 onMounted(() => {
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-    // Listen for clicks on images and mermaid diagrams to open lightbox
-    document.addEventListener('click', (e) => {
-        // Touch mode: direct click on .lightbox-img or .mermaid opens lightbox
-        // PC mode: only click on .lightbox-expand-icon opens lightbox
-        const isExpandIcon = !!e.target.closest('.lightbox-expand-icon')
-        // PC mode: only expand icon opens lightbox (not the image/mermaid itself)
-        if (!isExpandIcon && e.pointerType !== 'touch') return
-
-        // When clicking the expand icon, find the image from the wrapper
-        // (the icon is a sibling of the img, not a child)
-        let img
-        if (isExpandIcon) {
-            const wrap = e.target.closest('.lightbox-img-wrap')
-            img = wrap ? wrap.querySelector('.lightbox-img') : null
-        } else {
-            img = e.target.closest('.lightbox-img')
-        }
-        if (img) {
-            e.preventDefault()
-            // Check if the image is inside a markdown body — collect sibling images for navigation
-            const mdContainer = img.closest('.markdown-body, .chat-message')
-            if (mdContainer) {
-                const allImgs = mdContainer.querySelectorAll('img')
-                if (allImgs.length > 1) {
-                    const { list, startIdx } = collectMdImages(mdContainer, img)
-                    if (list.length > 1) {
-                        openMdImages(list, startIdx)
-                        return
-                    }
-                }
-            }
-            open(fullImgSrc(img))
-            return
-        }
-        const mermaidDiv = e.target.closest('.markdown-body .mermaid, .chat-message .mermaid')
-        if (mermaidDiv) {
-            e.preventDefault()
-            const svg = mermaidDiv.querySelector('svg')
-            if (svg) openSvg(svg.outerHTML)
-        }
-    })
+    document.addEventListener('click', handleLightboxClick)
 })
 
 onUnmounted(() => {
     document.removeEventListener('mousemove', handleMouseMove)
     document.removeEventListener('mouseup', handleMouseUp)
+    document.removeEventListener('click', handleLightboxClick)
     if (unregisterBack) {
         unregisterBack()
         unregisterBack = null

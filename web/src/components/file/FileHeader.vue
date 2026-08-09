@@ -146,7 +146,7 @@
               {{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}
             </button>
             <!-- Collapsible extra items (shown inline when space allows) -->
-            <button v-if="file.isBinary && toolbarCollapsedIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText; menuOpen = false">
+            <button v-if="file.isBinary && toolbarCollapsedIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText(); menuOpen = false">
               <Code2 :size="14" />
               {{ t('file.header.openAsText') }}
             </button>
@@ -162,7 +162,7 @@
               <Download :size="14" />
               {{ t('common.download') }}
             </button>
-            <button v-if="isMarkdown && viewMode === 'rendered' && toolbarCollapsedIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml; menuOpen = false">
+            <button v-if="isMarkdown && viewMode === 'rendered' && toolbarCollapsedIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml(); menuOpen = false">
               <FileOutput :size="14" />
               {{ t('file.header.exportHtml') }}
             </button>
@@ -174,7 +174,7 @@
               <GitBranch :size="14" />
               {{ t('file.header.fileHistory') }}
             </button>
-            <button v-if="toolbarCollapsedIds.includes('delete')" class="dropdown-item danger" @click="handleDelete; menuOpen = false">
+            <button v-if="toolbarCollapsedIds.includes('delete')" class="dropdown-item danger" @click="handleDelete(); menuOpen = false">
               <Trash2 :size="14" />
               {{ t('common.delete') }}
             </button>
