@@ -154,6 +154,7 @@ import GitCommitMeta from './GitCommitMeta.vue'
 import GitDiffView from './GitDiffView.vue'
 import GitBreadcrumb from './GitBreadcrumb.vue'
 import { renderDiff } from '@/utils/diff.ts'
+import { buildFileHistoryCommits } from '@/utils/gitFileHistory.ts'
 import { store } from '@/stores/app.ts'
 import { useCommitNavigation, consumePendingCommitNavigation } from '@/composables/useCommitNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_OVERLAY } from '@/composables/useEdgeSwipeBack'
@@ -341,7 +342,18 @@ async function loadFileHistory(filePath) {
     }
     isGit.value = true
     untracked.value = !!hist.untracked
-    commits.value = hist.commits || []
+
+    // Prepend a working-tree entry only when this specific file has
+    // uncommitted changes. Otherwise file history shows commits only.
+    let hasUncommitted = false
+    const wtResp = await fetch(`/api/git/working-tree?path=${encodeURIComponent(filePath)}`)
+    if (wtResp.ok) {
+      const wt = await wtResp.json()
+      hasUncommitted = !!wt.hasUncommitted
+    }
+
+    const histCommits = hist.commits || []
+    commits.value = buildFileHistoryCommits(histCommits, hasUncommitted, t('git.history.workingTreeChanges'))
   } catch {
     error.value = t('git.history.loadError')
   } finally {
