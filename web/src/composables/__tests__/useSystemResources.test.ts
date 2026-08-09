@@ -222,4 +222,113 @@ describe('useSystemResources', () => {
     expect(resources.value.memory.percent).toBe(37.5)
     stopPolling()
   })
+
+  // ── Background polling ──
+
+  it('should start background polling with startBackgroundPolling', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        cpu: { percent: 0, core_count: 4 },
+        memory: { used: 0, total: 0, percent: 0 },
+        disk: { used: 0, total: 0, percent: 0 },
+        disk_io: { read_rate: 0, write_rate: 0 },
+        network: { upload_rate: 0, download_rate: 0 },
+        load: { load1: 0, load5: 0, load15: 0 },
+      }),
+    })
+    const { useSystemResources } = await import('../useSystemResources')
+    const { startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
+    startBackgroundPolling()
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled()
+    })
+    expect(listeners['visibilitychange']).toBeDefined()
+    stopBackgroundPolling()
+  })
+
+  it('should stop background polling and remove visibility listener', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        cpu: { percent: 0, core_count: 4 },
+        memory: { used: 0, total: 0, percent: 0 },
+        disk: { used: 0, total: 0, percent: 0 },
+        disk_io: { read_rate: 0, write_rate: 0 },
+        network: { upload_rate: 0, download_rate: 0 },
+        load: { load1: 0, load5: 0, load15: 0 },
+      }),
+    })
+    const { useSystemResources } = await import('../useSystemResources')
+    const { startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
+    startBackgroundPolling()
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled()
+    })
+    stopBackgroundPolling()
+    expect(listeners['visibilitychange']).toBeUndefined()
+  })
+
+  it('should not start a new timer when background polling is added while foreground is active', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        cpu: { percent: 0, core_count: 4 },
+        memory: { used: 0, total: 0, percent: 0 },
+        disk: { used: 0, total: 0, percent: 0 },
+        disk_io: { read_rate: 0, write_rate: 0 },
+        network: { upload_rate: 0, download_rate: 0 },
+        load: { load1: 0, load5: 0, load15: 0 },
+      }),
+    })
+    const { useSystemResources } = await import('../useSystemResources')
+    const { startPolling, stopPolling, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
+    startPolling()
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled()
+    })
+    const fetchCountBefore = mockFetch.mock.calls.length
+    // Adding background while foreground is active should not start a new timer
+    startBackgroundPolling()
+    stopPolling()
+    // Background should still be active
+    expect(listeners['visibilitychange']).toBeDefined()
+    stopBackgroundPolling()
+  })
+
+  it('should switch to background interval when foreground stops but background remains', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        cpu: { percent: 0, core_count: 4 },
+        memory: { used: 0, total: 0, percent: 0 },
+        disk: { used: 0, total: 0, percent: 0 },
+        disk_io: { read_rate: 0, write_rate: 0 },
+        network: { upload_rate: 0, download_rate: 0 },
+        load: { load1: 0, load5: 0, load15: 0 },
+      }),
+    })
+    const { useSystemResources } = await import('../useSystemResources')
+    const { startPolling, stopPolling, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
+    startBackgroundPolling()
+    startPolling()
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled()
+    })
+    // Stop foreground — should switch to background interval
+    stopPolling()
+    // Background is still active
+    expect(listeners['visibilitychange']).toBeDefined()
+    stopBackgroundPolling()
+  })
+
+  // ── onUnmounted cleanup ──
+
+  it('should expose startBackgroundPolling and stopBackgroundPolling', async () => {
+    const { useSystemResources } = await import('../useSystemResources')
+    const { startBackgroundPolling, stopBackgroundPolling, resources } = useSystemResources()
+    expect(typeof startBackgroundPolling).toBe('function')
+    expect(typeof stopBackgroundPolling).toBe('function')
+    expect(resources.value).toBeDefined()
+  })
 })

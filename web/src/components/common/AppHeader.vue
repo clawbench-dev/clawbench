@@ -151,7 +151,7 @@ const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
 const { isAppMode } = useAppMode()
 const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
-const switchTab = inject('switchTab')
+const switchTab = inject<(tab: string) => void>('switchTab')
 
 const props = defineProps({
     projectRoot: String,
@@ -166,8 +166,8 @@ const { entries: recentFileEntries } = useRecentFiles()
 
 // Recent files quick-index dropdown state
 const fileDropdownOpen = ref(false)
-const fileDropdownPanelRef = ref(null)
-const fileDropdownStyle = ref({})
+const fileDropdownPanelRef = ref<HTMLElement | null>(null)
+const fileDropdownStyle = ref<Record<string, string>>({})
 
 function toggleFileDropdown() {
     if (fileDropdownOpen.value) {
@@ -188,7 +188,7 @@ function updateFileDropdownPosition(useEstimate = false) {
     positionDropdown(el, fileDropdownPanelRef, fileDropdownStyle, useEstimate ? estimatePanelWidth(el) : undefined)
 }
 
-function selectRecentFile(entry) {
+function selectRecentFile(entry: { path: string }) {
     fileDropdownOpen.value = false
     emit('selectRecentFile', entry.path)
 }
@@ -196,10 +196,10 @@ function selectRecentFile(entry) {
 function openFileManager() {
     fileDropdownOpen.value = false
     if (store.state.currentFile?.path) store.closeCurrentFile()
-    switchTab?.('browse')
+    switchTab('browse')
 }
 
-function dirName(path) {
+function dirName(path: string) {
     const idx = path.lastIndexOf('/')
     return idx > 0 ? path.substring(0, idx) : ''
 }
@@ -207,9 +207,9 @@ function dirName(path) {
 // Branch quick-index dropdown
 const branchDropdownOpen = ref(false)
 const branchDropdownLoading = ref(false)
-const branchList = ref([])
-const branchDropdownPanelRef = ref(null)
-const branchDropdownStyle = ref({})
+const branchList = ref<BranchEntry[]>([])
+const branchDropdownPanelRef = ref<HTMLElement | null>(null)
+const branchDropdownStyle = ref<Record<string, string>>({})
 
 function toggleBranchDropdown() {
     if (branchDropdownOpen.value) {
@@ -232,7 +232,7 @@ function updateBranchDropdownPosition(useEstimate = false) {
 async function loadBranches() {
     branchDropdownLoading.value = true
     try {
-        const data = await apiGet('/api/git/branches')
+        const data = await apiGet('/api/git/branches') as { branches?: BranchEntry[] }
         branchList.value = data.branches || []
     } catch {
         branchList.value = []
@@ -245,7 +245,7 @@ async function loadBranches() {
     }
 }
 
-async function selectBranch(b) {
+async function selectBranch(b: BranchEntry) {
     branchDropdownOpen.value = false
     if (b.name === gitBranch.value) return
     const ok = await dialog.confirm(
@@ -254,7 +254,7 @@ async function selectBranch(b) {
     )
     if (!ok) return
     try {
-        const result = await apiPost('/api/git/checkout', { branch: b.name })
+        const result = await apiPost('/api/git/checkout', { branch: b.name }) as { success?: boolean; error?: string; errorDetail?: string }
         if (result.success) {
             await store.loadGitBranch()
             await store.loadFiles(store.state.currentDir)
@@ -276,7 +276,7 @@ async function selectBranch(b) {
  * are still loading) differs from the settled width, causing the horizontally
  * centered position to jump between opens.
  */
-function deferPosition(update) {
+function deferPosition(update: () => void) {
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             update()
@@ -291,7 +291,7 @@ function deferPosition(update) {
  *     caused the visible flash.
  *  2. After a double rAF, with the measured real width, for a precise fit.
  */
-function positionDropdown(anchorEl, panelRef, styleRef, estimatedWidth) {
+function positionDropdown(anchorEl: Element | null, panelRef: { value: HTMLElement | null }, styleRef: { value: Record<string, string> }, estimatedWidth?: number) {
     if (!anchorEl) return
     const anchorRect = anchorEl.getBoundingClientRect()
     const margin = 8
@@ -326,7 +326,7 @@ function positionDropdown(anchorEl, panelRef, styleRef, estimatedWidth) {
 }
 
 /** Estimated initial width — matches the minWidth set in positionDropdown. */
-function estimatePanelWidth(anchorEl) {
+function estimatePanelWidth(anchorEl: Element | null) {
     if (!anchorEl) return 200
     const vw = window.innerWidth
     const maxPanelWidth = Math.min(320, vw - 16)
@@ -335,8 +335,8 @@ function estimatePanelWidth(anchorEl) {
 
 const dialog = useDialog()
 
-const toast = inject('toast')
-const hotSwitchProject = inject('hotSwitchProject')
+const toast = inject<{ show: (msg: string, opts?: Record<string, unknown>) => void }>('toast')
+const hotSwitchProject = inject<(path: string) => Promise<void>>('hotSwitchProject')
 
 // Status color class for the Server icon
 const statusDotClass = computed(() => {
@@ -434,7 +434,7 @@ watch(gitBranch, (newVal, oldVal) => {
 function openHistory() {
     branchDropdownOpen.value = false
     setPendingManageNavigation()
-    switchTab?.('history')
+    switchTab('history')
 }
 
 // Refresh branch when project changes
@@ -444,13 +444,23 @@ watch(() => props.projectRoot, (newRoot) => {
 
 // Dropdown state
 const dropdownOpen = ref(false)
-const dropdownRef = ref(null)
-const dropdownPanelRef = ref(null)
+const dropdownRef = ref<HTMLElement | null>(null)
+const dropdownPanelRef = ref<HTMLElement | null>(null)
 const loadingRecent = ref(false)
-const recentItems = ref([])
+interface RecentItem {
+  name: string
+  path: string
+  displayPath: string
+}
+
+interface BranchEntry {
+  name: string
+}
+
+const recentItems = ref<RecentItem[]>([])
 
 // Dynamic dropdown positioning (teleported to body, needs fixed positioning)
-const dropdownStyle = ref({})
+const dropdownStyle = ref<Record<string, string>>({})
 
 function updateDropdownPosition(useEstimate = false) {
     const el = document.querySelector('.project-switch-btn')
@@ -475,7 +485,7 @@ async function loadRecentProjects() {
     try {
         const resp = await fetch('/api/recent-projects')
         const paths = await resp.json()
-        recentItems.value = paths.map(p => {
+        recentItems.value = paths.map((p: string) => {
             const name = baseName(p)
             // Display relative to home directory for cleaner paths
             // Normalize separators for comparison (Windows uses backslashes)
@@ -498,7 +508,7 @@ async function loadRecentProjects() {
     }
 }
 
-async function selectRecent(item) {
+async function selectRecent(item: RecentItem) {
     dropdownOpen.value = false
     if (item.path === props.projectRoot) return
     try {
@@ -546,7 +556,7 @@ function openBrowse() {
 }
 
 // Close dropdown on outside click
-function onClickOutside(e) {
+function onClickOutside(e: MouseEvent) {
     if (dropdownRef.value && dropdownRef.value.contains(e.target)) return
     if (dropdownPanelRef.value && dropdownPanelRef.value.contains(e.target)) return
     if (fileDropdownPanelRef.value && fileDropdownPanelRef.value.contains(e.target)) return
@@ -563,14 +573,14 @@ function onClickOutside(e) {
 // Track whether the path element was dragged, so click can decide to bubble or not
 let pathDragged = false
 
-function onPathMouseDown(e) {
-    const el = e.currentTarget
+function onPathMouseDown(e: MouseEvent) {
+    const el = e.currentTarget as HTMLElement
     pathDragged = false
     if (el.scrollWidth <= el.clientWidth) return
     let startX = e.pageX
     let scrollLeft = el.scrollLeft
 
-    function onMouseMove(ev) {
+    function onMouseMove(ev: MouseEvent) {
         const dx = ev.pageX - startX
         if (Math.abs(dx) > 2) pathDragged = true
         el.scrollLeft = scrollLeft - dx
@@ -583,7 +593,7 @@ function onPathMouseDown(e) {
     document.addEventListener('mouseup', onMouseUp)
 }
 
-function onPathClick(e) {
+function onPathClick(e: MouseEvent) {
     if (pathDragged) {
         e.stopPropagation()
     }
@@ -593,17 +603,17 @@ function onPathClick(e) {
 // --- Logout (APP mode) ---
 function handleLogout() {
     resourcesMenuOpen.value = false
-    if (window.AndroidNative?.showServerDialog) {
-        window.AndroidNative.showServerDialog()
+    if ((window as unknown as { AndroidNative?: { showServerDialog: () => void } }).AndroidNative?.showServerDialog) {
+        (window as unknown as { AndroidNative: { showServerDialog: () => void } }).AndroidNative.showServerDialog()
     } else {
         window.location.href = '/login'
     }
 }
 
 // --- System resources monitor (Server icon button) ---
-const serverBtnRef = ref(null)
+const serverBtnRef = ref<HTMLElement | null>(null)
 const resourcesMenuOpen = ref(false)
-const resourcesPanelRef = ref(null)
+const resourcesPanelRef = ref<{ startPolling?: () => void; stopPolling?: () => void } | null>(null)
 
 function toggleResourcesMenu() {
     resourcesMenuOpen.value = !resourcesMenuOpen.value

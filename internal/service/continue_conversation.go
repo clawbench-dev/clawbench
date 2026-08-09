@@ -283,7 +283,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	if overrideAgentID != "" {
 		if agent, ok := model.Agents[overrideAgentID]; ok {
 			agentID = overrideAgentID
-			agentSource = "user"
+			agentSource = cancelReasonUser
 			if agent.Backend != "" {
 				backend = agent.Backend
 			}

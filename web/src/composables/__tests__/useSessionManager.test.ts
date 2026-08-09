@@ -45,13 +45,14 @@ function createMockOptions() {
     const switchSessionCore = vi.fn()
     const createSessionCore = vi.fn()
     const archiveSessionCore = vi.fn()
+    const destroySessionCore = vi.fn()
     const disconnectStream = vi.fn()
     const updateRenderedContents = vi.fn()
     const clearInputState = vi.fn()
     const scrollBottom = vi.fn()
     return {
         messages, loading,
-        switchSessionCore, createSessionCore, archiveSessionCore,
+        switchSessionCore, createSessionCore, archiveSessionCore, destroySessionCore,
         continueFromExecutionCore: vi.fn().mockResolvedValue(true),
         forkSessionCore: vi.fn().mockResolvedValue(true),
         checkContinueSessionCore: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
@@ -620,6 +621,121 @@ describe('useSessionManager', () => {
                 openChatPanel: vi.fn(),
             }
             expect(() => mgr.registerIdentityActions(mockExtra)).not.toThrow()
+        })
+    })
+
+    // ── forkSession ──
+
+    describe('forkSession', () => {
+        it('calls cleanup, clears input and pending messages, then delegates to forkSessionCore', async () => {
+            const opts = createMockOptions()
+            opts.loading.value = true
+            opts.messages.value.push({
+                role: 'user', content: 'pending', blocks: [], files: [], createdAt: '', pending: true,
+            })
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.forkSession('session-1', 42, 'agent-2')
+
+            expect(opts.disconnectStream).toHaveBeenCalled()
+            expect(opts.clearInputState).toHaveBeenCalled()
+            expect(opts.messages.value.some((m: any) => m.pending)).toBe(false)
+            expect(opts.forkSessionCore).toHaveBeenCalledWith('session-1', 42, 'agent-2')
+            expect(result).toBe(true)
+        })
+
+        it('calls forkSessionCore without optional args', async () => {
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            await mgr.forkSession('session-1')
+
+            expect(opts.forkSessionCore).toHaveBeenCalledWith('session-1', undefined, undefined)
+        })
+    })
+
+    // ── destroySession ──
+
+    describe('destroySession', () => {
+        it('calls cleanup, cancels running session, clears queue, then destroys', async () => {
+            const opts = createMockOptions()
+            opts.loading.value = true
+            mockRunningSessions.value = new Set(['session-2'])
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.destroySession('session-2')
+
+            expect(opts.disconnectStream).toHaveBeenCalled()
+            expect(mockCancelChat).toHaveBeenCalledWith('session-2')
+            expect(fetchSpy).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/queue?session_id=session-2'),
+                { method: 'DELETE' },
+            )
+            expect(opts.destroySessionCore).toHaveBeenCalledWith('session-2')
+
+            fetchSpy.mockRestore()
+        })
+    })
+
+    // ── destroyCurrentSession ──
+
+    describe('destroyCurrentSession', () => {
+        it('returns early if no current session', async () => {
+            const opts = createMockOptions()
+            mockCurrentSessionId.value = ''
+            const mgr = useSessionManager(opts)
+
+            const deleteDraft = vi.fn()
+            await mgr.destroyCurrentSession(deleteDraft)
+
+            expect(opts.destroySessionCore).not.toHaveBeenCalled()
+            expect(deleteDraft).not.toHaveBeenCalled()
+        })
+
+        it('destroys current session and calls deleteDraft', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+            const deleteDraft = vi.fn()
+
+            await mgr.destroyCurrentSession(deleteDraft)
+
+            expect(opts.destroySessionCore).toHaveBeenCalledWith('session-1')
+            expect(deleteDraft).toHaveBeenCalledWith('session-1')
+
+            fetchSpy.mockRestore()
+        })
+    })
+
+    // ── continueFromExecution ──
+
+    describe('continueFromExecution', () => {
+        it('calls cleanup then delegates to continueFromExecutionCore', async () => {
+            const opts = createMockOptions()
+            opts.loading.value = true
+            const switchTabFn = vi.fn()
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.continueFromExecution(1, 2, switchTabFn)
+
+            expect(opts.disconnectStream).toHaveBeenCalled()
+            expect(opts.continueFromExecutionCore).toHaveBeenCalledWith(1, 2, switchTabFn)
+            expect(result).toBe(true)
+        })
+    })
+
+    // ── checkContinueSession ──
+
+    describe('checkContinueSession', () => {
+        it('delegates to checkContinueSessionCore', async () => {
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.checkContinueSession(1, 2)
+
+            expect(opts.checkContinueSessionCore).toHaveBeenCalledWith(1, 2)
+            expect(result).toEqual({ exists: false, sessionId: '' })
         })
     })
 })
