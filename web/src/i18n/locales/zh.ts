@@ -770,6 +770,10 @@ export default {
       exitEdit: '退出编辑',
       confirmExit: '你有未保存的修改，退出前是否保存？',
       dontSave: '不保存',
+      externalChangeTitle: '文件已变更',
+      externalChange: '该文件已在别处被修改。是否重新加载？',
+      reload: '重新加载',
+      keepChanges: '保留当前内容',
     },
     overlay: {
       back: '返回',

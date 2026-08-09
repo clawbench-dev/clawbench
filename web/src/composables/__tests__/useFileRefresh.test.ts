@@ -84,6 +84,27 @@ vi.mock('@/composables/useFileNavStack.ts', () => ({
   useFileNavStack: vi.fn(() => ({ removePath: vi.fn() })),
 }))
 
+// Mock editing + dialog so the external-change confirmation can be controlled.
+const isEditingMock = vi.hoisted(() => vi.fn(() => false))
+vi.mock('@/composables/useFileEditor.ts', () => ({
+  useFileEditor: () => ({
+    editing: { value: false },
+    isEditing: isEditingMock,
+    setEditing: vi.fn(),
+    registerExitEditHandler: vi.fn(),
+    exitEdit: vi.fn(),
+  }),
+}))
+const confirmDialogMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
+vi.mock('@/composables/useDialog.ts', () => ({
+  useDialog: () => ({
+    confirm: confirmDialogMock,
+    prompt: vi.fn(),
+    alert: vi.fn(),
+    state: { value: { visible: false } },
+  }),
+}))
+
 import { refreshCurrentFile, flashRanges, flashType } from '../useFileRefresh.ts'
 import { store } from '@/stores/app.ts'
 import { computeDiff } from '@/utils/diffUtils.ts'
@@ -445,5 +466,62 @@ describe('useFileRefresh clearOnError', () => {
     expect(removePathMock).not.toHaveBeenCalled()
 
     globalThis.fetch = originalFetch
+  })
+})
+
+describe('useFileRefresh external-change confirmation while editing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    flashRanges.value = []
+    flashType.value = 'add'
+    diffMarkers.value = []
+    diffOldContent.value = null
+  })
+
+  const setFetch = (content: string, ok = true) => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok,
+      json: () => Promise.resolve(ok ? { content } : { error: 'File not found' }),
+    })
+  }
+
+  it('does not prompt when not editing', async () => {
+    isEditingMock.mockReturnValue(false)
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'old\n' }
+    setFetch('new\n')
+    await refreshCurrentFile()
+    expect(confirmDialogMock).not.toHaveBeenCalled()
+    expect(store.selectFile).toHaveBeenCalled()
+  })
+
+  it('does not prompt when editing but content is unchanged on disk', async () => {
+    isEditingMock.mockReturnValue(true)
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'same\n' }
+    setFetch('same\n')
+    await refreshCurrentFile()
+    expect(confirmDialogMock).not.toHaveBeenCalled()
+    expect(store.selectFile).toHaveBeenCalled()
+  })
+
+  it('aborts the refresh (no selectFile, flash cleared) when editing, external change, and user keeps current', async () => {
+    isEditingMock.mockReturnValue(true)
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'old\n' }
+    setFetch('new\n')
+    confirmDialogMock.mockResolvedValue(false)
+    flashRanges.value = [{ line: 1, start: 0, end: 3 }]
+    await refreshCurrentFile()
+    expect(confirmDialogMock).toHaveBeenCalled()
+    expect(store.selectFile).not.toHaveBeenCalled()
+    expect(flashRanges.value).toEqual([])
+  })
+
+  it('proceeds with reload when editing, external change, and user confirms', async () => {
+    isEditingMock.mockReturnValue(true)
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'old\n' }
+    setFetch('new\n')
+    confirmDialogMock.mockResolvedValue(true)
+    await refreshCurrentFile()
+    expect(confirmDialogMock).toHaveBeenCalled()
+    expect(store.selectFile).toHaveBeenCalled()
   })
 })

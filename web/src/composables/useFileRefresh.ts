@@ -29,6 +29,9 @@ import {
   type DiffResult,
 } from '@/composables/useMarkdownDiff.ts'
 import { getFileType } from '@/utils/fileType.ts'
+import { useFileEditor } from '@/composables/useFileEditor.ts'
+import { useDialog } from '@/composables/useDialog.ts'
+import i18n from '@/i18n'
 
 // ─── Flash state (consumed by CodePreview for code/raw files) ───
 
@@ -136,6 +139,27 @@ function isCurrentFileMarkdown(): boolean {
     const name = store.state.currentFile?.name
     if (!name) return false
     return getFileType(name)?.isMarkdown || false
+}
+
+/**
+ * True when the file is being edited in the browser AND the on-disk content
+ * differs from what's currently loaded — i.e. an external modification that
+ * would otherwise silently clobber the user's in-progress edits.
+ */
+function shouldPromptExternalReload(newContent: string | null, oldContent: string | null): boolean {
+    if (newContent === null) return false
+    if (newContent === oldContent) return false
+    return useFileEditor().isEditing()
+}
+
+/** Ask the user whether to reload an externally-modified file. */
+function confirmExternalReload(): Promise<boolean> {
+    const t = i18n.global.t
+    return useDialog().confirm(t('file.editor.externalChange'), {
+        title: t('file.editor.externalChangeTitle'),
+        confirmText: t('file.editor.reload'),
+        cancelText: t('file.editor.keepChanges'),
+    })
 }
 
 /**
@@ -259,6 +283,19 @@ async function doRefreshCurrentFile(options: {
 
   const newContent = await prefetchFileContent(currentFilePath)
   if (gen !== refreshGeneration) return
+
+  // ─── External-change guard ───
+  // If the user is editing this file and it changed on disk elsewhere, ask
+  // before replacing the buffer so their in-progress edits aren't silently
+  // discarded. Declining aborts the whole refresh (no store update, no flash).
+  if (shouldPromptExternalReload(newContent, oldContent)) {
+      const reload = await confirmExternalReload()
+      if (!reload) {
+          clearFlash()
+          clearDiffMarkers()
+          return
+      }
+  }
 
   let diffResult: LineDiff | null = null
   let codeMarkers: DiffMarker[] | null = null

@@ -445,6 +445,11 @@ watch(() => props.content, (c) => {
         canUndo.value = false
         canRedo.value = false
         dirty.value = false
+        // setState() rebuilds extensions from scratch, which seeds the lang
+        // compartment empty. Re-apply the language so syntax highlighting
+        // survives an in-place content refresh (e.g. after a quote-driven edit
+        // deletes lines and the file reloads with the same language prop).
+        mountLang()
     }
     savedSnapshot = next
     // Sticky def lines may have shifted; clear the highlight cache and recompute.
@@ -478,10 +483,13 @@ function handleSaveShortcut() {
 
 // Exit edit mode. If there are unsaved changes, confirm whether to save,
 // discard, or cancel (stay editing) instead of silently exiting.
+// Returns true if the edit actually exits (save or discard), false if the
+// user cancels and stays editing. Callers can use this to chain a follow-up
+// action (e.g. opening the preview) only after edit mode has really ended.
 async function handleExit() {
     if (!dirty.value) {
         emit('exitEdit')
-        return
+        return true
     }
     const choice = await dialog.confirm(t('file.editor.confirmExit'), {
         confirmText: t('file.editor.save'),
@@ -493,11 +501,14 @@ async function handleExit() {
     if (choice === true) {
         // Save and exit (FileViewer's handleSave reloads content and leaves edit mode).
         emit('save', getValue())
+        return true
     } else if (choice === null) {
         // Discard changes and exit.
         emit('exitEdit')
+        return true
     }
     // choice === false → user cancelled; stay in edit mode.
+    return false
 }
 
 defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit })

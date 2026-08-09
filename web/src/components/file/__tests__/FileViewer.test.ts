@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from 'vitest'
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
@@ -154,6 +154,17 @@ afterEach(() => {
   pendingIntervals.length = 0
 })
 
+// CodeMirrorViewer stub exposes handleExit so the FileViewer preview-while-
+// editing flow (which calls it to exit edit mode first) can be exercised.
+const mockHandleExit = vi.fn()
+const codeMirrorViewerStub = {
+  name: 'CodeMirrorViewer',
+  template: '<div class="cm-stub" />',
+  methods: {
+    handleExit: (...args: unknown[]) => mockHandleExit(...args),
+  },
+}
+
 // Stub child components
 const stubs = {
   FileHeader: true,
@@ -163,7 +174,7 @@ const stubs = {
   VideoPreview: true,
   OfficePreview: true,
   MarkdownPreview: true,
-  CodeMirrorViewer: true,
+  CodeMirrorViewer: codeMirrorViewerStub,
   DiffDrawer: true,
 }
 
@@ -358,6 +369,69 @@ describe('FileViewer', () => {
       await nextTick()
       expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(true)
       expect(wrapper.findComponent({ name: 'MarkdownPreview' }).exists()).toBe(false)
+    })
+  })
+
+  describe('preview request while editing markdown', () => {
+    const mdFile = {
+      name: 'readme.md',
+      path: '/tmp/readme.md',
+      content: '# Title\n\nsome text',
+      isMarkdown: true,
+      isHtml: false,
+      isImage: false,
+      isAudio: false,
+      isVideo: false,
+      isPdf: false,
+      isOffice: false,
+      isBinary: false,
+      tooLarge: false,
+    }
+
+    beforeEach(async () => {
+      ;(await import('@/composables/useFileEditor'))._resetForTesting()
+      mockHandleExit.mockReset()
+      mockHandleExit.mockResolvedValue(true)
+    })
+
+    function setupState(wrapper: ReturnType<typeof mount>) {
+      return (wrapper.vm as any).$.setupState
+    }
+
+    it('when not editing, emits toggleView immediately without calling handleExit', async () => {
+      const wrapper = mountViewer({ file: mdFile })
+      await setupState(wrapper).handleToggleViewRequest()
+      expect(wrapper.emitted('toggleView')).toBeTruthy()
+      expect(mockHandleExit).not.toHaveBeenCalled()
+    })
+
+    it('while editing, exits edit mode via handleExit then emits toggleView', async () => {
+      const wrapper = mountViewer({ file: mdFile })
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      expect(ss.editing).toBe(true)
+      const editor = (await import('@/composables/useFileEditor')).useFileEditor()
+      mockHandleExit.mockImplementation(() => {
+        editor.editing.value = false // simulate the exit completing
+        return true
+      })
+      await ss.handleToggleViewRequest()
+      expect(mockHandleExit).toHaveBeenCalled()
+      expect(wrapper.emitted('toggleView')).toBeTruthy()
+      expect(ss.editing).toBe(false)
+    })
+
+    it('while editing, does not emit toggleView when exit is cancelled (stays editing)', async () => {
+      const wrapper = mountViewer({ file: mdFile })
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      mockHandleExit.mockResolvedValue(false)
+      await ss.handleToggleViewRequest()
+      expect(mockHandleExit).toHaveBeenCalled()
+      expect(wrapper.emitted('toggleView')).toBeFalsy()
+      expect(ss.editing).toBe(true)
     })
   })
 })

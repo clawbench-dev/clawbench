@@ -192,6 +192,23 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(document.body.textContent).toContain('line two')
   })
 
+  it('keeps syntax highlighting after an in-place content refresh of the same file', async () => {
+    // Dynamically import the language facet so it resolves to the same
+    // @codemirror/language module instance the component's extension chain
+    // uses (a top-level static import resolves to a different copy in this
+    // environment, making the facet read return null regardless of state).
+    const { language: languageFacet } = await import('@codemirror/language')
+    const wrapper = mountViewer({ content: 'const a = 1\n', language: 'javascript', file: { path: '/p/main.js' } })
+    await sleep(80) // let mountLang() apply the language
+    expect(wrapper.vm.getView().state.facet(languageFacet)).toBeTruthy()
+    // Simulate a same-file refresh after content deletion: content changes but
+    // the language prop stays identical, so the refresh path re-creates state
+    // from buildAllExtensions() and previously dropped the tokenizer.
+    await wrapper.setProps({ content: 'const b = 2\n' })
+    await sleep(80)
+    expect(wrapper.vm.getView().state.facet(languageFacet)).toBeTruthy()
+  })
+
   it('shows quote question on selection in read-only mode', async () => {
     const wrapper = mountViewer({ content: 'aaa\nbbb\nccc', file: { path: '/p/main.go' } })
     await sleep(80)

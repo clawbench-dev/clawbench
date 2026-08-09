@@ -13,7 +13,7 @@
       :overlay-open="fileNav.overlayOpen.value"
       :editing="editing"
       @delete="emit('delete', file.path)"
-      @toggle-view="emit('toggleView')"
+      @toggle-view="handleToggleViewRequest"
       @toggle-edit="handleToggleEdit"
       @show-details="emit('showDetails')"
       @open-git-history="emit('openGitHistory')"
@@ -323,6 +323,38 @@ function handleToggleEdit() {
     const saved = captureScrollFrom(getScrollEl())
     editing.value = !editing.value
     restoreScrollAfter(saved)
+}
+
+// Preview / toggle-view request. When a markdown file is being edited, the
+// rendered preview is gated on `!editing`, so opening it must first exit edit
+// mode. Mirror the bottom X button exactly (CodeMirrorViewer.handleExit, which
+// confirms save/discard/cancel when dirty) and only flip the view mode once the
+// edit has really ended. If the user cancels the exit, stay put.
+async function handleToggleViewRequest() {
+    if (editing.value) {
+        const exited = await cmEditorRef.value?.handleExit?.()
+        if (exited !== true) return
+        // The "save and exit" path clears editing asynchronously in handleSave;
+        // wait for it so MarkdownPreview (gated on !editing) actually renders.
+        await waitEditingCleared()
+        if (editing.value) return // save still in flight / failed — don't flip yet
+    }
+    emit('toggleView')
+}
+
+// Resolve once edit mode has been left, or after a timeout so callers never
+// hang. Callers still re-check `editing` afterwards.
+function waitEditingCleared(timeoutMs = 5000) {
+    return new Promise((resolve) => {
+        if (!editing.value) return resolve()
+        const start = Date.now()
+        const timer = setInterval(() => {
+            if (!editing.value || Date.now() - start > timeoutMs) {
+                clearInterval(timer)
+                resolve()
+            }
+        }, 50)
+    })
 }
 
 // Restore the previously captured scroll anchor/ratio once the current scroll
