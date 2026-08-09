@@ -684,12 +684,19 @@ export function usePortForward() {
   /**
    * Ensure a port is registered for forwarding, registering it if needed.
    * Returns the localPort that was assigned (may differ from target port).
-   * Idempotent: if already registered with the same (port, host), returns existing localPort immediately.
+   * Idempotent: if already registered with the same (port, host), returns existing localPort.
+   * If the existing port is currently disabled, it is re-enabled so the caller
+   * (e.g. the localhost URL click handler) can actually open it.
    * Used by localhost URL click handler to auto-setup port forwarding.
    */
   async function ensurePortRegistered(port: number, protocol: string, host?: string): Promise<number> {
     const existing = ports.value.find(p => p.port === port && p.host === (host || ''))
-    if (existing) return existing.localPort
+    if (existing) {
+      if (!existing.enabled) {
+        await setPortEnabled(existing.localPort, true)
+      }
+      return existing.localPort
+    }
     return registerPort(port, '', protocol, host)
   }
 

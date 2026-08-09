@@ -904,7 +904,7 @@ describe('usePortForward', () => {
     describe('ensurePortRegistered', () => {
         it('returns existing localPort if port already exists', async () => {
             mockApiGet.mockResolvedValue({
-                ports: [{ port: 3000, name: 'App', protocol: 'http', active: true, localPort: 3000, host: '' }],
+                ports: [{ port: 3000, name: 'App', protocol: 'http', active: true, enabled: true, localPort: 3000, host: '' }],
             })
 
             const { usePortForward } = await import('@/composables/usePortForward')
@@ -917,6 +917,40 @@ describe('usePortForward', () => {
             const result = await ensurePortRegistered(3000, 'http')
 
             expect(mockApiPost).not.toHaveBeenCalled()
+            expect(result).toBe(3000)
+        })
+
+        it('re-enables an existing port that is currently disabled', async () => {
+            mockApiGet.mockResolvedValue({
+                ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false, enabled: false }],
+            })
+            mockApiPut.mockResolvedValue({ status: 'ok' })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { ensurePortRegistered, loadPorts } = usePortForward()
+
+            await loadPorts()
+
+            const result = await ensurePortRegistered(3000, 'http')
+
+            // Should not re-register, but re-enable the disabled port so it can be opened.
+            expect(mockApiPost).not.toHaveBeenCalled()
+            expect(mockApiPut).toHaveBeenCalledWith('/api/proxy/ports/enabled', { localPort: 3000, enabled: true })
+            expect(result).toBe(3000)
+        })
+
+        it('does not re-enable an already-enabled port', async () => {
+            mockApiGet.mockResolvedValue({
+                ports: [{ port: 3000, localPort: 3000, name: 'App', protocol: 'http', active: true, enabled: true }],
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { ensurePortRegistered, loadPorts } = usePortForward()
+
+            await loadPorts()
+            const result = await ensurePortRegistered(3000, 'http')
+
+            expect(mockApiPut).not.toHaveBeenCalled()
             expect(result).toBe(3000)
         })
 
@@ -938,8 +972,8 @@ describe('usePortForward', () => {
         it('matches both port and host when finding existing entry', async () => {
             mockApiGet.mockResolvedValue({
                 ports: [
-                    { port: 3000, localPort: 3000, host: '', name: 'Local', protocol: 'http', active: true },
-                    { port: 3000, localPort: 3001, host: '192.168.1.1', name: 'Remote', protocol: 'http', active: true },
+                    { port: 3000, localPort: 3000, host: '', name: 'Local', protocol: 'http', active: true, enabled: true },
+                    { port: 3000, localPort: 3001, host: '192.168.1.1', name: 'Remote', protocol: 'http', active: true, enabled: true },
                 ],
             })
 
