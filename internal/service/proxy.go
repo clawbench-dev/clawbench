@@ -172,6 +172,7 @@ func (r *ProxyRegistry) RegisterPort(port int, host string, name string, protoco
 		Name:      name,
 		Protocol:  protocol,
 		Active:    checkPortActive(port, host),
+		Enabled:   true,
 	}
 
 	// For non-localhost targets, start an HTTP reverse proxy to rewrite the Host header.
@@ -261,6 +262,7 @@ func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name st
 		Name:      name,
 		Protocol:  protocol,
 		Active:    checkPortActive(port, host),
+		Enabled:   true,
 	}
 
 	// Start reverse proxy if needed for the new target
@@ -335,6 +337,50 @@ func (r *ProxyRegistry) UnregisterPort(localPort int) error {
 	r.deletePortFromDB(localPort)
 
 	slog.Info("proxy port unregistered", slog.Int("local_port", localPort))
+	return nil
+}
+
+// SetPortEnabled enables or disables an existing forwarded port.
+// Disabling stops forwarding: it halts any active reverse proxy (non-localhost
+// targets) and marks the port inactive. Enabling restores forwarding. The
+// change is persisted to the database and reflected in ListPorts via Enabled.
+func (r *ProxyRegistry) SetPortEnabled(localPort int, enabled bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	p, ok := r.ports[localPort]
+	if !ok {
+		return fmt.Errorf("local port %d is not registered", localPort)
+	}
+	if p.Enabled == enabled {
+		return nil
+	}
+
+	p.Enabled = enabled
+	if enabled {
+		// Restore reverse proxy for non-localhost targets
+		if IsNonLocalhostTarget(p.Host) {
+			if err := r.startReverseProxy(localPort, p.Port, p.Host, p.Protocol); err != nil {
+				slog.Warn(
+					"failed to start reverse proxy after enabling port",
+					slog.Int("local_port", localPort),
+					slog.String("err", err.Error()),
+				)
+			}
+		}
+	} else {
+		// Disabled — halt forwarding and mark inactive
+		r.stopReverseProxy(localPort)
+		p.Active = false
+	}
+
+	r.savePortEnabledToDB(localPort, enabled)
+
+	slog.Info(
+		"proxy port enabled state updated",
+		slog.Int("local_port", localPort),
+		slog.Bool("enabled", enabled),
+	)
 	return nil
 }
 
@@ -513,17 +559,23 @@ func (r *ProxyRegistry) checkAllPorts() {
 		localPort int
 		port      int
 		host      string
+		enabled   bool
 	}, 0, len(r.ports))
 	for lp, p := range r.ports {
 		portList = append(portList, struct {
 			localPort int
 			port      int
 			host      string
-		}{localPort: lp, port: p.Port, host: p.Host})
+			enabled   bool
+		}{localPort: lp, port: p.Port, host: p.Host, enabled: p.Enabled})
 	}
 	r.mu.RUnlock()
 
 	for _, entry := range portList {
+		// Disabled ports are not probed — they stay inactive until re-enabled.
+		if !entry.enabled {
+			continue
+		}
 		active := checkPortActive(entry.port, entry.host)
 
 		r.mu.Lock()
@@ -919,7 +971,7 @@ func (r *ProxyRegistry) loadPortsFromDB() {
 		return
 	}
 
-	rows, err := dbRead.Query("SELECT local_port, port, host, name, protocol FROM forwarded_ports")
+	rows, err := dbRead.Query("SELECT local_port, port, host, name, protocol, enabled FROM forwarded_ports")
 	if err != nil {
 		slog.Warn("failed to load persisted ports from DB", slog.String("err", err.Error()))
 		return
@@ -929,7 +981,9 @@ func (r *ProxyRegistry) loadPortsFromDB() {
 	for rows.Next() {
 		var localPort, port int
 		var host, name, protocol string
-		if err := rows.Scan(&localPort, &port, &host, &name, &protocol); err != nil {
+		enabled := true
+		if err := rows.Scan(&localPort, &port, &host, &name, &protocol, &enabled); err != nil {
+			slog.Warn("failed to scan persisted port", slog.String("err", err.Error()))
 			continue
 		}
 		if !r.IsPortAllowed(port) {
@@ -946,9 +1000,10 @@ func (r *ProxyRegistry) loadPortsFromDB() {
 			Name:      name,
 			Protocol:  protocol,
 			Active:    false, // will be updated by health check
+			Enabled:   enabled,
 		}
 		// For non-localhost targets, start an HTTP reverse proxy to rewrite Host header.
-		if IsNonLocalhostTarget(host) {
+		if enabled && IsNonLocalhostTarget(host) {
 			if err := r.startReverseProxy(localPort, port, host, protocol); err != nil {
 				slog.Warn(
 					"failed to start reverse proxy on DB load",
@@ -968,15 +1023,31 @@ func (r *ProxyRegistry) loadPortsFromDB() {
 
 // savePortToDB persists a single forwarded port to the database.
 func (r *ProxyRegistry) savePortToDB(localPort int, port int, host string, name, protocol string) {
+	r.savePortToDBWithEnabled(localPort, port, host, name, protocol, true)
+}
+
+// savePortToDBWithEnabled persists a forwarded port including its enabled state.
+func (r *ProxyRegistry) savePortToDBWithEnabled(localPort int, port int, host string, name, protocol string, enabled bool) {
 	if db == nil {
 		return
 	}
 	_, err := WriteExec(
-		"INSERT OR REPLACE INTO forwarded_ports (local_port, port, host, name, protocol) VALUES (?, ?, ?, ?, ?)",
-		localPort, port, host, name, protocol,
+		"INSERT OR REPLACE INTO forwarded_ports (local_port, port, host, name, protocol, enabled) VALUES (?, ?, ?, ?, ?, ?)",
+		localPort, port, host, name, protocol, enabled,
 	)
 	if err != nil {
 		slog.Error("failed to persist port to DB", slog.Int("local_port", localPort), slog.String("err", err.Error()))
+	}
+}
+
+// savePortEnabledToDB updates only the enabled state of a forwarded port.
+func (r *ProxyRegistry) savePortEnabledToDB(localPort int, enabled bool) {
+	if db == nil {
+		return
+	}
+	_, err := WriteExec("UPDATE forwarded_ports SET enabled = ? WHERE local_port = ?", enabled, localPort)
+	if err != nil {
+		slog.Error("failed to persist port enabled state to DB", slog.Int("local_port", localPort), slog.String("err", err.Error()))
 	}
 }
 

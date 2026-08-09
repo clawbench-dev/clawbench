@@ -572,6 +572,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add enabled column for user-controlled enable/disable.
+	// Existing ports default to enabled=true (backward compatible).
+	var hasForwardedPortEnabled int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='enabled'").Scan(&hasForwardedPortEnabled)
+	if hasForwardedPortEnabled == 0 {
+		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"); err != nil {
+			return fmt.Errorf("failed to add enabled column to forwarded_ports: %w", err)
+		}
+	}
+
 	// Migrate: add custom_system_prompt column to agents for user-editable system prompt
 	var hasCustomSystemPrompt int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='custom_system_prompt'").Scan(&hasCustomSystemPrompt)

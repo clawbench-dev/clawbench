@@ -100,6 +100,30 @@ func unregisterPortByQuery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{jsonKeyStatus: "ok"})
 }
 
+// ServeProxySetPortEnabled toggles a forwarded port's user-controlled enabled state.
+// Body: {"localPort": 8080, "enabled": false}
+func ServeProxySetPortEnabled(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPut) {
+		return
+	}
+	var req struct {
+		LocalPort int  `json:"localPort"`
+		Enabled   bool `json:"enabled"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.LocalPort <= 0 || req.LocalPort > 65535 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortNumber", map[string]any{"Port": req.LocalPort})
+		return
+	}
+	if err := service.ProxyService.SetPortEnabled(req.LocalPort, req.Enabled); err != nil {
+		writeLocalizedError(w, r, model.NotFound(err, "FileNotFoundShort"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{jsonKeyStatus: "ok"})
+}
+
 // ServeProxyDetect returns auto-detected listening ports on the server.
 func ServeProxyDetect(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {

@@ -52,6 +52,7 @@ interface ForwardedPort {
   name: string
   protocol: string
   active: boolean
+  enabled: boolean
 }
 
 interface DetectedPort {
@@ -117,6 +118,12 @@ const tunnelErrorType = ref<TunnelErrorType>('')
 // These show a yellow blinking dot instead of green/grey.
 const connectingPorts = ref(new Set<number>())
 
+// Port scan drawer state: whether a scan has ever completed (drives first-open auto-scan),
+// the current scanning flag, and the open state of the scan drawer.
+const scanDrawerOpen = ref(false)
+const hasScanned = ref(false)
+const scanning = ref(false)
+
 // Auto-refresh interval when tunnel is unhealthy
 let tunnelPollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -143,9 +150,9 @@ function ensurePortForwardListener() {
   }) as EventListener)
 }
 
-/** Returns true if any registered port has an active backend */
+/** Returns true if any enabled port has an active backend */
 function hasActivePorts(): boolean {
-  return ports.value.some(p => p.active)
+  return ports.value.some(p => p.enabled && p.active)
 }
 
 // Sync active port count to global store for dock badge
@@ -260,8 +267,38 @@ export function usePortForward() {
   }
 
   async function detectPorts() {
-    const data = await apiGet<{ ports: DetectedPort[] }>('/api/proxy/detect')
-    detectedPorts.value = data.ports || []
+    scanning.value = true
+    try {
+      const data = await apiGet<{ ports: DetectedPort[] }>('/api/proxy/detect')
+      detectedPorts.value = data.ports || []
+      hasScanned.value = true
+    } finally {
+      scanning.value = false
+    }
+  }
+
+  /** Enable or disable a forwarded port on the backend, then refresh the list. */
+  async function setPortEnabled(localPort: number, enabled: boolean) {
+    await apiPut('/api/proxy/ports/enabled', { localPort, enabled })
+    await loadPorts(true)
+  }
+
+  /** Open the scan drawer, auto-running a scan the first time it is opened. */
+  async function openScanDrawer() {
+    scanDrawerOpen.value = true
+    if (!hasScanned.value && !scanning.value) {
+      await detectPorts()
+    }
+  }
+
+  /** Close the scan drawer. */
+  function closeScanDrawer() {
+    scanDrawerOpen.value = false
+  }
+
+  /** Re-run a scan from within the drawer. */
+  async function rescanPorts() {
+    await detectPorts()
   }
 
   /** Sync all registered ports to Android native on initial load.
@@ -276,6 +313,7 @@ export function usePortForward() {
       return
     }
     for (const p of ports.value) {
+      if (!p.enabled) continue
       ;getAndroidNative()?.addForwardedPort?.(p.localPort, p.port, p.host || '')
     }
   }
@@ -630,11 +668,18 @@ export function usePortForward() {
     tunnelError,
     tunnelErrorType,
     connectingPorts,
+    scanDrawerOpen,
+    hasScanned,
+    scanning,
     loadPorts,
     registerPort,
     updatePort,
     unregisterPort,
+    setPortEnabled,
     detectPorts,
+    openScanDrawer,
+    closeScanDrawer,
+    rescanPorts,
     syncToNative,
     loadSSHInfo,
     checkTunnelHealth,

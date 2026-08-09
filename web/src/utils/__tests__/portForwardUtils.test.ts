@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasActivePort, tunnelStatusFromPorts, buildPortUrl } from '@/utils/portForwardUtils'
+import { hasActivePort, tunnelStatusFromPorts, buildPortUrl, enabledPorts } from '@/utils/portForwardUtils'
 import type { ForwardedPort } from '@/utils/portForwardUtils'
 
 describe('portForwardUtils', () => {
@@ -8,16 +8,16 @@ describe('portForwardUtils', () => {
   describe('hasActivePort', () => {
     it('returns true when at least one port is active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', active: false, localPort: 0 },
-        { port: 4000, host: '', name: 'B', protocol: 'http', active: true, localPort: 0 },
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: false, localPort: 0, enabled: true },
+        { port: 4000, host: '', name: 'B', protocol: 'http', active: true, localPort: 0, enabled: true },
       ]
       expect(hasActivePort(ports)).toBe(true)
     })
 
     it('returns false when no ports are active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', active: false, localPort: 0 },
-        { port: 4000, host: '', name: 'B', protocol: 'http', active: false, localPort: 0 },
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: false, localPort: 0, enabled: true },
+        { port: 4000, host: '', name: 'B', protocol: 'http', active: false, localPort: 0, enabled: true },
       ]
       expect(hasActivePort(ports)).toBe(false)
     })
@@ -28,10 +28,28 @@ describe('portForwardUtils', () => {
 
     it('returns true when all ports are active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', active: true, localPort: 0 },
-        { port: 4000, host: '', name: 'B', protocol: 'http', active: true, localPort: 0 },
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: true, localPort: 0, enabled: true },
+        { port: 4000, host: '', name: 'B', protocol: 'http', active: true, localPort: 0, enabled: true },
       ]
       expect(hasActivePort(ports)).toBe(true)
+    })
+
+    it('ignores disabled ports when checking active backend', () => {
+      const ports: ForwardedPort[] = [
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: true, localPort: 0, enabled: false },
+        { port: 4000, host: '', name: 'B', protocol: 'http', active: false, localPort: 0, enabled: true },
+      ]
+      expect(hasActivePort(ports)).toBe(false)
+    })
+  })
+
+  describe('enabledPorts', () => {
+    it('returns only enabled ports', () => {
+      const ports: ForwardedPort[] = [
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: false, localPort: 0, enabled: true },
+        { port: 4000, host: '', name: 'B', protocol: 'http', active: false, localPort: 0, enabled: false },
+      ]
+      expect(enabledPorts(ports).map(p => p.port)).toEqual([3000])
     })
   })
 
@@ -44,23 +62,38 @@ describe('portForwardUtils', () => {
 
     it('returns "ok" when there are ports and at least one is active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', active: true, localPort: 0 },
-        { port: 4000, host: '', name: 'B', protocol: 'http', active: false, localPort: 0 },
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: true, localPort: 0, enabled: true },
+        { port: 4000, host: '', name: 'B', protocol: 'http', active: false, localPort: 0, enabled: true },
       ]
       expect(tunnelStatusFromPorts(ports)).toBe('ok')
     })
 
     it('returns "degraded" when there are ports but none are active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', active: false, localPort: 0 },
-        { port: 4000, host: '', name: 'B', protocol: 'http', active: false, localPort: 0 },
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: false, localPort: 0, enabled: true },
+        { port: 4000, host: '', name: 'B', protocol: 'http', active: false, localPort: 0, enabled: true },
       ]
       expect(tunnelStatusFromPorts(ports)).toBe('degraded')
     })
 
     it('returns "ok" when all ports are active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', active: true, localPort: 0 },
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: true, localPort: 0, enabled: true },
+      ]
+      expect(tunnelStatusFromPorts(ports)).toBe('ok')
+    })
+
+    it('returns "ok" when the only active ports are disabled', () => {
+      const ports: ForwardedPort[] = [
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: true, localPort: 0, enabled: false },
+      ]
+      expect(tunnelStatusFromPorts(ports)).toBe('ok')
+    })
+
+    it('returns "ok" when all registered ports are disabled', () => {
+      const ports: ForwardedPort[] = [
+        { port: 3000, host: '', name: 'A', protocol: 'http', active: false, localPort: 0, enabled: false },
+        { port: 4000, host: '', name: 'B', protocol: 'http', active: false, localPort: 0, enabled: false },
       ]
       expect(tunnelStatusFromPorts(ports)).toBe('ok')
     })

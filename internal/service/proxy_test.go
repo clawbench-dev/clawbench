@@ -265,6 +265,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			host TEXT NOT NULL DEFAULT '',
 			name TEXT NOT NULL DEFAULT '',
 			protocol TEXT NOT NULL DEFAULT 'http',
+			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
@@ -305,6 +306,70 @@ func TestProxyRegistry_PortPersistence_RegisterAndLoad(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "API", name)
 	assert.Equal(t, "https", protocol)
+}
+
+func TestProxyRegistry_SetPortEnabled_PersistsAndReloads(t *testing.T) {
+	testDB := setupTestDB(t)
+	cleanup := SetDBForTest(testDB, testDB)
+	defer cleanup()
+
+	r := NewProxyRegistry(0)
+	defer r.Stop()
+
+	_, err := r.RegisterPort(8080, "", "API", "http")
+	assert.NoError(t, err)
+	assert.True(t, r.ListPorts()[0].Enabled, "newly registered port should be enabled by default")
+
+	// Disable
+	err = r.SetPortEnabled(8080, false)
+	assert.NoError(t, err)
+	assert.False(t, r.ListPorts()[0].Enabled)
+	assert.False(t, r.ListPorts()[0].Active, "disabling should mark the port inactive")
+
+	// Verify DB persisted enabled=false
+	var enabled bool
+	err = testDB.QueryRow("SELECT enabled FROM forwarded_ports WHERE local_port = 8080").Scan(&enabled)
+	assert.NoError(t, err)
+	assert.False(t, enabled)
+
+	// New registry reloads disabled state from DB
+	r2 := NewProxyRegistry(0)
+	defer r2.Stop()
+	ports := r2.ListPorts()
+	assert.Len(t, ports, 1)
+	assert.False(t, ports[0].Enabled, "reloaded port should retain disabled state")
+}
+
+func TestProxyRegistry_SetPortEnabled_ReEnableRestores(t *testing.T) {
+	testDB := setupTestDB(t)
+	cleanup := SetDBForTest(testDB, testDB)
+	defer cleanup()
+
+	r := NewProxyRegistry(0)
+	defer r.Stop()
+
+	_, err := r.RegisterPort(8080, "", "API", "http")
+	assert.NoError(t, err)
+	assert.NoError(t, r.SetPortEnabled(8080, false))
+	assert.NoError(t, r.SetPortEnabled(8080, true))
+	assert.True(t, r.ListPorts()[0].Enabled, "re-enabling should restore enabled state")
+
+	var enabled bool
+	err = testDB.QueryRow("SELECT enabled FROM forwarded_ports WHERE local_port = 8080").Scan(&enabled)
+	assert.NoError(t, err)
+	assert.True(t, enabled)
+}
+
+func TestProxyRegistry_SetPortEnabled_NotRegistered(t *testing.T) {
+	testDB := setupTestDB(t)
+	cleanup := SetDBForTest(testDB, testDB)
+	defer cleanup()
+
+	r := NewProxyRegistry(0)
+	defer r.Stop()
+
+	err := r.SetPortEnabled(9999, false)
+	assert.Error(t, err)
 }
 
 func TestProxyRegistry_PortPersistence_UnregisterDeletesFromDB(t *testing.T) {

@@ -457,3 +457,105 @@ func TestUpdatePort_DisallowedPortRange(t *testing.T) {
 
 	assertStatus(t, w, http.StatusForbidden)
 }
+
+// --- SetPortEnabled (PUT /api/proxy/ports/enabled) ---
+
+func TestServeProxySetPortEnabled_Disable(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	_, _ = service.ProxyService.RegisterPort(8080, "", "api", "http")
+
+	req := newRequest(t, http.MethodPut, "/api/proxy/ports/enabled", map[string]interface{}{
+		"localPort": 8080,
+		"enabled":   false,
+	})
+	w := callHandler(ServeProxySetPortEnabled, req)
+
+	assertOK(t, w)
+	assertJSONField(t, w, "status", "ok")
+
+	ports := service.ProxyService.ListPorts()
+	assert.Len(t, ports, 1)
+	assert.False(t, ports[0].Enabled)
+	// Disabling marks the port inactive
+	assert.False(t, ports[0].Active)
+}
+
+func TestServeProxySetPortEnabled_Enable(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	_, _ = service.ProxyService.RegisterPort(8080, "", "api", "http")
+	_ = service.ProxyService.SetPortEnabled(8080, false)
+
+	req := newRequest(t, http.MethodPut, "/api/proxy/ports/enabled", map[string]interface{}{
+		"localPort": 8080,
+		"enabled":   true,
+	})
+	w := callHandler(ServeProxySetPortEnabled, req)
+
+	assertOK(t, w)
+
+	ports := service.ProxyService.ListPorts()
+	assert.Len(t, ports, 1)
+	assert.True(t, ports[0].Enabled)
+}
+
+func TestServeProxySetPortEnabled_NotRegistered(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPut, "/api/proxy/ports/enabled", map[string]interface{}{
+		"localPort": 9999,
+		"enabled":   false,
+	})
+	w := callHandler(ServeProxySetPortEnabled, req)
+
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestServeProxySetPortEnabled_InvalidLocalPort(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	tests := []struct {
+		name      string
+		localPort int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+		{"too large", 70000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := newRequest(t, http.MethodPut, "/api/proxy/ports/enabled", map[string]interface{}{
+				"localPort": tt.localPort,
+				"enabled":   false,
+			})
+			w := callHandler(ServeProxySetPortEnabled, req)
+			assertStatus(t, w, http.StatusBadRequest)
+		})
+	}
+}
+
+func TestServeProxySetPortEnabled_MissingBody(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodPut, "/api/proxy/ports/enabled", http.NoBody)
+	w := callHandler(ServeProxySetPortEnabled, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestServeProxySetPortEnabled_MethodNotAllowed(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/proxy/ports/enabled", nil)
+	w := callHandler(ServeProxySetPortEnabled, req)
+
+	assertStatus(t, w, http.StatusMethodNotAllowed)
+}

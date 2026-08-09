@@ -1,35 +1,50 @@
 <template>
-  <div class="proxy-port-item" :class="{ inactive: !active && !tunnelDisconnected }">
-    <!-- Top row: port + badges | actions -->
+  <div class="proxy-port-item" :class="{ disabled: !enabled }">
+    <!-- Header row: identity + toggle -->
     <div class="port-row-top">
       <div class="port-badges">
         <span class="port-number">{{ localPort }}</span>
         <span class="port-protocol" :class="protocol">{{ protocol }}</span>
         <span class="port-status" :class="statusClass" :title="statusTitle"></span>
       </div>
-      <div class="port-actions">
-        <button class="port-action-btn sandbox" @click.stop="$emit('open', localPort, protocol, host)" :title="t('proxy.openInSandbox')">
-          <Box :size="14" />
-        </button>
-        <button class="port-action-btn open" @click.stop="$emit('openExternal', localPort, protocol, host)" :title="t('proxy.openInBrowser')">
-          <ExternalLink :size="14" />
-        </button>
-        <button class="port-action-btn reconnect" :class="{ spinning: reconnecting }" :disabled="reconnecting" @click.stop="$emit('reconnect', localPort)" :title="t('proxy.reconnectPort')">
-          <RotateCcw :size="14" />
-        </button>
-        <button class="port-action-btn edit" @click.stop="$emit('edit', localPort)" :title="t('common.edit')">
-          <Pencil :size="14" />
-        </button>
-        <button class="port-action-btn delete" @click.stop="$emit('remove', localPort)" :title="t('common.delete')">
-          <Trash2 :size="14" />
+      <div class="port-toggle">
+        <button
+          class="toggle-switch"
+          :class="{ on: enabled }"
+          :disabled="toggling"
+          :title="enabled ? t('proxy.disable') : t('proxy.enable')"
+          @click.stop="$emit('toggleEnabled', localPort, !enabled)"
+        >
+          <span class="toggle-thumb" />
         </button>
       </div>
     </div>
-    <!-- Bottom row: target + name (secondary info) -->
-    <div v-if="hasDetail" class="port-row-bottom">
+
+    <!-- Info row: name + target -->
+    <div class="port-info">
+      <span v-if="name" class="port-name">{{ name }}</span>
       <span v-if="port !== localPort" class="port-target">→ {{ host || 'localhost' }}:{{ port }}</span>
       <span v-else-if="host" class="port-host">{{ host }}</span>
-      <span v-if="name" class="port-name">{{ name }}</span>
+    </div>
+
+    <!-- Actions row -->
+    <div class="port-actions">
+      <button class="port-action-btn sandbox" :disabled="!enabled" @click.stop="$emit('open', localPort, protocol, host)" :title="t('proxy.openInSandbox')">
+        <Box :size="14" />
+      </button>
+      <button class="port-action-btn open" :disabled="!enabled" @click.stop="$emit('openExternal', localPort, protocol, host)" :title="t('proxy.openInBrowser')">
+        <ExternalLink :size="14" />
+      </button>
+      <button class="port-action-btn reconnect" :class="{ spinning: reconnecting }" :disabled="reconnecting || !enabled" @click.stop="$emit('reconnect', localPort)" :title="t('proxy.reconnectPort')">
+        <RotateCcw :size="14" />
+      </button>
+      <span class="port-actions-spacer" />
+      <button class="port-action-btn edit" @click.stop="$emit('edit', localPort)" :title="t('common.edit')">
+        <Pencil :size="14" />
+      </button>
+      <button class="port-action-btn delete" @click.stop="$emit('remove', localPort)" :title="t('common.delete')">
+        <Trash2 :size="14" />
+      </button>
     </div>
   </div>
 </template>
@@ -48,18 +63,17 @@ const props = defineProps({
   name: { type: String, default: '' },
   protocol: { type: String, default: 'http' },
   active: { type: Boolean, default: false },
+  enabled: { type: Boolean, default: true },
   tunnelDisconnected: { type: Boolean, default: false },
   reconnecting: { type: Boolean, default: false },
   connecting: { type: Boolean, default: false },
+  toggling: { type: Boolean, default: false },
 })
 
-defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove'])
-
-const hasDetail = computed(() => {
-  return props.port !== props.localPort || props.host || props.name
-})
+defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove', 'toggleEnabled'])
 
 const statusClass = computed(() => {
+  if (!props.enabled) return 'disabled'
   if (props.connecting) return 'connecting'
   if (props.active) return 'active'
   if (props.tunnelDisconnected) return 'tunnel-down'
@@ -67,6 +81,7 @@ const statusClass = computed(() => {
 })
 
 const statusTitle = computed(() => {
+  if (!props.enabled) return t('proxy.portItem.disabled')
   if (props.connecting) return t('proxy.portItem.connecting')
   if (props.active) return t('proxy.portItem.active')
   if (props.tunnelDisconnected) return t('proxy.portItem.tunnelDown')
@@ -78,17 +93,37 @@ const statusTitle = computed(() => {
 .proxy-port-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 0;
+  background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
 }
 
-.proxy-port-item.inactive {
-  opacity: 0.6;
+.proxy-port-item:hover {
+  border-color: var(--accent-color, #0066cc);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  transform: translateY(-1px);
 }
 
-/* Top row: badges left, actions right */
+.proxy-port-item:active {
+  transform: translateY(0);
+}
+
+.proxy-port-item.disabled {
+  opacity: 0.55;
+}
+
+.proxy-port-item.disabled:hover {
+  border-color: var(--border-color, #e5e5e5);
+  box-shadow: none;
+}
+
+/* Header row: badges left, toggle right */
 .port-row-top {
   display: flex;
   align-items: center;
@@ -99,22 +134,23 @@ const statusTitle = computed(() => {
 .port-badges {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
 .port-number {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
   font-family: monospace;
   color: var(--text-primary, #1a1a1a);
+  line-height: 1;
 }
 
 .port-protocol {
   font-size: 10px;
   font-weight: 600;
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding: 2px 6px;
+  border-radius: 0;
   text-transform: uppercase;
   line-height: 1;
 }
@@ -157,6 +193,11 @@ const statusTitle = computed(() => {
   animation: pulse-red 2s ease-in-out infinite;
 }
 
+.port-status.disabled {
+  background: #9ca3af;
+  opacity: 0.6;
+}
+
 @keyframes pulse-red {
   0%, 100% {
     box-shadow: 0 0 4px rgba(239, 68, 68, 0.4);
@@ -177,84 +218,77 @@ const statusTitle = computed(() => {
   }
 }
 
-.port-actions {
+/* Toggle switch */
+.port-toggle {
   display: flex;
-  gap: 2px;
+  align-items: center;
   flex-shrink: 0;
 }
 
-.port-action-btn {
-  width: 26px;
-  height: 26px;
+.toggle-switch {
+  width: 38px;
+  height: 20px;
+  border-radius: 10px;
   border: none;
-  background: none;
-  color: var(--text-muted, #999);
+  background: var(--bg-tertiary, #e9ecef);
+  position: relative;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: all 0.15s;
+  transition: background 0.2s ease;
+  padding: 0;
+  flex-shrink: 0;
 }
 
-.port-action-btn:hover {
-  color: var(--text-secondary, #666);
-  background: var(--bg-tertiary, #f0f0f0);
+.toggle-switch.on {
+  background: var(--accent-color, #0066cc);
 }
 
-.port-action-btn.open:hover {
-  color: var(--accent-color, #0066cc);
-  background: var(--bg-tertiary, #f0f0f0);
-}
-
-.port-action-btn.sandbox:hover {
-  color: #8b5cf6;
-  background: var(--bg-tertiary, #f0f0f0);
-}
-
-.port-action-btn.reconnect:hover {
-  color: #22c55e;
-  background: var(--bg-tertiary, #f0f0f0);
-}
-
-.port-action-btn.reconnect.spinning svg {
-  animation: spin 1s linear infinite;
-}
-
-.port-action-btn.reconnect:disabled {
-  cursor: not-allowed;
+.toggle-switch:disabled {
   opacity: 0.6;
+  cursor: not-allowed;
 }
 
-.port-action-btn.edit:hover {
-  color: #f59e0b;
-  background: var(--bg-tertiary, #f0f0f0);
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease;
 }
 
-.port-action-btn.delete:hover {
-  color: #dc3545;
-  background: var(--bg-tertiary, #f0f0f0);
+.toggle-switch.on .toggle-thumb {
+  transform: translateX(18px);
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* Bottom row: secondary info */
-.port-row-bottom {
+/* Info row */
+.port-info {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
+  padding-left: 2px;
+}
+
+.port-name {
+  font-size: 13px;
+  color: var(--text-secondary, #666);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .port-target {
   font-size: 11px;
   font-family: monospace;
   font-weight: 500;
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: 1px 6px;
+  border-radius: 0;
   background: rgba(59, 130, 246, 0.1);
   color: #3b82f6;
 }
@@ -263,18 +297,80 @@ const statusTitle = computed(() => {
   font-size: 11px;
   font-family: monospace;
   font-weight: 500;
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: 1px 6px;
+  border-radius: 0;
   background: rgba(107, 114, 128, 0.1);
   color: var(--text-secondary, #666);
 }
 
-.port-name {
-  font-size: 12px;
+/* Actions row */
+.port-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  border-top: 1px solid var(--border-color, #e5e5e5);
+  padding-top: 6px;
+}
+
+.port-actions-spacer {
+  flex: 1;
+}
+
+.port-action-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  transition: all 0.15s;
+}
+
+.port-action-btn:hover:not(:disabled) {
   color: var(--text-secondary, #666);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+.port-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.port-action-btn.open:hover:not(:disabled) {
+  color: var(--accent-color, #0066cc);
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+.port-action-btn.sandbox:hover:not(:disabled) {
+  color: #8b5cf6;
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+.port-action-btn.reconnect:hover:not(:disabled) {
+  color: #22c55e;
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+.port-action-btn.reconnect.spinning svg {
+  animation: spin 1s linear infinite;
+}
+
+.port-action-btn.edit:hover:not(:disabled) {
+  color: #f59e0b;
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+.port-action-btn.delete:hover:not(:disabled) {
+  color: #dc3545;
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 </style>

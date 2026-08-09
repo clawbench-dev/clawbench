@@ -10,23 +10,32 @@ export interface ForwardedPort {
   name: string
   protocol: string
   active: boolean
+  enabled: boolean
 }
 
 /**
- * Check if any port in the list has an active backend.
+ * Returns the subset of ports that are enabled (user-controlled forwarding active).
+ * Disabled ports are excluded from tunnel health determination.
+ */
+export function enabledPorts(ports: ForwardedPort[]): ForwardedPort[] {
+  return ports.filter(p => p.enabled)
+}
+
+/**
+ * Check if any enabled port has an active backend.
  */
 export function hasActivePort(ports: ForwardedPort[]): boolean {
-  return ports.some(p => p.active)
+  return enabledPorts(ports).some(p => p.active)
 }
 
 /**
  * Determines tunnel status from port state.
- * `hasPorts` indicates whether there are any registered ports.
- * When there are ports but none are active, the tunnel is degraded.
- * When there are no ports, or at least one is active, the tunnel is OK.
+ * `hasPorts` indicates whether there are any enabled registered ports.
+ * When there are enabled ports but none are active, the tunnel is degraded.
+ * When there are no enabled ports, or at least one is active, the tunnel is OK.
  */
 export function tunnelStatusFromPorts(ports: ForwardedPort[]): 'ok' | 'degraded' {
-  const hasPorts = ports.length > 0
+  const hasPorts = enabledPorts(ports).length > 0
   const anyActive = hasActivePort(ports)
   if (hasPorts && !anyActive) return 'degraded'
   return 'ok'

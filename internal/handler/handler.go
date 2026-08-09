@@ -326,6 +326,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	// Port forwarding (registration & detection only; actual forwarding uses SSH tunnels)
 	register("/api/proxy/ports", middleware.Auth(ServeProxyPortAction))
+	register("/api/proxy/ports/enabled", middleware.Auth(ServeProxySetPortEnabled))
 	register("/api/proxy/detect", middleware.Auth(ServeProxyDetect))
 
 	// SSH tunnel info — intentionally unauthenticated:

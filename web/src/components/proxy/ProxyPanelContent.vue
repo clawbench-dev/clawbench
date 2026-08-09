@@ -1,20 +1,20 @@
 <template>
   <div class="proxy-panel-content">
-    <div class="proxy-panel">
-      <!-- Compact header: title + scan + create buttons (matches TaskListPage style) -->
-      <div class="proxy-header">
-        <span class="proxy-header-title">{{ t('nav.portForward') }}</span>
-        <button class="header-btn" :class="{ spinning: detecting }" :disabled="detecting" @click="handleDetect" :title="t('proxy.autoDetect')">
-          <span class="detect-icon-wrap">
-            <Search :size="14" class="detect-icon" />
-            <span v-if="detecting" class="radar-ping"></span>
-          </span>
-        </button>
-        <button class="create-btn" @click="openAddForm" :title="t('proxy.addPort')">
-          <Plus :size="16" />
-        </button>
-      </div>
+    <!-- Compact header: icon + title + scan + create buttons (matches chat/app header: flush border, bg-secondary) -->
+    <div class="proxy-header">
+      <span class="proxy-header-icon">
+        <NetworkIcon :size="14" />
+      </span>
+      <span class="proxy-header-title">{{ t('nav.portForward') }}</span>
+      <button class="header-btn" @click="handleOpenScan" :title="t('proxy.scanTitle')">
+        <Search :size="14" />
+      </button>
+      <button class="create-btn" @click="openAddForm" :title="t('proxy.addPort')">
+        <Plus :size="16" />
+      </button>
+    </div>
 
+    <div class="proxy-panel">
       <!-- App mode: tunnel status banners -->
       <template v-if="isAppMode">
         <div v-if="tunnelStatus === 'disconnected'" class="tunnel-banner error">
@@ -94,10 +94,8 @@
         </div>
       </div>
 
-      <!-- Two-zone layout: registered ports (top, 50–100%) + detected ports (bottom, 0–50%, sticky to bottom) -->
+      <!-- Registered ports list -->
       <div class="proxy-zones">
-
-        <!-- Zone 1: Registered ports (top half) -->
         <div class="proxy-zone-registered">
           <!-- Loading -->
           <div v-if="loading" class="proxy-loading">{{ t('common.loading') }}</div>
@@ -113,14 +111,17 @@
               :name="p.name"
               :protocol="p.protocol"
               :active="p.active"
+              :enabled="p.enabled"
               :tunnel-disconnected="tunnelStatus === 'disconnected'"
               :reconnecting="reconnectingPorts.has(p.localPort)"
               :connecting="connectingPorts.has(p.localPort)"
+              :toggling="togglingPorts.has(p.localPort)"
               @open="openPortWithCheck"
               @open-external="openInExternalBrowser"
               @reconnect="handleReconnect"
               @edit="handleEdit"
               @remove="handleRemove"
+              @toggle-enabled="handleToggleEnabled"
             />
           </div>
 
@@ -131,27 +132,50 @@
             <div class="proxy-empty-hint">{{ t('proxy.emptyHint') }}</div>
           </div>
         </div>
-
-        <!-- Zone 2: Detected ports (bottom half, pinned to bottom) -->
-        <div v-if="detectedPorts.length > 0" class="proxy-zone-detected">
-          <div class="proxy-detected-label">{{ t('proxy.detectedPorts') }}</div>
-          <div class="proxy-detected-chips">
-            <button
-              v-for="(p, i) in detectedPortsNotRegistered"
-              :key="p.port"
-              class="detect-chip"
-              :class="p.protocol"
-              :style="{ animationDelay: `${i * 60}ms` }"
-              @click="handleQuickAdd(p.port, p.protocol, p.processName)"
-            >
-              <span class="chip-row"><span class="chip-port">{{ p.port }}</span><span class="chip-proto">{{ p.protocol }}</span></span>
-              <span v-if="p.processName" class="chip-cmdline"><span class="chip-process">{{ p.processName }}</span><span v-if="p.processArgs" class="chip-args"> {{ p.processArgs }}</span></span>
-            </button>
-            <span v-if="detectedPortsNotRegistered.length === 0" class="detect-all-registered">{{ t('proxy.allRegistered') }}</span>
-          </div>
-        </div>
-
       </div>
+
+      <!-- Port scan drawer (bound to proxy tab: auto-hides on tab switch) -->
+      <BottomSheet :open="scanDrawer.effectiveOpen.value" auto @close="scanDrawer.close()">
+        <template #header>
+          <Search :size="16" class="bs-header-icon" />
+          <span class="bs-header-title">{{ t('proxy.scanTitle') }}</span>
+          <span class="port-scan-header-spacer"></span>
+          <button class="port-scan-rescan-icon" :disabled="scanning" :title="t('proxy.rescan')" @click.stop="rescanPorts">
+            <RefreshCw :size="16" />
+          </button>
+        </template>
+        <div class="port-scan-content">
+          <div v-if="scanning" class="port-scan-loading">
+            <div class="port-scan-spinner"></div>
+            <span>{{ t('proxy.scanInProgress') }}</span>
+          </div>
+
+          <template v-else>
+            <div v-if="detectedPortsNotRegistered.length > 0" class="port-scan-results">
+              <div class="port-scan-count">{{ t('proxy.scanCount', { count: detectedPortsNotRegistered.length }) }}</div>
+              <button
+                v-for="p in detectedPortsNotRegistered"
+                :key="p.port"
+                class="port-scan-item"
+                :class="p.protocol"
+                @click="handleQuickAdd(p.port, p.protocol, p.processName)"
+              >
+                <span class="port-scan-item-port">{{ p.port }}</span>
+                <span class="port-scan-item-proto">{{ p.protocol }}</span>
+                <span v-if="p.processName" class="port-scan-item-process">
+                  {{ p.processName }}<span v-if="p.processArgs"> {{ p.processArgs }}</span>
+                </span>
+                <Plus :size="14" class="port-scan-item-add" />
+              </button>
+            </div>
+
+            <div v-else class="port-scan-empty">
+              <Search :size="24" />
+              <span>{{ t('proxy.scanNoResults') }}</span>
+            </div>
+          </template>
+        </div>
+      </BottomSheet>
 
       <!-- Add/Edit Modal (shared) -->
       <ModalDialog :open="showForm" :title="isEditMode ? t('proxy.editPort') : t('proxy.addPort')" @close="showForm = false">
@@ -210,12 +234,14 @@
 </template>
 
 <script setup>
-import { XCircle, RotateCcw, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, Network as NetworkIcon } from 'lucide-vue-next'
+import { XCircle, RotateCcw, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, RefreshCw, Network as NetworkIcon } from 'lucide-vue-next'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import BottomSheet from '@/components/common/BottomSheet.vue'
 import { usePortForward } from '@/composables/usePortForward.ts'
+import { useTabDrawer } from '@/composables/useTabDrawer.ts'
 import { useToast } from '@/composables/useToast.ts'
 
 const { t } = useI18n()
@@ -231,8 +257,8 @@ const portInputRef = ref(null)
 const formError = ref('')
 const saving = ref(false)
 
-const detecting = ref(false)
 const tunnelGuideExpanded = ref(false)
+const togglingPorts = ref(new Set())
 
 const isEditMode = computed(() => editingLocalPort.value !== null)
 
@@ -249,8 +275,19 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, registerPort, updatePort, unregisterPort, detectPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, scanning, hasScanned, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
 const toast = useToast()
+
+// Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.
+const scanDrawer = useTabDrawer('proxy')
+
+// Open the drawer; auto-run a scan the first time it is opened.
+function handleOpenScan() {
+  scanDrawer.open()
+  if (!hasScanned.value && !scanning.value) {
+    detectPorts()
+  }
+}
 
 const sshCopied = ref(false)
 
@@ -332,12 +369,17 @@ async function handleRemove(localPort) {
   await unregisterPort(localPort)
 }
 
-async function handleDetect() {
-  detecting.value = true
+async function handleToggleEnabled(localPort, enabled) {
+  if (togglingPorts.value.has(localPort)) return
+  togglingPorts.value.add(localPort)
+  togglingPorts.value = new Set(togglingPorts.value)
   try {
-    await detectPorts()
+    await setPortEnabled(localPort, enabled)
+  } catch (e) {
+    toast.show(e?.message || t('proxy.addPort') + ' failed', { type: 'error', icon: '❌' })
   } finally {
-    detecting.value = false
+    togglingPorts.value.delete(localPort)
+    togglingPorts.value = new Set(togglingPorts.value)
   }
 }
 
@@ -402,21 +444,32 @@ async function handleRetryTunnel() {
   overflow: hidden;
 }
 
-/* Compact header — matches TaskListPage style */
+/* Compact header — flush to panel edges, matches chat/app header style */
 .proxy-header {
   display: flex;
   align-items: center;
-  padding: 4px 8px;
+  padding: 4px 6px;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
   gap: 6px;
+  background: var(--bg-secondary, #f8f9fa);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
 
 .proxy-header-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proxy-header-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary, #666);
+  flex-shrink: 0;
 }
 
 /* Create button in header toolbar */
@@ -466,43 +519,6 @@ async function handleRetryTunnel() {
 
 .header-btn:active:not(:disabled) {
   transform: scale(0.9);
-}
-
-.header-btn.spinning svg {
-  animation: spin 1s linear infinite;
-}
-
-.detect-icon-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.detect-icon-wrap .detect-icon {
-  position: relative;
-  z-index: 1;
-}
-
-.radar-ping {
-  position: absolute;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--accent-color, #0066cc);
-  opacity: 0;
-  animation: radar-ping 1.2s ease-out infinite;
-}
-
-@keyframes radar-ping {
-  0% {
-    transform: scale(0.5);
-    opacity: 0.5;
-  }
-  100% {
-    transform: scale(2.5);
-    opacity: 0;
-  }
 }
 
 @media (hover: hover) {
@@ -652,147 +668,6 @@ async function handleRetryTunnel() {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Zone 2: detected ports — takes 0–50%, pinned to bottom, hidden when empty */
-.proxy-zone-detected {
-  flex: 0 0 auto;
-  max-height: 50%;
-  border-top: 1px solid var(--border-color, #e5e5e5);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.proxy-detected-label {
-  font-size: 11px;
-  color: var(--text-muted, #999);
-  padding: 6px 0 4px;
-  flex-shrink: 0;
-}
-
-.proxy-detected-chips {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  padding-right: 4px;
-  padding-bottom: 4px;
-}
-
-.detect-chip {
-  padding: 6px 8px 6px 10px;
-  border: none;
-  border-left: 3px solid #3b82f6;
-  border-radius: 0;
-  background: var(--bg-tertiary, #f5f5f5);
-  color: var(--text-primary, #1a1a1a);
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 0.15s;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-  animation: chip-appear 0.3s ease-out both;
-}
-
-.detect-chip.https {
-  border-left-color: #8b5cf6;
-}
-
-.chip-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.chip-port {
-  font-family: monospace;
-  font-weight: 700;
-  font-size: 12px;
-}
-
-.chip-proto {
-  font-size: 8px;
-  font-family: sans-serif;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: rgba(59, 130, 246, 0.12);
-  color: #3b82f6;
-}
-
-.detect-chip.https .chip-proto {
-  background: rgba(139, 92, 246, 0.12);
-  color: #8b5cf6;
-}
-
-.detect-chip .chip-cmdline {
-  font-size: 9px;
-  font-family: monospace;
-  white-space: nowrap;
-  min-width: 0;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-left: 1px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-
-.detect-chip .chip-cmdline::-webkit-scrollbar {
-  display: none;
-}
-
-.detect-chip .chip-process {
-  font-weight: 600;
-  color: var(--text-secondary, #666);
-}
-
-.detect-chip .chip-args {
-  color: var(--text-muted, #999);
-}
-
-.detect-chip:active {
-  transform: scale(0.97);
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-}
-
-.detect-chip:active .chip-proto {
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
-}
-
-.detect-chip:active .chip-process {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.detect-chip:active .chip-args {
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.detect-all-registered {
-  font-size: 11px;
-  color: var(--text-muted, #999);
-  opacity: 0.7;
-}
-
-@keyframes chip-appear {
-  from {
-    opacity: 0;
-    transform: scale(0.8) translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
 /* Tunnel guide (web mode) */
 .tunnel-guide {
   border: 1px solid var(--border-color, #e5e5e5);
@@ -918,6 +793,168 @@ async function handleRetryTunnel() {
 </style>
 
 <style>
+/* Port scan drawer */
+.port-scan-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  min-height: 0;
+}
+
+.port-scan-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 12px;
+  color: var(--text-muted, #999);
+  font-size: 13px;
+}
+
+.port-scan-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--bg-tertiary, #e9ecef);
+  border-top-color: var(--accent-color, #0066cc);
+  border-radius: 50%;
+  animation: port-scan-spin 0.8s linear infinite;
+}
+
+@keyframes port-scan-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Rescan icon in drawer header */
+.port-scan-header-spacer {
+  flex: 1;
+}
+
+.port-scan-rescan-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  border-radius: 0;
+  transition: all 0.15s;
+}
+
+.port-scan-rescan-icon:hover:not(:disabled) {
+  color: var(--accent-color, #0066cc);
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+.port-scan-rescan-icon:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.port-scan-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #666);
+  flex-shrink: 0;
+}
+
+.port-scan-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px;
+}
+
+.port-scan-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-left: 3px solid #3b82f6;
+  border-radius: 0;
+  background: var(--bg-secondary, #f8f9fa);
+  color: var(--text-primary, #1a1a1a);
+  cursor: pointer;
+  transition: all 0.15s;
+  min-width: 0;
+}
+
+.port-scan-item:hover {
+  border-color: var(--accent-color, #0066cc);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  transform: translateY(-1px);
+}
+
+.port-scan-item.https {
+  border-left-color: #8b5cf6;
+}
+
+.port-scan-item-port {
+  font-family: monospace;
+  font-weight: 700;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.port-scan-item-proto {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 0;
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.port-scan-item.https .port-scan-item-proto {
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+}
+
+.port-scan-item-process {
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--text-muted, #999);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.port-scan-item-add {
+  color: var(--text-muted, #999);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.port-scan-item:hover .port-scan-item-add {
+  color: var(--accent-color, #0066cc);
+}
+
+.port-scan-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 12px;
+  color: var(--text-muted, #999);
+  font-size: 13px;
+  opacity: 0.8;
+}
+
 .port-add-content {
   display: flex;
   flex-direction: column;
