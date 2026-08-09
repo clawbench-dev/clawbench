@@ -2,7 +2,7 @@
 
 > Task ID: 33 | Agent: codebuddy
 
-你是 ClawBench 项目的部署助手。在发布（Task 3）完成后，将最新版本部署到本地三个 Docker 实例供测试。
+你是 ClawBench 项目的部署助手。在发布（Task 3）完成后，将最新版本部署到本地实例供测试（绿色版宿主机 + NPM/Docker 镜像版容器）。
 
 **项目根目录：** 运行 `cd` 到 Git 仓库根目录（即本文件所在仓库的根目录），后续所有命令均基于该目录执行。
 
@@ -20,7 +20,7 @@ echo "最新版本标签: $NEW_TAG"
 
 ```bash
 # 检查绿色版当前版本
-GREEN_VER=$(docker exec clawbench-green ./clawbench --version 2>/dev/null | sed 's/^v//' || echo "")
+GREEN_VER=$(/opt/clawbench-green/clawbench --version 2>/dev/null | sed 's/^v//' || echo "")
 # 检查 NPM 版当前版本
 NPM_CUR_VER=$(docker exec clawbench-npm npx clawbench --version 2>/dev/null | sed 's/^v//' || echo "")
 # 检查 Docker 镜像版当前版本
@@ -56,9 +56,9 @@ fi
 echo "发布产物已就绪 ($ASSETS 个文件)"
 ```
 
-## 4. 本地部署：绿色版（Docker，端口 20300）
+## 4. 本地部署：绿色版（宿主机，端口 20300）
 
-将 Linux amd64 绿色版下载到本地，部署到 Docker 容器中，端口映射 20300。
+将 Linux amd64 绿色版下载到宿主机，直接运行，端口 20300。
 
 ### 4.1 清理端口占用
 
@@ -77,55 +77,37 @@ fi
 ### 4.2 下载绿色版
 
 ```bash
-DEPLOY_DIR="/tmp/clawbench-deploy-green"
-rm -rf "$DEPLOY_DIR"
+DEPLOY_DIR="/opt/clawbench-green"
 mkdir -p "$DEPLOY_DIR"
 
 # 从 GitHub Release 下载 Linux amd64 绿色版
-gh release download $NEW_TAG --pattern "clawbench-linux-amd64.zip" --dir "$DEPLOY_DIR"
+TMP_DIR=$(mktemp -d)
+gh release download $NEW_TAG --pattern "clawbench-linux-amd64.zip" --dir "$TMP_DIR"
 
+cd "$TMP_DIR"
+unzip -o clawbench-linux-amd64.zip
+# 复制到部署目录（保留 data-dir 等已有数据）
+cp clawbench/clawbench "$DEPLOY_DIR/clawbench"
+chmod +x "$DEPLOY_DIR/clawbench"
+
+# 清理临时目录
+rm -rf "$TMP_DIR"
+```
+
+### 4.3 启动绿色版
+
+```bash
+# 使用 nohup 后台运行，日志输出到部署目录
 cd "$DEPLOY_DIR"
-unzip clawbench-linux-amd64.zip
-chmod +x clawbench/clawbench
+nohup ./clawbench --port 20300 --data-dir /opt/clawbench-green-data > /opt/clawbench-green/clawbench.log 2>&1 &
+echo "绿色版已启动，PID: $!"
 ```
 
-### 4.3 停止并移除旧容器（如果存在）
-
-```bash
-docker stop clawbench-green 2>/dev/null && docker rm clawbench-green 2>/dev/null || true
-```
-
-### 4.4 构建并启动 Docker 容器
-
-```bash
-# 准备 Dockerfile（复用项目根目录的 Dockerfile，但改端口）
-cd "$DEPLOY_DIR/clawbench"
-
-cat > Dockerfile <<'DOCKERFILE'
-FROM ubuntu:24.04
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl bash && \
-    rm -rf /var/lib/apt/lists/*
-WORKDIR /app
-COPY clawbench .
-RUN mkdir -p /data/.clawbench
-EXPOSE 20300
-ENTRYPOINT ["./clawbench", "--port", "20300", "--data-dir", "/data/.clawbench"]
-DOCKERFILE
-
-docker build -t clawbench-green:latest .
-docker run -d \
-  --name clawbench-green \
-  -p 20300:20300 \
-  -v clawbench-green-data:/data \
-  clawbench-green:latest
-```
-
-### 4.5 等待启动并获取密码
+### 4.4 等待启动并获取密码
 
 ```bash
 sleep 3
-GREEN_PASS=$(docker exec clawbench-green cat /data/.clawbench/auto-password 2>/dev/null || docker exec clawbench-green cat /app/.clawbench/auto-password 2>/dev/null || echo "未找到自动密码")
+GREEN_PASS=$(cat /opt/clawbench-green-data/auto-password 2>/dev/null || echo "未找到自动密码")
 echo "绿色版 (port 20300) 密码: $GREEN_PASS"
 ```
 
@@ -239,7 +221,7 @@ echo "Docker 镜像版 (port 20400) 密码: $IMG_PASS"
 ╔══════════════════════════════════════════════════════════╗
 ║  ClawBench $NEW_TAG 部署完成                              ║
 ╠══════════════════════════════════════════════════════════╣
-║  绿色版 (Docker)   →  http://localhost:20300              ║
+║  绿色版 (宿主机)   →  http://localhost:20300              ║
 ║  密码: $GREEN_PASS                                        ║
 ╠══════════════════════════════════════════════════════════╣
 ║  Docker 镜像版     →  http://localhost:20400              ║
@@ -257,7 +239,7 @@ echo "Docker 镜像版 (port 20400) 密码: $IMG_PASS"
 - 本任务依赖发布（Task 3）完成
 - **杀进程时绝对不要用 `pkill` 或 `killall`**，必须用 `lsof -i :PORT -t | xargs kill` 按端口精确杀
 - **绝对不要碰端口 20000**——那是用户的主服务
-- Docker 镜像版容器内监听 20000，宿主机映射到 20400；绿色版和 NPM 版容器内直接监听各自端口
+- Docker 镜像版容器内监听 20000，宿主机映射到 20400；绿色版直接在宿主机监听 20300；NPM 版容器内直接监听 20500
 - NPM 安装使用官方 registry `https://registry.npmjs.org`（不使用国内镜像，因 npmmirror 同步延迟可能导致平台包 404）
 - NPM 安装需显式安装平台包 `@xulongzhe/clawbench-linux-x64`，主包不会自动安装可选依赖
 - Docker 镜像的 GHCR 地址是 `ghcr.io/clawbench-dev/clawbench`（GitHub 仓库的 organization 是 `clawbench-dev`）
