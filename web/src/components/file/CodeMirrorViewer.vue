@@ -30,6 +30,7 @@ import { defaultKeymap, historyKeymap, history, undo, redo, undoDepth, redoDepth
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { buildLangExtension } from '@/utils/codeEditorLang'
+import { getWordRangeAt } from '@/utils/codeWordRange'
 import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import { copyText } from '@/utils/clipboard.ts'
@@ -188,13 +189,19 @@ function handleEditorClick(event) {
     return false
 }
 
-function handleEditorDblClick(_event, editor) {
-    const sel = editor.state.selection.main
-    if (sel.empty) return
-    const text = editor.state.sliceDoc(sel.from, sel.to).trim()
+function handleEditorDblClick(event, editor) {
+    if (props.editable) return // double-click select+copy is for browse mode only
+    // Native selection is disabled in browse mode, so select the word at the
+    // click position ourselves, then copy it.
+    const pos = editor.posAtCoords({ x: event.clientX, y: event.clientY })
+    if (pos == null) return
+    const range = getWordRangeAt(editor.state, pos)
+    if (!range) return
+    editor.dispatch({ selection: { anchor: range.from, head: range.to } })
+    const text = editor.state.sliceDoc(range.from, range.to).trim()
     if (!text) return
-    const startLine = editor.state.doc.lineAt(sel.from).number
-    const endLine = editor.state.doc.lineAt(sel.to).number
+    const startLine = editor.state.doc.lineAt(range.from).number
+    const endLine = editor.state.doc.lineAt(range.to).number
     copyText(text)
     quoteQuestion.showBar({
         text,
@@ -614,6 +621,16 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 .cm-viewer.cm-readonly .cm-activeLine,
 .cm-viewer.cm-readonly .cm-activeLineGutter {
     display: none;
+}
+
+/* Browse mode: suppress native text selection (mobile long-press / desktop drag)
+   so accidental selection handles don't appear. Selecting + copying is done
+   deliberately via double-click (see handleEditorDblClick). Edit mode keeps the
+   normal selectable behavior. */
+.cm-viewer.cm-readonly .cm-content {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
 }
 
 /* Diff marker gutter label */

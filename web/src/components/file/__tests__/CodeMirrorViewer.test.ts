@@ -328,4 +328,16 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(css).toMatch(/border-top:\s*2px\s+solid/)
     expect(css).toMatch(/--code-bg-editing/)
   })
+
+  it('disables native text selection in browse mode only', async () => {
+    mountViewer({ content: 'x', editable: false })
+    mountViewer({ content: 'x', editable: true })
+    await sleep(50)
+    // The browse-mode stylesheet must suppress native selection on .cm-content;
+    // edit mode leaves it selectable (no such rule for is-editable).
+    const css = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n')
+    const rule = /\.cm-viewer\.cm-readonly\s+\.cm-content\s*\{[^}]*user-select:\s*none/m
+    expect(css).toMatch(rule)
+    expect(css).not.toMatch(/\.cm-viewer\.is-editable\s+\.cm-content\s*\{[^}]*user-select:\s*none/)
+  })
 })
