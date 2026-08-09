@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { loadBrowseDir, loadOpenFile, clearOpenFile } from '@/stores/app.ts'
+import { loadBrowseDir, loadOpenFile, clearStaleOpenFile } from '@/stores/app.ts'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 
@@ -170,7 +170,7 @@ describe('loadFiles DirectoryNotFound → parent navigation', () => {
   })
 })
 
-describe('saveOpenFile / loadOpenFile / clearOpenFile', () => {
+describe('saveOpenFile / loadOpenFile / clearStaleOpenFile', () => {
   const OPEN_FILE_PREFIX = 'clawbench-open-file:'
 
   beforeEach(() => {
@@ -195,17 +195,17 @@ describe('saveOpenFile / loadOpenFile / clearOpenFile', () => {
     expect(loadOpenFile()).toBe('')
   })
 
-  it('clearOpenFile removes the persisted file for the current project', () => {
+  it('clearStaleOpenFile removes the persisted file for the current project', () => {
     store.state.projectRoot = '/home/user/myproject'
     localStorage.setItem(OPEN_FILE_PREFIX + '/home/user/myproject', 'src/main.go')
-    clearOpenFile()
+    clearStaleOpenFile()
     expect(localStorage.getItem(OPEN_FILE_PREFIX + '/home/user/myproject')).toBeNull()
   })
 
-  it('clearOpenFile does nothing when projectRoot is empty', () => {
+  it('clearStaleOpenFile does nothing when projectRoot is empty', () => {
     store.state.projectRoot = ''
     localStorage.setItem(OPEN_FILE_PREFIX + '/home/user/other', 'other.go')
-    clearOpenFile()
+    clearStaleOpenFile()
     // Should not affect other keys
     expect(localStorage.getItem(OPEN_FILE_PREFIX + '/home/user/other')).toBe('other.go')
   })
@@ -220,5 +220,20 @@ describe('saveOpenFile / loadOpenFile / clearOpenFile', () => {
     expect(loadOpenFile()).toBe('file-a.ts')
     store.state.projectRoot = '/project/b'
     expect(loadOpenFile()).toBe('file-b.ts')
+  })
+
+  it('switching away from a project preserves its open-file record (restore on return)', () => {
+    // Simulate: open file-a in project a
+    store.state.projectRoot = '/project/a'
+    localStorage.setItem(OPEN_FILE_PREFIX + '/project/a', 'file-a.ts')
+
+    // Simulate project switch a -> b. The switch must NOT clear project a's
+    // record — otherwise returning to project a cannot restore the current file.
+    store.state.projectRoot = '/project/b'
+    localStorage.setItem(OPEN_FILE_PREFIX + '/project/b', 'file-b.ts')
+
+    // Return a -> b -> a; project a's open file must still be there.
+    store.state.projectRoot = '/project/a'
+    expect(loadOpenFile()).toBe('file-a.ts')
   })
 })

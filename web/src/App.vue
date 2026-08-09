@@ -445,7 +445,7 @@ import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
 import { useUpgrade } from './composables/useUpgrade'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, requestExitConfirm } from './composables/useBackHandler'
-import { store, loadBrowseDir, loadOpenFile, clearOpenFile } from './stores/app.ts'
+import { store, loadBrowseDir, loadOpenFile, clearStaleOpenFile } from './stores/app.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
 import { formatBadgeCount } from './utils/format.ts'
@@ -484,8 +484,9 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   await new Promise(r => setTimeout(r, 150))
 
   // ── Phase 2: POST to backend — now returns full init data (roots, homeDir, config) ──
-  // Clear open file for the OLD project before switching (setProject resets projectRoot)
-  clearOpenFile()
+  // Note: do NOT clearOpenFile() here. It runs before setProject(), so it would
+  // delete the OLD project's persisted open-file record, breaking restore when
+  // the user switches back to it. Per-project restore relies on that record.
   try {
     await store.setProject(newProjectPath)
   } catch (err) {
@@ -528,26 +529,9 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   switchingProject.value = false
 
   // ── Phase 6: Background data loading — all independent, fully parallel, non-blocking ──
-  const restoreBrowseDir = async () => {
-    const savedDir = loadBrowseDir()
-    if (savedDir) {
-      try { await store.loadFiles(savedDir, true) } catch {
-        // Directory no longer exists — fall back to project root
-        await store.loadFiles('')
-      }
-    } else {
-      await store.loadFiles('')
-    }
-    // Restore last opened file for this project
-    const savedFile = loadOpenFile()
-    if (savedFile) {
-      const ok = await store.selectFile(savedFile)
-      if (ok) fileNav.openFile(savedFile)
-    }
-  }
   await sessionIdentity.initSessionFromAPI()
   Promise.allSettled([
-    restoreBrowseDir(),
+    restoreProjectWorkspace(),
     loadSessionsOnce(),
     store.loadGitBranch(),
     loadTasks(),
@@ -770,6 +754,40 @@ function closeOverlayAndSync() {
   detailsDrawer.close()
   searchDrawer.close()
   fileHistoryDrawer.close()
+}
+
+/**
+ * Restore the current project's workspace: last browsed directory (falling
+ * back to the project root if it no longer exists) and last opened file.
+ *
+ * Single source of truth shared by app startup (initializeApp) and project
+ * switch (hotSwitchProject) — keeps both paths in sync and avoids divergence.
+ * If the saved file can no longer be opened (deleted/moved), its stale record
+ * is cleared so it isn't retried and re-reported on every launch/switch.
+ */
+async function restoreProjectWorkspace() {
+  const savedDir = loadBrowseDir()
+  if (savedDir) {
+    try { await store.loadFiles(savedDir, true) } catch {
+      // Directory no longer exists — fall back to project root
+      try { await store.loadFiles('') } catch {}
+    }
+  } else {
+    try { await store.loadFiles('') } catch {
+      toast.show(t('toast.fileListLoadFailed'), { icon: '⚠️', type: 'error', duration: 6000 })
+    }
+  }
+  // Restore last opened file (per-project)
+  const savedFile = loadOpenFile()
+  if (savedFile) {
+    const ok = await store.selectFile(savedFile)
+    if (ok) {
+      fileNav.openFile(savedFile)
+    } else {
+      // File no longer exists — clear the stale record to avoid repeated failures.
+      clearStaleOpenFile()
+    }
+  }
 }
 
 const { isAppMode } = useAppMode()
@@ -1062,24 +1080,9 @@ async function initializeApp() {
   loadSSHInfo().catch(() => {})
   loadTerminalStatus().catch(() => {})
   store.loadGitBranch().catch(() => {})
-  // Restore last browsed directory; fall back to project root if the dir no longer exists
-  const savedDir = loadBrowseDir()
-  if (savedDir) {
-    try { await store.loadFiles(savedDir, true) } catch {
-      // Directory no longer exists — fall back to project root
-      try { await store.loadFiles('') } catch {}
-    }
-  } else {
-    try { await store.loadFiles('') } catch {
-      toast.show(t('toast.fileListLoadFailed'), { icon: '⚠️', type: 'error', duration: 6000 })
-    }
-  }
-  // Restore last opened file (per-project)
-  const savedFile = loadOpenFile()
-  if (savedFile) {
-    const ok = await store.selectFile(savedFile)
-    if (ok) fileNav.openFile(savedFile)
-  }
+  // Restore last browsed directory + last opened file (per-project), falling
+  // back to the project root if the saved dir/file no longer exists.
+  await restoreProjectWorkspace()
   return true
 }
 

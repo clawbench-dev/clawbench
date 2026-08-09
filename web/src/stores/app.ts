@@ -32,11 +32,22 @@ export function loadOpenFile(): string {
     } catch { return '' }
 }
 
-export function clearOpenFile(): void {
+// Private — only closeCurrentFile() and clearStaleOpenFile() may clear the
+// persisted open-file record. Exposing it as a public API invites misuse
+// (e.g. calling it against the wrong project, which previously broke
+// per-project restore on switch-back).
+function clearOpenFile(): void {
     if (!state.projectRoot) return
     try {
         localStorage.removeItem(OPEN_FILE_PREFIX + state.projectRoot)
     } catch { /* ignore */ }
+}
+
+// Public cleanup for a stale open-file record (e.g. the saved file was deleted).
+// Keeps the low-level clearOpenFile private; restore calls this when selectFile
+// fails so the record isn't retried (and re-reported) on every launch/switch.
+export function clearStaleOpenFile(): void {
+    clearOpenFile()
 }
 
 /**
