@@ -1433,7 +1433,7 @@ func TestIsValidAgentID(t *testing.T) {
 		{"a\nb", false},       // newline
 		{"a\tb", false},       // tab
 		{"agent%00id", false}, // null byte (URL-encoded)
-		{"中文", false},          // Unicode characters
+		{"中文", false},         // Unicode characters
 		{"agent-id-1", true},  // hyphens and digits
 	}
 

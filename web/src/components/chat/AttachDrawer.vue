@@ -302,7 +302,7 @@ function toggleAttached(path: string, isDir: boolean = false) {
 
 // Delete a recent share/upload. If it's currently attached, detach it first so
 // the footer doesn't hold a reference to a removed file.
-async function handleDeleteShare(item: { path: string }) {
+async function handleDeleteShare(item: { path: string; name?: string }) {
   const confirmed = await dialog.confirm(t('chat.attach.deleteShareConfirm', { name: item.name ?? baseName(item.path) }), {
     dangerous: true,
     confirmText: t('common.delete'),
@@ -312,7 +312,7 @@ async function handleDeleteShare(item: { path: string }) {
   await deleteRecentShare(item.path)
 }
 
-async function handleDeleteUpload(item: { path: string }) {
+async function handleDeleteUpload(item: { path: string; name?: string }) {
   const confirmed = await dialog.confirm(t('chat.attach.deleteUploadConfirm', { name: item.name ?? baseName(item.path) }), {
     dangerous: true,
     confirmText: t('common.delete'),

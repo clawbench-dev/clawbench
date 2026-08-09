@@ -215,25 +215,25 @@ func listRecentFiles(projectPath, dirPath string, limit int) []recentFile {
 // (symlink-safe via isPathUnderBase), preventing the attachment drawer from
 // removing arbitrary project files. Writes an error and returns false on
 // failure.
-func deleteRecentFile(w http.ResponseWriter, r *http.Request, subDir string) bool {
+func deleteRecentFile(w http.ResponseWriter, r *http.Request, subDir string) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
-		return false
+		return
 	}
 	if r.Method != http.MethodDelete {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
-		return false
+		return
 	}
 
 	var req struct {
 		Path string `json:"path"`
 	}
 	if !decodeJSON(w, r, &req) {
-		return false
+		return
 	}
 	if req.Path == "" {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "MissingPath")
-		return false
+		return
 	}
 
 	// Resolve the path against the project root. Unlike resolveAbsPath, we
@@ -243,18 +243,18 @@ func deleteRecentFile(w http.ResponseWriter, r *http.Request, subDir string) boo
 		ap, err := filepath.Abs(req.Path)
 		if err != nil || !isPathUnderAnyRoot(ap) {
 			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-			return false
+			return
 		}
 		absPath = ap
 	} else {
 		baseAbs, err := filepath.Abs(projectPath)
 		if err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to resolve project path: %w", err)))
-			return false
+			return
 		}
 		absPath, ok = validateAndResolvePath(w, r, baseAbs, req.Path)
 		if !ok {
-			return false
+			return
 		}
 	}
 
@@ -262,27 +262,26 @@ func deleteRecentFile(w http.ResponseWriter, r *http.Request, subDir string) boo
 	info, err := os.Stat(absPath)
 	if err != nil {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return false
+		return
 	}
 	if info.IsDir() {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAFile")
-		return false
+		return
 	}
 
 	// Scope check: the file must live inside .clawbench/<subDir>.
 	baseDir := filepath.Join(projectPath, ".clawbench", subDir)
 	if !isPathUnderBase(absPath, baseDir) {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-		return false
+		return
 	}
 
 	if err := os.Remove(absPath); err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("delete failed: %w", err)))
-		return false
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	return true
 }
 
 // ShareInRecent handles GET /api/share-in/recent (list) and

@@ -453,7 +453,6 @@ func TestServeQuickCommandByID_UpdateProjectOnlyWithCookie(t *testing.T) {
 	assert.True(t, proj[0].ProjectOnly)
 }
 
-
 func TestServeQuickCommandByID_InvalidID(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
