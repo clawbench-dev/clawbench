@@ -196,7 +196,7 @@ function selectRecentFile(entry: { path: string }) {
 function openFileManager() {
     fileDropdownOpen.value = false
     if (store.state.currentFile?.path) store.closeCurrentFile()
-    switchTab('browse')
+    switchTab?.('browse')
 }
 
 function dirName(path: string) {
@@ -434,7 +434,7 @@ watch(gitBranch, (newVal, oldVal) => {
 function openHistory() {
     branchDropdownOpen.value = false
     setPendingManageNavigation()
-    switchTab('history')
+    switchTab?.('history')
 }
 
 // Refresh branch when project changes
@@ -557,14 +557,15 @@ function openBrowse() {
 
 // Close dropdown on outside click
 function onClickOutside(e: MouseEvent) {
-    if (dropdownRef.value && dropdownRef.value.contains(e.target)) return
-    if (dropdownPanelRef.value && dropdownPanelRef.value.contains(e.target)) return
-    if (fileDropdownPanelRef.value && fileDropdownPanelRef.value.contains(e.target)) return
-    if (branchDropdownPanelRef.value && branchDropdownPanelRef.value.contains(e.target)) return
+    const target = e.target as Node | null
+    if (dropdownRef.value && dropdownRef.value.contains(target)) return
+    if (dropdownPanelRef.value && dropdownPanelRef.value.contains(target)) return
+    if (fileDropdownPanelRef.value && fileDropdownPanelRef.value.contains(target)) return
+    if (branchDropdownPanelRef.value && branchDropdownPanelRef.value.contains(target)) return
     const currentFileBadge = document.querySelector('.current-file-badge')
-    if (currentFileBadge && currentFileBadge.contains(e.target)) return
+    if (currentFileBadge && currentFileBadge.contains(target)) return
     const branchBadge = document.querySelector('.branch-badge')
-    if (branchBadge && branchBadge.contains(e.target)) return
+    if (branchBadge && branchBadge.contains(target)) return
     dropdownOpen.value = false
     fileDropdownOpen.value = false
     branchDropdownOpen.value = false
