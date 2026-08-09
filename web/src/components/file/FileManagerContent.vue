@@ -401,7 +401,6 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { setAttachDragData, hasAttachDragData, buildAttachDragImage } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
-import { useFileNavStack } from '@/composables/useFileNavStack'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
@@ -524,15 +523,12 @@ const { isWideScreen } = useWideScreenLayout()
 
 const activeTab = inject('activeTab', ref(''))
 
-const fileNav = useFileNavStack()
-
 // Register back handler for file browser directory navigation
-// PRIORITY_PAGE < PRIORITY_OVERLAY, so file-overlay always wins when open.
-// The !overlayOpen guard is redundant with priority but makes intent explicit.
+// PRIORITY_PAGE < PRIORITY_OVERLAY, so file-view always wins when open.
 // canGoBack: true when not at project root (currentDir !== '')
 useFeatureBackHandler(
   'browse',
-  () => activeTab.value === 'browse' && !fileNav.overlayOpen.value && props.currentDir !== '',
+  () => activeTab.value === 'browse' && props.currentDir !== '',
   () => emit('navigateBack'),
   PRIORITY_PAGE,
 )

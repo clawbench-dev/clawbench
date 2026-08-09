@@ -4,10 +4,10 @@ import { ref, computed } from 'vue'
 export const DOCK_BTN_WIDTH = 34
 export const DOCK_GAP = 12
 export const DOCK_STEP = DOCK_BTN_WIDTH + DOCK_GAP // 46
-const PRIMARY_COUNT = 3 // chat, browse, history
+const PRIMARY_COUNT = 4 // chat, browse, view, history
 
-/** Minimum dock content width: 3 primary + overflow_btn = 4 buttons, 3 gaps = 172px */
-const MIN_DOCK_CONTENT_WIDTH = 4 * DOCK_BTN_WIDTH + 3 * DOCK_GAP
+/** Minimum dock content width: 4 primary + overflow_btn = 5 buttons, 4 gaps = 218px */
+const MIN_DOCK_CONTENT_WIDTH = 5 * DOCK_BTN_WIDTH + 4 * DOCK_GAP
 
 /**
  * Composable for responsive dock overflow logic.

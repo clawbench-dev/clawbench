@@ -79,6 +79,11 @@
               <span class="item-path">{{ dirName(entry.path) }}</span>
             </div>
           </div>
+          <div class="menu-divider"></div>
+          <div class="app-menu-item other-item" @click="openFileManager">
+            <FolderOpen :size="14" class="item-icon" />
+            <span class="item-label">{{ t('appHeader.openFileManager') }}</span>
+          </div>
         </div>
       </Transition>
     </Teleport>
@@ -125,7 +130,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, Cpu, Activity, MemoryStick, Database } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, FolderOpen, Cpu, Activity, MemoryStick, Database } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -186,6 +191,12 @@ function updateFileDropdownPosition(useEstimate = false) {
 function selectRecentFile(entry) {
     fileDropdownOpen.value = false
     emit('selectRecentFile', entry.path)
+}
+
+function openFileManager() {
+    fileDropdownOpen.value = false
+    if (store.state.currentFile?.path) store.closeCurrentFile()
+    switchTab?.('browse')
 }
 
 function dirName(path) {

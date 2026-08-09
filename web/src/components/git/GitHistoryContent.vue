@@ -147,7 +147,7 @@
 <script setup>
 import { Plus, Minus } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
-import { ref, computed, inject, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitCommitList from './GitCommitList.vue'
 import GitCommitMeta from './GitCommitMeta.vue'
@@ -159,8 +159,6 @@ import { store } from '@/stores/app.ts'
 import { useCommitNavigation, consumePendingCommitNavigation, pendingSha as pendingCommitSha, consumePendingManageNavigation, pendingManageView } from '@/composables/useCommitNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 const { t } = useI18n()
-
-const switchTab = inject('switchTab', () => {})
 
 const props = defineProps({
   mode: {
@@ -177,8 +175,8 @@ const props = defineProps({
 const emit = defineEmits(['open-file'])
 
 function onOpenFile(path) {
+  // App.vue's handleSelectFile switches to the file-view tab.
   emit('open-file', path)
-  switchTab('browse')
 }
 
 // ─── Unified state ─────────────────────────────────────────────────────────

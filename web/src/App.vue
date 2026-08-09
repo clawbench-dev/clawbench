@@ -45,7 +45,7 @@
           >
             <template #left>
               <div class="col-left" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="onLeftPanePointerDown" @focusin="setActivePane('left')">
-                <!-- File Browse Tab (合一：目录浏览 + 文件覆盖预览) -->
+                <!-- File Manager Tab (directory browsing only) -->
                 <TabPanel tabId="browse" :activeTab="leftPanelActive" :noHeader="true">
                   <div class="browse-panel">
                     <FileManagerContent
@@ -70,7 +70,14 @@
                       @refresh="handleRefresh"
                       @open-terminal="handleOpenTerminal"
                     />
+                  </div>
+                </TabPanel>
+
+                <!-- File View Tab (opened file preview) -->
+                <TabPanel tabId="view" :activeTab="leftPanelActive" :noHeader="true">
+                  <div class="view-panel">
                     <FileOverlay
+                      v-if="fileNav.overlayOpen.value"
                       ref="fileOverlayRef"
                       :overlay-open="fileNav.overlayOpen.value"
                       :current-file="currentFile"
@@ -94,6 +101,33 @@
                       @open-file="handleOverlayOpenFile"
                       @overlay-close="handleOverlayClose"
                     />
+                    <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
+                      <template v-if="recentFileEntries.length">
+                        <div class="view-empty-recent">
+                          <div class="view-empty-recent-title">{{ t('appHeader.recentFiles') }}</div>
+                          <div class="view-empty-recent-list">
+                            <div
+                              v-for="entry in recentFileEntries"
+                              :key="entry.path"
+                              class="view-empty-recent-item"
+                              @click="handleAppHeaderRecentFileSelect(entry.path)"
+                            >
+                              <FileIcon :path="entry.path" :size="16" />
+                              <span class="view-empty-recent-name">{{ baseName(entry.path) }}</span>
+                              <span class="view-empty-recent-dir">{{ dirName(entry.path) }}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <FileText :size="40" class="view-empty-icon" />
+                        <span class="view-empty-no-recent-title">{{ t('appHeader.noRecentFiles') }}</span>
+                      </template>
+                      <button class="view-empty-manager-btn" @click="switchTab('browse')">
+                        <FolderOpen :size="16" />
+                        <span>{{ t('nav.fileManager') }}</span>
+                      </button>
+                    </div>
                   </div>
                 </TabPanel>
 
@@ -235,6 +269,9 @@
             <button class="dock-btn" :class="{ active: activeTab === 'browse' }" @click.stop="switchTab('browse')" :title="t('nav.fileManager')">
               <FolderOpen />
             </button>
+            <button class="dock-btn" :class="{ active: activeTab === 'view' }" @click.stop="switchTab('view')" :title="t('nav.fileView')">
+              <FileText />
+            </button>
             <div class="dock-btn-wrap">
               <button class="dock-btn" :class="{ active: activeTab === 'history' }" @click.stop="switchTab('history')" :title="t('git.history.projectHistory')">
                 <GitBranch />
@@ -288,15 +325,15 @@
             <span>{{ t('nav.tasks') }}</span>
             <span v-if="store.state.taskUnreadCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
           </button>
-          <button v-if="popupOverflowTabs.includes('proxy')" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
-            <Network :size="16" />
-            <span>{{ t('nav.portForward') }}</span>
-            <span v-if="store.state.portForwardActiveCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
-          </button>
           <button v-if="popupOverflowTabs.includes('terminal')" class="dock-overflow-item" :class="{ active: activeTab === 'terminal' }" @click.stop="handleOverflowSelect('terminal')">
             <TerminalIcon :size="16" />
             <span>{{ t('terminal.title') }}</span>
             <span v-if="store.state.terminalSessionCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
+          </button>
+          <button v-if="popupOverflowTabs.includes('proxy')" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
+            <Network :size="16" />
+            <span>{{ t('nav.portForward') }}</span>
+            <span v-if="store.state.portForwardActiveCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
           </button>
           <button v-if="popupOverflowTabs.includes('settings')" class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
             <Settings :size="16" />
@@ -317,13 +354,15 @@ import { appLog, startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
-import { MessageSquare, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
 import Lightbox from './components/media/Lightbox.vue'
 import ChatPanelContent from './components/chat/ChatPanelContent.vue'
 import FileManagerContent from './components/file/FileManagerContent.vue'
+import FileIcon from './components/common/FileIcon.vue'
+import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 const TerminalPanelContent = defineAsyncComponent(() => import('./components/terminal/TerminalPanelContent.vue'))
@@ -535,11 +574,11 @@ function onLeftPanePointerDown() {
 }
 
 // Dock active indicator — water-drop sliding highlight
-// Dynamic button count: chat, browse, history, [inline overflow...], [overflow btn]
+// Dynamic button count: chat, browse, view, history, [inline overflow...], [overflow btn]
 const DOCK_STEP = 46 // 34 (btn width) + 12 (gap)
 
 const dockActiveIndex = computed(() => {
-  const visibleTabs = ['chat', 'browse', 'history', ...inlineOverflowTabs.value]
+  const visibleTabs = ['chat', 'browse', 'view', 'history', ...inlineOverflowTabs.value]
   if (singleDirectTab.value) visibleTabs.push(singleDirectTab.value)
   if (showOverflowButton.value) visibleTabs.push('__overflow__')
   const idx = visibleTabs.indexOf(activeTab.value)
@@ -653,10 +692,10 @@ function handleOpenTask(e) {
 }
 
 // Register browse-scoped drawers with tab-drawer binding
-const detailsDrawer = useTabDrawer('browse')
-const tocDrawer = useTabDrawer('browse')
-const searchDrawer = useTabDrawer('browse')
-const fileHistoryDrawer = useTabDrawer('browse')
+const detailsDrawer = useTabDrawer('view')
+const tocDrawer = useTabDrawer('view')
+const searchDrawer = useTabDrawer('view')
+const fileHistoryDrawer = useTabDrawer('view')
 const fileSearchDrawer = useTabDrawer('browse', { autoRestore: false })
 
 function openFileHistory() {
@@ -682,7 +721,7 @@ const sortField = ref(localConfig.sortField || null)
 const sortDir = ref(localConfig.sortDir || 'asc')
 
 useFileWatch({
-  fileManagerOpen: computed(() => leftPanelActive.value === 'browse'),
+  fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),
   currentDir: computed(() => store.state.currentDir),
   currentFile: computed(() => store.state.currentFile),
 })
@@ -763,10 +802,10 @@ const handleReconnect = () => {
 // Edge swipe back gesture detection (right-edge-left-swipe → go back)
 useEdgeSwipeBack()
 
-// 文件覆盖层的返回手势：overlay 优先级高于 browse，无论 mount 顺序如何
+// 文件浏览页的返回手势：优先于文件管理器，无论 mount 顺序如何
 useFeatureBackHandler(
   'file-overlay',
-  () => panelIsActive('browse') && fileNav.overlayOpen.value,
+  () => panelIsActive('view') && fileNav.overlayOpen.value,
   () => {
     // 编辑模式下，屏幕边缘向内滑应先退出编辑（有未保存改动时弹出确认菜单），
     // 而不是直接返回上一文件或关闭文件。退出手势在此被消费，用户停留在文件浏览态。
@@ -1141,7 +1180,7 @@ async function handleNavigateBack() {
 async function handleSelectFile(path) {
     const ok = await store.selectFile(path)
     if (ok) {
-        switchTab('browse')
+        switchTab('view')
         fileNav.openFile(path)
     }
 }
@@ -1151,13 +1190,14 @@ async function handleBrowseSelectFile(path) {
     const ok = await store.selectFile(path)
     if (ok) {
         fileNav.openFile(path)
+        switchTab('view')
     }
 }
 
 async function handleTaskOpenFile(filePath, lineStart) {
     const ok = await store.selectFile(filePath)
     if (ok) {
-        switchTab('browse')
+        switchTab('view')
         fileNav.openFile(filePath)
         if (lineStart) scrollToLine(lineStart)
     }
@@ -1199,7 +1239,7 @@ async function handleOverlayOpenFile(payload) {
 async function handleAppHeaderRecentFileSelect(path) {
     const ok = await store.selectFile(path)
     if (ok) {
-        switchTab('browse')
+        switchTab('view')
         fileNav.openFile(path)
     }
 }
@@ -1207,7 +1247,7 @@ async function handleAppHeaderRecentFileSelect(path) {
 function handleOpenFileOverlay(e) {
     const { path, lineStart, lineEnd } = e.detail || {}
     if (!path) return
-    switchTab('browse')
+    switchTab('view')
     if (lineStart) markdownViewMode.value = 'raw'
     fileNav.openFile(path)
     if (lineStart) scrollToLine(lineStart, lineEnd)
@@ -1271,8 +1311,8 @@ const overflowMenuOpen = ref(false)
 const overflowBtnRef = ref(null)
 const overflowTabs = computed(() => {
   const tabs = ['tasks']
-  if (!isSSHDisabled.value) tabs.push('proxy')
   if (!isTerminalDisabled.value) tabs.push('terminal')
+  if (!isSSHDisabled.value) tabs.push('proxy')
   tabs.push('settings')
   return tabs
 })
@@ -1445,6 +1485,7 @@ function onChatColDrop(e) {
 
 const wideScreenTabMeta = {
   browse: { icon: FolderOpen, titleKey: 'nav.fileManager' },
+  view: { icon: FileText, titleKey: 'nav.fileView' },
   history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
   tasks: overflowTabMeta.tasks,
   proxy: overflowTabMeta.proxy,
@@ -1887,18 +1928,17 @@ function openChatSearchDrawer() {
   }
 }
 function openBrowseSearchDrawer() {
-  if (fileNav.overlayOpen.value) {
-    if (searchDrawer.isOpen.value) {
-      fileOverlayRef.value?.focusSearchInput()
-    } else if (currentFile.value?.content) {
-      searchDrawer.open()
-    }
+  if (fileSearchDrawer.isOpen.value) {
+    fileManagerRef.value?.focusSearchInput()
   } else {
-    if (fileSearchDrawer.isOpen.value) {
-      fileManagerRef.value?.focusSearchInput()
-    } else {
-      fileSearchDrawer.open()
-    }
+    fileSearchDrawer.open()
+  }
+}
+function openFileViewSearchDrawer() {
+  if (searchDrawer.isOpen.value) {
+    fileOverlayRef.value?.focusSearchInput()
+  } else if (currentFile.value?.content) {
+    searchDrawer.open()
   }
 }
 function handleCtrlF(e) {
@@ -1919,6 +1959,9 @@ function handleCtrlF(e) {
         } else if (panelIsActive('browse')) {
             e.preventDefault()
             openBrowseSearchDrawer()
+        } else if (panelIsActive('view')) {
+            e.preventDefault()
+            openFileViewSearchDrawer()
         }
         // Left pane focused on a non-searchable tab → native Ctrl+F
     } else if (activeTab.value === 'chat') {
@@ -1927,6 +1970,9 @@ function handleCtrlF(e) {
     } else if (activeTab.value === 'browse') {
         e.preventDefault()
         openBrowseSearchDrawer()
+    } else if (activeTab.value === 'view') {
+        e.preventDefault()
+        openFileViewSearchDrawer()
     }
     // Other tabs: don't preventDefault — let browser handle Ctrl+F natively
 }
@@ -1971,6 +2017,140 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.view-panel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.view-panel-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+/* With recent files: list fills available space, manager button pinned to bottom */
+.view-panel-empty.has-recent {
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 16px 20px 20px;
+  text-align: left;
+}
+
+.view-panel-empty.has-recent .view-empty-recent {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.view-panel-empty.has-recent .view-empty-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.view-panel-empty.has-recent .view-empty-manager-btn {
+  margin-top: auto;
+}
+
+/* No recent files: centered chat-style empty state */
+.view-panel-empty.no-recent {
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.view-empty-icon {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.view-empty-no-recent-title {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.view-empty-recent-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.view-empty-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.view-empty-recent-item:hover {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.1));
+}
+
+.view-empty-recent-item:active {
+  background: var(--bg-active, rgba(128, 128, 128, 0.18));
+}
+
+.view-empty-recent-name {
+  color: var(--text-primary);
+  font-size: 13px;
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.view-empty-recent-dir {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
+
+.view-empty-manager-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.view-empty-manager-btn:hover {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.1));
 }
 
 /* Wide-screen split panes — positioned ancestors for the absolute TabPanels */

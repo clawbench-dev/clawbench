@@ -80,6 +80,14 @@ describe('useWideScreenLayout', () => {
     expect(localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)).toBe('terminal')
   })
 
+  it('view is a wide-screen dock tab and can be switched/persisted to', () => {
+    expect(WIDE_SCREEN_DOCK_TABS).toContain('view')
+    switchLeftTab('view')
+    expect(localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)).toBe('view')
+    const { leftTab } = useWideScreenLayout()
+    expect(leftTab.value).toBe('view')
+  })
+
   it('switchLeftTab runs registered side-effects and activeTab setter, but only on change', () => {
     const sideEffects = vi.fn()
     const setActiveTab = vi.fn()
@@ -125,6 +133,7 @@ describe('resolveLeftTabOnEnter', () => {
   it('adopts a non-chat activeTab as the left tab', () => {
     expect(resolveLeftTabOnEnter('terminal', 'browse')).toBe('terminal')
     expect(resolveLeftTabOnEnter('settings', 'browse')).toBe('settings')
+    expect(resolveLeftTabOnEnter('view', 'browse')).toBe('view')
   })
 
   it('keeps persisted leftTab when activeTab is chat', () => {

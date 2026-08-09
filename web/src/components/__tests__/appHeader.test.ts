@@ -7,19 +7,21 @@ import AppHeader from '@/components/common/AppHeader.vue'
 const {
   loadGitBranchFn,
   setPendingManageNavigationFn,
+  closeCurrentFileFn,
   mockState,
   wsConfig,
   isAppModeConfig,
 } = vi.hoisted(() => ({
   loadGitBranchFn: vi.fn(),
   setPendingManageNavigationFn: vi.fn(),
+  closeCurrentFileFn: vi.fn(),
   mockState: { gitBranch: '' },
   wsConfig: { value: 'connected' as string },
   isAppModeConfig: { value: false as boolean },
 }))
 
 vi.mock('@/stores/app.ts', () => ({
-  store: { state: mockState, loadGitBranch: loadGitBranchFn, loadFiles: vi.fn() },
+  store: { state: mockState, loadGitBranch: loadGitBranchFn, loadFiles: vi.fn(), closeCurrentFile: closeCurrentFileFn },
 }))
 vi.mock('@/composables/useGlobalEvents', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -52,6 +54,7 @@ const i18n = createI18n({
     switchProjectFailed: 'Switch project failed: {error}',
     switchProjectNetworkError: 'Switch project failed: network error',
     recentFiles: 'Recent files', noFileOpen: 'Recent files', noRecentFiles: 'No recently opened files',
+    openFileManager: 'Open file manager',
     branches: 'Branches', moreBranches: 'Manage branches',
     switchBranchConfirm: 'Switch to branch "{branch}"?',
     branchDirtyWorktree: 'dirty', switchBranchFailed: 'Failed: {error}', switchBranchNetworkError: 'network',
@@ -561,6 +564,73 @@ describe('AppHeader', () => {
     expect(wrapper.emitted('selectRecentFile')).toEqual([['/home/user/src/a.ts']])
   })
 
+  it('openFileManager closes dropdown and switches to browse tab', () => {
+    closeCurrentFileFn.mockReset()
+    const switchTabMock = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const wrapper = mount(AppHeader, {
+      props: { projectRoot: '/home/user/my-project', currentFileName: 'main.go', recentFilesAvailable: 3 },
+      attachTo: container,
+      global: {
+        plugins: [i18n],
+        stubs: { PopupMenu: PopupMenuStub, 'lucide-vue-next': LucideStub },
+        provide: { switchTab: switchTabMock, toast: { show: vi.fn() }, hotSwitchProject: vi.fn() },
+      },
+    })
+    wrapper.vm.fileDropdownOpen = true
+    ;(wrapper.vm as any).openFileManager()
+    expect(wrapper.vm.fileDropdownOpen).toBe(false)
+    expect(switchTabMock).toHaveBeenCalledWith('browse')
+    wrapper.unmount()
+    document.body.removeChild(container)
+  })
+
+  it('openFileManager closes the open current file before switching', () => {
+    closeCurrentFileFn.mockReset()
+    mockState.currentFile = { path: '/home/user/src/main.go' }
+    const switchTabMock = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const wrapper = mount(AppHeader, {
+      props: { projectRoot: '/home/user/my-project', currentFileName: 'main.go', recentFilesAvailable: 3 },
+      attachTo: container,
+      global: {
+        plugins: [i18n],
+        stubs: { PopupMenu: PopupMenuStub, 'lucide-vue-next': LucideStub },
+        provide: { switchTab: switchTabMock, toast: { show: vi.fn() }, hotSwitchProject: vi.fn() },
+      },
+    })
+    ;(wrapper.vm as any).openFileManager()
+    expect(closeCurrentFileFn).toHaveBeenCalledTimes(1)
+    expect(switchTabMock).toHaveBeenCalledWith('browse')
+    wrapper.unmount()
+    document.body.removeChild(container)
+    mockState.currentFile = undefined
+  })
+
+  it('openFileManager does not close file when none is open', () => {
+    closeCurrentFileFn.mockReset()
+    mockState.currentFile = undefined
+    const switchTabMock = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const wrapper = mount(AppHeader, {
+      props: { projectRoot: '/home/user/my-project', recentFilesAvailable: 3 },
+      attachTo: container,
+      global: {
+        plugins: [i18n],
+        stubs: { PopupMenu: PopupMenuStub, 'lucide-vue-next': LucideStub },
+        provide: { switchTab: switchTabMock, toast: { show: vi.fn() }, hotSwitchProject: vi.fn() },
+      },
+    })
+    ;(wrapper.vm as any).openFileManager()
+    expect(closeCurrentFileFn).not.toHaveBeenCalled()
+    expect(switchTabMock).toHaveBeenCalledWith('browse')
+    wrapper.unmount()
+    document.body.removeChild(container)
+  })
+
   it('opening file dropdown closes branch and project dropdowns', async () => {
     const wrapper = mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
     wrapper.vm.fileDropdownOpen = false
@@ -583,7 +653,7 @@ describe('AppHeader', () => {
     expect(wrapper.vm.branchDropdownOpen).toBe(true)
   })
 
-  it('renders recent file entries in dropdown', async () => {
+  it('renders recent file entries in dropdown with open-file-manager footer', async () => {
     const wrapper = mountAndTrack({ currentFileName: 'main.go', recentFilesAvailable: 3 })
     wrapper.vm.recentFileEntries = [
       { path: '/home/user/src/a.ts', accessedAt: 1 },
@@ -592,8 +662,11 @@ describe('AppHeader', () => {
     ;(wrapper.vm as any).toggleFileDropdown()
     try { await wrapper.vm.$nextTick() } catch {}
 
-    const items = document.body.querySelectorAll('.app-menu-item')
-    expect(items.length).toBe(2)
+    const items = Array.from(document.body.querySelectorAll('.app-menu-item')) as HTMLElement[]
+    const recentItems = items.filter(i => !i.classList.contains('other-item'))
+    const footerItem = items.find(i => i.classList.contains('other-item'))
+    expect(recentItems.length).toBe(2)
+    expect(footerItem).toBeTruthy()
   })
 
   it('positionDropdown clamps panel width to viewport on narrow screens', async () => {

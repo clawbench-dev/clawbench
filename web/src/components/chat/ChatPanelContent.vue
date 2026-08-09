@@ -256,8 +256,8 @@ async function handleFileTagClick(filePath) {
         // so openFilePath doesn't treat in-project files as external.
         const root = store.state.projectRoot
         const relPath = root && filePath.startsWith(root + '/') ? filePath.slice(root.length + 1) : filePath
-        const ok = await openFilePath(relPath)
-        if (ok) switchTab('browse')
+        // openFilePath decides the destination tab itself (file → view, dir → browse).
+        await openFilePath(relPath)
     }
 }
 
@@ -265,7 +265,7 @@ function handleQuoteClick() {
     const q = quoteData.value
     if (q?.filePath) {
         store.selectFile(q.filePath).then(() => {
-            switchTab('browse')
+            switchTab('view')
         })
     }
 }
@@ -297,8 +297,8 @@ const {
   chatRender: render,
   tabId: 'chat',
   onFileOpen: async (path, lineStart, lineEnd) => {
-    const ok = await openFilePath(path, lineStart, lineEnd)
-    if (ok) switchTab('browse')
+    // openFilePath decides the destination tab itself (file → view, dir → browse).
+    await openFilePath(path, lineStart, lineEnd)
   },
   findLiveBlock: (ids) => findToolBlock(ids),
 })
@@ -518,7 +518,9 @@ provide('chatRender', {
   hasImagesInContent: render.hasImagesInContent,
 })
 provide('chatSession', { getAgentBackend, getAgentName })
-provide('chatUI', { navigateToFileViewer: () => switchTab('browse') })
+// openFilePath (via open-file-overlay / open-file-manager events) already routes to
+// the correct tab (file → view, dir → browse), so this is a no-op to avoid overriding.
+provide('chatUI', { navigateToFileViewer: () => {} })
 provide('autoSpeech', autoSpeech)
 provide('layoutRefreshKey', layoutRefreshKey)
 

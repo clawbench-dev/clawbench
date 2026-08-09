@@ -38,7 +38,6 @@ const emit = defineEmits(['close', 'prev', 'next'])
 
 const { t } = useI18n()
 const toast = inject('toast', null)
-const switchTab = inject('switchTab', null)
 const hotSwitchProject = inject('hotSwitchProject', null)
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
@@ -137,8 +136,8 @@ async function handleValueClick(event) {
           await store.setProject(wtPath)
         }
       } else if (filePath) {
-        const ok = await openFilePath(filePath)
-        if (ok) switchTab?.('browse')
+        // openFilePath decides the destination tab (file → view, dir → browse).
+        await openFilePath(filePath)
       }
     }
     emit('close')
@@ -167,15 +166,13 @@ async function handleValueClick(event) {
     const lineStart = fileBtn.getAttribute('data-line-start')
     const lineEnd = fileBtn.getAttribute('data-line-end')
     if (filePath) {
-      const ok = await openFilePath(
+      // openFilePath decides the destination tab (file → view, dir → browse).
+      await openFilePath(
         filePath,
         lineStart ? parseInt(lineStart, 10) : undefined,
         lineEnd ? parseInt(lineEnd, 10) : undefined,
       )
-      if (ok) {
-        switchTab?.('browse')
-        emit('close')
-      }
+      emit('close')
     }
     return
   }
