@@ -27,6 +27,24 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   } as unknown as typeof globalThis.ResizeObserver
 }
 
+// ── jsdom cookie store ──
+// jsdom's document.cookie setter routes through the tough-cookie library, which
+// leaves a dangling internal Promise on every write (detectAsyncLeaks flags it
+// on any module that sets a cookie at import time, e.g. web/src/i18n/index.ts).
+// Replace it with a plain in-memory store so no async resource is created.
+try {
+  let cookieStore = ''
+  Object.defineProperty(document, 'cookie', {
+    get: () => cookieStore,
+    set: (value: string) => {
+      cookieStore = value
+    },
+    configurable: true,
+  })
+} catch {
+  // document not yet available — skip
+}
+
 // ── Deterministic vue-devtools hook state ──
 // vue-i18n's app.use() plugin calls setupDevtoolsPlugin(), which invokes
 // hook.emit() whenever a __VUE_DEVTOOLS_GLOBAL_HOOK__ object exists on window.
