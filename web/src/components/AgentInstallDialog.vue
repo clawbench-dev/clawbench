@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div class="install-overlay" @click.self="$emit('close')">
+    <div ref="overlayRef" tabindex="-1" class="install-overlay" @click.self="$emit('close')" @keydown.escape="handleEscape">
       <div class="install-box">
         <div class="install-title">{{ t('welcomeInfo.install') }} {{ backendName }}</div>
         <div class="install-hint">{{ t('welcomeInfo.manualInstallHint') }}</div>
@@ -25,7 +25,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
@@ -40,9 +40,17 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const copied = ref(false)
+const overlayRef = ref<HTMLDivElement | null>(null)
 let unregisterBack: (() => void) | null = null
 
+// Escape (PC) closes the dialog, mirroring the Android back handler.
+function handleEscape() {
+  emit('close')
+}
+
 onMounted(() => {
+  // Focus the overlay so Escape key works immediately (same as BottomSheet/ModalDialog).
+  nextTick(() => overlayRef.value?.focus())
   unregisterBack = registerBackHandler({
     id: 'agent-install-dialog',
     canGoBack: () => true,
@@ -73,6 +81,7 @@ function copyCmd() {
   z-index: 3000;
   padding: 0 20px;
   animation: overlay-in 0.15s ease;
+  outline: none;
 }
 
 .install-box {
