@@ -66,6 +66,7 @@ interface AndroidNativeBridge {
   addForwardedPort?: (localPort: number, targetPort: number, host: string) => void
   removeForwardedPort?: (localPort: number) => void
   stopBackgroundService?: () => void
+  getForwardedPorts?: () => string
   isTunnelConnected?: () => boolean | null
   getTunnelError?: () => string
   getTunnelErrorType?: () => string
@@ -277,10 +278,21 @@ export function usePortForward() {
     }
   }
 
-  /** Enable or disable a forwarded port on the backend, then refresh the list. */
+  /** Enable or disable a forwarded port on the backend, then refresh the list.
+   *  In app mode, also sync the native SSH tunnel so disabling actually stops
+   *  forwarding (otherwise the native layer keeps counting it in the notification). */
   async function setPortEnabled(localPort: number, enabled: boolean) {
     await apiPut('/api/proxy/ports/enabled', { localPort, enabled })
     await loadPorts(true)
+    if (isAppMode.value) {
+      const p = ports.value.find(x => x.localPort === localPort)
+      const native = getAndroidNative()
+      if (enabled && p) {
+        native?.addForwardedPort?.(p.localPort, p.port, p.host || '')
+      } else if (!enabled) {
+        native?.removeForwardedPort?.(localPort)
+      }
+    }
   }
 
   /** Open the scan drawer, auto-running a scan the first time it is opened. */
@@ -302,19 +314,42 @@ export function usePortForward() {
   }
 
   /** Sync all registered ports to Android native on initial load.
-   *  If the server has no registered ports, stop the native service
-   *  to avoid an idle foreground service draining battery. */
+   *  Reconciles the native layer with the server's enabled ports: ports that
+   *  are disabled or no longer registered are removed from the native set so
+   *  the notification count stays accurate. If the server has no enabled ports,
+   *  stops the native service to avoid an idle foreground service draining battery. */
   async function syncToNative() {
     if (!isAppMode.value) return
     await loadPorts()
-    if (ports.value.length === 0) {
-      // No ports on server — stop the native service (clears stale SharedPreferences)
-      ;getAndroidNative()?.stopBackgroundService?.()
+    const native = getAndroidNative()
+    if (!native) return
+
+    const enabledPorts = ports.value.filter(p => p.enabled)
+    if (enabledPorts.length === 0) {
+      // No enabled ports on server — stop the native service (clears stale SharedPreferences)
+      native.stopBackgroundService?.()
       return
     }
-    for (const p of ports.value) {
-      if (!p.enabled) continue
-      ;getAndroidNative()?.addForwardedPort?.(p.localPort, p.port, p.host || '')
+
+    const enabledLocalPorts = new Set(enabledPorts.map(p => p.localPort))
+
+    // Remove native forwards that are no longer enabled on the server.
+    if (typeof native.getForwardedPorts === 'function') {
+      try {
+        const current: Array<{ port?: number; host?: string }> = JSON.parse(native.getForwardedPorts() || '[]')
+        for (const item of current) {
+          const lp = item && item.port
+          if (lp && !enabledLocalPorts.has(lp)) {
+            native.removeForwardedPort?.(lp)
+          }
+        }
+      } catch {
+        // Ignore parse errors — reconciliation is best-effort.
+      }
+    }
+
+    for (const p of enabledPorts) {
+      native.addForwardedPort?.(p.localPort, p.port, p.host || '')
     }
   }
 

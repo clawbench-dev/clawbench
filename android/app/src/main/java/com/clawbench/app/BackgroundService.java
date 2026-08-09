@@ -114,6 +114,11 @@ public class BackgroundService extends Service {
     private static volatile boolean isRunning = false;
     private static volatile BackgroundService instance;
 
+    /** Returns the live BackgroundService instance, or null if it is not running. */
+    public static BackgroundService getInstance() {
+        return instance;
+    }
+
     // Set to true in onDestroy() before networkExecutor.shutdownNow().
     // Checked by addPortForward / notifyPortForwardResult to skip callbacks
     // that would race with Activity/WebView teardown.
@@ -1938,6 +1943,16 @@ public class BackgroundService extends Service {
         intent.setAction("REMOVE_PORT");
         intent.putExtra("port", port);
         context.startService(intent);
+    }
+
+    /**
+     * Snapshot of the currently managed forwarded ports (localPort → PortInfo).
+     * Returns a copy so callers (e.g. the WebView bridge's getForwardedPorts)
+     * can inspect the real set that drives the notification count without
+     * racing concurrent modifications on the SSH worker thread.
+     */
+    public Map<Integer, PortInfo> getForwardedPortsSnapshot() {
+        return new java.util.HashMap<>(forwardedPorts);
     }
 
     /**

@@ -2101,12 +2101,36 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public String getForwardedPorts() {
             try {
+                // The notification count and actual SSH forwarding are driven by
+                // BackgroundService.forwardedPorts (restored from SharedPreferences on
+                // service start), NOT the MainActivity cache. Read the real set so the
+                // JS-side reconciliation can detect and remove stale forwards that are
+                // no longer enabled on the server. Fall back to the local cache when
+                // the background service is not running.
+                java.util.Map<Integer, ?> realSet = null;
+                BackgroundService bs = BackgroundService.getInstance();
+                if (bs != null) {
+                    realSet = bs.getForwardedPortsSnapshot();
+                }
                 JSONArray arr = new JSONArray();
-                for (Map.Entry<Integer, String> entry : activity.forwardedPorts.entrySet()) {
-                    org.json.JSONObject obj = new org.json.JSONObject();
-                    obj.put("port", entry.getKey());
-                    obj.put("host", entry.getValue());
-                    arr.put(obj);
+                if (realSet != null) {
+                    for (java.util.Map.Entry<Integer, ?> entry : realSet.entrySet()) {
+                        org.json.JSONObject obj = new org.json.JSONObject();
+                        obj.put("port", entry.getKey());
+                        String host = "";
+                        if (entry.getValue() instanceof BackgroundService.PortInfo) {
+                            host = ((BackgroundService.PortInfo) entry.getValue()).host;
+                        }
+                        obj.put("host", host);
+                        arr.put(obj);
+                    }
+                } else {
+                    for (java.util.Map.Entry<Integer, String> entry : activity.forwardedPorts.entrySet()) {
+                        org.json.JSONObject obj = new org.json.JSONObject();
+                        obj.put("port", entry.getKey());
+                        obj.put("host", entry.getValue());
+                        arr.put(obj);
+                    }
                 }
                 return arr.toString();
             } catch (Exception e) {
