@@ -25,17 +25,52 @@
 
       <main class="main-content" :class="{ 'wide-screen': isWideScreen }">
         <!-- Wide-screen vertical dock (non-chat tabs only) -->
-        <div v-show="isWideScreen" class="wide-dock">
+        <div v-show="isWideScreen" class="wide-dock" ref="wideDockRef">
           <div class="wide-dock-center">
             <div class="dock-active-indicator wide-dock-active-indicator" :style="wideDockIndicatorStyle"></div>
-            <div v-for="tab in WIDE_SCREEN_DOCK_TABS" :key="tab" class="dock-btn-wrap">
+            <!-- Primary tabs (always visible) -->
+            <div v-for="tab in WIDE_SCREEN_PRIMARY_TABS" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
               <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(tab) }" @animationend="wideDockBadgeAnimEnd(tab)">{{ formatBadgeCount(wideDockBadgeCount(tab)) }}</span>
             </div>
+            <!-- Inline overflow tabs -->
+            <div v-for="tab in wideInlineOverflowTabs" :key="tab" class="dock-btn-wrap">
+              <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
+                <component :is="wideDockTabIcon(tab)" />
+              </button>
+              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(tab) }" @animationend="wideDockBadgeAnimEnd(tab)">{{ formatBadgeCount(wideDockBadgeCount(tab)) }}</span>
+            </div>
+            <!-- Single remaining popup item shown directly (no overflow menu) -->
+            <div v-if="wideSingleDirectTab" :key="'single-' + wideSingleDirectTab" class="dock-btn-wrap">
+              <button class="dock-btn" :class="wideDockBtnClass(wideSingleDirectTab)" @click.stop="handleWideDockTabClick(wideSingleDirectTab)" :title="wideDockTabTitle(wideSingleDirectTab)">
+                <component :is="wideDockTabIcon(wideSingleDirectTab)" />
+              </button>
+              <span v-if="wideDockBadgeVisible(wideSingleDirectTab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(wideSingleDirectTab) }" @animationend="wideDockBadgeAnimEnd(wideSingleDirectTab)">{{ formatBadgeCount(wideDockBadgeCount(wideSingleDirectTab)) }}</span>
+            </div>
+            <!-- Overflow button (popup has >1 items) -->
+            <div v-if="wideShowOverflowButton" class="dock-btn-wrap wide-dock-overflow-wrap">
+              <button ref="wideOverflowBtnRef" class="dock-btn wide-dock-overflow-btn" :class="{ active: wideOverflowTabActive }" @click.stop="toggleWideOverflowMenu" :title="wideOverflowButtonTitle" :aria-expanded="wideOverflowMenuOpen" aria-haspopup="menu">
+                <MoreHorizontal />
+              </button>
+              <span v-if="wideOverflowBadgeCount > 0 && !wideOverflowTabActive" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': overflowBadgeAnim }" @animationend="overflowBadgeAnim = false">{{ formatBadgeCount(wideOverflowBadgeCount) }}</span>
+            </div>
           </div>
         </div>
+
+        <!-- Wide-screen dock overflow popup -->
+        <Teleport to="body">
+          <Transition name="dock-popup">
+            <div v-if="wideOverflowMenuOpen" class="dock-overflow-popup wide-dock-overflow-popup" :style="wideOverflowPopupStyle" @keydown.escape="wideOverflowMenuOpen = false">
+              <button v-for="tab in widePopupOverflowTabs" :key="tab" class="dock-overflow-item" :class="{ active: leftTab === tab }" @click.stop="handleWideOverflowSelect(tab)">
+                <component :is="wideDockTabIcon(tab)" :size="16" />
+                <span>{{ wideDockTabTitle(tab) }}</span>
+                <span v-if="wideDockBadgeCount(tab) > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(tab) }" @animationend="wideDockBadgeAnimEnd(tab)">{{ formatBadgeCount(wideDockBadgeCount(tab)) }}</span>
+              </button>
+            </div>
+          </Transition>
+        </Teleport>
 
         <div class="content-area" id="contentArea">
           <SplitView
@@ -425,7 +460,6 @@ import {
   switchLeftTab,
   setSplitRatio,
   registerWideScreenCallbacks,
-  WIDE_SCREEN_DOCK_TABS,
 } from './composables/useWideScreenLayout'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
@@ -973,6 +1007,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   document.addEventListener('click', handleOverflowOutsideClick)
+  document.addEventListener('click', handleWideOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e) => {
       const resolved = e.detail
       theme.value = resolved
@@ -1338,6 +1373,26 @@ const {
   () => overflowTabs.value,
 )
 
+// Wide-screen vertical dock: same overflow tabs, measured by height. The primary
+// buttons (browse/view/history) are always visible; the rest promote inline by
+// available height and collapse into a popup when space is short.
+const WIDE_SCREEN_PRIMARY_TABS = ['browse', 'view', 'history']
+const wideDockRef = ref(null)
+const wideOverflowBtnRef = ref(null)
+const {
+  inlineOverflowTabs: wideInlineOverflowTabs,
+  popupOverflowTabs: widePopupOverflowTabs,
+  singleDirectTab: wideSingleDirectTab,
+  showOverflowButton: wideShowOverflowButton,
+  allInlineOverflowTabs: wideAllInlineOverflowTabs,
+  startObserving: startWideDockResize,
+  stopObserving: stopWideDockResize,
+} = useDockOverflow(
+  () => wideDockRef.value,
+  () => overflowTabs.value,
+  { direction: 'vertical', primaryCount: WIDE_SCREEN_PRIMARY_TABS.length },
+)
+
 // Close overflow popup when layout changes (resize promotes/demotes items)
 watch(() => inlineOverflowTabs.value.length, () => {
   overflowMenuOpen.value = false
@@ -1359,6 +1414,7 @@ watch(anyKeyboardActive, (active) => {
 watch(() => localConfig.uiScale, () => {
   requestAnimationFrame(() => {
     startDockResize()
+    startWideDockResize()
     // Also update --dock-height CSS variable for fixed-position elements
     const dw = document.querySelector('.bottom-dock-wrapper')
     if (dw) {
@@ -1537,7 +1593,14 @@ function wideDockBadgeAnimEnd(tab) {
   }
 }
 const wideDockActiveIndex = computed(() => {
-  const i = WIDE_SCREEN_DOCK_TABS.indexOf(leftTab.value)
+  // Visible order mirrors the rendered dock: primary + inline overflow + singleDirect (+ overflow btn).
+  const visible = [
+    ...WIDE_SCREEN_PRIMARY_TABS,
+    ...wideInlineOverflowTabs.value,
+  ]
+  if (wideSingleDirectTab.value) visible.push(wideSingleDirectTab.value)
+  if (wideShowOverflowButton.value) visible.push('__overflow__')
+  const i = visible.indexOf(leftTab.value)
   return i >= 0 ? i : 0
 })
 const wideDockIndicatorStyle = computed(() => ({
@@ -1651,6 +1714,76 @@ function handleOverflowOutsideClick(e) {
     overflowMenuOpen.value = false
   }
 }
+
+// ── Wide-screen dock overflow state ──
+const wideOverflowMenuOpen = ref(false)
+const wideOverflowTabActive = computed(() => widePopupOverflowTabs.value.includes(leftTab.value))
+
+const wideOverflowPopupStyle = computed(() => {
+  const btn = wideOverflowBtnRef.value
+  if (!btn) return {}
+  const rect = btn.getBoundingClientRect()
+  const vp = getZoomedViewport()
+  // Anchor to the bottom of the wide dock so the menu sits near the screen
+  // bottom (matching the bottom-dock popup). max-height CSS keeps it on screen.
+  const dock = wideDockRef.value
+  const dockBottom = dock ? dock.getBoundingClientRect().bottom : vp.height
+  return {
+    position: 'fixed',
+    left: `${toFixedCSS(rect.right + 8)}px`,
+    bottom: `${toFixedCSS(vp.height - dockBottom + 8)}px`,
+  }
+})
+
+const wideOverflowButtonTitle = computed(() => {
+  if (widePopupOverflowTabs.value.includes(leftTab.value)) {
+    return overflowTabMeta[leftTab.value] ? t(overflowTabMeta[leftTab.value].titleKey) : t('nav.more')
+  }
+  return t('nav.more')
+})
+
+const wideOverflowBadgeCount = computed(() => {
+  let count = 0
+  for (const tab of overflowTabs.value) {
+    if (wideAllInlineOverflowTabs.value.includes(tab)) continue
+    count += wideDockBadgeCount(tab)
+  }
+  return count
+})
+
+function toggleWideOverflowMenu() {
+  if (wideOverflowTabActive.value && !wideOverflowMenuOpen.value) {
+    wideOverflowMenuOpen.value = true
+  } else if (wideOverflowMenuOpen.value) {
+    wideOverflowMenuOpen.value = false
+  } else {
+    wideOverflowMenuOpen.value = true
+  }
+}
+
+function handleWideOverflowSelect(tab) {
+  if (leftTab.value === tab) {
+    wideOverflowMenuOpen.value = false
+    return
+  }
+  wideOverflowMenuOpen.value = false
+  if (tab === 'terminal') {
+    handleDockTerminal()
+  } else {
+    switchTab(tab)
+  }
+}
+
+function handleWideOverflowOutsideClick(e) {
+  if (wideOverflowMenuOpen.value && !e.target.closest('.dock-overflow-popup') && !e.target.closest('.wide-dock-overflow-btn')) {
+    wideOverflowMenuOpen.value = false
+  }
+}
+
+// Close wide overflow popup when layout changes (resize promotes/demotes items)
+watch(() => wideInlineOverflowTabs.value.length, () => {
+  wideOverflowMenuOpen.value = false
+})
 
 function handleOpenTerminal(cwd) {
     terminalRequestedCwd.value = cwd || null
@@ -1818,6 +1951,7 @@ onMounted(async () => {
     await nextTick()
     applyUIScale(localConfig.uiScale ?? 1)
     startDockResize()
+    startWideDockResize()
     welcomeOverlay.value?.show()
     versionMismatchOverlay.value?.show()
     checkForUpgrade()
@@ -1996,8 +2130,10 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     document.removeEventListener('click', handleOverflowOutsideClick)
+    document.removeEventListener('click', handleWideOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
     stopFlushTimer()
+    stopWideDockResize()
 })
 </script>
 
@@ -2493,6 +2629,22 @@ onUnmounted(() => {
     border-right: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
     transform: rotate(45deg);
+}
+
+/* Wide-dock popup sits to the right of the vertical dock — anchor the arrow on
+   the left edge pointing back toward the dock. */
+.wide-dock-overflow-popup {
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
+}
+.wide-dock-overflow-popup::after {
+    left: -6px;
+    right: auto;
+    top: 16px;
+    bottom: auto;
+    border-right: none;
+    border-left: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
 }
 
 .dock-overflow-item {

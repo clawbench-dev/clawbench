@@ -1,41 +1,61 @@
 import { ref, computed } from 'vue'
 
 /** Dock layout constants (must match App.vue CSS) */
-export const DOCK_BTN_WIDTH = 34
+export const DOCK_BTN_SIZE = 34
 export const DOCK_GAP = 12
-export const DOCK_STEP = DOCK_BTN_WIDTH + DOCK_GAP // 46
-const PRIMARY_COUNT = 4 // chat, browse, view, history
+export const DOCK_STEP = DOCK_BTN_SIZE + DOCK_GAP // 46
 
-/** Minimum dock content width: 4 primary + overflow_btn = 5 buttons, 4 gaps = 218px */
-const MIN_DOCK_CONTENT_WIDTH = 5 * DOCK_BTN_WIDTH + 4 * DOCK_GAP
+export interface DockOverflowOptions {
+  /** Which axis the dock lays out along and measures for overflow. */
+  direction?: 'horizontal' | 'vertical'
+  /** Size of a single dock button along the layout axis. */
+  btnSize?: number
+  /** Gap between dock buttons along the layout axis. */
+  gap?: number
+  /** Number of always-visible primary buttons (reserved before overflow items). */
+  primaryCount?: number
+}
 
 /**
  * Composable for responsive dock overflow logic.
- * Observes the dock element width and computes how many overflow items
- * can be promoted to inline dock buttons.
+ * Observes a dock element's size along a given axis and computes how many
+ * overflow items can be promoted to inline dock buttons.
  *
- * Pure responsive: width enough → inline in overflowTabs order,
- * width not enough → go to overflow menu. No slot4, no priority.
+ * Pure responsive: space enough → inline in overflowTabs order,
+ * space not enough → go to overflow menu. No slot4, no priority.
  *
- * @param getDockEl - getter for the .bottom-dock element (template ref)
+ * Shared by the horizontal bottom dock (narrow screens) and the vertical
+ * wide-screen dock — they only differ in direction, button size/gap and the
+ * number of fixed primary buttons.
+ *
+ * @param getDockEl - getter for the dock element (template ref)
  * @param getOverflowTabs - getter for the list of all available overflow tab IDs
  *   (order matters: first items are promoted first)
+ * @param options - layout tuning (direction, sizes, primary count)
  */
 export function useDockOverflow(
   getDockEl: () => HTMLElement | null,
   getOverflowTabs: () => string[],
+  options: DockOverflowOptions = {},
 ) {
-  const dockContentWidth = ref(0)
+  const { direction = 'horizontal', btnSize = DOCK_BTN_SIZE, gap = DOCK_GAP, primaryCount = 4 } = options
+  const step = btnSize + gap
+  // Minimum size to hold the fixed primary buttons + the overflow button.
+  const minContent = (primaryCount + 1) * btnSize + primaryCount * gap
+
+  const dockContentSize = ref(0)
 
   let resizeObserver: ResizeObserver | null = null
 
-  /** How many overflow items can be inline given the current dock width */
+  const isVertical = direction === 'vertical'
+
+  /** How many overflow items can be inline given the current dock size */
   const inlineCount = computed(() => {
-    const width = dockContentWidth.value
-    if (width <= 0) return 0
-    const remaining = width - MIN_DOCK_CONTENT_WIDTH
+    const size = dockContentSize.value
+    if (size <= 0) return 0
+    const remaining = size - minContent
     if (remaining < 0) return 0
-    return Math.min(Math.floor(remaining / DOCK_STEP), getOverflowTabs().length)
+    return Math.min(Math.floor(remaining / step), getOverflowTabs().length)
   })
 
   /** Overflow tabs shown inline in the dock */
@@ -61,8 +81,17 @@ export function useDockOverflow(
 
   /** Total number of visible dock buttons (for indicator index bound) */
   const totalDockButtons = computed(() => {
-    return PRIMARY_COUNT + allInlineOverflowTabs.value.length + (showOverflowButton.value ? 1 : 0)
+    return primaryCount + allInlineOverflowTabs.value.length + (showOverflowButton.value ? 1 : 0)
   })
+
+  /** Measure the dock element's content size along the layout axis. */
+  function measureSize(el: HTMLElement): number {
+    const style = getComputedStyle(el)
+    if (isVertical) {
+      return el.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0)
+    }
+    return el.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0)
+  }
 
   /** Start observing dock element size. Call in onMounted. Idempotent. */
   function startObserving() {
@@ -70,18 +99,18 @@ export function useDockOverflow(
     const el = getDockEl()
     if (!el) return
 
-    // Initial measurement — skip if hidden (display:none → clientWidth=0)
-    // to preserve the last known good width
-    const measured = el.clientWidth - (parseFloat(getComputedStyle(el).paddingLeft) || 0)
-      - (parseFloat(getComputedStyle(el).paddingRight) || 0)
-    if (measured > 0) dockContentWidth.value = measured
+    // Initial measurement — skip if hidden (display:none → clientHeight/Width=0)
+    // to preserve the last known good size
+    const measured = measureSize(el)
+    if (measured > 0) dockContentSize.value = measured
 
     resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        // Skip width=0 (element hidden via display:none / v-show) —
-        // preserve last good width; observer fires again when visible
-        if (entry.contentRect.width > 0) {
-          dockContentWidth.value = entry.contentRect.width
+        // Skip size=0 (element hidden via display:none / v-show) —
+        // preserve last good size; observer fires again when visible
+        const size = isVertical ? entry.contentRect.height : entry.contentRect.width
+        if (size > 0) {
+          dockContentSize.value = size
         }
       }
     })
@@ -95,7 +124,7 @@ export function useDockOverflow(
   }
 
   return {
-    dockContentWidth,
+    dockContentSize,
     inlineOverflowTabs,
     popupOverflowTabs,
     singleDirectTab,
