@@ -322,6 +322,7 @@
     z-index: 10;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 40px;
   }
 
@@ -334,6 +335,7 @@
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.1);
     backdrop-filter: blur(10px);
+    flex-shrink: 0;
   }
 
   .install-prompt {
@@ -349,6 +351,7 @@
     color: rgba(255,255,255,0.85);
     font-family: 'Courier New', monospace;
     letter-spacing: 0.3px;
+    white-space: nowrap;
   }
 
   .github-link {
@@ -363,6 +366,7 @@
     color: rgba(255,255,255,0.85);
     text-decoration: none;
     transition: all 0.3s;
+    flex-shrink: 0;
   }
 
   .github-link:hover {
@@ -381,6 +385,27 @@
     font-size: 15px;
     font-weight: 500;
     letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+
+  .license-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 24px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px);
+    color: rgba(255,255,255,0.85);
+    flex-shrink: 0;
+  }
+
+  .license-text {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
   }
 
   /* Right side feature cards */
@@ -654,6 +679,12 @@
       </svg>
       <span class="github-text">github.com/clawbench-dev/clawbench</span>
     </a>
+    <div class="license-box">
+      <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 0 1 2.6v4.4c0 4.1 2.9 7.6 7 9 4.1-1.4 7-4.9 7-9V2.6L8 0zm-.18 11.33L5.1 8.62l.9-.9 1.82 1.81 3.4-3.4.9.9-4.3 4.3z"/>
+      </svg>
+      <span class="license-text">MIT License</span>
+    </div>
   </div>
 </body>
 </html>
