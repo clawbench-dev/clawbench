@@ -170,10 +170,11 @@ const chatSession = inject('chatSession', {})
 const { renderTextBlock, toolCallSummary, formatToolInput, humanizeCron, repeatLabel, truncate, hasImagesInContent } = chatRender
 const { getAgentBackend, getAgentName } = chatSession
 
-// File changes extraction (Write → created, Edit → modified)
+// File changes extraction (Write → created, Edit → modified).
+// Uses summaryCards as fallback when blocks are empty (summary-only view).
 const fileChanges = computed(() => {
   if (props.msg?.role !== 'assistant' || props.msg.streaming) return { created: [], modified: [] }
-  return extractFileChanges(props.msg?.blocks || [])
+  return extractFileChanges(props.msg?.blocks || [], props.msg?.summaryCards)
 })
 const hasFileChanges = computed(() => fileChanges.value.created.length > 0 || fileChanges.value.modified.length > 0)
 

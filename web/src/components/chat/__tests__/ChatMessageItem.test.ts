@@ -29,7 +29,7 @@ vi.mock('@/composables/useDialog', () => ({
 }))
 
 vi.mock('@/utils/chatStreamUtils', () => ({
-  extractFileChanges: (blocks: any[]) => {
+  extractFileChanges: (blocks: any[], summaryCards?: any) => {
     const created: string[] = []
     const modified: string[] = []
     for (const block of blocks || []) {
@@ -39,6 +39,8 @@ vi.mock('@/utils/chatStreamUtils', () => ({
       if (block.name === 'Write') created.push(filePath)
       else if (block.name === 'Edit') modified.push(filePath)
     }
+    for (const p of summaryCards?.createdFiles || []) created.push(p)
+    for (const p of summaryCards?.modifiedFiles || []) modified.push(p)
     return { created, modified }
   },
 }))
@@ -249,6 +251,31 @@ describe('ChatMessageItem', () => {
       const allElements = wrapper.findAll('.chat-file-changes-banner, .chat-cancelled-mark')
       expect(allElements[0].classes()).toContain('chat-file-changes-banner')
       expect(allElements[1].classes()).toContain('chat-cancelled-mark')
+    })
+
+    it('renders file changes banner from summaryCards when blocks are empty (summary-only)', () => {
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c5',
+          role: 'assistant',
+          content: '',
+          blocks: [],
+          streaming: false,
+          summary: 'summary text',
+          summaryCards: { createdFiles: ['/new.ts'], modifiedFiles: ['/a.ts'] },
+        },
+      })
+      const banner = wrapper.find('.chat-file-changes-banner')
+      expect(banner.exists()).toBe(true)
+      const count = wrapper.find('.chat-file-changes-count')
+      expect(count.text()).toBe('2')
+    })
+
+    it('hides file changes banner when summaryCards has no file changes', () => {
+      const wrapper = createWrapper({
+        msg: { id: 'c6', role: 'assistant', content: '', blocks: [], streaming: false, summary: 's', summaryCards: { createdFiles: [], modifiedFiles: [] } },
+      })
+      expect(wrapper.find('.chat-file-changes-banner').exists()).toBe(false)
     })
   })
 })

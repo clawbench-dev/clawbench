@@ -39,6 +39,30 @@ func TestExtractSummaryCards(t *testing.T) {
 	}
 }
 
+func TestExtractSummaryCardsFileChanges(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", Name: "Write", ID: "w1", FilePath: "/src/new.go", Done: true},
+		{Type: "tool_use", Name: "Write", ID: "w2", FilePath: "/src/dup.go", Done: true},
+		{Type: "tool_use", Name: "Edit", ID: "e1", FilePath: "/src/a.go", Done: true},
+		{Type: "tool_use", Name: "Edit", ID: "e2", FilePath: "/src/a.go", Done: true},
+		{Type: "tool_use", Name: "Write", ID: "w3", Done: false, FilePath: "/src/notdone.go"},
+		{Type: "tool_use", Name: "Edit", ID: "e3", Done: true, Input: map[string]any{"file_path": "/src/via-input.go"}},
+	}
+	cards := extractSummaryCards(blocks)
+	if len(cards.CreatedFiles) != 2 {
+		t.Fatalf("expected 2 created files, got %+v", cards.CreatedFiles)
+	}
+	if cards.CreatedFiles[0] != "/src/new.go" || cards.CreatedFiles[1] != "/src/dup.go" {
+		t.Fatalf("created mismatch: %+v", cards.CreatedFiles)
+	}
+	if len(cards.ModifiedFiles) != 2 {
+		t.Fatalf("expected 2 modified files (dedup + input fallback), got %+v", cards.ModifiedFiles)
+	}
+	if cards.ModifiedFiles[0] != "/src/a.go" || cards.ModifiedFiles[1] != "/src/via-input.go" {
+		t.Fatalf("modified mismatch: %+v", cards.ModifiedFiles)
+	}
+}
+
 func TestExtractSummaryCardsAskQuestion(t *testing.T) {
 	blocks := []model.ContentBlock{{
 		Type: "text",

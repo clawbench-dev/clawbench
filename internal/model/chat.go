@@ -106,6 +106,12 @@ type SummaryCards struct {
 	Tools        []SummaryTool     `json:"tools,omitempty"`
 	TaskIDs      []int64           `json:"taskIDs,omitempty"`
 	AskQuestions []AskQuestionCard `json:"askQuestions,omitempty"`
+	// CreatedFiles / ModifiedFiles hold the file paths written (Write) or edited
+	// (Edit) by the message. They restore the file-changes banner in summary-only
+	// view, where full content blocks are omitted so they cannot be derived from
+	// blocks on the frontend.
+	CreatedFiles  []string `json:"createdFiles,omitempty"`
+	ModifiedFiles []string `json:"modifiedFiles,omitempty"`
 }
 
 // UnmarshalJSON implements custom deserialization for ChatMessage.

@@ -44,11 +44,45 @@ func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 					Output: b.Output,
 				})
 			}
+			if b.Done {
+				extractFileChanges(cards, b)
+			}
 		case contentKeyText:
 			extractFromText(cards, b.Text)
 		}
 	}
 	return cards
+}
+
+// extractFileChanges records created/modified file paths from a done tool_use
+// block, mirroring the frontend extractFileChanges semantics (Write → created,
+// Edit → modified, deduplicated). Requires a detected file path.
+func extractFileChanges(cards *model.SummaryCards, b model.ContentBlock) {
+	path := b.FilePath
+	if path == "" {
+		if p, ok := b.Input["file_path"].(string); ok {
+			path = p
+		}
+	}
+	if path == "" {
+		return
+	}
+	switch b.Name {
+	case "Write":
+		cards.CreatedFiles = appendUnique(cards.CreatedFiles, path)
+	case "Edit":
+		cards.ModifiedFiles = appendUnique(cards.ModifiedFiles, path)
+	}
+}
+
+// appendUnique appends s to slice if not already present.
+func appendUnique(slice []string, s string) []string {
+	for _, existing := range slice {
+		if existing == s {
+			return slice
+		}
+	}
+	return append(slice, s)
 }
 
 // extractFromText parses scheduled-task IDs and ask-question cards from a text block.

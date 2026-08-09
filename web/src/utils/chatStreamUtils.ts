@@ -125,11 +125,26 @@ function isGarbageOutput(output: string | undefined): boolean {
 export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
 
 /**
+ * Structured summary card metadata. Mirrors the backend model.SummaryCards.
+ * createdFiles/modifiedFiles restore the file-changes banner in summary-only
+ * view, where full content blocks are omitted and cannot be traversed.
+ */
+export interface SummaryCards {
+  tools?: Array<Record<string, unknown>>
+  taskIDs?: number[]
+  askQuestions?: Array<Record<string, unknown>>
+  createdFiles?: string[]
+  modifiedFiles?: string[]
+}
+
+/**
  * Extract file changes (created/modified) from tool_use blocks.
  * Write → created, Edit → modified. Deduplicates by file path.
  * Only considers blocks where done=true.
+ * When blocks are absent (summary-only view), falls back to the file-change
+ * lists carried in summaryCards.
  */
-export function extractFileChanges(blocks: ContentBlock[]): { created: string[]; modified: string[] } {
+export function extractFileChanges(blocks: ContentBlock[], summaryCards?: SummaryCards | null): { created: string[]; modified: string[] } {
   const createdSet = new Set<string>()
   const modifiedSet = new Set<string>()
   for (const block of blocks) {
@@ -141,6 +156,10 @@ export function extractFileChanges(blocks: ContentBlock[]): { created: string[];
     } else if (block.name === 'Edit') {
       modifiedSet.add(filePath)
     }
+  }
+  if (summaryCards) {
+    for (const p of summaryCards.createdFiles || []) createdSet.add(p)
+    for (const p of summaryCards.modifiedFiles || []) modifiedSet.add(p)
   }
   return { created: [...createdSet], modified: [...modifiedSet] }
 }

@@ -1042,6 +1042,36 @@ describe('extractFileChanges', () => {
     ]
     expect(extractFileChanges(blocks)).toEqual({ created: [], modified: [] })
   })
+
+  it('falls back to summaryCards.createdFiles/modifiedFiles when blocks are empty', () => {
+    const summaryCards = {
+      createdFiles: ['web/src/new.ts'],
+      modifiedFiles: ['web/src/a.ts', 'web/src/b.ts'],
+    }
+    expect(extractFileChanges([], summaryCards)).toEqual({
+      created: ['web/src/new.ts'],
+      modified: ['web/src/a.ts', 'web/src/b.ts'],
+    })
+  })
+
+  it('merges blocks and summaryCards with dedup', () => {
+    const blocks = [
+      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/new.ts' },
+      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/a.ts' },
+    ]
+    const summaryCards = {
+      createdFiles: ['web/src/new.ts', 'web/src/other.ts'],
+      modifiedFiles: ['web/src/a.ts'],
+    }
+    expect(extractFileChanges(blocks, summaryCards)).toEqual({
+      created: ['web/src/new.ts', 'web/src/other.ts'],
+      modified: ['web/src/a.ts'],
+    })
+  })
+
+  it('returns empty when blocks and summaryCards are both empty', () => {
+    expect(extractFileChanges([], {})).toEqual({ created: [], modified: [] })
+  })
 })
 
 describe('cancelPendingMessages', () => {

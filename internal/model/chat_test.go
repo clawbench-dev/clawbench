@@ -331,6 +331,8 @@ func TestSummaryCardsRoundTrip(t *testing.T) {
 			Output: "Cancelled",
 		}},
 		TaskIDs: []int64{42},
+		CreatedFiles:  []string{"/src/new.go"},
+		ModifiedFiles: []string{"/src/a.go"},
 		AskQuestions: []AskQuestionCard{{
 			Header:      "",
 			MultiSelect: false,
@@ -354,6 +356,12 @@ func TestSummaryCardsRoundTrip(t *testing.T) {
 	}
 	if len(back.TaskIDs) != 1 || back.TaskIDs[0] != 42 {
 		t.Fatalf("taskIDs mismatch: %+v", back.TaskIDs)
+	}
+	if len(back.CreatedFiles) != 1 || back.CreatedFiles[0] != "/src/new.go" {
+		t.Fatalf("createdFiles mismatch: %+v", back.CreatedFiles)
+	}
+	if len(back.ModifiedFiles) != 1 || back.ModifiedFiles[0] != "/src/a.go" {
+		t.Fatalf("modifiedFiles mismatch: %+v", back.ModifiedFiles)
 	}
 	if len(back.AskQuestions) != 1 || back.AskQuestions[0].Question != "Continue?" {
 		t.Fatalf("askQuestions mismatch: %+v", back.AskQuestions)
