@@ -2,6 +2,7 @@ package service
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"clawbench/internal/model"
@@ -107,9 +108,9 @@ func containsString(slice []string, s string) bool {
 // extractFromText parses scheduled-task IDs and ask-question cards from a text block.
 func extractFromText(cards *model.SummaryCards, text string) {
 	for _, m := range scheduledTaskIDRe.FindAllStringSubmatch(text, -1) {
-		var id int64
-		for _, c := range m[1] {
-			id = id*10 + int64(c-'0')
+		id, err := strconv.ParseInt(m[1], 10, 64)
+		if err != nil {
+			continue
 		}
 		cards.TaskIDs = append(cards.TaskIDs, id)
 	}

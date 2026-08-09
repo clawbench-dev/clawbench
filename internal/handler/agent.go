@@ -4,6 +4,7 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -21,6 +22,23 @@ func IsChinaMainland() bool {
 }
 
 const npmMirrorRegistry = "https://registry.npmmirror.com"
+
+// agentIDRe validates agent IDs: alphanumeric, hyphens, underscores, dots only.
+var agentIDRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+// isValidAgentID checks that an agent ID is non-empty, within length limits,
+// and contains only safe characters (no path traversal or injection vectors).
+func isValidAgentID(id string) bool {
+	if id == "" || utf8.RuneCountInString(id) > 128 {
+		return false
+	}
+	// Must start with a letter or digit; only letters, digits, hyphens, underscores, dots allowed.
+	// Reject pure dot sequences like ".." to prevent path traversal.
+	if id == "." || id == ".." {
+		return false
+	}
+	return agentIDRe.MatchString(id)
+}
 
 // prepareInstallCmd modifies an install command for display:
 // Adds China npm mirror registry if in mainland China.
@@ -128,7 +146,10 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 			s.ModelList = reg.GetModelListState(a.ID, "")
 
 			if s.ModelList != nil && len(s.ModelList.Models) > 0 {
-				a.Models = s.ModelList.Models
+				// Copy the slice to avoid mutating the shared Agent object under RLock.
+				models := make([]model.AgentModel, len(s.ModelList.Models))
+				copy(models, s.ModelList.Models)
+				a.Models = models
 			}
 		}
 		states[a.ID] = s
@@ -563,7 +584,7 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/agents/")
 	agentID := strings.TrimSuffix(path, "/refresh-models")
 
-	if agentID == "" || strings.Contains(agentID, "/") {
+	if !isValidAgentID(agentID) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
 		return
 	}
@@ -629,7 +650,7 @@ func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/agents/")
 	agentID := strings.TrimSuffix(path, "/acp-sessions")
 
-	if agentID == "" || strings.Contains(agentID, "/") {
+	if !isValidAgentID(agentID) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
 		return
 	}

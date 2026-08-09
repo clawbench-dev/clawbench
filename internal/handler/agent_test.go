@@ -1404,6 +1404,80 @@ func TestAgentDelete_DefaultAgent(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestIsValidAgentID(t *testing.T) {
+	tests := []struct {
+		id    string
+		valid bool
+	}{
+		// Valid IDs
+		{"claude", true},
+		{"claude-code", true},
+		{"my_agent", true},
+		{"agent.v2", true},
+		{"A1b2C3", true},
+		{"a", true},
+
+		// Invalid IDs
+		{"", false},           // empty
+		{"a/b", false},        // contains slash
+		{"a b", false},        // contains space
+		{"..", false},         // path traversal (dots only, but regex rejects bare ..)
+		{"agent;rm", false},   // shell injection
+		{"agent`cmd`", false}, // backtick injection
+		{"a$b", false},        // shell variable
+		{"a|b", false},        // pipe
+		{"a&b", false},        // ampersand
+		{"a\b", false},        // backslash
+		{"a'or'1", false},     // SQL injection
+		{"a\"b", false},       // double quote
+		{"a\nb", false},       // newline
+		{"a\tb", false},       // tab
+		{"agent%00id", false}, // null byte (URL-encoded)
+		{"中文", false},          // Unicode characters
+		{"agent-id-1", true},  // hyphens and digits
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.id, func(t *testing.T) {
+			if tc.id == "" {
+				t.Run("empty", func(t *testing.T) {}) // avoid empty test name
+			}
+			result := isValidAgentID(tc.id)
+			assert.Equal(t, tc.valid, result, "isValidAgentID(%q)", tc.id)
+		})
+	}
+}
+
+func TestIsValidAgentID_LengthLimit(t *testing.T) {
+	// 128 runes: valid
+	id128 := strings.Repeat("a", 128)
+	assert.True(t, isValidAgentID(id128))
+
+	// 129 runes: invalid
+	id129 := strings.Repeat("a", 129)
+	assert.False(t, isValidAgentID(id129))
+}
+
+func TestServeAgentRefreshModels_InvalidAgentID_SpecialChars(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Path traversal attempt
+	req := newRequest(t, http.MethodPost, "/api/agents/../refresh-models", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentRefreshModels, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeAgentSubRoutes_InvalidAgentID_SpecialChars(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Shell injection attempt
+	req := newRequest(t, http.MethodPost, "/api/agents/agent%3Brm/refresh-models", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentSubRoutes, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestAgentDelete_EmptyID(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
