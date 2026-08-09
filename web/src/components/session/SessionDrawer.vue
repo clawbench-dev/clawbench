@@ -313,8 +313,8 @@ onUnmounted(() => {
 }
 
 .session-item.active {
-  border-left: 3px solid var(--accent-color, #0066cc);
-  padding-left: 9px;
+  border-left: 4px solid var(--accent-color, #0066cc);
+  padding-left: 8px;
 }
 
 .session-row.active {
@@ -323,6 +323,10 @@ onUnmounted(() => {
 
 .session-row.running {
   background: rgba(34, 197, 94, 0.05);
+}
+
+.session-row.active.running {
+  background: linear-gradient(135deg, rgba(0, 102, 204, 0.08), rgba(34, 197, 94, 0.1));
 }
 
 .session-item-info {
