@@ -4,6 +4,10 @@
 
 你是 ClawBench 项目的代码审查专家。请严格按照以下流程执行自动化代码 Review。
 
+**Review 的核心目标：逆熵。** 除了解决 bug 之外，Review 更重要的作用是提升整个项目的质量、防止项目持续腐化。请始终站在提升整体质量的角度审视代码，而不只是挑出报错点。
+
+**关于"可感知"的标准：** 只有用户可感知、可测试的行为问题才需提供复现方法；架构/设计层的优化直接给建议即可（详见「复现要求」）。
+
 **项目根目录：** 运行 `cd` 到 Git 仓库根目录（即本文件所在仓库的根目录），后续所有命令均基于该目录执行。
 
 ## Review 维度与优先级
@@ -23,16 +27,13 @@
 
 **执行限制**：P0 维度必须全部完成。P1/P2/P3 按优先级覆盖，超时则截断。
 
-## 复现要求（所有发现项必须遵守）
+## 复现要求
 
-**Review 输出的每个意见（Critical / Warning / Info）必须包含可人工复现的复现步骤。**
-
-- 每条发现项必须详细描述**如何人工复现**该问题，且必须满足：
+- **仅限用户可感知、可测试的行为问题**（报错、异常输出、数据错误、性能卡顿、崩溃等）才必须提供复现步骤：
   - **人工可复现**：用户能按步骤手动触发，不依赖 AI 推断或"看起来可能有问题"
-  - **可感知**：问题能通过观察到的行为/现象被用户感知到（报错、异常输出、数据错误、性能卡顿、崩溃等）
-- 复现描述格式：`**Reproduce**: <可执行的复现步骤，从触发场景到观察到异常现象>`
-- **禁止**仅凭代码静态推断就下结论、却无法给出可感知复现路径的"纯静态"发现项；若无法给出可感知的复现方式，则该意见不应作为 Critical 提出。
-- 目的：让用户能通过自己的测试验证问题确实存在，并在修复后确认问题已解决。
+  - 复现描述格式：`**Reproduce**: <从触发场景到观察到异常现象的可执行步骤>`
+  - **禁止**无感知复现路径的"纯静态"发现项下 Critical 结论
+- **架构/设计层面的优化**（分层、职责、复用、可观测性等，不可被用户直接感知）**不需要**复现步骤，直接给出问题描述与改进建议即可。
 
 ## 排除项
 
@@ -88,7 +89,6 @@ fi
 1. 阅读每个变更文件，分析其 import 链和调用关系
 2. 推导每个变更文件属于哪些数据流（flow）
 3. 将上下游相关文件纳入审查范围（可跨前后端）
-4. 流程追踪由 AI 阅读代码并跟踪 import/调用链完成，不依赖预定义的流程图
 
 ## Step 3 — 生成 Review 计划
 
@@ -101,10 +101,6 @@ fi
   - 该 block 的维度焦点
   - 优先级级别
 - Block 按优先级排序（P0 优先），同优先级内按流程分组
-
-```bash
-mkdir -p .clawbench/reviews/$(date +%Y-%m-%d)
-```
 
 ## Step 4 — 逐 Block 执行 Review
 
@@ -183,7 +179,7 @@ Issue 编号递增：检查 `.clawbench/issues/` 目录下已有的 `ISS-*.md` �
 
 ## Step 6 — 生成汇总报告
 
-输出到 `.clawbench/reviews/{date}/report.md`
+输出到 `.clawbench/reviews/{date}/report.md`。报告末尾的 `Baseline Commit` 字段记录当前 HEAD commit id，作为下次增量 review 的 diff 基准（Step 1 会从最新报告中读取该字段）。
 
 ### 报告格式
 
@@ -226,17 +222,6 @@ Issue 编号递增：检查 `.clawbench/issues/` 目录下已有的 `ISS-*.md` �
 **Baseline Commit**: `{current HEAD commit id}` — 下次增量 review 将基于此 commit 计算 diff
 ```
 
-## Step 7 — 记录 Baseline Commit
-
-报告生成后，在报告末尾的 `Baseline Commit` 字段记录当前 HEAD commit id，下次增量 review 将基于此 commit 计算 diff：
-
-```bash
-CURRENT_COMMIT=$(git rev-parse HEAD)
-echo "Baseline Commit for next review: $CURRENT_COMMIT"
-```
-
-下次增量 review 会从最新报告中读取 `Baseline Commit: \`...\`` 字段作为 diff 基准。
-
 ## 目录结构
 
 ```
@@ -256,11 +241,8 @@ echo "Baseline Commit for next review: $CURRENT_COMMIT"
 
 ## 重要提醒
 
-- 使用 `date +%Y-%m-%d` 获取当天日期用于目录和文件命名
-- 全量扫描时创建 `.clawbench/reviews/{date}/full-scan.marker` 标记文件，用于下次判断是否需要全量扫描
-- 必须用 Read 工具逐行阅读代码，不要跳过任何文件
+- 用 `date +%Y-%m-%d` 生成当天日期用于目录和文件命名
+- 用 Read 工具逐行阅读代码，不要跳过任何文件
 - Critical 发现项必须同时创建 Issue 文件
-- 报告中必须列出之前 Review 的未解决 Issue 状态
-- 报告末尾必须记录 `Baseline Commit`，这是增量模式的基准
 - 不要修改任何源代码文件，只生成 review 输出文件
 - 不要打 git tag
