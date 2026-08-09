@@ -52,14 +52,23 @@ func TestExtractSummaryCardsFileChanges(t *testing.T) {
 	if len(cards.CreatedFiles) != 2 {
 		t.Fatalf("expected 2 created files, got %+v", cards.CreatedFiles)
 	}
-	if cards.CreatedFiles[0] != "/src/new.go" || cards.CreatedFiles[1] != "/src/dup.go" {
+	if cards.CreatedFiles[0].Path != "/src/new.go" || cards.CreatedFiles[1].Path != "/src/dup.go" {
 		t.Fatalf("created mismatch: %+v", cards.CreatedFiles)
+	}
+	if len(cards.CreatedFiles[0].ToolIDs) != 1 || cards.CreatedFiles[0].ToolIDs[0] != "w1" {
+		t.Fatalf("created[0] toolIDs mismatch: %+v", cards.CreatedFiles[0])
 	}
 	if len(cards.ModifiedFiles) != 2 {
 		t.Fatalf("expected 2 modified files (dedup + input fallback), got %+v", cards.ModifiedFiles)
 	}
-	if cards.ModifiedFiles[0] != "/src/a.go" || cards.ModifiedFiles[1] != "/src/via-input.go" {
+	if cards.ModifiedFiles[0].Path != "/src/a.go" || cards.ModifiedFiles[1].Path != "/src/via-input.go" {
 		t.Fatalf("modified mismatch: %+v", cards.ModifiedFiles)
+	}
+	if len(cards.ModifiedFiles[0].ToolIDs) != 2 || cards.ModifiedFiles[0].ToolIDs[0] != "e1" || cards.ModifiedFiles[0].ToolIDs[1] != "e2" {
+		t.Fatalf("modified[0] toolIDs mismatch (e1,e2 dedup): %+v", cards.ModifiedFiles[0])
+	}
+	if len(cards.ModifiedFiles[1].ToolIDs) != 1 || cards.ModifiedFiles[1].ToolIDs[0] != "e3" {
+		t.Fatalf("modified[1] toolIDs mismatch (via-input): %+v", cards.ModifiedFiles[1])
 	}
 }
 

@@ -97,6 +97,40 @@ type AskQuestionCard struct {
 	Options     []AskQuestionOption `json:"options"`
 }
 
+// SummaryFileChange ties a created/modified file path to the Write/Edit tool
+// call IDs that produced it. ToolIDs let the frontend fetch the diff content
+// on demand (GET /api/ai/chat/tool-call) in summary-only view, where content
+// blocks are slim and carry no input/output.
+type SummaryFileChange struct {
+	Path    string   `json:"path"`
+	ToolIDs []string `json:"toolIDs,omitempty"`
+}
+
+// SummaryFileChanges is a []SummaryFileChange that also decodes the legacy
+// []string format (plain paths) stored by older versions.
+type SummaryFileChanges []SummaryFileChange
+
+// UnmarshalJSON accepts both the current object format
+// ([{"path":...,"toolIDs":[...]}]) and the legacy plain-path format
+// (["path1","path2"]).
+func (s *SummaryFileChanges) UnmarshalJSON(data []byte) error {
+	var objs []SummaryFileChange
+	if err := json.Unmarshal(data, &objs); err == nil {
+		*s = objs
+		return nil
+	}
+	var paths []string
+	if err := json.Unmarshal(data, &paths); err != nil {
+		return err
+	}
+	out := make(SummaryFileChanges, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, SummaryFileChange{Path: p})
+	}
+	*s = out
+	return nil
+}
+
 // SummaryCards holds the structured card metadata persisted alongside the
 // reading summary text. Tools are auto-expand tool_use blocks; TaskIDs are the
 // scheduled-task IDs referenced by <scheduled-task> tags; AskQuestions are
@@ -107,11 +141,11 @@ type SummaryCards struct {
 	TaskIDs      []int64           `json:"taskIDs,omitempty"`
 	AskQuestions []AskQuestionCard `json:"askQuestions,omitempty"`
 	// CreatedFiles / ModifiedFiles hold the file paths written (Write) or edited
-	// (Edit) by the message. They restore the file-changes banner in summary-only
-	// view, where full content blocks are omitted so they cannot be derived from
-	// blocks on the frontend.
-	CreatedFiles  []string `json:"createdFiles,omitempty"`
-	ModifiedFiles []string `json:"modifiedFiles,omitempty"`
+	// (Edit) by the message, plus the tool call IDs. They restore the
+	// file-changes banner in summary-only view (where full content blocks are
+	// omitted) and enable on-demand diff fetching via the tool call IDs.
+	CreatedFiles  SummaryFileChanges `json:"createdFiles,omitempty"`
+	ModifiedFiles SummaryFileChanges `json:"modifiedFiles,omitempty"`
 }
 
 // UnmarshalJSON implements custom deserialization for ChatMessage.

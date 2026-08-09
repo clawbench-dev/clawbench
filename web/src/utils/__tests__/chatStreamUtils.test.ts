@@ -959,6 +959,8 @@ describe('resolveEffectiveMsgId', () => {
   })
 })
 
+const fc = (path: string, toolIds: string[] = []) => ({ path, toolIds })
+
 describe('extractFileChanges', () => {
   it('classifies Write as created and Edit as modified', () => {
     const blocks = [
@@ -966,21 +968,21 @@ describe('extractFileChanges', () => {
       { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/bar.ts' },
     ]
     expect(extractFileChanges(blocks)).toEqual({
-      created: ['web/src/foo.ts'],
-      modified: ['web/src/bar.ts'],
+      created: [fc('web/src/foo.ts')],
+      modified: [fc('web/src/bar.ts')],
     })
   })
 
-  it('deduplicates by file path', () => {
+  it('deduplicates by file path but collects tool IDs', () => {
     const blocks = [
-      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/foo.ts' },
-      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/foo.ts' },
-      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/bar.ts' },
-      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/bar.ts' },
+      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/foo.ts', id: 'w1' },
+      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/foo.ts', id: 'w2' },
+      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/bar.ts', id: 'e1' },
+      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/bar.ts', id: 'e1' },
     ]
     expect(extractFileChanges(blocks)).toEqual({
-      created: ['web/src/foo.ts'],
-      modified: ['web/src/bar.ts'],
+      created: [fc('web/src/foo.ts', ['w1', 'w2'])],
+      modified: [fc('web/src/bar.ts', ['e1'])],
     })
   })
 
@@ -991,7 +993,7 @@ describe('extractFileChanges', () => {
     ]
     expect(extractFileChanges(blocks)).toEqual({
       created: [],
-      modified: ['web/src/done.ts'],
+      modified: [fc('web/src/done.ts')],
     })
   })
 
@@ -1000,7 +1002,7 @@ describe('extractFileChanges', () => {
       { type: 'tool_use', name: 'Write', done: true, input: { file_path: 'web/src/via-input.ts' } },
     ]
     expect(extractFileChanges(blocks)).toEqual({
-      created: ['web/src/via-input.ts'],
+      created: [fc('web/src/via-input.ts')],
       modified: [],
     })
   })
@@ -1011,7 +1013,7 @@ describe('extractFileChanges', () => {
     ]
     expect(extractFileChanges(blocks)).toEqual({
       created: [],
-      modified: ['web/src/top.ts'],
+      modified: [fc('web/src/top.ts')],
     })
   })
 
@@ -1043,29 +1045,40 @@ describe('extractFileChanges', () => {
     expect(extractFileChanges(blocks)).toEqual({ created: [], modified: [] })
   })
 
-  it('falls back to summaryCards.createdFiles/modifiedFiles when blocks are empty', () => {
+  it('falls back to summaryCards plain-path arrays when blocks are empty', () => {
     const summaryCards = {
       createdFiles: ['web/src/new.ts'],
       modifiedFiles: ['web/src/a.ts', 'web/src/b.ts'],
     }
     expect(extractFileChanges([], summaryCards)).toEqual({
-      created: ['web/src/new.ts'],
-      modified: ['web/src/a.ts', 'web/src/b.ts'],
+      created: [fc('web/src/new.ts')],
+      modified: [fc('web/src/a.ts'), fc('web/src/b.ts')],
+    })
+  })
+
+  it('captures tool IDs from summaryCards object form (summary-only view)', () => {
+    const summaryCards = {
+      createdFiles: [{ path: 'web/src/new.ts', toolIDs: ['w1', 'w2'] }],
+      modifiedFiles: [{ path: 'web/src/a.ts', toolIDs: ['e1'] }],
+    }
+    expect(extractFileChanges([], summaryCards)).toEqual({
+      created: [fc('web/src/new.ts', ['w1', 'w2'])],
+      modified: [fc('web/src/a.ts', ['e1'])],
     })
   })
 
   it('merges blocks and summaryCards with dedup', () => {
     const blocks = [
-      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/new.ts' },
-      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/a.ts' },
+      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/new.ts', id: 'w1' },
+      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/a.ts', id: 'e1' },
     ]
     const summaryCards = {
-      createdFiles: ['web/src/new.ts', 'web/src/other.ts'],
-      modifiedFiles: ['web/src/a.ts'],
+      createdFiles: [{ path: 'web/src/new.ts', toolIDs: ['w1'] }, 'web/src/other.ts'],
+      modifiedFiles: [{ path: 'web/src/a.ts', toolIDs: ['e1'] }],
     }
     expect(extractFileChanges(blocks, summaryCards)).toEqual({
-      created: ['web/src/new.ts', 'web/src/other.ts'],
-      modified: ['web/src/a.ts'],
+      created: [fc('web/src/new.ts', ['w1']), fc('web/src/other.ts')],
+      modified: [fc('web/src/a.ts', ['e1'])],
     })
   })
 

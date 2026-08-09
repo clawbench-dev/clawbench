@@ -9,20 +9,32 @@
       <div v-if="created.length" class="fc-section">
         <div class="fc-section-title">{{ t('chat.fileChanges.created') }}</div>
         <div class="fc-file-list">
-          <button v-for="path in created" :key="'c-' + path" class="fc-file-item" @click="$emit('open-file', path)">
-            <FileIcon :path="path" :size="16" class="fc-file-icon" />
-            <span class="fc-file-name">{{ baseName(path) }}</span>
-          </button>
+          <div v-for="change in created" :key="'c-' + change.path" class="fc-file-item">
+            <button class="fc-file-main" @click="$emit('select-file', { ...change, toolName: 'Write' })">
+              <FileIcon :path="change.path" :size="16" class="fc-file-icon" />
+              <span class="fc-file-name">{{ baseName(change.path) }}</span>
+              <ChevronRight :size="14" class="fc-file-chevron" />
+            </button>
+            <button class="fc-file-jump" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="$emit('open-file', change.path)">
+              <ExternalLink :size="14" />
+            </button>
+          </div>
         </div>
       </div>
       <!-- Modified section -->
       <div v-if="modified.length" class="fc-section">
         <div class="fc-section-title">{{ t('chat.fileChanges.modified') }}</div>
         <div class="fc-file-list">
-          <button v-for="path in modified" :key="'m-' + path" class="fc-file-item" @click="$emit('open-file', path)">
-            <FileIcon :path="path" :size="16" class="fc-file-icon" />
-            <span class="fc-file-name">{{ baseName(path) }}</span>
-          </button>
+          <div v-for="change in modified" :key="'m-' + change.path" class="fc-file-item">
+            <button class="fc-file-main" @click="$emit('select-file', { ...change, toolName: 'Edit' })">
+              <FileIcon :path="change.path" :size="16" class="fc-file-icon" />
+              <span class="fc-file-name">{{ baseName(change.path) }}</span>
+              <ChevronRight :size="14" class="fc-file-chevron" />
+            </button>
+            <button class="fc-file-jump" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="$emit('open-file', change.path)">
+              <ExternalLink :size="14" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -31,7 +43,7 @@
 
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { FileDiff } from 'lucide-vue-next'
+import { FileDiff, ChevronRight, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 
@@ -43,7 +55,7 @@ defineProps({
   modified: { type: Array, default: () => [] },
 })
 
-defineEmits(['close', 'open-file'])
+defineEmits(['close', 'open-file', 'select-file'])
 
 function baseName(path) {
   const idx = path.lastIndexOf('/')
@@ -77,13 +89,7 @@ function baseName(path) {
 .fc-file-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
+  padding: 0 16px;
   transition: background 0.15s;
 }
 
@@ -93,6 +99,21 @@ function baseName(path) {
 
 .fc-file-item:active {
   background: var(--bg-primary);
+}
+
+.fc-file-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
 }
 
 .fc-file-icon {
@@ -108,5 +129,37 @@ function baseName(path) {
   text-overflow: ellipsis;
   min-width: 0;
   flex: 1;
+}
+
+.fc-file-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted, #999);
+  transition: transform 0.15s, color 0.15s;
+}
+
+.fc-file-main:hover .fc-file-chevron {
+  color: var(--accent-color, #0066cc);
+  transform: translateX(2px);
+}
+
+.fc-file-jump {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.fc-file-jump:hover {
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
 }
 </style>

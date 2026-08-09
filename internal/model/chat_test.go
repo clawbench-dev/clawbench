@@ -330,9 +330,9 @@ func TestSummaryCardsRoundTrip(t *testing.T) {
 			Status: "error",
 			Output: "Cancelled",
 		}},
-		TaskIDs: []int64{42},
-		CreatedFiles:  []string{"/src/new.go"},
-		ModifiedFiles: []string{"/src/a.go"},
+		TaskIDs:       []int64{42},
+		CreatedFiles:  SummaryFileChanges{{Path: "/src/new.go", ToolIDs: []string{"w1"}}},
+		ModifiedFiles: SummaryFileChanges{{Path: "/src/a.go", ToolIDs: []string{"e1"}}},
 		AskQuestions: []AskQuestionCard{{
 			Header:      "",
 			MultiSelect: false,
@@ -357,14 +357,39 @@ func TestSummaryCardsRoundTrip(t *testing.T) {
 	if len(back.TaskIDs) != 1 || back.TaskIDs[0] != 42 {
 		t.Fatalf("taskIDs mismatch: %+v", back.TaskIDs)
 	}
-	if len(back.CreatedFiles) != 1 || back.CreatedFiles[0] != "/src/new.go" {
+	if len(back.CreatedFiles) != 1 || back.CreatedFiles[0].Path != "/src/new.go" || len(back.CreatedFiles[0].ToolIDs) != 1 || back.CreatedFiles[0].ToolIDs[0] != "w1" {
 		t.Fatalf("createdFiles mismatch: %+v", back.CreatedFiles)
 	}
-	if len(back.ModifiedFiles) != 1 || back.ModifiedFiles[0] != "/src/a.go" {
+	if len(back.ModifiedFiles) != 1 || back.ModifiedFiles[0].Path != "/src/a.go" || len(back.ModifiedFiles[0].ToolIDs) != 1 || back.ModifiedFiles[0].ToolIDs[0] != "e1" {
 		t.Fatalf("modifiedFiles mismatch: %+v", back.ModifiedFiles)
 	}
 	if len(back.AskQuestions) != 1 || back.AskQuestions[0].Question != "Continue?" {
 		t.Fatalf("askQuestions mismatch: %+v", back.AskQuestions)
+	}
+}
+
+func TestSummaryFileChangesLegacyUnmarshal(t *testing.T) {
+	// Legacy format: plain []string paths (no tool IDs).
+	raw := []byte(`{"createdFiles":["/src/a.go"],"modifiedFiles":["/src/b.go","/src/c.go"]}`)
+	var cards SummaryCards
+	if err := json.Unmarshal(raw, &cards); err != nil {
+		t.Fatalf("legacy unmarshal: %v", err)
+	}
+	if len(cards.CreatedFiles) != 1 || cards.CreatedFiles[0].Path != "/src/a.go" || len(cards.CreatedFiles[0].ToolIDs) != 0 {
+		t.Fatalf("legacy createdFiles mismatch: %+v", cards.CreatedFiles)
+	}
+	if len(cards.ModifiedFiles) != 2 || cards.ModifiedFiles[0].Path != "/src/b.go" || cards.ModifiedFiles[1].Path != "/src/c.go" {
+		t.Fatalf("legacy modifiedFiles mismatch: %+v", cards.ModifiedFiles)
+	}
+
+	// New format round-trips through the same unmarshal.
+	objRaw := []byte(`{"createdFiles":[{"path":"/src/a.go","toolIDs":["w1","w2"]}]}`)
+	var objCards SummaryCards
+	if err := json.Unmarshal(objRaw, &objCards); err != nil {
+		t.Fatalf("object unmarshal: %v", err)
+	}
+	if len(objCards.CreatedFiles) != 1 || objCards.CreatedFiles[0].Path != "/src/a.go" || len(objCards.CreatedFiles[0].ToolIDs) != 2 {
+		t.Fatalf("object createdFiles mismatch: %+v", objCards.CreatedFiles)
 	}
 }
 

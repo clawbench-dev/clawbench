@@ -332,6 +332,10 @@ export default {
       title: 'View Changed Files',
       created: 'Written',
       modified: 'Modified',
+      openFile: 'Open file',
+      noDiffs: 'No related write/edit calls',
+      loadingDiff: 'Loading changes…',
+      diffLoadFailed: 'Failed to load changes',
     },
     speech: {
       summarizing: 'Summarizing',

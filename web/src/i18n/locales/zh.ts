@@ -332,6 +332,10 @@ export default {
       title: '查看变更文件',
       created: '写入',
       modified: '修改',
+      openFile: '打开文件',
+      noDiffs: '没有相关的写入/修改记录',
+      loadingDiff: '加载变更内容…',
+      diffLoadFailed: '变更内容加载失败',
     },
     speech: {
       summarizing: '摘要中',

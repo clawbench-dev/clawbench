@@ -125,43 +125,77 @@ function isGarbageOutput(output: string | undefined): boolean {
 export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
 
 /**
+ * A single created/modified file along with the Write/Edit tool call IDs that
+ * produced it. toolIds let the drill-down view fetch the diff content on
+ * demand from the tool-call API (blocks in loaded/summary view are slim and
+ * carry no input).
+ */
+export interface FileChange {
+  path: string
+  toolIds: string[]
+}
+
+/**
  * Structured summary card metadata. Mirrors the backend model.SummaryCards.
  * createdFiles/modifiedFiles restore the file-changes banner in summary-only
  * view, where full content blocks are omitted and cannot be traversed.
+ * Each entry is either a legacy plain path string or an object carrying the
+ * path plus the Write/Edit tool call IDs ({ path, toolIDs }).
  */
 export interface SummaryCards {
   tools?: Array<Record<string, unknown>>
   taskIDs?: number[]
   askQuestions?: Array<Record<string, unknown>>
-  createdFiles?: string[]
-  modifiedFiles?: string[]
+  createdFiles?: Array<string | { path: string; toolIDs?: string[] }>
+  modifiedFiles?: Array<string | { path: string; toolIDs?: string[] }>
+}
+
+// Merge a summaryCards file-change entry into a map of FileChange objects.
+function mergeSummaryFileChanges(list: Array<string | { path: string; toolIDs?: string[] }> | undefined, map: Map<string, FileChange>): void {
+  for (const item of list || []) {
+    const path = typeof item === 'string' ? item : item?.path
+    if (!path) continue
+    let fc = map.get(path)
+    if (!fc) {
+      fc = { path, toolIds: [] }
+      map.set(path, fc)
+    }
+    const ids = typeof item === 'string' ? [] : (item?.toolIDs || [])
+    for (const id of ids) {
+      if (id && !fc.toolIds.includes(id)) fc.toolIds.push(id)
+    }
+  }
 }
 
 /**
  * Extract file changes (created/modified) from tool_use blocks.
  * Write → created, Edit → modified. Deduplicates by file path.
- * Only considers blocks where done=true.
+ * Only considers blocks where done=true. For each file, collects the tool call
+ * IDs so the diff drill-down can fetch content on demand.
  * When blocks are absent (summary-only view), falls back to the file-change
- * lists carried in summaryCards.
+ * lists carried in summaryCards (which carry tool IDs from the backend).
  */
-export function extractFileChanges(blocks: ContentBlock[], summaryCards?: SummaryCards | null): { created: string[]; modified: string[] } {
-  const createdSet = new Set<string>()
-  const modifiedSet = new Set<string>()
+export function extractFileChanges(blocks: ContentBlock[], summaryCards?: SummaryCards | null): { created: FileChange[]; modified: FileChange[] } {
+  const created = new Map<string, FileChange>()
+  const modified = new Map<string, FileChange>()
   for (const block of blocks) {
     if (block.type !== 'tool_use' || !block.done) continue
     const filePath = (block.file_path || (block.input as Record<string, unknown>)?.file_path) as string | undefined
     if (!filePath) continue
-    if (block.name === 'Write') {
-      createdSet.add(filePath)
-    } else if (block.name === 'Edit') {
-      modifiedSet.add(filePath)
+    const map = block.name === 'Write' ? created : block.name === 'Edit' ? modified : null
+    if (!map) continue
+    let fc = map.get(filePath)
+    if (!fc) {
+      fc = { path: filePath, toolIds: [] }
+      map.set(filePath, fc)
     }
+    if (block.id && !fc.toolIds.includes(block.id)) fc.toolIds.push(block.id)
   }
   if (summaryCards) {
-    for (const p of summaryCards.createdFiles || []) createdSet.add(p)
-    for (const p of summaryCards.modifiedFiles || []) modifiedSet.add(p)
+    mergeSummaryFileChanges(summaryCards.createdFiles, created)
+    mergeSummaryFileChanges(summaryCards.modifiedFiles, modified)
   }
-  return { created: [...createdSet], modified: [...modifiedSet] }
+  return { created: [...created.values()], modified: [...modified.values()] }
 }
 
 /**

@@ -56,7 +56,8 @@ func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 
 // extractFileChanges records created/modified file paths from a done tool_use
 // block, mirroring the frontend extractFileChanges semantics (Write → created,
-// Edit → modified, deduplicated). Requires a detected file path.
+// Edit → modified, deduplicated). Requires a detected file path. The tool call
+// ID is captured per path so the frontend can fetch the diff on demand.
 func extractFileChanges(cards *model.SummaryCards, b model.ContentBlock) {
 	path := b.FilePath
 	if path == "" {
@@ -69,20 +70,38 @@ func extractFileChanges(cards *model.SummaryCards, b model.ContentBlock) {
 	}
 	switch b.Name {
 	case "Write":
-		cards.CreatedFiles = appendUnique(cards.CreatedFiles, path)
+		cards.CreatedFiles = appendFileChange(cards.CreatedFiles, path, b.ID)
 	case "Edit":
-		cards.ModifiedFiles = appendUnique(cards.ModifiedFiles, path)
+		cards.ModifiedFiles = appendFileChange(cards.ModifiedFiles, path, b.ID)
 	}
 }
 
-// appendUnique appends s to slice if not already present.
-func appendUnique(slice []string, s string) []string {
-	for _, existing := range slice {
-		if existing == s {
-			return slice
+// appendFileChange appends a path to the change list, merging the tool ID into
+// an existing entry for the same path (deduplicated per path and per ID).
+func appendFileChange(list model.SummaryFileChanges, path, toolID string) model.SummaryFileChanges {
+	for i := range list {
+		if list[i].Path == path {
+			if toolID != "" && !containsString(list[i].ToolIDs, toolID) {
+				list[i].ToolIDs = append(list[i].ToolIDs, toolID)
+			}
+			return list
 		}
 	}
-	return append(slice, s)
+	fc := model.SummaryFileChange{Path: path}
+	if toolID != "" {
+		fc.ToolIDs = []string{toolID}
+	}
+	return append(list, fc)
+}
+
+// containsString reports whether s is present in slice.
+func containsString(slice []string, s string) bool {
+	for _, existing := range slice {
+		if existing == s {
+			return true
+		}
+	}
+	return false
 }
 
 // extractFromText parses scheduled-task IDs and ask-question cards from a text block.

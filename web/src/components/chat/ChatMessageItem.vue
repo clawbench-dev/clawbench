@@ -101,7 +101,21 @@
       :created="fileChanges.created"
       :modified="fileChanges.modified"
       @close="fileChangesDrawer.close()"
-      @open-file="handleOpenFile"
+      @open-file="handleOpenFilePayload"
+      @select-file="handleSelectFile"
+    />
+
+    <!-- File diffs drill-down sheet (all Write/Edit diffs for one file) -->
+    <FileDiffsDrawer
+      :open="fileDiffsDrawer.effectiveOpen.value"
+      :file-path="selectedFile?.path || ''"
+      :tool-name="selectedFile?.toolName || ''"
+      :blocks="msg.blocks || []"
+      :msg-id="msg.id"
+      :tool-ids="selectedFile?.toolIds || []"
+      :format-tool-input="formatToolInput"
+      @close="fileDiffsDrawer.close()"
+      @file-open="handleOpenFilePayload"
     />
   </div>
 </template>
@@ -120,6 +134,7 @@ import { store } from '@/stores/app.ts'
 import ContentBlocks from './ContentBlocks.vue'
 import FileAttachmentList from './FileAttachmentList.vue'
 import FileChangesDrawer from './FileChangesDrawer.vue'
+import FileDiffsDrawer from './FileDiffsDrawer.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 
@@ -191,13 +206,28 @@ const isLastBlockThinking = computed(() => {
 })
 
 const fileChangesDrawer = useTabDrawer('chat')
+const fileDiffsDrawer = useTabDrawer('chat')
 
-function handleOpenFile(path) {
+// File selected for drill-down: { path, toolName: 'Write' | 'Edit', toolIds: string[] }
+const selectedFile = ref(null)
+
+function handleSelectFile(payload) {
+  selectedFile.value = payload
+  fileChangesDrawer.close()
+  fileDiffsDrawer.open()
+}
+
+// Handles open-file payloads: either a plain path string (from FileChangesDrawer)
+// or { path, lineStart, lineEnd } (from FileDiffsDrawer's diff file-open buttons).
+function handleOpenFilePayload(payload) {
+  const path = typeof payload === 'string' ? payload : payload.path
+  const lineStart = typeof payload === 'string' ? undefined : payload.lineStart
+  const lineEnd = typeof payload === 'string' ? undefined : payload.lineEnd
   // AI may return absolute paths (e.g. /home/user/project/src/foo.ts).
   // Strip projectRoot prefix so openFilePath doesn't treat them as external.
   const root = store.state.projectRoot
   const relPath = root && path.startsWith(root + '/') ? path.slice(root.length + 1) : path
-  openFilePath(relPath)
+  openFilePath(relPath, lineStart, lineEnd)
 }
 
 // Copy message markdown — only the final conclusion (last text block)
