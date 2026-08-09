@@ -193,6 +193,28 @@ describe('ChatMessageItem', () => {
     expect(wrapper.find('.summary-toggle-stub').exists()).toBe(true)
   })
 
+  it('shows read-aloud button for summary view with empty blocks (summary fallback)', () => {
+    // extractSpeakableText returns '' for empty blocks, but the read-aloud button
+    // must still render in summary view so the summary can be spoken.
+    const wrapper = createWrapper({
+      msg: { id: 's2', role: 'assistant', content: '', blocks: [], summary: 'Short summary', streaming: false },
+    })
+    const speakBtn = wrapper.find('.chat-action-btn--wide')
+    expect(speakBtn.exists()).toBe(true)
+    expect(speakBtn.text()).toContain('朗读')
+  })
+
+  it('speaks summary text when clicking read-aloud in summary view with empty blocks', async () => {
+    const wrapper = createWrapper({
+      msg: { id: 's3', role: 'assistant', content: '', blocks: [], summary: 'Speak me', streaming: false },
+    })
+    const speakBtn = wrapper.find('.chat-action-btn--wide')
+    await speakBtn.trigger('click')
+    const autoSpeech = (wrapper.vm as any).$.provides.autoSpeech
+    // speakText falls back to the summary because blocks are empty
+    expect(autoSpeech.speakText).toHaveBeenCalledWith('s3', 'Speak me')
+  })
+
   it('applies has-metadata class when assistant message has metadata', () => {
     const wrapper = createWrapper({
       msg: { id: '7', role: 'assistant', content: 'response', blocks: [], metadata: { wallMs: 100 } },

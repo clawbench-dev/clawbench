@@ -145,9 +145,14 @@ const speakBtnRef = ref(null)
 
 // Extract text content from message blocks for TTS.
 // Uses extractSpeakableText to include AskUserQuestion blocks.
+// Falls back to the summary text when blocks are empty (summary-first loading
+// strips content), so the read-aloud button stays available in summary view.
 const msgText = computed(() => {
   if (props.msg?.role !== 'assistant') return ''
-  return extractSpeakableText(props.msg?.blocks || [])
+  const text = extractSpeakableText(props.msg?.blocks || [])
+  if (text) return text
+  if (shouldShowSummary(props.msg) && props.msg?.summary) return props.msg.summary
+  return ''
 })
 
 // Whether to render the summary view. Computed from message state (summary
