@@ -23,6 +23,17 @@
 
 **执行限制**：P0 维度必须全部完成。P1/P2/P3 按优先级覆盖，超时则截断。
 
+## 复现要求（所有发现项必须遵守）
+
+**Review 输出的每个意见（Critical / Warning / Info）必须包含可人工复现的复现步骤。**
+
+- 每条发现项必须详细描述**如何人工复现**该问题，且必须满足：
+  - **人工可复现**：用户能按步骤手动触发，不依赖 AI 推断或"看起来可能有问题"
+  - **可感知**：问题能通过观察到的行为/现象被用户感知到（报错、异常输出、数据错误、性能卡顿、崩溃等）
+- 复现描述格式：`**Reproduce**: <可执行的复现步骤，从触发场景到观察到异常现象>`
+- **禁止**仅凭代码静态推断就下结论、却无法给出可感知复现路径的"纯静态"发现项；若无法给出可感知的复现方式，则该意见不应作为 Critical 提出。
+- 目的：让用户能通过自己的测试验证问题确实存在，并在修复后确认问题已解决。
+
 ## 排除项
 
 不审查以下目录/文件：
@@ -119,14 +130,17 @@ mkdir -p .clawbench/reviews/$(date +%Y-%m-%d)
 ### Critical
 - [CRIT-001] {description} ({file}:{line})
   - **Impact**: {why this is critical}
+  - **Reproduce**: {可执行、可感知的人工复现步骤}
   - **Suggestion**: {how to fix}
 
 ### Warning
 - [WARN-001] {description} ({file}:{line})
+  - **Reproduce**: {可执行、可感知的人工复现步骤}
   - **Suggestion**: {improvement idea}
 
 ### Info
 - [INFO-001] {description}
+  - **Reproduce**: {可执行、可感知的人工复现步骤（若适用）}
 ```
 
 ### Issue 文件格式（仅 Critical）
@@ -146,6 +160,9 @@ files: [{file list}]
 
 ## Impact
 {why this matters}
+
+## Reproduce
+{可执行、可感知的人工复现步骤 —— 从触发场景到观察到异常现象}
 
 ## Suggestion
 {how to fix}
