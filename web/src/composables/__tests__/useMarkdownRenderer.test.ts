@@ -232,12 +232,21 @@ describe('renderMarkdown', () => {
     expect(mockDOMPurifySanitize).not.toHaveBeenCalled()
   })
 
-  it('passes ADD_TAGS and ADD_ATTR to DOMPurify', () => {
+  it('passes ADD_TAGS, ADD_ATTR, and ALLOWED_URI_REGEXP allowing file: scheme to DOMPurify', () => {
     mockMarkedParse.mockReturnValue('<p>content</p>')
     mockDOMPurifySanitize.mockImplementation((s: string) => s)
 
     renderMarkdown('content')
-    expect(mockDOMPurifySanitize).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ ADD_TAGS: expect.arrayContaining(['math', 'button']), ADD_ATTR: expect.arrayContaining(['data-action', 'aria-label', 'title']) }))
+    expect(mockDOMPurifySanitize).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        ADD_TAGS: expect.arrayContaining(['math', 'button']),
+        ADD_ATTR: expect.arrayContaining(['data-action', 'aria-label', 'title']),
+        ALLOWED_URI_REGEXP: expect.any(RegExp),
+      })
+    )
+    const callArgs = mockDOMPurifySanitize.mock.calls[0][1]
+    expect(callArgs.ALLOWED_URI_REGEXP.test('file:///Users/yuqing/foo.go')).toBe(true)
   })
 
   it('renders KaTeX before sanitizing when skipEnhancements=false', () => {

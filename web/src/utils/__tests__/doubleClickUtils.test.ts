@@ -26,6 +26,17 @@ describe('doubleClickUtils', () => {
       expect(isExternalLink('tel:+1234567890')).toBe(true)
     })
 
+    it.each(['ftp://example.com/file', 'sms:+1234567890', 'callto:user', 'cid:part1', 'xmpp:user@example.com'])(
+      'returns true for sanitizer-supported external link %s',
+      (href) => {
+        expect(isExternalLink(href)).toBe(true)
+      },
+    )
+
+    it('returns false for file URIs handled by the in-app file viewer', () => {
+      expect(isExternalLink('file:///workspace/src/main.go')).toBe(false)
+    })
+
     it('returns true for protocol-relative links', () => {
       expect(isExternalLink('//cdn.example.com/script.js')).toBe(true)
     })

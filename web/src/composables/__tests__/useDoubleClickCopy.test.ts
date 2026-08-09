@@ -135,6 +135,24 @@ describe('useDoubleClickCopy', () => {
       document.body.removeChild(anchor)
     })
 
+    it('passes annotated file line metadata to onOpenFile', () => {
+      const { handleDblClick } = useDoubleClickCopy()
+      const onOpenFile = vi.fn()
+      const anchor = document.createElement('a')
+      anchor.setAttribute('href', '../../src/main.rs#L42-L50')
+      anchor.setAttribute('data-file-path', 'src/main.rs')
+      anchor.setAttribute('data-line-start', '42')
+      anchor.setAttribute('data-line-end', '50')
+      document.body.appendChild(anchor)
+
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'target', { value: anchor, writable: false })
+      handleDblClick(event, onOpenFile)
+
+      expect(onOpenFile).toHaveBeenCalledWith('src/main.rs', 42, 50)
+      document.body.removeChild(anchor)
+    })
+
     it('does not call onOpenFile for anchor links (#section)', () => {
       const { handleDblClick } = useDoubleClickCopy()
       const onOpenFile = vi.fn()

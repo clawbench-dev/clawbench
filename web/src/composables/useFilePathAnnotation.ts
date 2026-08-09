@@ -41,6 +41,60 @@ function tryDecodeUri(uri: string): string {
     }
 }
 
+export interface ParsedFileUri {
+    path: string
+    lineStart?: number
+    lineEnd?: number
+}
+
+/**
+ * Parse a raw URI or path string (handling file://, #L10-L20 hash, :10-20 suffix).
+ */
+export function parseFileUri(rawInput: string): ParsedFileUri {
+    if (!rawInput) return { path: '' }
+    let raw = rawInput.trim()
+
+    // 1. Strip file:// protocol prefix
+    if (raw.startsWith('file://')) {
+        raw = raw.slice(7)
+        if (raw.startsWith('file://')) raw = raw.slice(7)
+    }
+
+    // 2. Decode percent-encoded URI components (e.g. file:///Users/.../foo%20bar.go)
+    try {
+        if (raw.includes('%')) {
+            raw = decodeURIComponent(raw)
+        }
+    } catch { /* ignore malformed % */ }
+
+    // 3. Extract line fragment from hash (#L10-L20, #L10, #10-20, #10)
+    let lineStart: number | undefined
+    let lineEnd: number | undefined
+
+    const hashIdx = raw.indexOf('#')
+    if (hashIdx !== -1) {
+        const hash = raw.slice(hashIdx + 1)
+        raw = raw.slice(0, hashIdx)
+        const match = hash.match(/^L?(\d+)(?:-L?(\d+))?$/i)
+        if (match) {
+            lineStart = parseInt(match[1], 10)
+            if (match[2]) lineEnd = parseInt(match[2], 10)
+        }
+    }
+
+    // 4. Extract line range from colon suffix (:10-20, :10) if not extracted from hash
+    if (!lineStart) {
+        const colonMatch = raw.match(/:(\d+)(?:-(\d+))?$/)
+        if (colonMatch) {
+            raw = raw.slice(0, raw.length - colonMatch[0].length)
+            lineStart = parseInt(colonMatch[1], 10)
+            if (colonMatch[2]) lineEnd = parseInt(colonMatch[2], 10)
+        }
+    }
+
+    return { path: raw, lineStart, lineEnd }
+}
+
 // ── Path resolution helpers ────────────────────────────────────────────────────
 
 /**
@@ -117,15 +171,19 @@ function shouldRejectPath(path: string): boolean {
  * When baseDir resolves to a different project-internal path, primary = baseDir result, fallback = projectRoot result.
  */
 export function resolveFilePathDual(path: string, projectRoot: string, homeDir?: string, baseDir?: string): ResolveResult | null {
+    const parsed = parseFileUri(path)
+    const cleanPath = parsed.path
+    if (!cleanPath) return null
+
     // Reject glob patterns, URLs, env vars
-    if (shouldRejectPath(path)) return null
+    if (shouldRejectPath(cleanPath)) return null
     // Reject bare identifiers without / or file extension
-    if (!/\//.test(path) && !/\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(path.replace(/:\d+(-\d+)?$/, ''))) return null
+    if (!/\//.test(cleanPath) && !/\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(cleanPath)) return null
 
     // ── Tilde expansion ──
-    if (path.startsWith('~/') || path === '~') {
+    if (cleanPath.startsWith('~/') || cleanPath === '~') {
         if (!homeDir) return null
-        const expanded = homeDir + path.slice(1)
+        const expanded = homeDir + cleanPath.slice(1)
         if (!projectRoot) return { primary: expanded, fallback: expanded }
         if (expanded.startsWith(projectRoot + '/')) {
             const rel = expanded.slice(projectRoot.length + 1)
@@ -136,14 +194,14 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     }
 
     // ── Absolute path ──
-    if (path.startsWith('/')) {
-        if (!projectRoot) return { primary: path, fallback: path }
-        if (path.startsWith(projectRoot + '/')) {
-            const rel = path.slice(projectRoot.length + 1)
+    if (cleanPath.startsWith('/')) {
+        if (!projectRoot) return { primary: cleanPath, fallback: cleanPath }
+        if (cleanPath.startsWith(projectRoot + '/')) {
+            const rel = cleanPath.slice(projectRoot.length + 1)
             return { primary: rel, fallback: rel }
         }
-        if (path === projectRoot) return null
-        return { primary: path, fallback: path }
+        if (cleanPath === projectRoot) return null
+        return { primary: cleanPath, fallback: cleanPath }
     }
 
     // ── Relative path without any root ──
@@ -334,16 +392,23 @@ export function annotateFilePaths(
         const rawHref = a.getAttribute('href')!
         const href = tryDecodeUri(rawHref)
         if (/^(https?:|\/\/|mailto:|tel:|#)/i.test(href)) continue
-        const resolved = baseDir
-            ? resolveRelativePath(href, baseDir)
-            : resolveFilePath(href, projectRoot, homeDir)
+        const parsed = parseFileUri(href)
+        const resolved = (parsed.path.startsWith('/') || !baseDir)
+            ? resolveFilePath(parsed.path, projectRoot, homeDir)
+            : resolveRelativePath(parsed.path, baseDir)
         if (!resolved) continue
         detectedPaths.push(resolved)
-        a.insertAdjacentHTML('afterend', fileOpenButtonHtml(resolved))
+        const btnHtml = fileOpenButtonHtml(resolved, parsed.lineStart, parsed.lineEnd)
+        a.setAttribute('data-file-path', resolved)
+        if (parsed.lineStart) a.setAttribute('data-line-start', String(parsed.lineStart))
+        if (parsed.lineEnd) a.setAttribute('data-line-end', String(parsed.lineEnd))
+        a.classList.add('chat-file-path')
+        a.insertAdjacentHTML('afterend', btnHtml)
     }
 
     // ── Step 2: <code> tags whose content is purely a file path ──
     for (const code of doc.querySelectorAll('code')) {
+        if (code.closest('a')) continue
         if (code.classList.contains('chat-worktree-path')) continue
         const stripped = (code.textContent || '').trim()
         if (!looksLikeFilePath(stripped)) continue
@@ -539,8 +604,18 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
         if (pathType === 'dir') {
             // Remove project-external directory annotations
             containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"].external`).forEach(btn => btn.remove())
-            containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"]`).forEach(span => span.replaceWith(...span.childNodes))
-            containerEl.querySelectorAll(`.code-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"]`).forEach(span => span.replaceWith(...span.childNodes))
+            containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"], .code-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"]`).forEach(el => {
+                if (el.tagName === 'A' || el.tagName === 'CODE') {
+                    el.classList.remove('chat-file-path', 'code-file-path', 'external')
+                    el.removeAttribute('data-file-path')
+                    el.removeAttribute('data-fallback-path')
+                    el.removeAttribute('data-external')
+                    el.removeAttribute('data-line-start')
+                    el.removeAttribute('data-line-end')
+                } else {
+                    el.replaceWith(...el.childNodes)
+                }
+            })
             continue
         }
 
@@ -574,11 +649,17 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
         containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"]`).forEach(btn => {
             btn.remove()
         })
-        containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(span => {
-            span.replaceWith(...span.childNodes)
-        })
-        containerEl.querySelectorAll(`.code-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(span => {
-            span.replaceWith(...span.childNodes)
+        containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"], .code-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(el => {
+            if (el.tagName === 'A' || el.tagName === 'CODE') {
+                el.classList.remove('chat-file-path', 'code-file-path')
+                el.removeAttribute('data-file-path')
+                el.removeAttribute('data-fallback-path')
+                el.removeAttribute('data-external')
+                el.removeAttribute('data-line-start')
+                el.removeAttribute('data-line-end')
+            } else {
+                el.replaceWith(...el.childNodes)
+            }
         })
     }
 }
@@ -595,6 +676,7 @@ export function clearVerifiedCache(): void {
 
 export function useFilePathAnnotation() {
     return {
+        parseFileUri,
         resolveFilePath,
         resolveFilePathDual,
         fileOpenButtonHtml,
@@ -661,13 +743,24 @@ export function tryResolveCodeString(
  * If the file doesn't exist, shows a toast and does not navigate.
  */
 export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number): Promise<boolean> {
-    const isExternal = resolvedPath.startsWith('/')
+    const parsed = parseFileUri(resolvedPath)
+    let targetPath = parsed.path
+    if (!targetPath) return false
+
+    const root = store.state.projectRoot
+    if (root && targetPath.startsWith(root + '/')) {
+        targetPath = targetPath.slice(root.length + 1)
+    }
+
+    const finalLineStart = lineStart ?? parsed.lineStart
+    const finalLineEnd = lineEnd ?? parsed.lineEnd
+    const isExternal = targetPath.startsWith('/')
 
     if (!isExternal) {
         try {
-            const resp = await fetch(`/api/dir?path=${encodeURIComponent(resolvedPath)}`)
+            const resp = await fetch(`/api/dir?path=${encodeURIComponent(targetPath)}`)
             if (resp.ok) {
-                await store.navigateToDir(resolvedPath)
+                await store.navigateToDir(targetPath)
                 window.dispatchEvent(new CustomEvent('close-file-overlay'))
                 window.dispatchEvent(new CustomEvent('open-file-manager'))
                 return true
@@ -681,11 +774,11 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
         const resp = await fetch(`/api/file/batch-exists`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: [resolvedPath] }),
+            body: JSON.stringify({ paths: [targetPath] }),
         })
         if (resp.ok) {
             const data = await resp.json() as { results: Record<string, string> }
-            const type = data.results?.[resolvedPath]
+            const type = data.results?.[targetPath]
             if (type !== 'file' && type !== 'dir') {
                 const { useToast } = await import('@/composables/useToast')
                 const { gt } = await import('@/composables/useLocale')
@@ -700,7 +793,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
             }
             if (type === 'dir') {
                 // Path is a directory — navigate into it instead of opening as file
-                await store.navigateToDir(resolvedPath)
+                await store.navigateToDir(targetPath)
                 window.dispatchEvent(new CustomEvent('close-file-overlay'))
                 window.dispatchEvent(new CustomEvent('open-file-manager'))
                 return true
@@ -710,9 +803,9 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
         // Batch-exists check failed — proceed with selectFile as best-effort
     }
 
-    const ok = await store.selectFile(resolvedPath)
+    const ok = await store.selectFile(targetPath)
     if (ok) {
-        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: resolvedPath, lineStart, lineEnd } }))
+        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: targetPath, lineStart: finalLineStart, lineEnd: finalLineEnd } }))
         if (isExternal) {
             const { useToast } = await import('@/composables/useToast')
             useToast().show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
@@ -727,7 +820,16 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
  * If the path is a directory itself, navigate into its parent and highlight it.
  */
 export async function navToFileInManager(resolvedPath: string): Promise<boolean> {
-    const isExternal = resolvedPath.startsWith('/')
+    const parsed = parseFileUri(resolvedPath)
+    let targetPath = parsed.path
+    if (!targetPath) return false
+
+    const root = store.state.projectRoot
+    if (root && targetPath.startsWith(root + '/')) {
+        targetPath = targetPath.slice(root.length + 1)
+    }
+
+    const isExternal = targetPath.startsWith('/')
 
     // Verify the path exists
     let pathType: 'file' | 'dir' | 'none' = 'none'
@@ -735,11 +837,11 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
         const resp = await fetch('/api/file/batch-exists', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: [resolvedPath] }),
+            body: JSON.stringify({ paths: [targetPath] }),
         })
         if (resp.ok) {
             const data = await resp.json() as { results: Record<string, string> }
-            pathType = (data.results?.[resolvedPath] as 'file' | 'dir' | 'none') || 'none'
+            pathType = (data.results?.[targetPath] as 'file' | 'dir' | 'none') || 'none'
         }
     } catch { /* proceed as best-effort */ }
 
@@ -768,12 +870,12 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
 
     // Navigate to the containing directory using loadFiles directly
     // (navigateToDir silently no-ops when dirLoading is true, which can race)
-    const parentDir = dirName(resolvedPath)
+    const parentDir = dirName(targetPath)
     await store.loadFiles(parentDir)
 
     // Brief delay to let DOM settle after loadFiles before highlighting the target
     setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: resolvedPath } }))
+        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: targetPath } }))
     }, 50)
 
     return true

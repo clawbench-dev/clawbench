@@ -100,6 +100,7 @@ export function renderKatexInString(html: string): string {
 // DOMPurify 配置：取所有调用方的并集
 const DOMPURIFY_ADD_TAGS = ['math', 'button']
 const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-path', 'data-table-idx', 'data-row-idx']
+const DOMPURIFY_ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i
 
 /**
  * 渲染Markdown内容为HTML（统一管线，所有调用方共用）
@@ -140,7 +141,7 @@ export function renderMarkdown(
 
     // 3. Sanitize HTML (XSS prevention)
     if (sanitize) {
-        html = DOMPurify.sanitize(html, { ADD_TAGS: DOMPURIFY_ADD_TAGS, ADD_ATTR: DOMPURIFY_ADD_ATTR })
+        html = DOMPurify.sanitize(html, { ADD_TAGS: DOMPURIFY_ADD_TAGS, ADD_ATTR: DOMPURIFY_ADD_ATTR, ALLOWED_URI_REGEXP: DOMPURIFY_ALLOWED_URI_REGEXP })
     }
 
     // 4. Fix image paths (MarkdownPreview-specific)

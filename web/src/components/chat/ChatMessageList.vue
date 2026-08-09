@@ -136,6 +136,7 @@ import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
+import { isExternalLink, isAnchorLink } from '@/utils/doubleClickUtils.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
@@ -266,23 +267,28 @@ async function handleChatClick(event) {
     return
   }
 
-  // 5. File-path button handler
-  const btn = (event.target).closest('.chat-file-open-btn')
-  if (btn) {
-    event.preventDefault()
-    event.stopPropagation()
-    const filePath = btn.getAttribute('data-file-path')
-    const lineStart = btn.getAttribute('data-line-start')
-    const lineEnd = btn.getAttribute('data-line-end')
-    if (filePath) {
-      const ok = await openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
-      if (ok) chatUI.navigateToFileViewer?.()
+  // 5. File-path handler (button or annotated element or any file:// / local link)
+  const fileEl = (event.target).closest('.chat-file-open-btn, .chat-file-path, a[href]')
+  if (fileEl) {
+    const href = fileEl.getAttribute('href')
+    if (href && (isAnchorLink(href) || isExternalLink(href))) {
+      // Let anchor links (#) and external web links (http/https) pass through
+    } else {
+      const filePath = fileEl.getAttribute('data-file-path') || href
+      if (filePath) {
+        event.preventDefault()
+        event.stopPropagation()
+        const lineStart = fileEl.getAttribute('data-line-start')
+        const lineEnd = fileEl.getAttribute('data-line-end')
+        const ok = await openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
+        if (ok) chatUI.navigateToFileViewer?.()
+        return
+      }
     }
-    return
   }
 
-  handleDblClick(event, async (href) => {
-    const ok = await openFilePath(href)
+  handleDblClick(event, async (href, lineStart, lineEnd) => {
+    const ok = await openFilePath(href, lineStart, lineEnd)
     if (ok) chatUI.navigateToFileViewer?.()
   })
 }

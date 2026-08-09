@@ -28,7 +28,7 @@ interface ToastShow {
 }
 
 export interface LinkHandler {
-    (path: string): void
+    (path: string, lineStart?: number, lineEnd?: number): void
 }
 
 export interface DoubleClickCopyOptions {
@@ -120,7 +120,19 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
         // 处理相对路径链接 (非 http/https 链接)
         if (!isExternalLink(decodedHref) && onOpenFile) {
             event.preventDefault()
-            onOpenFile(decodedHref)
+            const dataFilePath = anchor.getAttribute('data-file-path')
+            const dataLineStart = anchor.getAttribute('data-line-start')
+            const dataLineEnd = anchor.getAttribute('data-line-end')
+
+            const filePath = dataFilePath || decodedHref
+            const lineStart = dataLineStart ? parseInt(dataLineStart, 10) : undefined
+            const lineEnd = dataLineEnd ? parseInt(dataLineEnd, 10) : undefined
+
+            if (lineStart !== undefined) {
+                onOpenFile(filePath, lineStart, lineEnd)
+            } else {
+                onOpenFile(filePath)
+            }
             return true
         }
 

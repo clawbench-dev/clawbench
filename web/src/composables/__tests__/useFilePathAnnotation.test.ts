@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { store } from '@/stores/app'
 import {
+  parseFileUri,
   resolveFilePath,
   resolveFilePathDual,
   resolveRelativePath,
@@ -523,6 +525,15 @@ describe('annotateFilePaths', () => {
     expect(result.detectedPaths).toContain('src/utils.ts')
   })
 
+  it('resolves <a> with file:/// absolute path correctly even when baseDir is provided', () => {
+    const input = '<a href="file:///home/user/project/src/main.go#L10-L20">main.go</a>'
+    const result = annotateFilePaths(input, { projectRoot, baseDir: 'src' })
+    expect(result.detectedPaths).toContain('src/main.go')
+    expect(result.html).toContain('data-file-path="src/main.go"')
+    expect(result.html).toContain('data-line-start="10"')
+    expect(result.html).toContain('data-line-end="20"')
+  })
+
   it('returns empty detectedPaths for plain text with no paths', () => {
     const input = 'This is just some text without any file references.'
     const result = annotateFilePaths(input, { projectRoot })
@@ -812,6 +823,13 @@ describe('annotateFilePaths', () => {
   // ── Chinese path encoding (percent-encoded href decoding) ──
 
   describe('percent-encoded href decoding for Chinese paths', () => {
+    it('does not double annotate code tags inside a tags', () => {
+      const input = '<a href="src/main.go"><code>src/main.go</code></a>'
+      const result = annotateFilePaths(input, { projectRoot })
+      const count = (result.html.match(/chat-file-open-btn/g) || []).length
+      expect(count).toBe(1)
+    })
+
     it('decodes percent-encoded Chinese href in <a> tags', () => {
       // Browsers/DOMPurify may encode 中文 → %E4%B8%AD%E6%96%87 in href attributes
       const input = '<a href="%E4%B8%AD%E6%96%87/%E6%96%87%E4%BB%B6.md">链接</a>'
@@ -1867,6 +1885,92 @@ describe('openFilePath', () => {
     window.dispatchEvent = origDispatch
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it('navToFileInManager normalizes a project file URI before lookup and navigation', async () => {
+    vi.useFakeTimers()
+    store.state.projectRoot = '/workspace'
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    const result = await navToFileInManager('file:///workspace/src/main.go#L42')
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(result).toBe(true)
+    expect(mockFetch).toHaveBeenCalledWith('/api/file/batch-exists', expect.objectContaining({
+      body: JSON.stringify({ paths: ['src/main.go'] }),
+    }))
+    expect(mockLoadFiles).toHaveBeenCalledWith('src')
+    const highlightCall = mockDispatchEvent.mock.calls.find((call: any[]) => call[0].type === 'highlight-file-item')
+    expect(highlightCall?.[0].detail.path).toBe('src/main.go')
+
+    store.state.projectRoot = '/home/user/project'
+    window.dispatchEvent = origDispatch
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  describe('parseFileUri and file:// URL support', () => {
+    it('parses file:// URIs with line range fragments (#L10-L20)', () => {
+      const result = parseFileUri('file:///Users/foo/project/src/main.go#L10-L20')
+      expect(result.path).toBe('/Users/foo/project/src/main.go')
+      expect(result.lineStart).toBe(10)
+      expect(result.lineEnd).toBe(20)
+    })
+
+    it('parses file:// URIs with single line fragment (#L15)', () => {
+      const result = parseFileUri('file:///Users/foo/project/src/main.go#L15')
+      expect(result.path).toBe('/Users/foo/project/src/main.go')
+      expect(result.lineStart).toBe(15)
+      expect(result.lineEnd).toBeUndefined()
+    })
+
+    it('parses file:// URIs with colon suffix (:10-20)', () => {
+      const result = parseFileUri('file:///Users/foo/project/src/main.go:10-20')
+      expect(result.path).toBe('/Users/foo/project/src/main.go')
+      expect(result.lineStart).toBe(10)
+      expect(result.lineEnd).toBe(20)
+    })
+
+    it('decodes percent-encoded URI paths', () => {
+      const result = parseFileUri('file:///Users/foo/%E4%B8%AD%E6%96%87/%E6%B5%8B%E8%AF%95.go#L5')
+      expect(result.path).toBe('/Users/foo/中文/测试.go')
+      expect(result.lineStart).toBe(5)
+    })
+
+    it('handles empty input gracefully', () => {
+      expect(parseFileUri('').path).toBe('')
+    })
+
+    it('openFilePath normalizes file:// URIs and extracts line numbers', async () => {
+      store.state.projectRoot = '/workspace'
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) })
+      vi.stubGlobal('fetch', mockFetch)
+
+      const mockDispatchEvent = vi.fn()
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = mockDispatchEvent
+
+      const ok = await openFilePath('file:///workspace/src/main.go#L42-L50')
+
+      expect(ok).toBe(true)
+      const openCall = mockDispatchEvent.mock.calls.find((call: any[]) => call[0].type === 'open-file-overlay')
+      expect(openCall).toBeDefined()
+      expect(openCall![0].detail.lineStart).toBe(42)
+      expect(openCall![0].detail.lineEnd).toBe(50)
+
+      window.dispatchEvent = origDispatch
+      vi.unstubAllGlobals()
+    })
   })
 
 })

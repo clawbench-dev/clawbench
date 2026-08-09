@@ -4,10 +4,11 @@
  */
 
 /**
- * Check if an href is an external link (http/https, mailto, tel, protocol-relative).
+ * Check if an href is an external link supported by the Markdown sanitizer.
+ * file: is intentionally excluded because it is handled as an in-app file link.
  */
 export function isExternalLink(href: string): boolean {
-  return /^(https?:|\/\/|mailto:|tel:)/i.test(href)
+  return /^(?:(?:f|ht)tps?:|mailto:|tel:|callto:|sms:|cid:|xmpp:|\/\/)/i.test(href)
 }
 
 /**

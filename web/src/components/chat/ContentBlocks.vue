@@ -550,8 +550,8 @@ function handleToolDetailClick(event) {
   // Try tool-specific action handler first (via data-tool-name on the .tool-detail container)
   const toolName = event.currentTarget.dataset?.toolName
   if (toolName && handleToolAction(toolName, event, emit)) return
-  // Allow file-open buttons, file-path spans, commit-hash elements, and table rows to bubble
-  if (event.target.closest('.chat-file-open-btn') || event.target.closest('.chat-file-path') || event.target.closest('.chat-commit-hash, .chat-commit-open-btn') || event.target.closest('.chat-worktree-btn') || event.target.closest('tbody tr[data-row-idx]')) {
+  // Allow file-open buttons, file-path spans, a[href] links, commit-hash elements, and table rows to bubble
+  if (event.target.closest('.chat-file-open-btn') || event.target.closest('.chat-file-path') || event.target.closest('a[href]') || event.target.closest('.chat-commit-hash, .chat-commit-open-btn') || event.target.closest('.chat-worktree-btn') || event.target.closest('tbody tr[data-row-idx]')) {
     return
   }
   event.stopPropagation()
