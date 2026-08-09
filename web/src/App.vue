@@ -424,6 +424,7 @@ import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/us
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useSessionIdentity, registerSessionDrawerRef, resetIdentity } from './composables/useSessionIdentity.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
+import { resetAllCrudLists } from '@/composables/useCrudList'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
 import { clearPlanState } from './composables/usePlanProgress.ts'
 import { useToast } from './composables/useToast.ts'
@@ -438,7 +439,7 @@ import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
 import { useFileEditor } from './composables/useFileEditor'
-import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
+import { openRecentFile, removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
@@ -513,6 +514,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   clearPlanState()
   resetTaskTabState()
   resetTabDrawerState()
+  resetAllCrudLists()
   fileNav.closeOverlay()
   activeTab.value = 'chat'
 
@@ -1275,7 +1277,7 @@ async function handleOverlayOpenFile(payload) {
 }
 
 async function handleAppHeaderRecentFileSelect(path) {
-    const ok = await store.selectFile(path)
+    const ok = await openRecentFile(path, (p) => store.selectFile(p))
     if (ok) {
         switchTab('view')
         fileNav.openFile(path)

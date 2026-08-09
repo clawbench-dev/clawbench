@@ -102,6 +102,21 @@ export function removeRecentFile(path: string) {
   saveToStorage()
 }
 
+/**
+ * Open a recent file via the given loader. If the file can no longer be
+ * opened (e.g. it was deleted or moved externally), the stale entry is
+ * removed from the recent list so it doesn't linger as a dead shortcut.
+ * Returns whether the file opened successfully.
+ */
+export async function openRecentFile(path: string, load: (path: string) => Promise<boolean>): Promise<boolean> {
+  ensureWatchers()
+  const ok = await load(path)
+  if (!ok) {
+    removeRecentFile(path)
+  }
+  return ok
+}
+
 export function useRecentFiles() {
   ensureWatchers()
   // Lazy-load on first use
@@ -128,5 +143,6 @@ export function useRecentFiles() {
     recentFilesExcluding,
     recordRecentFile,
     removeRecentFile,
+    openRecentFile,
   }
 }

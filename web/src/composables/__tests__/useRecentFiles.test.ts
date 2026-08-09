@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { computed, nextTick } from 'vue'
-import { _resetForTesting, recordRecentFile, removeRecentFile, useRecentFiles } from '@/composables/useRecentFiles'
+import { _resetForTesting, openRecentFile, recordRecentFile, removeRecentFile, useRecentFiles } from '@/composables/useRecentFiles'
 import { store } from '@/stores/app.ts'
 
 // Mock store — reactive so the useRecentFiles projectRoot watcher fires on switch.
@@ -66,6 +66,27 @@ describe('useRecentFiles', () => {
     const { entries } = useRecentFiles()
     expect(entries.value).toHaveLength(1)
     expect(entries.value[0].path).toBe('b.ts')
+  })
+
+  it('openRecentFile removes the entry when the file fails to open', async () => {
+    recordRecentFile('gone.ts')
+    recordRecentFile('ok.ts')
+    const load = vi.fn(async (p: string) => p !== 'gone.ts')
+    const ok = await openRecentFile('gone.ts', load)
+    expect(ok).toBe(false)
+    const { entries } = useRecentFiles()
+    expect(entries.value.map(e => e.path)).toEqual(['ok.ts'])
+  })
+
+  it('openRecentFile keeps the entry when the file opens successfully', async () => {
+    recordRecentFile('a.ts')
+    recordRecentFile('b.ts')
+    const load = vi.fn(async () => true)
+    const ok = await openRecentFile('b.ts', load)
+    expect(ok).toBe(true)
+    expect(load).toHaveBeenCalledWith('b.ts')
+    const { entries } = useRecentFiles()
+    expect(entries.value.map(e => e.path)).toEqual(['b.ts', 'a.ts'])
   })
 
   it('recentFilesExcluding filters out current file', () => {
