@@ -1,5 +1,23 @@
 <template>
   <div class="chat-attachment-tags">
+    <!-- Uploading pending file cards (instant local Blob thumbnail & upload progress) -->
+    <template v-for="(pf, idx) in pendingFiles" :key="'pending-' + idx">
+      <span v-if="pf.uploading"
+        class="chat-file-attachment attachment-pending"
+        :class="{ 'attachment-image-only': pf.isImage && pf.previewUrl }">
+        <img v-if="pf.isImage && pf.previewUrl"
+          class="attachment-thumb-img attachment-uploading-img"
+          :src="pf.previewUrl" />
+        <FileIcon v-else :path="pf.path || 'file'" :size="22" class="attachment-file-icon" />
+        <div class="attachment-upload-overlay">
+          <span class="attachment-spinner"></span>
+          <span class="attachment-progress-text">{{ pf.progress }}%</span>
+        </div>
+        <button class="attachment-close-btn" @click.stop="$emit('remove-pending', idx)" :title="t('common.remove')">×</button>
+      </span>
+    </template>
+
+    <!-- Attached file reference cards -->
     <span v-for="fileEntry in files" :key="'att-' + fileEntry.path"
       class="chat-file-attachment attachment-ref"
       :class="{ 'attachment-image-only': isImageFile(fileEntry.path) && (isThumbableExt(fileEntry.path) || thumbErrors.has(fileEntry.path)) }"
@@ -23,14 +41,20 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import { isThumbableExt } from '@/utils/fileManager'
 import { isImageFile, type FileEntry } from '@/utils/fileAttachmentUtils'
 import { baseName } from '@/utils/path'
+import type { PendingFile } from '@/composables/useFileUpload'
 
-const props = defineProps<{
-  files: FileEntry[]
-}>()
+const props = withDefaults(defineProps<{
+  files?: FileEntry[]
+  pendingFiles?: PendingFile[]
+}>(), {
+  files: () => [],
+  pendingFiles: () => [],
+})
 
 defineEmits<{
   'file-click': [path: string]
   'remove': [path: string]
+  'remove-pending': [index: number]
 }>()
 
 const { t } = useI18n()
@@ -152,5 +176,44 @@ watch(() => props.files, (files) => {
 
 .chat-attachment-tags .attachment-ref:hover {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
+}
+
+.chat-attachment-tags .attachment-pending {
+  background: var(--bg-tertiary, #f3f4f6);
+  border: 1px dashed var(--border-color, #d1d5db);
+  color: var(--text-secondary, #4b5563);
+}
+
+.attachment-upload-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: inherit;
+  z-index: 1;
+}
+
+.attachment-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: attach-spin 0.6s linear infinite;
+}
+
+@keyframes attach-spin {
+  to { transform: rotate(360deg); }
+}
+
+.attachment-progress-text {
+  font-size: 9px;
+  font-weight: 600;
+  color: #ffffff;
+  line-height: 1;
 }
 </style>

@@ -680,11 +680,18 @@ async function sendMessage(text) {
 
     if ((!inputText && !hasFiles) || inputDisabled.value) return
 
+    // A pending upload has no server path yet. Sending it would silently submit
+    // an empty attachment and let the request complete against the next draft.
+    if (pendingFiles.value.some(file => file.uploading)) {
+      toast.show(t('chat.attach.uploading'), { icon: '⚠️', type: 'info' })
+      return
+    }
+
     // If AI is generating, enqueue the message instead of sending immediately
     if (loading.value) {
       // Capture file arrays before clearing (they're passed by reference)
       const capturedAttached = [...attachedFiles.value]
-      const capturedPending = pendingFiles.value.map(f => ({ path: f.path, isDir: false }))
+      const capturedPending = pendingFiles.value.filter(f => f.path).map(f => ({ path: f.path, isDir: false }))
       // Build file paths and entries from attachedFiles (unified channel)
       const mergedPaths = capturedAttached.map(f => f.path)
       const allFiles = dedupeFiles([...capturedPending, ...capturedAttached])
@@ -723,7 +730,7 @@ async function sendMessage(text) {
 
     // Build file paths and entries from attachedFiles (unified channel)
     const filePaths = attachedFiles.value.map(f => f.path)
-    const uploadedFiles = pendingFiles.value.map(f => ({ path: f.path, isDir: false }))
+    const uploadedFiles = pendingFiles.value.filter(f => f.path).map(f => ({ path: f.path, isDir: false }))
     const projectFiles = attachedFiles.value.map(f => ({ path: f.path, isDir: f.isDir ?? false, startLine: f.startLine, endLine: f.endLine }))
     const allFiles = dedupeFiles([...uploadedFiles, ...projectFiles])
 

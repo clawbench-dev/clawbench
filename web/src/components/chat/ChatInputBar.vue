@@ -56,23 +56,23 @@
         <Upload :size="24" :stroke-width="1.5" />
         <span>{{ t('chat.attach.dropToUpload') }}</span>
       </div>
-      <!-- Paste overlay (brief feedback when pasting files from clipboard) -->
+      <!-- Paste overlay (dynamic feedback while uploading pasted files from clipboard) -->
       <Transition name="paste-fade">
         <div v-if="isPasteOver" class="paste-overlay">
-          <ClipboardPaste :size="24" :stroke-width="1.5" />
-          <span>{{ t('chat.attach.pasteToUpload') }}</span>
+          <Loader2 :size="18" class="paste-spinner-icon" />
+          <span>{{ t('chat.attach.uploading') }}</span>
         </div>
       </Transition>
-      <!-- Attachment tags (horizontal scrollable cards — only quote + attached file refs) -->
-      <div v-if="quoteData || attachedFiles.length > 0" class="chat-attachment-tags">
+      <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
+      <div v-if="quoteData || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
         <!-- Quote selection card (same size as file cards, accent-colored) -->
         <span v-if="quoteData" class="chat-file-attachment attachment-quote" :title="quoteData.filePath" @click="$emit('quote-click')">
           <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
           <span class="attachment-filename">{{ quoteFileName }}{{ quoteLineRange }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-quote')" :title="t('common.remove')">×</button>
         </span>
-        <!-- Attached file reference cards (shared component) -->
-        <AttachmentTags :files="attachedFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" />
+        <!-- Attached file reference cards (shared component, includes pending uploads with local Blob preview) -->
+        <AttachmentTags :files="attachedFiles" :pending-files="pendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
       </div>
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
@@ -256,7 +256,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, ClipboardPaste, Minimize2 } from 'lucide-vue-next'
+import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, Minimize2 } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -274,12 +274,13 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useFileUpload } from '@/composables/useFileUpload'
+import { appLog } from '@/utils/appLog'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency } = useSessionIdentity()
 const { supportsACP, hasPreferredMode, agentCanResume } = useAgents()
 const toast = useToast()
-const { uploadAndAttach } = useFileUpload()
+const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 
 // isACP: true when the current agent supports ACP (has acpCommand).
 // Used for mode chips — these are ACP features
@@ -769,39 +770,162 @@ function onDrop(e) {
   }
 }
 
+function dataUrlToFile(dataUrl, filename) {
+  try {
+    const parts = dataUrl.split(',')
+    if (parts.length < 2) return null
+    const mimeMatch = parts[0].match(/:(.*?);/)
+    const mime = mimeMatch ? mimeMatch[1] : 'image/png'
+    const bstr = atob(parts[1])
+    let n = bstr.length
+    const u8arr = new Uint8Array(n)
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n)
+    }
+    const ext = mime === 'image/png' ? '.png'
+      : mime === 'image/jpeg' ? '.jpg'
+      : mime === 'image/webp' ? '.webp'
+      : mime === 'image/gif' ? '.gif'
+      : '.png'
+    const name = filename.includes('.') ? filename : `${filename}${ext}`
+    return new File([u8arr], name, { type: mime })
+  } catch {
+    return null
+  }
+}
+
+let lastPasteTimestamp = 0
+let pasteUploadGeneration = 0
+
+function dedupePasteFiles(files) {
+  const seen = new Set()
+  const result = []
+  for (const f of files) {
+    const key = `${f.name}_${f.size}_${f.type}_${f.lastModified}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      result.push(f)
+    }
+  }
+  return result
+}
+
 function onPaste(e) {
-  const items = e.clipboardData?.items
-  if (!items) return
+  const now = Date.now()
+  if (now - lastPasteTimestamp < 300) {
+    if (e.cancelable) e.preventDefault()
+    if (typeof e.stopPropagation === 'function') e.stopPropagation()
+    return
+  }
+
+  const clipboardData = e.clipboardData
+  if (!clipboardData) return
 
   const files = []
-  for (const item of items) {
-    if (item.kind === 'file') {
-      const raw = item.getAsFile()
-      if (!raw) continue
-      // Clipboard images (e.g. screenshots) may have no name or empty name.
-      // Backend requires non-empty extension, so give a default name with extension.
-      if (!raw.name || raw.name === '' || !raw.name.includes('.')) {
-        const ext = raw.type === 'image/png' ? '.png'
-          : raw.type === 'image/jpeg' ? '.jpg'
-          : raw.type === 'image/webp' ? '.webp'
-          : raw.type === 'image/gif' ? '.gif'
-          : raw.type === 'image/bmp' ? '.bmp'
-          : '.png'
-        files.push(new File([raw], `clipboard_${Date.now()}${ext}`, { type: raw.type }))
-      } else {
-        files.push(raw)
+
+  // 1. Process DataTransferItemList items (image files & screenshot blobs)
+  if (clipboardData.items) {
+    for (const item of clipboardData.items) {
+      if (item.kind === 'file') {
+        const raw = item.getAsFile()
+        if (!raw) continue
+        // Clipboard images (e.g. screenshots) may have no name or empty name.
+        if (!raw.name || raw.name === '' || !raw.name.includes('.')) {
+          const ext = raw.type === 'image/png' ? '.png'
+            : raw.type === 'image/jpeg' ? '.jpg'
+            : raw.type === 'image/webp' ? '.webp'
+            : raw.type === 'image/gif' ? '.gif'
+            : raw.type === 'image/bmp' ? '.bmp'
+            : raw.type === 'image/svg+xml' ? '.svg'
+            : '.png'
+          files.push(new File([raw], `clipboard_${Date.now()}_${files.length}${ext}`, { type: raw.type || 'image/png' }))
+        } else {
+          files.push(raw)
+        }
+      }
+    }
+  }
+
+  // 2. Fallback to clipboardData.files if items yielded no files
+  if (files.length === 0 && clipboardData.files && clipboardData.files.length > 0) {
+    for (let i = 0; i < clipboardData.files.length; i++) {
+      const raw = clipboardData.files[i]
+      if (raw.type.startsWith('image/') || raw.name.match(/\.(png|jpe?g|gif|webp|bmp|svg)$/i)) {
+        if (!raw.name || raw.name === '' || !raw.name.includes('.')) {
+          const ext = raw.type === 'image/png' ? '.png'
+            : raw.type === 'image/jpeg' ? '.jpg'
+            : raw.type === 'image/webp' ? '.webp'
+            : raw.type === 'image/gif' ? '.gif'
+            : raw.type === 'image/bmp' ? '.bmp'
+            : raw.type === 'image/svg+xml' ? '.svg'
+            : '.png'
+          files.push(new File([raw], `clipboard_${Date.now()}_${i}${ext}`, { type: raw.type || 'image/png' }))
+        } else {
+          files.push(raw)
+        }
+      }
+    }
+  }
+
+  // 3. Check plain text for data:image/... base64 string
+  if (files.length === 0 && typeof clipboardData.getData === 'function') {
+    const textData = clipboardData.getData('text/plain')
+    if (textData && textData.trim().startsWith('data:image/')) {
+      const file = dataUrlToFile(textData.trim(), `clipboard_${Date.now()}_0`)
+      if (file) {
+        files.push(file)
+      }
+    }
+  }
+
+  // 4. Check HTML for data:image/... base64 images (synchronous)
+  if (files.length === 0 && typeof clipboardData.getData === 'function') {
+    const htmlData = clipboardData.getData('text/html')
+    if (htmlData) {
+      const matches = htmlData.match(/src=["'](data:image\/[a-zA-Z0-9+/.-]+;base64,[^"']+)["']/gi)
+      if (matches) {
+        let count = 0
+        for (const match of matches) {
+          const src = match.replace(/^src=["']/i, '').replace(/["']$/i, '')
+          const file = dataUrlToFile(src, `clipboard_${Date.now()}_${count++}`)
+          if (file) files.push(file)
+        }
       }
     }
   }
 
   if (files.length > 0) {
-    e.preventDefault()
-    uploadAndAttach(files)
-    // Show brief paste overlay feedback
+    lastPasteTimestamp = now
+    if (e.cancelable) e.preventDefault()
+    if (typeof e.stopPropagation === 'function') e.stopPropagation()
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation()
+
+    const uniqueFiles = dedupePasteFiles(files)
+    appLog.d('ChatInputBar', 'Pasted image/files detected, uploading and attaching:', uniqueFiles.map(f => f.name))
+    // Show dynamic paste uploading feedback tied to upload lifecycle
+    const generation = ++pasteUploadGeneration
     clearTimeout(pasteOverlayTimer)
     isPasteOver.value = true
-    pasteOverlayTimer = setTimeout(() => { isPasteOver.value = false }, 1500)
+    uploadAndAttach(uniqueFiles).finally(() => {
+      if (generation !== pasteUploadGeneration) return
+      pasteOverlayTimer = setTimeout(() => {
+        isPasteOver.value = false
+      }, 200)
+    })
   }
+}
+
+function handleWindowPaste(e) {
+  if (e.defaultPrevented) return
+
+  const target = e.target
+  const isChatTextarea = target === textareaRef.value
+  if (isChatTextarea) return
+
+  const isOtherInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+  if (isOtherInput) return
+
+  onPaste(e)
 }
 
 function clearInput() {
@@ -972,9 +1096,12 @@ watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.valu
 onMounted(() => {
   fetchItems()
   startPlaceholderRotation()
+  window.addEventListener('paste', handleWindowPaste, true)
 })
 
 onBeforeUnmount(() => {
+  pasteUploadGeneration++
+  window.removeEventListener('paste', handleWindowPaste, true)
   stopMachine.destroy()
   if (quickSendPressTimer) {
     clearTimeout(quickSendPressTimer)
@@ -1374,12 +1501,20 @@ defineExpose({
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: color-mix(in srgb, var(--success-color, #22c55e) 8%, var(--bg-primary, #fff));
-  color: var(--success-color, #22c55e);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, var(--bg-primary, #fff));
+  color: var(--accent-color, #0066cc);
   font-size: 13px;
   font-weight: 500;
   border-radius: 20px;
   pointer-events: none;
+}
+
+.paste-spinner-icon {
+  animation: paste-spin 0.8s linear infinite;
+}
+
+@keyframes paste-spin {
+  to { transform: rotate(360deg); }
 }
 
 .paste-fade-enter-active,
