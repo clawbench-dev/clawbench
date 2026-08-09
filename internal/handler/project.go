@@ -17,7 +17,8 @@ import (
 	"clawbench/internal/service"
 )
 
-// ServeRecentProjects handles GET (list) and POST (add) for recent projects.
+// ServeRecentProjects handles GET (list), POST (add), and DELETE (remove record)
+// for recent projects. DELETE never touches the project directory on disk.
 func ServeRecentProjects(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:

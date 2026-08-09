@@ -1588,17 +1588,30 @@ func TestServeRecentProjects_AddAndList(t *testing.T) {
 }
 
 func TestServeRecentProjects_Delete(t *testing.T) {
-	_, teardown := setupTestEnv(t)
+	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Add a project first
-	_ = service.AddRecentProject("/home/user/to-delete")
+	// Removing a project only removes its recent-project record; its directory stays intact.
+	projectPath := filepath.Join(env.WatchDir, "to-remove")
+	assert.NoError(t, os.MkdirAll(projectPath, 0o755))
+	markerPath := filepath.Join(projectPath, "keep.txt")
+	assert.NoError(t, os.WriteFile(markerPath, []byte("keep"), 0o644))
+	assert.NoError(t, service.AddRecentProject(projectPath))
 
 	delReq := newRequest(t, http.MethodDelete, "/api/recent-projects", map[string]string{
-		"path": "/home/user/to-delete",
+		"path": projectPath,
 	})
 	w := callHandler(ServeRecentProjects, delReq)
 	assert.Equal(t, http.StatusOK, w.Code)
+	var recordCount int
+	assert.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM recent_projects WHERE project_path = ?", projectPath,
+	).Scan(&recordCount))
+	assert.Zero(t, recordCount)
+	_, err := os.Stat(markerPath)
+	assert.NoError(t, err)
+	_, err = os.Stat(projectPath)
+	assert.NoError(t, err)
 }
 
 func TestServeRecentProjects_MethodNotAllowed(t *testing.T) {
