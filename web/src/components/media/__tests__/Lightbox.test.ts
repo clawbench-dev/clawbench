@@ -291,6 +291,63 @@ describe('Lightbox', () => {
       expect(vm.lastTx).toBe(0)
       expect(vm.lastTy).toBe(0)
     })
+
+    it('normalizes a URL that already carries a t= param (file-manager source)', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      // ImagePreview.mediaUrl already appends ?t=<mediaTimestamp>; chat passes
+      // a clean data-full-src. Both must end up with a single clean ?t= param.
+      vm.open('/api/local-file/a/b.png?t=100')
+      await nextTick()
+
+      const url = vm.currentUrl as string
+      expect(url).toMatch(/^\/api\/local-file\/a\/b\.png\?t=\d+$/)
+      expect(url.split('t=').length).toBe(2)
+      expect(url).not.toContain('&t=')
+    })
+
+    it('resetAndRefresh never accumulates t= params across repeated calls', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('/api/local-file/a/b.png?t=100')
+      await nextTick()
+
+      // Simulate a source that already carried a cache-buster, then refresh twice.
+      // Each refresh must yield one clean ?t= (the malformed path&t= case).
+      vm.resetAndRefresh()
+      const first = vm.currentUrl as string
+      expect(first).toMatch(/^\/api\/local-file\/a\/b\.png\?t=\d+$/)
+      expect(first).not.toContain('&')
+
+      vm.resetAndRefresh()
+      const second = vm.currentUrl as string
+      expect(second).toMatch(/^\/api\/local-file\/a\/b\.png\?t=\d+$/)
+      expect(second).not.toContain('&')
+    })
+
+    it('normalizes timestamped src in md navigation', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const imgs = [
+        { src: 'http://localhost/a.png?t=111', name: 'a.png' },
+        { src: 'http://localhost/b.png?t=222', name: 'b.png' },
+      ]
+      vm.openMdImages(imgs, 0)
+      await nextTick()
+
+      const url = vm.currentUrl as string
+      expect(url).toMatch(/^http:\/\/localhost\/a\.png\?t=\d+$/)
+      expect(url).not.toContain('&')
+
+      vm.navigateNext()
+      await nextTick()
+      const nextUrl = vm.currentUrl as string
+      expect(nextUrl).toMatch(/^http:\/\/localhost\/b\.png\?t=\d+$/)
+      expect(nextUrl).not.toContain('&')
+    })
   })
 
   // ── Wheel zoom respects fitScale ──

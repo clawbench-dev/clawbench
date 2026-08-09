@@ -4,15 +4,17 @@
       <div class="lightbox-backdrop" @click="close" />
       <div class="lightbox-toolbar">
         <div v-if="currentFileName" class="lb-filename">{{ currentFileName }}</div>
-        <button v-if="currentUrl || currentSvg" class="lb-btn" @click="handleDownload" title="Download">
-          <Download :size="20" />
-        </button>
-        <button class="lb-btn" @click="resetAndRefresh" title="Reset & Reload">
-          <RotateCcw :size="20" />
-        </button>
-        <button class="lb-btn lb-close" @click="close" title="Close">
-          <X :size="20" />
-        </button>
+        <div class="lb-actions">
+          <button v-if="currentUrl || currentSvg" class="lb-btn" @click="handleDownload" title="Download">
+            <Download :size="20" />
+          </button>
+          <button class="lb-btn" @click="resetAndRefresh" title="Reset & Reload">
+            <RotateCcw :size="20" />
+          </button>
+          <button class="lb-btn lb-close" @click="close" title="Close">
+            <X :size="20" />
+          </button>
+        </div>
       </div>
       <div
         class="lightbox-content"
@@ -320,6 +322,20 @@ function fullImgSrc(img) {
     return (img && img.dataset && img.dataset.fullSrc) || (img ? img.src : '')
 }
 
+/**
+ * Normalize a URL to a single clean form for the lightbox: strip any existing
+ * cache-buster t= params and clean up stray '?/'&' separators they leave behind.
+ * Sources may already carry a ?t= timestamp (e.g. ImagePreview.mediaUrl,
+ * MarkdownPreview.fixLocalImagePaths), so appending another t= directly would
+ * accumulate params and produce malformed URLs on refresh.
+ */
+function normalizeUrl(url) {
+    return url
+        .replace(/[?&]t=\d+/g, '')
+        .replace(/[?&]+$/g, '')
+        .replace(/\?&/g, '?')
+}
+
 function navigateMdImage(newIdx, direction) {
     const img = mdImages.value[newIdx]
     if (!img) return
@@ -339,12 +355,12 @@ function navigateMdImage(newIdx, direction) {
     lastTy.value = 0
 
     mdCurrentIndex.value = newIdx
-    currentUrl.value = fullImgSrc(img) + (fullImgSrc(img).includes('?') ? '&' : '?') + 't=' + Date.now()
+    currentUrl.value = normalizeUrl(fullImgSrc(img)) + '?t=' + Date.now()
     currentSvg.value = ''
 }
 
 function open(url, svg = '') {
-    currentUrl.value = svg ? '' : url + (url.includes('?') ? '&' : '?') + 't=' + Date.now()
+    currentUrl.value = svg ? '' : normalizeUrl(url) + '?t=' + Date.now()
     currentSvg.value = svg
     lightboxVisible.value = true
     imageLoading.value = !svg
@@ -385,7 +401,7 @@ function openMdImages(imgs, startIndex) {
     mdCurrentIndex.value = startIndex
 
     const img = imgs[startIndex]
-    currentUrl.value = fullImgSrc(img) + (fullImgSrc(img).includes('?') ? '&' : '?') + 't=' + Date.now()
+    currentUrl.value = normalizeUrl(fullImgSrc(img)) + '?t=' + Date.now()
     currentSvg.value = ''
     currentFilePath.value = ''
 
@@ -440,8 +456,7 @@ function resetAndRefresh() {
     lastTx.value = 0
     lastTy.value = 0
     if (currentUrl.value) {
-        const base = currentUrl.value.replace(/[?&]t=\d+/, '')
-        currentUrl.value = base + (base.includes('?') ? '&' : '?') + 't=' + Date.now()
+        currentUrl.value = normalizeUrl(currentUrl.value) + '?t=' + Date.now()
     }
 }
 
@@ -474,7 +489,7 @@ function handleDownload() {
 
     // External URL — construct download link directly
     const a = document.createElement('a')
-    const baseUrl = currentUrl.value.replace(/[?&]t=\d+/, '')
+    const baseUrl = normalizeUrl(currentUrl.value)
     a.href = baseUrl
     a.download = currentFileName.value || ''
     document.body.appendChild(a)
@@ -755,6 +770,14 @@ onUnmounted(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.lb-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-left: auto;
+    flex-shrink: 0;
 }
 
 .lb-nav-btn {
