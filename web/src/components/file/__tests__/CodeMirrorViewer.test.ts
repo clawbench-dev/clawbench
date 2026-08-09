@@ -340,4 +340,18 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(css).toMatch(rule)
     expect(css).not.toMatch(/\.cm-viewer\.is-editable\s+\.cm-content\s*\{[^}]*user-select:\s*none/)
   })
+
+  it('prevents mousedown selection in browse mode but not edit mode', async () => {
+    const browse = mountViewer({ content: 'aaa bbb\n', editable: false })
+    await sleep(80)
+    const md1 = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 })
+    browse.vm.getView().contentDOM.dispatchEvent(md1)
+    expect(md1.defaultPrevented).toBe(true)
+
+    const edit = mountViewer({ content: 'aaa bbb\n', editable: true })
+    await sleep(80)
+    const md2 = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 })
+    edit.vm.getView().contentDOM.dispatchEvent(md2)
+    expect(md2.defaultPrevented).toBe(false)
+  })
 })

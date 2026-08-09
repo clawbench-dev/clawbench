@@ -213,8 +213,17 @@ function handleEditorDblClick(event, editor) {
 }
 
 const interactionExtension = EditorView.domEventHandlers({
-    click(event, editor) { handleEditorClick(event, editor) },
+    click(event, editor) { return handleEditorClick(event, editor) },
     dblclick(event, editor) { handleEditorDblClick(event, editor) },
+    // Browse mode: stop the browser AND CodeMirror from starting a drag or
+    // long-press text selection — selecting + copying is a deliberate
+    // double-click action. Returning true prevents the default mousedown
+    // (native selection) and skips CodeMirror's built-in MouseSelection.
+    mousedown(event, _editor) {
+        if (props.editable) return false
+        event.preventDefault()
+        return true
+    },
 })
 
 // ─── Selection-based quote question (read-only mode) ───
