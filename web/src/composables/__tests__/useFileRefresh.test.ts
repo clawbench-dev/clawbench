@@ -86,13 +86,16 @@ vi.mock('@/composables/useFileNavStack.ts', () => ({
 
 // Mock editing + dialog so the external-change confirmation can be controlled.
 const isEditingMock = vi.hoisted(() => vi.fn(() => false))
+const isEditorDirtyMock = vi.hoisted(() => vi.fn(() => false))
 vi.mock('@/composables/useFileEditor.ts', () => ({
   useFileEditor: () => ({
     editing: { value: false },
     isEditing: isEditingMock,
+    isEditorDirty: isEditorDirtyMock,
     setEditing: vi.fn(),
     registerExitEditHandler: vi.fn(),
     exitEdit: vi.fn(),
+    registerDirtyGetter: vi.fn(),
   }),
 }))
 const confirmDialogMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
@@ -476,6 +479,8 @@ describe('useFileRefresh external-change confirmation while editing', () => {
     flashType.value = 'add'
     diffMarkers.value = []
     diffOldContent.value = null
+    isEditingMock.mockReturnValue(false)
+    isEditorDirtyMock.mockReturnValue(false)
   })
 
   const setFetch = (content: string, ok = true) => {
@@ -496,6 +501,7 @@ describe('useFileRefresh external-change confirmation while editing', () => {
 
   it('does not prompt when editing but content is unchanged on disk', async () => {
     isEditingMock.mockReturnValue(true)
+    isEditorDirtyMock.mockReturnValue(true)
     store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'same\n' }
     setFetch('same\n')
     await refreshCurrentFile()
@@ -503,8 +509,19 @@ describe('useFileRefresh external-change confirmation while editing', () => {
     expect(store.selectFile).toHaveBeenCalled()
   })
 
-  it('aborts the refresh (no selectFile, flash cleared) when editing, external change, and user keeps current', async () => {
+  it('does not prompt when editing but there are no unsaved changes (refreshes directly)', async () => {
     isEditingMock.mockReturnValue(true)
+    isEditorDirtyMock.mockReturnValue(false)
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'old\n' }
+    setFetch('new\n')
+    await refreshCurrentFile()
+    expect(confirmDialogMock).not.toHaveBeenCalled()
+    expect(store.selectFile).toHaveBeenCalled()
+  })
+
+  it('aborts the refresh (no selectFile, flash cleared) when editing, dirty, external change, and user keeps current', async () => {
+    isEditingMock.mockReturnValue(true)
+    isEditorDirtyMock.mockReturnValue(true)
     store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'old\n' }
     setFetch('new\n')
     confirmDialogMock.mockResolvedValue(false)
@@ -515,8 +532,9 @@ describe('useFileRefresh external-change confirmation while editing', () => {
     expect(flashRanges.value).toEqual([])
   })
 
-  it('proceeds with reload when editing, external change, and user confirms', async () => {
+  it('proceeds with reload when editing, dirty, external change, and user confirms', async () => {
     isEditingMock.mockReturnValue(true)
+    isEditorDirtyMock.mockReturnValue(true)
     store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'old\n' }
     setFetch('new\n')
     confirmDialogMock.mockResolvedValue(true)

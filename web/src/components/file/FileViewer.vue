@@ -299,13 +299,19 @@ function handleExitEditRequest() {
 }
 
 let unregisterExitEdit = null
+let unregisterDirtyGetter = null
 onMounted(() => {
     unregisterExitEdit = fileEditor.registerExitEditHandler(handleExitEditRequest)
+    unregisterDirtyGetter = fileEditor.registerDirtyGetter(() => cmEditorRef.value?.isDirty?.() ?? false)
 })
 onBeforeUnmount(() => {
     if (unregisterExitEdit) {
         unregisterExitEdit()
         unregisterExitEdit = null
+    }
+    if (unregisterDirtyGetter) {
+        unregisterDirtyGetter()
+        unregisterDirtyGetter = null
     }
 })
 

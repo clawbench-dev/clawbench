@@ -142,14 +142,16 @@ function isCurrentFileMarkdown(): boolean {
 }
 
 /**
- * True when the file is being edited in the browser AND the on-disk content
- * differs from what's currently loaded — i.e. an external modification that
- * would otherwise silently clobber the user's in-progress edits.
+ * True when the file is being edited in the browser with unsaved changes AND
+ * the on-disk content differs from what's currently loaded — i.e. an external
+ * modification that would otherwise silently clobber the user's in-progress
+ * edits. If there are no unsaved changes, refresh silently.
  */
 function shouldPromptExternalReload(newContent: string | null, oldContent: string | null): boolean {
     if (newContent === null) return false
     if (newContent === oldContent) return false
-    return useFileEditor().isEditing()
+    const editor = useFileEditor()
+    return editor.isEditing() && editor.isEditorDirty()
 }
 
 /** Ask the user whether to reload an externally-modified file. */

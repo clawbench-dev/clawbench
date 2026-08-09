@@ -16,11 +16,13 @@ import { ref } from 'vue'
 
 const _editing = ref(false)
 let _exitEditHandler: (() => void | Promise<void>) | null = null
+let _dirtyGetter: (() => boolean) | null = null
 
 /** @internal Reset all state — for tests only */
 export function _resetForTesting() {
     _editing.value = false
     _exitEditHandler = null
+    _dirtyGetter = null
 }
 
 export function useFileEditor() {
@@ -30,6 +32,22 @@ export function useFileEditor() {
 
     function isEditing(): boolean {
         return _editing.value
+    }
+
+    /**
+     * Register a getter for the editor's unsaved-changes (dirty) state.
+     * Returns an unregister function. Only one getter can be active at a time.
+     */
+    function registerDirtyGetter(fn: () => boolean): () => void {
+        _dirtyGetter = fn
+        return () => {
+            if (_dirtyGetter === fn) _dirtyGetter = null
+        }
+    }
+
+    /** Whether the active editor currently has unsaved changes. */
+    function isEditorDirty(): boolean {
+        return _dirtyGetter?.() ?? false
     }
 
     /**
@@ -48,5 +66,5 @@ export function useFileEditor() {
         return _exitEditHandler?.()
     }
 
-    return { editing: _editing, setEditing, isEditing, registerExitEditHandler, exitEdit }
+    return { editing: _editing, setEditing, isEditing, registerExitEditHandler, exitEdit, registerDirtyGetter, isEditorDirty }
 }

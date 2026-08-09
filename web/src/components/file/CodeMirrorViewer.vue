@@ -511,7 +511,7 @@ async function handleExit() {
     return false
 }
 
-defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit })
+defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, isDirty: () => dirty.value })
 </script>
 
 <style scoped>
