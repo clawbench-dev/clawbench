@@ -406,6 +406,72 @@ func TestShareInRecent_Delete(t *testing.T) {
 	})
 }
 
+func TestDeleteRecentFile_AbsolutePath(t *testing.T) {
+	t.Run("AbsolutePathUnderProject_Succeeds", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		shareInDir := filepath.Join(env.ProjectDir, ".clawbench", "share-in")
+		_ = os.MkdirAll(shareInDir, 0o755)
+		_ = os.WriteFile(filepath.Join(shareInDir, "abs.txt"), []byte("data"), 0o644)
+
+		absPath := filepath.Join(env.ProjectDir, ".clawbench", "share-in", "abs.txt")
+		body := fmt.Sprintf(`{"path": %q}`, absPath)
+		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent", strings.NewReader(body))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assertOK(t, w)
+	})
+
+	t.Run("AbsolutePathOutsideRoot_Returns403", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		body := `{"path": "/etc/passwd"}`
+		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent", strings.NewReader(body))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assertStatus(t, w, http.StatusForbidden)
+	})
+
+	t.Run("InvalidJSON_Returns400", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent", strings.NewReader(`not json`))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assertStatus(t, w, http.StatusBadRequest)
+	})
+
+	t.Run("GETMethodOnDeleteEndpoint_Returns405", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// GET to ShareInRecent should list files, not delete
+		// But the handler should NOT enter deleteRecentFile with GET
+		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", http.NoBody)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("NoProjectCookie_Returns403", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent",
+			strings.NewReader(`{"path": ".clawbench/share-in/test.txt"}`))
+
+		w := callHandler(ShareInRecent, req)
+		assertStatus(t, w, http.StatusForbidden)
+	})
+}
+
 func TestUploadRecent_Delete(t *testing.T) {
 	t.Run("DeletesFileInsideUploadsDir", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
