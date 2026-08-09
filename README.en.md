@@ -145,7 +145,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Office document preview**: Word, Excel, and PowerPoint documents rendered natively in the browser — no download needed
 - **File Preview Overlay**: Office files open in a preview overlay on top of the browse tab, supporting navigation stack (multi-file switching + back)
 - **List/Grid View Toggle**: Grid view shows image thumbnails for visual file browsing
-- **Image Thumbnails**: Backend generates square thumbnails with dominant-color padding for quick preview
+- **Image Thumbnails**: Backend generates proportional thumbnails for quick preview
 - Context menu: rename, delete, copy, cut, paste, new file/folder, download, open as project
 - **Multi-Select Operations**: Toggle multi-select mode from toolbar, batch copy/cut/delete; mobile long-press triggers context menu
 - File upload (all file types supported, configurable size and count)
@@ -153,7 +153,8 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Document search exclusion**: Office documents are excluded from file content search to improve performance (same as PDF)
 - **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
 - **Ctrl+F/Cmd+F Context-Aware Search**: Automatically opens the appropriate search drawer based on current tab — Chat tab: session search (RAG); Browse tab with file overlay: in-file content search; Browse tab without overlay: filename search; if already open, focuses the search input
-- **File Preview Overlay**: Click a file to open a preview overlay on top of the browse tab, no tab switching needed; supports navigation stack (multi-file switching + back), close to return to file list
+- **Separate File View Tab**: Directory browsing (`browse`) and file viewing (`view`) are independent tabs — opening a file auto-switches to `view`, closing it stays on `view` showing empty state (recent files list), no auto-return to file manager
+- **File Preview Overlay**: Click a file to open a preview overlay in the `view` tab; supports navigation stack (multi-file switching + back), close to return to empty state
 - **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
 
 ### 🎨 Code Preview & Editing
