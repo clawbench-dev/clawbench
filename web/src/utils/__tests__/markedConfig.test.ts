@@ -97,4 +97,52 @@ describe('markedConfig', () => {
             expect(html).not.toContain('class="language-')
         })
     })
+
+    /**
+     * Regression: marked@4 (redoc transitive) drops <strong> when bold wraps
+     * inline code and is immediately followed by CJK punctuation.
+     * Must keep marked@18+ so chat/file preview renders bold correctly.
+     */
+    describe('bold + inline code + CJK punctuation (marked@4 regression)', () => {
+        it('keeps strong when **…`code`** is followed by fullwidth comma', () => {
+            const md = '5. **媒体缓存 bust 靠 query `t`**，依赖前端记得刷新 timestamp'
+            const html = marked.parse(md) as string
+            expect(html).toContain('<strong>')
+            expect(html).toContain('</strong>')
+            expect(html).toContain('<code>t</code>')
+            expect(html).toMatch(/<strong>[\s\S]*媒体缓存[\s\S]*<code>t<\/code>[\s\S]*<\/strong>/)
+            // Literal asterisks must not leak into rendered HTML
+            expect(html).not.toContain('**媒体')
+            expect(html).not.toContain('`t`**')
+        })
+
+        it('keeps strong for **text `code`** + various CJK punctuation', () => {
+            const puncts = ['，', '。', '；', '：', '）', '、', '！']
+            for (const p of puncts) {
+                const md = '**query `t`**' + p + 'x'
+                const html = marked.parse(md) as string
+                expect(html, `failed for punct ${JSON.stringify(p)}`).toContain('<strong>')
+                expect(html).toContain('<code>t</code>')
+                expect(html).not.toMatch(/\*\*query/)
+            }
+        })
+
+        it('keeps strong in multi-item list matching real chat content', () => {
+            const md = [
+                '1. **扩展名表多处维护**：`app.ts`',
+                "2. **绝对路径靠 `path.startsWith('/')` 判断**，Windows",
+                '3. **文件操作 handler 偏厚**：`file.go`',
+                '4. **`/api/files` 全量 Walk** 对大仓库危险，主路径用的是 `/api/dir`',
+                '5. **媒体缓存 bust 靠 query `t`**，依赖前端记得刷新 timestamp；watcher 路径走 `refreshCurrentFile`，列表缩略图（`file_thumb.go`）是否同步要另看',
+            ].join('\n')
+            const html = marked.parse(md) as string
+            const items = [...html.matchAll(/<li>[\s\S]*?<\/li>/g)].map((m) => m[0])
+            expect(items).toHaveLength(5)
+            for (let i = 0; i < 5; i++) {
+                expect(items[i], `item ${i + 1} missing <strong>`).toContain('<strong>')
+            }
+            expect(items[4]).toMatch(/<strong>[\s\S]*媒体缓存[\s\S]*<\/strong>/)
+            expect(items[4]).not.toContain('**媒体')
+        })
+    })
 })

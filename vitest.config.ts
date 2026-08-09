@@ -34,9 +34,13 @@ function staticAssetResolver(): import('vite').Plugin {
 export default defineConfig({
   plugins: [vue(), staticAssetResolver()],
   resolve: {
+    // Same as vite.config.ts: pin marked@18 so redoc's marked@4 is never used.
+    // marked@4 drops <strong> for **text `code`** + CJK punctuation (U+FF0C etc.).
     alias: {
       '@': resolve(__dirname, 'web/src'),
+      marked: resolve(__dirname, 'node_modules/marked'),
     },
+    dedupe: ['marked'],
   },
   publicDir: resolve(__dirname, 'assets'),
   server: {
