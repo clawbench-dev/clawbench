@@ -524,4 +524,25 @@ describe('BottomSheet width (all drawers share the same width)', () => {
     await nextTick()
     expect($('.bs-panel')?.classList.contains('bs-constrained')).toBe(true)
   })
+
+  it('applies wide-auto class on overlay and panel when isWideScreen + auto', async () => {
+    wideState.isWideScreen.value = true
+    wrapper = mountSheet({ auto: true })
+    expect($('.bs-overlay')?.classList.contains('bs-overlay-wide-auto')).toBe(true)
+    expect($('.bs-panel')?.classList.contains('bs-wide-auto')).toBe(true)
+  })
+
+  it('does not apply wide-auto class when isWideScreen but not auto', async () => {
+    wideState.isWideScreen.value = true
+    wrapper = mountSheet({ auto: false })
+    expect($('.bs-overlay')?.classList.contains('bs-overlay-wide-auto')).toBe(false)
+    expect($('.bs-panel')?.classList.contains('bs-wide-auto')).toBe(false)
+  })
+
+  it('does not apply wide-auto class when auto but not isWideScreen', async () => {
+    wideState.isWideScreen.value = false
+    wrapper = mountSheet({ auto: true })
+    expect($('.bs-overlay')?.classList.contains('bs-overlay-wide-auto')).toBe(false)
+    expect($('.bs-panel')?.classList.contains('bs-wide-auto')).toBe(false)
+  })
 })
