@@ -175,8 +175,12 @@ export default defineConfig({
     },
   },
   resolve: {
+    // Force root marked@18. redoc (web/ transitive) installs marked@4, which
+    // fails to parse **bold `code`** followed by CJK punctuation (e.g. ，).
     alias: {
       '@': resolve(__dirname, 'web/src'),
+      marked: resolve(__dirname, 'node_modules/marked'),
     },
+    dedupe: ['marked'],
   },
 })

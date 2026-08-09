@@ -90,5 +90,8 @@
     "vite": "^6.0.0",
     "vitest": "^4.1.8",
     "vue-tsc": "^2.2.12"
+  },
+  "overrides": {
+    "marked": "$marked"
   }
 }
