@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, nextTick, h, defineComponent } from 'vue'
@@ -13,6 +13,7 @@ vi.mock('lucide-vue-next', () => ({
   Folder: { name: 'Folder', render: () => h('span', { class: 'icon-folder' }) },
   Check: { name: 'Check', render: () => h('span', { class: 'icon-check' }) },
   ExternalLink: { name: 'ExternalLink', render: () => h('span', { class: 'icon-external-link' }) },
+  Trash2: { name: 'Trash2', render: () => h('span', { class: 'icon-trash2' }) },
   Loader2: { name: 'Loader2', render: () => h('span', { class: 'icon-loader2' }) },
   X: { name: 'X', render: () => h('span', { class: 'icon-x' }) },
 }))
@@ -33,11 +34,25 @@ const sharedRecentShares = ref<any[]>([])
 const sharedRecentUploads = ref<any[]>([])
 const mockFetchRecentShares = vi.fn()
 const mockFetchRecentUploads = vi.fn()
+const mockDeleteRecentShare = vi.fn()
+const mockDeleteRecentUpload = vi.fn()
+const mockDialogConfirm = vi.fn()
+
+vi.mock('@/composables/useDialog.ts', () => ({
+  useDialog: () => ({
+    confirm: mockDialogConfirm,
+    prompt: vi.fn(),
+    alert: vi.fn(),
+    resolve: vi.fn(),
+    state: ref({ visible: false }),
+  }),
+}))
 
 vi.mock('@/composables/useShareIn', () => ({
   useShareIn: () => ({
     recentShares: sharedRecentShares,
     fetchRecentShares: mockFetchRecentShares,
+    deleteRecentShare: mockDeleteRecentShare,
   }),
 }))
 
@@ -45,6 +60,7 @@ vi.mock('@/composables/useUploadRecent', () => ({
   useUploadRecent: () => ({
     recentUploads: sharedRecentUploads,
     fetchRecentUploads: mockFetchRecentUploads,
+    deleteRecentUpload: mockDeleteRecentUpload,
   }),
 }))
 
@@ -133,6 +149,12 @@ function getRawState(wrapper: ReturnType<typeof mountDrawer>) {
 }
 
 describe('AttachDrawer', () => {
+  beforeEach(() => {
+    mockDeleteRecentShare.mockClear()
+    mockDeleteRecentUpload.mockClear()
+    mockDialogConfirm.mockClear()
+  })
+
   it('renders drawer when open=true', () => {
     const wrapper = mountDrawer()
     expect(wrapper.find('.bottom-sheet').exists()).toBe(true)
@@ -506,5 +528,68 @@ describe('AttachDrawer', () => {
   it('effectiveCurrentDir uses currentDir when provided', () => {
     const wrapper = mountDrawer({ currentDir: 'src' })
     expect(getRawState(wrapper).effectiveCurrentDir.value).toBe('src')
+  })
+
+  it('wires delete handlers and delete API calls into setup state', () => {
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    expect(typeof state.handleDeleteShare).toBe('function')
+    expect(typeof state.handleDeleteUpload).toBe('function')
+    expect(state.deleteRecentShare).toBe(mockDeleteRecentShare)
+    expect(state.deleteRecentUpload).toBe(mockDeleteRecentUpload)
+  })
+
+  it('handleDeleteShare calls deleteRecentShare and detaches if attached', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/share-in/a.txt' }] })
+    const state = getRawState(wrapper)
+    await state.handleDeleteShare({ path: '.clawbench/share-in/a.txt' })
+    expect(mockDeleteRecentShare).toHaveBeenCalledWith('.clawbench/share-in/a.txt')
+    expect(wrapper.emitted('remove-attached')).toBeTruthy()
+  })
+
+  it('handleDeleteShare does not detach when not attached', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    const state = getRawState(wrapper)
+    await state.handleDeleteShare({ path: '.clawbench/share-in/a.txt' })
+    expect(mockDeleteRecentShare).toHaveBeenCalledWith('.clawbench/share-in/a.txt')
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+  })
+
+  it('handleDeleteShare does nothing when user cancels', async () => {
+    mockDialogConfirm.mockResolvedValue(false)
+    const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/share-in/a.txt' }] })
+    const state = getRawState(wrapper)
+    await state.handleDeleteShare({ path: '.clawbench/share-in/a.txt' })
+    expect(mockDeleteRecentShare).not.toHaveBeenCalled()
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+  })
+
+  it('handleDeleteUpload calls deleteRecentUpload and detaches if attached', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/uploads/a.txt' }] })
+    const state = getRawState(wrapper)
+    await state.handleDeleteUpload({ path: '.clawbench/uploads/a.txt' })
+    expect(mockDeleteRecentUpload).toHaveBeenCalledWith('.clawbench/uploads/a.txt')
+    expect(wrapper.emitted('remove-attached')).toBeTruthy()
+  })
+
+  it('handleDeleteUpload does not detach when not attached', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    const state = getRawState(wrapper)
+    await state.handleDeleteUpload({ path: '.clawbench/uploads/a.txt' })
+    expect(mockDeleteRecentUpload).toHaveBeenCalledWith('.clawbench/uploads/a.txt')
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+  })
+
+  it('handleDeleteUpload does nothing when user cancels', async () => {
+    mockDialogConfirm.mockResolvedValue(false)
+    const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/uploads/a.txt' }] })
+    const state = getRawState(wrapper)
+    await state.handleDeleteUpload({ path: '.clawbench/uploads/a.txt' })
+    expect(mockDeleteRecentUpload).not.toHaveBeenCalled()
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
   })
 })

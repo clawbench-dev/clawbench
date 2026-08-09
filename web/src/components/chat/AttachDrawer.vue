@@ -30,6 +30,7 @@
           @click="toggleAttached(effectiveCurrentDir, true)">
           <div class="ad-icon-wrap">
             <FileIcon path="" :is-dir="true" :size="28" class="ad-file-icon" />
+            <Check v-show="isAttached(effectiveCurrentDir)" :size="12" class="ad-icon-check" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">
@@ -39,7 +40,6 @@
             <span class="ad-file-meta">{{ effectiveCurrentDir }}</span>
           </div>
           <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', effectiveCurrentDir)" />
-          <Check :size="14" class="ad-file-check" />
         </button>
         <!-- Current file -->
         <button v-if="currentFile"
@@ -49,6 +49,7 @@
             <img v-if="isImageFile(currentFile) && isThumbableExt(currentFile) && !thumbErrors.has(currentFile)"
               class="ad-thumb" :src="thumbUrl(currentFile)" loading="lazy" @error="onThumbError(currentFile)" />
             <FileIcon v-else :path="currentFile" :size="28" class="ad-file-icon" />
+            <Check v-show="isAttached(currentFile)" :size="12" class="ad-icon-check" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">
@@ -58,7 +59,6 @@
             <span class="ad-file-meta">{{ dirName(currentFile) }}</span>
           </div>
           <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', currentFile)" />
-          <Check :size="14" class="ad-file-check" />
         </button>
         <div v-if="!currentFile && !effectiveCurrentDir" class="ad-empty">{{ t('chat.attach.emptyCurrent') }}</div>
       </template>
@@ -75,13 +75,13 @@
             <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
             <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
+            <Check v-show="isAttached(item.path)" :size="12" class="ad-icon-check" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ baseName(item.path) }}</span>
             <span class="ad-file-meta">{{ dirName(item.path) }} · x{{ item.count }}</span>
           </div>
           <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
-          <Check :size="14" class="ad-file-check" />
         </button>
       </template>
 
@@ -97,13 +97,14 @@
             <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
             <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
+            <Check v-show="isAttached(item.path)" :size="12" class="ad-icon-check" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
             <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatRelativeTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
           </div>
           <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
-          <Check :size="14" class="ad-file-check" />
+          <Trash2 :size="14" class="ad-file-delete" @click.stop="handleDeleteShare(item)" :title="t('chat.attach.deleteRecent')" />
         </button>
       </template>
 
@@ -135,13 +136,14 @@
             <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
             <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
+            <Check v-show="isAttached(item.path)" :size="12" class="ad-icon-check" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
             <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatRelativeTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
           </div>
           <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
-          <Check :size="14" class="ad-file-check" />
+          <Trash2 :size="14" class="ad-file-delete" @click.stop="handleDeleteUpload(item)" :title="t('chat.attach.deleteRecent')" />
         </button>
       </template>
     </div>
@@ -158,12 +160,13 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { Paperclip, Upload, Check, ExternalLink } from 'lucide-vue-next'
+import { Paperclip, Upload, Check, ExternalLink, Trash2 } from 'lucide-vue-next'
 import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import { useI18n } from 'vue-i18n'
+import { useDialog } from '@/composables/useDialog'
 import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
 import { useFileUpload } from '@/composables/useFileUpload'
@@ -199,8 +202,9 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { recentShares, fetchRecentShares } = useShareIn()
-const { recentUploads, fetchRecentUploads } = useUploadRecent()
+const dialog = useDialog()
+const { recentShares, fetchRecentShares, deleteRecentShare } = useShareIn()
+const { recentUploads, fetchRecentUploads, deleteRecentUpload } = useUploadRecent()
 
 // ── Upload logic (now lives inside the drawer) ──
 const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop } = useFileUpload()
@@ -294,6 +298,28 @@ function toggleAttached(path: string, isDir: boolean = false) {
   } else {
     emit('add-attached', path, isDir)
   }
+}
+
+// Delete a recent share/upload. If it's currently attached, detach it first so
+// the footer doesn't hold a reference to a removed file.
+async function handleDeleteShare(item: { path: string }) {
+  const confirmed = await dialog.confirm(t('chat.attach.deleteShareConfirm', { name: item.name ?? baseName(item.path) }), {
+    dangerous: true,
+    confirmText: t('common.delete'),
+  })
+  if (!confirmed) return
+  if (isAttached(item.path)) emit('remove-attached', item.path)
+  await deleteRecentShare(item.path)
+}
+
+async function handleDeleteUpload(item: { path: string }) {
+  const confirmed = await dialog.confirm(t('chat.attach.deleteUploadConfirm', { name: item.name ?? baseName(item.path) }), {
+    dangerous: true,
+    confirmText: t('common.delete'),
+  })
+  if (!confirmed) return
+  if (isAttached(item.path)) emit('remove-attached', item.path)
+  await deleteRecentUpload(item.path)
 }
 
 
@@ -525,6 +551,36 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-file-row:active .ad-file-open {
   opacity: 1;
   color: var(--accent-color);
+}
+
+/* Attachment check badge: sits on the bottom-right corner of the icon */
+.ad-icon-wrap .ad-icon-check {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 14px;
+  height: 14px;
+  padding: 2px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--accent-color);
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--bg-panel, #fff);
+  pointer-events: none;
+}
+
+/* Delete button for recent shares/uploads */
+.ad-file-delete {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0.5;
+  cursor: pointer;
+  transition: opacity 0.15s, color 0.15s;
+}
+.ad-file-row:hover .ad-file-delete,
+.ad-file-row:active .ad-file-delete {
+  opacity: 1;
+  color: var(--danger-color, #dc3545);
 }
 
 /* Current item label */

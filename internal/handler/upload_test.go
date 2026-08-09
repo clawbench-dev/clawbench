@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -326,6 +327,117 @@ func TestUploadRecent(t *testing.T) {
 		assert.Len(t, result, 2)
 		assert.Equal(t, "new.txt", result[0].Name)
 		assert.Equal(t, "old.txt", result[1].Name)
+	})
+}
+
+func TestShareInRecent_Delete(t *testing.T) {
+	t.Run("DeletesFileInsideShareInDir", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		shareInDir := filepath.Join(env.ProjectDir, ".clawbench", "share-in")
+		_ = os.MkdirAll(shareInDir, 0o755)
+		_ = os.WriteFile(filepath.Join(shareInDir, "target.txt"), []byte("data"), 0o644)
+
+		body := `{"path": ".clawbench/share-in/target.txt"}`
+		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent", strings.NewReader(body))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assertOK(t, w)
+
+		_, err := os.Stat(filepath.Join(shareInDir, "target.txt"))
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("MissingPath_Returns400", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent", strings.NewReader(`{}`))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assertStatus(t, w, http.StatusBadRequest)
+	})
+
+	t.Run("NotFound_Returns404", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent",
+			strings.NewReader(`{"path": ".clawbench/share-in/missing.txt"}`))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assertStatus(t, w, http.StatusNotFound)
+	})
+
+	t.Run("RefusesFileOutsideShareInDir", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "project.txt", "keep me")
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent",
+			strings.NewReader(`{"path": "project.txt"}`))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assertStatus(t, w, http.StatusForbidden)
+
+		_, err := os.Stat(filepath.Join(env.ProjectDir, "project.txt"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("RefusesDirectory", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		sub := filepath.Join(env.ProjectDir, ".clawbench", "share-in", "sub")
+		_ = os.MkdirAll(sub, 0o755)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent",
+			strings.NewReader(`{"path": ".clawbench/share-in/sub"}`))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assertStatus(t, w, http.StatusBadRequest)
+	})
+}
+
+func TestUploadRecent_Delete(t *testing.T) {
+	t.Run("DeletesFileInsideUploadsDir", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		uploadsDir := filepath.Join(env.ProjectDir, ".clawbench", "uploads")
+		_ = os.MkdirAll(uploadsDir, 0o755)
+		_ = os.WriteFile(filepath.Join(uploadsDir, "target.txt"), []byte("data"), 0o644)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/upload/recent",
+			strings.NewReader(`{"path": ".clawbench/uploads/target.txt"}`))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadRecent, req)
+		assertOK(t, w)
+
+		_, err := os.Stat(filepath.Join(uploadsDir, "target.txt"))
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("RefusesFileOutsideUploadsDir", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "project.txt", "keep me")
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/upload/recent",
+			strings.NewReader(`{"path": "project.txt"}`))
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadRecent, req)
+		assertStatus(t, w, http.StatusForbidden)
 	})
 }
 

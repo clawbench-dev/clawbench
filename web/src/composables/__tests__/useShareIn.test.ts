@@ -40,4 +40,40 @@ describe('useShareIn', () => {
     expect(mockFetch).toHaveBeenCalledWith('/api/share-in/recent')
     expect(recentShares.value).toEqual(files)
   })
+
+  it('deleteRecentShare success: sends DELETE and removes from list', async () => {
+    const files = [
+      { name: 'a.txt', path: '.clawbench/share-in/a.txt', size: 10, modTime: 't' },
+      { name: 'b.txt', path: '.clawbench/share-in/b.txt', size: 20, modTime: 't' },
+    ]
+    mockFetch.mockResolvedValue({ ok: true })
+
+    const { useShareIn } = await import('@/composables/useShareIn.ts')
+    const { recentShares, deleteRecentShare } = useShareIn()
+    recentShares.value = files
+
+    const result = await deleteRecentShare('.clawbench/share-in/a.txt')
+
+    expect(result).toBe(true)
+    expect(mockFetch).toHaveBeenCalledWith('/api/share-in/recent', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: '.clawbench/share-in/a.txt' }),
+    })
+    expect(recentShares.value.map(f => f.path)).toEqual(['.clawbench/share-in/b.txt'])
+  })
+
+  it('deleteRecentShare non-ok: keeps list and returns false', async () => {
+    const files = [{ name: 'a.txt', path: '.clawbench/share-in/a.txt', size: 10, modTime: 't' }]
+    mockFetch.mockResolvedValue({ ok: false, status: 403 })
+
+    const { useShareIn } = await import('@/composables/useShareIn.ts')
+    const { recentShares, deleteRecentShare } = useShareIn()
+    recentShares.value = files
+
+    const result = await deleteRecentShare('.clawbench/share-in/a.txt')
+
+    expect(result).toBe(false)
+    expect(recentShares.value.length).toBe(1)
+  })
 })
