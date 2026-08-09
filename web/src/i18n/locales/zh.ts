@@ -1625,7 +1625,6 @@ export default {
     commandAutoExecute: '自动执行（打开终端时自动运行）',
     autoExecuteWarning: '将取消同项目其他命令的自动执行标记',
     commandProjectOnly: '仅本项目',
-    commandProjectOnlyHint: '勾选后此命令只在当前项目显示，否则为全局命令',
     commandRequired: '名称和命令不能为空',
     commandSaved: '命令已保存',
     commandDeleted: '命令已删除',

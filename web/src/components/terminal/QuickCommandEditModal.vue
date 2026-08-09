@@ -32,7 +32,6 @@
         <input type="checkbox" v-model="form.project_only" />
         <span>{{ t('terminal.commandProjectOnly') }}</span>
       </label>
-      <div v-if="form.project_only" class="form-hint">{{ t('terminal.commandProjectOnlyHint') }}</div>
     </div>
 
     <template #footer>

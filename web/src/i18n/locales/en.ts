@@ -1624,7 +1624,6 @@ export default {
     commandAutoExecute: 'Auto execute (run when terminal opens)',
     autoExecuteWarning: 'This will disable auto-execute on other commands in this project',
     commandProjectOnly: 'This project only',
-    commandProjectOnlyHint: 'When checked, this command only shows in the current project; otherwise it is global',
     commandRequired: 'Label and command are required',
     commandSaved: 'Command saved',
     commandDeleted: 'Command deleted',

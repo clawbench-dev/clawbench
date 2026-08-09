@@ -671,9 +671,13 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
       // Refocus as a microtask: runs after the current event (and the browser's
       // touch-down default that blurred us) but before the next paint, so the
       // keyboard never visibly collapses. Faster than requestAnimationFrame.
+      // Re-validate here: by microtask time focus may have settled on a real
+      // control (e.g. an input inside a modal/drawer), which must not be stolen.
       queueMicrotask(() => {
         const ta = tab.xterm?.textarea
-        if (ta && document.activeElement !== ta && !!props.active) {
+        if (!ta || !props.active) return
+        if (!shouldAutoRefocusTerminal(!!props.active, document.activeElement)) return
+        if (document.activeElement !== ta) {
           ta.focus()
         }
       })
