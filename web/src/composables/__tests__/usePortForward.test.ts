@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 
 // ── Timer leak prevention ──
 
@@ -41,6 +41,11 @@ vi.mock('@/utils/api', () => ({
     apiPost: (...args: any[]) => mockApiPost(...args),
     apiPut: (...args: any[]) => mockApiPut(...args),
     apiDelete: (...args: any[]) => mockApiDelete(...args),
+}))
+
+const mockStore = vi.hoisted(() => ({ state: {} as Record<string, unknown> }))
+vi.mock('@/stores/app', () => ({
+    store: mockStore,
 }))
 
 const mockIsAppMode = ref(false)
@@ -136,6 +141,26 @@ describe('usePortForward', () => {
             expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/ports')
             expect(ports.value).toHaveLength(1)
             expect(ports.value[0].port).toBe(3000)
+        })
+
+        it('counts enabled ports (not just active) for the dock badge', async () => {
+            const portsResponse = {
+                ports: [
+                    { port: 3000, localPort: 3000, name: 'A', protocol: 'http', active: true, enabled: true },
+                    { port: 4000, localPort: 4000, name: 'B', protocol: 'http', active: false, enabled: true },
+                    { port: 5000, localPort: 5000, name: 'C', protocol: 'http', active: true, enabled: false },
+                ],
+            }
+            mockApiGet.mockResolvedValue(portsResponse)
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { loadPorts } = usePortForward()
+
+            await loadPorts()
+            await nextTick()
+
+            // Enabled (3000 + 4000) even though 4000 is not active; 5000 excluded because disabled.
+            expect(mockStore.state.portForwardEnabledCount).toBe(2)
         })
 
         it('sets loading state when not silent', async () => {

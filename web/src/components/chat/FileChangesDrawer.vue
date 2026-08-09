@@ -13,7 +13,6 @@
             <button class="fc-file-main" @click="$emit('select-file', { ...change, toolName: 'Write' })">
               <FileIcon :path="change.path" :size="16" class="fc-file-icon" />
               <span class="fc-file-name">{{ baseName(change.path) }}</span>
-              <ChevronRight :size="14" class="fc-file-chevron" />
             </button>
             <button class="fc-file-jump" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="$emit('open-file', change.path)">
               <ExternalLink :size="14" />
@@ -29,7 +28,6 @@
             <button class="fc-file-main" @click="$emit('select-file', { ...change, toolName: 'Edit' })">
               <FileIcon :path="change.path" :size="16" class="fc-file-icon" />
               <span class="fc-file-name">{{ baseName(change.path) }}</span>
-              <ChevronRight :size="14" class="fc-file-chevron" />
             </button>
             <button class="fc-file-jump" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="$emit('open-file', change.path)">
               <ExternalLink :size="14" />
@@ -43,7 +41,7 @@
 
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { FileDiff, ChevronRight, ExternalLink } from 'lucide-vue-next'
+import { FileDiff, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 
@@ -129,17 +127,6 @@ function baseName(path) {
   text-overflow: ellipsis;
   min-width: 0;
   flex: 1;
-}
-
-.fc-file-chevron {
-  flex-shrink: 0;
-  color: var(--text-muted, #999);
-  transition: transform 0.15s, color 0.15s;
-}
-
-.fc-file-main:hover .fc-file-chevron {
-  color: var(--accent-color, #0066cc);
-  transform: translateX(2px);
 }
 
 .fc-file-jump {

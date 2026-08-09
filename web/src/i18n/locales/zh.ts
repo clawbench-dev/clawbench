@@ -6,6 +6,7 @@ export default {
     archive: '归档',
     confirm: '确定',
     close: '关闭',
+    back: '返回',
     edit: '编辑',
     copy: '复制',
     copied: '已复制',

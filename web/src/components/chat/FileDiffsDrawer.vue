@@ -1,18 +1,24 @@
 <template>
-  <BottomSheet :open="open" auto @close="$emit('close')">
+  <BottomSheet :open="open" auto back-event="back" @close="$emit('close')" @back="$emit('back')">
     <template #header>
+      <button class="fd-back-btn" :title="t('common.back')" :aria-label="t('common.back')" @click.stop="$emit('back')">
+        <ArrowLeft :size="16" />
+      </button>
       <FileIcon :path="filePath" :size="16" class="bs-header-icon" />
-      <span class="fd-header-path">{{ displayPath }}</span>
-      <span class="fd-header-badge">{{ badgeLabel }}</span>
-      <span v-if="diffItems.length > 1" class="fd-header-count">{{ diffItems.length }}</span>
+      <span class="fd-header-path">{{ baseName }}</span>
     </template>
     <div class="fd-body tool-detail-body" @click="handleBodyClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+      <!-- Full path + jump + badge + change count at the top of the content area -->
+      <div class="fd-file-info">
+        <span class="fd-file-info-path" :title="displayPath">{{ displayPath }}</span>
+        <button class="fd-file-info-open" :title="t('chat.fileChanges.openFile')" :aria-label="t('chat.fileChanges.openFile')" @click="handleOpenFile">
+          <ExternalLink :size="14" />
+        </button>
+        <span class="fd-header-badge">{{ badgeLabel }}</span>
+        <span v-if="diffItems.length > 0" class="fd-header-count">{{ diffItems.length }}</span>
+      </div>
       <div v-if="diffItems.length" class="fd-diffs">
-        <div v-for="(item, i) in diffItems" :key="item.key" class="fd-diff-item">
-          <div class="fd-diff-label">
-            <span class="fd-diff-label-name">{{ item.name }}</span>
-            <span class="fd-diff-label-index">{{ i + 1 }}</span>
-          </div>
+        <div v-for="item in diffItems" :key="item.key" class="fd-diff-item">
           <div v-if="item.loading" class="fd-loading"><span class="fd-loading-spinner"></span><span>{{ t('chat.fileChanges.loadingDiff') }}</span></div>
           <div v-else-if="item.error" class="fd-error">
             <span>{{ t('chat.fileChanges.diffLoadFailed') }}</span>
@@ -37,6 +43,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ArrowLeft, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
@@ -58,12 +65,24 @@ const props = defineProps({
   formatToolInput: { type: Function, required: true },
 })
 
-const emit = defineEmits(['close', 'file-open'])
+const emit = defineEmits(['close', 'file-open', 'back'])
 
 const { t } = useI18n()
 
 const displayPath = computed(() => props.filePath.replace(/^\.\//, ''))
+
+// Header shows only the file name; the full path lives in the content-area bar.
+const baseName = computed(() => {
+  const p = displayPath.value
+  const idx = p.lastIndexOf('/')
+  return idx >= 0 ? p.slice(idx + 1) : p
+})
+
 const badgeLabel = computed(() => props.toolName === 'Write' ? t('chat.fileChanges.created') : t('chat.fileChanges.modified'))
+
+function handleOpenFile() {
+  emit('file-open', { path: props.filePath })
+}
 
 // tool_use blocks matching the selected file + tool type.
 const matchingBlocks = computed(() => {
@@ -79,6 +98,17 @@ const matchingBlocks = computed(() => {
 
 function hasInlineInput(block) {
   return !!block.input && Object.keys(block.input).length > 0
+}
+
+// All diffs here belong to the same file (shown in the drawer header), so the
+// per-diff .tool-file-header (path + open button) emitted by the shared
+// Edit/Write renderers is redundant and stripped.
+function stripFileHeader(html) {
+  return html ? html.replace(/<div class="tool-file-header">.*?<\/div>/gs, '') : html
+}
+
+function renderDiff(input, name, done, status, output) {
+  return stripFileHeader(props.formatToolInput(input, name, { done, status, output }))
 }
 
 // Ordered diff items: inline blocks render directly; the rest are fetched by
@@ -104,7 +134,7 @@ function buildItems() {
         key: b.id || 'inline-' + items.length,
         name: b.name,
         toolId: b.id,
-        inputHtml: props.formatToolInput(b.input, b.name, { done: b.done, status: b.status, output: b.output }),
+        inputHtml: renderDiff(b.input, b.name, b.done, b.status, b.output),
         loading: false,
         error: false,
       })
@@ -137,7 +167,7 @@ async function fetchDiff(item) {
       input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
     }
     if (input) {
-      item.inputHtml = props.formatToolInput(input, data.name || item.name || props.toolName, { done: data.done !== false, status: data.status || '', output: data.output || '' })
+      item.inputHtml = renderDiff(input, data.name || item.name || props.toolName, data.done !== false, data.status || '', data.output || '')
       item.error = false
     } else {
       item.error = true
@@ -184,7 +214,7 @@ function handleBodyClick(event) {
 
 <style scoped>
 .fd-body {
-  padding: 6px 10px 10px;
+  padding: 4px 8px 8px;
   overflow-y: auto;
   overflow-x: clip;
   font-size: 12px;
@@ -196,35 +226,59 @@ function handleBodyClick(event) {
 .fd-diffs {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+}
+
+/* Content-area top bar: full path + jump + badge + change count */
+.fd-file-info {
+  display: flex;
+  align-items: center;
   gap: 6px;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 8px;
+}
+
+.fd-file-info-path {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.fd-file-info-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.fd-file-info-open:hover {
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+.fd-file-info .fd-header-count {
+  margin-left: auto;
 }
 
 .fd-diff-item {
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  padding: 3px 5px;
   background: var(--bg-secondary);
-}
-
-.fd-diff-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 2px;
-}
-
-.fd-diff-label-name {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-muted, #999);
-}
-
-.fd-diff-label-index {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary, #bbb);
 }
 
 .fd-empty {
@@ -278,6 +332,32 @@ function handleBodyClick(event) {
 
 .fd-retry-btn:hover {
   background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+}
+
+.fd-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-right: 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary, #555);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.fd-back-btn:hover {
+  color: var(--text-primary, #1a1a1a);
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+.fd-back-btn:active {
+  background: var(--border-color, #dee2e6);
 }
 
 .fd-header-path {

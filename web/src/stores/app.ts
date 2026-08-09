@@ -142,7 +142,7 @@ interface AppState {
     terminalSessionCount: number
 
     // Active port forward count (for dock badge)
-    portForwardActiveCount: number
+    portForwardEnabledCount: number
 
     // Task list (kept in sync by global polling)
     tasks: Array<Record<string, unknown>>
@@ -190,7 +190,7 @@ const state = reactive<AppState>({
     taskRunning: false,
     taskJustCompleted: false,
     terminalSessionCount: 0,
-    portForwardActiveCount: 0,
+    portForwardEnabledCount: 0,
     tasks: [],
 
     // File browser
@@ -292,7 +292,7 @@ function resetProjectState(): void {
     state.taskRunning = false
     state.taskJustCompleted = false
     state.terminalSessionCount = 0
-    state.portForwardActiveCount = 0
+    state.portForwardEnabledCount = 0
     state.tasks = []
     // Config defaults
     state.uploadMaxSizeMB = 100

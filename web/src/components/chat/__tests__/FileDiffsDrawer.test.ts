@@ -45,7 +45,7 @@ const i18n = createI18n({
           diffLoadFailed: '变更内容加载失败',
         },
       },
-      common: { retry: '重试' },
+      common: { retry: '重试', back: '返回' },
     },
   },
 })
@@ -115,7 +115,7 @@ describe('FileDiffsDrawer', () => {
     expect(wrapper.text()).toContain('写入')
   })
 
-  it('chains multiple diffs together with index labels', async () => {
+  it('chains multiple diffs together with a count badge in the header', async () => {
     const wrapper = mountDrawer({
       filePath: '/a.ts',
       toolName: 'Edit',
@@ -123,8 +123,7 @@ describe('FileDiffsDrawer', () => {
     })
     await flushPromises()
     expect(formatToolInput).toHaveBeenCalledTimes(3)
-    const labels = wrapper.findAll('.fd-diff-label-index').map(l => l.text())
-    expect(labels).toEqual(['1', '2', '3'])
+    expect(wrapper.findAll('.fd-diff-item').length).toBe(3)
     expect(wrapper.find('.fd-header-count').text()).toBe('3')
   })
 
@@ -152,7 +151,7 @@ describe('FileDiffsDrawer', () => {
     expect(global.fetch).toHaveBeenCalledWith('/api/ai/chat/tool-call?tool_id=e1&message_id=7')
     expect(global.fetch).toHaveBeenCalledWith('/api/ai/chat/tool-call?tool_id=e2&message_id=7')
     expect(formatToolInput).toHaveBeenCalledTimes(2)
-    expect(wrapper.findAll('.fd-diff-label-index').length).toBe(2)
+    expect(wrapper.findAll('.fd-diff-item').length).toBe(2)
   })
 
   it('shows an error state and retries when a fetch fails', async () => {
@@ -162,6 +161,56 @@ describe('FileDiffsDrawer', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.fd-error').exists()).toBe(true)
     expect(wrapper.text()).toContain('重试')
+  })
+
+  it('strips the per-diff file path header since all diffs share the file', async () => {
+    const wrapper = mountDrawer({
+      filePath: '/a.ts',
+      toolName: 'Edit',
+      blocks: makeInlineBlocks('/a.ts', 'Edit', 1),
+      formatToolInput: () => `<div class="tool-file-header"><span class="tool-file-path">/a.ts</span></div><div class="edit-diff-view">content</div>`,
+    })
+    await flushPromises()
+    expect(wrapper.find('.tool-file-header').exists()).toBe(false)
+    expect(wrapper.find('.edit-diff-view').exists()).toBe(true)
+  })
+
+  it('emits back when the header back button is clicked', async () => {
+    const wrapper = mountDrawer({
+      filePath: '/a.ts',
+      toolName: 'Edit',
+      blocks: makeInlineBlocks('/a.ts', 'Edit', 1),
+    })
+    await flushPromises()
+    const backBtn = wrapper.find('.fd-back-btn')
+    expect(backBtn.exists()).toBe(true)
+    await backBtn.trigger('click')
+    expect(wrapper.emitted('back')).toBeTruthy()
+  })
+
+  it('shows only the file name in the header and full path in the content bar', async () => {
+    const wrapper = mountDrawer({
+      filePath: '/src/components/a.ts',
+      toolName: 'Edit',
+      blocks: makeInlineBlocks('/src/components/a.ts', 'Edit', 1),
+    })
+    await flushPromises()
+    expect(wrapper.find('.fd-header-path').text()).toBe('a.ts')
+    expect(wrapper.find('.fd-file-info-path').text()).toBe('/src/components/a.ts')
+  })
+
+  it('emits file-open for the selected file when the jump button is clicked', async () => {
+    const wrapper = mountDrawer({
+      filePath: '/a.ts',
+      toolName: 'Edit',
+      blocks: makeInlineBlocks('/a.ts', 'Edit', 1),
+    })
+    await flushPromises()
+    const openBtn = wrapper.find('.fd-file-info-open')
+    expect(openBtn.exists()).toBe(true)
+    await openBtn.trigger('click')
+    expect(wrapper.emitted('file-open')).toBeTruthy()
+    expect(wrapper.emitted('file-open')[0][0]).toEqual({ path: '/a.ts' })
   })
 
   it('emits file-open when a diff file-open button is clicked', async () => {

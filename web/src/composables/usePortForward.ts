@@ -156,9 +156,11 @@ function hasActivePorts(): boolean {
   return ports.value.some(p => p.enabled && p.active)
 }
 
-// Sync active port count to global store for dock badge
+// Sync enabled port count to global store for dock badge.
+// Counts ENABLED ports (not just connected ones) so the badge stays visible
+// even when the tunnel/backends are temporarily down.
 watch(ports, () => {
-  store.state.portForwardActiveCount = ports.value.filter(p => p.active).length
+  store.state.portForwardEnabledCount = ports.value.filter(p => p.enabled).length
 }, { deep: true })
 
 /**

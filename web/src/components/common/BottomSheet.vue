@@ -51,6 +51,7 @@ const props = defineProps({
   transparentOverlay: Boolean, // 透明遮罩（可点击关闭但可见底层内容）
   fullscreen: Boolean, // 全屏模式，覆盖 app header，用于无 header 的页面（如终端）
   closeGuard: Boolean, // 阻止一切关闭操作（overlay点击/header点击/返回手势），用于内部有原生选择器等场景
+  backEvent: String, // 自定义"返回"手势发出的事件名（默认 close）。用于下钻抽屉：边缘内滑返回时发出指定事件而非关闭。
 })
 
 const emit = defineEmits(['close'])
@@ -116,7 +117,13 @@ function registerDrawerBackHandler() {
     canGoBack: () => props.open && !leaving.value,
     goBack: () => {
       appLog.d('BottomSheet', `back gesture closing drawer: ${id}`)
-      handleClose()
+      // Drill-down drawers may customize the back gesture to emit an event
+      // (e.g. "back") that returns to the parent drawer instead of closing.
+      if (props.backEvent) {
+        handleClose(props.backEvent)
+      } else {
+        handleClose()
+      }
     },
     priority,
   })
@@ -141,18 +148,20 @@ function handleEscapeKey(e) {
   handleClose()
 }
 
-function handleClose() {
+function handleClose(eventName) {
+  // Click handlers pass the click Event as the first arg — normalize to 'close'.
+  if (typeof eventName !== 'string') eventName = 'close'
   if (props.closeGuard) return
   if (leaving.value) return
   if (props.instant) {
-    emit('close')
+    emit(eventName)
     return
   }
   leaving.value = true
   leaveTimer = setTimeout(() => {
     leaving.value = false
     leaveTimer = null
-    emit('close')
+    emit(eventName)
   }, 250)
 }
 

@@ -6,6 +6,7 @@ export default {
     archive: 'Archive',
     confirm: 'OK',
     close: 'Close',
+    back: 'Back',
     edit: 'Edit',
     copy: 'Copy',
     copied: 'Copied',

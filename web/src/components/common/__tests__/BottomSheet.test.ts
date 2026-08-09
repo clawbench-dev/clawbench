@@ -72,6 +72,23 @@ describe('BottomSheet back gesture', () => {
     expect(wrapper!.emitted('close')).toBeTruthy()
   })
 
+  it('back gesture emits the custom backEvent instead of close', () => {
+    wrapper = mountSheet({ backEvent: 'back' })
+    handleBackNavigation()
+    vi.advanceTimersByTime(300)
+    expect(wrapper!.emitted('back')).toBeTruthy()
+    expect(wrapper!.emitted('close')).toBeFalsy()
+  })
+
+  it('backEvent does not affect overlay close (still emits close)', () => {
+    wrapper = mountSheet({ backEvent: 'back' })
+    const overlay = $('.bs-overlay')!
+    overlay.click()
+    vi.advanceTimersByTime(300)
+    expect(wrapper!.emitted('close')).toBeTruthy()
+    expect(wrapper!.emitted('back')).toBeFalsy()
+  })
+
   it('unregisters back handler when open changes to false', async () => {
     wrapper = mountSheet()
     expect(canNavigateBack()).toBe(true)

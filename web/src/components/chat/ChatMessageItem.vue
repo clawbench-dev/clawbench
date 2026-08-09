@@ -116,6 +116,7 @@
       :format-tool-input="formatToolInput"
       @close="fileDiffsDrawer.close()"
       @file-open="handleOpenFilePayload"
+      @back="handleFileDiffsBack"
     />
   </div>
 </template>
@@ -215,6 +216,11 @@ function handleSelectFile(payload) {
   selectedFile.value = payload
   fileChangesDrawer.close()
   fileDiffsDrawer.open()
+}
+
+function handleFileDiffsBack() {
+  fileDiffsDrawer.close()
+  fileChangesDrawer.open()
 }
 
 // Handles open-file payloads: either a plain path string (from FileChangesDrawer)
