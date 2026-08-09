@@ -38,6 +38,10 @@ function loadFromStorage() {
     if (raw) {
       const parsed = JSON.parse(raw)
       _entries.value = parsed.slice(0, getMaxRecent())
+    } else {
+      // No stored data for this project — clear entries so switching to a
+      // project without recent files doesn't leak the previous project's list.
+      _entries.value = []
     }
   } catch (e) {
     appLog.w(TAG, 'loadFromStorage failed:', e)

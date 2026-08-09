@@ -1,13 +1,17 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { computed } from 'vue'
+import { computed, nextTick } from 'vue'
 import { _resetForTesting, recordRecentFile, removeRecentFile, useRecentFiles } from '@/composables/useRecentFiles'
+import { store } from '@/stores/app.ts'
 
-// Mock store
-vi.mock('@/stores/app.ts', () => ({
-  store: {
-    state: { projectRoot: '/test/project' },
-  },
-}))
+// Mock store — reactive so the useRecentFiles projectRoot watcher fires on switch.
+vi.mock('@/stores/app.ts', async () => {
+  const { reactive } = await import('vue')
+  return {
+    store: {
+      state: reactive({ projectRoot: '/test/project' }),
+    },
+  }
+})
 
 // Mock localStorage
 const localStorageStore: Record<string, string> = {}
@@ -95,5 +99,19 @@ describe('useRecentFiles', () => {
     recordRecentFile('')
     const { entries } = useRecentFiles()
     expect(entries.value).toHaveLength(0)
+  })
+
+  it('clears entries when switching to a project with no recent files', async () => {
+    store.state.projectRoot = '/proj-a'
+    recordRecentFile('a.ts')
+    expect(useRecentFiles().entries.value).toHaveLength(1)
+
+    // Switch to a project that has no stored recent files — the previous
+    // project's entries must not leak through.
+    store.state.projectRoot = '/proj-b'
+    await nextTick()
+    expect(useRecentFiles().entries.value).toHaveLength(0)
+
+    store.state.projectRoot = '/test/project'
   })
 })
