@@ -36,9 +36,12 @@ func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 		case "tool_use":
 			if isAutoExpandTool(b.Name) {
 				cards.Tools = append(cards.Tools, model.SummaryTool{
-					Name:  b.Name,
-					ID:    b.ID,
-					Input: b.Input,
+					Name:   b.Name,
+					ID:     b.ID,
+					Input:  b.Input,
+					Done:   b.Done,
+					Status: b.Status,
+					Output: b.Output,
 				})
 			}
 		case contentKeyText:

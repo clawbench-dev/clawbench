@@ -68,11 +68,16 @@ type ChatMessage struct {
 
 // SummaryTool is a compact record of a tool_use block present in a reading
 // summary view. input is included for interactive tools (AskUserQuestion,
-// PermissionApproval) that need it for card rendering.
+// PermissionApproval) that need it for card rendering. done/status/output are
+// captured so interactive cards (e.g. PermissionApproval) can render their
+// final approved/denied state in summary view instead of pending buttons.
 type SummaryTool struct {
-	Name  string         `json:"name"`
-	ID    string         `json:"id,omitempty"`
-	Input map[string]any `json:"input,omitempty"`
+	Name   string         `json:"name"`
+	ID     string         `json:"id,omitempty"`
+	Input  map[string]any `json:"input,omitempty"`
+	Done   bool           `json:"done,omitempty"`
+	Status string         `json:"status,omitempty"`
+	Output string         `json:"output,omitempty"`
 }
 
 // AskQuestionOption is a single option in an ask-question card.

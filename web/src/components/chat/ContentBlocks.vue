@@ -20,7 +20,7 @@
           <CheckCircle2 :size="14" color="#22c55e" class="tool-check" />
         </div>
         <div v-if="shouldAutoExpandTool(tool.name || '')" class="tool-detail" :data-tool-name="tool.name" @click="handleToolDetailClick">
-          <div v-html="formatToolInput(tool.input || {}, tool.name)"></div>
+          <div v-html="formatToolInput(tool.input || {}, tool.name, { done: tool.done, status: tool.status, output: tool.output })"></div>
         </div>
       </template>
       <!-- Scheduled task cards from summaryCards.taskIDs (task data fetched in real time) -->

@@ -323,9 +323,12 @@ func TestPathsFromFileEntries(t *testing.T) {
 func TestSummaryCardsRoundTrip(t *testing.T) {
 	cards := SummaryCards{
 		Tools: []SummaryTool{{
-			Name:  "Bash",
-			ID:    "tool-1",
-			Input: map[string]any{"command": "ls"},
+			Name:   "Bash",
+			ID:     "tool-1",
+			Input:  map[string]any{"command": "ls"},
+			Done:   true,
+			Status: "error",
+			Output: "Cancelled",
 		}},
 		TaskIDs: []int64{42},
 		AskQuestions: []AskQuestionCard{{
@@ -345,6 +348,9 @@ func TestSummaryCardsRoundTrip(t *testing.T) {
 	}
 	if len(back.Tools) != 1 || back.Tools[0].Name != "Bash" {
 		t.Fatalf("tools mismatch: %+v", back.Tools)
+	}
+	if !back.Tools[0].Done || back.Tools[0].Status != "error" || back.Tools[0].Output != "Cancelled" {
+		t.Fatalf("tools result state mismatch: %+v", back.Tools[0])
 	}
 	if len(back.TaskIDs) != 1 || back.TaskIDs[0] != 42 {
 		t.Fatalf("taskIDs mismatch: %+v", back.TaskIDs)
