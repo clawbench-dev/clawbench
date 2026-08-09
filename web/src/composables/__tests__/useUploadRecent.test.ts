@@ -73,7 +73,10 @@ describe('useUploadRecent', () => {
       { name: 'b.txt', path: '.clawbench/uploads/b.txt', size: 20, modTime: '' },
     ]
     const { deleteRecentUpload } = useUploadRecent()
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    } as Response)
 
     const result = await deleteRecentUpload('.clawbench/uploads/a.txt')
 
@@ -84,6 +87,20 @@ describe('useUploadRecent', () => {
       body: JSON.stringify({ path: '.clawbench/uploads/a.txt' }),
     })
     expect(recentUploads.value.map(f => f.path)).toEqual(['.clawbench/uploads/b.txt'])
+  })
+
+  it('deleteRecentUpload with stale-server array response: keeps list and returns false', async () => {
+    recentUploads.value = [{ name: 'a.txt', path: '.clawbench/uploads/a.txt', size: 10, modTime: '' }]
+    const { deleteRecentUpload } = useUploadRecent()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([{ name: 'a.txt', path: '.clawbench/uploads/a.txt', size: 10, modTime: '' }]),
+    } as Response)
+
+    const result = await deleteRecentUpload('.clawbench/uploads/a.txt')
+
+    expect(result).toBe(false)
+    expect(recentUploads.value.length).toBe(1)
   })
 
   it('deleteRecentUpload non-ok: keeps list and returns false', async () => {

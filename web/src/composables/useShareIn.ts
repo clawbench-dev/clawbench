@@ -29,9 +29,15 @@ async function deleteRecentShare(path: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path }),
     })
+    // Only trust the delete when the server confirms it with {ok:true}. An old
+    // server without the DELETE handler returns 200 + a JSON array, which we
+    // must NOT treat as success — otherwise the file is only hidden, not deleted.
     if (res.ok) {
-      recentShares.value = recentShares.value.filter(f => f.path !== path)
-      return true
+      const data = await res.json().catch(() => null)
+      if (data && data.ok === true) {
+        recentShares.value = recentShares.value.filter(f => f.path !== path)
+        return true
+      }
     }
     appLog.w('ShareIn', 'Failed to delete recent share', path, res.status)
   } catch (e) {
