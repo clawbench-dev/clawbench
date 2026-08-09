@@ -174,24 +174,12 @@ def pass_fail(passed):
     return f"{GREEN}PASS{RESET}" if passed else f"{RED}FAIL{RESET}"
 
 # ── Get current per-package coverage ────────────────────────────
-result = subprocess.run(
-    ["go", "test", "-cover", "./..."],
-    capture_output=True, text=True
-)
-output = result.stdout + result.stderr
+# Per-package coverage is derived solely from the already-generated
+# coverage.out (from `go test -coverprofile` in Step 1). This avoids a
+# redundant second full `go test ./...` run, which dominated script runtime.
+current = {}
 
-# First pass: get raw per-package coverage from go test -cover
-current_raw = {}
-for line in output.split("\n"):
-    m = re.search(r'^[ok?]{2}\s+(\S+)\s+.*?coverage:\s+([\d.]+)%', line)
-    if m:
-        pkg = m.group(1)
-        if "node_modules" in pkg or "vendor" in pkg:
-            continue
-        current_raw[pkg] = float(m.group(2))
-
-# Second pass: recalculate from coverprofile excluding exempt files
-current = dict(current_raw)
+# Recalculate per-package coverage from coverprofile, excluding exempt files.
 if coverage_profile:
     try:
         pkg_stmts = defaultdict(lambda: {"covered": 0, "total": 0})
@@ -222,7 +210,7 @@ if coverage_profile:
             if data["total"] > 0:
                 current[pkg] = round((data["covered"] / data["total"]) * 100, 1)
     except Exception:
-        pass  # Fall back to raw coverage
+        pass  # Fall back to empty — Tier 1 will treat packages as REMOVED
 
 # ══════════════════════════════════════════════════════════════════
 # TIER 1: Project Gate
