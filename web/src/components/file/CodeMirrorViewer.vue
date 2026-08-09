@@ -342,7 +342,7 @@ function buildAllExtensions() {
         codeMirrorTheme,
         syntaxHighlighting(codeHighlightStyle),
         history(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
+        keymap.of([{ key: 'Mod-s', run: handleSaveShortcut, preventDefault: true }, ...defaultKeymap, ...historyKeymap]),
         interactionExtension,
         selectionExtension,
         editStateExtension,
@@ -466,6 +466,14 @@ function handleUndo() {
 
 function handleRedo() {
     if (view.value) redo(view.value)
+}
+
+// Ctrl/Cmd+S save shortcut (Mod = Ctrl on Windows/Linux, Cmd on Mac). Mirrors
+// the save button: only when editing, dirty, and not already saving.
+function handleSaveShortcut() {
+    if (!props.editable || !dirty.value || props.saving) return false
+    emit('save', getValue())
+    return true
 }
 
 // Exit edit mode. If there are unsaved changes, confirm whether to save,

@@ -62,13 +62,54 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     const wrapper = mountViewer({ editable: true, content: 'const y = 2' })
     await sleep(80)
     // Make the editor dirty so the save button becomes visible.
-    wrapper.vm.getView().dispatch({ changes: { from: 9, to: 10, insert: 'x' } })
+    wrapper.vm.getView().dispatch({ changes: { from: 11, to: 11, insert: 'x' } })
     await nextTick()
     await sleep(30)
     const saveBtn = wrapper.find('.editor-btn.primary')
     if (!saveBtn.exists()) return // editor host not mounted in this test env; save emit covered elsewhere
     await saveBtn.trigger('click')
     expect(wrapper.emitted('save')?.[0][0]).toBe('const y = 2x')
+  })
+
+  function dispatchSaveKey(view: { contentDOM: HTMLElement }) {
+    view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true }))
+  }
+
+  it('saves via Ctrl+S shortcut when editing and dirty', async () => {
+    const wrapper = mountViewer({ editable: true, content: 'const y = 2' })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    view.dispatch({ changes: { from: 11, to: 11, insert: 'x' } }) // make dirty
+    await sleep(30)
+    dispatchSaveKey(view)
+    await nextTick()
+    expect(wrapper.emitted('save')?.[0][0]).toBe('const y = 2x')
+  })
+
+  it('does not save via Ctrl+S when not dirty', async () => {
+    const wrapper = mountViewer({ editable: true, content: 'clean\n' })
+    await sleep(80)
+    dispatchSaveKey(wrapper.vm.getView())
+    await nextTick()
+    expect(wrapper.emitted('save')).toBeFalsy()
+  })
+
+  it('does not save via Ctrl+S in read-only browse mode', async () => {
+    const wrapper = mountViewer({ content: 'const y = 2' })
+    await sleep(80)
+    dispatchSaveKey(wrapper.vm.getView())
+    await nextTick()
+    expect(wrapper.emitted('save')).toBeFalsy()
+  })
+
+  it('does not save via Ctrl+S while a save is already in flight', async () => {
+    const wrapper = mountViewer({ editable: true, saving: true, content: 'const y = 2' })
+    await sleep(80)
+    wrapper.vm.getView().dispatch({ changes: { from: 9, to: 10, insert: 'x' } }) // make dirty
+    await sleep(30)
+    dispatchSaveKey(wrapper.vm.getView())
+    await nextTick()
+    expect(wrapper.emitted('save')).toBeFalsy()
   })
 
   it('emits exitEdit on exit-edit button click', async () => {
