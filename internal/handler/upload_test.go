@@ -424,16 +424,27 @@ func TestDeleteRecentFile_AbsolutePath(t *testing.T) {
 		assertOK(t, w)
 	})
 
-	t.Run("AbsolutePathOutsideRoot_Returns403", func(t *testing.T) {
+	t.Run("AbsolutePathOutsideRoot_Returns403or404", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		body := `{"path": "/etc/passwd"}`
+		// Use a path that exists on all platforms but is outside the project root.
+		// On Windows, os.TempDir() is typically C:\Users\...\AppData\Local\Temp.
+		// On Unix, /tmp exists. Both are outside the project directory.
+		outsideDir := os.TempDir()
+		absPath := filepath.Join(outsideDir, "clawbench_test_outside_root.txt")
+		_ = os.WriteFile(absPath, []byte("outside"), 0o644)
+		defer func() { _ = os.Remove(absPath) }()
+
+		body := fmt.Sprintf(`{"path": %q}`, absPath)
 		req := httptest.NewRequest(http.MethodDelete, "/api/share-in/recent", strings.NewReader(body))
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(ShareInRecent, req)
-		assertStatus(t, w, http.StatusForbidden)
+		// 403 if the path is under a root but not under .clawbench/share-in,
+		// 404 if the path is not under any root (isPathUnderAnyRoot fails).
+		assert.True(t, w.Code == http.StatusForbidden || w.Code == http.StatusNotFound,
+			"expected 403 or 404, got %d", w.Code)
 	})
 
 	t.Run("InvalidJSON_Returns400", func(t *testing.T) {
