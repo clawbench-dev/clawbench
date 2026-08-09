@@ -82,45 +82,73 @@
 
 **所有代码修改必须在独立 worktree 中进行，不能直接在主工作区操作。改动仅在本地提交，不推送到远程，由人工审查后决定是否合并。**
 
-#### 5a. 确保获取最新 main
+#### 5a. 分支策略（重点）
+
+**永远使用同一个分支，不要每次新建带日期的分支。每次执行前，rebase 主线。**（与 `docs/timer/doc-sync.md` 的分支策略一致，保证分支始终基于最新 main，且本地提交可在多次执行间持续累积。）
+
+- 固定分支：`ai/fix/review-issues`
+- 固定 worktree 路径：`.worktrees/issue-fix`
+- 所有修复只在本分支上**本地累积**提交，**不要 push**，由人工在本地审查后决定是否合并进 `main`
+- 分支与主线的同步方式：每次执行前 `git rebase origin/main`，确保分支始终基于最新 main
+
+#### 5b. 准备固定 Worktree 并 rebase 主线
 
 ```bash
 git fetch origin main
+
+# 首次运行：创建固定分支和 worktree
+if [ ! -d .worktrees/issue-fix/.git ]; then
+  git worktree add .worktrees/issue-fix -b ai/fix/review-issues origin/main
+fi
+
+cd .worktrees/issue-fix
+
+# 每次执行前都 rebase 主线（即使没有任何改动也执行）
+git rebase origin/main
 ```
 
-#### 5b. 创建 Worktree 和分支
-
-分支命名规范：`ai/{类型}/{简要描述}-{日期}`，其中类型为 `docs`/`fix`/`feat`，日期格式 `YYYYMMDD`。
+**如果 rebase 出现冲突**：修复分支与 main 偶尔会同时改动同一文件。此时需手动解决冲突：
 
 ```bash
-BRANCH=ai/fix/issues-$(date +%Y%m%d)
-git worktree add .worktrees/issue-fix -b "$BRANCH" origin/main
-cd .worktrees/issue-fix
+git status          # 查看冲突文件
+# 逐个编辑解决冲突，然后：
+git add -A
+git rebase --continue
 ```
+
+解决冲突时，以 main（主线）的内容为准，将本分支对同一区域的修复重新应用到主线版本之上。
+
+**如果报错 worktree 已存在**：直接 `cd .worktrees/issue-fix` 并跳过创建步骤，仅执行 rebase。
+**如果报错分支已存在**：用 `git worktree add .worktrees/issue-fix ai/fix/review-issues`（不带 `-b`）复用已有分支。
 
 #### 5c. 应用改动
 
-将之前步骤中的修复改动应用到 worktree 中。
+将 Step 3/4 中选定并完成修复的改动应用到 worktree 中。每个独立的 issue 对应一份独立的改动。
 
-#### 5d. 提交
+#### 5d. 提交（每个独立 issue 一个独立提交）
+
+**每个独立 issue 必须单独提交，禁止把多个 issue 合并进同一个 commit。**
 
 ```bash
 git add -A
-git commit -m "fix: {本次修复的 issue 列表和简要描述}"
+git status    # 确认只包含当前 issue 涉及的文件
+git commit -m "fix: ISS-{nnn} {一句话修复描述}"
 ```
+
+依次为每个选中的 issue 重复 5c → 5d：修复一个、提交一个，再处理下一个，直到所有选定 issue 完成。这样每个提交只对应一个 issue，便于人工按 commit 逐个审查和挑选合并。
 
 **不要 push。** 改动仅在本地，等待人工审查后决定是否合并。
 
-#### 5e. 清理 Worktree
+#### 5e. 保留 Worktree（不删除）
 
 ```bash
 cd {项目根目录}
-git worktree remove .worktrees/issue-fix --force
+# 保留固定 worktree，供下次执行继续累积提交
 ```
 
-**无论修改成功还是失败，都必须清理 worktree。分支保留在本地供审查。**
+**提交成功后不要删除 worktree**（`.worktrees/issue-fix` 固定复用，供下次执行），与 `doc-sync.md` 的约定一致。
 
-**如果只做了验证（Step 2）而没有代码修复，则不需要提交。只有修改了源代码文件或 `.clawbench/issues/` 下的 .md 文件时才需要提交。**
+**如果只做了验证（Step 2）而没有代码修复，则不需要提交。只有修改了源代码文件或 `.clawbench/issues/` 下的 .md 文件时才需要提交。若本次执行有提交，保留 worktree 供下次执行；若没有提交，worktree 与分支保持原样即可。**
 
 ### Step 6 — 输出报告
 
@@ -135,7 +163,7 @@ git worktree remove .worktrees/issue-fix --force
 **仍待处理**:
 | ID | Dimension | 描述 | 优先级 |
 **验证**: go build ✅ | go test ✅/❌ | npm test ✅/❌/N/A
-**本地分支**: ai/fix/issues-{YYYYMMDD}
+**本地分支**: ai/fix/review-issues（固定分支，本地累积，未 push）
 ```
 
 ## 约束
@@ -148,6 +176,7 @@ git worktree remove .worktrees/issue-fix --force
 - 每次最多修复 3 个 issue
 - 修复必须是最小化的，不做无关重构
 - 涉及前端代码时必须额外运行 npm test
-- **所有代码修改必须在独立 worktree 中进行**：创建 `.worktrees/issue-fix` 目录和 `ai/fix/issues-{YYYYMMDD}` 分支，完成后必须清理 worktree
-- **分支命名规范**：`ai/fix/issues-{YYYYMMDD}`，一看便知是 AI 自动修改
+- **所有代码修改必须在独立 worktree 中进行**：固定复用 `.worktrees/issue-fix` 目录和 `ai/fix/review-issues` 分支，每次执行前 rebase 主线，完成后**保留** worktree（不删除）
+- **分支命名规范**：固定分支 `ai/fix/review-issues`，一看便知是 AI 自动修改；不再使用带日期的分支名
+- **每个独立 issue 一个独立提交**：禁止把多个 issue 合并进同一个 commit
 - **不要 push**：改动仅在本地提交，等待人工审查后决定是否合并

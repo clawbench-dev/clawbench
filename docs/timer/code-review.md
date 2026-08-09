@@ -169,6 +169,18 @@ files: [{file list}]
 
 Issue 编号递增：检查 `.clawbench/issues/` 目录下已有的 `ISS-*.md` 文件，取最大编号 +1。
 
+### Critical 去重（防止重复上报）
+
+**新建 Issue 前必须先查重**，避免同一缺陷被反复上报成多个 ISS 号（例如同一组点击处理器问题曾在多轮 review 中被标记为 ISS-159/163/173）。
+
+1. 针对待上报的 Critical 发现，在 `.clawbench/issues/` 中检索所有 `status: open` 的 Issue，按**涉及文件 + 缺陷根因**判断是否已覆盖
+2. 判定为同一缺陷（同文件、同根因，仅位置/行号不同）时：
+   - **不新建 Issue**，改为在已有 Issue 的 History 追加：`- {date}: Confirmed still present (re-flagged in {review-date})`
+   - 如新增了同类位置，可更新已有 Issue 的 `files` 字段补充文件列表
+3. 只有与所有 open Issue 均不重叠时才创建新 Issue 文件
+
+**去重对象**：优先比对同文件的同根因；不同文件但由同一逻辑缺陷引起的（如同一模式复制粘贴到多处），也应归并为同一 Issue 并在 Description 中列出所有位置。
+
 ## Step 5 — 检查已有 Issue 的疑似解决状态
 
 对于 `.clawbench/issues/` 下所有 `status: open` 的 Issue：
