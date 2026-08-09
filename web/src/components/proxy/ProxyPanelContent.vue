@@ -651,7 +651,7 @@ async function handleRetryTunnel() {
 .proxy-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
 /* Two-zone layout: registered ports (top, 50–100%) + detected ports (bottom, 0–50%, pinned to bottom) */
