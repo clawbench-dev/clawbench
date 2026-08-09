@@ -282,11 +282,17 @@ function recomputeOverlay() {
 // scrollDOM.scrollTop toward the target line to give a smooth scroll instead.
 let flashTimer = null
 let scrollRAF = null
-function smoothScrollToLine(editor, pos) {
+function centeredScrollTop(editor, pos) {
     const scroller = editor.scrollDOM
     const block = editor.lineBlockAt(pos)
     const viewportHeight = scroller.clientHeight
-    const targetTop = Math.max(0, block.top - (viewportHeight - block.height) / 2)
+    const maxScrollTop = Math.max(0, scroller.scrollHeight - viewportHeight)
+    const centeredTop = block.top - (viewportHeight - block.height) / 2
+    return Math.min(maxScrollTop, Math.max(0, centeredTop))
+}
+function smoothScrollToLine(editor, pos) {
+    const scroller = editor.scrollDOM
+    const targetTop = centeredScrollTop(editor, pos)
     const startTop = scroller.scrollTop
     const delta = targetTop - startTop
     if (Math.abs(delta) < 0.5) return
@@ -298,11 +304,19 @@ function smoothScrollToLine(editor, pos) {
         // easeInOutCubic
         const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
         scroller.scrollTop = startTop + delta * eased
-        if (t < 1) scrollRAF = requestAnimationFrame(step)
-        else scrollRAF = null
+        if (t < 1) {
+            scrollRAF = requestAnimationFrame(step)
+        } else {
+            // Recalculate after the animation: CodeMirror may finish measuring
+            // the document while the smooth movement is in progress.
+            scroller.scrollTop = centeredScrollTop(editor, pos)
+            scrollRAF = null
+        }
     }
     scrollRAF = requestAnimationFrame(step)
 }
+let pendingScrollRequestId = null
+let pendingScrollRAF = null
 function scrollToLine(line, lineEnd) {
     const editor = view.value
     if (!editor) return
@@ -326,7 +340,38 @@ function scrollToLine(line, lineEnd) {
 function onScrollToLine(e) {
     const d = e.detail
     if (!d || typeof d.line !== 'number') return
-    scrollToLine(d.line, d.lineEnd)
+    if (d.path && d.path !== props.file?.path) return
+    if (!d.requestId) {
+        window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
+        scrollToLine(d.line, d.lineEnd)
+        return
+    }
+    if (pendingScrollRequestId === d.requestId) return
+    pendingScrollRequestId = d.requestId
+
+    const applyWhenLaidOut = () => {
+        if (pendingScrollRequestId !== d.requestId) return
+        const editor = view.value
+        if (!editor || (d.path && d.path !== props.file?.path)) {
+            pendingScrollRequestId = null
+            return
+        }
+        const scroller = editor.scrollDOM
+        // A newly mounted editor can have content but no measured viewport for
+        // one or more frames. Wait for layout before calculating the center.
+        if (scroller.clientHeight <= 0 && scroller.scrollHeight > 0) {
+            pendingScrollRAF = requestAnimationFrame(applyWhenLaidOut)
+            return
+        }
+        pendingScrollRequestId = null
+        pendingScrollRAF = null
+        window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
+        scrollToLine(d.line, d.lineEnd)
+        window.dispatchEvent(new CustomEvent('cm-scroll-to-line-handled', { detail: { requestId: d.requestId } }))
+    }
+    // Always defer the first measurement by one frame so the editor has its
+    // final height after a rendered/raw view transition.
+    pendingScrollRAF = requestAnimationFrame(applyWhenLaidOut)
 }
 
 // ─── Assemble extensions ───
@@ -391,6 +436,9 @@ onMounted(() => {
 
 onUnmounted(() => {
     window.removeEventListener('cm-scroll-to-line', onScrollToLine)
+    if (pendingScrollRAF) cancelAnimationFrame(pendingScrollRAF)
+    pendingScrollRAF = null
+    pendingScrollRequestId = null
     if (scrollRAF) cancelAnimationFrame(scrollRAF)
     if (flashTimer) clearTimeout(flashTimer)
     if (selDebounceTimer) clearTimeout(selDebounceTimer)

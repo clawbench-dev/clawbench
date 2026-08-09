@@ -183,8 +183,14 @@
       </div>
     </div>
 
-    <!-- Region 3: Overlay nav (close only, always present, fixed size) -->
+    <!-- Region 3: Overlay navigation, always present and fixed size -->
     <div class="overlay-nav">
+      <button class="file-header-btn" :disabled="!canGoBack" @click.stop="$emit('navigateBack')" :title="t('file.overlay.back')">
+        <ChevronLeft :size="16" />
+      </button>
+      <button class="file-header-btn" :disabled="!canGoForward" @click.stop="$emit('navigateForward')" :title="t('file.overlay.forward')">
+        <ChevronRight :size="16" />
+      </button>
       <button class="file-header-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
         <X :size="14" />
       </button>
@@ -195,7 +201,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -214,9 +220,11 @@ const props = defineProps({
     showLineNumbers: Boolean,
     stickyScroll: Boolean,
     overlayOpen: Boolean,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
     editing: Boolean,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'exportHtml', 'fitWidth', 'toggleEdit'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'exportHtml', 'fitWidth', 'toggleEdit'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()

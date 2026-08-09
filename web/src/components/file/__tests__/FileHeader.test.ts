@@ -33,7 +33,7 @@ const i18n = createI18n({
           edit: 'Edit',
           finishEditing: 'Finish editing',
         },
-        overlay: { back: 'Back' },
+        overlay: { back: 'Back', forward: 'Forward' },
       },
     },
   },
@@ -167,6 +167,16 @@ describe('FileHeader', () => {
     const wrapper = mountHeader()
     const btns = wrapper.findAll('.file-header-btn')
     expect(btns.length).toBeGreaterThan(0)
+  })
+
+  it('emits file navigation events and disables unavailable directions', async () => {
+    const wrapper = mountHeader({ canGoBack: true, canGoForward: false })
+    const navButtons = wrapper.findAll('.overlay-nav .file-header-btn')
+    expect(navButtons[0].attributes('disabled')).toBeUndefined()
+    expect(navButtons[1].attributes('disabled')).toBeDefined()
+
+    await navButtons[0].trigger('click')
+    expect(wrapper.emitted('navigateBack')).toBeTruthy()
   })
 
   it('emits toggleView when handleToggleView is called', async () => {

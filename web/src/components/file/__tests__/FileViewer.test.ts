@@ -79,6 +79,7 @@ vi.mock('@/composables/useFileNavStack.ts', () => ({
   useFileNavStack: () => ({
     overlayOpen: { value: false },
     canGoBack: { value: false },
+    canGoForward: { value: false },
   }),
 }))
 

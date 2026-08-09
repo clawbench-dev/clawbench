@@ -11,6 +11,8 @@
       :show-line-numbers="showLineNumbers"
       :sticky-scroll="stickyScroll"
       :overlay-open="fileNav.overlayOpen.value"
+      :can-go-back="fileNav.canGoBack.value"
+      :can-go-forward="fileNav.canGoForward.value"
       :editing="editing"
       @delete="emit('delete', file.path)"
       @toggle-view="emit('toggleView')"
@@ -25,6 +27,8 @@
       @toggle-sticky-scroll="toggleStickyScroll"
       @refresh="emit('refresh')"
       @overlay-close="emit('overlayClose')"
+      @navigate-back="emit('navigateBack')"
+      @navigate-forward="emit('navigateForward')"
       @share-external="emit('shareExternal')"
       @export-html="handleExportHtml"
       @fit-width="handleFitWidth"
@@ -130,6 +134,7 @@
           @delete="emit('delete', file.path)"
           @show-details="emit('showDetails')"
           @open-git-history="emit('openGitHistory')"
+          @open-file="emit('openFile', $event)"
         />
         <!-- Source/raw mode: a single CodeMirrorViewer for both browse and edit
              (editable toggles), so scroll survives the edit toggle. -->
@@ -269,7 +274,7 @@ const props = defineProps({
     markdownViewMode: String,
     externalLoading: Boolean,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'shareExternal'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal'])
 
 const fileNav = useFileNavStack()
 
@@ -579,6 +584,11 @@ onMounted(() => {
 
 // Save/restore scroll position when switching files
 watch(() => props.file, (f, oldF) => {
+    // Capture the pane being left synchronously. Relying only on scroll events
+    // can miss the final position when navigation follows a smooth scroll.
+    if (oldF?.path && scrollEl) {
+        scrollPositions.set(oldF.path, scrollEl.scrollTop)
+    }
     // Stop listening on old scroll container
     detachScrollListener()
 

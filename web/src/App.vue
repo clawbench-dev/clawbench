@@ -135,6 +135,8 @@
                       @close-git-history="fileHistoryDrawer.close()"
                       @open-file="handleOverlayOpenFile"
                       @overlay-close="handleOverlayClose"
+                      @navigate-back="handleFileHistoryBack"
+                      @navigate-forward="handleFileHistoryForward"
                     />
                     <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
                       <template v-if="recentFileEntries.length">
@@ -542,7 +544,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
     const savedFile = loadOpenFile()
     if (savedFile) {
       const ok = await store.selectFile(savedFile)
-      if (ok) fileNav.openFile(savedFile)
+      if (ok) fileNav.openFile(savedFile, { viewMode: markdownViewMode.value })
     }
   }
   await sessionIdentity.initSessionFromAPI()
@@ -1078,7 +1080,7 @@ async function initializeApp() {
   const savedFile = loadOpenFile()
   if (savedFile) {
     const ok = await store.selectFile(savedFile)
-    if (ok) fileNav.openFile(savedFile)
+    if (ok) fileNav.openFile(savedFile, { viewMode: markdownViewMode.value })
   }
   return true
 }
@@ -1216,7 +1218,7 @@ async function handleSelectFile(path) {
     const ok = await store.selectFile(path)
     if (ok) {
         switchTab('view')
-        fileNav.openFile(path)
+        fileNav.openFile(path, { viewMode: markdownViewMode.value })
     }
 }
 
@@ -1224,8 +1226,8 @@ async function handleBrowseSelectFile(path) {
     if (fileManagerRef.value?.multiSelectState?.active) return
     const ok = await store.selectFile(path)
     if (ok) {
-        fileNav.openFile(path)
         switchTab('view')
+        fileNav.openFile(path, { viewMode: markdownViewMode.value })
     }
 }
 
@@ -1233,8 +1235,9 @@ async function handleTaskOpenFile(filePath, lineStart) {
     const ok = await store.selectFile(filePath)
     if (ok) {
         switchTab('view')
-        fileNav.openFile(filePath)
-        if (lineStart) scrollToLine(lineStart)
+        if (lineStart) markdownViewMode.value = 'raw'
+        fileNav.openFile(filePath, { lineStart, viewMode: markdownViewMode.value })
+        if (lineStart) scrollToLine(lineStart, undefined, filePath)
     }
 }
 
@@ -1242,8 +1245,27 @@ function handleOverlayClose() {
     closeOverlayAndSync()
 }
 
+async function handleFileHistoryBack() {
+    const path = fileNav.goBack()
+    const location = fileNav.currentLocation.value
+    if (!path || !location) return
+    if (location.viewMode) markdownViewMode.value = location.viewMode
+    const ok = await store.selectFile(path)
+    if (ok && location.lineStart) scrollToLine(location.lineStart, location.lineEnd, path)
+}
+
+async function handleFileHistoryForward() {
+    const path = fileNav.goForward()
+    const location = fileNav.currentLocation.value
+    if (!path || !location) return
+    if (location.viewMode) markdownViewMode.value = location.viewMode
+    const ok = await store.selectFile(path)
+    if (ok && location.lineStart) scrollToLine(location.lineStart, location.lineEnd, path)
+}
+
 async function handleOverlayOpenFile(payload) {
     const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
+    fileNav.updateCurrent({ viewMode: markdownViewMode.value })
     // Try as directory first — navigate into dir and close overlay
     if (!path.startsWith('/')) {
         try {
@@ -1263,8 +1285,8 @@ async function handleOverlayOpenFile(payload) {
     const ok = await store.selectFile(path)
     if (ok) {
         if (lineStart) markdownViewMode.value = 'raw'
-        fileNav.openFile(path)
-        if (lineStart) scrollToLine(lineStart, lineEnd)
+        fileNav.openFile(path, { lineStart, lineEnd, viewMode: markdownViewMode.value })
+        if (lineStart) scrollToLine(lineStart, lineEnd, path)
         if (isExternal) {
             toast.show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
         }
@@ -1272,20 +1294,22 @@ async function handleOverlayOpenFile(payload) {
 }
 
 async function handleAppHeaderRecentFileSelect(path) {
+    fileNav.updateCurrent({ viewMode: markdownViewMode.value })
     const ok = await store.selectFile(path)
     if (ok) {
         switchTab('view')
-        fileNav.openFile(path)
+        fileNav.openFile(path, { viewMode: markdownViewMode.value })
     }
 }
 
 function handleOpenFileOverlay(e) {
     const { path, lineStart, lineEnd } = e.detail || {}
     if (!path) return
+    fileNav.updateCurrent({ viewMode: markdownViewMode.value })
     switchTab('view')
     if (lineStart) markdownViewMode.value = 'raw'
-    fileNav.openFile(path)
-    if (lineStart) scrollToLine(lineStart, lineEnd)
+    fileNav.openFile(path, { lineStart, lineEnd, viewMode: markdownViewMode.value })
+    if (lineStart) scrollToLine(lineStart, lineEnd, path)
 }
 
 function onTaskCardClick(taskId) {
@@ -1790,16 +1814,43 @@ function handleOpenTerminal(cwd) {
     switchTab('terminal')
 }
 
-function scrollToLine(line, lineEnd) {
+let activeLineScrollCancel = null
+let lineScrollRequestId = 0
+
+function scrollToLine(line, lineEnd, path = store.state.currentFile?.path) {
     const startLine = Math.max(1, line)
     const endLine = Math.min(lineEnd && lineEnd > startLine ? lineEnd : startLine, startLine + 200)
-    // CodeMirror-based viewers (code/raw files) scroll internally via this event
-    window.dispatchEvent(new CustomEvent('cm-scroll-to-line', { detail: { line: startLine, lineEnd } }))
     const selector = `.code-line[data-line="${startLine}"]`
-    const maxAttempts = 30
+    const requestId = ++lineScrollRequestId
+    const maxAttempts = 60
     let attempts = 0
+    let handled = false
+
+    activeLineScrollCancel?.()
+
+    function cleanup() {
+        window.removeEventListener('cm-scroll-to-line-handled', onHandled)
+        if (activeLineScrollCancel === cleanup) activeLineScrollCancel = null
+    }
+
+    function onHandled(e) {
+        if (e.detail?.requestId !== requestId) return
+        handled = true
+        cleanup()
+    }
+
+    activeLineScrollCancel = cleanup
+    window.addEventListener('cm-scroll-to-line-handled', onHandled)
+
     function tryScroll() {
         attempts++
+        // CodeMirror may mount asynchronously when a rendered Markdown file is
+        // switched to source mode. Retry the same request until it acknowledges it.
+        window.dispatchEvent(new CustomEvent('cm-scroll-to-line', {
+            detail: { line: startLine, lineEnd, path, requestId },
+        }))
+        if (handled) return
+
         const firstEl = document.querySelector(selector)
         if (firstEl) {
             // Cancel any pending scroll-position restore in FileViewer
@@ -1814,13 +1865,16 @@ function scrollToLine(line, lineEnd) {
                     el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
                 }
             }
+            cleanup()
             return
         }
         if (attempts < maxAttempts) {
-            nextTick(tryScroll)
+            requestAnimationFrame(tryScroll)
+        } else {
+            cleanup()
         }
     }
-    nextTick(tryScroll)
+    requestAnimationFrame(tryScroll)
 }
 
 
@@ -2116,6 +2170,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+    activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()
     window.removeEventListener('clawbench-foreground', handleForeground)

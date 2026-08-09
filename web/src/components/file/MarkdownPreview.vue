@@ -54,6 +54,9 @@ const props = defineProps<{
     wordWrap?: boolean
     showLineNumbers?: boolean
 }>()
+const emit = defineEmits<{
+    openFile: [payload: { path: string; lineStart?: number; lineEnd?: number }]
+}>()
 
 const renderedHtml = ref('')
 const bodyRef = ref<HTMLElement | null>(null)
@@ -109,7 +112,7 @@ const { handleDblClick } = useDoubleClickCopy({
     },
 })
 
-const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath } = useFilePathAnnotation()
+const { annotateFilePaths, verifyFilePaths, resolveRelativePath } = useFilePathAnnotation()
 
 function handleClick(event: MouseEvent) {
     // Code block header buttons (copy/wrap)
@@ -146,7 +149,11 @@ function handleClick(event: MouseEvent) {
         const lineStart = btn.getAttribute('data-line-start')
         const lineEnd = btn.getAttribute('data-line-end')
         if (filePath) {
-            openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
+            emit('openFile', {
+                path: filePath,
+                lineStart: lineStart ? parseInt(lineStart, 10) : undefined,
+                lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined,
+            })
         }
         return
     }
@@ -167,10 +174,13 @@ function handleClick(event: MouseEvent) {
             }
         }
     }
-    handleDblClick(event, (href) => {
+    handleDblClick(event, (href, lineStart, lineEnd) => {
+        event.stopPropagation()
+        const anchor = target?.closest<HTMLAnchorElement>('a[href]')
+        const annotatedPath = anchor?.getAttribute('data-file-path')
         const currentDir = props.file?.path ? dirName(props.file.path) : ''
-        const resolvedPath = resolveRelativePath(href, currentDir)
-        openFilePath(resolvedPath)
+        const resolvedPath = annotatedPath || resolveRelativePath(href, currentDir)
+        emit('openFile', { path: resolvedPath, lineStart, lineEnd })
     })
 }
 

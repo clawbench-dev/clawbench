@@ -143,6 +143,31 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     cancelSpy.mockRestore()
   })
 
+  it('acknowledges matching delayed line navigation and ignores another file', async () => {
+    const wrapper = mountViewer({
+      file: { path: '/tmp/current.ts', name: 'current.ts' },
+      content: 'line1\nline2\nline3\nline4\nline5\n',
+    })
+    await sleep(80)
+    const handled = vi.fn()
+    window.addEventListener('cm-scroll-to-line-handled', handled)
+
+    window.dispatchEvent(new CustomEvent('cm-scroll-to-line', {
+      detail: { line: 4, path: '/tmp/other.ts', requestId: 1 },
+    }))
+    expect(handled).not.toHaveBeenCalled()
+
+    window.dispatchEvent(new CustomEvent('cm-scroll-to-line', {
+      detail: { line: 4, path: '/tmp/current.ts', requestId: 2 },
+    }))
+    await sleep(20)
+    expect(handled).toHaveBeenCalledTimes(1)
+    expect(handled.mock.calls[0][0].detail).toEqual({ requestId: 2 })
+
+    window.removeEventListener('cm-scroll-to-line-handled', handled)
+    wrapper.unmount()
+  })
+
   it('toggles line numbers via prop', async () => {
     const wrapper = mountViewer({ showLineNumbers: true })
     await sleep(50)
