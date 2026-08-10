@@ -35,8 +35,8 @@ describe('useWakeLock', () => {
       configurable: true,
     })
 
-    // Reset AndroidNative
-    ;(globalThis as any).AndroidNative = undefined
+    // Reset ClawBenchNative
+    ;(globalThis as any).ClawBenchNative = undefined
 
     // Reset document visibilityState
     Object.defineProperty(document, 'visibilityState', {
@@ -93,7 +93,7 @@ describe('useWakeLock', () => {
 
   it('acquires via Android bridge when Web API unavailable', async () => {
     const mockSetKeepScreenOn = vi.fn()
-    ;(globalThis as any).AndroidNative = { setKeepScreenOn: mockSetKeepScreenOn }
+    ;(globalThis as any).ClawBenchNative = { setKeepScreenOn: mockSetKeepScreenOn }
 
     // Remove Web Wake Lock API
     Object.defineProperty(globalThis, 'navigator', {
@@ -110,7 +110,7 @@ describe('useWakeLock', () => {
 
   it('releases via Android bridge', async () => {
     const mockSetKeepScreenOn = vi.fn()
-    ;(globalThis as any).AndroidNative = { setKeepScreenOn: mockSetKeepScreenOn }
+    ;(globalThis as any).ClawBenchNative = { setKeepScreenOn: mockSetKeepScreenOn }
 
     const { acquire, release } = await importUseWakeLock()
     await acquire()

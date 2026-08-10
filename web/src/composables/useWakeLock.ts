@@ -4,7 +4,7 @@
  * Manages a screen wake lock to prevent the display from turning off.
  * Uses two complementary mechanisms:
  *   1. Web Wake Lock API (navigator.wakeLock) — standard, works in all modern browsers
- *   2. Android native bridge (AndroidNative.setKeepScreenOn) — extra safety in WebView
+ *   2. Native bridge (ClawBenchNative.setKeepScreenOn) — extra safety in WebView
  *
  * The wake lock is automatically released when the page becomes hidden
  * (e.g. user switches tabs). We re-acquire on visibility change if the
@@ -15,6 +15,7 @@
 
 import { ref } from 'vue'
 import { appLog } from '@/utils/appLog'
+import { getNative } from '@/utils/clawbenchNative'
 
 const TAG = 'WakeLock'
 
@@ -53,17 +54,15 @@ async function _doAcquire() {
     appLog.w(TAG, 'Web Wake Lock acquire failed:', e)
   }
 
-  // 2. Android native bridge (extra safety — works even when WebView doesn't focus)
+  // 2. Native bridge (setKeepScreenOn) — extra safety in WebView
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = (window as any).AndroidNative
+    const native = getNative()
     if (native?.setKeepScreenOn) {
       native.setKeepScreenOn(true)
-      appLog.i(TAG, 'Android setKeepScreenOn(true)')
-      // Even if Web API failed, Android bridge may succeed
+      appLog.i(TAG, 'Native setKeepScreenOn(true)')
       if (!held.value) held.value = true
     } else if (native) {
-      appLog.w(TAG, 'Android bridge exists but setKeepScreenOn method missing — APP needs update')
+      appLog.w(TAG, 'Native bridge exists but setKeepScreenOn method missing — host needs update')
     }
   } catch { /* not in app mode */ }
 }
@@ -90,13 +89,12 @@ function release() {
     webWakeLock = null
   }
 
-  // Android native bridge
+  // Native bridge
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = (window as any).AndroidNative
+    const native = getNative()
     if (native?.setKeepScreenOn) {
       native.setKeepScreenOn(false)
-      appLog.i(TAG, 'Android setKeepScreenOn(false)')
+      appLog.i(TAG, 'Native setKeepScreenOn(false)')
     }
   } catch { /* not in app mode */ }
 

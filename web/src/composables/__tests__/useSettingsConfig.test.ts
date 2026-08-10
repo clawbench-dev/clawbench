@@ -418,10 +418,10 @@ describe('useSettingsConfig', () => {
   })
 
   describe('push_mode sync', () => {
-    it('calls AndroidNative.setNativePushEnabled on loadConfig', async () => {
+    it('calls ClawBenchNative.setNativePushEnabled on loadConfig', async () => {
       const mockSetNativePushEnabled = vi.fn()
-      const original = (window as any).AndroidNative
-      ;(window as any).AndroidNative = { setNativePushEnabled: mockSetNativePushEnabled }
+      const original = (window as any).ClawBenchNative
+      ;(window as any).ClawBenchNative = { setNativePushEnabled: mockSetNativePushEnabled }
 
       // Mock API to return push_mode
       mockedApiGet.mockResolvedValueOnce({ push_mode: 'native' })
@@ -433,16 +433,16 @@ describe('useSettingsConfig', () => {
 
       // Restore
       if (original) {
-        ;(window as any).AndroidNative = original
+        ;(window as any).ClawBenchNative = original
       } else {
-        delete (window as any).AndroidNative
+        delete (window as any).ClawBenchNative
       }
     })
 
-    it('calls AndroidNative.setNativePushEnabled(false) when push_mode is dingtalk', async () => {
+    it('calls ClawBenchNative.setNativePushEnabled(false) when push_mode is dingtalk', async () => {
       const mockSetNativePushEnabled = vi.fn()
-      const original = (window as any).AndroidNative
-      ;(window as any).AndroidNative = { setNativePushEnabled: mockSetNativePushEnabled }
+      const original = (window as any).ClawBenchNative
+      ;(window as any).ClawBenchNative = { setNativePushEnabled: mockSetNativePushEnabled }
 
       mockedApiGet.mockResolvedValueOnce({ push_mode: 'dingtalk' })
 
@@ -451,9 +451,9 @@ describe('useSettingsConfig', () => {
       expect(mockSetNativePushEnabled).toHaveBeenCalledWith(false)
 
       if (original) {
-        ;(window as any).AndroidNative = original
+        ;(window as any).ClawBenchNative = original
       } else {
-        delete (window as any).AndroidNative
+        delete (window as any).ClawBenchNative
       }
     })
   })

@@ -6,6 +6,7 @@ import { playNotificationSound } from './useNotificationSound'
 import { gt } from './useLocale'
 import { serverConfig } from './useSettingsConfig'
 import { stripMarkdownPreview } from '@/utils/format'
+import { getNative } from '@/utils/clawbenchNative'
 
 // Event types from server
 interface ServerEvent {
@@ -160,8 +161,7 @@ async function fetchPendingEvents() {
             localStorage.setItem(LAST_SEEN_KEY, latestId)
             // Sync cursor to Android SharedPreferences
             try {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                ;(window as any).AndroidNative?.updateLastSeenEventId(latestId)
+                getNative()?.updateLastSeenEventId(latestId)
             } catch {}
         }
     } catch {
@@ -249,8 +249,7 @@ function connect() {
                         // fetchPendingEvents() won't re-deliver these events when
                         // the app switches to background.
                         try {
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            ;(window as any).AndroidNative?.updateLastSeenEventId(msg.id)
+                            getNative()?.updateLastSeenEventId(msg.id)
                         } catch {}
                     }
                 }

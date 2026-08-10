@@ -2,6 +2,7 @@ import { reactive, ref } from 'vue'
 import { apiGet, apiPatch, apiPost } from '@/utils/api'
 import i18n, { STORAGE_KEY as LOCALE_KEY, setLocaleCookie } from '@/i18n'
 import { useAgents } from '@/composables/useAgents'
+import { getNative } from '@/utils/clawbenchNative'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
 
@@ -409,8 +410,7 @@ export function useSettingsConfig() {
   function syncPushModeToNative() {
     try {
       const pushMode = serverConfig.value.push_mode as string || 'native'
-      const native = (window as unknown as { AndroidNative?: { setNativePushEnabled?: (v: boolean) => void } }).AndroidNative
-      native?.setNativePushEnabled?.(pushMode === 'native')
+      getNative()?.setNativePushEnabled?.(pushMode === 'native')
     } catch { /* not in app mode */ }
   }
 
