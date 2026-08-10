@@ -695,7 +695,7 @@ onUnmounted(() => {
     border: none;
     background: transparent;
     cursor: pointer;
-    color: #fff;
+    color: var(--text-primary);
     border-radius: 0;
     font-size: 12px;
     font-weight: 500;
@@ -722,7 +722,7 @@ onUnmounted(() => {
     white-space: nowrap;
     min-width: 0;
     line-height: 1.4;
-    color: #fff;
+    color: var(--text-primary);
 }
 
 /* Branch badge */
@@ -737,7 +737,7 @@ onUnmounted(() => {
     border-radius: 0;
     font-size: 12px;
     font-weight: 500;
-    color: #fff;
+    color: var(--text-primary);
     flex: 0 1 auto;
     min-width: 0;
     max-width: 100%;
@@ -764,7 +764,7 @@ onUnmounted(() => {
     border-radius: 0;
     font-size: 12px;
     font-weight: 500;
-    color: #fff;
+    color: var(--text-primary);
     flex: 0 1 auto;
     min-width: 0;
     max-width: 100%;
@@ -796,12 +796,12 @@ onUnmounted(() => {
     white-space: nowrap;
     min-width: 0;
     line-height: 1.4;
-    color: #fff;
+    color: var(--text-primary);
 }
 
 /* Empty state text when no file is open — visually distinct from a real file name */
 .current-file-badge .no-file-name {
-    color: color-mix(in srgb, #fff 55%, transparent);
+    color: color-mix(in srgb, var(--text-primary) 55%, transparent);
     font-weight: 400;
 }
 
