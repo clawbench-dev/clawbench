@@ -122,16 +122,22 @@ func TestACPInitRegistration(t *testing.T) {
 
 	t.Run("grok", func(t *testing.T) {
 		p := mustLookup(t, "grok")
-		// Grok ACP uses generic remaps (no ACP plugin registered)
-		if p.ACP != nil {
-			t.Fatal("expected nil ACP plugin for grok (redundant InputRemaps removed)")
+		// Grok registers its own ACP plugin with tool mapping + input remaps.
+		if p.ACP == nil {
+			t.Fatal("expected ACP plugin for grok")
 		}
 		remaps := backends.LookupACPRemaps("grok")
 		if remaps == nil {
-			t.Fatal("expected generic fallback remaps for grok")
+			t.Fatal("expected grok-specific remaps")
 		}
 		if remaps["filePath"] != "file_path" {
-			t.Errorf("expected generic filePath->file_path for grok, got %q", remaps["filePath"])
+			t.Errorf("expected filePath->file_path for grok, got %q", remaps["filePath"])
+		}
+		if remaps["replaceAll"] != "replace_all" {
+			t.Errorf("expected replaceAll->replace_all for grok, got %q", remaps["replaceAll"])
+		}
+		if prefixes := backends.LookupACPToolCallIDPrefixes("grok"); len(prefixes) == 0 {
+			t.Error("expected grok toolCallID prefixes to be registered")
 		}
 	})
 

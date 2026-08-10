@@ -186,8 +186,9 @@ func TestBackendSupportsCLI(t *testing.T) {
 	assert.True(t, BackendSupportsCLI("codex")) // custom backend also counts as CLI
 	assert.True(t, BackendSupportsCLI("vecli"))
 
-	// Unregistered backends report false
-	assert.False(t, BackendSupportsCLI("grok"), "ACP-only backend without CLI factory should report false")
+	// Backends not in the test stub map report false (grok is ACP-first but
+	// also registers a CLI fallback; it's simply absent from the stub map).
+	assert.False(t, BackendSupportsCLI("grok"))
 	assert.False(t, BackendSupportsCLI("unsupported"))
 	assert.False(t, BackendSupportsCLI(""))
 }

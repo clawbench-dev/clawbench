@@ -6,8 +6,8 @@ import (
 )
 
 func init() {
-	// Grok Build is ACP-only: no ai.RegisterBackend (CLI factory) is registered,
-	// so chat always uses the ACP stdio transport (grok agent stdio).
+	// Grok prefers ACP over stdio (grok agent stdio); a streaming-json CLI
+	// fallback is registered in cli.go via ai.RegisterBackend("grok", ...).
 	backends.Register(&backends.BackendPlugin{
 		ID: "grok",
 		Spec: model.BackendSpec{
@@ -17,6 +17,10 @@ func init() {
 			ACPLoadSession:       true,
 			InstallCmd:           "curl -fsSL https://x.ai/cli/install.sh | bash",
 			SortOrder:            13,
+		},
+		ACP: &backends.ACPPlugin{
+			ToolCallIDPrefixes: GrokACPTCIDPrefixes,
+			InputRemaps:        GrokACPRemaps,
 		},
 	})
 }

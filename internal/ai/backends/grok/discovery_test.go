@@ -111,6 +111,64 @@ func TestGrokDefaults_FirstIsDefault(t *testing.T) {
 	assert.Equal(t, "grok-4.5", models[0].ID)
 }
 
+func TestParseGrokModels_DashBulletsAndDefaultLine(t *testing.T) {
+	output := `Model 'grok' is using its own API key.
+
+Default model: grok
+
+Available models:
+  - grok-4.5
+  * grok (default)
+  - grok-code
+`
+	models := parseGrokModels(output)
+	require.Len(t, models, 3)
+
+	ids := map[string]bool{}
+	defaultIDs := []string{}
+	for _, m := range models {
+		ids[m.ID] = true
+		if m.Default {
+			defaultIDs = append(defaultIDs, m.ID)
+		}
+	}
+	assert.True(t, ids["grok"])
+	assert.True(t, ids["grok-4.5"])
+	assert.True(t, ids["grok-code"])
+	assert.Equal(t, []string{"grok"}, defaultIDs, "only the (default)-marked model is default")
+	assert.Equal(t, "Grok Code", models[2].Name, "known dash-list models should use pretty names")
+}
+
+func TestParseGrokModels_DedupesIDs(t *testing.T) {
+	output := `Available models:
+  * grok-4.5 (default)
+  - grok-4.5
+  * grok-build
+`
+	models := parseGrokModels(output)
+	require.Len(t, models, 2, "duplicate model IDs should be collapsed")
+	assert.Equal(t, "grok-4.5", models[0].ID)
+	assert.True(t, models[0].Default)
+	assert.Equal(t, "grok-build", models[1].ID)
+	assert.False(t, models[1].Default)
+}
+
+func TestParseGrokModels_DefaultLineFallsBackWhenNoSuffix(t *testing.T) {
+	output := `Default model: grok-3
+
+Available models:
+  - grok-4.5
+  - grok-3
+  - grok-build
+`
+	models := parseGrokModels(output)
+	require.Len(t, models, 3)
+	assert.Equal(t, "grok-3", models[1].ID)
+	assert.True(t, models[1].Default, "the model named by 'Default model:' should be default")
+	assert.False(t, models[0].Default)
+	assert.False(t, models[2].Default)
+}
+
 func TestDiscoverGrokModels_Registered(t *testing.T) {
 	// model discovery function should be registered via init()
 	registry := model.GetBackendRegistry()

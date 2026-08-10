@@ -3,6 +3,7 @@ package grok
 import (
 	"testing"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 
 	"github.com/stretchr/testify/assert"
@@ -37,16 +38,18 @@ func TestGrokBackendPlugin_ThinkingEffortLevels(t *testing.T) {
 		plugin.Spec.ThinkingEffortLevels)
 }
 
-func TestGrokBackendPlugin_NoACPPlugin(t *testing.T) {
+func TestGrokBackendPlugin_ACPToolMapping(t *testing.T) {
 	plugin := backends.Lookup("grok")
 	require.NotNil(t, plugin)
-	assert.Nil(t, plugin.ACP, "grok should have nil ACP plugin (redundant InputRemaps removed)")
+	require.NotNil(t, plugin.ACP, "grok should register ACP tool mapping data")
+	assert.NotEmpty(t, plugin.ACP.ToolCallIDPrefixes, "grok should map ACP toolCallID prefixes")
+	assert.NotEmpty(t, plugin.ACP.InputRemaps, "grok should map ACP input field names")
+	assert.Equal(t, "Read", plugin.ACP.ToolCallIDPrefixes["read_file"])
+	assert.Equal(t, "Edit", plugin.ACP.ToolCallIDPrefixes["search_replace"])
+	assert.Equal(t, "old_string", plugin.ACP.InputRemaps["oldString"])
 }
 
-func TestGrokBackendPlugin_NoCLIFactory(t *testing.T) {
-	// Grok is ACP-only: no CLI plugin and no CLI backend factory.
-	plugin := backends.Lookup("grok")
-	require.NotNil(t, plugin)
-	assert.Nil(t, plugin.CLI, "grok should not have a CLI plugin")
-	assert.Nil(t, plugin.Custom, "grok should not have a custom plugin")
+func TestGrokBackendPlugin_RegisteredCLIFactory(t *testing.T) {
+	// Grok registers a streaming-json CLI fallback via ai.RegisterBackend.
+	assert.NotNil(t, ai.LookupBackendFactoryForTest("grok"), "grok should have a CLI backend factory")
 }
