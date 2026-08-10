@@ -41,11 +41,15 @@ function setupXHRMock() {
           xhrSendHandler(xhr, formData)
         }
       }),
+      abort: vi.fn(() => {
+        if (xhr.onabort) xhr.onabort()
+      }),
       timeout: 0,
       upload: { onprogress: null as ((e: any) => void) | null },
       onload: null as (() => void) | null,
       onerror: null as (() => void) | null,
       ontimeout: null as (() => void) | null,
+      onabort: null as (() => void) | null,
       responseText: '',
       status: 200,
     }
@@ -479,6 +483,39 @@ describe('useFileUpload', () => {
       await upload.uploadAndAttach([makeFile('fail.txt')])
 
       // Failed entries are removed from pendingFiles
+      expect(upload.pendingFiles.value).toHaveLength(0)
+      expect(upload.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('aborts a removed upload and ignores a late success response', async () => {
+      let xhrInstance: any
+      xhrSendHandler = (xhr) => { xhrInstance = xhr }
+
+      const upload = useFileUpload()
+      const uploadPromise = upload.uploadAndAttach([makeFile('cancel.txt')])
+
+      expect(upload.pendingFiles.value).toHaveLength(1)
+      upload.removeFile(0)
+      respondSuccess(xhrInstance, '.clawbench/uploads/cancel.txt')
+      await uploadPromise
+
+      expect(xhrInstance.abort).toHaveBeenCalledTimes(1)
+      expect(upload.pendingFiles.value).toHaveLength(0)
+      expect(upload.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('aborts outstanding uploads when pending files are cleared', async () => {
+      let xhrInstance: any
+      xhrSendHandler = (xhr) => { xhrInstance = xhr }
+
+      const upload = useFileUpload()
+      const uploadPromise = upload.uploadAndAttach([makeFile('first.txt'), makeFile('second.txt')])
+
+      upload.clearPendingFiles()
+      respondSuccess(xhrInstance, '.clawbench/uploads/first.txt')
+      await uploadPromise
+
+      expect(xhrInstance.abort).toHaveBeenCalledTimes(1)
       expect(upload.pendingFiles.value).toHaveLength(0)
       expect(upload.attachedFiles.value).toHaveLength(0)
     })

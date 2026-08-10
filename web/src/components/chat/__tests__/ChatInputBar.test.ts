@@ -101,12 +101,18 @@ vi.mock('@/composables/useQuoteQuestion.ts', () => ({
   }),
 }))
 
+const mockUploadAndAttach = vi.fn()
 vi.mock('@/composables/useFileUpload.ts', () => ({
   useFileUpload: () => ({
     pendingFiles: { value: [] },
     attachedFiles: { value: [] },
     uploadingFiles: { value: [] },
     isDragOver: { value: false },
+    uploadAndAttach: (...args: unknown[]) => {
+      mockUploadAndAttach(...args)
+      return Promise.resolve()
+    },
+    removeFile: vi.fn(),
     onDragEnter: vi.fn(),
     onDragOver: vi.fn(),
     onDragLeave: vi.fn(),
@@ -1143,6 +1149,80 @@ describe('ChatInputBar', () => {
       expect(resumeBtn).toBeTruthy()
       await resumeBtn!.trigger('click')
       expect(wrapper.emitted('open-acp-sessions')).toBeTruthy()
+    })
+  })
+
+  describe('Image pasting in textarea', () => {
+    beforeEach(() => {
+      mockUploadAndAttach.mockClear()
+    })
+
+    it('handles image pasting from clipboard items', async () => {
+      const wrapper = mountBar()
+      const textarea = wrapper.find('.chat-textarea')
+      const preventDefault = vi.fn()
+
+      const imageFile = new File(['dummy'], 'screenshot.png', { type: 'image/png' })
+      const clipboardData = {
+        items: [
+          {
+            kind: 'file',
+            getAsFile: () => imageFile,
+          },
+        ],
+        getData: vi.fn(),
+      }
+
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.assign(event, { clipboardData, preventDefault })
+      textarea.element.dispatchEvent(event)
+
+      expect(preventDefault).toHaveBeenCalled()
+      expect(mockUploadAndAttach).toHaveBeenCalledTimes(1)
+      expect(mockUploadAndAttach).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ type: 'image/png' })]))
+    })
+
+    it('deduplicates duplicate image items in clipboard and uploads exactly once', async () => {
+      const wrapper = mountBar()
+      const textarea = wrapper.find('.chat-textarea')
+      const preventDefault = vi.fn()
+      const imageFile = new File(['dummy content'], 'test.png', { type: 'image/png' })
+      const dupImageFile = new File(['dummy content'], 'test.png', { type: 'image/png' })
+
+      const clipboardData = {
+        items: [
+          { kind: 'file', getAsFile: () => imageFile },
+          { kind: 'file', getAsFile: () => dupImageFile },
+        ],
+        getData: vi.fn(),
+      }
+
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.assign(event, { clipboardData, preventDefault })
+      textarea.element.dispatchEvent(event)
+
+      expect(preventDefault).toHaveBeenCalled()
+      expect(mockUploadAndAttach).toHaveBeenCalledTimes(1)
+      expect(mockUploadAndAttach.mock.calls[0][0]).toHaveLength(1)
+    })
+
+    it('handles data:image base64 text pasting', async () => {
+      const wrapper = mountBar()
+      const textarea = wrapper.find('.chat-textarea')
+      const preventDefault = vi.fn()
+
+      const base64Data = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+      const clipboardData = {
+        items: [],
+        getData: (format: string) => (format === 'text/plain' ? base64Data : ''),
+      }
+
+      const event = new Event('paste', { bubbles: true, cancelable: true })
+      Object.assign(event, { clipboardData, preventDefault })
+      textarea.element.dispatchEvent(event)
+
+      expect(preventDefault).toHaveBeenCalled()
+      expect(mockUploadAndAttach).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ type: 'image/png' })]))
     })
   })
 })

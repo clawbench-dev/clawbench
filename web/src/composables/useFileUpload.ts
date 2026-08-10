@@ -9,16 +9,19 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 // FileManagerContent) so that uploads initiated in the drawer are visible to
 // sendMessage in ChatPanelContent. Same pattern as useChatContext.
 
-interface PendingFile {
+export interface PendingFile {
   path: string
   previewUrl: string | null
   isImage: boolean
   uploading: boolean
   progress: number
   size: number
+  xhr?: XMLHttpRequest
+  cancelled?: boolean
 }
 
 const pendingFiles = ref<PendingFile[]>([])
+let uploadGeneration = 0
 
 // Upload progress for directory uploads (file manager)
 const dirUploading = ref(false)
@@ -69,6 +72,7 @@ export function useFileUpload() {
       if (dir) formData.append('dir', dir)
 
       const xhr = new XMLHttpRequest()
+      if (entry) entry.xhr = xhr
       xhr.open('POST', '/api/upload/file')
       xhr.timeout = 300000
 
@@ -81,6 +85,10 @@ export function useFileUpload() {
       }
 
       xhr.onload = () => {
+        if (entry?.cancelled) {
+          resolve(false)
+          return
+        }
         try {
           const data = JSON.parse(xhr.responseText)
           if (data.ok) {
@@ -112,6 +120,10 @@ export function useFileUpload() {
       }
 
       xhr.onerror = () => {
+        if (entry?.cancelled) {
+          resolve(false)
+          return
+        }
         if (entry) {
           entry.uploading = false
           if (previewUrl) URL.revokeObjectURL(previewUrl)
@@ -129,6 +141,10 @@ export function useFileUpload() {
       }
 
       xhr.ontimeout = () => {
+        if (entry?.cancelled) {
+          resolve(false)
+          return
+        }
         if (entry) {
           entry.uploading = false
           if (previewUrl) URL.revokeObjectURL(previewUrl)
@@ -138,6 +154,9 @@ export function useFileUpload() {
         toast.show(gt('upload.timeout'), { icon: '⚠️', type: 'error' })
         resolve(false)
       }
+
+      // Removing a pending card aborts the request without showing a network error.
+      xhr.onabort = () => resolve(false)
 
       xhr.send(formData)
     })
@@ -213,7 +232,9 @@ export function useFileUpload() {
       toast.show(gt('upload.tooManyFiles', { total: files.length, remaining }), { icon: '⚠️', type: 'error' })
     }
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
+    const generation = uploadGeneration
     for (const file of toUpload) {
+      if (generation !== uploadGeneration) break
       if (file.size > maxSizeBytes) {
         toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: '⚠️', type: 'error' })
         continue
@@ -236,10 +257,16 @@ export function useFileUpload() {
 
   function removeFile(index: number) {
     const f = pendingFiles.value[index]
-    if (f?.previewUrl) {
-      URL.revokeObjectURL(f.previewUrl)
-    }
+    if (f) cancelPendingFile(f)
     pendingFiles.value.splice(index, 1)
+  }
+
+  function cancelPendingFile(file: PendingFile) {
+    if (file.uploading) {
+      file.cancelled = true
+      file.xhr?.abort()
+    }
+    if (file.previewUrl) URL.revokeObjectURL(file.previewUrl)
   }
 
   function cleanupPreviewUrls() {
@@ -249,7 +276,8 @@ export function useFileUpload() {
   }
 
   function clearPendingFiles() {
-    cleanupPreviewUrls()
+    uploadGeneration++
+    pendingFiles.value.forEach(cancelPendingFile)
     pendingFiles.value = []
   }
 
