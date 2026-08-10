@@ -4,7 +4,8 @@ directories:
   output: release
   buildResources: build
 files:
-  - dist/**
+  - dist/
+  - package.json
   - "!**/node_modules/.cache"
 win:
   target: dir
