@@ -13,7 +13,7 @@ vi.mock('@/utils/lazyMermaid.ts', () => ({
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
-import { exportRenderedHtml } from '@/utils/exportHtml.ts'
+import { exportRenderedHtml, imageIssueReasonCode } from '@/utils/exportHtml.ts'
 
 describe('exportRenderedHtml', () => {
   beforeEach(() => {
@@ -341,6 +341,74 @@ describe('exportRenderedHtml', () => {
     el.remove()
 
     expect(result.skippedImages).toBe(1)
+  })
+
+  it('collects server-reported skip reasons into issues', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: {},
+        skipped: [{ path: 'images/huge.png', reason: 'exceeds 2MB limit' }],
+      }),
+    })
+
+    const el = createElement('<img src="/api/local-file/images/huge.png">')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+
+    expect(result.skippedImages).toBe(1)
+    expect(result.issues).toHaveLength(1)
+    expect(result.issues[0]).toMatchObject({ path: 'images/huge.png', reason: 'exceeds 2MB limit', kind: 'skipped' })
+    expect(imageIssueReasonCode(result.issues[0].reason)).toBe('too_large')
+  })
+
+  it('uses api_error reason for failed requests', async () => {
+    mockFetch.mockResolvedValue({ ok: false })
+
+    const el = createElement('<img src="/api/local-file/images/photo.png">')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+
+    expect(result.skippedImages).toBe(1)
+    expect(result.issues[0]).toMatchObject({ path: 'images/photo.png', reason: 'api_error', kind: 'skipped' })
+  })
+
+  it('uses network_error reason on thrown fetch', async () => {
+    mockFetch.mockRejectedValue(new Error('down'))
+
+    const el = createElement('<img src="/api/local-file/images/photo.png">')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+
+    expect(result.skippedImages).toBe(1)
+    expect(result.issues[0].reason).toBe('network_error')
+  })
+
+  it('reports external images as external-kind issues', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ results: {} }) })
+
+    const el = createElement('<img src="https://example.com/a.png">')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+
+    expect(result.externalImages).toBe(1)
+    expect(result.issues[0]).toMatchObject({ path: 'https://example.com/a.png', reason: 'external', kind: 'external' })
   })
 
   it('handles multiple local images', async () => {

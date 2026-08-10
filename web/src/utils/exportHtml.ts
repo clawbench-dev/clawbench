@@ -23,10 +23,22 @@ export interface ExportOptions {
     fileName: string
 }
 
+/** One image that could not be embedded into the exported HTML. */
+export interface ImageIssue {
+    /** Image path or URL as it appears in the markdown. */
+    path: string
+    /** Machine-readable reason code (see reasonText for display). */
+    reason: string
+    /** Whether it was a skipped local file or an external URL. */
+    kind: 'skipped' | 'external'
+}
+
 export interface ExportResult {
     html: string
     skippedImages: number
     externalImages: number
+    /** Per-image embed failure details. */
+    issues: ImageIssue[]
 }
 
 // ─── Image inlining ────────────────────────────────────────────────────────────
@@ -50,10 +62,11 @@ interface BatchBase64Response {
  * Extract image paths from /api/local-file/ URLs in the cloned DOM,
  * call batch-base64 API, and replace src with data URIs.
  */
-async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; external: number }> {
+async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; external: number; issues: ImageIssue[] }> {
     const imgs = Array.from(clone.querySelectorAll('img')) as HTMLImageElement[]
-    if (imgs.length === 0) return { skipped: 0, external: 0 }
+    if (imgs.length === 0) return { skipped: 0, external: 0, issues: [] }
 
+    const issues: ImageIssue[] = []
     let external = 0
     const pathToImg: Map<string, HTMLImageElement[]> = new Map()
 
@@ -65,9 +78,10 @@ async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; exte
         // Skip data URIs (already self-contained)
         if (src.startsWith('data:')) continue
 
-        // Skip external URLs (will need internet)
+        // External URLs (will need internet)
         if (/^(https?:|\/\/)/i.test(src)) {
             external++
+            issues.push({ path: src, reason: 'external', kind: 'external' })
             continue
         }
 
@@ -87,11 +101,16 @@ async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; exte
         else pathToImg.set(imgPath, [img])
     }
 
-    if (pathToImg.size === 0) return { skipped: 0, external }
+    if (pathToImg.size === 0) return { skipped: 0, external, issues }
 
     // Batch fetch base64
     const paths = Array.from(pathToImg.keys())
-    let skipped: number
+    let skipped = 0
+
+    const addSkipped = (path: string, reason: string) => {
+        skipped++
+        issues.push({ path, reason, kind: 'skipped' })
+    }
 
     try {
         const resp = await fetch('/api/file/batch-base64', {
@@ -102,7 +121,8 @@ async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; exte
 
         if (!resp.ok) {
             // API failed — all local images keep original src
-            return { skipped: paths.length, external }
+            for (const p of paths) addSkipped(p, 'api_error')
+            return { skipped, external, issues }
         }
 
         const data: BatchBase64Response = await resp.json()
@@ -118,14 +138,18 @@ async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; exte
             pathToImg.delete(imgPath)
         }
 
-        // Remaining in pathToImg are paths that weren't in results (server skipped or failed)
-        skipped = pathToImg.size
+        // Remaining in pathToImg are paths that weren't in results (server skipped).
+        // Use the server-reported reason when available.
+        const skippedByPath = new Map((data.skipped || []).map(s => [s.path, s.reason]))
+        for (const p of pathToImg.keys()) {
+            addSkipped(p, skippedByPath.get(p) || 'unknown')
+        }
     } catch {
         // Network error — images keep original src
-        skipped = paths.length
+        for (const p of paths) addSkipped(p, 'network_error')
     }
 
-    return { skipped, external }
+    return { skipped, external, issues }
 }
 
 // ─── CSS inlining (stylesheet serialization) ───────────────────────────────────
@@ -593,7 +617,7 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
     //     so we leave them untouched.
 
     // 2. Inline images
-    const { skipped: skippedImages, external: externalImages } = await inlineImages(clone)
+    const { skipped: skippedImages, external: externalImages, issues } = await inlineImages(clone)
 
     // 3. Handle failed Mermaid diagrams
     handleFailedMermaid(clone)
@@ -764,5 +788,30 @@ ${lightboxJs}
 </body>
 </html>`
 
-    return { html, skippedImages, externalImages }
+    return { html, skippedImages, externalImages, issues }
+}
+
+/**
+ * Map a machine-readable embed-failure reason to a stable i18n reason code.
+ * Frontend-generated reasons use their own codes; backend `reason` strings
+ * (from /api/file/batch-base64 `skipped[].reason`) are mapped to known codes.
+ * Returns a code that resolves under `file.header.exportHtmlReason.<code>`.
+ */
+export function imageIssueReasonCode(reason: string): string {
+    const backendToCode: Record<string, string> = {
+        'exceeds 2MB limit': 'too_large',
+        'total size exceeded': 'total_too_large',
+        'not an image file': 'not_image',
+        'access denied': 'access_denied',
+        'read error': 'read_error',
+        'file not found': 'not_found',
+    }
+    if (backendToCode[reason]) return backendToCode[reason]
+    // Frontend-generated codes (external, api_error, network_error, unknown) pass through.
+    return reason
+}
+
+/** Resolve an issue reason to a display i18n key. */
+export function imageIssueReasonKey(reason: string): string {
+    return `file.header.exportHtmlReason.${imageIssueReasonCode(reason)}`
 }

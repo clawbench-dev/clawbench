@@ -251,7 +251,7 @@ import { store } from '@/stores/app.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
-import { exportRenderedHtml } from '@/utils/exportHtml.ts'
+import { exportRenderedHtml, imageIssueReasonKey } from '@/utils/exportHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
@@ -688,9 +688,13 @@ async function handleExportHtml() {
         const htmlName = props.file.name.replace(/\.md$/i, '.html')
         downloadBlob(result.html, htmlName, 'text/html')
         const msgs = [t('file.header.exportHtmlSuccess')]
-        if (result.skippedImages > 0) msgs.push(t('file.header.exportHtmlSkippedImages', { n: result.skippedImages }))
-        if (result.externalImages > 0) msgs.push(t('file.header.exportHtmlSkippedImages', { n: result.externalImages }))
-        toast.show(msgs.join('. '), { icon: '✅', type: 'success', duration: 3000 })
+        if (result.issues.length > 0) {
+            const MAX_DETAILS = 3
+            const detailText = result.issues.slice(0, MAX_DETAILS).map(i => `${i.path}: ${t(imageIssueReasonKey(i.reason))}`).join('; ')
+            const suffix = result.issues.length > MAX_DETAILS ? ` ...${t('file.header.exportHtmlMore', { n: result.issues.length - MAX_DETAILS })}` : ''
+            msgs.push(`${t('file.header.exportHtmlSkippedImages', { n: result.issues.length })} ${detailText}${suffix}`)
+        }
+        toast.show(msgs.join('. '), { icon: '✅', type: 'success', duration: 4000 })
     } catch {
         toast.show(t('file.header.exportHtmlFailed'), { icon: '❌', type: 'error', duration: 3000 })
     }
