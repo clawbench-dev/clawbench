@@ -383,6 +383,7 @@ import '@/assets/loading-mask.css'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
+import { getNative } from '@/utils/clawbenchNative'
 import { joinPath } from '@/utils/path'
 import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
 import {
@@ -976,7 +977,7 @@ const allSelectedAreFiles = computed(() => {
 })
 
 function doBatchShare() {
-    const native = window.AndroidNative
+    const native = getNative()
     if (!native || !native.shareFiles) return
     const paths = [...multiSelect.selected]
     if (!paths.length) return
@@ -992,7 +993,7 @@ function doBatchShare() {
         if (ext === 'zip' || ext === 'tar' || ext === 'gz') return 'application/zip'
         return '*/*'
     })
-    native.shareFiles(JSON.stringify(paths), JSON.stringify(mimeTypes))
+    native.shareFiles(JSON.stringify(paths), JSON.stringify(mimeTypes))?.catch(() => {})
 }
 
 const MAX_VISIBLE_ENTRIES = 1000
@@ -1133,7 +1134,7 @@ function doDownload() {
 function doShareExternal() {
     const path = ctxMenu.entry?.path
     closeCtxMenu()
-    const native = window.AndroidNative
+    const native = getNative()
     if (!native || !native.shareFile) return
     if (!path) return
     const ext = path.split('.').pop()?.toLowerCase()
@@ -1146,7 +1147,7 @@ function doShareExternal() {
     else if (audioExts.includes(ext)) mimeType = 'audio/*'
     else if (ext === 'pdf') mimeType = 'application/pdf'
     else if (ext === 'zip' || ext === 'tar' || ext === 'gz') mimeType = 'application/zip'
-    native.shareFile(path, mimeType)
+    native.shareFile(path, mimeType)?.catch(() => {})
 }
 
 // ── Archive download (zip) ──
@@ -1165,14 +1166,14 @@ async function doArchive(paths, zipName) {
             return
         }
         const blob = await resp.blob()
-        const native = window.AndroidNative
+        const native = getNative()
         if (isAppMode.value && native && native.downloadBlob) {
             // Android native: convert blob to base64 and pass to native bridge
             const reader = new FileReader()
             reader.onload = () => {
                 // reader.result is "data:application/zip;base64,XXXX..."
                 const base64 = reader.result.split(',')[1]
-                native.downloadBlob(base64, zipName || 'archive.zip')
+                native.downloadBlob(base64, zipName || 'archive.zip')?.catch(() => {})
             }
             reader.onerror = () => {
                 if (toast) toast.show(t('file.toast.archiveFailed'), { icon: '❌', type: 'error', duration: 2000 })

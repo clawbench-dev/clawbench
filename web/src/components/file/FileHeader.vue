@@ -204,6 +204,7 @@ import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
 import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
+import { getNative } from '@/utils/clawbenchNative'
 
 const props = defineProps({
     file: Object,
@@ -382,7 +383,7 @@ function handleExportHtml() {
 
 function handleShareExternal() {
     menuOpen.value = false
-    const native = window.AndroidNative
+    const native = getNative()
     if (!native || !native.shareFile) return
     const path = props.file?.path
     if (!path) return
@@ -396,7 +397,7 @@ function handleShareExternal() {
         const ext = path.split('.').pop()?.toLowerCase()
         if (ext === 'zip' || ext === 'tar' || ext === 'gz') mimeType = 'application/zip'
     }
-    native.shareFile(path, mimeType)
+    native.shareFile(path, mimeType)?.catch(() => {})
 }
 
 function handleDelete() {

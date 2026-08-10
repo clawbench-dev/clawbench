@@ -165,6 +165,7 @@ import { apiGet, apiPost } from '@/utils/api'
 import { toFixedCSS } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
 import { appLog } from '@/utils/appLog'
+import { getNative } from '@/utils/clawbenchNative'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
@@ -645,8 +646,8 @@ function onPathClick(e: MouseEvent) {
 // --- Logout (APP mode) ---
 function handleLogout() {
     resourcesMenuOpen.value = false
-    if ((window as unknown as { AndroidNative?: { showServerDialog: () => void } }).AndroidNative?.showServerDialog) {
-        (window as unknown as { AndroidNative: { showServerDialog: () => void } }).AndroidNative.showServerDialog()
+    if (getNative()?.showServerDialog) {
+        getNative()?.showServerDialog()
     } else {
         window.location.href = '/login'
     }

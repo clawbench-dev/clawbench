@@ -27,6 +27,7 @@ import { useAppMode } from '@/composables/useAppMode'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { appLog } from '@/utils/appLog'
+import { getNative } from '@/utils/clawbenchNative'
 import { normalizeVersion, isVersionedBuild, compareVersions, extractBaseVersion } from '@/utils/version'
 import { downloadByUrl } from '@/utils/download'
 
@@ -43,15 +44,18 @@ const { serverConfig } = useSettingsConfig()
 const visible = ref(false)
 const hasAttemptedShow = ref(false)
 
-const appVersion = computed(() => {
-  if (!isAppMode.value) return ''
+const appVersion = ref('')
+
+async function loadAppVersion(): Promise<void> {
+  if (!isAppMode.value) return
   try {
-    const native = (window as unknown as { AndroidNative?: { getAppVersion?: () => string } }).AndroidNative
-    return native?.getAppVersion?.() ?? ''
+    const native = getNative()
+    if (!native?.getAppVersion) { appVersion.value = ''; return }
+    appVersion.value = (await native.getAppVersion()) || ''
   } catch {
-    return ''
+    appVersion.value = ''
   }
-})
+}
 
 const serverVersion = computed(() => (serverConfig.value?.version as string) ?? '')
 
@@ -59,7 +63,7 @@ const normalizedServerVersion = computed(() => normalizeVersion(serverVersion.va
 
 function show() {
   hasAttemptedShow.value = true
-  tryShow()
+  void loadAppVersion().then(tryShow)
 }
 
 /** Attempt to show the dialog; silently skips if conditions aren't met yet. */

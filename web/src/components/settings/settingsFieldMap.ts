@@ -9,6 +9,8 @@
  * Both the category page and the restart dialog will pick it up automatically.
  */
 
+import { getNative } from '@/utils/clawbenchNative'
+
 export interface DependsOn {
   key: string
   value?: unknown
@@ -205,8 +207,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         if (changedKeys.includes('push_mode')) {
           // Sync Android native push (backend derives dingtalk/feishu.enabled from push_mode automatically)
           try {
-            const native = (window as unknown as { AndroidNative?: { setNativePushEnabled?: (v: boolean) => void } }).AndroidNative
-            native?.setNativePushEnabled?.(values?.push_mode === 'native')
+            getNative()?.setNativePushEnabled?.(values?.push_mode === 'native')
           } catch { /* not in app mode */ }
         }
       },

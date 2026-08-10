@@ -283,6 +283,7 @@ import { exportRenderedHtml, imageIssueReasonKey } from '@/utils/exportHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
+import { getNative } from '@/utils/clawbenchNative'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
@@ -734,7 +735,7 @@ async function handleExportHtml() {
 }
 
 function handleShareExternal() {
-    const native = window.AndroidNative
+    const native = getNative()
     if (!native || !native.shareFile) return
     const path = props.file?.path
     if (!path) return
@@ -748,7 +749,7 @@ function handleShareExternal() {
         const ext = path.split('.').pop()?.toLowerCase()
         if (ext === 'zip' || ext === 'tar' || ext === 'gz') mimeType = 'application/zip'
     }
-    native.shareFile(path, mimeType)
+    native.shareFile(path, mimeType)?.catch(() => {})
 }
 
 // Expose for parent (App.vue) to access PDF TOC

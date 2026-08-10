@@ -152,6 +152,7 @@ import { formatServerHost } from '@/utils/url'
 import { Server, X, Plus, MonitorSmartphone, Smartphone, ChevronRight } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
 import { downloadByUrl } from '@/utils/download'
+import { getNative } from '@/utils/clawbenchNative'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
@@ -189,8 +190,8 @@ function selectServer(srv) {
     showPasswordField.value = true
   }
   // Use native connectToServer for pre-auth, SSL handling, and error recovery
-  if (window.AndroidNative?.connectToServer) {
-    window.AndroidNative.connectToServer(srv.url, savedPassword || '')
+  if (getNative()?.connectToServer) {
+    getNative()?.connectToServer?.(srv.url, savedPassword || '')
   } else {
     window.location.href = srv.url + '/login'
   }
@@ -198,7 +199,7 @@ function selectServer(srv) {
 
 async function deleteServer(url) {
   if (!await dialog.confirm(t('login.deleteServer'), { dangerous: true })) return
-  removeServer(url)
+  await removeServer(url)
 }
 
 async function handleLogin() {
@@ -214,11 +215,11 @@ async function handleLogin() {
     })
     if (res.ok) {
       // Save password to Android native layer
-      if (window.AndroidNative?.isNativeApp?.()) {
-        window.AndroidNative.setSSHPassword(password.value)
+      if (getNative()?.isNativeApp?.()) {
+        getNative()?.setSSHPassword?.(password.value)
         // Also save to server list
         const currentUrl = window.location.origin
-        saveServer(currentUrl, password.value)
+        await saveServer(currentUrl, password.value)
       }
       emit('loginSuccess')
     } else if (res.status >= 500) {
@@ -255,11 +256,11 @@ async function handleAddServer() {
   }
 
   // Save to native server list first (so it persists even if connection fails later)
-  saveServer(url, newServerPassword.value)
+  await saveServer(url, newServerPassword.value)
 
   // Use native connectToServer for pre-auth, CORS bypass, SSL handling, and error recovery
-  if (window.AndroidNative?.connectToServer) {
-    window.AndroidNative.connectToServer(url, newServerPassword.value)
+  if (getNative()?.connectToServer) {
+    getNative()?.connectToServer?.(url, newServerPassword.value)
     // connectToServer handles navigation, cookie injection, and error display
     // No need to handle response here — the native layer takes over
     return
@@ -287,8 +288,8 @@ async function handleAddServer() {
 }
 
 function handleReconfigure() {
-  if (window.AndroidNative?.showServerDialog) {
-    window.AndroidNative.showServerDialog()
+  if (getNative()?.showServerDialog) {
+    getNative()?.showServerDialog?.()
   }
 }
 
@@ -306,7 +307,7 @@ function handleApkDownload() {
 
 onMounted(() => {
   if (isAppMode.value) {
-    loadServers()
+    void loadServers()
     // Set current server URL
     selectedServerUrl.value = window.location.origin
     // Pre-fill password if available

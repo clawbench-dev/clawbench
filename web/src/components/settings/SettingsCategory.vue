@@ -68,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
@@ -83,6 +83,7 @@ import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
 import { startFlushTimer, stopFlushTimer } from '@/utils/appLog'
+import { getNative } from '@/utils/clawbenchNative'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { downloadByUrl } from '@/utils/download'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
@@ -108,6 +109,16 @@ const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
 const showIosSheet = ref(false)
 const upgradeDialogRef = ref<InstanceType<typeof UpgradeDialog> | null>(null)
+const nativeAppVersion = ref('')
+
+onMounted(() => {
+  void (async () => {
+    try {
+      const native = getNative()
+      if (native?.getAppVersion) nativeAppVersion.value = (await native.getAppVersion()) ?? '-'
+    } catch { /* not in app mode */ }
+  })()
+})
 
 // Load agents when chat or agents category is shown
 watch(() => props.categoryId, (id) => {
@@ -195,11 +206,7 @@ function getItemValue(item: ItemSpec): unknown {
     return serverConfig.value?.version ?? '-'
   }
   if (item.key === 'appVersion') {
-    try {
-      const native = (window as unknown as { AndroidNative?: { getAppVersion?: () => string } }).AndroidNative
-      if (native?.getAppVersion) return native.getAppVersion() ?? '-'
-    } catch { /* not in app mode */ }
-    return '-'
+    return nativeAppVersion.value || '-'
   }
   if (item.source === 'local') {
     return localConfig[item.key]
@@ -224,12 +231,12 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
     if (item.key === 'logCapture') {
       if (value) {
         try {
-          ;(window as unknown as { AndroidNative?: { startLogCapture?: () => void } }).AndroidNative?.startLogCapture?.()
+          getNative()?.startLogCapture?.()?.catch(() => {})
         } catch { /* not in app mode */ }
         startFlushTimer()
       } else {
         try {
-          ;(window as unknown as { AndroidNative?: { stopLogCapture?: () => void } }).AndroidNative?.stopLogCapture?.()
+          getNative()?.stopLogCapture?.()?.catch(() => {})
         } catch { /* not in app mode */ }
         stopFlushTimer()
       }
@@ -249,7 +256,7 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
 function handleClick(item: ItemSpec) {
   if (item.key === 'reconfigureServer') {
     try {
-      ;(window as unknown as { AndroidNative?: { showServerDialog?: () => void } }).AndroidNative?.showServerDialog?.()
+      getNative()?.showServerDialog?.()
     } catch { /* not in app mode */ }
   }
   if (item.key === 'changePassword') {

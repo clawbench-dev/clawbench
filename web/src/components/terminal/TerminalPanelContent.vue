@@ -187,7 +187,6 @@ import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys
 import { selectionCellsToSelect, shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
 import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
-import { useAppMode } from '@/composables/useAppMode'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useKeyConfig } from '@/composables/useKeyConfig'
 import { useDialog } from '@/composables/useDialog'
@@ -537,21 +536,7 @@ watch(activeTabId, () => {
   nextTick(() => nextTick(() => gestures.attach()))
 })
 
-// Volume keys (Android)
-const { isAppMode } = useAppMode()
 const { isPC } = usePlatformDetect()
-
-function enableVolumeKeys() {
-  if (!isAppMode.value) return
-  const native = (window as unknown as { AndroidNative?: { setVolumeKeyMode?: (enabled: boolean) => void; setTerminalSessionCount?: (count: number) => void } }).AndroidNative
-  if (native?.setVolumeKeyMode) native.setVolumeKeyMode(true)
-}
-
-function disableVolumeKeys() {
-  if (!isAppMode.value) return
-  const native = (window as unknown as { AndroidNative?: { setVolumeKeyMode?: (enabled: boolean) => void } }).AndroidNative
-  if (native?.setVolumeKeyMode) native.setVolumeKeyMode(false)
-}
 
 ;(window as unknown as { __onVolumeKey?: (direction: 'up' | 'down') => void }).__onVolumeKey = (direction: 'up' | 'down') => {
   if (direction === 'up') terminalKeys.sendArrowUp()
@@ -561,15 +546,9 @@ function disableVolumeKeys() {
 // Computed
 const canCreateMore = computed(() => tabs.value.length < maxSessions.value)
 
-// Sync terminal session count to Android notification and store
+// Sync terminal session count to store
 watch(() => tabs.value.length, (count) => {
   store.state.terminalSessionCount = count
-  if (isAppMode.value) {
-    try {
-      const native = (window as unknown as { AndroidNative?: { setTerminalSessionCount?: (count: number) => void } }).AndroidNative
-      if (native?.setTerminalSessionCount) native.setTerminalSessionCount(count)
-    } catch { /* ignore */ }
-  }
 }, { immediate: true })
 
 const panelStyle = computed(() => ({
@@ -840,7 +819,6 @@ watch(() => props.active, async (isActive) => {
   if (props.platformUnsupported) return // No session management on unsupported platforms
   if (isActive) {
     emit('open')
-    enableVolumeKeys()
     await nextTick()
     const tab = activeTab.value
     if (tab) {
@@ -867,7 +845,6 @@ watch(() => props.active, async (isActive) => {
       focusTerminal()
     }
   } else {
-    disableVolumeKeys()
     tabManager.disconnectAll()
     terminalKeys.reset()
     showCommands.value = false
@@ -925,7 +902,6 @@ onMounted(async () => {
   // Mount and connect the active tab (only if terminal panel is active)
   if (props.active && !props.platformUnsupported) {
     emit('open')
-    enableVolumeKeys()
     // Wait for v-for :ref callbacks to populate tabContainerRefs
     await nextTick()
     const tab = activeTab.value
@@ -954,7 +930,6 @@ onBeforeUnmount(() => {
   themeObserver?.disconnect()
   viewport.stopWatching()
   gestures.detach()
-  disableVolumeKeys()
   delete (window as unknown as { __onVolumeKey?: unknown }).__onVolumeKey
   tabManager.disposeAll()
 })

@@ -399,6 +399,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent } from 'vue'
 import { appLog, startFlushTimer, stopFlushTimer } from '@/utils/appLog'
+import { getNative } from '@/utils/clawbenchNative'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
@@ -1093,7 +1094,7 @@ async function initializeApp() {
   loadSessionsOnce()
   if (isAppMode.value) syncToNative().catch(() => {})
   if (isAppMode.value && localConfig.logCapture) {
-    try { if (window.AndroidNative?.startLogCapture) window.AndroidNative.startLogCapture() } catch {}
+    try { if (getNative()?.startLogCapture) getNative()?.startLogCapture()?.catch(() => {}) } catch {}
   }
   if (localConfig.logCapture) startFlushTimer()
   loadSSHInfo().catch(() => {})
@@ -1910,7 +1911,6 @@ async function applyTheme(t) {
 
 /** Dismiss the native splash overlay in APP mode. */
 function dismissSplash() {
-    window.AndroidNative?.dismissSplash?.()
 }
 
 provide('theme', theme)
@@ -1992,13 +1992,13 @@ onMounted(async () => {
     }
     if (!resp.ok) {
         if (resp.status === 401 || resp.status === 403) {
-            if (isAppMode.value && window.AndroidNative?.getPassword?.()) {
-                const savedPwd = window.AndroidNative.getPassword()
+            if (isAppMode.value && getNative()?.getPassword) {
+                const savedPwd = await getNative()?.getPassword?.()
                 if (savedPwd) {
                     try {
                         const loginRes = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: savedPwd }) })
                         if (loginRes.ok) {
-                            if (window.AndroidNative?.setSSHPassword) window.AndroidNative.setSSHPassword(savedPwd)
+                            await getNative()?.setSSHPassword?.(savedPwd)
                         } else { isAuthenticated.value = false; return }
                     } catch { isAuthenticated.value = false; return }
                 } else { isAuthenticated.value = false; return }
@@ -2076,43 +2076,45 @@ onMounted(async () => {
       } catch {} // for cold-start pending navigation
     }
 
-    // Check AndroidNative bridge for cold-start pending navigation
+    // Check native bridge for cold-start pending navigation
     // Also poll briefly in case CustomEvent was dispatched while WebView was paused
-    if (isAppMode.value && window.AndroidNative?.getPendingNavigation) {
+    if (isAppMode.value && getNative()?.getPendingNavigation) {
       let pollCleared = false
       const pollPendingNav = () => {
-        try {
-          const nav = window.AndroidNative.getPendingNavigation()
-          appLog.d(TAG, 'getPendingNavigation poll result:', nav)
-          if (nav) {
-            const parsed = JSON.parse(nav)
-            const { sessionId, taskId, executionId, projectPath } = parsed
-            if (taskId) {
-              // Task notification navigation
-              pollCleared = true
-              if (projectPath && projectPath !== store.state.projectRoot) {
-                localStorage.setItem('clawbenchPendingNav', JSON.stringify({ taskId, executionId }))
-                fetch('/api/project', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ path: projectPath }),
-                }).then(() => window.location.reload())
-              } else {
-                processPendingTaskNav(taskId, executionId)
-              }
-            } else if (sessionId) {
-              // Session notification navigation
-              // Navigation data found — stop polling
-              pollCleared = true
-              if (projectPath && projectPath !== store.state.projectRoot) {
-                // Need to switch project first — use hot switch instead of reload
-                hotSwitchProject(projectPath, sessionId)
-              } else {
-                processPendingSessionNav(sessionId)
+        void (async () => {
+          try {
+            const nav = await getNative()?.getPendingNavigation?.()
+            appLog.d(TAG, 'getPendingNavigation poll result:', nav)
+            if (nav) {
+              const parsed = JSON.parse(nav)
+              const { sessionId, taskId, executionId, projectPath } = parsed
+              if (taskId) {
+                // Task notification navigation
+                pollCleared = true
+                if (projectPath && projectPath !== store.state.projectRoot) {
+                  localStorage.setItem('clawbenchPendingNav', JSON.stringify({ taskId, executionId }))
+                  fetch('/api/project', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: projectPath }),
+                  }).then(() => window.location.reload())
+                } else {
+                  processPendingTaskNav(taskId, executionId)
+                }
+              } else if (sessionId) {
+                // Session notification navigation
+                // Navigation data found — stop polling
+                pollCleared = true
+                if (projectPath && projectPath !== store.state.projectRoot) {
+                  // Need to switch project first — use hot switch instead of reload
+                  hotSwitchProject(projectPath, sessionId)
+                } else {
+                  processPendingSessionNav(sessionId)
+                }
               }
             }
-          }
-        } catch {} // and then every 500ms for up to 3 seconds
+          } catch {} // and then every 500ms for up to 3 seconds
+        })()
       }
       // Poll immediately and then every 500ms for up to 3 seconds
       pollPendingNav()
