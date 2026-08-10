@@ -60,6 +60,12 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	cmd := exec.CommandContext(ctx, cmdName, args...)
 	cmd.Dir = req.WorkDir
 
+	// Detach the backend process from the server's controlling terminal so
+	// agent-spawned commands (e.g. `sudo`) cannot prompt on the ClawBench
+	// server console via /dev/tty and block the session. Setpgid keeps the
+	// whole process tree in its own group so cancel can reap it.
+	setProcessGroup(cmd)
+
 	if req.WorkDir == "" {
 		slog.Warn("cli backend: WorkDir is EMPTY, process will inherit server CWD",
 			slog.String("backend", b.BackendName),
@@ -122,9 +128,12 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		var waitCalled bool
 		defer func() {
 			if !waitCalled {
-				// exec.CommandContext already sends SIGKILL on cancel,
-				// so the process should exit quickly. Best-effort Wait
-				// with timeout to reap the process and avoid zombies.
+				// exec.CommandContext already sends SIGKILL on cancel, but only
+				// to the parent process. Since the backend now runs in its own
+				// process group, kill the whole tree so child subprocesses
+				// (e.g. an agent-spawned `sudo`) don't linger and hold the pipes
+				// open, blocking Wait(). Then best-effort Wait to avoid zombies.
+				killProcessGroup(cmd.Process)
 				go func() {
 					timer := time.NewTimer(30 * time.Second)
 					defer timer.Stop()

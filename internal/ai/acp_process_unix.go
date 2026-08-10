@@ -10,8 +10,21 @@ import (
 
 // setProcessGroup puts the ACP process in its own process group so we can
 // kill the entire tree (npx + child processes) when closing the connection.
+//
+// Setsid:true both starts a new session and makes the child its own process
+// group leader (pgid == pid, since a session leader is also a group leader).
+// This serves two purposes:
+//  1. killProcessGroup's `-pid` signal reaches the whole process tree.
+//  2. The child is detached from the server's controlling terminal. Without
+//     this, an agent-spawned command such as `sudo` would inherit the server
+//     tty and prompt for a password on the ClawBench server console (via
+//     /dev/tty), blocking the whole session. A new session has no controlling
+//     terminal, so sudo fails fast with "no tty present" instead of hanging.
+//
+// NOTE: We must NOT combine Setpgid:true with Setsid:true — Go's fork/exec
+// rejects that combination with EPERM ("operation not permitted").
 func setProcessGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
 
 // killProcessGroup sends SIGKILL to the process group of the given process.
