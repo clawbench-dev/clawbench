@@ -571,6 +571,9 @@ async function selectRecent(item: RecentItem) {
 }
 
 async function removeRecent(item: RecentItem) {
+    // Close the dropdown first: it is teleported with z-index 9999, higher than
+    // the confirm dialog overlay (3000), so leaving it open would cover the dialog.
+    dropdownOpen.value = false
     const confirmed = await dialog.confirm(
         t('appHeader.removeProjectConfirm', { name: item.name }),
         { dangerous: true },
