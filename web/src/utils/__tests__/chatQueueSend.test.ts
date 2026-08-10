@@ -1,0 +1,118 @@
+import { describe, expect, it, vi } from 'vitest'
+import { enqueueAndMaybeStart, generateQueueId } from '@/utils/chatQueueSend'
+import type { FileEntry } from '@/utils/fileAttachmentUtils'
+import type { EnqueueAndMaybeStartOptions } from '@/utils/chatQueueSend'
+
+function makeOpts(overrides: Partial<EnqueueAndMaybeStartOptions> = {}): EnqueueAndMaybeStartOptions {
+  return {
+    sessionId: 'sess-1',
+    text: 'hello',
+    attachedFiles: [],
+    pendingFiles: [],
+    pushMessage: vi.fn(),
+    onPendingRendered: vi.fn(),
+    enqueue: vi.fn().mockResolvedValue({ needsStart: false }),
+    resubmit: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  }
+}
+
+describe('generateQueueId', () => {
+  it('produces a pending- prefixed unique id', () => {
+    const a = generateQueueId()
+    const b = generateQueueId()
+    expect(a.startsWith('pending-')).toBe(true)
+    expect(a).not.toBe(b)
+  })
+})
+
+describe('enqueueAndMaybeStart', () => {
+  it('pushes a pending user message with a generated queueId', async () => {
+    const opts = makeOpts()
+    await enqueueAndMaybeStart(opts)
+    const push = opts.pushMessage as ReturnType<typeof vi.fn>
+    expect(push).toHaveBeenCalledTimes(1)
+    const msg = push.mock.calls[0][0]
+    expect(msg.role).toBe('user')
+    expect(msg.pending).toBe(true)
+    expect(msg.content).toBe('hello')
+    expect(msg.blocks).toEqual([{ type: 'text', text: 'hello' }])
+    expect(msg.id).toMatch(/^pending-/)
+  })
+
+  it('dedupes pending and attached files into the pending message files', async () => {
+    const pending: FileEntry[] = [{ path: '/a', isDir: false }]
+    const attached: FileEntry[] = [
+      { path: '/a', isDir: false, startLine: 1, endLine: 5 },
+      { path: '/b', isDir: false },
+    ]
+    const opts = makeOpts({ pendingFiles: pending, attachedFiles: attached })
+    await enqueueAndMaybeStart(opts)
+    const msg = (opts.pushMessage as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    // dedupeFiles keeps the richer entry (with line range) for /a
+    const paths = msg.files.map((f: FileEntry) => f.path)
+    expect(paths).toEqual(['/a', '/b'])
+    const a = msg.files.find((f: FileEntry) => f.path === '/a')
+    expect(a.startLine).toBe(1)
+  })
+
+  it('calls enqueue with sessionId, text, attachments and queueId', async () => {
+    const opts = makeOpts({ attachedFiles: [{ path: '/x', isDir: false }] })
+    await enqueueAndMaybeStart(opts)
+    const enqueue = opts.enqueue as ReturnType<typeof vi.fn>
+    expect(enqueue).toHaveBeenCalledTimes(1)
+    const [sid, text, attached, pending, queueId] = enqueue.mock.calls[0]
+    expect(sid).toBe('sess-1')
+    expect(text).toBe('hello')
+    expect(attached).toEqual([{ path: '/x', isDir: false }])
+    expect(pending).toEqual([])
+    expect(queueId).toMatch(/^pending-/)
+  })
+
+  it('does NOT resubmit when needsStart is false', async () => {
+    const opts = makeOpts()
+    await enqueueAndMaybeStart(opts)
+    expect(opts.resubmit).not.toHaveBeenCalled()
+  })
+
+  it('resubmits with the backend-returned message and files when needsStart is true', async () => {
+    const attached: FileEntry[] = [{ path: '/a', isDir: false }]
+    const opts = makeOpts({
+      attachedFiles: attached,
+      enqueue: vi.fn().mockResolvedValue({
+        needsStart: true,
+        message: 'resubmitted text',
+        filePaths: ['/a'],
+        files: [{ path: '/a', isDir: false }],
+      }),
+    })
+    await enqueueAndMaybeStart(opts)
+    expect(opts.resubmit).toHaveBeenCalledTimes(1)
+    expect(opts.resubmit).toHaveBeenCalledWith('resubmitted text', ['/a'], [{ path: '/a', isDir: false }])
+  })
+
+  it('falls back to original text and computed files when needsStart result lacks them', async () => {
+    const attached: FileEntry[] = [{ path: '/a', isDir: false }]
+    const opts = makeOpts({
+      attachedFiles: attached,
+      enqueue: vi.fn().mockResolvedValue({ needsStart: true }),
+    })
+    await enqueueAndMaybeStart(opts)
+    expect(opts.resubmit).toHaveBeenCalledWith('hello', ['/a'], [{ path: '/a', isDir: false }])
+  })
+
+  it('honors a caller-provided queueId instead of generating one', async () => {
+    const opts = makeOpts({ queueId: 'custom-qid' })
+    await enqueueAndMaybeStart(opts)
+    const msg = (opts.pushMessage as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(msg.id).toBe('custom-qid')
+    const enqueue = opts.enqueue as ReturnType<typeof vi.fn>
+    expect(enqueue.mock.calls[0][4]).toBe('custom-qid')
+  })
+
+  it('calls onPendingRendered after pushing the message', async () => {
+    const opts = makeOpts()
+    await enqueueAndMaybeStart(opts)
+    expect(opts.onPendingRendered).toHaveBeenCalledTimes(1)
+  })
+})

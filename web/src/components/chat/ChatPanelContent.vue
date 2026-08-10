@@ -187,6 +187,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { buildQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
 import { dedupeFiles } from '@/utils/fileAttachmentUtils.ts'
+import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
 import { playNotificationSound } from '@/composables/useNotificationSound.ts'
 import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -692,41 +693,27 @@ async function sendMessage(text) {
        // Capture file arrays before clearing (they're passed by reference)
        const capturedAttached = [...attachedFiles.value]
        const capturedPending = pendingFiles.value.filter(f => f.path).map(f => ({ path: f.path, isDir: false }))
-      // Build file paths and entries from attachedFiles (unified channel)
-      const mergedPaths = capturedAttached.map(f => f.path)
-      const allFiles = dedupeFiles([...capturedPending, ...capturedAttached])
-      // Generate unique queueId for precise matching in queue_drain/queue_cancel
-      const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      // Clear input state synchronously so user sees immediate feedback
-      clearAll()
-      resetQuotePin()
-      inputBarRef.value?.clearInput()
-      clearPendingFiles()
-      // Push a pending user message directly into messages.value
-      messages.value.push({
-        role: 'user',
-        id: queueId,
-        content: inputText || '',
-        blocks: (inputText || '') ? [{ type: 'text', text: inputText }] : [],
-        files: allFiles,
-        createdAt: new Date().toISOString(),
-        pending: true,
-      })
-      render.updateRenderedContents()
-      scrollBottom(true)
-      // Capture session ID before any async boundary
-      const capturedSessionId = identity.currentSessionId.value
-      // Enqueue to backend (POST /api/ai/queue) with queueId
-      const result = await manager.enqueueMessage(capturedSessionId, inputText, capturedAttached, capturedPending, queueId)
-      // Race condition: if AI finished right as we enqueued, the backend
-      // dequeued the message and wants us to resubmit as a new chat.
-      if (result.needsStart) {
-        // enqueueMessage already removed the pending message by queueId.
-        // sendMessageNow will push its own copy.
-        await sendMessageNow(result.message || inputText, result.filePaths || mergedPaths, result.files || allFiles)
-      }
-      return
-    }
+       // Clear input state synchronously so user sees immediate feedback
+       clearAll()
+       resetQuotePin()
+       inputBarRef.value?.clearInput()
+       clearPendingFiles()
+       // Push a pending user message, enqueue it, and resubmit on needs_start.
+       // Shared with the AskUserQuestion-card path so both get identical
+       // needs_start handling (avoids silently dropping the message, which would
+       // leave no assistant placeholder and no loading indicator).
+       await enqueueAndMaybeStart({
+         sessionId: identity.currentSessionId.value,
+         text: inputText || '',
+         attachedFiles: capturedAttached,
+         pendingFiles: capturedPending,
+         pushMessage: (msg) => messages.value.push(msg),
+         onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
+         enqueue: (sid, text, attached, pending, qid) => manager.enqueueMessage(sid, text, attached, pending, qid),
+         resubmit: (text, filePaths, files) => sendMessageNow(text, filePaths, files),
+       })
+       return
+     }
 
     // Build file paths and entries from attachedFiles (unified channel)
     const filePaths = attachedFiles.value.map(f => f.path)
@@ -842,19 +829,21 @@ async function sendMessageNow(text, filePaths, files) {
 async function handleToolSendMessage(text) {
     if (!text) return
     if (loading.value) {
-      // Generate unique queueId for precise matching
-      const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      messages.value.push({
-        role: 'user',
-        id: queueId,
-        content: text,
-        blocks: text ? [{ type: 'text', text }] : [],
-        createdAt: new Date().toISOString(),
-        pending: true,
+      // Shared with the normal input path: push a pending user message, enqueue
+      // it, and resubmit on needs_start. Previously this path fired the enqueue
+      // without awaiting/checking needs_start, so when the backend dequeued the
+      // answer (session no longer running) it was silently lost — leaving no
+      // assistant placeholder and no loading indicator.
+      await enqueueAndMaybeStart({
+        sessionId: identity.currentSessionId.value,
+        text,
+        attachedFiles: [],
+        pendingFiles: [],
+        pushMessage: (msg) => messages.value.push(msg),
+        onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
+        enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
+        resubmit: (msg, filePaths, files) => sendMessageNow(msg, filePaths, files),
       })
-      render.updateRenderedContents()
-      scrollBottom(true)
-      manager.enqueueMessage(identity.currentSessionId.value, text, [], [], queueId)
     } else {
       await sendMessage(text)
     }
