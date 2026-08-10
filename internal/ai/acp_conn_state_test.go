@@ -786,13 +786,13 @@ func TestIsACPSlashCommand_ValidCommands(t *testing.T) {
 	assert.True(t, IsACPSlashCommand("/help"))
 	assert.True(t, IsACPSlashCommand("/memory"))
 	assert.True(t, IsACPSlashCommand("/model"))
-	assert.True(t, IsACPSlashCommand("/Reload-Plugins")) // case-insensitive letter
+	assert.True(t, IsACPSlashCommand("/Reload-Plugins"))      // case-insensitive letter
 	assert.True(t, IsACPSlashCommand("/reload-plugins arg1")) // with args
-	assert.True(t, IsACPSlashCommand("  /compact  ")) // trimmed
+	assert.True(t, IsACPSlashCommand("  /compact  "))         // trimmed
 }
 
 func TestIsACPSlashCommand_InvalidCommands(t *testing.T) {
-	assert.False(t, IsACPSlashCommand("hello"))       // no slash
+	assert.False(t, IsACPSlashCommand("hello"))        // no slash
 	assert.False(t, IsACPSlashCommand("/"))            // slash only
 	assert.False(t, IsACPSlashCommand("/1abc"))        // digit after slash
 	assert.False(t, IsACPSlashCommand("//comment"))    // double slash

@@ -336,8 +336,5 @@ func IsACPSlashCommand(text string) bool {
 	}
 	// Must start with /<letter> followed by alphanumeric or hyphen
 	c := t[1]
-	if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-		return false
-	}
-	return true
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
