@@ -164,14 +164,9 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			//
 			// Extract human-readable error message from ACP RequestError.
 			// RequestError.Error() returns the full JSON blob which is not
-			// useful to the end user — we want just the .Message field
-			// (e.g. "Internal error: Upstream request failed: [invalid_request_error] Insufficient Balance").
-			errContent := err.Error()
-			var reqErr *acp.RequestError
-			if errors.As(err, &reqErr) {
-				errContent = reqErr.Message
-			}
-			forwardACPEvent(ch, StreamEvent{Type: "warning", Content: errContent, Reason: ReasonRequestFailed})
+			// useful to the end user — we want the code and just the .Message
+			// field (e.g. "Internal error: Upstream request failed: [invalid_request_error] Insufficient Balance").
+			forwardACPEvent(ch, StreamEvent{Type: "warning", Content: acpErrorText(err), Reason: ReasonRequestFailed})
 			forwardACPEvent(ch, StreamEvent{Type: "done"})
 			return
 		}
@@ -215,6 +210,19 @@ func (b *ACPBackend) emitSessionAndCacheState(conn *ACPConn, isNew bool, ch chan
 	if planState := conn.GetCachedPlanState(); planState != nil {
 		forwardACPEvent(ch, StreamEvent{Type: "plan_update", Plan: planState})
 	}
+}
+
+// acpErrorText formats an ACP error for the UI warning banner, preserving both
+// the JSON-RPC error code and the human-readable message. For a RequestError we
+// emit "ACP error <code>: <message>" instead of err.Error()'s raw JSON blob
+// (which is noisy and unhelpful to the end user). Non-RequestError errors fall
+// through to err.Error() unchanged.
+func acpErrorText(err error) string {
+	var reqErr *acp.RequestError
+	if errors.As(err, &reqErr) {
+		return fmt.Sprintf("ACP error %d: %s", reqErr.Code, reqErr.Message)
+	}
+	return err.Error()
 }
 
 // Ensure compile-time interface compliance

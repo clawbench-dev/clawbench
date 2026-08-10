@@ -275,6 +275,44 @@ func TestRefactor_IsACPResourceNotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// acpErrorText — non-fatal prompt error formatting for the UI warning banner
+// ---------------------------------------------------------------------------
+
+func TestRefactor_ACPErrorText(t *testing.T) {
+	t.Run("request_error_preserves_code_and_message", func(t *testing.T) {
+		reqErr := &acp.RequestError{
+			Code:    -32603,
+			Message: "Internal error: Upstream request failed: Insufficient Balance",
+		}
+		got := acpErrorText(reqErr)
+		assert.Equal(t, "ACP error -32603: Internal error: Upstream request failed: Insufficient Balance", got)
+	})
+
+	t.Run("request_error_with_data_drops_raw_json_blob", func(t *testing.T) {
+		reqErr := &acp.RequestError{
+			Code:    -32000,
+			Message: "Auth required",
+			Data:    map[string]any{"details": "token expired"},
+		}
+		got := acpErrorText(reqErr)
+		// The human-readable message (and code) must win over the raw JSON blob.
+		assert.Equal(t, "ACP error -32000: Auth required", got)
+		assert.NotContains(t, got, `"details"`)
+	})
+
+	t.Run("wrapped_request_error_still_extracted", func(t *testing.T) {
+		reqErr := &acp.RequestError{Code: -32602, Message: "Invalid params"}
+		got := acpErrorText(fmt.Errorf("acp: prompt: %w", reqErr))
+		assert.Equal(t, "ACP error -32602: Invalid params", got)
+	})
+
+	t.Run("non_request_error_returns_raw_message", func(t *testing.T) {
+		got := acpErrorText(fmt.Errorf("some other failure"))
+		assert.Equal(t, "some other failure", got)
+	})
+}
+
+// ---------------------------------------------------------------------------
 // configKilledConnectionError
 // ---------------------------------------------------------------------------
 
