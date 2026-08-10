@@ -55,4 +55,5 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   shareText: (text: string) => invoke('native:share-text', text),
   shareFile: (path: string, mime: string) => invoke('native:share-file', path, mime),
   shareFiles: (paths: string, mimes: string) => invoke('native:share-files', paths, mimes),
+  nativeNotify: (title: string, body: string, nav?: unknown) => invoke('native:notify', title, body, nav),
 })

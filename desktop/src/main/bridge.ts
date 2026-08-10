@@ -8,7 +8,7 @@ import { addForwardedPort, removeForwardedPort as rmFwd,
 import { getMainWindow, openSandboxWindow } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
 import { setKeepScreenOnImpl } from './powersave'
-import { dispatchOpenSession } from './notification'
+import { dispatchOpenSession, showTerminalNotification } from './notification'
 
 let pendingNavigation: string | null = null
 
@@ -76,6 +76,10 @@ export function registerBridge(): void {
     return Promise.resolve()
   })
   ipcMain.handle('native:start-log-capture', () => Promise.resolve())
+  ipcMain.handle('native:notify', (_e, title: string, body: string, nav?: unknown) => {
+    showTerminalNotification(title, body, nav as { sessionId?: string; taskId?: string; executionId?: string; projectPath?: string } | undefined)
+    return Promise.resolve()
+  })
   ipcMain.handle('native:stop-log-capture', () => Promise.resolve())
 
   ipcMain.on('native:show-server-dialog', () => getMainWindow()?.webContents.send('clawbench-show-server-dialog'))

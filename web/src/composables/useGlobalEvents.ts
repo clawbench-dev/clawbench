@@ -413,6 +413,12 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data']) 
             showBrowserNotification(title, {
                 body: alert_,
                 tag: `clawbench-${event}-${data.session_id || data.task_id || Date.now()}`,
+                nav: {
+                    sessionId: data.session_id,
+                    taskId: data.task_id,
+                    executionId: data.execution_id,
+                    projectPath: data.project_path,
+                },
                 onClick,
             })
         }

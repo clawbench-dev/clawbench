@@ -1,5 +1,7 @@
 import { ref } from 'vue'
 import { appLog } from '@/utils/appLog'
+import { getNative } from '@/utils/clawbenchNative'
+import type { NotificationNav } from '@/utils/clawbenchNative'
 
 const TAG = 'Notification'
 
@@ -34,7 +36,9 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 }
 
 /**
- * Show browser notification
+ * Show browser notification.
+ * In a native host with a nativeNotify bridge (Electron), routes to the main
+ * process so the OS notification still appears when the window is hidden/minimized.
  */
 export function showBrowserNotification(
   title: string,
@@ -44,10 +48,18 @@ export function showBrowserNotification(
     badge?: string
     tag?: string
     onClick?: () => void
+    nav?: NotificationNav
   }
 ): void {
   // Don't show notifications when page is visible and focused
   if (document.visibilityState === 'visible' && document.hasFocus()) {
+    return
+  }
+
+  // Electron native path: main-process Notification (reliable when window hidden)
+  const native = getNative()
+  if (native?.nativeNotify) {
+    void native.nativeNotify(title, options?.body || '', options?.nav).catch(() => {})
     return
   }
 

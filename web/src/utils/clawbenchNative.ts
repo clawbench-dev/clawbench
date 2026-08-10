@@ -66,6 +66,17 @@ export interface ClawBenchNative {
   shareText(text: string): Promise<void>
   shareFile(path: string, mime: string): Promise<void>
   shareFiles(paths: string, mimes: string): Promise<void>
+
+  /** Optional (Electron): show a native OS notification. Click dispatches session/task navigation. */
+  nativeNotify?(title: string, body: string, nav?: NotificationNav): Promise<void>
+}
+
+/** Navigation target for a native notification click. */
+export interface NotificationNav {
+  sessionId?: string
+  taskId?: string
+  executionId?: string
+  projectPath?: string
 }
 
 const bridgeWindow = window as unknown as { ClawBenchNative?: ClawBenchNative }
