@@ -24,12 +24,23 @@ import CodeMirrorViewer from '../CodeMirrorViewer.vue'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
+// jsdom has no real layout, so CodeMirror's content may render asynchronously
+// and not be present immediately after mount. Wait until the editor has actually
+// drawn its text (poll up to ~1s) so selection/rendering assertions are reliable.
+async function waitForRender(view: { contentDOM: HTMLElement }): Promise<void> {
+  for (let i = 0; i < 50; i++) {
+    if (view.contentDOM.textContent) return
+    await sleep(20)
+  }
+}
+
 function gutterClasses() {
   return [...document.querySelectorAll('.cm-gutter')].map(g => (g.className || ''))
 }
 
 describe('CodeMirrorViewer (real CodeMirror)', () => {
   beforeEach(() => {
+    vi.restoreAllMocks()
     document.body.innerHTML = ''
     quoteMocks.showBar.mockClear()
     quoteMocks.hideBar.mockClear()
@@ -209,17 +220,36 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(wrapper.vm.getView().state.facet(languageFacet)).toBeTruthy()
   })
 
-  it('shows quote question on selection in read-only mode', async () => {
+  // jsdom's Selection is unreliable for contenteditable trees, so simulate the
+  // browser's native selection with a stub whose nodes are the editor's real
+  // contentDOM (EditorView.posAtDOM still resolves them to real offsets). This
+  // exercises the component's selectionchange → quote-bar path end to end.
+  function stubNativeSelection(view: { contentDOM: HTMLElement }): void {
+    const contentDOM = view.contentDOM
+    const fake = {
+      isCollapsed: false,
+      anchorNode: contentDOM,
+      anchorOffset: 0,
+      focusNode: contentDOM,
+      focusOffset: contentDOM.childNodes.length,
+      toString: () => contentDOM.textContent ?? '',
+    }
+    vi.spyOn(window, 'getSelection').mockReturnValue(fake as unknown as Selection)
+  }
+
+  it('shows quote question on native text selection in read-only mode', async () => {
     const wrapper = mountViewer({ content: 'aaa\nbbb\nccc', file: { path: '/p/main.go' } })
     await sleep(80)
     const view = wrapper.vm.getView()
-    view.dispatch({ selection: { anchor: 0, head: 7 } }) // selects "aaa\nbb"
+    await waitForRender(view)
+    stubNativeSelection(view)
+    document.dispatchEvent(new Event('selectionchange'))
     await sleep(700) // debounce 200ms + showBar 400ms
     expect(quoteMocks.showBar).toHaveBeenCalledTimes(1)
     const data = quoteMocks.showBar.mock.calls[0][0]
     expect(data.filePath).toBe('/p/main.go')
     expect(data.startLine).toBe(1)
-    expect(data.endLine).toBe(2)
+    expect(data.endLine).toBe(3)
     expect(data.text).toContain('aaa')
   })
 
@@ -227,7 +257,9 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     const wrapper = mountViewer({ content: 'aaa\nbbb', editable: true })
     await sleep(80)
     const view = wrapper.vm.getView()
-    view.dispatch({ selection: { anchor: 0, head: 4 } })
+    await waitForRender(view)
+    stubNativeSelection(view)
+    document.dispatchEvent(new Event('selectionchange'))
     await sleep(700)
     expect(quoteMocks.showBar).not.toHaveBeenCalled()
   })
@@ -329,29 +361,49 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(css).toMatch(/--code-bg-editing/)
   })
 
-  it('disables native text selection in browse mode only', async () => {
+  it('enables native text selection in browse mode (no user-select suppression)', async () => {
     mountViewer({ content: 'x', editable: false })
     mountViewer({ content: 'x', editable: true })
     await sleep(50)
-    // The browse-mode stylesheet must suppress native selection on .cm-content;
-    // edit mode leaves it selectable (no such rule for is-editable).
+    // Read-only mode must NOT suppress native selection — the browser owns
+    // drag-select and long-press copy. Assert no user-select:none rule applies
+    // to .cm-content in either browse or edit mode.
     const css = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n')
-    const rule = /\.cm-viewer\.cm-readonly\s+\.cm-content\s*\{[^}]*user-select:\s*none/m
-    expect(css).toMatch(rule)
+    expect(css).not.toMatch(/\.cm-viewer\.cm-readonly\s+\.cm-content\s*\{[^}]*user-select:\s*none/)
     expect(css).not.toMatch(/\.cm-viewer\.is-editable\s+\.cm-content\s*\{[^}]*user-select:\s*none/)
   })
 
-  it('prevents mousedown selection in browse mode but not edit mode', async () => {
+  it('does not preventDefault mousedown in browse mode so native selection works', async () => {
     const browse = mountViewer({ content: 'aaa bbb\n', editable: false })
     await sleep(80)
     const md1 = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 })
     browse.vm.getView().contentDOM.dispatchEvent(md1)
-    expect(md1.defaultPrevented).toBe(true)
+    // The native capture handler stops propagation to CodeMirror but must NOT
+    // call preventDefault, so the browser's native selection can start.
+    expect(md1.defaultPrevented).toBe(false)
+  })
 
+  it('leaves mousedown handling to CodeMirror in edit mode', async () => {
     const edit = mountViewer({ content: 'aaa bbb\n', editable: true })
     await sleep(80)
+    const view = edit.vm.getView()
+    await waitForRender(view)
+    // In edit mode the native selection handler is NOT attached, so CodeMirror
+    // owns mousedown and prevents the browser's native selection (it draws its
+    // own). This proves native selection bypass is read-only-only.
     const md2 = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 })
-    edit.vm.getView().contentDOM.dispatchEvent(md2)
-    expect(md2.defaultPrevented).toBe(false)
+    view.contentDOM.dispatchEvent(md2)
+    expect(md2.defaultPrevented).toBe(true)
+  })
+
+  it('keeps native copy enabled in browse mode (copy event not intercepted)', async () => {
+    const browse = mountViewer({ content: 'select me\n', editable: false })
+    await sleep(80)
+    const contentDOM = browse.vm.getView().contentDOM as HTMLElement
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true })
+    contentDOM.dispatchEvent(copyEvent)
+    // The native copy handler stops CodeMirror intercepting but must not
+    // preventDefault, so the browser copies the native selection.
+    expect(copyEvent.defaultPrevented).toBe(false)
   })
 })
