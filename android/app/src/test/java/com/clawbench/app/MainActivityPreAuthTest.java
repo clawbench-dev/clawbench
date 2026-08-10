@@ -43,7 +43,7 @@ import static org.mockito.Mockito.when;
  * When the Android native login page submits, connectToServer() now
  * pre-authenticates via POST /login before navigating the WebView.
  * This eliminates the second (web) login page that appeared due to
- * AndroidNative JS bridge timing issues.
+ * ClawBenchNative JS bridge timing issues.
  *
  * Covers:
  * 1. handleAuthResponse state machine: 200/401/429/other

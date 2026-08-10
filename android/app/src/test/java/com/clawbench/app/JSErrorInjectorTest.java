@@ -11,18 +11,18 @@ public class JSErrorInjectorTest {
 
     @Test
     public void buildScript_containsGuardFlag() {
-        String script = JSErrorInjector.buildScript("AndroidNative");
+        String script = JSErrorInjector.buildScript("ClawBenchNative");
         assertTrue("Should contain __clawbenchErrorInjected guard",
                 script.contains("__clawbenchErrorInjected"));
     }
 
     @Test
     public void buildScript_interpolatesInterfaceName_androidNative() {
-        String script = JSErrorInjector.buildScript("AndroidNative");
-        assertTrue("Should reference AndroidNative",
-                script.contains("typeof AndroidNative!=='undefined'"));
-        assertTrue("Should call AndroidNative.log",
-                script.contains("AndroidNative.log("));
+        String script = JSErrorInjector.buildScript("ClawBenchNative");
+        assertTrue("Should reference ClawBenchNative",
+                script.contains("typeof ClawBenchNative!=='undefined'"));
+        assertTrue("Should call ClawBenchNative.log",
+                script.contains("ClawBenchNative.log("));
     }
 
     @Test
@@ -81,7 +81,7 @@ public class JSErrorInjectorTest {
     @Test
     public void buildScript_acceptsValidIdentifiers() {
         // Should not throw for valid JS identifiers
-        assertNotNull(JSErrorInjector.buildScript("AndroidNative"));
+        assertNotNull(JSErrorInjector.buildScript("ClawBenchNative"));
         assertNotNull(JSErrorInjector.buildScript("BrowserNative"));
         assertNotNull(JSErrorInjector.buildScript("$jquery"));
         assertNotNull(JSErrorInjector.buildScript("_private"));
