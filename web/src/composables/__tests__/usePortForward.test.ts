@@ -901,6 +901,34 @@ describe('usePortForward', () => {
         })
     })
 
+    describe('setPortEnabled', () => {
+        it('does not throw when the Android synchronous bridge returns undefined', async () => {
+            // Android @JavascriptInterface writes are synchronous and return plain
+            // undefined (no Promise), unlike Electron. Regression: a .catch() chained
+            // directly on the call used to throw "Cannot read properties of undefined".
+            mockIsAppMode.value = true
+            mockApiPut.mockResolvedValue({ status: 'ok' })
+            mockApiGet.mockResolvedValue({
+                ports: [{ port: 8080, localPort: 8080, host: '192.168.1.1', name: 'API', protocol: 'http', active: true, enabled: true }],
+            })
+            const mockAdd = vi.fn(() => undefined)
+            const mockRemove = vi.fn(() => undefined)
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAdd, removeForwardedPort: mockRemove }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { setPortEnabled } = usePortForward()
+
+            await expect(setPortEnabled(8080, true)).resolves.toBeUndefined()
+            expect(mockAdd).toHaveBeenCalledWith(8080, 8080, '192.168.1.1')
+
+            await expect(setPortEnabled(8080, false)).resolves.toBeUndefined()
+            expect(mockRemove).toHaveBeenCalledWith(8080)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+    })
+
     describe('ensurePortRegistered', () => {
         it('returns existing localPort if port already exists', async () => {
             mockApiGet.mockResolvedValue({
