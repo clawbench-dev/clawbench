@@ -9,6 +9,7 @@ files:
   - "!**/node_modules/.cache"
 win:
   target: dir
+  signAndEditExecutable: false
 mac:
   target: dir
 linux:
