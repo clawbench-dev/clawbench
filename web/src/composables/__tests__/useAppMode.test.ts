@@ -24,7 +24,7 @@ describe('useAppMode', () => {
 
   it('detects app mode when AndroidNative.isNativeApp() returns true', async () => {
     // Set up the mock before importing
-    ;(window as any).AndroidNative = {
+    ;(window as any).ClawBenchNative = {
       isNativeApp: () => true,
     }
 
@@ -34,11 +34,11 @@ describe('useAppMode', () => {
     expect(isAppMode.value).toBe(true)
 
     // Clean up
-    delete (window as any).AndroidNative
+    delete (window as any).ClawBenchNative
   })
 
   it('detects web mode when AndroidNative.isNativeApp() returns false', async () => {
-    ;(window as any).AndroidNative = {
+    ;(window as any).ClawBenchNative = {
       isNativeApp: () => false,
     }
 
@@ -47,7 +47,7 @@ describe('useAppMode', () => {
 
     expect(isAppMode.value).toBe(false)
 
-    delete (window as any).AndroidNative
+    delete (window as any).ClawBenchNative
   })
 
   it('returns singleton state across multiple calls', async () => {
