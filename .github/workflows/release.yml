@@ -499,6 +499,168 @@ jobs:
             echo "::warning::Could not determine package visibility. If it's private, set it to public at: ${SETTINGS_URL}"
           fi
 
+  build-desktop-linux:
+    name: Build Desktop Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Build desktop (Linux)
+        run: |
+          cd desktop
+          npm ci
+          npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-package
+          path: desktop/release/linux-unpacked/
+
+  build-desktop-windows:
+    name: Build Desktop Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Build desktop (Windows)
+        run: |
+          cd desktop
+          npm ci
+          npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-package
+          path: desktop/release/win-unpacked/
+
+  build-desktop-macos:
+    name: Build Desktop macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install desktop deps
+        run: |
+          cd desktop
+          npm ci
+
+      - name: Build desktop (macOS arm64 + x64)
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          cd desktop
+          npx tsc -p tsconfig.json
+          npx electron-builder --dir --arm64
+          npx electron-builder --dir --x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-package
+          path: desktop/release/mac*/
+
+  publish-npm-desktop:
+    name: Publish desktop to npm
+    needs: [build-desktop-linux, build-desktop-windows, build-desktop-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download desktop Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-linux-package
+          path: pkg-desktop/linux-x64/app/
+
+      - name: Download desktop Windows
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows-package
+          path: pkg-desktop/win32-x64/app/
+
+      - name: Download desktop macOS
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-macos-package
+          path: pkg-desktop/macos-all/
+
+      - name: Assemble desktop npm packages
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Split macOS artifact (mac-arm64 / mac-x64) into per-arch packages
+          cp -r pkg-desktop/macos-all/mac-arm64 pkg-desktop/darwin-arm64/app
+          cp -r pkg-desktop/macos-all/mac-x64 pkg-desktop/darwin-x64/app
+          for PLATFORM in linux-x64 win32-x64 darwin-arm64 darwin-x64; do
+            PKG="npm/platforms-desktop/$PLATFORM"
+            mkdir -p "$PKG"
+            cp -r "pkg-desktop/$PLATFORM/app/." "$PKG/"
+            node -e "const fs=require('fs');const p={name:'@xulongzhe/clawbench-desktop-$PLATFORM',version:'$VERSION',description:'ClawBench desktop client',files:['**/*']};fs.writeFileSync('$PKG/package.json',JSON.stringify(p,null,2)+'\n')"
+          done
+          echo "Assembled desktop npm packages"
+
+      - name: Configure npm registry for publishing
+        run: |
+          rm -f .npmrc
+          {
+            echo "registry=https://registry.npmjs.org/"
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
+          } >> "${NPM_CONFIG_USERCONFIG}"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @xulongzhe/clawbench-desktop-linux-x64
+        run: npm publish ./npm/platforms-desktop/linux-x64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @xulongzhe/clawbench-desktop-win32-x64
+        run: npm publish ./npm/platforms-desktop/win32-x64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @xulongzhe/clawbench-desktop-darwin-arm64
+        run: npm publish ./npm/platforms-desktop/darwin-arm64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @xulongzhe/clawbench-desktop-darwin-x64
+        run: npm publish ./npm/platforms-desktop/darwin-x64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   publish-npm:
     name: Publish to npm
     needs: [build-frontend, build-linux, build-linux-arm64, build-windows, build-macos-arm64, build-macos-amd64]
