@@ -948,6 +948,8 @@ export default {
     chat: 'Chat',
     clear: 'Clear',
     placeholder: 'Type your question...',
+    addToChat: 'Add to chat',
+    addedToChat: 'Added to chat',
     send: 'Send',
     aiChat: 'AI Chat',
     newSession: 'New session',

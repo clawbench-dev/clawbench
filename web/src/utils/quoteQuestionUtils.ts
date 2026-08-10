@@ -104,3 +104,38 @@ export function buildQuoteMessage(
   }
   return `${userMessage.trim()}\n\n\`\`\`${langPrefix}${filePath}${lineSuffix}\n${text}\n\`\`\``
 }
+
+export interface QuoteMessageItem {
+  text: string
+  filePath: string
+  language: string
+  startLine: number
+  endLine: number
+  note?: string
+}
+
+function buildQuoteBlock(quote: QuoteMessageItem): string {
+  const langPrefix = quote.language ? `${quote.language}:` : ':'
+  let lineSuffix = ''
+  if (quote.startLine && quote.endLine && quote.startLine !== quote.endLine) {
+    lineSuffix = `:${quote.startLine}-${quote.endLine}`
+  } else if (quote.startLine) {
+    lineSuffix = `:${quote.startLine}`
+  }
+  return `\`\`\`${langPrefix}${quote.filePath}${lineSuffix}\n${quote.text}\n\`\`\``
+}
+
+/** Build one prompt from an optional overall question and ordered quoted selections. */
+export function buildMultiQuoteMessage(userMessage: string, quotes: QuoteMessageItem[]): string {
+  const parts: string[] = []
+  const prompt = userMessage.trim()
+  if (prompt) parts.push(prompt)
+
+  for (const quote of quotes) {
+    const note = quote.note?.trim()
+    if (note) parts.push(note)
+    parts.push(buildQuoteBlock(quote))
+  }
+
+  return parts.join('\n\n')
+}

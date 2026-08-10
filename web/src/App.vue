@@ -260,11 +260,11 @@
         @close="detailsDrawer.close()"
       />
 
-      <!-- Quote question floating bar (narrow mode only; wide-screen uses ChatInputBar quote tag) -->
+      <!-- Quote question floating bar (shared by narrow and wide layouts) -->
       <QuoteQuestionBar
-        v-if="!isWideScreen"
         :visible="quoteQuestion.visible.value"
         :quoteData="quoteQuestion.quoteData.value"
+        @add="quoteQuestion.addToConversation($event)"
         @send="quoteQuestion.sendMessage($event)"
         @close="quoteQuestion.closeSheet()"
         @pin="quoteQuestion.pinBar()"
@@ -432,7 +432,7 @@ import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
-import { useQuoteQuestion, restoreBarVisibility } from './composables/useQuoteQuestion.ts'
+import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
@@ -1522,10 +1522,6 @@ watch(isWideScreen, (val) => {
     document.documentElement.style.setProperty('--dock-height', '0px')
   } else {
     onTabSwitch(activeTab.value)
-    // Restore QuoteQuestionBar visibility if a pinned quote exists
-    // (wide-screen auto-pin sets barVisible=false because the floating bar
-    // is hidden there; switching to narrow needs the bar back).
-    restoreBarVisibility()
     // Bottom dock visible again — re-measure (ResizeObserver may miss the
     // display:none → visible transition, see the keyboard safety-net comment).
     nextTick(() => {

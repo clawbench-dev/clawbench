@@ -36,6 +36,9 @@
               @keydown.enter.exact.prevent="handleSend"
               @input="autoResizeTextarea"
             />
+            <button class="qq-add-btn" @click="handleAdd" :title="t('quoteBar.addToChat')" :aria-label="t('quoteBar.addToChat')">
+              <Plus :size="14" />
+            </button>
             <button class="qq-send-btn" :class="{ disabled: !canSend }" @click="handleSend" :title="t('quoteBar.send')">
               <Send :size="14" />
             </button>
@@ -48,7 +51,7 @@
 </template>
 
 <script setup>
-import { MessageSquare, XCircle, Send } from 'lucide-vue-next'
+import { MessageSquare, XCircle, Plus, Send } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
@@ -59,7 +62,7 @@ const props = defineProps({
   visible: Boolean,
   quoteData: Object,
 })
-const emit = defineEmits(['send', 'close', 'pin', 'unpin'])
+const emit = defineEmits(['add', 'send', 'close', 'pin', 'unpin'])
 
 const expanded = ref(false)
 const inputText = ref('')
@@ -127,6 +130,12 @@ watch(inputText, () => nextTick(() => autoResizeTextarea()))
 function handleSend() {
   if (!canSend.value) return
   emit('send', inputText.value)
+  expanded.value = false
+  inputText.value = ''
+}
+
+function handleAdd() {
+  emit('add', inputText.value)
   expanded.value = false
   inputText.value = ''
 }
@@ -304,6 +313,7 @@ defineExpose({ expanded, expand, inputText })
   background: color-mix(in srgb, var(--danger-color) 8%, transparent);
 }
 
+.qq-add-btn,
 .qq-send-btn {
   display: flex;
   align-items: center;
@@ -318,6 +328,16 @@ defineExpose({ expanded, expand, inputText })
   cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
   flex-shrink: 0;
+}
+
+.qq-add-btn {
+  background: transparent;
+  color: var(--accent-color);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
+}
+
+.qq-add-btn:hover {
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 .qq-send-btn:hover {
