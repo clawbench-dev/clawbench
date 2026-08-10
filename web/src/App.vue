@@ -148,8 +148,10 @@
                               @click="handleAppHeaderRecentFileSelect(entry.path)"
                             >
                               <FileIcon :path="entry.path" :size="16" />
-                              <span class="view-empty-recent-name">{{ baseName(entry.path) }}</span>
-                              <span class="view-empty-recent-dir">{{ dirName(entry.path) }}</span>
+                              <div class="view-empty-recent-text">
+                                <span class="view-empty-recent-name">{{ baseName(entry.path) }}</span>
+                                <span class="view-empty-recent-dir">{{ dirName(entry.path) }}</span>
+                              </div>
                               <button
                                 class="view-empty-recent-remove"
                                 type="button"
@@ -2257,12 +2259,20 @@ onUnmounted(() => {
 .view-empty-recent-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 8px 10px;
   border-radius: 8px;
   cursor: pointer;
   text-align: left;
   transition: background 0.15s;
+}
+
+.view-empty-recent-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .view-empty-recent-item:hover {
   background: var(--bg-hover, rgba(128, 128, 128, 0.1));
@@ -2275,8 +2285,7 @@ onUnmounted(() => {
 .view-empty-recent-name {
   color: var(--text-primary);
   font-size: 13px;
-  flex-shrink: 0;
-  max-width: 40%;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2289,35 +2298,36 @@ onUnmounted(() => {
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
-  margin-left: auto;
   padding: 0;
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s;
+  transition: color 0.15s, background 0.15s;
 }
 
-.view-empty-recent-item:hover .view-empty-recent-remove,
+.view-empty-recent-item:hover .view-empty-recent-remove {
+  color: var(--text-secondary);
+}
+
 .view-empty-recent-remove:focus-visible {
-  opacity: 1;
+  color: var(--text-secondary);
 }
 
-.view-empty-recent-remove:hover {
+.view-empty-recent-remove:hover,
+.view-empty-recent-remove:focus-visible {
   color: var(--color-red, #ef4444);
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
 }
 
 .view-empty-recent-dir {
   color: var(--text-muted);
-  font-size: 12px;
-  flex: 1;
+  font-size: 11px;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  direction: rtl;
 }
 
 .view-empty-manager-btn {
