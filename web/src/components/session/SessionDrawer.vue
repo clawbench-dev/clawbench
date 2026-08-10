@@ -303,13 +303,6 @@ onUnmounted(() => {
   padding: 10px 12px;
   border-top: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
-  transition: background 0.15s;
-}
-
-@media (hover: hover) {
-  .session-item:hover {
-    background: var(--bg-secondary, #f8f9fa);
-  }
 }
 
 .session-item.active {
@@ -327,6 +320,15 @@ onUnmounted(() => {
 
 .session-row.active.running {
   background: linear-gradient(135deg, rgba(0, 102, 204, 0.08), rgba(34, 197, 94, 0.1));
+}
+
+@media (hover: hover) {
+  .session-row:hover {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  }
+  .session-row.active.running:hover {
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  }
 }
 
 .session-item-info {
