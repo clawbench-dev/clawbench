@@ -44,13 +44,15 @@ ClawBench 目前有三端：Go 后端（本机服务）、Vue 3 移动优先 Web
 | 分享 | `shareText()` `shareFile()` `shareFiles()` | 简化：系统默认应用打开 / 复制剪贴板 |
 | 日志采集 | `startLogCapture()` `stopLogCapture()` | 复用 |
 
-### 2.3 明确不做
+### 2.3 明确不做（桌面侧不实现，但**保留在共享契约**）
 
-- `dismissSplash`（原生窗口无 splash 覆盖层）
-- `setVolumeKeyMode`（桌面无硬件音量键）
-- 所有 OEM 相关（`isChineseOem`/`getOemName`/自动启动/电池优化）
-- `setTerminalSessionCount`（状态栏角标文本）
-- `stopBackgroundService`（Android 前台服务概念）
+> **2026-08-10 修订**：以下方法原本被列为"不做"并从共享契约移除，但审查发现会破坏 Android 既有流程（桥为 Android+Electron 共用，移除即 Android 回归）。现**保留在 `ClawBenchNative` 契约**，Electron preload 实现为 no-op，Android 侧真实行为不变。
+
+- `dismissSplash`（桌面无 splash；**契约保留**，Electron no-op —— Android 远程页 splash 依赖此调用，不可移除）
+- `stopBackgroundService`（桌面无前台服务；**契约保留**，Electron no-op —— Android 无端口时停服务防耗电，不可移除）
+- `setVolumeKeyMode`（桌面无硬件音量键，**从契约移除**）
+- 所有 OEM 相关（`isChineseOem`/`getOemName`/自动启动/电池优化，**从契约移除**）
+- `setTerminalSessionCount`（状态栏角标文本，**从契约移除**）
 - 桌面独有加分项（托盘/应用菜单/单实例锁/协议深链/自启动）——**列入后续**，本次不含
 
 ## 3. 仓库结构（新增顶层 `desktop/`）
@@ -87,6 +89,8 @@ desktop/
 - `setKeepScreenOn(on: boolean): void`
 - `setNativePushEnabled(enabled: boolean): void`
 - `updateLastSeenEventId(eventId: string): void`
+- `dismissSplash(): void` — Android 收口；Electron no-op
+- `stopBackgroundService(): void` — Android 收口；Electron no-op
 
 ### 4.2 异步方法（ipcRenderer.invoke → ipcMain.handle）
 
