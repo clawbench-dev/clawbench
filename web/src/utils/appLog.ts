@@ -13,6 +13,8 @@
  *   appLog.e → console.error/ AppLog.e (E)
  */
 
+import { getNative, isNativeApp as nativeBridgeIsNativeApp } from '@/utils/clawbenchNative'
+
 const LOG_ENDPOINT = '/api/client-log'
 const FLUSH_INTERVAL_MS = 2000  // 2-second flush interval
 const BUFFER_CAPACITY = 200     // max buffered entries
@@ -36,10 +38,11 @@ function safeStringify(a: unknown): string {
 
 function relayToNative(level: string, tag: string, args: unknown[]): void {
   try {
-    const native = (window as unknown as { AndroidNative?: { log: (level: string, tag: string, msg: string) => void; isNativeApp?: () => boolean } }).AndroidNative
+    const native = getNative()
     if (!native || !native.log) return
-    // Check isNativeApp() + top-frame to avoid iframe false positives
-    if (native.isNativeApp?.() !== true) return
+    // Native-mode check to avoid false positives
+    if (!isNativeApp()) return
+    // Top-frame check to avoid iframe false positives
     if (window !== window.top) return
     const msg = args.map(safeStringify).join(' ')
     native.log(level, tag, msg)
@@ -56,8 +59,7 @@ let isFlushing = false
 
 function isNativeApp(): boolean {
   try {
-    const native = (window as unknown as { AndroidNative?: { isNativeApp?: () => boolean } }).AndroidNative
-    return native?.isNativeApp?.() === true
+    return nativeBridgeIsNativeApp()
   } catch {
     return false
   }

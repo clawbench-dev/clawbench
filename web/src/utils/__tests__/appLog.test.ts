@@ -29,7 +29,7 @@ describe('appLog console output', () => {
 
 describe('appLog native relay', () => {
   let logSpy: ReturnType<typeof vi.fn>
-  const origAndroidNative = (window as any).AndroidNative
+  const origAndroidNative = (window as any).ClawBenchNative
 
   beforeEach(() => {
     _clearBuffer()
@@ -37,49 +37,49 @@ describe('appLog native relay', () => {
   })
 
   afterEach(() => {
-    (window as any).AndroidNative = origAndroidNative
+    (window as any).ClawBenchNative = origAndroidNative
     vi.restoreAllMocks()
     _clearBuffer()
   })
 
   it('relays via AndroidNative.log in app mode', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
-    ;(window as any).AndroidNative = { log: logSpy, isNativeApp: () => true }
+    ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => true }
     appLog.d('MyTag', 'hello', 'world')
     expect(logSpy).toHaveBeenCalledWith('D', 'MyTag', 'hello world')
   })
 
   it('relays error level correctly', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    ;(window as any).AndroidNative = { log: logSpy, isNativeApp: () => true }
+    ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => true }
     appLog.e('MyTag', 'fail:', 'code')
     expect(logSpy).toHaveBeenCalledWith('E', 'MyTag', 'fail: code')
   })
 
   it('skips native relay when AndroidNative is absent', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
-    delete (window as any).AndroidNative
+    delete (window as any).ClawBenchNative
     appLog.d('Test', 'hello')
     expect(logSpy).not.toHaveBeenCalled()
   })
 
   it('skips native relay when isNativeApp returns false', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
-    ;(window as any).AndroidNative = { log: logSpy, isNativeApp: () => false }
+    ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => false }
     appLog.d('Test', 'hello')
     expect(logSpy).not.toHaveBeenCalled()
   })
 
   it('JSON-serializes object arguments in native relay', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    ;(window as any).AndroidNative = { log: logSpy, isNativeApp: () => true }
+    ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => true }
     appLog.w('Test', 'err:', { code: 404 })
     expect(logSpy).toHaveBeenCalledWith('W', 'Test', 'err: {"code":404}')
   })
 
   it('handles circular references safely in native relay', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    ;(window as any).AndroidNative = { log: logSpy, isNativeApp: () => true }
+    ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => true }
     const circular: any = { name: 'test' }
     circular.self = circular
     appLog.w('Test', 'circular:', circular)
@@ -89,20 +89,20 @@ describe('appLog native relay', () => {
 
 describe('appLog HTTP relay', () => {
   let fetchSpy: ReturnType<typeof vi.fn>
-  const origAndroidNative = (window as any).AndroidNative
+  const origAndroidNative = (window as any).ClawBenchNative
 
   beforeEach(() => {
     _clearBuffer()
     fetchSpy = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', fetchSpy)
     // Non-app mode window (no AndroidNative)
-    delete (window as any).AndroidNative
+    delete (window as any).ClawBenchNative
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
-    ;(window as any).AndroidNative = origAndroidNative
+    ;(window as any).ClawBenchNative = origAndroidNative
     stopFlushTimer()
     _clearBuffer()
   })
@@ -140,7 +140,7 @@ describe('appLog HTTP relay', () => {
 
   it('skips HTTP relay in Android app mode (native bridge handles it)', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
-    ;(window as any).AndroidNative = { log: vi.fn(), isNativeApp: () => true }
+    ;(window as any).ClawBenchNative = { log: vi.fn(), isNativeApp: () => true }
 
     appLog.d('Test', 'hello')
     // Give a tick for any async operations
