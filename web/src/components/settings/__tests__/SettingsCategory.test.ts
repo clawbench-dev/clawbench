@@ -532,14 +532,14 @@ describe('SettingsCategory', () => {
       expect(vm.$.setupState.showPasswordDialog).toBe(true)
     })
 
-    it('calls AndroidNative.showServerDialog when reconfigureServer is clicked', async () => {
+    it('calls ClawBenchNative.showServerDialog when reconfigureServer is clicked', async () => {
       const mockShowServerDialog = vi.fn()
-      ;(window as any).AndroidNative = { showServerDialog: mockShowServerDialog }
+      ;(window as any).ClawBenchNative = { showServerDialog: mockShowServerDialog }
       const wrapper = mountCategory('about')
       const vm = wrapper.vm as any
       vm.$.setupState.handleClick({ key: 'reconfigureServer' })
       expect(mockShowServerDialog).toHaveBeenCalled()
-      delete (window as any).AndroidNative
+      delete (window as any).ClawBenchNative
     })
   })
 

@@ -2031,7 +2031,7 @@ onMounted(async () => {
     checkForUpgrade()
 
     // Handle pending navigation from push notification deep link
-    // (cross-project reload or cold start via AndroidNative bridge)
+    // (cross-project reload or cold start via native bridge)
     const processPendingSessionNav = (navSessionId) => {
       // Wait for sessions to load before switching (max 3 seconds)
       let attempts = 0

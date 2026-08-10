@@ -849,10 +849,10 @@ describe('AppHeader', () => {
 
   // ── handleLogout ──
 
-  it('handleLogout calls AndroidNative.showServerDialog in APP mode', async () => {
+  it('handleLogout calls ClawBenchNative.showServerDialog in APP mode', async () => {
     isAppModeConfig.value = true
     const showServerDialogMock = vi.fn()
-    vi.stubGlobal('AndroidNative', { showServerDialog: showServerDialogMock })
+    vi.stubGlobal('ClawBenchNative', { showServerDialog: showServerDialogMock })
 
     const wrapper = mountAndTrack()
     await (wrapper.vm as any).handleLogout()

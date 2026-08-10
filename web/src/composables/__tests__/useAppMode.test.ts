@@ -16,13 +16,13 @@ describe('useAppMode', () => {
     vi.restoreAllMocks()
   })
 
-  it('detects web mode when AndroidNative is not defined', async () => {
+  it('detects web mode when ClawBenchNative is not defined', async () => {
     const { useAppMode } = await import('@/composables/useAppMode')
     const { isAppMode } = useAppMode()
     expect(isAppMode.value).toBe(false)
   })
 
-  it('detects app mode when AndroidNative.isNativeApp() returns true', async () => {
+  it('detects app mode when ClawBenchNative.isNativeApp() returns true', async () => {
     // Set up the mock before importing
     ;(window as any).ClawBenchNative = {
       isNativeApp: () => true,
@@ -37,7 +37,7 @@ describe('useAppMode', () => {
     delete (window as any).ClawBenchNative
   })
 
-  it('detects web mode when AndroidNative.isNativeApp() returns false', async () => {
+  it('detects web mode when ClawBenchNative.isNativeApp() returns false', async () => {
     ;(window as any).ClawBenchNative = {
       isNativeApp: () => false,
     }

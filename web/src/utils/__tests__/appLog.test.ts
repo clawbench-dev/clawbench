@@ -29,7 +29,7 @@ describe('appLog console output', () => {
 
 describe('appLog native relay', () => {
   let logSpy: ReturnType<typeof vi.fn>
-  const origAndroidNative = (window as any).ClawBenchNative
+  const origClawBenchNative = (window as any).ClawBenchNative
 
   beforeEach(() => {
     _clearBuffer()
@@ -37,12 +37,12 @@ describe('appLog native relay', () => {
   })
 
   afterEach(() => {
-    (window as any).ClawBenchNative = origAndroidNative
+    (window as any).ClawBenchNative = origClawBenchNative
     vi.restoreAllMocks()
     _clearBuffer()
   })
 
-  it('relays via AndroidNative.log in app mode', () => {
+  it('relays via ClawBenchNative.log in app mode', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => true }
     appLog.d('MyTag', 'hello', 'world')
@@ -56,7 +56,7 @@ describe('appLog native relay', () => {
     expect(logSpy).toHaveBeenCalledWith('E', 'MyTag', 'fail: code')
   })
 
-  it('skips native relay when AndroidNative is absent', () => {
+  it('skips native relay when ClawBenchNative is absent', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     delete (window as any).ClawBenchNative
     appLog.d('Test', 'hello')
@@ -89,20 +89,20 @@ describe('appLog native relay', () => {
 
 describe('appLog HTTP relay', () => {
   let fetchSpy: ReturnType<typeof vi.fn>
-  const origAndroidNative = (window as any).ClawBenchNative
+  const origClawBenchNative = (window as any).ClawBenchNative
 
   beforeEach(() => {
     _clearBuffer()
     fetchSpy = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', fetchSpy)
-    // Non-app mode window (no AndroidNative)
+    // Non-app mode window (no ClawBenchNative)
     delete (window as any).ClawBenchNative
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
-    ;(window as any).ClawBenchNative = origAndroidNative
+    ;(window as any).ClawBenchNative = origClawBenchNative
     stopFlushTimer()
     _clearBuffer()
   })

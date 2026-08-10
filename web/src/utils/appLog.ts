@@ -1,6 +1,6 @@
 /**
  * Unified frontend logger: always prints to browser console,
- * relays to Android AppLog via AndroidNative.log() bridge when in app mode,
+ * relays to host AppLog via ClawBenchNative.log() bridge when in app mode,
  * and relays to the server via HTTP POST when in web mode.
  *
  * Tag convention: use short PascalCase module name, e.g.

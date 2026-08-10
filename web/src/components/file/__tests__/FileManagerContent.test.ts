@@ -871,18 +871,18 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
   describe('doShareExternal', () => {
     const mockShareFile = vi.fn()
-    const origAndroidNative = (window as any).AndroidNative
+    const origClawBenchNative = (window as any).ClawBenchNative
 
     beforeEach(() => {
       mockShareFile.mockReset()
     })
 
     afterEach(() => {
-      ;(window as any).AndroidNative = origAndroidNative
+      ;(window as any).ClawBenchNative = origClawBenchNative
     })
 
-    it('calls AndroidNative.shareFile with correct mimeType for image', async () => {
-      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+    it('calls ClawBenchNative.shareFile with correct mimeType for image', async () => {
+      ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
       const wrapper = mountContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
@@ -893,8 +893,8 @@ describe('FileManagerContent — keyboard shortcuts', () => {
       expect(mockShareFile).toHaveBeenCalledWith('/photos/test.png', 'image/*')
     })
 
-    it('calls AndroidNative.shareFile with video mimeType for mp4', async () => {
-      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+    it('calls ClawBenchNative.shareFile with video mimeType for mp4', async () => {
+      ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
       const wrapper = mountContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
@@ -905,8 +905,8 @@ describe('FileManagerContent — keyboard shortcuts', () => {
       expect(mockShareFile).toHaveBeenCalledWith('/video/clip.mp4', 'video/*')
     })
 
-    it('calls AndroidNative.shareFile with audio mimeType for mp3', async () => {
-      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+    it('calls ClawBenchNative.shareFile with audio mimeType for mp3', async () => {
+      ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
       const wrapper = mountContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
@@ -917,8 +917,8 @@ describe('FileManagerContent — keyboard shortcuts', () => {
       expect(mockShareFile).toHaveBeenCalledWith('/audio/song.mp3', 'audio/*')
     })
 
-    it('calls AndroidNative.shareFile with pdf mimeType', async () => {
-      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+    it('calls ClawBenchNative.shareFile with pdf mimeType', async () => {
+      ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
       const wrapper = mountContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
@@ -929,8 +929,8 @@ describe('FileManagerContent — keyboard shortcuts', () => {
       expect(mockShareFile).toHaveBeenCalledWith('/doc/file.pdf', 'application/pdf')
     })
 
-    it('calls AndroidNative.shareFile with wildcard mimeType for unknown', async () => {
-      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+    it('calls ClawBenchNative.shareFile with wildcard mimeType for unknown', async () => {
+      ;(window as any).ClawBenchNative = { shareFile: mockShareFile }
       const wrapper = mountContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
@@ -941,8 +941,8 @@ describe('FileManagerContent — keyboard shortcuts', () => {
       expect(mockShareFile).toHaveBeenCalledWith('/doc/file.xyz', '*/*')
     })
 
-    it('does nothing when AndroidNative is missing', async () => {
-      ;(window as any).AndroidNative = undefined
+    it('does nothing when ClawBenchNative is missing', async () => {
+      ;(window as any).ClawBenchNative = undefined
       const wrapper = mountContent()
       await nextTick()
       wrapper.vm.ctxMenu.visible = true
@@ -959,14 +959,14 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
 describe('FileManagerContent — batch share', () => {
   const mockShareFiles = vi.fn()
-  const origAndroidNative = (window as any).AndroidNative
+  const origClawBenchNative = (window as any).ClawBenchNative
 
   beforeEach(() => {
     mockShareFiles.mockReset()
   })
 
   afterEach(() => {
-    ;(window as any).AndroidNative = origAndroidNative
+    ;(window as any).ClawBenchNative = origClawBenchNative
   })
 
   it('allSelectedAreFiles returns true when only files selected', async () => {
@@ -994,8 +994,8 @@ describe('FileManagerContent — batch share', () => {
     expect(wrapper.vm.allSelectedAreFiles).toBe(true)
   })
 
-  it('doBatchShare calls AndroidNative.shareFiles with paths and mime types', async () => {
-    ;(window as any).AndroidNative = { shareFiles: mockShareFiles }
+  it('doBatchShare calls ClawBenchNative.shareFiles with paths and mime types', async () => {
+    ;(window as any).ClawBenchNative = { shareFiles: mockShareFiles }
     const wrapper = mountContent()
     wrapper.vm.multiSelectState.active = true
     wrapper.vm.multiSelectState.selected.add('test.ts')
@@ -1015,7 +1015,7 @@ describe('FileManagerContent — batch share', () => {
   })
 
   it('doBatchShare maps image/video/audio/pdf/zip mime types correctly', async () => {
-    ;(window as any).AndroidNative = { shareFiles: mockShareFiles }
+    ;(window as any).ClawBenchNative = { shareFiles: mockShareFiles }
     const entries = [
       { name: 'photo.png', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
       { name: 'clip.mp4', type: 'file', modified: '2025-01-01T00:00:00Z', size: 200 },
@@ -1034,8 +1034,8 @@ describe('FileManagerContent — batch share', () => {
     expect(mimeTypes).toEqual(['image/*', 'video/*', 'audio/*'])
   })
 
-  it('doBatchShare does nothing when AndroidNative is missing', async () => {
-    ;(window as any).AndroidNative = undefined
+  it('doBatchShare does nothing when ClawBenchNative is missing', async () => {
+    ;(window as any).ClawBenchNative = undefined
     const wrapper = mountContent()
     wrapper.vm.multiSelectState.active = true
     wrapper.vm.multiSelectState.selected.add('test.ts')
@@ -1046,7 +1046,7 @@ describe('FileManagerContent — batch share', () => {
   })
 
   it('doBatchShare does nothing when shareFiles method is missing', async () => {
-    ;(window as any).AndroidNative = { shareFile: vi.fn() } // no shareFiles
+    ;(window as any).ClawBenchNative = { shareFile: vi.fn() } // no shareFiles
     const wrapper = mountContent()
     wrapper.vm.multiSelectState.active = true
     wrapper.vm.multiSelectState.selected.add('test.ts')

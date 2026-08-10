@@ -1,10 +1,12 @@
+import { getNative } from '@/utils/clawbenchNative'
+
 /**
  * Download utilities shared across all components.
  *
  * Three download primitives:
  * - buildLocalFileUrl() — construct /api/local-file/ URLs with proper encoding
  * - downloadFileByPath() — download a file by relative or absolute path (web/app dispatch)
- * - downloadBlob()      — download client-side content as a file (blob → <a> or Android bridge)
+ * - downloadBlob()      — download client-side content as a file (blob → <a> or native bridge)
  */
 
 /**
@@ -48,8 +50,7 @@ export function buildLocalFileUrl(
  */
 export function downloadFileByPath(path: string, fileName?: string): void {
     if (!path) return
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = (window as any).AndroidNative
+    const native = getNative()
     if (typeof native !== 'undefined' && native?.downloadFile) {
         native.downloadFile(path)
         return
@@ -72,8 +73,7 @@ export function downloadFileByPath(path: string, fileName?: string): void {
  */
 export function downloadByUrl(url: string, fileName?: string): void {
     if (!url) return
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = (window as any).AndroidNative
+    const native = getNative()
     if (typeof native !== 'undefined' && native?.downloadUrl) {
         native.downloadUrl(url, fileName || '')
         return
@@ -91,12 +91,11 @@ export function downloadByUrl(url: string, fileName?: string): void {
 /**
  * Download a string as a file via Blob.
  * - Web: URL.createObjectURL + <a> tag click
- * - APP (Android): FileReader → base64 → AndroidNative.downloadBlob
+ * - APP (Android): FileReader → base64 → ClawBenchNative.downloadBlob
  */
 export function downloadBlob(content: string, filename: string, mimeType: string) {
     const blob = new Blob([content], { type: mimeType })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const native = (window as any).AndroidNative
+    const native = getNative()
     const isApp = typeof native !== 'undefined' && native?.downloadBlob
 
     if (isApp) {

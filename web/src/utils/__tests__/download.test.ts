@@ -111,13 +111,13 @@ describe('downloadByUrl', () => {
     anchor.remove()
   })
 
-  it('calls AndroidNative.downloadUrl in app mode', () => {
+  it('calls ClawBenchNative.downloadUrl in app mode', () => {
     const mockDownloadUrl = vi.fn()
-    ;(window as any).AndroidNative = { downloadUrl: mockDownloadUrl }
+    ;(window as any).ClawBenchNative = { downloadUrl: mockDownloadUrl }
 
     downloadByUrl('/api/apk', 'clawbench-android.apk')
     expect(mockDownloadUrl).toHaveBeenCalledWith('/api/apk', 'clawbench-android.apk')
 
-    delete (window as any).AndroidNative
+    delete (window as any).ClawBenchNative
   })
 })
