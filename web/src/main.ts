@@ -1,3 +1,8 @@
+import { installPromiseWithResolversPolyfill } from './utils/polyfills.ts'
+
+// Must run before any module that depends on Promise.withResolvers (e.g. pdfjs-dist).
+installPromiseWithResolversPolyfill()
+
 import { createApp } from 'vue'
 import App from './App.vue'
 import i18n from './i18n'
