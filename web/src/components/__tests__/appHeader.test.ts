@@ -8,6 +8,8 @@ const {
   loadGitBranchFn,
   setPendingManageNavigationFn,
   closeCurrentFileFn,
+  dialogConfirmFn,
+  removeRecentFileFn,
   mockState,
   wsConfig,
   isAppModeConfig,
@@ -15,6 +17,8 @@ const {
   loadGitBranchFn: vi.fn(),
   setPendingManageNavigationFn: vi.fn(),
   closeCurrentFileFn: vi.fn(),
+  dialogConfirmFn: vi.fn(),
+  removeRecentFileFn: vi.fn(),
   mockState: { gitBranch: '' },
   wsConfig: { value: 'connected' as string },
   isAppModeConfig: { value: false as boolean },
@@ -44,6 +48,21 @@ vi.mock('@/composables/useAppMode', () => {
 vi.mock('@/composables/useCommitNavigation.ts', () => ({
   setPendingManageNavigation: setPendingManageNavigationFn,
 }))
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: dialogConfirmFn }),
+}))
+vi.mock('@/composables/useRecentFiles', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { ref } = require('vue')
+  return {
+    useRecentFiles: () => ({
+      entries: ref([]),
+      recordRecentFile: vi.fn(),
+      removeRecentFile: removeRecentFileFn,
+      openRecentFile: vi.fn(),
+    }),
+  }
+})
 
 const i18n = createI18n({
   legacy: false, locale: 'en',
@@ -58,6 +77,10 @@ const i18n = createI18n({
     branches: 'Branches', moreBranches: 'Manage branches',
     switchBranchConfirm: 'Switch to branch "{branch}"?',
     branchDirtyWorktree: 'dirty', switchBranchFailed: 'Failed: {error}', switchBranchNetworkError: 'network',
+    removeProject: 'Remove project',
+    removeProjectConfirm: 'Remove "{name}" from recent projects?',
+    projectRemoved: 'Project removed',
+    removeProjectFailed: 'Failed to remove project',
   }, login: { logout: 'Logout' }, systemResources: { title: 'System Resources' } } },
 })
 
@@ -119,6 +142,8 @@ describe('AppHeader', () => {
     mockState.gitBranch = ''
     loadGitBranchFn.mockReset()
     setPendingManageNavigationFn.mockReset()
+    dialogConfirmFn.mockReset()
+    dialogConfirmFn.mockResolvedValue(true)
   })
 
   // ── projectName computed (5) ──
@@ -426,6 +451,80 @@ describe('AppHeader', () => {
 
     expect(wrapper.vm.dropdownOpen).toBe(false)
     expect(hotSwitchMock).toHaveBeenCalledWith('/home/user/other-project')
+  })
+
+  // ── removeRecent ──
+
+  it('removeRecent confirms and removes only the selected recent project', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountAndTrack()
+    wrapper.vm.recentItems = [
+      { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a' },
+      { path: '/home/user/project-b', name: 'project-b', displayPath: 'project-b' },
+    ]
+    await (wrapper.vm as any).removeRecent(wrapper.vm.recentItems[0])
+
+    expect(dialogConfirmFn).toHaveBeenCalledWith(
+      expect.stringContaining('project-a'),
+      { dangerous: true },
+    )
+    expect(fetchMock).toHaveBeenCalledWith('/api/recent-projects', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: '/home/user/project-a' }),
+    })
+    expect(wrapper.vm.recentItems).toEqual([
+      { path: '/home/user/project-b', name: 'project-b', displayPath: 'project-b' },
+    ])
+
+    vi.unstubAllGlobals()
+  })
+
+  it('removeRecent does nothing when confirmation is cancelled', async () => {
+    dialogConfirmFn.mockResolvedValueOnce(false)
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountAndTrack()
+    const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a' }
+    wrapper.vm.recentItems = [item]
+
+    await (wrapper.vm as any).removeRecent(item)
+
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/recent-projects', expect.objectContaining({
+      method: 'DELETE',
+    }))
+    expect(wrapper.vm.recentItems).toEqual([item])
+    vi.unstubAllGlobals()
+  })
+
+  it('removeRecent keeps the item when the request fails', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountAndTrack()
+    const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a' }
+    wrapper.vm.recentItems = [item]
+
+    await (wrapper.vm as any).removeRecent(item)
+
+    expect(wrapper.vm.recentItems).toEqual([item])
+    vi.unstubAllGlobals()
+  })
+
+  it('recent-file remove button removes the entry without confirmation', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.recentFileEntries = [{ path: '/home/user/a.ts', accessedAt: 1 }]
+    wrapper.vm.fileDropdownOpen = true
+    await wrapper.vm.$nextTick()
+
+    const removeBtn = document.body.querySelector('.app-menu .item-remove-btn')
+    expect(removeBtn).toBeTruthy()
+    ;(removeBtn as HTMLElement)?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(removeRecentFileFn).toHaveBeenCalledTimes(1)
+    expect(removeRecentFileFn).toHaveBeenCalledWith('/home/user/a.ts')
+    expect(dialogConfirmFn).not.toHaveBeenCalled()
+    wrapper.vm.fileDropdownOpen = false
   })
 
   // ── onClickOutside ──

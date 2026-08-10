@@ -48,6 +48,15 @@
                 <Projector :size="14" class="item-icon" />
                 <span class="item-label">{{ item.name }}</span>
                 <span class="item-path" @mousedown.prevent="onPathMouseDown" @click="onPathClick">{{ item.displayPath }}</span>
+                <button
+                  class="item-remove-btn"
+                  type="button"
+                  :title="t('appHeader.removeProject')"
+                  :aria-label="t('appHeader.removeProject')"
+                  @click.stop="removeRecent(item)"
+                >
+                  <X :size="14" />
+                </button>
               </div>
             </div>
             <div class="menu-divider"></div>
@@ -77,6 +86,15 @@
               <FileIcon :path="entry.path" :size="16" class="item-icon" />
               <span class="item-label">{{ baseName(entry.path) }}</span>
               <span class="item-path">{{ dirName(entry.path) }}</span>
+              <button
+                class="item-remove-btn"
+                type="button"
+                :title="t('appHeader.removeRecentFile')"
+                :aria-label="t('appHeader.removeRecentFile')"
+                @click.stop="removeRecentFile(entry.path)"
+              >
+                <X :size="14" />
+              </button>
             </div>
           </div>
           <div class="menu-divider"></div>
@@ -130,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, FolderOpen, Cpu, Activity, MemoryStick, Database } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, FolderOpen, Cpu, Activity, MemoryStick, Database, X } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -146,6 +164,7 @@ import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { toFixedCSS } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
+import { appLog } from '@/utils/appLog'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
@@ -162,7 +181,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['openProjectDialog', 'selectRecentFile'])
 
-const { entries: recentFileEntries } = useRecentFiles()
+const { entries: recentFileEntries, removeRecentFile } = useRecentFiles()
 
 // Recent files quick-index dropdown state
 const fileDropdownOpen = ref(false)
@@ -547,6 +566,28 @@ async function selectRecent(item: RecentItem) {
         }
     } catch {
         toast?.show(t('appHeader.switchProjectNetworkError'), { icon: '⚠️', type: 'error', duration: 3000 })
+    }
+}
+
+async function removeRecent(item: RecentItem) {
+    const confirmed = await dialog.confirm(
+        t('appHeader.removeProjectConfirm', { name: item.name }),
+        { dangerous: true },
+    )
+    if (!confirmed) return
+
+    try {
+        const resp = await fetch('/api/recent-projects', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: item.path }),
+        })
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        recentItems.value = recentItems.value.filter(r => r.path !== item.path)
+        toast?.show(t('appHeader.projectRemoved'), { icon: '✅', type: 'success', duration: 2000 })
+    } catch (error) {
+        appLog.w('AppHeader', 'Failed to remove recent project', { path: item.path, error })
+        toast?.show(t('appHeader.removeProjectFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
     }
 }
 
@@ -988,6 +1029,35 @@ onUnmounted(() => {
     text-overflow: ellipsis;
     white-space: nowrap;
     cursor: default;
+}
+
+.app-menu-item .item-remove-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.app-menu-item .item-remove-btn:hover {
+    color: var(--color-red, #ef4444);
+    background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
+}
+
+.app-menu-item.active .item-remove-btn {
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.app-menu-item.active .item-remove-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.18);
 }
 
 .app-menu-item.other-item .item-icon {

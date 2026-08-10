@@ -150,6 +150,15 @@
                               <FileIcon :path="entry.path" :size="16" />
                               <span class="view-empty-recent-name">{{ baseName(entry.path) }}</span>
                               <span class="view-empty-recent-dir">{{ dirName(entry.path) }}</span>
+                              <button
+                                class="view-empty-recent-remove"
+                                type="button"
+                                :title="t('appHeader.removeRecentFile')"
+                                :aria-label="t('appHeader.removeRecentFile')"
+                                @click.stop="removeRecentFile(entry.path)"
+                              >
+                                <X :size="14" />
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -389,7 +398,7 @@ import { appLog, startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
-import { MessageSquare, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -2246,7 +2255,6 @@ onUnmounted(() => {
   text-align: left;
   transition: background 0.15s;
 }
-
 .view-empty-recent-item:hover {
   background: var(--bg-hover, rgba(128, 128, 128, 0.1));
 }
@@ -2263,6 +2271,34 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.view-empty-recent-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.view-empty-recent-item:hover .view-empty-recent-remove,
+.view-empty-recent-remove:focus-visible {
+  opacity: 1;
+}
+
+.view-empty-recent-remove:hover {
+  color: var(--color-red, #ef4444);
+  background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
 }
 
 .view-empty-recent-dir {
