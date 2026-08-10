@@ -188,7 +188,7 @@ export function usePortForward() {
     // Register with Android native layer: pass localPort, targetPort, host
     if (isAppMode.value) {
       appLog.d(TAG, 'registerPort: localPort=' + localPort + ', targetPort=' + port + ', host=' + (host || ''))
-      ;getNative()?.addForwardedPort?.(localPort, port, host || '')
+      ;getNative()?.addForwardedPort?.(localPort, port, host || '').catch(() => {})
     }
     // Fire-and-forget: refresh port list and SSH info in the background.
     // Do NOT await — the caller needs localPort immediately to open the WebView.
@@ -201,8 +201,8 @@ export function usePortForward() {
     await apiPut('/api/proxy/ports', { localPort, port, host, name, protocol })
     // Re-sync native layer after update: remove old, add new with correct localPort
     if (isAppMode.value) {
-      ;getNative()?.removeForwardedPort?.(localPort)
-      ;getNative()?.addForwardedPort?.(localPort, port, host || '')
+      ;getNative()?.removeForwardedPort?.(localPort).catch(() => {})
+      ;getNative()?.addForwardedPort?.(localPort, port, host || '').catch(() => {})
     }
     await Promise.all([loadPorts(true), loadSSHInfo()])
   }
@@ -210,7 +210,7 @@ export function usePortForward() {
   async function unregisterPort(localPort: number) {
     await apiDelete(`/api/proxy/ports?port=${localPort}`)
     if (isAppMode.value) {
-      ;getNative()?.removeForwardedPort?.(localPort)
+      ;getNative()?.removeForwardedPort?.(localPort).catch(() => {})
     }
     await Promise.all([loadPorts(true), loadSSHInfo()])
   }
@@ -236,9 +236,9 @@ export function usePortForward() {
       const p = ports.value.find(x => x.localPort === localPort)
       const native = getNative()
       if (enabled && p) {
-        native?.addForwardedPort?.(p.localPort, p.port, p.host || '')
+        native?.addForwardedPort?.(p.localPort, p.port, p.host || '').catch(() => {})
       } else if (!enabled) {
-        native?.removeForwardedPort?.(localPort)
+        native?.removeForwardedPort?.(localPort).catch(() => {})
       }
     }
   }
@@ -281,7 +281,7 @@ export function usePortForward() {
         for (const item of current) {
           const lp = item && item.port
           if (lp && !enabledLocalPorts.has(lp)) {
-            native.removeForwardedPort?.(lp)
+            native.removeForwardedPort?.(lp).catch(() => {})
           }
         }
       } catch {
@@ -290,7 +290,7 @@ export function usePortForward() {
     }
 
     for (const p of enabledPorts) {
-      native.addForwardedPort?.(p.localPort, p.port, p.host || '')
+      native.addForwardedPort?.(p.localPort, p.port, p.host || '').catch(() => {})
     }
   }
 
@@ -499,9 +499,9 @@ export function usePortForward() {
   /** Internal helper: actually open the port in sandbox or external browser */
   function doOpen(native: ClawBenchNative | undefined, localPort: number, protocol?: string, hostArg?: string, path?: string) {
     if (native?.openInSandbox) {
-      native.openInSandbox(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '', path || '', currentSessionId.value || '')
+      native.openInSandbox(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '', path || '', currentSessionId.value || '').catch(() => {})
     } else if (native?.openInBrowser) {
-      native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '', path || '')
+      native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '', path || '').catch(() => {})
     }
   }
 
@@ -612,7 +612,7 @@ export function usePortForward() {
     if (isAppMode.value) {
       const native = getNative()
       if (native?.openInBrowser) {
-        native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', host || '', '')
+        native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', host || '', '').catch(() => {})
       }
     } else {
       window.open(buildPortUrl(localPort, protocol), '_blank')
