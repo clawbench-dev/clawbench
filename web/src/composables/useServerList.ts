@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { getNative } from '@/utils/clawbenchNative'
 
 export interface ServerEntry {
   url: string
@@ -6,16 +7,6 @@ export interface ServerEntry {
 }
 
 const STORAGE_KEY = 'clawbench-servers'
-
-/** Get the native AndroidNative bridge (typed) */
-function getNative(): {
-  getServerList?: () => string
-  saveServer?: (url: string, password: string) => void
-  removeServer?: (url: string) => void
-} | undefined {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (window as any).AndroidNative
-}
 
 /** Parse server list from JSON string */
 function parseList(json: string): ServerEntry[] {
@@ -34,17 +25,17 @@ function parseList(json: string): ServerEntry[] {
 
 /**
  * Composable for managing the multi-server list.
- * In APP mode, reads/writes via AndroidNative bridge (synchronous).
+ * In APP mode, reads/writes via the native bridge (async).
  * In web mode, falls back to localStorage.
  */
 export function useServerList() {
   const servers = ref<ServerEntry[]>([])
 
-  function load() {
+  async function load() {
     const native = getNative()
     if (native?.getServerList) {
-      // Synchronous JS bridge call — no loading state needed
-      servers.value = parseList(native.getServerList())
+      const json = await native.getServerList()
+      servers.value = json ? parseList(json) : []
     } else {
       // Fallback: localStorage (web mode, single-origin only)
       const raw = localStorage.getItem(STORAGE_KEY)
@@ -52,10 +43,10 @@ export function useServerList() {
     }
   }
 
-  function save(url: string, password: string) {
+  async function save(url: string, password: string) {
     const native = getNative()
     if (native?.saveServer) {
-      native.saveServer(url, password)
+      await native.saveServer(url, password)
     } else {
       const list = parseList(localStorage.getItem(STORAGE_KEY) || '[]')
       const idx = list.findIndex(e => e.url === url)
@@ -66,23 +57,20 @@ export function useServerList() {
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
     }
-    // Refresh in-memory list
-    load()
+    await load()
   }
 
-  function remove(url: string) {
+  async function remove(url: string) {
     const native = getNative()
     if (native?.removeServer) {
-      native.removeServer(url)
+      await native.removeServer(url)
     } else {
       const list = parseList(localStorage.getItem(STORAGE_KEY) || '[]')
-      const filtered = list.filter(e => e.url !== url)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list.filter(e => e.url !== url)))
     }
-    load()
+    await load()
   }
 
-  /** Get password for a given server URL, or empty string */
   function getPassword(url: string): string {
     return servers.value.find(e => e.url === url)?.password || ''
   }
