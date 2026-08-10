@@ -41,6 +41,85 @@ function tryDecodeUri(uri: string): string {
     }
 }
 
+// ── File URI parsing ───────────────────────────────────────────────────────────
+
+export interface ParsedFileUri {
+    /** Clean filesystem path (percent-decoded, no file:// / hash / :line suffix). */
+    path: string
+    lineStart?: number
+    lineEnd?: number
+}
+
+// Matches #L10-L20, #L10, #10-20, #10 (single or ranged line fragment).
+const LINE_FRAGMENT_RE = /^L?(\d+)(?:-L?(\d+))?$/i
+
+/**
+ * Parse a raw URI/path string into a clean filesystem path and optional line range.
+ *
+ * Supported forms:
+ *   - file:///abs/path, file://localhost/abs/path
+ *   - /abs/path, rel/path, ../rel/path
+ *   - Optional line target: #L10-L20, #L10, #10-20, #10, or a trailing :10-20 / :10
+ *
+ * Percent-encoded path components are decoded (e.g. %E4%B8%AD → 中).
+ * Non-numeric hashes (e.g. "#section") are dropped from the path.
+ * A trailing ":N[-M]" is only treated as a line range when it is the last
+ * thing in the string, so Windows drive letters (C:/…) are unaffected.
+ */
+export function parseFileUri(rawInput: string): ParsedFileUri {
+    const input = (rawInput ?? '').trim()
+    if (!input) return { path: '' }
+
+    let raw = input
+
+    // 1. Strip the file:// scheme (handles file:///path and file://host/path).
+    if (raw.startsWith('file://')) {
+        raw = raw.slice('file://'.length)
+        if (!raw.startsWith('/')) {
+            // file://host/… → drop the host, keep the absolute path.
+            const slash = raw.indexOf('/')
+            raw = slash === -1 ? '' : raw.slice(slash)
+        }
+        // file:///… leaves raw already starting with "/".
+    }
+
+    let lineStart: number | undefined
+    let lineEnd: number | undefined
+
+    // 2. Extract the line fragment from a hash (#L10-L20 / #10 / #section).
+    const hashIdx = raw.indexOf('#')
+    if (hashIdx !== -1) {
+        const hash = raw.slice(hashIdx + 1)
+        raw = raw.slice(0, hashIdx)
+        const m = hash.match(LINE_FRAGMENT_RE)
+        if (m) {
+            lineStart = parseInt(m[1], 10)
+            if (m[2]) lineEnd = parseInt(m[2], 10)
+        }
+    }
+
+    // 3. Fall back to a trailing ":N[-M]" line suffix when no hash was present.
+    if (lineStart === undefined) {
+        const cm = raw.match(/:(\d+)(?:-(\d+))?$/)
+        if (cm) {
+            raw = raw.slice(0, raw.length - cm[0].length)
+            lineStart = parseInt(cm[1], 10)
+            if (cm[2]) lineEnd = parseInt(cm[2], 10)
+        }
+    }
+
+    // 4. Percent-decode the remaining path.
+    if (raw.includes('%')) {
+        try {
+            raw = decodeURIComponent(raw)
+        } catch {
+            // Ignore malformed percent sequences; keep the raw path.
+        }
+    }
+
+    return { path: raw, lineStart, lineEnd }
+}
+
 // ── Path resolution helpers ────────────────────────────────────────────────────
 
 /**
@@ -334,16 +413,25 @@ export function annotateFilePaths(
         const rawHref = a.getAttribute('href')!
         const href = tryDecodeUri(rawHref)
         if (/^(https?:|\/\/|mailto:|tel:|#)/i.test(href)) continue
-        const resolved = baseDir
-            ? resolveRelativePath(href, baseDir)
-            : resolveFilePath(href, projectRoot, homeDir)
+        const parsed = parseFileUri(href)
+        if (!parsed.path) continue
+        const resolved = (parsed.path.startsWith('/') || !baseDir)
+            ? resolveFilePath(parsed.path, projectRoot, homeDir)
+            : resolveRelativePath(parsed.path, baseDir)
         if (!resolved) continue
         detectedPaths.push(resolved)
-        a.insertAdjacentHTML('afterend', fileOpenButtonHtml(resolved))
+        // Mark the <a> so click handlers can open the resolved path with its
+        // line range; the button is an additional affordance.
+        a.setAttribute('data-file-path', resolved)
+        if (parsed.lineStart) a.setAttribute('data-line-start', String(parsed.lineStart))
+        if (parsed.lineEnd) a.setAttribute('data-line-end', String(parsed.lineEnd))
+        a.classList.add('chat-file-path')
+        a.insertAdjacentHTML('afterend', fileOpenButtonHtml(resolved, parsed.lineStart, parsed.lineEnd))
     }
 
     // ── Step 2: <code> tags whose content is purely a file path ──
     for (const code of doc.querySelectorAll('code')) {
+        if (code.closest('a')) continue
         if (code.classList.contains('chat-worktree-path')) continue
         const stripped = (code.textContent || '').trim()
         if (!looksLikeFilePath(stripped)) continue
@@ -539,8 +627,19 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
         if (pathType === 'dir') {
             // Remove project-external directory annotations
             containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"].external`).forEach(btn => btn.remove())
-            containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"]`).forEach(span => span.replaceWith(...span.childNodes))
-            containerEl.querySelectorAll(`.code-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"]`).forEach(span => span.replaceWith(...span.childNodes))
+            containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"], .code-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"]`).forEach(el => {
+                if (el.tagName === 'A' || el.tagName === 'CODE') {
+                    // Keep the element but drop its file-open affordances.
+                    el.classList.remove('chat-file-path', 'code-file-path', 'external')
+                    el.removeAttribute('data-file-path')
+                    el.removeAttribute('data-fallback-path')
+                    el.removeAttribute('data-external')
+                    el.removeAttribute('data-line-start')
+                    el.removeAttribute('data-line-end')
+                } else {
+                    el.replaceWith(...el.childNodes)
+                }
+            })
             continue
         }
 
@@ -574,11 +673,18 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
         containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"]`).forEach(btn => {
             btn.remove()
         })
-        containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(span => {
-            span.replaceWith(...span.childNodes)
-        })
-        containerEl.querySelectorAll(`.code-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(span => {
-            span.replaceWith(...span.childNodes)
+        containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"], .code-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(el => {
+            if (el.tagName === 'A' || el.tagName === 'CODE') {
+                // Keep the element but drop its file-open affordances.
+                el.classList.remove('chat-file-path', 'code-file-path')
+                el.removeAttribute('data-file-path')
+                el.removeAttribute('data-fallback-path')
+                el.removeAttribute('data-external')
+                el.removeAttribute('data-line-start')
+                el.removeAttribute('data-line-end')
+            } else {
+                el.replaceWith(...el.childNodes)
+            }
         })
     }
 }
@@ -595,6 +701,7 @@ export function clearVerifiedCache(): void {
 
 export function useFilePathAnnotation() {
     return {
+        parseFileUri,
         resolveFilePath,
         resolveFilePathDual,
         fileOpenButtonHtml,
@@ -661,13 +768,27 @@ export function tryResolveCodeString(
  * If the file doesn't exist, shows a toast and does not navigate.
  */
 export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number): Promise<boolean> {
-    const isExternal = resolvedPath.startsWith('/')
+    const parsed = parseFileUri(resolvedPath)
+    let targetPath = parsed.path
+    if (!targetPath) return false
+
+    const finalLineStart = lineStart ?? parsed.lineStart
+    const finalLineEnd = lineEnd ?? parsed.lineEnd
+
+    // Normalize an absolute project path (e.g. file:///root/… or /root/…) to
+    // a project-relative path so it is opened inside the current project.
+    const root = store.state.projectRoot
+    if (root && targetPath.startsWith(root + '/')) {
+        targetPath = targetPath.slice(root.length + 1)
+    }
+
+    const isExternal = targetPath.startsWith('/')
 
     if (!isExternal) {
         try {
-            const resp = await fetch(`/api/dir?path=${encodeURIComponent(resolvedPath)}`)
+            const resp = await fetch(`/api/dir?path=${encodeURIComponent(targetPath)}`)
             if (resp.ok) {
-                await store.navigateToDir(resolvedPath)
+                await store.navigateToDir(targetPath)
                 window.dispatchEvent(new CustomEvent('close-file-overlay'))
                 window.dispatchEvent(new CustomEvent('open-file-manager'))
                 return true
@@ -681,11 +802,11 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
         const resp = await fetch(`/api/file/batch-exists`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: [resolvedPath] }),
+            body: JSON.stringify({ paths: [targetPath] }),
         })
         if (resp.ok) {
             const data = await resp.json() as { results: Record<string, string> }
-            const type = data.results?.[resolvedPath]
+            const type = data.results?.[targetPath]
             if (type !== 'file' && type !== 'dir') {
                 const { useToast } = await import('@/composables/useToast')
                 const { gt } = await import('@/composables/useLocale')
@@ -700,7 +821,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
             }
             if (type === 'dir') {
                 // Path is a directory — navigate into it instead of opening as file
-                await store.navigateToDir(resolvedPath)
+                await store.navigateToDir(targetPath)
                 window.dispatchEvent(new CustomEvent('close-file-overlay'))
                 window.dispatchEvent(new CustomEvent('open-file-manager'))
                 return true
@@ -710,9 +831,9 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
         // Batch-exists check failed — proceed with selectFile as best-effort
     }
 
-    const ok = await store.selectFile(resolvedPath)
+    const ok = await store.selectFile(targetPath)
     if (ok) {
-        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: resolvedPath, lineStart, lineEnd } }))
+        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: targetPath, lineStart: finalLineStart, lineEnd: finalLineEnd } }))
         if (isExternal) {
             const { useToast } = await import('@/composables/useToast')
             useToast().show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
@@ -727,7 +848,16 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
  * If the path is a directory itself, navigate into its parent and highlight it.
  */
 export async function navToFileInManager(resolvedPath: string): Promise<boolean> {
-    const isExternal = resolvedPath.startsWith('/')
+    const parsed = parseFileUri(resolvedPath)
+    let targetPath = parsed.path
+    if (!targetPath) return false
+
+    const root = store.state.projectRoot
+    if (root && targetPath.startsWith(root + '/')) {
+        targetPath = targetPath.slice(root.length + 1)
+    }
+
+    const isExternal = targetPath.startsWith('/')
 
     // Verify the path exists
     let pathType: 'file' | 'dir' | 'none' = 'none'
@@ -735,11 +865,11 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
         const resp = await fetch('/api/file/batch-exists', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: [resolvedPath] }),
+            body: JSON.stringify({ paths: [targetPath] }),
         })
         if (resp.ok) {
             const data = await resp.json() as { results: Record<string, string> }
-            pathType = (data.results?.[resolvedPath] as 'file' | 'dir' | 'none') || 'none'
+            pathType = (data.results?.[targetPath] as 'file' | 'dir' | 'none') || 'none'
         }
     } catch { /* proceed as best-effort */ }
 
@@ -768,12 +898,12 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
 
     // Navigate to the containing directory using loadFiles directly
     // (navigateToDir silently no-ops when dirLoading is true, which can race)
-    const parentDir = dirName(resolvedPath)
+    const parentDir = dirName(targetPath)
     await store.loadFiles(parentDir)
 
     // Brief delay to let DOM settle after loadFiles before highlighting the target
     setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: resolvedPath } }))
+        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: targetPath } }))
     }, 50)
 
     return true

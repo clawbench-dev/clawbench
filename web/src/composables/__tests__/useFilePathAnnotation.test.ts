@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import {
+  parseFileUri,
   resolveFilePath,
   resolveFilePathDual,
   resolveRelativePath,
@@ -445,6 +446,23 @@ describe('annotateFilePaths', () => {
     expect(result.detectedPaths).toContain('src/main.go')
     expect(result.html).toContain('chat-file-path')
     expect(result.html).toContain('chat-file-open-btn')
+  })
+
+  it('annotates <a> with file:// absolute path and line range', () => {
+    const input = '<a href="file:///home/user/project/src/main.go#L10-L20">main.go</a>'
+    const result = annotateFilePaths(input, { projectRoot })
+    expect(result.detectedPaths).toContain('src/main.go')
+    expect(result.html).toContain('data-file-path="src/main.go"')
+    expect(result.html).toContain('data-line-start="10"')
+    expect(result.html).toContain('data-line-end="20"')
+    expect(result.html).toContain('chat-file-path')
+  })
+
+  it('does not double annotate code tags inside a tags', () => {
+    const input = '<a href="src/main.go"><code>src/main.go</code></a>'
+    const result = annotateFilePaths(input, { projectRoot })
+    const count = (result.html.match(/chat-file-open-btn/g) || []).length
+    expect(count).toBe(1)
   })
 
   it('does not annotate absolute paths outside projectRoot without file extension', () => {
@@ -1867,6 +1885,53 @@ describe('openFilePath', () => {
     window.dispatchEvent = origDispatch
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  describe('parseFileUri', () => {
+    it('parses file:// URIs with line range fragment (#L10-L20)', () => {
+      const r = parseFileUri('file:///Users/foo/project/src/main.go#L10-L20')
+      expect(r.path).toBe('/Users/foo/project/src/main.go')
+      expect(r.lineStart).toBe(10)
+      expect(r.lineEnd).toBe(20)
+    })
+
+    it('parses file:// URIs with single line fragment (#L15)', () => {
+      const r = parseFileUri('file:///Users/foo/project/src/main.go#L15')
+      expect(r.path).toBe('/Users/foo/project/src/main.go')
+      expect(r.lineStart).toBe(15)
+      expect(r.lineEnd).toBeUndefined()
+    })
+
+    it('parses #10-20 and #10 forms', () => {
+      expect(parseFileUri('src/main.go#10-20')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+      expect(parseFileUri('src/main.go#10')).toMatchObject({ path: 'src/main.go', lineStart: 10 })
+    })
+
+    it('parses file:// URIs with colon suffix (:10-20)', () => {
+      const r = parseFileUri('file:///Users/foo/project/src/main.go:10-20')
+      expect(r.path).toBe('/Users/foo/project/src/main.go')
+      expect(r.lineStart).toBe(10)
+      expect(r.lineEnd).toBe(20)
+    })
+
+    it('decodes percent-encoded URI paths', () => {
+      const r = parseFileUri('file:///Users/foo/%E4%B8%AD%E6%96%87/%E6%B5%8B%E8%AF%95.go#L5')
+      expect(r.path).toBe('/Users/foo/中文/测试.go')
+      expect(r.lineStart).toBe(5)
+    })
+
+    it('strips a file:// host prefix', () => {
+      expect(parseFileUri('file://localhost/var/log/app.log').path).toBe('/var/log/app.log')
+    })
+
+    it('handles empty input gracefully', () => {
+      expect(parseFileUri('').path).toBe('')
+      expect(parseFileUri(undefined as unknown as string).path).toBe('')
+    })
+
+    it('drops non-numeric hashes but keeps the path', () => {
+      expect(parseFileUri('docs/guide.md#section').path).toBe('docs/guide.md')
+    })
   })
 
 })

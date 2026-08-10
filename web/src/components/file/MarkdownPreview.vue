@@ -109,7 +109,7 @@ const { handleDblClick } = useDoubleClickCopy({
     },
 })
 
-const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath } = useFilePathAnnotation()
+const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri } = useFilePathAnnotation()
 
 function handleClick(event: MouseEvent) {
     // Code block header buttons (copy/wrap)
@@ -167,10 +167,15 @@ function handleClick(event: MouseEvent) {
             }
         }
     }
-    handleDblClick(event, (href) => {
+    handleDblClick(event, (href, lineStart, lineEnd) => {
+        const anchor = target?.closest<HTMLAnchorElement>('a[href]')
+        const annotatedPath = anchor?.getAttribute('data-file-path')
         const currentDir = props.file?.path ? dirName(props.file.path) : ''
-        const resolvedPath = resolveRelativePath(href, currentDir)
-        openFilePath(resolvedPath)
+        // Prefer the annotated resolved path; for a file:// link take its path
+        // directly; otherwise resolve the relative href against the md's dir.
+        const resolvedPath = annotatedPath
+            || (href.startsWith('file://') ? parseFileUri(href).path : resolveRelativePath(href, currentDir))
+        openFilePath(resolvedPath, lineStart, lineEnd)
     })
 }
 

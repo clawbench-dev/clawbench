@@ -449,6 +449,8 @@ import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
 import { useFileEditor } from './composables/useFileEditor'
 import { openRecentFile, removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
+import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
+import { openFilePath } from './composables/useFilePathAnnotation'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
@@ -2127,9 +2129,16 @@ function handleCtrlF(e) {
 
 onMounted(() => {
     document.addEventListener('keydown', handleCtrlF)
+    stopLocalLinkGuard = initLocalLinkGuard((href) => {
+        openFilePath(href)
+    })
 })
 
+let stopLocalLinkGuard = null
+
 onUnmounted(() => {
+    stopLocalLinkGuard?.()
+    stopLocalLinkGuard = null
     stopDockResize()
     removeTaskHandler()
     window.removeEventListener('clawbench-foreground', handleForeground)

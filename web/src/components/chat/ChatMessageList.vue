@@ -281,8 +281,8 @@ async function handleChatClick(event) {
     return
   }
 
-  handleDblClick(event, async (href) => {
-    const ok = await openFilePath(href)
+  handleDblClick(event, async (href, lineStart, lineEnd) => {
+    const ok = await openFilePath(href, lineStart, lineEnd)
     if (ok) chatUI.navigateToFileViewer?.()
   })
 }
