@@ -41,7 +41,6 @@
             @click="toggleSelect(def.id)"
           >
             <span class="kcf-chip-label">{{ def.label }}</span>
-            <span v-if="isSelected(def.id)" class="kcf-check">&#10003;</span>
           </button>
         </div>
       </div>
@@ -147,7 +146,7 @@ defineExpose({ getSelectedIds })
   border: none;
   cursor: pointer;
   padding: 2px 6px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   transition: background 0.15s;
   font-family: inherit;
 }
@@ -237,7 +236,7 @@ defineExpose({ getSelectedIds })
   min-width: 36px;
   padding: 0 10px;
   border: 1px solid var(--border-color, #e0e0e0);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   font-size: 13px;
@@ -263,15 +262,6 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-chip-label {
-  line-height: 1;
-}
-
-.kcf-check {
-  position: absolute;
-  top: 2px;
-  right: 3px;
-  font-size: 9px;
-  color: var(--accent, #4f8ef7);
   line-height: 1;
 }
 
