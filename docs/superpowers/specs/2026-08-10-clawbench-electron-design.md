@@ -50,9 +50,8 @@ ClawBench 目前有三端：Go 后端（本机服务）、Vue 3 移动优先 Web
 
 - `dismissSplash`（桌面无 splash；**契约保留**，Electron no-op —— Android 远程页 splash 依赖此调用，不可移除）
 - `stopBackgroundService`（桌面无前台服务；**契约保留**，Electron no-op —— Android 无端口时停服务防耗电，不可移除）
-- `setVolumeKeyMode`（桌面无硬件音量键，**从契约移除**）
-- 所有 OEM 相关（`isChineseOem`/`getOemName`/自动启动/电池优化，**从契约移除**）
-- `setTerminalSessionCount`（状态栏角标文本，**从契约移除**）
+- `setVolumeKeyMode` / `setTerminalSessionCount`（桌面无硬件音量键/状态栏角标；**契约保留**，Electron no-op —— Android 终端音量键转发与通知角标）
+- 所有 OEM 相关（`isChineseOem`/`getOemName`/`isOemAutoStartPrompted`/`setOemAutoStartPrompted`/`openOemAutoStartSettings`/`openOemBatterySettings`）（桌面无；**契约保留**，Electron no-op —— Android 国产机型引导；注：当前前端无活跃调用点，保留契约以对齐 Java）
 - 桌面独有加分项（托盘/应用菜单/单实例锁/协议深链/自启动）——**列入后续**，本次不含
 
 ## 3. 仓库结构（新增顶层 `desktop/`）

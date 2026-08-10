@@ -188,6 +188,8 @@ import { selectionCellsToSelect, shouldPreventTerminalContextMenu, useTerminalGe
 import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { useAppMode } from '@/composables/useAppMode'
+import { getNative } from '@/utils/clawbenchNative'
 import { useKeyConfig } from '@/composables/useKeyConfig'
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
@@ -543,12 +545,30 @@ const { isPC } = usePlatformDetect()
   else terminalKeys.sendArrowDown()
 }
 
+// Volume keys (Android)
+const { isAppMode } = useAppMode()
+
+function enableVolumeKeys() {
+  if (!isAppMode.value) return
+  getNative()?.setVolumeKeyMode?.(true)
+}
+
+function disableVolumeKeys() {
+  if (!isAppMode.value) return
+  getNative()?.setVolumeKeyMode?.(false)
+}
+
 // Computed
 const canCreateMore = computed(() => tabs.value.length < maxSessions.value)
 
-// Sync terminal session count to store
+// Sync terminal session count to Android notification and store
 watch(() => tabs.value.length, (count) => {
   store.state.terminalSessionCount = count
+  if (isAppMode.value) {
+    try {
+      getNative()?.setTerminalSessionCount?.(count)
+    } catch { /* ignore */ }
+  }
 }, { immediate: true })
 
 const panelStyle = computed(() => ({
@@ -817,9 +837,10 @@ const isMounted = ref(false)
 watch(() => props.active, async (isActive) => {
   if (!isMounted.value) return // Defer to onMounted for initial activation
   if (props.platformUnsupported) return // No session management on unsupported platforms
-  if (isActive) {
-    emit('open')
-    await nextTick()
+   if (isActive) {
+     emit('open')
+     enableVolumeKeys()
+     await nextTick()
     const tab = activeTab.value
     if (tab) {
       const container = tabContainerRefs.get(tab.id)
@@ -844,14 +865,15 @@ watch(() => props.active, async (isActive) => {
       gestures.attach()
       focusTerminal()
     }
-  } else {
-    tabManager.disconnectAll()
-    terminalKeys.reset()
-    showCommands.value = false
-    showTabMenu.value = false
-    viewport.stopWatching()
-    gestures.detach()
-  }
+   } else {
+     disableVolumeKeys()
+     tabManager.disconnectAll()
+     terminalKeys.reset()
+     showCommands.value = false
+     showTabMenu.value = false
+     viewport.stopWatching()
+     gestures.detach()
+   }
 })
 
 // Watch requestedCwd — when the file manager emits "open terminal here",
@@ -902,6 +924,7 @@ onMounted(async () => {
   // Mount and connect the active tab (only if terminal panel is active)
   if (props.active && !props.platformUnsupported) {
     emit('open')
+    enableVolumeKeys()
     // Wait for v-for :ref callbacks to populate tabContainerRefs
     await nextTick()
     const tab = activeTab.value
@@ -930,6 +953,7 @@ onBeforeUnmount(() => {
   themeObserver?.disconnect()
   viewport.stopWatching()
   gestures.detach()
+  disableVolumeKeys()
   delete (window as unknown as { __onVolumeKey?: unknown }).__onVolumeKey
   tabManager.disposeAll()
 })

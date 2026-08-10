@@ -22,6 +22,17 @@ export interface ClawBenchNative {
   dismissSplash(): void
   /** Stop the host background service when no ports are enabled (Android; no-op on desktop). */
   stopBackgroundService(): void
+  /** Forward hardware volume keys to the terminal (Android; no-op on desktop). */
+  setVolumeKeyMode(enabled: boolean): void
+  /** Update the terminal session count shown in the host notification (Android; no-op on desktop). */
+  setTerminalSessionCount(count: number): void
+  /** Chinese OEM with aggressive background management (Android; no-op on desktop). */
+  isChineseOem(): boolean
+  getOemName(): string
+  isOemAutoStartPrompted(): boolean
+  setOemAutoStartPrompted(): void
+  openOemAutoStartSettings(): boolean
+  openOemBatterySettings(): boolean
 
   // Async reads (main-process / native state)
   getAppVersion(): Promise<string>

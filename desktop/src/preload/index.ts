@@ -14,6 +14,14 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },
   dismissSplash: () => { /* desktop has no native splash overlay */ },
   stopBackgroundService: () => { /* desktop has no Android foreground service */ },
+  setVolumeKeyMode: () => { /* desktop has no hardware volume keys */ },
+  setTerminalSessionCount: () => { /* desktop has no status-bar terminal badge */ },
+  isChineseOem: () => false,
+  getOemName: () => '',
+  isOemAutoStartPrompted: () => false,
+  setOemAutoStartPrompted: () => {},
+  openOemAutoStartSettings: () => false,
+  openOemBatterySettings: () => false,
 
   // async reads
   getAppVersion: () => invoke('native:get-app-version'),
