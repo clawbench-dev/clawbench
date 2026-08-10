@@ -1,0 +1,14 @@
+appId: com.xulongzhe.clawbench
+productName: ClawBench
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - "!**/node_modules/.cache"
+win:
+  target: dir
+mac:
+  target: dir
+linux:
+  target: dir
