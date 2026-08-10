@@ -339,7 +339,7 @@ public class MainActivity extends AppCompatActivity {
     /**
      * Dismiss the native splash screen with a fade-out animation.
      * Called when the remote WebView page finishes loading successfully,
-     * or from JS via AndroidNative.dismissSplash() when Vue finishes mounting.
+     * or from JS via ClawBenchNative.dismissSplash() when Vue finishes mounting.
      */
     private void dismissSplash() {
         if (splashScreen == null || splashScreen.getVisibility() != View.VISIBLE) return;
@@ -419,7 +419,7 @@ public class MainActivity extends AppCompatActivity {
         settings.setUserAgentString(ua + " ClawBench-Android/1.0");
 
         // JavaScript interface for native bridge
-        webView.addJavascriptInterface(new WebAppInterface(this), "AndroidNative");
+        webView.addJavascriptInterface(new WebAppInterface(this), "ClawBenchNative");
 
         // Register WebView reference with BackgroundService for safe UI callbacks
         BackgroundService.updateWebViewRef(webView);
@@ -876,7 +876,7 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * Attempt to connect to a server URL.
-     * Called from the static login page via AndroidNative.connectToServer().
+     * Called from the static login page via ClawBenchNative.connectToServer().
      * Hides WebView content during the connection attempt so error pages don't flash.
      *
      * All connection errors are handled at the OkHttp level — the WebView is only
@@ -1758,7 +1758,7 @@ public class MainActivity extends AppCompatActivity {
 
             // Inject global error listeners to capture uncaught JS exceptions
             // and resource load failures (img/script/link 404s, etc.)
-            view.evaluateJavascript(JSErrorInjector.buildScript("AndroidNative"), null);
+            view.evaluateJavascript(JSErrorInjector.buildScript("ClawBenchNative"), null);
 
             if (LOGIN_HTML_URL.equals(url)) {
                 // Navigating to the login page — show it immediately.
@@ -1799,7 +1799,7 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 // Remote page finished loading successfully — show the WebView.
                 // Note: do NOT dismiss native splash here; the JS app will call
-                // AndroidNative.dismissSplash() once Vue finishes mounting,
+                // ClawBenchNative.dismissSplash() once Vue finishes mounting,
                 // so the splash covers the full gap from cold start to app ready.
                 webViewConnected = true;
                 cancelConnectionTimeout();

@@ -4,7 +4,7 @@ import java.util.regex.Pattern;
 
 /**
  * Shared JS error listener injection for WebViews.
- * Used by both MainActivity (AndroidNative) and BrowserActivity (BrowserNative).
+ * Used by both MainActivity (ClawBenchNative) and BrowserActivity (BrowserNative).
  *
  * Captures:
  * - Uncaught runtime JS errors (via window.addEventListener 'error' bubble phase)
@@ -22,7 +22,7 @@ public final class JSErrorInjector {
      * Build the JS script that injects global error listeners into the WebView.
      *
      * @param nativeInterfaceName The JavascriptInterface name to call
-     *                           ("AndroidNative" for MainActivity, "BrowserNative" for BrowserActivity)
+     *                           ("ClawBenchNative" for MainActivity, "BrowserNative" for BrowserActivity)
      * @return JavaScript code to evaluate in onPageStarted
      * @throws IllegalArgumentException if nativeInterfaceName is not a valid JS identifier
      */

@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * - Clear browsing data (manual, with confirmation dialog)
  * - Data persists across sessions (not cleared on exit)
  * - Auto-accept SSL for localhost, prompt for others
- * - No AndroidNative bridge injected (clean browser environment)
+ * - No ClawBenchNative bridge injected (clean browser environment)
  *
  * Lifecycle:
  * - Back button navigates back to MainActivity (preserves WebView state)
