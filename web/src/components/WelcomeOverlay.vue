@@ -47,6 +47,10 @@
             <Smartphone :size="16" />
             <span>{{ t('pwa.downloadAndroidApp') }}</span>
           </div>
+          <div v-if="desktopDownload.isDesktop && desktopDownload.currentDownloadUrl()" class="welcome-install-row" role="button" tabindex="0" @click="desktopDownload.downloadDesktop()" @keydown.enter="desktopDownload.downloadDesktop()">
+            <Monitor :size="16" />
+            <span>{{ t('pwa.downloadDesktopApp') }}</span>
+          </div>
         </div>
         <div class="welcome-footer">
           <button class="btn-ok" @click="close">
@@ -82,9 +86,10 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePwaInstall } from '@/composables/usePwaInstall'
+import { useDesktopDownload } from '@/composables/useDesktopDownload'
 import { useAgents } from '@/composables/useAgents'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
-import { MonitorSmartphone, Smartphone, Loader2 } from 'lucide-vue-next'
+import { MonitorSmartphone, Smartphone, Monitor, Loader2 } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
 import AgentInstallDialog from './AgentInstallDialog.vue'
 import AgentIcon from './common/AgentIcon.vue'
@@ -110,6 +115,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const pwaInstall = usePwaInstall()
+const desktopDownload = useDesktopDownload()
 const { rescanAgents } = useAgents()
 const visible = ref(false)
 const backends = ref<BackendInfo[]>([])
@@ -130,7 +136,7 @@ const sortedBackends = computed(() => {
   })
 })
 
-const showInstallSection = computed(() => pwaInstall.showPwaInstall.value || pwaInstall.showApkDownload.value)
+const showInstallSection = computed(() => pwaInstall.showPwaInstall.value || pwaInstall.showApkDownload.value || (desktopDownload.isDesktop && !!desktopDownload.currentDownloadUrl()))
 
 async function loadBackends() {
   try {
@@ -219,6 +225,7 @@ watch(visible, (v) => {
 
 onMounted(() => {
   loadBackends()
+  desktopDownload.loadLatest()
   window.addEventListener('clawbench-show-welcome', forceShow)
 })
 
