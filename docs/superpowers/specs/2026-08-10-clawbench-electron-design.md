@@ -59,7 +59,7 @@ ClawBench 目前有三端：Go 后端（本机服务）、Vue 3 移动优先 Web
 desktop/
   package.json                # electron / electron-store / ssh2；版本号来源
   main/
-    index.ts                  # 入口：app 生命周期、单实例锁
+    index.ts                  # 入口：app 生命周期
     bridge.ts                 # 所有 ipcMain.handle 注册（ClawBenchNative 契约）
     window.ts                 # 主窗口 + 沙盒窗口管理
     tunnel.ts                 # SSH 隧道（ssh2 端口转发，替代 BackgroundService）
@@ -81,8 +81,7 @@ desktop/
 ### 4.1 同步方法（preload 本地常量）
 
 - `isNativeApp(): boolean` → true
-- `getAppVersion(): string`
-- `getLanguage(): string`
+- `getLanguage(): string`（locale，preload 本地读）
 - `openSession(sessionId: string): void` — 派发会话深链事件
 - `log(level, tag, msg): void`
 - `setKeepScreenOn(on: boolean): void`
@@ -91,6 +90,7 @@ desktop/
 
 ### 4.2 异步方法（ipcRenderer.invoke → ipcMain.handle）
 
+- 环境：`getAppVersion()` → Promise（主进程 `app.getVersion()`，构建时源为 `desktop/package.json`，避免 preload 在 asar 下读 package.json 的坑）
 - 服务器：`getServerUrl()` `getSavedServerConfig()` `getServerList()` `getPassword()` → Promise
 - 服务器写：`saveServer(url, pwd)` `removeServer(url)` `setSSHPassword(pwd)` `connectToServer(url, pwd)` → Promise
 - 隧道：`addForwardedPort(localPort, targetPort, host)` `removeForwardedPort(port)` `reconnectTunnel()` `reconnectTunnelAsync()` → Promise
@@ -116,6 +116,7 @@ desktop/
 - `JSErrorInjector.java`：`buildScript("AndroidNative")` → `"ClawBenchNative"`
 - 静态 `android/app/src/main/assets/login.html`：`AndroidNative.*` → `ClawBenchNative.*`
 - 重打 APK。**无向后兼容**（旧 APK 失去原生模式属预期）
+- **上线顺序**：先部署改名的 web 前端 bundle（`ClawBenchNative` 契约生效），再发布新版 APK；避免出现"旧 web + 新 APK"或"新 web + 旧 APK"两者都拿不到桥的中间态。
 
 ## 6. Electron 主进程关键实现
 
@@ -159,12 +160,16 @@ Electron 内置 `safeStorage` 加密 `setSSHPassword` 存的密码（不用已�
 {
   "version": "0.1.0",
   "downloads": {
-    "windows": "https://registry.npmjs.org/@xulongzhe/clawbench-desktop-win32-x64/-/…",
-    "mac":     "https://registry.npmjs.org/@xulongzhe/clawbench-desktop-darwin-arm64/-/…",
-    "linux":   "https://registry.npmjs.org/@xulongzhe/clawbench-desktop-linux-x64/-/…"
+    "win32-x64":   "https://registry.npmjs.org/@xulongzhe/clawbench-desktop-win32-x64/-/…",
+    "darwin-arm64":"https://registry.npmjs.org/@xulongzhe/clawbench-desktop-darwin-arm64/-/…",
+    "darwin-x64":  "https://registry.npmjs.org/@xulongzhe/clawbench-desktop-darwin-x64/-/…",
+    "linux-x64":   "https://registry.npmjs.org/@xulongzhe/clawbench-desktop-linux-x64/-/…",
+    "linux-arm64": "https://registry.npmjs.org/@xulongzhe/clawbench-desktop-linux-arm64/-/…"
   }
 }
 ```
+
+**OS→arch 解析规则（明确）**：后端按 `os-arch` 键返回全部平台项；前端用 `navigator.userAgentData` / `navigator.platform` 检测当前 OS + arch，按优先级选键（darwin 优先 `darwin-arm64` 若 Apple Silicon，否则 `darwin-x64`）。若检测不到 arch，默认回退到该 OS 的 x64 项。
 
 国内访问自动改写为 `registry.npmmirror.com`。公开端点，无需鉴权。
 
@@ -176,7 +181,7 @@ Electron 内置 `safeStorage` 加密 `setSSHPassword` 存的密码（不用已�
 ## 9. 测试
 
 - **前端**：单测改 `ClawBenchNative` + async（Vitest），覆盖 await 化后的读操作
-- **Electron 主进程**：抽纯模块单测（`store.ts`、`secrets.ts`、`tunnel.ts` 配置层、`updater.ts` 的 registry 查询/校验），mock `ssh2` / `safeStorage` / npm HTTP
+- **Electron 主进程**：抽纯模块单测（`store.ts`、`secrets.ts`、`tunnel.ts` 配置层、`updater.ts` 的 registry 查询/校验），mock `ssh2` / `safeStorage` / npm HTTP。**registry 查询逻辑须抽成纯函数**（不依赖 Electron，可单测），与 §8.1 的 Go 端点 `/api/desktop/latest` 保持一致的包名映射与 npmmirror 改写规则。
 - **Android**：改名 + 重打 APK，跑现有测试
 
 ## 10. 风险与回滚
