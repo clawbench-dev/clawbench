@@ -87,7 +87,7 @@ describe('usePortForward', () => {
         mockApiDelete.mockReset()
         mockIsAppMode.value = false
         mockToastShow.mockReset()
-        delete (window as any).AndroidNative
+        delete (window as any).ClawBenchNative
     })
 
     describe('loadSSHInfo', () => {
@@ -317,7 +317,7 @@ describe('usePortForward', () => {
         it('opens WebView immediately in app mode (no testPortReachable)', async () => {
             mockIsAppMode.value = true
             const mockOpenInSandbox = vi.fn()
-            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox }
+            ;(window as any).ClawBenchNative = { openInSandbox: mockOpenInSandbox }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPort } = usePortForward()
@@ -326,7 +326,7 @@ describe('usePortForward', () => {
 
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -334,7 +334,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             const mockOpenInSandbox = vi.fn()
             const mockTestPortReachable = vi.fn().mockReturnValue(false)
-            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
+            ;(window as any).ClawBenchNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPort } = usePortForward()
@@ -345,14 +345,14 @@ describe('usePortForward', () => {
             expect(mockTestPortReachable).not.toHaveBeenCalled()
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
         it('passes host parameter to native sandbox browser', async () => {
             mockIsAppMode.value = true
             const mockOpenInSandbox = vi.fn()
-            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox }
+            ;(window as any).ClawBenchNative = { openInSandbox: mockOpenInSandbox }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPort } = usePortForward()
@@ -361,14 +361,14 @@ describe('usePortForward', () => {
 
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '192.168.1.1', '', 'test-session-id')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
         it('falls back to openInBrowser when sandbox not available', async () => {
             mockIsAppMode.value = true
             const mockOpenInBrowser = vi.fn()
-            ;(window as any).AndroidNative = { openInBrowser: mockOpenInBrowser }
+            ;(window as any).ClawBenchNative = { openInBrowser: mockOpenInBrowser }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPort } = usePortForward()
@@ -377,7 +377,7 @@ describe('usePortForward', () => {
 
             expect(mockOpenInBrowser).toHaveBeenCalledWith(3000, 'https', '', '')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
     })
@@ -400,7 +400,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             const mockOpenInSandbox = vi.fn()
             const mockTestPortReachable = vi.fn().mockReturnValue(true)
-            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
+            ;(window as any).ClawBenchNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPortWithCheck } = usePortForward()
@@ -410,7 +410,7 @@ describe('usePortForward', () => {
             expect(mockTestPortReachable).toHaveBeenCalledWith(3000)
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -418,7 +418,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             const mockOpenInSandbox = vi.fn()
             const mockTestPortReachable = vi.fn().mockReturnValue(true)
-            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
+            ;(window as any).ClawBenchNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPortWithCheck, connectingPorts } = usePortForward()
@@ -431,7 +431,7 @@ describe('usePortForward', () => {
             expect(mockTestPortReachable).not.toHaveBeenCalled()
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -442,7 +442,7 @@ describe('usePortForward', () => {
                 .mockReturnValueOnce(false)  // initial check
                 .mockReturnValueOnce(true)   // after reconnect
             const mockReconnectTunnel = vi.fn().mockReturnValue(true)
-            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
+            ;(window as any).ClawBenchNative = { openInSandbox: mockOpenInSandbox, testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPortWithCheck } = usePortForward()
@@ -453,7 +453,7 @@ describe('usePortForward', () => {
             expect(mockToastShow).toHaveBeenCalledWith('portForward.tunnelReconnected', expect.objectContaining({ type: 'success' }))
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -461,7 +461,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             const mockTestPortReachable = vi.fn().mockReturnValue(false)
             const mockReconnectTunnel = vi.fn().mockReturnValue(true)
-            ;(window as any).AndroidNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
+            ;(window as any).ClawBenchNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPortWithCheck } = usePortForward()
@@ -470,7 +470,7 @@ describe('usePortForward', () => {
 
             expect(mockToastShow).toHaveBeenCalledWith('portForward.portUnreachable', expect.objectContaining({ type: 'error' }))
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -478,7 +478,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             const mockTestPortReachable = vi.fn().mockReturnValue(false)
             const mockReconnectTunnel = vi.fn().mockReturnValue(false)
-            ;(window as any).AndroidNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
+            ;(window as any).ClawBenchNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPortWithCheck } = usePortForward()
@@ -487,14 +487,14 @@ describe('usePortForward', () => {
 
             expect(mockToastShow).toHaveBeenCalledWith('portForward.portUnreachable', expect.objectContaining({ type: 'error' }))
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
         it('falls back to direct open when testPortReachable not available (old APK)', async () => {
             mockIsAppMode.value = true
             const mockOpenInSandbox = vi.fn()
-            ;(window as any).AndroidNative = { openInSandbox: mockOpenInSandbox }
+            ;(window as any).ClawBenchNative = { openInSandbox: mockOpenInSandbox }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openPortWithCheck } = usePortForward()
@@ -503,7 +503,7 @@ describe('usePortForward', () => {
 
             expect(mockOpenInSandbox).toHaveBeenCalledWith(3000, 'http', '', '', 'test-session-id')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
     })
@@ -513,7 +513,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             const mockTestPortReachable = vi.fn().mockReturnValue(true)
             mockApiGet.mockResolvedValue({ ports: [] })
-            ;(window as any).AndroidNative = { testPortReachable: mockTestPortReachable }
+            ;(window as any).ClawBenchNative = { testPortReachable: mockTestPortReachable }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { reconnectPort } = usePortForward()
@@ -532,7 +532,7 @@ describe('usePortForward', () => {
                 .mockReturnValueOnce(true)   // after reconnect
             const mockReconnectTunnel = vi.fn().mockReturnValue(true)
             mockApiGet.mockResolvedValue({ ports: [] })
-            ;(window as any).AndroidNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
+            ;(window as any).ClawBenchNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { reconnectPort } = usePortForward()
@@ -548,7 +548,7 @@ describe('usePortForward', () => {
             const mockTestPortReachable = vi.fn().mockReturnValue(false)
             const mockReconnectTunnel = vi.fn().mockReturnValue(true)
             mockApiGet.mockResolvedValue({ ports: [] })
-            ;(window as any).AndroidNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
+            ;(window as any).ClawBenchNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { reconnectPort } = usePortForward()
@@ -563,7 +563,7 @@ describe('usePortForward', () => {
             const mockTestPortReachable = vi.fn().mockReturnValue(false)
             const mockReconnectTunnel = vi.fn().mockReturnValue(false)
             mockApiGet.mockResolvedValue({ ports: [] })
-            ;(window as any).AndroidNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
+            ;(window as any).ClawBenchNative = { testPortReachable: mockTestPortReachable, reconnectTunnel: mockReconnectTunnel }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { reconnectPort } = usePortForward()
@@ -590,7 +590,7 @@ describe('usePortForward', () => {
         it('calls native openInBrowser in app mode', async () => {
             mockIsAppMode.value = true
             const mockOpenInBrowser = vi.fn()
-            ;(window as any).AndroidNative = { openInBrowser: mockOpenInBrowser }
+            ;(window as any).ClawBenchNative = { openInBrowser: mockOpenInBrowser }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openInExternalBrowser } = usePortForward()
@@ -599,14 +599,14 @@ describe('usePortForward', () => {
 
             expect(mockOpenInBrowser).toHaveBeenCalledWith(3000, 'https', '', '')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
         it('passes host parameter to native openInBrowser', async () => {
             mockIsAppMode.value = true
             const mockOpenInBrowser = vi.fn()
-            ;(window as any).AndroidNative = { openInBrowser: mockOpenInBrowser }
+            ;(window as any).ClawBenchNative = { openInBrowser: mockOpenInBrowser }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { openInExternalBrowser } = usePortForward()
@@ -615,7 +615,7 @@ describe('usePortForward', () => {
 
             expect(mockOpenInBrowser).toHaveBeenCalledWith(3000, 'https', '192.168.1.1', '')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -669,7 +669,7 @@ describe('usePortForward', () => {
             mockApiPost.mockResolvedValue({ localPort: 3000 })
             mockApiGet.mockResolvedValue({ ports: [] })
             const mockAddForwardedPort = vi.fn()
-            ;(window as any).AndroidNative = { addForwardedPort: mockAddForwardedPort }
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { registerPort } = usePortForward()
@@ -682,7 +682,7 @@ describe('usePortForward', () => {
             expect(mockAddForwardedPort).toHaveBeenCalledWith(3000, 3000, '192.168.1.1')
             expect(result).toBe(3000)
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -724,7 +724,7 @@ describe('usePortForward', () => {
             mockApiGet.mockResolvedValue({ ports: [] })
             const mockRemove = vi.fn()
             const mockAdd = vi.fn()
-            ;(window as any).AndroidNative = { removeForwardedPort: mockRemove, addForwardedPort: mockAdd }
+            ;(window as any).ClawBenchNative = { removeForwardedPort: mockRemove, addForwardedPort: mockAdd }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { updatePort } = usePortForward()
@@ -734,7 +734,7 @@ describe('usePortForward', () => {
             expect(mockRemove).toHaveBeenCalledWith(3000)
             expect(mockAdd).toHaveBeenCalledWith(3000, 4000, '10.0.0.1')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
     })
@@ -848,7 +848,7 @@ describe('usePortForward', () => {
                 ports: [{ port: 8080, localPort: 8080, host: '', name: 'API', protocol: 'http', active: true, enabled: false }],
             })
             const mockRemove = vi.fn()
-            ;(window as any).AndroidNative = { removeForwardedPort: mockRemove }
+            ;(window as any).ClawBenchNative = { removeForwardedPort: mockRemove }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { setPortEnabled } = usePortForward()
@@ -857,7 +857,7 @@ describe('usePortForward', () => {
 
             expect(mockRemove).toHaveBeenCalledWith(8080)
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -868,7 +868,7 @@ describe('usePortForward', () => {
                 ports: [{ port: 8080, localPort: 8080, host: '192.168.1.1', name: 'API', protocol: 'http', active: true, enabled: true }],
             })
             const mockAdd = vi.fn()
-            ;(window as any).AndroidNative = { addForwardedPort: mockAdd }
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAdd }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { setPortEnabled } = usePortForward()
@@ -877,7 +877,7 @@ describe('usePortForward', () => {
 
             expect(mockAdd).toHaveBeenCalledWith(8080, 8080, '192.168.1.1')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -888,7 +888,7 @@ describe('usePortForward', () => {
                 ports: [{ port: 8080, localPort: 8080, host: '', name: 'API', protocol: 'http', active: true, enabled: false }],
             })
             const mockRemove = vi.fn()
-            ;(window as any).AndroidNative = { removeForwardedPort: mockRemove }
+            ;(window as any).ClawBenchNative = { removeForwardedPort: mockRemove }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { setPortEnabled } = usePortForward()
@@ -897,7 +897,7 @@ describe('usePortForward', () => {
 
             expect(mockRemove).not.toHaveBeenCalled()
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
         })
     })
 
@@ -993,20 +993,20 @@ describe('usePortForward', () => {
     })
 
     describe('syncToNative', () => {
-        it('stops native service when no ports are registered', async () => {
+        it('does nothing when no enabled ports are registered (stopBackgroundService removed)', async () => {
             mockIsAppMode.value = true
             mockApiGet.mockResolvedValue({ ports: [] })
             const mockStop = vi.fn()
-            ;(window as any).AndroidNative = { stopBackgroundService: mockStop }
+            ;(window as any).ClawBenchNative = { stopBackgroundService: mockStop }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { syncToNative } = usePortForward()
 
             await syncToNative()
 
-            expect(mockStop).toHaveBeenCalled()
+            expect(mockStop).not.toHaveBeenCalled()
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -1019,7 +1019,7 @@ describe('usePortForward', () => {
                 ],
             })
             const mockAdd = vi.fn()
-            ;(window as any).AndroidNative = { addForwardedPort: mockAdd }
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAdd }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { syncToNative } = usePortForward()
@@ -1029,7 +1029,7 @@ describe('usePortForward', () => {
             expect(mockAdd).toHaveBeenCalledWith(3000, 3000, '')
             expect(mockAdd).toHaveBeenCalledWith(8080, 8080, '192.168.1.1')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -1042,7 +1042,7 @@ describe('usePortForward', () => {
                 ],
             })
             const mockAdd = vi.fn()
-            ;(window as any).AndroidNative = { addForwardedPort: mockAdd }
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAdd }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { syncToNative } = usePortForward()
@@ -1052,7 +1052,7 @@ describe('usePortForward', () => {
             expect(mockAdd).not.toHaveBeenCalledWith(3000, 3000, '')
             expect(mockAdd).toHaveBeenCalledWith(8080, 8080, '')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -1079,7 +1079,7 @@ describe('usePortForward', () => {
             const mockAdd = vi.fn()
             const mockRemove = vi.fn()
             // Native still has a stale 3000 forward from before it was disabled/removed.
-            ;(window as any).AndroidNative = {
+            ;(window as any).ClawBenchNative = {
                 addForwardedPort: mockAdd,
                 removeForwardedPort: mockRemove,
                 getForwardedPorts: () => JSON.stringify([{ port: 8080, host: '' }, { port: 3000, host: '' }]),
@@ -1095,7 +1095,7 @@ describe('usePortForward', () => {
             expect(mockRemove).not.toHaveBeenCalledWith(8080)
             expect(mockAdd).toHaveBeenCalledWith(8080, 8080, '')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -1107,7 +1107,7 @@ describe('usePortForward', () => {
                 ],
             })
             const mockAdd = vi.fn()
-            ;(window as any).AndroidNative = {
+            ;(window as any).ClawBenchNative = {
                 addForwardedPort: mockAdd,
                 removeForwardedPort: vi.fn(),
                 getForwardedPorts: () => 'not-json',
@@ -1121,7 +1121,7 @@ describe('usePortForward', () => {
             // Malformed JSON is ignored; enabled port is still added.
             expect(mockAdd).toHaveBeenCalledWith(8080, 8080, '')
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
     })
@@ -1146,7 +1146,7 @@ describe('usePortForward', () => {
             // until the native callback confirms success or backend becomes active.
             mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
             const mockAddForwardedPort = vi.fn()
-            ;(window as any).AndroidNative = { addForwardedPort: mockAddForwardedPort }
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { registerPort, connectingPorts } = usePortForward()
@@ -1163,7 +1163,7 @@ describe('usePortForward', () => {
             // Port should be removed from connectingPorts
             expect(connectingPorts.value.has(3000)).toBe(false)
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -1172,7 +1172,7 @@ describe('usePortForward', () => {
             mockApiPost.mockResolvedValue({ localPort: 3000 })
             mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
             const mockAddForwardedPort = vi.fn()
-            ;(window as any).AndroidNative = { addForwardedPort: mockAddForwardedPort }
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { registerPort, connectingPorts } = usePortForward()
@@ -1191,7 +1191,7 @@ describe('usePortForward', () => {
             // Error toast should be shown
             expect(mockToastShow).toHaveBeenCalledWith('portForward.portUnreachable', expect.objectContaining({ type: 'error' }))
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
@@ -1206,7 +1206,7 @@ describe('usePortForward', () => {
                 .mockResolvedValueOnce({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: true }] })  // explicit loadPorts
 
             const mockAddForwardedPort = vi.fn()
-            ;(window as any).AndroidNative = { addForwardedPort: mockAddForwardedPort }
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { registerPort, connectingPorts, loadPorts } = usePortForward()
@@ -1219,7 +1219,7 @@ describe('usePortForward', () => {
 
             expect(connectingPorts.value.has(3000)).toBe(false)
 
-            delete (window as any).AndroidNative
+            delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
 
