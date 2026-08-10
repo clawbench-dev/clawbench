@@ -109,14 +109,8 @@ const statusTitle = computed(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
-.proxy-port-item.disabled {
-  opacity: 0.55;
-}
-
-.proxy-port-item.disabled:hover {
-  border-color: var(--border-color, #e5e5e5);
-  box-shadow: none;
-}
+/* Disabled ports keep their normal card appearance (no whole-card dimming);
+   state is conveyed via the toggle switch, status dot, and disabled actions. */
 
 /* Header row: badges left, toggle right */
 .port-row-top {

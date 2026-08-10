@@ -59,6 +59,12 @@ describe('ProxyPortItem', () => {
     expect(wrapper.find('.port-status').classes()).toContain('disabled')
   })
 
+  it('does not dim the whole card when disabled', () => {
+    const wrapper = mountItem({ enabled: false })
+    const cardStyle = getComputedStyle(wrapper.find('.proxy-port-item').element).opacity
+    expect(cardStyle).toBe('1')
+  })
+
   it('renders toggle in on state when enabled', () => {
     const wrapper = mountItem({ enabled: true })
     expect(wrapper.find('.toggle-switch').classes()).toContain('on')
