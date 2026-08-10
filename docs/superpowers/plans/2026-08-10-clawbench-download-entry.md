@@ -41,7 +41,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"time"
 )
 
@@ -64,22 +63,22 @@ var desktopDownloadKey = map[string]string{
 	"windows/amd64": "win32-x64",
 }
 
-// desktopLatestResult is the response of GET /api/desktop/latest.
-type desktopLatestResult struct {
+// DesktopLatestResult is the response of GET /api/desktop/latest.
+type DesktopLatestResult struct {
 	Version   string            `json:"version"`
 	Downloads map[string]string `json:"downloads"`
 }
 
-// fetchDesktopLatest queries the npm registry for each desktop platform package
-// and returns the latest version plus per-platform tarball URLs.
-func fetchDesktopLatest() (*desktopLatestResult, error) {
-	registryBase := getRegistryBase()
-	res := &desktopLatestResult{Downloads: make(map[string]string)}
+// fetchDesktopLatestFrom queries the npm registry base for each desktop platform
+// package and returns the latest version plus per-platform tarball URLs.
+// base is injectable for tests (httptest server).
+func fetchDesktopLatestFrom(base string) (*DesktopLatestResult, error) {
+	res := &DesktopLatestResult{Downloads: make(map[string]string)}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	for osArch, pkg := range desktopPlatformPkg {
-		url := fmt.Sprintf("%s/%s/latest", registryBase, pkg)
+		url := fmt.Sprintf("%s/%s/latest", base, pkg)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return nil, err
@@ -102,34 +101,27 @@ func fetchDesktopLatest() (*desktopLatestResult, error) {
 		if res.Version == "" || npmResp.Version > res.Version {
 			res.Version = npmResp.Version
 		}
-		res.Downloads[desktopDownloadKey[osArch]] = rewriteTarballURL(tarball, registryBase)
+		res.Downloads[desktopDownloadKey[osArch]] = rewriteTarballURL(tarball, base)
 	}
 	return res, nil
 }
 
+// FetchDesktopLatest queries the npm registry for the current region.
+func FetchDesktopLatest() (*DesktopLatestResult, error) {
+	return fetchDesktopLatestFrom(getRegistryBase())
+}
+
 // rewriteTarballURL points the tarball at the same registry base used for the query.
-func rewriteTarballURL(tarball, registryBase string) string {
-	if len(registryBase) > 0 && registryBase != "https://registry.npmjs.org" {
-		repl := "https://registry.npmjs.org"
-		if tarball == repl || (len(tarball) > len(repl) && tarball[:len(repl)] == repl) {
-			return registryBase + tarball[len(repl):]
-		}
+func rewriteTarballURL(tarball, base string) string {
+	const npmjs = "https://registry.npmjs.org"
+	if base != npmjs && len(tarball) > len(npmjs) && tarball[:len(npmjs)] == npmjs {
+		return base + tarball[len(npmjs):]
 	}
 	return tarball
 }
-
-// SortDownloadKeys returns sorted platform keys for deterministic output.
-func (r *desktopLatestResult) SortedKeys() []string {
-	keys := make([]string, 0, len(r.Downloads))
-	for k := range r.Downloads {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
 ```
 
-> 说明：`getRegistryBase()`、`npmRegistryResponse`、`upgradeHTTPClient` 均已在 `internal/service/upgrade.go` 定义，直接复用。`rewriteTarballURL` 仅做前缀改写（npmmirror 时 npmjs 前缀→registryBase）。
+> 说明：`getRegistryBase()`、`npmRegistryResponse`、`upgradeHTTPClient` 已在 `internal/service/upgrade.go` 定义，直接复用。核心逻辑 `fetchDesktopLatestFrom(base)` 可注入 registry base 供测试。
 
 - [ ] **Step 2: `internal/service/desktop_upgrade_test.go`（mock HTTP）**
 
@@ -145,7 +137,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFetchDesktopLatest(t *testing.T) {
+func TestFetchDesktopLatestFrom(t *testing.T) {
 	orig := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = orig }()
 
@@ -173,20 +165,22 @@ func TestFetchDesktopLatest(t *testing.T) {
 	defer ts.Close()
 
 	upgradeHTTPClient = ts.Client()
-	// Point getRegistryBase at the httptest server by overriding its region detection is not possible;
-	// instead assert on structure using a fixed base.
-	res, err := fetchDesktopLatest()
+	res, err := fetchDesktopLatestFrom(ts.URL)
 	require.NoError(t, err)
 	require.NotNil(t, res)
-	// Version should be the max across platforms.
+	// Version is the max across platforms.
 	assert.Equal(t, "0.2.0", res.Version)
-	_, ok := res.Downloads["win32-x64"]
-	assert.True(t, ok)
-	assert.Equal(t, "0.2.0", res.Downloads["linux-x64"] != "" && "x")
+	// All three requested platforms present; tarballs rewritten from npmjs base to ts.URL.
+	require.Contains(t, res.Downloads, "win32-x64")
+	require.Contains(t, res.Downloads, "darwin-arm64")
+	require.Contains(t, res.Downloads, "linux-x64")
+	assert.Contains(t, res.Downloads["win32-x64"], ts.URL)
+	assert.Contains(t, res.Downloads["darwin-arm64"], ts.URL)
+	assert.Contains(t, res.Downloads["linux-x64"], ts.URL)
 }
 ```
 
-> 注意：`fetchDesktopLatest` 用 `getRegistryBase()`（国内/海外固定值），无法直接指向 httptest。测试改为验证结构（至少 1 个平台、版本为最大、key 存在）。若要精确指向 mock server，可临时把 `getRegistryBase` 的返回值改为可注入——为控制范围，测试仅验证非空结构与版本聚合逻辑，HTTP 具体 URL 由 `registry` 单测在 Plan 3 覆盖。运行后按实际失败调整断言（确保测试真实验证行为，非空转）。
+> 说明：`fetchDesktopLatestFrom(ts.URL)` 直接打 mock server，`rewriteTarballURL` 会把 npmjs 前缀改写成 ts.URL，故断言 `Contains(ts.URL)` 真实验证改写逻辑。
 
 - [ ] **Step 3: `internal/handler/desktop.go`**
 
@@ -201,10 +195,13 @@ import (
 	"clawbench/internal/service"
 )
 
+// fetchDesktopLatest is injectable for tests.
+var fetchDesktopLatest = service.FetchDesktopLatest
+
 // ServeDesktopLatest returns the latest desktop app version and per-platform
 // download URLs. Public endpoint — no auth required.
 func ServeDesktopLatest(w http.ResponseWriter, r *http.Request) {
-	res, err := service.FetchDesktopLatest()
+	res, err := fetchDesktopLatest()
 	if err != nil {
 		slog.Error("desktop latest: fetch failed", "error", err)
 		http.Error(w, "failed to fetch latest desktop version", http.StatusBadGateway)
@@ -224,17 +221,7 @@ func ServeDesktopLatest(w http.ResponseWriter, r *http.Request) {
 	register("/api/desktop/latest", ServeDesktopLatest)
 ```
 
-- [ ] **Step 5: `internal/handler/desktop_test.go`（mock service）**
-
-在 `internal/service` 的 `fetchDesktopLatest` 不易直接 mock 时，改用 handler 层轻量测试：验证路由注册存在、无鉴权中间件包裹（对比 `/api/apk`）。若希望行为测试，将 `service.FetchDesktopLatest` 定义为可覆写的包级变量（见下），在 handler 测试中注入 stub。
-
-`internal/handler/desktop.go` 调整：
-
-```go
-var fetchDesktopLatest = service.FetchDesktopLatest
-```
-
-`desktop_test.go`:
+- [ ] **Step 5: `internal/handler/desktop_test.go`（注入 stub）**
 
 ```go
 package handler
@@ -245,6 +232,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"clawbench/internal/service"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -253,8 +242,8 @@ func TestServeDesktopLatest(t *testing.T) {
 	orig := fetchDesktopLatest
 	defer func() { fetchDesktopLatest = orig }()
 
-	fetchDesktopLatest = func() (*desktopLatestResult, error) {
-		return &desktopLatestResult{Version: "0.2.0", Downloads: map[string]string{"win32-x64": "https://npm/t.tgz"}}, nil
+	fetchDesktopLatest = func() (*service.DesktopLatestResult, error) {
+		return &service.DesktopLatestResult{Version: "0.2.0", Downloads: map[string]string{"win32-x64": "https://npm/t.tgz"}}, nil
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/desktop/latest", nil)
@@ -262,22 +251,17 @@ func TestServeDesktopLatest(t *testing.T) {
 	ServeDesktopLatest(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var body struct {
-		Version   string            `json:"version"`
-		Downloads map[string]string `json:"downloads"`
-	}
+	var body service.DesktopLatestResult
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
 	assert.Equal(t, "0.2.0", body.Version)
 	assert.Equal(t, "https://npm/t.tgz", body.Downloads["win32-x64"])
 }
 ```
 
-> `desktopLatestResult` 需在 handler 包可见——将结果类型定义在 `internal/service`（`service.DesktopLatestResult`），handler 引用之。上面 handler 测试里的局部类型改为引用 `service.DesktopLatestResult`，stub 返回它。调整后运行测试。
-
 - [ ] **Step 6: 运行 Go 测试**
 
 ```bash
-go test ./internal/service/ -run TestFetchDesktopLatest -v
+go test ./internal/service/ -run TestFetchDesktopLatestFrom -v
 go test ./internal/handler/ -run TestServeDesktopLatest -v
 go build ./...
 ```
