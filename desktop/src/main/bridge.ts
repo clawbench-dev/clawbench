@@ -6,7 +6,7 @@ import { getStore, initStore } from './store'
 import { getPassword, savePassword } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
-import { getMainWindow, openSandboxWindow } from './window'
+import { getMainWindow, createMainWindow, openSandboxWindow } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
 import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
@@ -42,7 +42,9 @@ export function registerBridge(): void {
   ipcMain.handle('native:connect-to-server', (_e, url: string, password: string) => {
     getStore().set('serverUrl', url)
     if (password) savePassword(password)
-    dispatchOpenSession(null)
+    const w = getMainWindow()
+    if (w) { w.loadURL(url) }
+    else { createMainWindow() }
   })
 
   ipcMain.handle('native:get-forwarded-ports', () => JSON.stringify(getForwardedPorts()))

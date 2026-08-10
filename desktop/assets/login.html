@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClawBench 桌面版</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #0f1115; color: #e8eaed; height: 100vh; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .card { width: 380px; background: #1a1d24; border: 1px solid #2a2e37; border-radius: 12px; padding: 26px; max-height: 90vh; overflow-y: auto; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .sub { color: #9aa0aa; font-size: 13px; margin-bottom: 18px; }
+    .saved-title { font-size: 13px; color: #9aa0aa; margin: 4px 0 10px; }
+    .server-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      background: #0f1115; border: 1px solid #2a2e37; border-radius: 8px;
+      padding: 10px 12px; margin-bottom: 8px;
+    }
+    .server-item .url { font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .server-item button { background: #4c8dff; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+    .server-item button:hover { background: #3d7aef; }
+    .server-item .del { background: transparent; color: #9aa0aa; }
+    .server-item .del:hover { color: #ff6b6b; }
+    .divider { border: none; border-top: 1px solid #2a2e37; margin: 16px 0; }
+    label { display: block; font-size: 13px; color: #9aa0aa; margin: 12px 0 6px; }
+    input {
+      width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #2a2e37;
+      background: #0f1115; color: #e8eaed; font-size: 14px; outline: none;
+    }
+    input:focus { border-color: #4c8dff; }
+    button.primary {
+      width: 100%; margin-top: 18px; padding: 11px; border: none; border-radius: 8px;
+      background: #4c8dff; color: #fff; font-size: 15px; cursor: pointer;
+    }
+    button.primary:hover { background: #3d7aef; }
+    button.primary:disabled { background: #2a5a9e; cursor: not-allowed; }
+    .err { color: #ff6b6b; font-size: 13px; margin-top: 12px; min-height: 18px; }
+    .hint { color: #6b7280; font-size: 12px; margin-top: 14px; line-height: 1.6; }
+    .empty { color: #6b7280; font-size: 13px; padding: 6px 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>ClawBench 桌面版</h1>
+    <div class="sub">选择或添加服务器</div>
+
+    <div class="saved-title">已保存服务器</div>
+    <div id="serverList"></div>
+    <div id="empty" class="empty" style="display:none;">暂无已保存服务器</div>
+
+    <hr class="divider" />
+    <label for="url">服务器地址</label>
+    <input id="url" type="text" placeholder="https://host:20000" autocomplete="off" />
+    <label for="pwd">密码（可选，保存后自动登录）</label>
+    <input id="pwd" type="password" placeholder="留空则不保存" autocomplete="off" />
+    <button id="connect" class="primary">连接</button>
+    <div id="err" class="err"></div>
+    <div class="hint">示例：https://192.168.1.100:20000</div>
+  </div>
+
+  <script>
+    function native() { return window.ClawBenchNative || {} }
+
+    function setErr(msg) { document.getElementById('err').textContent = msg || '' }
+
+    function parseList(json) {
+      try {
+        var arr = JSON.parse(json || '[]')
+        return Array.isArray(arr) ? arr.filter(function (e) { return e && typeof e.url === 'string' }) : []
+      } catch (e) { return [] }
+    }
+
+    function renderServerList() {
+      var n = native()
+      var list = n.getServerList ? parseList(n.getServerList()) : []
+      var container = document.getElementById('serverList')
+      var empty = document.getElementById('empty')
+      container.innerHTML = ''
+      empty.style.display = list.length ? 'none' : 'block'
+      list.forEach(function (srv) {
+        var row = document.createElement('div')
+        row.className = 'server-item'
+        var url = document.createElement('span')
+        url.className = 'url'
+        url.textContent = srv.url
+        var connect = document.createElement('button')
+        connect.textContent = '连接'
+        connect.onclick = function () {
+          var pwd = (typeof srv.password === 'string') ? srv.password : ''
+          doConnect(srv.url, pwd)
+        }
+        var del = document.createElement('button')
+        del.className = 'del'
+        del.textContent = '✕'
+        del.onclick = function () {
+          if (n.removeServer) n.removeServer(srv.url)
+          renderServerList()
+        }
+        row.appendChild(url); row.appendChild(connect); row.appendChild(del)
+        container.appendChild(row)
+      })
+    }
+
+    function doConnect(url, password) {
+      var n = native()
+      setErr('')
+      document.getElementById('connect').disabled = true
+      if (password && n.saveServer) n.saveServer(url, password)
+      if (password && n.setSSHPassword) n.setSSHPassword(password)
+      if (n.connectToServer) n.connectToServer(url, password)
+    }
+
+    document.getElementById('connect').addEventListener('click', function () {
+      var url = document.getElementById('url').value.trim()
+      var pwd = document.getElementById('pwd').value
+      if (!url) { setErr('请输入服务器地址'); return }
+      try {
+        var u = new URL(url)
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error()
+      } catch (e) { setErr('地址格式无效，请包含 http(s)://'); return }
+      doConnect(url, pwd)
+    })
+
+    // Prefill last used server URL if any
+    try {
+      var n = native()
+      if (n.getSavedServerConfig) {
+        var cfg = JSON.parse(n.getSavedServerConfig() || '{}')
+        if (cfg.host) {
+          var proto = cfg.protocol || 'https'
+          var port = cfg.port ? ':' + cfg.port : ''
+          var saved = proto + '://' + cfg.host + port
+          if (saved) document.getElementById('url').value = saved
+        }
+      }
+    } catch (e) {}
+
+    renderServerList()
+  </script>
+</body>
+</html>

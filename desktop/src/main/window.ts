@@ -6,14 +6,30 @@ let mainWindow: BrowserWindow | null = null
 
 export function getMainWindow(): BrowserWindow | null { return mainWindow }
 
+function loginPagePath(): string {
+  return path.join(process.resourcesPath, 'login.html')
+}
+
 export function createMainWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, show: false,
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false },
   })
-  const url = getStore().get('serverUrl') || 'http://localhost:20000'
-  mainWindow.loadURL(url)
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  const serverUrl = getStore().get('serverUrl')
+  if (serverUrl) {
+    mainWindow.loadURL(serverUrl)
+  } else {
+    // First run: no server configured — show a built-in login page to enter the server URL.
+    mainWindow.loadFile(loginPagePath())
+  }
+
+  // Ensure the window is always shown, even if the page fails to load (e.g. no
+  // server at the configured URL), so the user is never left with a hidden window.
+  const showWindow = () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show() }
+  mainWindow.once('ready-to-show', showWindow)
+  mainWindow.webContents.on('did-fail-load', () => { if (!mainWindow?.isVisible()) showWindow() })
+  setTimeout(showWindow, 2000)
+
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     shell.openExternal(target)
     return { action: 'deny' }

@@ -3,6 +3,9 @@ productName: ClawBench
 directories:
   output: release
   buildResources: build
+extraResources:
+  - from: assets/login.html
+    to: login.html
 files:
   - dist/
   - package.json
