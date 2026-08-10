@@ -157,6 +157,8 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **File Preview Overlay**: Click a file to open a preview overlay in the `view` tab; supports navigation stack (multi-file switching + back), close to return to empty state
 - **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
 
+> ⌨️ **Desktop Keyboard Shortcuts**: For all keyboard shortcuts across every interface and scope on PC, see **[Keyboard Shortcuts Reference](docs/KEYBOARD.md)**
+
 ### 🎨 Code Preview & Editing
 - CodeMirror-based code browsing and editing dual mode, read-only by default, one-click switch to edit mode
 - Syntax highlighting, sticky line numbers, word wrap toggle, 30+ language extensions (high-frequency static imports, low-frequency lazy loading)
