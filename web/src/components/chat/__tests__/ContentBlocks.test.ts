@@ -96,9 +96,10 @@ const i18n = createI18n({
 })
 
 const LucideStub = { template: '<span class="lucide-stub" />' }
+const mountedWrappers: ReturnType<typeof mount>[] = []
 
 function mountBlocks(props: Record<string, unknown> = {}) {
-  return mount(ContentBlocks, {
+  const wrapper = mount(ContentBlocks, {
     props: {
       blocks: [],
       msgId: 'msg-1',
@@ -123,7 +124,15 @@ function mountBlocks(props: Record<string, unknown> = {}) {
       },
     },
   })
+  mountedWrappers.push(wrapper)
+  return wrapper
 }
+
+afterEach(() => {
+  for (const wrapper of mountedWrappers.splice(0)) {
+    if (wrapper.exists()) wrapper.unmount()
+  }
+})
 
 describe('ContentBlocks', () => {
   // ── Text blocks ──
@@ -336,6 +345,35 @@ describe('ContentBlocks', () => {
         cancelled: false,
       })
       expect(wrapper.find('.placeholder-dots').exists()).toBe(true)
+    })
+
+    it('shows elapsed streaming time and updates it from the message start time', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-08-10T12:00:00.000Z'))
+      const wrapper = mountBlocks({
+        blocks: [],
+        streaming: true,
+        cancelled: false,
+        startedAt: '2026-08-10T11:59:58.000Z',
+      })
+
+      try {
+        expect(wrapper.find('.streaming-elapsed').text()).toBe('2s')
+
+        vi.advanceTimersByTime(63_000)
+        await nextTick()
+        expect(wrapper.find('.streaming-elapsed').text()).toBe('1m 05s')
+
+        vi.advanceTimersByTime(3_596_000)
+        await nextTick()
+        expect(wrapper.find('.streaming-elapsed').text()).toBe('1h 01m 01s')
+
+        await wrapper.setProps({ streaming: false })
+        expect(wrapper.find('.streaming-elapsed').exists()).toBe(false)
+      } finally {
+        wrapper.unmount()
+        vi.useRealTimers()
+      }
     })
 
     it('hides placeholder dots when not streaming', () => {

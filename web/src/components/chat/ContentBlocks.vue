@@ -184,7 +184,10 @@
     </template>
     </template>
     <!-- Loading dots while AI is still streaming (not when cancelled, and not when showing summary) -->
-    <div v-if="streaming && !cancelled && !(showingSummary && summary)" class="placeholder-dots"><span></span><span></span><span></span></div>
+    <div v-if="streaming && !cancelled && !(showingSummary && summary)" class="streaming-status">
+      <div class="placeholder-dots"><span></span><span></span><span></span></div>
+      <span class="streaming-elapsed" role="timer">{{ elapsedLabel }}</span>
+    </div>
 
   </div>
 </template>
@@ -303,6 +306,7 @@ const props = defineProps({
   blockTasks: { type: Object, default: () => ({}) },
   blockAskQuestions: { type: Object, default: () => ({}) },
   streaming: { type: Boolean, default: false },
+  startedAt: { type: String, default: '' },
   cancelled: { type: Boolean, default: false },
   summary: { type: String, default: null },
   summaryCards: { type: Object, default: null },
@@ -322,6 +326,43 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session'])
+
+const elapsedSeconds = ref(0)
+let elapsedTimer = null
+let fallbackStartedAt = Date.now()
+
+function updateElapsed() {
+  const parsedStartedAt = Date.parse(props.startedAt)
+  const startedAt = Number.isFinite(parsedStartedAt) ? parsedStartedAt : fallbackStartedAt
+  elapsedSeconds.value = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+}
+
+function stopElapsedTimer() {
+  if (elapsedTimer) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
+
+watch([() => props.streaming, () => props.startedAt], ([streaming]) => {
+  stopElapsedTimer()
+  if (!streaming) return
+  fallbackStartedAt = Date.now()
+  updateElapsed()
+  elapsedTimer = setInterval(updateElapsed, 1000)
+}, { immediate: true })
+
+const elapsedLabel = computed(() => {
+  if (elapsedSeconds.value < 60) return `${elapsedSeconds.value}s`
+  const minutes = Math.floor(elapsedSeconds.value / 60)
+  const seconds = String(elapsedSeconds.value % 60).padStart(2, '0')
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60)
+    const remainingMinutes = String(minutes % 60).padStart(2, '0')
+    return `${hours}h ${remainingMinutes}m ${seconds}s`
+  }
+  return `${minutes}m ${seconds}s`
+})
 
 // Key helper: use msgId if available, otherwise msgIndex
 function key(bi) {
@@ -723,6 +764,7 @@ watch(() => props.active, (active) => {
 })
 
 onUnmounted(() => {
+  stopElapsedTimer()
   if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
   _collapseTimers.forEach(t => clearTimeout(t))
   _collapseTimers = []
@@ -730,6 +772,19 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.streaming-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.streaming-elapsed {
+  color: var(--text-muted, #999);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
 .placeholder-dots {
   display: flex;
   gap: 4px;

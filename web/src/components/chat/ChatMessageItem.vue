@@ -15,6 +15,7 @@
         :blockTasks="blockTasks"
         :blockAskQuestions="blockAskQuestions"
         :streaming="msg.streaming"
+        :startedAt="msg.createdAt"
         :cancelled="msg.cancelled"
         :summary="msg.summary"
         :summaryCards="msg.summaryCards"
