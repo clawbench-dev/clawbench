@@ -1909,8 +1909,9 @@ async function applyTheme(t) {
     await reRenderMermaid()
 }
 
-/** Dismiss the native splash overlay in APP mode. */
+/** Dismiss the native splash overlay in APP mode (no-op in web/desktop). */
 function dismissSplash() {
+    try { getNative()?.dismissSplash?.() } catch { /* not in app mode */ }
 }
 
 provide('theme', theme)

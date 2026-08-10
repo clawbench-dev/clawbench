@@ -269,7 +269,9 @@ export function usePortForward() {
 
     const enabledPorts = ports.value.filter(p => p.enabled)
     if (enabledPorts.length === 0) {
-      // No enabled ports on server — nothing to reconcile (stopBackgroundService removed)
+      // No enabled ports on server — stop the native service (avoids idle foreground
+      // service draining battery on Android; no-op on desktop).
+      native.stopBackgroundService?.()
       return
     }
 

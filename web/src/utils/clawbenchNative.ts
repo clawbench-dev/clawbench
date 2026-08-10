@@ -18,6 +18,10 @@ export interface ClawBenchNative {
   updateLastSeenEventId(id: string): void
   setKeepScreenOn(on: boolean): void
   log(level: string, tag: string, msg: string): void
+  /** Dismiss the host splash overlay once the app is ready (Android; no-op on desktop). */
+  dismissSplash(): void
+  /** Stop the host background service when no ports are enabled (Android; no-op on desktop). */
+  stopBackgroundService(): void
 
   // Async reads (main-process / native state)
   getAppVersion(): Promise<string>

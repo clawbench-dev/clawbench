@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   updateLastSeenEventId: (id: string) => { ipcRenderer.send('native:update-last-seen', id) },
   setKeepScreenOn: (on: boolean) => { ipcRenderer.send('native:keep-screen-on', on) },
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },
+  dismissSplash: () => { /* desktop has no native splash overlay */ },
+  stopBackgroundService: () => { /* desktop has no Android foreground service */ },
 
   // async reads
   getAppVersion: () => invoke('native:get-app-version'),

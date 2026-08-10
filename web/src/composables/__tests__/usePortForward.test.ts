@@ -993,7 +993,7 @@ describe('usePortForward', () => {
     })
 
     describe('syncToNative', () => {
-        it('does nothing when no enabled ports are registered (stopBackgroundService removed)', async () => {
+        it('stops native service when no enabled ports are registered', async () => {
             mockIsAppMode.value = true
             mockApiGet.mockResolvedValue({ ports: [] })
             const mockStop = vi.fn()
@@ -1004,7 +1004,7 @@ describe('usePortForward', () => {
 
             await syncToNative()
 
-            expect(mockStop).not.toHaveBeenCalled()
+            expect(mockStop).toHaveBeenCalled()
 
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
