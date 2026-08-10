@@ -1,6 +1,7 @@
 import { app, ipcMain, shell, clipboard } from 'electron'
 import path from 'node:path'
 import os from 'node:os'
+import fs from 'node:fs'
 import { getStore, initStore } from './store'
 import { getPassword, savePassword } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd,
@@ -8,9 +9,10 @@ import { addForwardedPort, removeForwardedPort as rmFwd,
 import { getMainWindow, openSandboxWindow } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
 import { setKeepScreenOnImpl } from './powersave'
-import { dispatchOpenSession, showTerminalNotification } from './notification'
+import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
 
-let pendingNavigation: string | null = null
+let logFileStream: fs.WriteStream | null = null
+let logListener: ((event: Electron.Event, level: number, message: string) => void) | null = null
 
 export function registerBridge(): void {
   initStore()
@@ -51,7 +53,7 @@ export function registerBridge(): void {
   ipcMain.handle('native:add-forwarded-port', (_e, l: number, t: number, h: string) => addForwardedPort(l, t, h))
   ipcMain.handle('native:remove-forwarded-port', (_e, l: number) => rmFwd(l))
   ipcMain.handle('native:reconnect-tunnel', () => reconnectTunnel())
-  ipcMain.handle('native:get-pending-navigation', () => { const n = pendingNavigation; pendingNavigation = null; return n })
+  ipcMain.handle('native:get-pending-navigation', () => getPendingNavigationJson())
 
   ipcMain.handle('native:download-file', (_e, filePath: string) => downloadFileByPath(filePath))
   ipcMain.handle('native:download-url', (_e, url: string, fileName: string) => downloadByUrl(url, fileName))
@@ -70,17 +72,46 @@ export function registerBridge(): void {
     await downloadFileByPathTo(filePath, tmp)
     shell.openPath(tmp)
   })
-  ipcMain.handle('native:share-files', (_e, pathsJson: string) => {
+  ipcMain.handle('native:share-files', async (_e, pathsJson: string) => {
     const paths: string[] = JSON.parse(pathsJson || '[]')
-    paths.forEach(p => shell.showItemInFolder(os.tmpdir()))
+    if (paths.length === 0) return
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clawbench-share-'))
+    for (const p of paths) {
+      try {
+        await downloadFileByPathTo(p, path.join(tmpDir, path.basename(p)))
+      } catch { /* skip unshareable */ }
+    }
+    shell.openPath(tmpDir)
+  })
+  ipcMain.handle('native:start-log-capture', () => {
+    const w = getMainWindow()
+    if (!w || logFileStream) return Promise.resolve()
+    const file = path.join(app.getPath('userData'), 'desktop.log')
+    logFileStream = fs.createWriteStream(file, { flags: 'a' })
+    logListener = (_event: Electron.Event, level: number, message: string) => {
+      logFileStream?.write(`[${new Date().toISOString()}] [${level}] ${message}\n`)
+    }
+    w.webContents.on('console-message', logListener)
     return Promise.resolve()
   })
-  ipcMain.handle('native:start-log-capture', () => Promise.resolve())
+  ipcMain.handle('native:stop-log-capture', () => {
+    const w = getMainWindow()
+    if (w && logListener) w.webContents.removeListener('console-message', logListener)
+    logListener = null
+    if (logFileStream) { logFileStream.end(); logFileStream = null }
+    return Promise.resolve()
+  })
   ipcMain.handle('native:notify', (_e, title: string, body: string, nav?: unknown) => {
     showTerminalNotification(title, body, nav as { sessionId?: string; taskId?: string; executionId?: string; projectPath?: string } | undefined)
     return Promise.resolve()
   })
-  ipcMain.handle('native:stop-log-capture', () => Promise.resolve())
+  ipcMain.handle('native:stop-log-capture', () => {
+    const w = getMainWindow()
+    if (w && logListener) w.webContents.removeListener('console-message', logListener)
+    logListener = null
+    if (logFileStream) { logFileStream.end(); logFileStream = null }
+    return Promise.resolve()
+  })
 
   ipcMain.on('native:show-server-dialog', () => getMainWindow()?.webContents.send('clawbench-show-server-dialog'))
   ipcMain.on('native:open-session', (_e, id: string) => dispatchOpenSession(id))

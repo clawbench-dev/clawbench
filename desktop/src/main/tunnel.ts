@@ -1,4 +1,6 @@
 import net from 'node:net'
+import http from 'node:http'
+import https from 'node:https'
 import { Client } from 'ssh2'
 import { getPassword } from './secrets'
 import { getStore } from './store'
@@ -66,7 +68,11 @@ export function disconnectTunnel(): void {
 }
 
 /** Add a local port forward: localhost:localPort → host:targetPort via the SSH channel. */
-export function addForwardedPort(localPort: number, targetPort: number, host: string): Promise<boolean> {
+export async function addForwardedPort(localPort: number, targetPort: number, host: string): Promise<boolean> {
+  if (!state.connected) {
+    const ok = await ensureTunnel()
+    if (!ok) return false
+  }
   return new Promise((resolve) => {
     if (!client || !state.connected) { resolve(false); return }
     const server = net.createServer((socket) => {
@@ -97,8 +103,53 @@ export function testPortReachable(localPort: number): Promise<boolean> {
   })
 }
 
+const DEFAULT_SSH_USER = 'clawbench'
+
+interface SshInfo {
+  enabled: boolean
+  port: number
+  username: string
+}
+
+/** Fetch SSH connection info from the server's public /api/ssh/info endpoint. */
+function fetchSshInfo(serverUrl: string): Promise<SshInfo | null> {
+  return new Promise((resolve) => {
+    try {
+      const url = new URL(serverUrl)
+      const scheme = url.protocol.replace(':', '')
+      const httpPort = url.port || (scheme === 'https' ? '443' : '80')
+      const infoUrl = `${scheme}://${url.hostname}:${httpPort}/api/ssh/info`
+      const lib = scheme === 'https' ? https : http
+      const req = lib.get(infoUrl, { rejectUnauthorized: false }, (res) => {
+        let data = ''
+        res.on('data', c => { data += c })
+        res.on('end', () => {
+          try {
+            const j = JSON.parse(data)
+            resolve({ enabled: !!j.enabled, port: j.port || -1, username: j.username || DEFAULT_SSH_USER })
+          } catch { resolve(null) }
+        })
+      })
+      req.on('error', () => resolve(null))
+    } catch { resolve(null) }
+  })
+}
+
+/** Establish the SSH tunnel if not already connected. Returns true when connected. */
+export async function ensureTunnel(): Promise<boolean> {
+  if (state.connected && client) return true
+  const serverUrl = getStore().get('serverUrl')
+  if (!serverUrl) return false
+  let url: URL
+  try { url = new URL(serverUrl) } catch { return false }
+
+  const info = await fetchSshInfo(serverUrl)
+  const sshPort = info && info.enabled && info.port > 0 ? info.port : Number(url.port || 80) + 1
+  const username = info?.username || DEFAULT_SSH_USER
+  return connectTunnel(url.hostname, sshPort, username)
+}
+
 export function reconnectTunnel(): Promise<boolean> {
-  const s = getStore().get('serverUrl')
-  // serverUrl like https://host:port — tunnel host/port resolved in bridge.ts from server config
-  return Promise.resolve(false)
+  disconnectTunnel()
+  return ensureTunnel()
 }
