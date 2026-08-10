@@ -139,17 +139,19 @@ export function useQuoteQuestion() {
   }
 
   /**
-   * 编程式显示引用问答栏（供双击复制后调用，不依赖 selectionchange 事件）
-   * 延迟 400ms 显示，避免双击的 pointerdown 事件触发"点击外部关闭"
+   * 编程式显示引用问答栏（不依赖 selectionchange 事件）。
+   * 默认延迟 400ms 显示，避免双击的 pointerdown 事件触发"点击外部关闭"
+   * （markdown 预览双击复制依赖此延迟）。传 { delay: 0 } 可立即显示
+   * （代码模式拖选无 pointerdown 干扰）。
    */
-  function showBar(data: QuoteData) {
+  function showBar(data: QuoteData, opts: { delay?: number } = {}) {
     setTimeout(() => {
       setQuoteData(data)
       barVisible.value = true
       if (isWideScreen.value) {
         barPinned.value = true
       }
-    }, 400)
+    }, opts.delay ?? 400)
   }
 
   async function sendMessage(userMessage: string) {
