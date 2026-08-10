@@ -53,6 +53,9 @@
           <button v-if="toolbarInlineIds.includes('upload')" class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
             <Upload :size="16" />
           </button>
+          <button v-if="!isAppMode && toolbarInlineIds.includes('uploadFolder')" class="toolbar-btn" :disabled="dirUploading" @click="triggerFolderUpload()" :title="t('file.uploadFolder')">
+            <FolderUp :size="16" />
+          </button>
           <button v-if="toolbarInlineIds.includes('viewToggle')" class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
             <LayoutGrid v-if="viewMode === 'list'" :size="16" />
             <LayoutList v-else :size="16" />
@@ -93,6 +96,12 @@
                 <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerUpload(); moreMenuOpen = false">
                   <Upload :size="14" />
                   <span>{{ t('file.uploadHere') }}</span>
+                </button>
+              </template>
+              <template v-if="!isAppMode && toolbarCollapsedIds.includes('uploadFolder')">
+                <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerFolderUpload(); moreMenuOpen = false">
+                  <FolderUp :size="14" />
+                  <span>{{ t('file.uploadFolder') }}</span>
                 </button>
               </template>
               <template v-if="toolbarCollapsedIds.includes('viewToggle')">
@@ -140,6 +149,9 @@
 
     <!-- Hidden file input for upload -->
     <input type="file" ref="uploadInputRef" @change="onUploadFileSelect" style="display:none" multiple />
+
+    <!-- Hidden directory input for folder upload (PC only, preserves structure) -->
+    <input v-if="!isAppMode" type="file" ref="folderInputRef" @change="onFolderUploadSelect" style="display:none" webkitdirectory multiple />
 
     <!-- Upload progress bar -->
     <div v-if="dirUploading" class="dir-upload-progress">
@@ -385,7 +397,7 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
@@ -413,8 +425,9 @@ const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
 // File upload to current directory
-const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, handleFileSelectToDir, handleFileDropToDir } = useFileUpload()
+const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFileDropToDirStructured } = useFileUpload()
 const uploadInputRef = ref(null)
+const folderInputRef = ref(null)
 
 // Drag-and-drop state (shared between file-list and file-grid)
 const isDragOver = ref(false)
@@ -428,9 +441,18 @@ function triggerUpload() {
   uploadInputRef.value?.click()
 }
 
+function triggerFolderUpload() {
+  folderInputRef.value?.click()
+}
+
 async function onUploadFileSelect(e) {
   await handleFileSelectToDir(e, props.currentDir || '.')
   // Refresh directory listing after uploads complete
+  emit('refresh')
+}
+
+async function onFolderUploadSelect(e) {
+  await handleFolderSelect(e, props.currentDir || '.')
   emit('refresh')
 }
 
@@ -456,7 +478,7 @@ async function onDrop(e) {
   isDragOver.value = false
   const files = Array.from(e.dataTransfer?.files || [])
   if (files.length === 0) return
-  await handleFileDropToDir(files, props.currentDir || '.')
+  await handleFileDropToDirStructured(files, props.currentDir || '.')
   emit('refresh')
 }
 
@@ -592,7 +614,7 @@ watch(moreMenuOpen, (open) => {
 const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
-  () => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'multiselect', 'hidden'],
+  () => ['refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle', 'multiselect', 'hidden'],
   { inlineCount: 3, gap: 6 },
 )
 

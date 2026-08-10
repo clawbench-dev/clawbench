@@ -3,6 +3,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
+import { folderRelPath } from '@/utils/fileAttachmentUtils'
 
 // ── Module-level singleton state ──
 // pendingFiles MUST be shared across all callers (AttachDrawer, ChatPanelContent,
@@ -36,7 +37,7 @@ export function useFileUpload() {
   // (file preview, chat input, quote-question) can read/write it.
   const { attachedFiles, addAttachedFile, removeAttachedFile } = useChatContext()
 
-  function uploadOneFile(file: File, dir?: string, autoAttach?: boolean) {
+  function uploadOneFile(file: File, dir?: string, autoAttach?: boolean, relPath?: string) {
     return new Promise((resolve) => {
       // Pre-flight size check: prevent sending a request that will be
       // rejected by the server's MaxBytesReader (which causes onerror
@@ -70,6 +71,7 @@ export function useFileUpload() {
       const formData = new FormData()
       formData.append('file', file)
       if (dir) formData.append('dir', dir)
+      if (relPath) formData.append('relpath', relPath)
 
       const xhr = new XMLHttpRequest()
       if (entry) entry.xhr = xhr
@@ -162,7 +164,7 @@ export function useFileUpload() {
     })
   }
 
-  async function uploadFiles(files: File[], dir?: string) {
+  async function uploadFiles(files: File[], dir?: string, preserveStructure = false) {
     const maxFiles = store.state.uploadMaxFiles
     const currentCount = pendingFiles.value.filter(f => !f.uploading).length
     const remaining = maxFiles - currentCount
@@ -193,7 +195,10 @@ export function useFileUpload() {
         if (isDirUpload) dirUploadDone.value++
         continue
       }
-      await uploadOneFile(file, dir)
+      // When preserving folder structure, derive each file's relative sub-path
+      // (including the top-level folder) from webkitRelativePath.
+      const relPath = preserveStructure ? folderRelPath(file) || undefined : undefined
+      await uploadOneFile(file, dir, false, relPath)
       if (isDirUpload) dirUploadDone.value++
     }
 
@@ -255,6 +260,21 @@ export function useFileUpload() {
     await uploadFiles(files, dir)
   }
 
+  /** Upload a directory to a target dir, preserving nested folder structure. */
+  async function handleFolderSelect(e: Event, dir: string) {
+    const files = Array.from((e.target as HTMLInputElement).files || [])
+    ;(e.target as HTMLInputElement).value = ''
+    if (files.length === 0) return
+    await uploadFiles(files, dir, true)
+  }
+
+  /** Drop files into a dir, preserving structure when any file is from a folder. */
+  async function handleFileDropToDirStructured(files: File[], dir: string) {
+    if (files.length === 0) return
+    const isFolder = files.some(f => folderRelPath(f) !== '')
+    await uploadFiles(files, dir, isFolder)
+  }
+
   function removeFile(index: number) {
     const f = pendingFiles.value[index]
     if (f) cancelPendingFile(f)
@@ -300,5 +320,7 @@ export function useFileUpload() {
     uploadFilesToDir: uploadFiles,
     handleFileSelectToDir,
     handleFileDropToDir,
+    handleFolderSelect,
+    handleFileDropToDirStructured,
   }
 }

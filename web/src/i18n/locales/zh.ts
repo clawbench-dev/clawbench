@@ -665,6 +665,7 @@ export default {
     hideHiddenFiles: '隐藏隐藏文件',
     showHiddenFiles: '显示隐藏文件',
     uploadHere: '上传文件',
+    uploadFolder: '上传文件夹',
     dropToUpload: '松开上传到当前目录',
     dropToAttach: '松开添加到会话',
     pasteToUpload: '粘贴上传文件...',

@@ -55,16 +55,11 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 	}
 	defer func() { _ = file.Close() }()
 
-	// Validate file extension — all file types are allowed.
+	// No extension validation — all file types are allowed.
 	// This is intentional: users upload code, configs, binaries, and arbitrary
-	// project files. We only require a non-empty extension so the file can be
-	// identified and served correctly. Content safety is enforced by the
-	// downstream consumer (AI agent / file viewer), not the upload endpoint.
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext == "" {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileMustHaveExtension")
-		return
-	}
+	// project files, including extensionless files common in source trees
+	// (LICENSE, Makefile, .env). Content safety is enforced by the downstream
+	// consumer (AI agent / file viewer), not the upload endpoint.
 
 	// Determine target directory: custom dir or default .clawbench/uploads/
 	var targetDir string
@@ -104,9 +99,18 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		}
 	}
 
+	// Optional relative sub-path for directory uploads (preserves nested folder
+	// structure). When present, the file is saved into targetDir/<relpath>/,
+	// creating the intermediate directories as needed.
+	targetDir = resolveRelPathDir(w, r, targetDir)
+	if targetDir == "" {
+		return
+	}
+
 	// Generate filename: use original name, append sequential number if exists
 	baseName := filepath.Base(header.Filename)
-	nameWithoutExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	ext := strings.ToLower(filepath.Ext(baseName))
+	nameWithoutExt := strings.TrimSuffix(baseName, ext)
 	// Replace spaces with underscores for safety
 	nameWithoutExt = strings.ReplaceAll(nameWithoutExt, " ", "_")
 	filename := nameWithoutExt + ext
@@ -161,6 +165,48 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		"ok":   true,
 		"path": relativePath,
 	})
+}
+
+// resolveRelPathDir applies the optional "relpath" form value to targetDir,
+// creating the nested directory structure it describes. Returns the new target
+// directory, or the original targetDir when relpath is absent/empty. On a
+// validation or filesystem error it writes the response and returns "".
+func resolveRelPathDir(w http.ResponseWriter, r *http.Request, targetDir string) string {
+	relRaw := r.FormValue("relpath")
+	if relRaw == "" {
+		return targetDir
+	}
+	rel := strings.Trim(filepath.ToSlash(filepath.Clean(relRaw)), "/")
+	if rel == "" || rel == "." {
+		return targetDir
+	}
+	// Reject absolute paths and parent-directory traversal.
+	if filepath.IsAbs(relRaw) || containsParentTraversal(rel) {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return ""
+	}
+	subAbs := filepath.Join(targetDir, filepath.FromSlash(rel))
+	// Defense-in-depth: the joined path must stay under the target dir.
+	if !isPathUnderBase(subAbs, targetDir) {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return ""
+	}
+	if err := os.MkdirAll(subAbs, 0o755); err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to create upload subdirectory: %w", err)))
+		return ""
+	}
+	return subAbs
+}
+
+// containsParentTraversal reports whether a slash-normalized relative path
+// contains a ".." segment, which would escape the intended target directory.
+func containsParentTraversal(rel string) bool {
+	for _, seg := range strings.Split(rel, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // recentFile represents a file in an uploads directory.

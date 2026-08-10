@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, folderRelPath, isDirUploadFile } from '@/utils/fileAttachmentUtils.ts'
 
 describe('normalizeFileEntry', () => {
   it('normalizes string to { path, isDir: false } object', () => {
@@ -147,5 +147,42 @@ describe('dedupeFiles', () => {
     expect(dedupeFiles([...uploaded, ...project])).toEqual([
       { path: '/src/main.go', isDir: false, startLine: 10, endLine: 20 },
     ])
+  })
+})
+
+describe('folderRelPath', () => {
+  it('returns the full directory portion including top-level folder', () => {
+    expect(folderRelPath({ webkitRelativePath: 'src/utils/helper.ts' })).toBe('src/utils')
+  })
+  it('returns the single top-level folder for a file at folder root', () => {
+    expect(folderRelPath({ webkitRelativePath: 'src/helper.ts' })).toBe('src')
+  })
+  it('handles deeply nested paths', () => {
+    expect(folderRelPath({ webkitRelativePath: 'a/b/c/d/file.txt' })).toBe('a/b/c/d')
+  })
+  it('normalizes backslash separators (Windows)', () => {
+    expect(folderRelPath({ webkitRelativePath: 'src\\utils\\helper.ts' })).toBe('src/utils')
+  })
+  it('returns empty string for a file without webkitRelativePath (loose drop)', () => {
+    expect(folderRelPath({ name: 'file.txt' })).toBe('')
+  })
+  it('returns empty string for empty webkitRelativePath', () => {
+    expect(folderRelPath({ webkitRelativePath: '' })).toBe('')
+  })
+  it('returns empty string for missing webkitRelativePath', () => {
+    expect(folderRelPath({})).toBe('')
+  })
+  it('returns empty string for null/undefined file', () => {
+    expect(folderRelPath(null as any)).toBe('')
+    expect(folderRelPath(undefined as any)).toBe('')
+  })
+})
+
+describe('isDirUploadFile', () => {
+  it('returns true for a file that belongs to a folder', () => {
+    expect(isDirUploadFile({ webkitRelativePath: 'src/main.go' })).toBe(true)
+  })
+  it('returns false for a loose file', () => {
+    expect(isDirUploadFile({ name: 'main.go' })).toBe(false)
   })
 })

@@ -1332,7 +1332,7 @@ func TestUploadFile_NoFileProvided(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestUploadFile_NoExtension(t *testing.T) {
+func TestUploadFile_NoExtension_Allowed(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -1347,7 +1347,7 @@ func TestUploadFile_NoExtension(t *testing.T) {
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(UploadFile, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestUploadFilePost_AllExtensionsAllowed(t *testing.T) {

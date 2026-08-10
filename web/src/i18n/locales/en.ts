@@ -664,6 +664,7 @@ export default {
     hideHiddenFiles: 'Hide hidden files',
     showHiddenFiles: 'Show hidden files',
     uploadHere: 'Upload files',
+    uploadFolder: 'Upload folder',
     dropToUpload: 'Drop to upload to current folder',
     dropToAttach: 'Drop to attach to chat',
     pasteToUpload: 'Pasting files...',

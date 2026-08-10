@@ -88,6 +88,11 @@ function makeFile(name: string, size = 100, type = 'text/plain') {
   return { name, size, type } as File
 }
 
+// Helper: create a fake File that belongs to a picked folder (has webkitRelativePath)
+function makeDirFile(name: string, relPath: string, size = 100) {
+  return { name, size, type: 'text/plain', webkitRelativePath: relPath } as unknown as File
+}
+
 describe('useFileUpload', () => {
   let teardownXHR: () => void
 
@@ -119,6 +124,8 @@ describe('useFileUpload', () => {
       expect(typeof upload.uploadAndAttach).toBe('function')
       expect(typeof upload.handleFileSelectToDir).toBe('function')
       expect(typeof upload.handleFileDropToDir).toBe('function')
+      expect(typeof upload.handleFolderSelect).toBe('function')
+      expect(typeof upload.handleFileDropToDirStructured).toBe('function')
       expect(typeof upload.removeFile).toBe('function')
       expect(typeof upload.addAttachedFile).toBe('function')
       expect(typeof upload.removeAttachedFile).toBe('function')
@@ -410,6 +417,68 @@ describe('useFileUpload', () => {
     it('does nothing when empty file list', async () => {
       const upload = useFileUpload()
       await upload.handleFileDropToDir([], '/some/dir')
+      expect(upload.dirUploading.value).toBe(false)
+    })
+  })
+
+  describe('directory upload (preserve structure)', () => {
+    it('handleFolderSelect sends relpath derived from webkitRelativePath', async () => {
+      let capturedFormData: FormData | null = null
+      xhrSendHandler = (xhr, formData) => {
+        capturedFormData = formData
+        respondSuccess(xhr, 'dir/src/utils/helper.ts')
+      }
+
+      const upload = useFileUpload()
+      await upload.handleFolderSelect(
+        { target: { files: [makeDirFile('helper.ts', 'src/utils/helper.ts')], value: 'fake' } } as any,
+        '/dir'
+      )
+
+      expect(capturedFormData).toBeTruthy()
+      expect(capturedFormData!.get('dir')).toBe('/dir')
+      // relpath preserves the top-level folder + nested structure
+      expect(capturedFormData!.get('relpath')).toBe('src/utils')
+      expect(capturedFormData!.get('file')).toBeTruthy()
+    })
+
+    it('handleFolderSelect resets input value', async () => {
+      xhrSendHandler = (xhr) => respondSuccess(xhr, 'dir/f.txt')
+      const upload = useFileUpload()
+      const ev = { target: { files: [makeDirFile('f.txt', 'top/f.txt')], value: 'fake' } }
+      await upload.handleFolderSelect(ev as any, '/dir')
+      expect(ev.target.value).toBe('')
+    })
+
+    it('handleFileDropToDirStructured sends relpath when dropping a folder', async () => {
+      let capturedFormData: FormData | null = null
+      xhrSendHandler = (xhr, formData) => {
+        capturedFormData = formData
+        respondSuccess(xhr, 'dir/proj/Makefile')
+      }
+
+      const upload = useFileUpload()
+      await upload.handleFileDropToDirStructured([makeDirFile('Makefile', 'proj/Makefile')], '/dir')
+
+      expect(capturedFormData!.get('relpath')).toBe('proj')
+    })
+
+    it('handleFileDropToDirStructured omits relpath for loose file drops', async () => {
+      let capturedFormData: FormData | null = null
+      xhrSendHandler = (xhr, formData) => {
+        capturedFormData = formData
+        respondSuccess(xhr, 'dir/loose.txt')
+      }
+
+      const upload = useFileUpload()
+      await upload.handleFileDropToDirStructured([makeFile('loose.txt')], '/dir')
+
+      expect(capturedFormData!.get('relpath')).toBeNull()
+    })
+
+    it('handleFileDropToDirStructured does nothing when empty', async () => {
+      const upload = useFileUpload()
+      await upload.handleFileDropToDirStructured([], '/dir')
       expect(upload.dirUploading.value).toBe(false)
     })
   })

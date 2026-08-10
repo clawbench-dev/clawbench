@@ -41,6 +41,31 @@ func createMultipartUploadRequest(t *testing.T, filename, content, dir string) *
 	return req
 }
 
+// createMultipartUploadRequestRel builds a multipart/form-data POST request with
+// a file field uploaded into the "target" dir plus an optional "relpath" field.
+func createMultipartUploadRequestRel(t *testing.T, filename, content, relpath string) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("failed to create form file: %v", err)
+	}
+	_, _ = part.Write([]byte(content))
+
+	_ = writer.WriteField("dir", "target")
+	if relpath != "" {
+		_ = writer.WriteField("relpath", relpath)
+	}
+
+	_ = writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload/file", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
+}
+
 func TestUploadFile_DefaultDir(t *testing.T) {
 	t.Run("UploadToDefaultDir", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
@@ -85,15 +110,21 @@ func TestUploadFile_DefaultDir(t *testing.T) {
 		assertStatus(t, w, http.StatusBadRequest)
 	})
 
-	t.Run("NoExtension_Returns400", func(t *testing.T) {
+	t.Run("NoExtension_Allowed", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
+		// Extensionless files (LICENSE, Makefile, .env) are now allowed globally.
 		req := createMultipartUploadRequest(t, "noext", "content", "")
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(UploadFile, req)
-		assertStatus(t, w, http.StatusBadRequest)
+		assertOK(t, w)
+
+		var result map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &result)
+		pathStr, _ := result["path"].(string)
+		assert.Contains(t, filepath.ToSlash(pathStr), ".clawbench/uploads/noext")
 	})
 
 	t.Run("DangerousExtension_Allowed", func(t *testing.T) {
@@ -796,5 +827,86 @@ func TestUploadFile_CustomDir(t *testing.T) {
 		data, err := os.ReadFile(fullPath)
 		assert.NoError(t, err)
 		assert.Equal(t, "dst path under root", string(data))
+	})
+}
+
+func TestUploadFile_RelPath(t *testing.T) {
+	t.Run("NestedRelPath_CreatesStructure", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := createMultipartUploadRequestRel(t, "helper.ts", "code", "src/utils")
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadFile, req)
+		assertOK(t, w)
+
+		var result map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &result)
+		pathStr, _ := result["path"].(string)
+		// Preserves the top-level folder + nested structure under the target dir.
+		assert.Contains(t, filepath.ToSlash(pathStr), "target/src/utils/helper.ts")
+
+		// Verify file on disk.
+		data, err := os.ReadFile(filepath.Join(env.ProjectDir, "target", "src", "utils", "helper.ts"))
+		assert.NoError(t, err)
+		assert.Equal(t, "code", string(data))
+	})
+
+	t.Run("SingleSegmentRelPath_UsesFolderAsFirstLevel", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := createMultipartUploadRequestRel(t, "readme.md", "# doc", "src")
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadFile, req)
+		assertOK(t, w)
+
+		var result map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &result)
+		pathStr, _ := result["path"].(string)
+		assert.Contains(t, filepath.ToSlash(pathStr), "target/src/readme.md")
+
+		_, err := os.Stat(filepath.Join(env.ProjectDir, "target", "src", "readme.md"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("ExtensionlessFileInNestedRelPath_Allowed", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := createMultipartUploadRequestRel(t, "Makefile", "all:", "proj/sub")
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadFile, req)
+		assertOK(t, w)
+
+		var result map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &result)
+		pathStr, _ := result["path"].(string)
+		assert.Contains(t, filepath.ToSlash(pathStr), "target/proj/sub/Makefile")
+	})
+
+	t.Run("ParentTraversalInRelPath_Returns403", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := createMultipartUploadRequestRel(t, "evil.txt", "x", "../outside")
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadFile, req)
+		assertStatus(t, w, http.StatusForbidden)
+	})
+
+	t.Run("AbsoluteRelPath_Returns403", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := createMultipartUploadRequestRel(t, "evil.txt", "x", "/etc/evil")
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadFile, req)
+		assertStatus(t, w, http.StatusForbidden)
 	})
 }

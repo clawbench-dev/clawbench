@@ -49,3 +49,23 @@ export function dedupeFiles(files: FileEntry[]): FileEntry[] {
   }
   return result
 }
+
+/**
+ * Extract the directory portion of a file's `webkitRelativePath`, including the
+ * top-level folder (e.g. "src/utils/helper.ts" -> "src/utils", "src/helper.ts" -> "src").
+ * Returns '' for files without a relative path (loose drag-drop or single-file picker),
+ * which signals a flat upload. Path separators are normalized to '/'.
+ */
+export function folderRelPath(file: { webkitRelativePath?: string }): string {
+  const rel = file?.webkitRelativePath || ''
+  if (!rel) return ''
+  const normalized = rel.replace(/\\/g, '/')
+  const slashIdx = normalized.lastIndexOf('/')
+  if (slashIdx <= 0) return ''
+  return normalized.slice(0, slashIdx)
+}
+
+/** True if the file was picked/dropped as part of a directory (has a relative path). */
+export function isDirUploadFile(file: { webkitRelativePath?: string }): boolean {
+  return folderRelPath(file) !== ''
+}
