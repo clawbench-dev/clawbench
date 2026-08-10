@@ -81,7 +81,7 @@
 
   <!-- Floating scroll buttons — outside scroll container, inside relative wrapper -->
   <Transition name="scroll-fab">
-    <div v-if="scrolledUp || scrolledDown" ref="scrollFabRef" class="scroll-fab-group scroll-fab-bottom">
+    <div v-if="(scrolledUp || scrolledDown) && !textSelecting" ref="scrollFabRef" class="scroll-fab-group scroll-fab-bottom">
       <Transition name="scroll-fab-swap" mode="out-in">
         <div v-if="scrolledUp" key="up" class="scroll-fab-dir">
           <button class="scroll-fab-round" @click="scrollToTop" :title="t('chat.messageList.scrollToTop')">
@@ -136,6 +136,7 @@ import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
+import { useTextSelectionActive } from '@/composables/useTextSelection.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
@@ -291,6 +292,9 @@ let loadMorePending = false
 // Track whether the user is at the bottom of the chat.
 // When the user scrolls back to the bottom during streaming, auto-scroll resumes.
 const isAtBottom = ref(true)
+
+// Hide the floating scroll buttons while the user is selecting text.
+const { active: textSelecting } = useTextSelectionActive()
 
 // Whether user has scrolled up/down enough to show floating scroll buttons
 // Only one group shows at a time — whichever direction the user last scrolled toward
@@ -899,15 +903,27 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   background: var(--bg-primary);
   color: var(--text-secondary);
-  border: 1.5px solid var(--border-color);
-  border-radius: 14px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  border-radius: 50%;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, transform 0.15s, border-color 0.15s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  opacity: 0.6;
+  transition: background 0.15s, color 0.15s, transform 0.15s, border-color 0.15s, opacity 0.15s;
   -webkit-tap-highlight-color: transparent;
+}
+
+.scroll-fab-round:hover,
+.scroll-fab-round:focus-visible {
+  opacity: 1;
+  background: var(--bg-tertiary);
+}
+
+.scroll-fab-round:not(:disabled):active {
+  transform: scale(0.94);
 }
 
 .scroll-fab-round:active {

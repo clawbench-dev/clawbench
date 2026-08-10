@@ -800,6 +800,7 @@ export default {
     },
     overlay: {
       back: 'Back',
+      forward: 'Forward',
     },
     recent: {
       title: 'Recent Files',

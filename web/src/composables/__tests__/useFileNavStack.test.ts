@@ -118,6 +118,72 @@ describe('useFileNavStack', () => {
     expect(nav1.currentFilePath.value).toBe('/src/b.ts')
   })
 
+  describe('browser-style history', () => {
+    it('goForward: restores a file after going back', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/src/a.ts')
+      nav.openFile('/src/b.ts')
+      nav.goBack()
+
+      expect(nav.canGoForward.value).toBe(true)
+      expect(nav.goForward()).toBe('/src/b.ts')
+      expect(nav.currentFilePath.value).toBe('/src/b.ts')
+      expect(nav.canGoForward.value).toBe(false)
+    })
+
+    it('preserves line targets and view mode across back and forward navigation', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/docs/guide.md', { viewMode: 'rendered' })
+      nav.openFile('/src/main.rs', { lineStart: 42, lineEnd: 45, viewMode: 'raw' })
+
+      expect(nav.currentLocation.value).toEqual({
+        path: '/src/main.rs',
+        lineStart: 42,
+        lineEnd: 45,
+        viewMode: 'raw',
+      })
+
+      nav.goBack()
+      expect(nav.currentLocation.value).toEqual({ path: '/docs/guide.md', viewMode: 'rendered' })
+
+      nav.goForward()
+      expect(nav.currentLocation.value?.lineStart).toBe(42)
+      expect(nav.currentLocation.value?.viewMode).toBe('raw')
+    })
+
+    it('updates the current visit without changing history depth', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/docs/guide.md')
+      nav.updateCurrent({ viewMode: 'rendered' })
+
+      expect(nav.currentLocation.value).toEqual({ path: '/docs/guide.md', viewMode: 'rendered' })
+      expect(nav.canGoBack.value).toBe(false)
+    })
+
+    it('keeps different line targets in the same file as separate visits', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/src/main.rs', { lineStart: 10 })
+      nav.openFile('/src/main.rs', { lineStart: 20 })
+
+      expect(nav.canGoBack.value).toBe(true)
+      nav.goBack()
+      expect(nav.currentLocation.value?.lineStart).toBe(10)
+    })
+
+    it('openFile after going back discards the forward branch', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/src/a.ts')
+      nav.openFile('/src/b.ts')
+      nav.openFile('/src/c.ts')
+      nav.goBack()
+      nav.openFile('/src/d.ts')
+
+      expect(nav.currentFilePath.value).toBe('/src/d.ts')
+      expect(nav.canGoForward.value).toBe(false)
+      expect(nav.goBack()).toBe('/src/b.ts')
+    })
+  })
+
   describe('removePath', () => {
     it('removes a path from the middle of the stack', () => {
       const nav = useFileNavStack()

@@ -20,6 +20,10 @@ const i18n = createI18n({
           shareExternal: 'Share',
           edit: 'Edit',
         },
+        overlay: {
+          back: 'Back',
+          forward: 'Forward',
+        },
         editor: {
           save: 'Save',
           cancel: 'Cancel',
@@ -75,11 +79,14 @@ vi.mock('@/composables/useFileRefresh.ts', () => ({
   flashType: { value: null },
 }))
 
+const fileNavState = vi.hoisted(() => ({
+  overlayOpen: { value: false },
+  canGoBack: { value: false },
+  canGoForward: { value: false },
+}))
+
 vi.mock('@/composables/useFileNavStack.ts', () => ({
-  useFileNavStack: () => ({
-    overlayOpen: { value: false },
-    canGoBack: { value: false },
-  }),
+  useFileNavStack: () => fileNavState,
 }))
 
 vi.mock('@/composables/useSettingsConfig', () => ({
@@ -148,6 +155,9 @@ globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
 }) as typeof setInterval
 
 afterEach(() => {
+  fileNavState.overlayOpen.value = false
+  fileNavState.canGoBack.value = false
+  fileNavState.canGoForward.value = false
   for (const id of pendingTimers) { clearTimeout(id) }
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
@@ -266,6 +276,47 @@ describe('FileViewer', () => {
       await header.vm.$emit('delete', 'main.ts')
       expect(wrapper.emitted('delete')).toBeTruthy()
     }
+  })
+
+  it('renders floating history nav and emits back/forward when available', async () => {
+    fileNavState.overlayOpen.value = true
+    fileNavState.canGoBack.value = true
+    fileNavState.canGoForward.value = true
+    const wrapper = mountViewer()
+    await nextTick()
+
+    const buttons = wrapper.findAll('.file-nav-btn')
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0].attributes('disabled')).toBeUndefined()
+    expect(buttons[1].attributes('disabled')).toBeUndefined()
+
+    await buttons[0].trigger('click')
+    expect(wrapper.emitted('navigateBack')).toBeTruthy()
+
+    await buttons[1].trigger('click')
+    expect(wrapper.emitted('navigateForward')).toBeTruthy()
+  })
+
+  it('hides back/forward floating buttons when history is empty', async () => {
+    fileNavState.overlayOpen.value = true
+    fileNavState.canGoBack.value = false
+    fileNavState.canGoForward.value = false
+    const wrapper = mountViewer()
+    await nextTick()
+
+    expect(wrapper.findAll('.file-nav-btn')).toHaveLength(0)
+  })
+
+  it('hides the unavailable direction button individually', async () => {
+    fileNavState.overlayOpen.value = true
+    fileNavState.canGoBack.value = true
+    fileNavState.canGoForward.value = false
+    const wrapper = mountViewer()
+    await nextTick()
+
+    const buttons = wrapper.findAll('.file-nav-btn')
+    expect(buttons).toHaveLength(1)
+    expect(wrapper.find('.file-nav-float').exists()).toBe(true)
   })
 
   it('calls store.selectFile when openAsText is emitted', async () => {

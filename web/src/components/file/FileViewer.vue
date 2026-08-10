@@ -214,6 +214,33 @@
       </div>
     </div>
 
+    <!-- Floating history nav (back/forward) over the content area -->
+    <div
+      v-if="fileNav.overlayOpen.value && !textSelecting && (fileNav.canGoBack.value || fileNav.canGoForward.value)"
+      class="file-nav-float"
+    >
+      <button
+        v-if="fileNav.canGoBack.value"
+        class="file-nav-btn"
+        type="button"
+        :title="t('file.overlay.back')"
+        :aria-label="t('file.overlay.back')"
+        @click.stop="emit('navigateBack')"
+      >
+        <ChevronLeft :size="18" />
+      </button>
+      <button
+        v-if="fileNav.canGoForward.value"
+        class="file-nav-btn"
+        type="button"
+        :title="t('file.overlay.forward')"
+        :aria-label="t('file.overlay.forward')"
+        @click.stop="emit('navigateForward')"
+      >
+        <ChevronRight :size="18" />
+      </button>
+    </div>
+
     <!-- Shared diff drawer for all file types -->
     <DiffDrawer
       :visible="diffDrawer.effectiveOpen.value"
@@ -229,7 +256,7 @@
 import { ref, computed, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { Download, Code2, AlertTriangle, Share2 } from 'lucide-vue-next'
+import { Download, Code2, AlertTriangle, Share2, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
@@ -250,6 +277,7 @@ import { pickPreviewAnchor, pickCmAnchor, relTopFor, scrollTopFor } from '@/util
 import { store } from '@/stores/app.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack.ts'
+import { useTextSelectionActive } from '@/composables/useTextSelection.ts'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { exportRenderedHtml, imageIssueReasonKey } from '@/utils/exportHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
@@ -269,10 +297,10 @@ const props = defineProps({
     markdownViewMode: String,
     externalLoading: Boolean,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'shareExternal'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal'])
 
 const fileNav = useFileNavStack()
-
+const { active: textSelecting } = useTextSelectionActive()
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
@@ -617,6 +645,11 @@ onMounted(() => {
 
 // Save/restore scroll position when switching files
 watch(() => props.file, (f, oldF) => {
+    // Capture the pane being left synchronously. Relying only on scroll events
+    // can miss the final position when navigation follows a smooth scroll.
+    if (oldF?.path && scrollEl) {
+        scrollPositions.set(oldF.path, scrollEl.scrollTop)
+    }
     // Stop listening on old scroll container
     detachScrollListener()
 
@@ -740,6 +773,53 @@ defineExpose({
     flex: 1;
     flex-direction: column;
     min-height: 0;
+}
+
+/* Floating history nav (back/forward) overlaid on the content area.
+   Semi-transparent at rest; fully opaque on hover/focus so it never obscures
+   the code while remaining easy to reach. */
+.file-nav-float {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 10px;
+    z-index: 5;
+    opacity: 0.55;
+    transition: opacity 0.15s;
+    pointer-events: none;
+}
+
+.file-nav-float:hover,
+.file-nav-float:focus-within {
+    opacity: 1;
+}
+
+.file-nav-float .file-nav-btn {
+    pointer-events: auto;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
+    background: var(--bg-primary, #fff);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+
+.file-nav-float .file-nav-btn:not(:disabled):active {
+    background: var(--bg-tertiary);
+    transform: scale(0.94);
+}
+
+.file-nav-float .file-nav-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
 }
 
 .unsupported-file {

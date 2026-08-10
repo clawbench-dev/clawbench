@@ -33,7 +33,7 @@ const i18n = createI18n({
           edit: 'Edit',
           finishEditing: 'Finish editing',
         },
-        overlay: { back: 'Back' },
+        overlay: { back: 'Back', forward: 'Forward' },
       },
     },
   },

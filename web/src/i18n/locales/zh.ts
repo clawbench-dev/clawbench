@@ -801,6 +801,7 @@ export default {
     },
     overlay: {
       back: '返回',
+      forward: '前进',
     },
     recent: {
       title: '最近文件',

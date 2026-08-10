@@ -22,7 +22,7 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, watch, onMounted, onUnmounted, getCurrentInstance } from 'vue'
+import { ref, shallowRef, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state'
 import { EditorView, lineNumbers, Decoration, gutter, GutterMarker, keymap } from '@codemirror/view'
@@ -34,7 +34,6 @@ import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
-import { selectionToQuote } from '@/utils/codeSelectionQuote.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useCodeStickyScroll } from '@/composables/useCodeStickyScroll.ts'
 
@@ -53,17 +52,7 @@ const props = defineProps({
 const emit = defineEmits(['save', 'cancel', 'exitEdit'])
 
 const { t } = useI18n()
-const instance = getCurrentInstance()
 const editorHost = ref(null)
-// Resolve the element the CodeMirror editor should mount into. The template ref
-// is the primary source; if it is unbound (hoisted static vnode in some jsdom
-// test setups), fall back to the host inside this component's own root so the
-// editor is never created detached. Production always resolves via the ref.
-function resolveEditorHost() {
-    if (editorHost.value) return editorHost.value
-    const root = instance ? instance.proxy.$el : null
-    return root ? root.querySelector('.cm-host') : null
-}
 // EditorView must be stored in a shallowRef: Vue's ref() wraps objects in a
 // reactive Proxy, and CodeMirror's undo/redo build transactions against the
 // raw EditorState identity. Operating on the proxied view/state yields a
@@ -198,65 +187,42 @@ function handleEditorClick(event) {
     return false
 }
 
-// Diff-gutter clicks go through CodeMirror's click handler so the editor stays
-// in charge of them. Read-only mousedown/copy are handled by native listeners
-// (see attachNativeSelectionHandlers) so the browser owns text selection.
 const interactionExtension = EditorView.domEventHandlers({
     click(event, editor) { return handleEditorClick(event, editor) },
 })
 
 // ─── Selection-based quote question (read-only mode) ───
-// Read-only mode uses NATIVE browser text selection (desktop drag + mobile
-// long-press), so the DOM selection is real and the global selectionchange
-// event fires. We translate the DOM selection to accurate line numbers via
-// EditorView.posAtDOM and surface the quote bar. CodeMirror's own selection is
-// bypassed (see attachNativeSelectionHandlers), so CM never fires its internal
-// selection listener.
+// CodeMirror keeps its selection internally, so the global selectionchange handler
+// never fires for it. Watch selection changes here and surface the quote bar with
+// accurate line numbers from the editor state.
 let selDebounceTimer = null
-function handleNativeSelectionChange() {
-    const editor = view.value
-    if (!editor || props.editable) return // only read-only browse
+function handleSelectionChange(update) {
+    if (props.editable) return // only read-only browse
+    if (!update.selectionSet && !update.docChanged) return
+    const sel = update.state.selection.main
     if (selDebounceTimer) clearTimeout(selDebounceTimer)
-    const quote = selectionToQuote(window.getSelection(), editor, {
-        filePath: props.file?.path || '',
-        language: props.language,
-    })
-    if (quote) {
-        selDebounceTimer = setTimeout(() => quoteQuestion.showBar(quote), 200)
-    } else {
+    if (sel.empty) {
         selDebounceTimer = setTimeout(() => quoteQuestion.hideBar(), 200)
+        return
     }
+    const text = update.state.sliceDoc(sel.from, sel.to).trim()
+    if (!text) return
+    const startLine = update.state.doc.lineAt(sel.from).number
+    const endLine = update.state.doc.lineAt(sel.to).number
+    selDebounceTimer = setTimeout(() => {
+        // delay: 0 — double-click is not used in code mode, so there is no
+        // pointerdown that could immediately close the bar (see useQuoteQuestion).
+        quoteQuestion.showBar({
+            text,
+            filePath: props.file?.path || '',
+            language: props.language,
+            startLine,
+            endLine,
+        }, { delay: 0 })
+    }, 200)
 }
 
-// ─── Native selection handlers (read-only mode) ───
-// CodeMirror's event loop calls preventDefault() when a mousedown handler
-// returns true (and its built-in MouseSelection preventDefaults on mouseup),
-// which suppresses the browser's native selection. To give the user native
-// drag-select (desktop) and long-press copy (mobile), we add capture-phase
-// listeners on .cm-content that stop the event reaching CodeMirror's bubble
-// handler, so the browser owns selection. We never call preventDefault, so the
-// native default action (selection / copy) proceeds.
-function attachNativeSelectionHandlers(editor) {
-    if (props.editable) return
-    editor.contentDOM.addEventListener('mousedown', onNativeMousedown, true)
-    editor.contentDOM.addEventListener('copy', onNativeCopy, true)
-}
-function detachNativeSelectionHandlers(editor) {
-    if (!editor) return
-    editor.contentDOM.removeEventListener('mousedown', onNativeMousedown, true)
-    editor.contentDOM.removeEventListener('copy', onNativeCopy, true)
-}
-function onNativeMousedown(e) {
-    // Don't preventDefault — just keep CodeMirror from running its own
-    // mousedown handling (which would start MouseSelection and suppress native
-    // selection). The browser's native selection then takes over.
-    e.stopImmediatePropagation()
-}
-function onNativeCopy(e) {
-    // Stop CodeMirror intercepting copy with its (stale/empty) internal
-    // selection; the browser copies the real native selection instead.
-    e.stopImmediatePropagation()
-}
+const selectionExtension = EditorView.updateListener.of(handleSelectionChange)
 
 // Re-measure the sticky overlay whenever the editor geometry changes (resize,
 // line-number toggle, wrap toggle, doc height shifts) so its content offset and
@@ -299,11 +265,17 @@ function recomputeOverlay() {
 // scrollDOM.scrollTop toward the target line to give a smooth scroll instead.
 let flashTimer = null
 let scrollRAF = null
-function smoothScrollToLine(editor, pos) {
+function centeredScrollTop(editor, pos) {
     const scroller = editor.scrollDOM
     const block = editor.lineBlockAt(pos)
     const viewportHeight = scroller.clientHeight
-    const targetTop = Math.max(0, block.top - (viewportHeight - block.height) / 2)
+    const maxScrollTop = Math.max(0, scroller.scrollHeight - viewportHeight)
+    const centeredTop = block.top - (viewportHeight - block.height) / 2
+    return Math.min(maxScrollTop, Math.max(0, centeredTop))
+}
+function smoothScrollToLine(editor, pos) {
+    const scroller = editor.scrollDOM
+    const targetTop = centeredScrollTop(editor, pos)
     const startTop = scroller.scrollTop
     const delta = targetTop - startTop
     if (Math.abs(delta) < 0.5) return
@@ -316,7 +288,12 @@ function smoothScrollToLine(editor, pos) {
         const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
         scroller.scrollTop = startTop + delta * eased
         if (t < 1) scrollRAF = requestAnimationFrame(step)
-        else scrollRAF = null
+        else {
+            // Recalculate after the animation: CodeMirror may finish measuring
+            // the document while the smooth movement is in progress.
+            scroller.scrollTop = centeredScrollTop(editor, pos)
+            scrollRAF = null
+        }
     }
     scrollRAF = requestAnimationFrame(step)
 }
@@ -340,10 +317,43 @@ function scrollToLine(line, lineEnd) {
     }, 1500)
 }
 
+let pendingScrollRequestId = null
+let pendingScrollRAF = null
 function onScrollToLine(e) {
     const d = e.detail
     if (!d || typeof d.line !== 'number') return
-    scrollToLine(d.line, d.lineEnd)
+    if (d.path && d.path !== props.file?.path) return
+    if (!d.requestId) {
+        window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
+        scrollToLine(d.line, d.lineEnd)
+        return
+    }
+    if (pendingScrollRequestId === d.requestId) return
+    pendingScrollRequestId = d.requestId
+
+    const applyWhenLaidOut = () => {
+        if (pendingScrollRequestId !== d.requestId) return
+        const editor = view.value
+        if (!editor || (d.path && d.path !== props.file?.path)) {
+            pendingScrollRequestId = null
+            return
+        }
+        const scroller = editor.scrollDOM
+        // A newly mounted editor can have content but no measured viewport for
+        // one or more frames. Wait for layout before calculating the center.
+        if (scroller.clientHeight <= 0 && scroller.scrollHeight > 0) {
+            pendingScrollRAF = requestAnimationFrame(applyWhenLaidOut)
+            return
+        }
+        pendingScrollRequestId = null
+        pendingScrollRAF = null
+        window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
+        scrollToLine(d.line, d.lineEnd)
+        window.dispatchEvent(new CustomEvent('cm-scroll-to-line-handled', { detail: { requestId: d.requestId } }))
+    }
+    // Always defer the first measurement by one frame so the editor has its
+    // final height after a rendered/raw view transition.
+    pendingScrollRAF = requestAnimationFrame(applyWhenLaidOut)
 }
 
 // ─── Assemble extensions ───
@@ -361,6 +371,7 @@ function buildAllExtensions() {
         history(),
         keymap.of([{ key: 'Mod-s', run: handleSaveShortcut, preventDefault: true }, ...defaultKeymap, ...historyKeymap]),
         interactionExtension,
+        selectionExtension,
         editStateExtension,
         geometryExtension,
         jumpFlashCompartment.of([]),
@@ -394,7 +405,7 @@ function updateInputMode() {
 
 onMounted(() => {
     view.value = new EditorView({
-        parent: resolveEditorHost(),
+        parent: editorHost.value,
         state: EditorState.create({ doc: props.content || '', extensions: buildAllExtensions() }),
     })
     updateInputMode()
@@ -403,14 +414,13 @@ onMounted(() => {
     mountLang()
     sticky.init(view.value, props.file?.path, stickyScrollEnabled())
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
-    document.addEventListener('selectionchange', handleNativeSelectionChange)
-    attachNativeSelectionHandlers(view.value)
 })
 
 onUnmounted(() => {
     window.removeEventListener('cm-scroll-to-line', onScrollToLine)
-    document.removeEventListener('selectionchange', handleNativeSelectionChange)
-    detachNativeSelectionHandlers(view.value)
+    if (pendingScrollRAF) cancelAnimationFrame(pendingScrollRAF)
+    pendingScrollRAF = null
+    pendingScrollRequestId = null
     if (scrollRAF) cancelAnimationFrame(scrollRAF)
     if (flashTimer) clearTimeout(flashTimer)
     if (selDebounceTimer) clearTimeout(selDebounceTimer)
@@ -423,9 +433,6 @@ onUnmounted(() => {
 watch([() => props.editable], () => {
     reconfigure(readonlyCompartment, props.editable ? [] : [EditorState.readOnly.of(true)])
     updateInputMode()
-    // Native selection handlers are only attached in read-only mode.
-    detachNativeSelectionHandlers(view.value)
-    attachNativeSelectionHandlers(view.value)
     // Reset edit state when entering edit mode
     canUndo.value = false
     canRedo.value = false
@@ -639,11 +646,10 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     display: none;
 }
 
-/* Read-only mode keeps the browser's native text selection (desktop drag-select,
-   mobile long-press) so the user can copy any text at any time. Selection is NOT
-   suppressed — CodeMirror's mousedown/copy handling is bypassed in JS so the
-   browser owns selection. The content is selectable by default; no user-select
-   override is applied here. */
+/* Read-only mode keeps CodeMirror's default selection: text is selectable by
+   drag (desktop) / long-press (mobile) and copyable with Ctrl/Cmd+C. The
+   selection-driven quote bar reacts to CodeMirror's internal selection changes.
+   No user-select override is applied to the content. */
 
 /* Diff marker gutter label */
 .cm-diff-gutter-marker {
