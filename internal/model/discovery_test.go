@@ -80,9 +80,10 @@ func TestBackendSupportsCLI_ComputedFromFactoryRegistry(t *testing.T) {
 	assert.True(t, model.BackendSupportsCLI("claude"))
 	assert.True(t, model.BackendSupportsCLI("opencode"))
 	assert.True(t, model.BackendSupportsCLI("kimi"))
+	// grok registers a streaming-json CLI fallback in addition to ACP
+	assert.True(t, model.BackendSupportsCLI("grok"), "grok has a CLI fallback factory")
 
-	// ACP-only backends (e.g. grok) report false
-	assert.False(t, model.BackendSupportsCLI("grok"), "grok is ACP-only and has no CLI factory")
+	// Truly ACP-only backends (e.g. antigravity) report false
 	assert.False(t, model.BackendSupportsCLI("antigravity"), "antigravity is ACP-only and has no CLI factory")
 }
 

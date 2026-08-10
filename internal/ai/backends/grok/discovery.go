@@ -55,32 +55,12 @@ func parseGrokModels(output string) []model.AgentModel {
 		if trimmed == "" {
 			continue
 		}
-
-		// Capture explicit "Default model: xxx"
-		if strings.HasPrefix(strings.ToLower(trimmed), "default model:") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				defaultID = strings.TrimSpace(parts[1])
-			}
+		if id, ok := captureDefaultID(trimmed); ok {
+			defaultID = id
 			continue
 		}
-
-		// Only consider list-looking lines.
-		if !strings.Contains(trimmed, "-") && !strings.Contains(trimmed, "*") {
-			continue
-		}
-
-		m := grokModelLineRe.FindStringSubmatch(trimmed)
-		if len(m) < 2 {
-			continue
-		}
-		id := m[1]
-		// Skip section headers / non-model tokens.
-		lower := strings.ToLower(id)
-		if lower == "available" || lower == "models" || lower == "default" || lower == "model" {
-			continue
-		}
-		if seen[id] {
+		id, ok := extractModelID(trimmed)
+		if !ok || seen[id] {
 			continue
 		}
 		seen[id] = true
@@ -89,7 +69,6 @@ func parseGrokModels(output string) []model.AgentModel {
 		if isDefault {
 			defaultMarked = true
 		}
-
 		models = append(models, model.AgentModel{
 			ID:      id,
 			Name:    grokModelName(id),
@@ -97,33 +76,62 @@ func parseGrokModels(output string) []model.AgentModel {
 		})
 	}
 
-	// Ensure exactly one default when possible.
-	if len(models) > 0 {
-		hasDefault := false
-		for _, m := range models {
-			if m.Default {
-				hasDefault = true
-				break
-			}
+	applyFallbackDefault(models, defaultID)
+	return models
+}
+
+// captureDefaultID recognizes an explicit "Default model: xxx" line.
+// Returns the model ID and true when the line is a default-model line.
+func captureDefaultID(trimmed string) (id string, isDefaultLine bool) {
+	if !strings.HasPrefix(strings.ToLower(trimmed), "default model:") {
+		return "", false
+	}
+	parts := strings.SplitN(trimmed, ":", 2)
+	if len(parts) == 2 {
+		id = strings.TrimSpace(parts[1])
+	}
+	return id, true
+}
+
+// extractModelID pulls a model ID out of a bullet list line, skipping section
+// headers. Returns ok=false when the line is not a usable model entry.
+func extractModelID(trimmed string) (id string, ok bool) {
+	if !strings.Contains(trimmed, "-") && !strings.Contains(trimmed, "*") {
+		return "", false
+	}
+	m := grokModelLineRe.FindStringSubmatch(trimmed)
+	if len(m) < 2 {
+		return "", false
+	}
+	id = m[1]
+	switch strings.ToLower(id) {
+	case "available", "models", "default", "model":
+		return "", false
+	}
+	return id, true
+}
+
+// applyFallbackDefault ensures at most one model is marked default: prefer the
+// explicit "(default)" suffix (already set), then the "Default model:" value,
+// then the first listed model.
+func applyFallbackDefault(models []model.AgentModel, defaultID string) {
+	if len(models) == 0 {
+		return
+	}
+	for _, m := range models {
+		if m.Default {
+			return
 		}
-		if !hasDefault {
-			// Prefer matching defaultID, else first entry.
-			if defaultID != "" {
-				for i := range models {
-					if models[i].ID == defaultID {
-						models[i].Default = true
-						hasDefault = true
-						break
-					}
-				}
-			}
-			if !hasDefault {
-				models[0].Default = true
+	}
+	if defaultID != "" {
+		for i := range models {
+			if models[i].ID == defaultID {
+				models[i].Default = true
+				return
 			}
 		}
 	}
-
-	return models
+	models[0].Default = true
 }
 
 // grokModelName returns the pretty display name for a model ID, falling back

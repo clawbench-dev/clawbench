@@ -113,3 +113,62 @@ func TestGrokStream_FullFlow(t *testing.T) {
 	// last event should be done
 	assert.Equal(t, "done", events[len(events)-1].Type)
 }
+
+func TestGrokStream_ParseLine_End_CamelCaseUsage(t *testing.T) {
+	parser := &GrokStreamParser{}
+	events := collectGrokEvents(
+		parser,
+		`{"type":"end","stopReason":"EndTurn","sessionId":"sess-camel","usage":{"inputTokens":5,"outputTokens":6,"costUsd":0.02}}`,
+	)
+
+	assert.Equal(t, "sess-camel", parser.GetCapturedSessionID())
+	var meta *StreamEvent
+	for _, e := range events {
+		if e.Type == "metadata" {
+			meta = &e
+			break
+		}
+	}
+	require.NotNil(t, meta)
+	require.NotNil(t, meta.Meta)
+	assert.Equal(t, 5, meta.Meta.InputTokens)
+	assert.Equal(t, 6, meta.Meta.OutputTokens)
+	assert.InDelta(t, 0.02, meta.Meta.CostUSD, 1e-9)
+}
+
+func TestGrokStream_ParseLine_ErrorDataFallbackAndSessionID(t *testing.T) {
+	parser := &GrokStreamParser{}
+	events := collectGrokEvents(
+		parser,
+		`{"type":"error","data":"rate limited","sessionId":"err-sess"}`,
+	)
+	require.Len(t, events, 1)
+	assert.Equal(t, "error", events[0].Type)
+	assert.Contains(t, events[0].Error, "rate limited")
+	assert.Equal(t, "err-sess", parser.GetCapturedSessionID())
+}
+
+func TestGrokStream_ParseLine_ErrorNoMessage(t *testing.T) {
+	parser := &GrokStreamParser{}
+	events := collectGrokEvents(parser, `{"type":"error"}`)
+	require.Len(t, events, 1)
+	assert.Equal(t, "error", events[0].Type)
+	assert.Equal(t, "grok error", events[0].Error)
+}
+
+func TestGrokStream_End_EmptyMetadataNoEvent(t *testing.T) {
+	parser := &GrokStreamParser{}
+	events := collectGrokEvents(parser, `{"type":"end"}`)
+	// No metadata event (nothing useful), but a done event is always emitted.
+	var hasMeta, hasDone bool
+	for _, e := range events {
+		switch e.Type {
+		case "metadata":
+			hasMeta = true
+		case "done":
+			hasDone = true
+		}
+	}
+	assert.False(t, hasMeta, "end with no session/usage/stopReason should not emit metadata")
+	assert.True(t, hasDone)
+}
