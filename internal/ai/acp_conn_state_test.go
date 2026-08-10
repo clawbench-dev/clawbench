@@ -775,3 +775,62 @@ func TestIsPeerDisconnectMsg_OtherMessage(t *testing.T) {
 func TestIsPeerDisconnectMsg_BothPatterns(t *testing.T) {
 	assert.True(t, isPeerDisconnectMsg("peer disconnected and broken pipe"))
 }
+
+// ---------------------------------------------------------------------------
+// IsACPSlashCommand tests
+// ---------------------------------------------------------------------------
+
+func TestIsACPSlashCommand_ValidCommands(t *testing.T) {
+	assert.True(t, IsACPSlashCommand("/reload-plugins"))
+	assert.True(t, IsACPSlashCommand("/compact"))
+	assert.True(t, IsACPSlashCommand("/help"))
+	assert.True(t, IsACPSlashCommand("/memory"))
+	assert.True(t, IsACPSlashCommand("/model"))
+	assert.True(t, IsACPSlashCommand("/Reload-Plugins")) // case-insensitive letter
+	assert.True(t, IsACPSlashCommand("/reload-plugins arg1")) // with args
+	assert.True(t, IsACPSlashCommand("  /compact  ")) // trimmed
+}
+
+func TestIsACPSlashCommand_InvalidCommands(t *testing.T) {
+	assert.False(t, IsACPSlashCommand("hello"))       // no slash
+	assert.False(t, IsACPSlashCommand("/"))            // slash only
+	assert.False(t, IsACPSlashCommand("/1abc"))        // digit after slash
+	assert.False(t, IsACPSlashCommand("//comment"))    // double slash
+	assert.False(t, IsACPSlashCommand(""))             // empty
+	assert.False(t, IsACPSlashCommand(" / not a cmd")) // slash with space
+}
+
+func TestBuildPromptBlocks_SlashCommandSkipsSystemPrompt(t *testing.T) {
+	// Slash commands should NOT have system prompt prepended — ACP agents
+	// detect slash commands by the leading "/" and routing depends on it.
+	agent := &model.Agent{ID: "test-slash-sys", Backend: "acp-stdio", AcpCommand: "echo"}
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	req := ChatRequest{Prompt: "/reload-plugins", SystemPrompt: "Be helpful"}
+	blocks := backend.buildPromptBlocks(req)
+	require.Len(t, blocks, 1)
+	require.NotNil(t, blocks[0].Text)
+	assert.Equal(t, "/reload-plugins", blocks[0].Text.Text)
+	assert.NotContains(t, blocks[0].Text.Text, "System Instructions")
+}
+
+func TestBuildPromptBlocks_SlashCommandWithForkContext(t *testing.T) {
+	// Fork context is prepended to slash commands, but the slash command
+	// still needs to be at the start of the text. This is a known
+	// limitation — fork context + slash command is an unlikely combination.
+	agent := &model.Agent{ID: "test-slash-fork", Backend: "acp-stdio", AcpCommand: "echo"}
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	req := ChatRequest{
+		Prompt:      "/compact",
+		ForkContext: "history here",
+	}
+	blocks := backend.buildPromptBlocks(req)
+	require.Len(t, blocks, 1)
+	require.NotNil(t, blocks[0].Text)
+	// Fork context is prepended, so the slash command is no longer at the start
+	assert.Contains(t, blocks[0].Text.Text, "history here")
+	assert.Contains(t, blocks[0].Text.Text, "/compact")
+}

@@ -382,17 +382,23 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prompt := req.Message
-	if len(validatedFilePaths) > 0 {
-		prompt = fmt.Sprintf("[Current file: %s]\n%s", strings.Join(validatedFilePaths, ", "), req.Message)
-	}
-	if len(validatedDirPaths) > 0 {
-		prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(validatedDirPaths, ", "), prompt)
-	}
-	if len(fileEntryFileLabels) > 0 {
-		prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileEntryFileLabels), strings.Join(fileEntryFileLabels, ", "), prompt)
-	}
-	if len(fileEntryDirPaths) > 0 {
-		prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(fileEntryDirPaths, ", "), prompt)
+	// Slash commands (e.g. /reload-plugins, /compact) must be sent as-is to ACP
+	// agents — they detect commands by the leading "/" prefix. Prepending file
+	// paths or system instructions would break command detection.
+	isSlashCmd := ai.IsACPSlashCommand(req.Message)
+	if !isSlashCmd {
+		if len(validatedFilePaths) > 0 {
+			prompt = fmt.Sprintf("[Current file: %s]\n%s", strings.Join(validatedFilePaths, ", "), req.Message)
+		}
+		if len(validatedDirPaths) > 0 {
+			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(validatedDirPaths, ", "), prompt)
+		}
+		if len(fileEntryFileLabels) > 0 {
+			prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileEntryFileLabels), strings.Join(fileEntryFileLabels, ", "), prompt)
+		}
+		if len(fileEntryDirPaths) > 0 {
+			prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(fileEntryDirPaths, ", "), prompt)
+		}
 	}
 
 	// @ command injection: detect on raw req.Message, prepend template to prompt.

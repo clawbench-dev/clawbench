@@ -304,6 +304,9 @@ func IsACPResourceNotFound(err error) bool {
 
 // buildPromptBlocks constructs ACP ContentBlock list from the chat request.
 // If a system prompt should be injected, it's prepended as the first text block.
+// Slash commands (e.g. /reload-plugins) are sent as-is — ACP agents detect
+// commands by the leading "/" and will not recognize the command if it is
+// prefixed with [System Instructions: ...] or other text.
 func (b *ACPBackend) buildPromptBlocks(req ChatRequest) []acp.ContentBlock {
 	prompt := req.Prompt
 
@@ -313,9 +316,28 @@ func (b *ACPBackend) buildPromptBlocks(req ChatRequest) []acp.ContentBlock {
 		prompt = req.ForkContext + prompt
 	}
 
-	if req.ShouldInjectSystemPrompt() {
+	// Skip system prompt injection for slash commands — ACP agents
+	// detect slash commands by the leading "/" and routing depends on it.
+	if req.ShouldInjectSystemPrompt() && !IsACPSlashCommand(prompt) {
 		prompt = fmt.Sprintf("[System Instructions: %s]\n\n%s", req.SystemPrompt, prompt)
 	}
 
 	return []acp.ContentBlock{acp.TextBlock(prompt)}
+}
+
+// IsACPSlashCommand checks if the text is an ACP slash command (e.g. /compact,
+// /reload-plugins). ACP agents detect slash commands by the leading "/" and
+// route them to CommandExecutor instead of the LLM. The regex matches the
+// same pattern as CodeBuddy's isSlashCommand: /<letter>[<alphanumeric/hyphen>].
+func IsACPSlashCommand(text string) bool {
+	t := strings.TrimSpace(text)
+	if len(t) < 2 || t[0] != '/' {
+		return false
+	}
+	// Must start with /<letter> followed by alphanumeric or hyphen
+	c := t[1]
+	if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+		return false
+	}
+	return true
 }
