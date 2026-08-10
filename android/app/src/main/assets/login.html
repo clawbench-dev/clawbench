@@ -57,7 +57,7 @@
     }
   };
   var LANG = 'en';
-  try { LANG = AndroidNative.getLanguage(); } catch(e) {}
+  try { LANG = ClawBenchNative.getLanguage(); } catch(e) {}
   if (!I18N[LANG]) LANG = 'en';
   function t(key) { return I18N[LANG][key] || I18N['en'][key] || key; }
 </script>
@@ -812,7 +812,7 @@
 
     // Version
     try {
-      var ver = AndroidNative.getAppVersion();
+      var ver = ClawBenchNative.getAppVersion();
       if (ver) document.getElementById('version').textContent = 'v' + ver;
     } catch(e) {}
 
@@ -839,8 +839,8 @@
       setConnecting(true);
       try {
         // Update saved password in case it was changed
-        AndroidNative.saveServer(url, password);
-        AndroidNative.connectToServer(url, password);
+        ClawBenchNative.saveServer(url, password);
+        ClawBenchNative.connectToServer(url, password);
       } catch(e) {
         showError('errorMsg', t('connection_failed') + e.message);
         setConnecting(false);
@@ -873,8 +873,8 @@
       setConnecting(true, true);
       try {
         // Save to native list first
-        AndroidNative.saveServer(url, password);
-        AndroidNative.connectToServer(url, password);
+        ClawBenchNative.saveServer(url, password);
+        ClawBenchNative.connectToServer(url, password);
       } catch(e) {
         showError('addErrorMsg', t('connection_failed') + e.message);
         setConnecting(false, true);
@@ -894,7 +894,7 @@
 
   function loadServerList() {
     try {
-      var json = AndroidNative.getServerList();
+      var json = ClawBenchNative.getServerList();
       savedServers = JSON.parse(json);
       if (!Array.isArray(savedServers)) savedServers = [];
     } catch(e) {
@@ -1037,7 +1037,7 @@
     customConfirm(t('delete_server_msg'), { title: t('delete_server_title'), confirmText: t('delete') }).then(function(ok) {
       if (!ok) return;
       try {
-        AndroidNative.removeServer(url);
+        ClawBenchNative.removeServer(url);
       } catch(e) {}
       loadServerList();
     });
