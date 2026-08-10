@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage } from '@/utils/quoteQuestionUtils'
+import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage, buildMultiQuoteMessage } from '@/utils/quoteQuestionUtils'
 
 // --- closestElement ---
 
@@ -323,5 +323,33 @@ describe('buildQuoteMessage', () => {
   it('embeds quoted code with language but no line numbers', () => {
     const result = buildQuoteMessage('explain', 'some code', '/main.go', 'go', 0, 0)
     expect(result).toBe('explain\n\n```go:/main.go\nsome code\n```')
+  })
+})
+
+describe('buildMultiQuoteMessage', () => {
+  const quotes = [
+    { text: 'const a = 1', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1, note: 'Check initialization' },
+    { text: 'return a', filePath: '/b.ts', language: 'ts', startLine: 8, endLine: 9, note: '' },
+  ]
+
+  it('places the overall question first and each note before its quote', () => {
+    expect(buildMultiQuoteMessage('Compare these', quotes)).toBe(
+      'Compare these\n\nCheck initialization\n\n```ts:/a.ts:1\nconst a = 1\n```\n\n```ts:/b.ts:8-9\nreturn a\n```',
+    )
+  })
+
+  it('allows quotes to be sent without an overall question', () => {
+    expect(buildMultiQuoteMessage('', [quotes[1]])).toBe('```ts:/b.ts:8-9\nreturn a\n```')
+  })
+
+  it('preserves quote order across selections from the same file', () => {
+    const sameFile = [
+      { ...quotes[0], note: '', startLine: 10, endLine: 12, text: 'first' },
+      { ...quotes[0], note: '', startLine: 30, endLine: 31, text: 'second' },
+    ]
+    const result = buildMultiQuoteMessage('', sameFile)
+    expect(result.indexOf('first')).toBeLessThan(result.indexOf('second'))
+    expect(result).toContain('```ts:/a.ts:10-12')
+    expect(result).toContain('```ts:/a.ts:30-31')
   })
 })

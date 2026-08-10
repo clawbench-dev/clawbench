@@ -75,7 +75,7 @@
       :currentFile="currentFile"
       :currentDir="currentDir"
       :attachedFiles="attachedFiles"
-      :quoteData="quoteData"
+      :quotes="stagedQuotes"
       :messages="renderedMessages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
       :currentSessionId="identity.currentSessionId.value"
@@ -92,7 +92,7 @@
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
       @remove-attached-by-path="removeAttachedFileByPath"
-      @remove-quote="setQuoteData(null); resetQuotePin()"
+      @remove-quote="removeStagedQuote($event)"
       @quote-click="handleQuoteClick"
       @open-session-tab="identity.openSessionTab"
       @open-session-search="$emit('open-session-search')"
@@ -184,7 +184,7 @@ import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, shouldShowSummary } from '@/utils/chatSessionUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
-import { buildQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
+import { buildMultiQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
 import { dedupeFiles } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
@@ -262,8 +262,7 @@ async function handleFileTagClick(filePath) {
     }
 }
 
-function handleQuoteClick() {
-    const q = quoteData.value
+function handleQuoteClick(q) {
     if (q?.filePath) {
         store.selectFile(q.filePath).then(() => {
             switchTab('view')
@@ -456,7 +455,7 @@ const stream = useChatStream({
 })
 
 const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
-const { quoteData, setQuoteData, clearAll, removeAttachedFileByPath } = useChatContext()
+const { stagedQuotes, removeStagedQuote, clearAll, removeAttachedFileByPath } = useChatContext()
 
 const manager = useSessionManager({
   messages,
@@ -665,19 +664,16 @@ function persistSessionUpdate(fields) {
 async function sendMessage(text) {
     let inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
 
-    // Embed quote context into message body (wide-screen sends via ChatInputBar
-    // don't go through QuoteQuestionBar.sendMessage, so we must embed here).
-    if (quoteData.value) {
-      const q = quoteData.value
-      if (q.filePath) {
+    const quotes = [...stagedQuotes.value]
+    if (quotes.length > 0) {
+      for (const q of quotes) {
+        if (!q.filePath) continue
         addAttachedFile(q.filePath, false, q.startLine, q.endLine)
       }
-      // Always embed the quoted code block — even without typed text,
-      // the AI needs the code context from the quote.
-      inputText = buildQuoteMessage(inputText || '', q.text, q.filePath, q.language, q.startLine, q.endLine)
+      inputText = buildMultiQuoteMessage(inputText || '', quotes)
     }
 
-     const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quoteData.value
+     const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quotes.length > 0
 
      if ((!inputText && !hasFiles) || inputDisabled.value) return
 

@@ -947,6 +947,8 @@ export default {
     chat: '对话',
     clear: '清空',
     placeholder: '输入你的问题...',
+    addToChat: '加入对话',
+    addedToChat: '已加入对话',
     send: '发送',
     aiChat: 'AI 对话',
     newSession: '新会话',

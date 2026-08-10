@@ -14,6 +14,7 @@ const i18n = createI18n({
         chat: 'Chat',
         clear: 'Clear',
         placeholder: 'Ask...',
+        addToChat: 'Add to chat',
         send: 'Send',
         newSession: 'New Session',
         aiChat: 'AI Chat',
@@ -127,6 +128,7 @@ describe('QuoteQuestionBar component', () => {
         stubs: {
           MessageSquare: true,
           XCircle: true,
+          Plus: true,
           Send: true,
         },
       },
@@ -171,6 +173,30 @@ describe('QuoteQuestionBar component', () => {
     await vm.expand()
     // canSend is computed from inputText
     expect(vm.canSend).toBe(false)
+  })
+
+  it('allows adding the quote with empty text', async () => {
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.expand()
+
+    vm.handleAdd()
+
+    expect(wrapper.emitted('add')![0]).toEqual([''])
+    expect(vm.expanded).toBe(false)
+  })
+
+  it('emits entered text as the quote note when adding', async () => {
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.expand()
+    vm.inputText = 'note for this quote'
+    await nextTick()
+
+    vm.handleAdd()
+
+    expect(wrapper.emitted('add')![0]).toEqual(['note for this quote'])
+    expect(vm.inputText).toBe('')
   })
 
   it('send button is enabled when input has text', async () => {

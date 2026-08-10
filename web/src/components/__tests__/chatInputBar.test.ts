@@ -520,6 +520,43 @@ describe('ChatInputBar — quick-send touch events', () => {
 })
 
 describe('ChatInputBar — quoteData chip', () => {
+  it('renders multiple staged quote chips in order', async () => {
+    const wrapper = mountInputBar({
+      quotes: [
+        { id: 'q1', text: 'one', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 2, note: '' },
+        { id: 'q2', text: 'two', filePath: '/b.ts', language: 'ts', startLine: 8, endLine: 8, note: 'check this' },
+      ],
+    })
+    await nextTick()
+
+    const chips = wrapper.findAll('.attachment-quote')
+    expect(chips).toHaveLength(2)
+    expect(chips[0].text()).toContain('a.ts:1-2')
+    expect(chips[1].text()).toContain('b.ts:8')
+    expect(chips[1].attributes('title')).toBe('check this')
+  })
+
+  it('removes and navigates a specific staged quote', async () => {
+    const quote = { id: 'q2', text: 'two', filePath: '/b.ts', language: 'ts', startLine: 8, endLine: 8, note: '' }
+    const wrapper = mountInputBar({ quotes: [quote] })
+    await nextTick()
+
+    await wrapper.find('.attachment-quote').trigger('click')
+    await wrapper.find('.attachment-close-btn').trigger('click')
+
+    expect(wrapper.emitted('quote-click')![0]).toEqual([quote])
+    expect(wrapper.emitted('remove-quote')![0]).toEqual(['q2'])
+  })
+
+  it('sends staged quotes without requiring input text', async () => {
+    const wrapper = mountInputBar({
+      quotes: [{ id: 'q1', text: 'one', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1, note: '' }],
+    })
+    expect(wrapper.vm.hasInputContent).toBeTruthy()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    expect(wrapper.emitted('send')![0]).toEqual([''])
+  })
+
   it('shows quote chip when quoteData prop is provided', async () => {
     const wrapper = mountInputBar({
       quoteData: { text: 'selected code', filePath: '/foo.ts', language: 'typescript', startLine: 10, endLine: 20 },

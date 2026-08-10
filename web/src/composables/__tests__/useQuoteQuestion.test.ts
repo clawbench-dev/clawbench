@@ -289,6 +289,60 @@ describe('useQuoteQuestion', () => {
         expect.objectContaining({ type: 'error' }),
       )
     })
+
+    it('sends staged quotes with notes together with the active selection', async () => {
+      const qq = useQuoteQuestion()
+      mockSendMessage.mockResolvedValue(undefined)
+      ctx.addStagedQuote(
+        { text: 'first()', filePath: '/first.ts', language: 'ts', startLine: 1, endLine: 2 },
+        'Review this first',
+      )
+      ctx.setQuoteData({ text: 'second()', filePath: '/second.ts', language: 'ts', startLine: 8, endLine: 8 })
+
+      await qq.sendMessage('Compare them')
+
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        'Compare them\n\nReview this first\n\n```ts:/first.ts:1-2\nfirst()\n```\n\n```ts:/second.ts:8\nsecond()\n```',
+      )
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+    })
+
+    it('deduplicates the active selection against staged quotes', async () => {
+      const qq = useQuoteQuestion()
+      mockSendMessage.mockResolvedValue(undefined)
+      const quote = { text: 'same()', filePath: '/same.ts', language: 'ts', startLine: 4, endLine: 4 }
+      ctx.addStagedQuote(quote, 'Keep this note')
+      ctx.setQuoteData({ ...quote })
+
+      await qq.sendMessage('Explain')
+
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        'Explain\n\nKeep this note\n\n```ts:/same.ts:4\nsame()\n```',
+      )
+    })
+  })
+
+  describe('addToConversation', () => {
+    it('stages an active quote without requiring text', () => {
+      const qq = useQuoteQuestion()
+      ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
+
+      qq.addToConversation('')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(ctx.stagedQuotes.value[0].note).toBe('')
+      expect(ctx.quoteData.value).toBeNull()
+      expect(qq.visible.value).toBe(false)
+    })
+
+    it('stores entered text as the staged quote note', () => {
+      const qq = useQuoteQuestion()
+      ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
+
+      qq.addToConversation('  Why is this needed?  ')
+
+      expect(ctx.stagedQuotes.value[0].note).toBe('Why is this needed?')
+    })
   })
 
   describe('selectionchange listener', () => {

@@ -121,6 +121,49 @@ describe('useChatContext', () => {
     })
   })
 
+  describe('stagedQuotes', () => {
+    const first = { text: 'const a = 1', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1 }
+
+    it('keeps ordered selections with optional notes', () => {
+      ctx.addStagedQuote(first, 'first note')
+      ctx.addStagedQuote({ ...first, text: 'const b = 2', startLine: 2, endLine: 2 })
+
+      expect(ctx.stagedQuotes.value.map(item => ({ text: item.text, note: item.note }))).toEqual([
+        { text: 'const a = 1', note: 'first note' },
+        { text: 'const b = 2', note: '' },
+      ])
+    })
+
+    it('deduplicates an identical selection and updates a non-empty note', () => {
+      const original = ctx.addStagedQuote(first, 'old note')
+      const duplicate = ctx.addStagedQuote({ ...first }, 'new note')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(duplicate.id).toBe(original.id)
+      expect(ctx.stagedQuotes.value[0].note).toBe('new note')
+    })
+
+    it('does not erase an existing note when duplicate note is empty', () => {
+      ctx.addStagedQuote(first, 'keep me')
+      ctx.addStagedQuote({ ...first }, '   ')
+      expect(ctx.stagedQuotes.value[0].note).toBe('keep me')
+    })
+
+    it('keeps partially overlapping ranges as separate selections', () => {
+      ctx.addStagedQuote({ ...first, startLine: 1, endLine: 5 })
+      ctx.addStagedQuote({ ...first, text: 'overlap', startLine: 4, endLine: 8 })
+      expect(ctx.stagedQuotes.value).toHaveLength(2)
+    })
+
+    it('removes one staged quote by id without affecting the others', () => {
+      const firstItem = ctx.addStagedQuote(first)
+      const secondItem = ctx.addStagedQuote({ ...first, text: 'second', startLine: 2, endLine: 2 })
+      ctx.removeStagedQuote(firstItem.id)
+
+      expect(ctx.stagedQuotes.value.map(item => item.id)).toEqual([secondItem.id])
+    })
+  })
+
   describe('clearAll', () => {
     it('clears both attachedFiles and quoteData', () => {
       ctx.addAttachedFile('/a.txt')
@@ -131,6 +174,7 @@ describe('useChatContext', () => {
 
       expect(ctx.attachedFiles.value).toHaveLength(0)
       expect(ctx.quoteData.value).toBeNull()
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
     })
   })
 

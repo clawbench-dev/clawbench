@@ -64,12 +64,12 @@
         </div>
       </Transition>
       <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
-      <div v-if="quoteData || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
-        <!-- Quote selection card (same size as file cards, accent-colored) -->
-        <span v-if="quoteData" class="chat-file-attachment attachment-quote" :title="quoteData.filePath" @click="$emit('quote-click')">
+      <div v-if="quoteItems.length > 0 || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
+        <!-- Staged quote cards (same size as file cards, accent-colored) -->
+        <span v-for="(quote, quoteIndex) in quoteItems" :key="quote.id || quoteIndex" class="chat-file-attachment attachment-quote" :title="quote.note || quote.filePath" @click="$emit('quote-click', quote)">
           <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
-          <span class="attachment-filename">{{ quoteFileName }}{{ quoteLineRange }}</span>
-          <button class="attachment-close-btn" @click.stop="$emit('remove-quote')" :title="t('common.remove')">×</button>
+          <span class="attachment-filename">{{ quoteFileName(quote) }}{{ quoteLineRange(quote) }}</span>
+          <button class="attachment-close-btn" @click.stop="$emit('remove-quote', quote.id)" :title="t('common.remove')">×</button>
         </span>
         <!-- Attached file reference cards (shared component, includes pending uploads with local Blob preview) -->
         <AttachmentTags :files="attachedFiles" :pending-files="pendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
@@ -407,6 +407,8 @@ const props = defineProps({
   currentFile: Object,
   currentDir: String,
   attachedFiles: Array,
+  quotes: { type: Array, default: () => [] },
+  // Backward-compatible single quote prop for isolated consumers/tests.
   quoteData: Object,
   messages: Array,
   autoSpeechEnabled: Boolean,
@@ -662,7 +664,11 @@ watch(() => props.currentSessionId, (newId, oldId) => {
   // autoResizeTextarea is called automatically by the inputText watcher
 })
 
-const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || props.quoteData)
+const quoteItems = computed(() => props.quotes.length > 0
+  ? props.quotes
+  : props.quoteData ? [props.quoteData] : [])
+
+const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || quoteItems.value.length > 0)
 
 // Extract recently referenced files from message history
 const recentReferencedFiles = computed(() => {
@@ -688,18 +694,18 @@ async function handleArchive() {
   }
 }
 
-const quoteFileName = computed(() => {
-  if (!props.quoteData?.filePath) return ''
-  return props.quoteData.filePath.split('/').pop() || props.quoteData.filePath
-})
+function quoteFileName(quote) {
+  if (!quote?.filePath) return ''
+  return quote.filePath.split('/').pop() || quote.filePath
+}
 
-const quoteLineRange = computed(() => {
-  if (!props.quoteData?.startLine) return ''
-  const s = props.quoteData.startLine
-  const e = props.quoteData.endLine
+function quoteLineRange(quote) {
+  if (!quote?.startLine) return ''
+  const s = quote.startLine
+  const e = quote.endLine
   if (e && e !== s) return `:${s}-${e}`
   return `:${s}`
-})
+}
 
 function autoResizeTextarea() {
   const el = textareaRef.value
@@ -969,7 +975,7 @@ async function toggleAttachMenu() {
 function handleSendClick() {
   if (inputText.value.trim()) {
     emit('send', inputText.value.trim())
-  } else if (props.attachedFiles.length > 0) {
+  } else if (props.attachedFiles.length > 0 || quoteItems.value.length > 0) {
     emit('send', '')
   } else {
     toggleQuickMenu()

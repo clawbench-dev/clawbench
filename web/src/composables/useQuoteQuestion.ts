@@ -2,16 +2,22 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
-import { closestElement, getLineInfo, getFileInfo, buildQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
+import { closestElement, getLineInfo, getFileInfo, buildMultiQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
-import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 
 // Module-level singleton: bar visibility state shared across all consumers.
-// quoteData is stored in useChatContext (global singleton) so ChatInputBar
-// can render a quote chip in any tab.
-const { quoteData, setQuoteData, addAttachedFile, clearAll } = useChatContext()
-const { isWideScreen } = useWideScreenLayout()
+// The active selection stays separate from staged quotes so dismissing a
+// selection never discards snippets the user already added to the chat draft.
+const {
+  quoteData,
+  stagedQuotes,
+  setQuoteData,
+  addStagedQuote,
+  addAttachedFile,
+  clearQuotes,
+  clearAll,
+} = useChatContext()
 const barVisible = ref(false)
 const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the bar
 const sheetOpen = ref(false)
@@ -23,18 +29,7 @@ function onSelectionChange() {
   debounceTimer = setTimeout(() => {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.toString().trim()) {
-      // Wide-screen mode: auto-pin so the ChatInputBar quote tag survives
-      // focus switches (e.g. clicking the input textarea clears selection).
-      // There is no QuoteQuestionBar in wide-screen, so the quote tag in
-      // ChatInputBar is the only UI surface — losing it would be confusing.
-      if (isWideScreen.value && quoteData.value) {
-        barPinned.value = true
-        barVisible.value = false
-        return
-      }
-      // Narrow mode: when the selection is gone, drop the quote — unless the
-      // user explicitly pinned it via "引用提问". A stale quote chip must not
-      // linger in the chat input after the user deselects the text.
+      // Drop only the active selection. Staged quotes remain in the chat draft.
       if (!barPinned.value) {
         barVisible.value = false
         setQuoteData(null)
@@ -70,10 +65,6 @@ function onSelectionChange() {
 
     setQuoteData({ text, filePath, language, startLine, endLine })
     barVisible.value = true
-    // Wide-screen: auto-pin so the quote tag persists when user focuses input
-    if (isWideScreen.value) {
-      barPinned.value = true
-    }
   }, 150)
 }
 
@@ -83,13 +74,6 @@ let listenerCount = 0
 /** Reset the bar pinned state (for use when quoteData is cleared externally). */
 export function resetQuotePin() {
   barPinned.value = false
-}
-
-/** Restore bar visibility when transitioning from wide-screen to narrow. */
-export function restoreBarVisibility() {
-  if (quoteData.value && barPinned.value) {
-    barVisible.value = true
-  }
 }
 
 export function useQuoteQuestion() {
@@ -111,7 +95,6 @@ export function useQuoteQuestion() {
   })
 
   function closeSheet() {
-    // Clear selection when closing
     const sel = window.getSelection()
     if (sel) sel.removeAllRanges()
     barVisible.value = false
@@ -148,26 +131,36 @@ export function useQuoteQuestion() {
     setTimeout(() => {
       setQuoteData(data)
       barVisible.value = true
-      if (isWideScreen.value) {
-        barPinned.value = true
-      }
     }, opts.delay ?? 400)
+  }
+
+  function addToConversation(note = '') {
+    if (!quoteData.value) return
+    addStagedQuote(quoteData.value, note)
+    const sel = window.getSelection()
+    if (sel) sel.removeAllRanges()
+    setQuoteData(null)
+    barVisible.value = false
+    barPinned.value = false
+    toast.show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
   }
 
   async function sendMessage(userMessage: string) {
     if (!quoteData.value || !userMessage.trim()) return
 
     const q = quoteData.value
+    // Reuse the staging dedupe rule so reselecting an already staged range
+    // does not include the same quote twice in an immediate send.
+    addStagedQuote(q)
+    const quotes = [...stagedQuotes.value]
 
-    // Add the quoted file (with line info) as an attached file — unified channel.
-    // addAttachedFile handles dedup: if file already attached without line info,
-    // it upgrades the entry with startLine/endLine.
-    if (q.filePath) {
-      addAttachedFile(q.filePath, false, q.startLine, q.endLine)
+    for (const quote of quotes) {
+      if (quote.filePath) {
+        addAttachedFile(quote.filePath, false, quote.startLine, quote.endLine)
+      }
     }
 
-    // Embed quoted code text in the message body as context for the AI
-    const message = buildQuoteMessage(userMessage, q.text, q.filePath, q.language, q.startLine, q.endLine)
+    const message = buildMultiQuoteMessage(userMessage, quotes)
 
     // Capture animation coordinates BEFORE any await — the bar's handleSend()
     // sets expanded=false synchronously right after emit('send'), so the
@@ -177,16 +170,21 @@ export function useQuoteQuestion() {
     const animFrom = sendBtn?.getBoundingClientRect() ?? null
     const animTo = dockChatBtn?.getBoundingClientRect() ?? null
 
-    // Clear quoteData BEFORE sending — ChatPanelContent.sendMessage also checks
-    // quoteData and would double-embed the quote if it's still set.
-    clearAll()
+    // Keep attached files long enough for ChatPanelContent to capture them, but
+    // clear quotes before delegating so they are not embedded a second time.
+    clearQuotes()
     barVisible.value = false
     barPinned.value = false
 
     // Delegate to session identity singleton — it routes to ChatPanel's
     // sendMessage if registered, otherwise falls back to a direct API call.
     try {
-      await sessionIdentity.sendMessage(message)
+      const sendPromise = sessionIdentity.sendMessage(message)
+      // The registered ChatPanel handler captures files synchronously before its
+      // first await. Clear this batch now so a later response cannot wipe the
+      // next set of quotes the user starts collecting while the request runs.
+      clearAll()
+      await sendPromise
       toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })
       // Dispatch animation event with pre-captured coordinates
       if (animFrom && animTo) {
@@ -212,6 +210,7 @@ export function useQuoteQuestion() {
     unpinBar,
     showBar,
     hideBar,
+    addToConversation,
     sendMessage,
   }
 }
