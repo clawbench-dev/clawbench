@@ -20,7 +20,7 @@ func TestServeDesktopLatest(t *testing.T) {
 		return &service.DesktopLatestResult{Version: "0.2.0", Downloads: map[string]string{"win32-x64": "https://npm/t.tgz"}}, nil
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/desktop/latest", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/desktop/latest", http.NoBody)
 	rec := httptest.NewRecorder()
 	ServeDesktopLatest(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)

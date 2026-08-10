@@ -43,7 +43,7 @@ func fetchDesktopLatestFrom(base string) (*DesktopLatestResult, error) {
 
 	for osArch, pkg := range desktopPlatformPkg {
 		url := fmt.Sprintf("%s/%s/latest", base, pkg)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		if err != nil {
 			return nil, err
 		}

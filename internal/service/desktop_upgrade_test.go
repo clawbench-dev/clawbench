@@ -15,7 +15,7 @@ func TestFetchDesktopLatestFrom(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pkg := r.URL.Path
-		version := "0.1.0"
+		version := ""
 		tarball := ""
 		switch pkg {
 		case "/@xulongzhe/clawbench-desktop-win32-x64/latest":
