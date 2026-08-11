@@ -1,0 +1,27 @@
+{
+  "name": "@xulongzhe/clawbench-desktop",
+  "version": "0.1.0",
+  "description": "ClawBench desktop client (Electron) — auto-selects the platform package",
+  "type": "module",
+  "bin": {
+    "clawbench-desktop": "bin/clawbench-desktop.js"
+  },
+  "files": [
+    "bin/",
+    "install.js"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "optionalDependencies": {
+    "@xulongzhe/clawbench-desktop-linux-x64": "0.1.0",
+    "@xulongzhe/clawbench-desktop-linux-arm64": "0.1.0",
+    "@xulongzhe/clawbench-desktop-darwin-x64": "0.1.0",
+    "@xulongzhe/clawbench-desktop-darwin-arm64": "0.1.0",
+    "@xulongzhe/clawbench-desktop-win32-x64": "0.1.0"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "license": "MIT"
+}

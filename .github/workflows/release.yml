@@ -661,6 +661,17 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Assemble desktop main package (@xulongzhe/clawbench-desktop)
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          MAIN_DIR="npm/desktop-main"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$MAIN_DIR/package.json','utf8'));p.version='$VERSION';for(const d in p.optionalDependencies)p.optionalDependencies[d]='$VERSION';fs.writeFileSync('$MAIN_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
+
+      - name: Publish main desktop package (@xulongzhe/clawbench-desktop)
+        run: npm publish ./npm/desktop-main --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   publish-npm:
     name: Publish to npm
     needs: [build-frontend, build-linux, build-linux-arm64, build-windows, build-macos-arm64, build-macos-amd64]

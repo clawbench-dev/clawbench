@@ -1,5 +1,6 @@
 appId: com.xulongzhe.clawbench
 productName: ClawBench
+executableName: clawbench-desktop
 directories:
   output: release
   buildResources: build
