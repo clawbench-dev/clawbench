@@ -837,6 +837,37 @@ describe('FileManagerContent — doNewFile / doNewFolder', () => {
 
     vi.unstubAllGlobals()
   })
+
+  it('scrolls to and selects the new file after successful creation', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    // Selection is applied immediately, independent of DOM scroll readiness
+    const wrapper = mountContent({
+      currentDir: 'docs',
+      entries: [...sampleEntries, { name: 'newfile.txt', type: 'file', modified: '2025-01-01T00:00:00Z', size: 0 }],
+    })
+    await wrapper.vm.doNewFile()
+
+    expect(wrapper.vm.selectedPath).toBe('docs/newfile.txt')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('scrolls to and selects the new folder after successful creation', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent({
+      currentDir: 'docs',
+      entries: [...sampleEntries, { name: 'newfile.txt', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 }],
+    })
+    await wrapper.vm.doNewFolder()
+
+    expect(wrapper.vm.selectedPath).toBe('docs/newfile.txt')
+
+    vi.unstubAllGlobals()
+  })
 })
 
 describe('FileManagerContent — isTerminalDisabled', () => {

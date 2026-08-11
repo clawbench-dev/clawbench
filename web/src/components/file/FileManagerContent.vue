@@ -732,33 +732,48 @@ const fileListRef = ref(null)
 const fileGridRef = ref(null)
 const fileSearchDrawerRef = ref(null)
 
-function handleHighlightFileItem(e) {
-  const { path } = e.detail
+/**
+ * Select the entry at `path` and scroll it into view, retrying the scroll until
+ * the entry is rendered (the dir listing may still be reloading after an async
+ * refresh). Selection is applied immediately so it never depends on scroll/DOM
+ * readiness. When `openFile` is true and the target is a file, it is also opened
+ * in the viewer. Shared by the external highlight-file-item event and the
+ * new-file/new-folder creation flow.
+ */
+function scrollToEntryAndSelect(path, { openFile = false } = {}) {
   if (!path) return
 
+  // Select the item visually (directories and files) right away
+  selectedPath.value = path
+  // Optionally also select the file in the viewer
+  const entry = props.entries?.find(en => joinPath(props.currentDir, en.name) === path)
+  if (openFile && entry && entry.type !== 'dir') {
+    store.selectFile(path)
+  }
+
   if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
+
+  // The listing container must already be rendered for a scroll to apply
+  const container = fileListRef.value || fileGridRef.value
+  if (!container) return
 
   // navigateToDir is async (API call + DOM render), so retry until the item appears
   let attempts = 0
   const maxAttempts = 20
   const tryHighlight = () => {
-    const container = fileListRef.value || fileGridRef.value
-    if (!container) { if (attempts++ < maxAttempts) { highlightRetryTimer = setTimeout(tryHighlight, 100) }; return }
-
     const item = container.querySelector(`.file-item[data-path="${CSS.escape(path)}"], .grid-item[data-path="${CSS.escape(path)}"]`)
     if (!item) { if (attempts++ < maxAttempts) { highlightRetryTimer = setTimeout(tryHighlight, 100) }; return }
 
-    item.scrollIntoView({ block: 'center', behavior: 'smooth' })
-
-    // Select the item visually (directories and files)
-    selectedPath.value = path
-    // For files, also select in the viewer
-    const entry = props.entries?.find(en => joinPath(props.currentDir, en.name) === path)
-    if (entry && entry.type !== 'dir') {
-      store.selectFile(path)
+    // jsdom (tests) may not implement scrollIntoView — guard it
+    if (typeof item.scrollIntoView === 'function') {
+      item.scrollIntoView({ block: 'center', behavior: 'smooth' })
     }
   }
   tryHighlight()
+}
+
+function handleHighlightFileItem(e) {
+  scrollToEntryAndSelect(e.detail?.path, { openFile: true })
 }
 
 onMounted(() => {
@@ -1001,6 +1016,8 @@ async function doNewFile() {
         })
         if (resp.ok) {
             emit('refresh')
+            // Scroll to the new file and select it (without opening it in the viewer)
+            scrollToEntryAndSelect(joinPath(dir, name.trim()))
             if (toast) toast.show(t('file.toast.fileCreated'), { icon: '📄', type: 'success', duration: 1500 })
         } else {
             const err = await resp.json()
@@ -1026,6 +1043,8 @@ async function doNewFolder() {
         })
         if (resp.ok) {
             emit('refresh')
+            // Scroll to the new folder and select it
+            scrollToEntryAndSelect(joinPath(dir, name.trim()))
             if (toast) toast.show(t('file.toast.folderCreated'), { icon: '📁', type: 'success', duration: 1500 })
         } else {
             const err = await resp.json()
