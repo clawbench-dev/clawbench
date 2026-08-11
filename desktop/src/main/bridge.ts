@@ -107,13 +107,6 @@ export function registerBridge(): void {
     showTerminalNotification(title, body, nav as { sessionId?: string; taskId?: string; executionId?: string; projectPath?: string } | undefined)
     return Promise.resolve()
   })
-  ipcMain.handle('native:stop-log-capture', () => {
-    const w = getMainWindow()
-    if (w && logListener) w.webContents.removeListener('console-message', logListener)
-    logListener = null
-    if (logFileStream) { logFileStream.end(); logFileStream = null }
-    return Promise.resolve()
-  })
 
   ipcMain.on('native:show-server-dialog', () => getMainWindow()?.webContents.send('clawbench-show-server-dialog'))
   ipcMain.on('native:open-session', (_e, id: string) => dispatchOpenSession(id))
