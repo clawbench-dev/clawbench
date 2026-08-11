@@ -412,12 +412,6 @@ describe('BottomSheet rendering & slots', () => {
     expect($('.bs-overlay')).toBeTruthy()
   })
 
-  it('applies compact class when compact prop is true', async () => {
-    wrapper = mountSheet({ compact: true })
-    await nextTick()
-    expect($('.bs-panel')?.classList.contains('bs-compact')).toBe(true)
-  })
-
   it('applies auto class when auto prop is true', async () => {
     wrapper = mountSheet({ auto: true })
     await nextTick()

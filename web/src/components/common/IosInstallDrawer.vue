@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" :title="t('pwa.iosInstallTitle')" compact @close="close">
+  <BottomSheet :open="open" :title="t('pwa.iosInstallTitle')" auto @close="close">
     <div class="ios-install-steps">
       <div class="ios-step">
         <span class="ios-step-num">1</span>

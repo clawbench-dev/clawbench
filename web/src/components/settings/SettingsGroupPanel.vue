@@ -130,7 +130,7 @@
       v-if="config.entrySelector"
       :open="entryPicker.effectiveOpen.value"
       :title="t(config.entrySelector.labelKey)"
-      compact
+      auto
       @close="entryPicker.close()"
     >
       <div

@@ -144,7 +144,7 @@
     v-if="type === 'select'"
     :open="selectPicker.effectiveOpen.value"
     :title="label"
-    compact
+    auto
     @close="selectPicker.close()"
   >
     <div

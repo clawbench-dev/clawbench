@@ -10,7 +10,7 @@
       @click.self="handleClose"
       @keydown.escape="handleEscapeKey"
     >
-      <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-compact': compact, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-constrained': isWideScreen, 'bs-wide-auto': isWideScreen && auto }">
+      <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-constrained': isWideScreen, 'bs-wide-auto': isWideScreen && auto }">
         <!-- Header -->
         <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly }" @click="handleClose">
           <div class="bs-handle" />
@@ -44,7 +44,6 @@ const props = defineProps({
     default: '',
   },
   instant: Boolean,  // 立即关闭，无动画
-  compact: Boolean,  // 紧凑模式，高度自适应内容，最大50%，无圆角
   auto: Boolean,     // 自适应模式，高度按内容需要，最大全屏
   noHeader: Boolean, // 隐藏Header（含手柄）
   handleOnly: Boolean, // 仅显示拖拽手柄，无标题栏
@@ -208,15 +207,19 @@ defineExpose({
   animation: bs-slideUp 0.25s ease;
 }
 
-/* Compact mode - auto height */
-.bs-panel.bs-compact {
+/* Auto mode - auto height based on content, max full screen */
+.bs-panel.bs-auto {
   top: auto;
   height: auto;
-  max-height: 50%;
+  max-height: 100%;
 }
 
 .bs-panel.bs-leaving {
   animation: bs-slideDown 0.25s ease forwards;
+}
+
+.bs-panel.bs-auto .bs-body {
+  overflow-y: auto;
 }
 
 @keyframes bs-slideUp {
@@ -334,22 +337,6 @@ defineExpose({
   min-height: 0;
 }
 
-/* Compact mode body - scrollable when options overflow */
-.bs-panel.bs-compact .bs-body {
-  overflow-y: auto;
-}
-
-/* Auto mode - auto height based on content, max full screen */
-.bs-panel.bs-auto {
-  top: auto;
-  height: auto;
-  max-height: 100%;
-}
-
-.bs-panel.bs-auto .bs-body {
-  overflow-y: auto;
-}
-
 /* ── Footer ── */
 .bs-panel > .bs-footer {
   display: flex;
@@ -359,11 +346,6 @@ defineExpose({
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
   gap: 8px;
-}
-
-/* Compact mode footer — add bottom padding for dock bar clearance */
-.bs-panel.bs-compact > .bs-footer {
-    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
 
 /* Transparent overlay — clickable but see-through */
