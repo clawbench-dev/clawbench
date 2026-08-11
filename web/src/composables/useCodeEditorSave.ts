@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast.ts'
+import { markFileSaved } from '@/composables/useFileRefresh.ts'
 import { store } from '@/stores/app.ts'
 
 export function useCodeEditorSave() {
@@ -22,6 +23,9 @@ export function useCodeEditorSave() {
             // text just written IS the on-disk state, so reloading would only
             // add a network round-trip and scroll flash with no benefit.
             store.markSaved(path, content)
+            // Suppress the fsnotify-triggered auto-refresh that our own write
+            // causes; content is already synced, so it would just flash.
+            markFileSaved(path)
             show(t('file.editor.saved'), { icon: '✅', type: 'success', duration: 2000 })
             return true
         } catch {

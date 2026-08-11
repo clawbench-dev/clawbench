@@ -108,7 +108,7 @@ vi.mock('@/composables/useDialog.ts', () => ({
   }),
 }))
 
-import { refreshCurrentFile, flashRanges, flashType } from '../useFileRefresh.ts'
+import { refreshCurrentFile, flashRanges, flashType, markFileSaved, wasRecentlySaved } from '../useFileRefresh.ts'
 import { store } from '@/stores/app.ts'
 import { computeDiff } from '@/utils/diffUtils.ts'
 import { computeCodeDiffMarkers, diffMarkers, diffOldContent } from '@/composables/useMarkdownDiff.ts'
@@ -541,5 +541,54 @@ describe('useFileRefresh external-change confirmation while editing', () => {
     await refreshCurrentFile()
     expect(confirmDialogMock).toHaveBeenCalled()
     expect(store.selectFile).toHaveBeenCalled()
+  })
+})
+
+describe('useFileRefresh self-save suppression', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    flashRanges.value = []
+    flashType.value = 'add'
+    diffMarkers.value = []
+    diffOldContent.value = null
+  })
+
+  it('wasRecentlySaved returns false for an unmarked path', () => {
+    expect(wasRecentlySaved('/tmp/a.go')).toBe(false)
+  })
+
+  it('wasRecentlySaved returns true for a recently-saved path, then false after expiry', async () => {
+    markFileSaved('/tmp/a.go', 50)
+    expect(wasRecentlySaved('/tmp/a.go')).toBe(true)
+    // After the window expires the marker is dropped.
+    await new Promise(r => setTimeout(r, 80))
+    expect(wasRecentlySaved('/tmp/a.go')).toBe(false)
+  })
+
+  it('wasRecentlySaved is scoped per path', () => {
+    markFileSaved('/tmp/a.go', 2000)
+    expect(wasRecentlySaved('/tmp/a.go')).toBe(true)
+    expect(wasRecentlySaved('/tmp/b.go')).toBe(false)
+  })
+
+  it('marks file saved so the watcher skips its own save-triggered refresh', async () => {
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'new content\n' }
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ content: 'new content\n' }),
+    })
+    globalThis.fetch = fetchSpy
+
+    // The save flow marks the path; a file_change handler would check this and skip.
+    markFileSaved('a.go', 2000)
+    expect(wasRecentlySaved('a.go')).toBe(true)
+
+    // Simulate the watcher guard: skip refresh while recently saved.
+    if (!wasRecentlySaved('a.go')) {
+      await refreshCurrentFile()
+    }
+    // refreshCurrentFile should NOT have run (no prefetch fetch).
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(store.selectFile).not.toHaveBeenCalled()
   })
 })

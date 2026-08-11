@@ -62,6 +62,26 @@ let refreshing = false
 // If a new refresh arrives while one is in-flight, we defer it
 let pendingRefreshOptions: { loadDir?: boolean; clearOnError?: boolean } | null = null
 
+// ─── Self-save suppression ───
+// When the user saves a file through the editor, we already update the in-memory
+// content in place (store.markSaved). But the write also touches the disk, which
+// triggers fsnotify → the backend pushes a `file_change` SSE event → an
+// auto-refresh would re-fetch the same content, causing a visible flash. Track
+// recently-saved paths so the watcher can skip that redundant refresh.
+const savedAtByPath = new Map<string, number>()
+export function markFileSaved(path: string, windowMs = 2000): void {
+    savedAtByPath.set(path, Date.now() + windowMs)
+}
+export function wasRecentlySaved(path: string): boolean {
+    const until = savedAtByPath.get(path)
+    if (until === undefined) return false
+    if (Date.now() > until) {
+        savedAtByPath.delete(path)
+        return false
+    }
+    return true
+}
+
 function clearFlash() {
     if (flashTimer) { clearTimeout(flashTimer); flashTimer = null }
     flashRanges.value = []

@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { toastShow, markSaved } = vi.hoisted(() => ({
+const { toastShow, markSaved, markFileSaved } = vi.hoisted(() => ({
     toastShow: vi.fn(),
     markSaved: vi.fn(),
+    markFileSaved: vi.fn(),
 }))
 
 vi.mock('@/composables/useToast.ts', () => ({
     useToast: () => ({ show: toastShow }),
+}))
+vi.mock('@/composables/useFileRefresh.ts', () => ({
+    markFileSaved,
 }))
 vi.mock('@/stores/app.ts', () => ({
     store: { state: {}, markSaved },
@@ -21,6 +25,7 @@ describe('useCodeEditorSave', () => {
     beforeEach(() => {
         toastShow.mockReset()
         markSaved.mockReset()
+        markFileSaved.mockReset()
         vi.unstubAllGlobals()
     })
 
@@ -34,6 +39,7 @@ describe('useCodeEditorSave', () => {
             body: JSON.stringify({ path: '/tmp/a.go', content: 'package main' }),
         }))
         expect(markSaved).toHaveBeenCalledWith('/tmp/a.go', 'package main')
+        expect(markFileSaved).toHaveBeenCalledWith('/tmp/a.go')
         expect(toastShow).toHaveBeenCalled()
     })
 
@@ -43,6 +49,7 @@ describe('useCodeEditorSave', () => {
         const ok = await saveFile('/tmp/a.go', 'package main')
         expect(ok).toBe(false)
         expect(markSaved).not.toHaveBeenCalled()
+        expect(markFileSaved).not.toHaveBeenCalled()
         expect(toastShow).toHaveBeenCalled()
     })
 

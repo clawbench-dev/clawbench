@@ -1,6 +1,6 @@
 import { watch, onUnmounted, type Ref } from 'vue'
 import { store } from '@/stores/app.ts'
-import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
+import { refreshCurrentFile, wasRecentlySaved } from '@/composables/useFileRefresh.ts'
 import { useReconnect } from './useReconnect'
 
 interface UseFileWatchOptions {
@@ -55,7 +55,11 @@ export function useFileWatch(options: UseFileWatchOptions) {
     })
 
     eventSource.addEventListener('file_change', () => {
-      if (!currentFile.value?.path) return
+      const path = currentFile.value?.path
+      if (!path) return
+      // Skip refreshes caused by our own save — saveFile already synced the
+      // content in memory via markSaved, so re-fetching only causes a flash.
+      if (wasRecentlySaved(path)) return
       refreshCurrentFile({ clearOnError: true, loadDir: true })
     })
 
