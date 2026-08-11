@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -242,5 +243,51 @@ func TestSTTTranscribe_NonMultipartContentType(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestSTTTranscribeWS_AudioOverLimit(t *testing.T) {
+	old := GetSTTProvider()
+	defer SetSTTProvider(old)
+	SetSTTProvider(&sttTestProvider{text: "x"})
+
+	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/stt/transcribe/ws"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	chunk := bytes.Repeat([]byte("A"), 1<<20) // 1MB frames
+	sent := 0
+	for sent <= sttWSMaxAudioBytes {
+		if err := conn.Write(ctx, websocket.MessageBinary, chunk); err != nil {
+			break // server closed the connection on cap exceeded
+		}
+		sent += len(chunk)
+	}
+
+	// The server must either send an error frame or close the connection once
+	// the cap is exceeded — it must NOT silently keep buffering forever.
+	var sawErrorOrClose bool
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			sawErrorOrClose = true
+			break
+		}
+		var m sttWSServerMsg
+		if json.Unmarshal(data, &m) == nil && m.Type == sttWSError {
+			sawErrorOrClose = true
+			break
+		}
+	}
+	if !sawErrorOrClose {
+		t.Fatalf("expected server error/close after exceeding audio cap, got none")
 	}
 }

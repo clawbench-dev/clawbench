@@ -78,6 +78,9 @@ func STTTranscribe(w http.ResponseWriter, r *http.Request) {
 // sttWSWriteTimeout is the timeout for individual WebSocket writes.
 const sttWSWriteTimeout = 5 * time.Second
 
+// sttWSMaxAudioBytes caps total streamed audio per WS connection (20MB).
+const sttWSMaxAudioBytes = 20 << 20
+
 // sttWS type constants (satisfy goconst, aligned with existing WS constants).
 const (
 	sttWSType   = "type"
@@ -213,6 +216,13 @@ func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 			switch mt {
 			case websocket.MessageBinary:
 				state.mu.Lock()
+				if state.buffer.Len()+len(msg) > sttWSMaxAudioBytes {
+					state.mu.Unlock()
+					errData, _ := json.Marshal(sttWSServerMsg{Type: sttWSError})
+					_ = writeSTTWSText(conn, errData)
+					readErr <- errors.New("stt ws: audio exceeds limit")
+					return
+				}
 				state.buffer.Write(msg)
 				state.mu.Unlock()
 				select {

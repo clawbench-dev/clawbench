@@ -51,6 +51,10 @@ export function useVoiceInput() {
     (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.shortcut_key'] as string | undefined ?? 'Alt+Space'
   const streaming = () =>
     Boolean((settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.streaming'] ?? false)
+  const chunkMs = () =>
+    Number((settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.chunk_ms'] ?? 1000)
+  const language = () =>
+    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.language'] as string | undefined
 
   async function toggle() {
     if (state.value === 'recording' || state.value === 'transcribing') {
@@ -91,7 +95,7 @@ export function useVoiceInput() {
       try {
         const form = new FormData()
         form.append('file', blob, 'recording.webm')
-        form.append('language', 'zh')
+        form.append('language', language() ?? 'zh')
         const resp = await fetch('/api/stt/transcribe', { method: 'POST', body: form })
         const data = await resp.json().catch(() => ({}))
         if (!resp.ok) throw new Error((data as Record<string, unknown>).error as string ?? 'transcribe failed')
@@ -115,7 +119,7 @@ export function useVoiceInput() {
     mediaRecorder = new MediaRecorder(mediaStream!, mimeType ? { mimeType } : undefined)
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
-        void e.data.arrayBuffer().then((ab) => { ws!.send(new Uint8Array(ab)) })
+        ws.send(e.data)
       }
     }
     ws = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
@@ -129,7 +133,7 @@ export function useVoiceInput() {
         }
       } catch { /* ignore malformed */ }
     }
-    ws.onopen = () => mediaRecorder!.start()
+    ws.onopen = () => mediaRecorder!.start(chunkMs())
     ws.onerror = () => {
       error.value = '语音识别连接失败'
       cancel()

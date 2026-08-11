@@ -77,6 +77,52 @@ describe('useVoiceInput', () => {
     expect(v.isRecording.value).toBe(false)
   })
 
+  it('streaming start passes chunk_ms as the MediaRecorder timeslice', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true, 'stt.chunk_ms': 500 }
+
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    })
+
+    const startArg: { current: number | undefined } = { current: undefined }
+    vi.stubGlobal('MediaRecorder', class {
+      state = 'recording'
+      ondataavailable: unknown = null
+      onstop: unknown = null
+      start(timeslice?: number) { startArg.current = timeslice; this.state = 'recording' }
+      stop() { this.state = 'inactive' }
+      static isTypeSupported = vi.fn(() => true)
+    })
+
+    let wsInstance: {
+      onopen: (() => void) | null
+      onmessage: unknown
+      onerror: unknown
+      onclose: unknown
+    } | undefined
+    vi.stubGlobal('WebSocket', class {
+      readyState = 1
+      static OPEN = 1
+      onopen: (() => void) | null = null
+      onmessage: unknown = null
+      onerror: unknown = null
+      onclose: unknown = null
+      send = vi.fn()
+      close = vi.fn()
+      constructor() { wsInstance = this }
+    })
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    wsInstance!.onopen!()
+    expect(startArg.current).toBe(500)
+    v.cancel()
+  })
+
   it('uses fallback MediaRecorder construction when webm is unsupported', async () => {
     const track = { stop: vi.fn() }
     const stream = { getTracks: () => [track] }
