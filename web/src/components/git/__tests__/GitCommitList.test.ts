@@ -57,7 +57,6 @@ function createCommits(count: number) {
     msg: `Commit ${i}`,
     date: '2025-01-01',
     author: 'Test',
-    fileCount: 1,
     refs: [],
   }))
 }

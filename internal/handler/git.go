@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -94,13 +93,12 @@ func isValidGitRefName(s string) bool {
 
 // commitInfo represents a git commit in API responses.
 type commitInfo struct {
-	SHA       string   `json:"sha"`
-	Parents   []string `json:"parents"` // parent commit SHAs (empty for initial commit, 2+ for merge)
-	Msg       string   `json:"msg"`
-	Date      string   `json:"date"`
-	Author    string   `json:"author"`
-	Refs      []string `json:"refs"`      // branch/tag names decorating this commit
-	FileCount int      `json:"fileCount"` // number of files changed in this commit
+	SHA     string   `json:"sha"`
+	Parents []string `json:"parents"` // parent commit SHAs (empty for initial commit, 2+ for merge)
+	Msg     string   `json:"msg"`
+	Date    string   `json:"date"`
+	Author  string   `json:"author"`
+	Refs    []string `json:"refs"` // branch/tag names decorating this commit
 }
 
 // parseGitLog parses git log output (format: %H|%P|%s|%ad|%an%d) into commitInfo slice.
@@ -148,107 +146,6 @@ func parseGitLog(output string) []commitInfo {
 	return commits
 }
 
-// parseGitLogWithStats parses git log output that includes --shortstat.
-// The format uses a null byte (%x00) after each commit's header line.
-// git appends --shortstat output after the format, so the actual structure is:
-//
-//	header1\x00\n\n  shortstat1\nheader2\x00\n\n  shortstat2\n...
-//
-// When split by \x00, each chunk (except first and last) contains the previous
-// commit's shortstat followed by the current commit's header. We re-associate
-// shortstat with the correct commit.
-func parseGitLogWithStats(output string) []commitInfo {
-	records := strings.Split(output, "\x00")
-	var commits []commitInfo
-
-	for i, rec := range records {
-		rec = strings.TrimSpace(rec)
-		if rec == "" {
-			continue
-		}
-
-		headerLine, shortstatLines := splitHeaderAndShortstat(rec)
-
-		// Apply shortstat to the previous commit (it belongs to the commit before the header)
-		if len(shortstatLines) > 0 && len(commits) > 0 {
-			statStr := strings.Join(shortstatLines, " ")
-			if fc := parseFileCountFromShortstat(statStr); fc > 0 {
-				commits[len(commits)-1].FileCount = fc
-			}
-		}
-
-		if headerLine == "" {
-			continue
-		}
-
-		info := parseGitLog(headerLine)
-		if len(info) == 0 {
-			continue
-		}
-
-		// For the last record, check if there's trailing shortstat after the header
-		commit := info[0]
-		if i == len(records)-1 {
-			commit.FileCount = extractFileCountFromShortstatLines(shortstatLines)
-		}
-
-		commits = append(commits, commit)
-	}
-
-	return commits
-}
-
-// splitHeaderAndShortstat separates a git log record into its header line
-// and any shortstat lines. The header is the first non-empty, non-shortstat line.
-func splitHeaderAndShortstat(rec string) (headerLine string, shortstatLines []string) {
-	lines := strings.Split(rec, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		if isShortstatLine(trimmed) {
-			shortstatLines = append(shortstatLines, trimmed)
-			continue
-		}
-		if headerLine == "" {
-			headerLine = trimmed
-		}
-	}
-	return headerLine, shortstatLines
-}
-
-// isShortstatLine returns true if the line looks like a git --shortstat output.
-func isShortstatLine(line string) bool {
-	return strings.Contains(line, "files changed") || strings.Contains(line, "file changed")
-}
-
-// extractFileCountFromShortstatLines returns the file count from the first
-// shortstat line that contains one.
-func extractFileCountFromShortstatLines(shortstatLines []string) int {
-	for _, line := range shortstatLines {
-		if fc := parseFileCountFromShortstat(line); fc > 0 {
-			return fc
-		}
-	}
-	return 0
-}
-
-// parseFileCountFromShortstat extracts the file count from a git --shortstat line.
-// Example inputs: " 2 files changed, 10 insertions(+), 5 deletions(-)"
-//
-//	" 1 file changed, 3 insertions(+)"
-func parseFileCountFromShortstat(stat string) int {
-	m := shortstatRegex.FindStringSubmatch(stat)
-	if len(m) >= 2 {
-		n, _ := strconv.Atoi(m[1])
-		return n
-	}
-	return 0
-}
-
-var shortstatRegex = regexp.MustCompile(`(\d+) files? changed`)
-
 // into a clean list of ref names.
 func parseDecorateRefs(s string) []string {
 	s = strings.TrimSpace(s)
@@ -288,6 +185,92 @@ func isGitRepo(projectPath string) bool {
 	return err == nil
 }
 
+// projectHistoryCache caches git log results to avoid re-running the
+// (previously slow) git log --shortstat for the same project history page.
+// Keyed by project path + skip offset + current HEAD sha, so any commit or
+// branch change automatically invalidates stale entries.
+var projectHistoryCache = struct {
+	sync.Mutex
+	entries map[string]projectHistoryCacheEntry
+}{entries: make(map[string]projectHistoryCacheEntry)}
+
+type projectHistoryCacheEntry struct {
+	commits  []commitInfo
+	hasMore  bool
+	loadedAt time.Time
+}
+
+const projectHistoryCacheTTL = 30 * time.Second
+
+// projectHistoryHeadSHA returns the current HEAD sha for the project, used as
+// part of the cache key. Returns "" if HEAD cannot be resolved (e.g. empty repo).
+func projectHistoryHeadSHA(projectPath string) string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = projectPath
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// getProjectHistory returns the project commit history (optionally skipping N
+// commits), using a TTL cache keyed by (projectPath, skip, HEAD). A new HEAD
+// (new commit or branch switch) naturally misses the cache and recomputes.
+func getProjectHistory(projectPath string, skip int) ([]commitInfo, bool) {
+	headSHA := projectHistoryHeadSHA(projectPath)
+	key := fmt.Sprintf("%s|%d|%s", projectPath, skip, headSHA)
+
+	projectHistoryCache.Lock()
+	if e, ok := projectHistoryCache.entries[key]; ok && time.Since(e.loadedAt) < projectHistoryCacheTTL {
+		projectHistoryCache.Unlock()
+		return e.commits, e.hasMore
+	}
+	projectHistoryCache.Unlock()
+
+	// git log for entire project, with optional skip
+	// Format: SHA|parents|subject|date|author+refs
+	// --topo-order ensures branches display contiguously
+	// --decorate-refs-exclude hides remote-tracking refs
+	logArgs := []string{"log", "--format=%H|%P|%s|%ad|%an%d", "--date=iso-strict", "--topo-order", "--decorate-refs-exclude=refs/remotes", "-30"}
+	if skip > 0 {
+		logArgs = append(logArgs, "--skip", fmt.Sprintf("%d", skip))
+	}
+	cmd := exec.Command("git", logArgs...)
+	cmd.Dir = projectPath
+	output, _ := cmd.CombinedOutput()
+
+	commits := parseGitLog(string(output))
+	hasMore := len(commits) == 30
+
+	projectHistoryCache.Lock()
+	if len(projectHistoryCache.entries) >= 100 {
+		// Evict expired entries first; if still full, drop oldest.
+		now := time.Now()
+		for k, v := range projectHistoryCache.entries {
+			if now.Sub(v.loadedAt) >= projectHistoryCacheTTL {
+				delete(projectHistoryCache.entries, k)
+			}
+		}
+		if len(projectHistoryCache.entries) >= 100 {
+			var oldestKey string
+			var oldest time.Time
+			for k, v := range projectHistoryCache.entries {
+				if oldestKey == "" || v.loadedAt.Before(oldest) {
+					oldestKey, oldest = k, v.loadedAt
+				}
+			}
+			if oldestKey != "" {
+				delete(projectHistoryCache.entries, oldestKey)
+			}
+		}
+	}
+	projectHistoryCache.entries[key] = projectHistoryCacheEntry{commits: commits, hasMore: hasMore, loadedAt: time.Now()}
+	projectHistoryCache.Unlock()
+
+	return commits, hasMore
+}
+
 // ServeGitProjectHistory returns commit history for the entire project.
 // Supports pagination via ?skip=N (skips N commits).
 func ServeGitProjectHistory(w http.ResponseWriter, r *http.Request) {
@@ -313,25 +296,12 @@ func ServeGitProjectHistory(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Sscanf(s, "%d", &skip)
 	}
 
-	// git log for entire project, with optional skip
-	// Format: SHA|parents|subject|date|author+refs, followed by --shortstat
-	// Null byte (%x00) separator allows parsing multi-line output per commit
-	// --topo-order ensures branches display contiguously
-	// --decorate-refs-exclude hides remote-tracking refs
-	logArgs := []string{"log", "--format=%H|%P|%s|%ad|%an%d%x00", "--shortstat", "--date=iso-strict", "--topo-order", "--decorate-refs-exclude=refs/remotes", "-30"}
-	if skip > 0 {
-		logArgs = append(logArgs, "--skip", fmt.Sprintf("%d", skip))
-	}
-	cmd := exec.Command("git", logArgs...)
-	cmd.Dir = projectPath
-	output, _ := cmd.CombinedOutput()
-
-	commits := parseGitLogWithStats(string(output))
+	commits, hasMore := getProjectHistory(projectPath, skip)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"isGit":   true,
 		"commits": commits,
-		"hasMore": len(commits) == 30,
+		"hasMore": hasMore,
 	})
 }
 

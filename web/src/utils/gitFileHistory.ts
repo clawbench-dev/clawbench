@@ -4,7 +4,6 @@ export interface GitCommitLite {
   date: string
   author: string
   isWT?: boolean
-  fileCount?: number
 }
 
 /**
@@ -17,7 +16,7 @@ export interface GitCommitLite {
 export function buildFileHistoryCommits(histCommits: GitCommitLite[], hasUncommitted: boolean, workingTreeMsg: string): GitCommitLite[] {
   if (hasUncommitted) {
     return [
-      { sha: 'HEAD', msg: workingTreeMsg, date: '', author: '', isWT: true, fileCount: 1 },
+      { sha: 'HEAD', msg: workingTreeMsg, date: '', author: '', isWT: true },
       ...histCommits,
     ]
   }

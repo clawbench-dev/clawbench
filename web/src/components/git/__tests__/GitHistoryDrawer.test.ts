@@ -8,7 +8,7 @@ describe('buildFileHistoryCommits', () => {
   it('prepends a working-tree entry when the file has uncommitted changes', () => {
     const result = buildFileHistoryCommits([commitA], true, workingTreeMsg)
     expect(result).toHaveLength(2)
-    expect(result[0]).toMatchObject({ sha: 'HEAD', msg: workingTreeMsg, isWT: true, fileCount: 1 })
+    expect(result[0]).toMatchObject({ sha: 'HEAD', msg: workingTreeMsg, isWT: true })
     expect(result[1]).toBe(commitA)
   })
 
