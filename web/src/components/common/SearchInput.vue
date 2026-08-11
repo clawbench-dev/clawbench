@@ -25,7 +25,7 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 
-defineProps({
+const props = defineProps({
   modelValue: { type: String, default: '' },
   placeholder: { type: String, default: '' },
 })
@@ -36,7 +36,11 @@ const inputRef = ref(null)
 const focused = ref(false)
 
 function focus() {
-  inputRef.value?.focus()
+  const el = inputRef.value
+  if (!el) return
+  el.focus()
+  // Select existing content so typing replaces it (like a normal editor's find box)
+  if (props.modelValue) el.select()
 }
 
 defineExpose({ focus, inputRef, focused })

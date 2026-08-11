@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
@@ -113,5 +113,26 @@ describe('SearchInput', () => {
   it('exposes inputRef', () => {
     const wrapper = mountInput()
     expect(wrapper.vm.inputRef).toBeDefined()
+  })
+
+  it('selects existing content when focused with a non-empty value', () => {
+    const wrapper = mountInput({ modelValue: 'hello' })
+    const el = wrapper.find('input').element as HTMLInputElement
+    ;(wrapper.vm as any).inputRef = el
+    const select = vi.spyOn(el, 'select')
+
+    wrapper.vm.focus()
+
+    expect(select).toHaveBeenCalled()
+  })
+
+  it('does not select content when focused with an empty value', () => {
+    const wrapper = mountInput()
+    const el = wrapper.find('input').element as HTMLInputElement
+    const select = vi.spyOn(el, 'select')
+
+    wrapper.vm.focus()
+
+    expect(select).not.toHaveBeenCalled()
   })
 })
