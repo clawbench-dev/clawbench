@@ -148,14 +148,14 @@ func (m *ACPConnManager) sweepOnce() {
 	now := time.Now()
 	for sid, conn := range m.conns {
 		conn.mu.Lock()
-		idle := now.Sub(conn.lastUsed)
+		lastActivity := conn.lastActivityNano()
 		alive := conn.alive
 		conn.mu.Unlock()
 
 		if !alive {
 			continue // already dead, will be respawned on next use
 		}
-		if idle < idleConnTimeout {
+		if now.Sub(time.Unix(0, lastActivity)) < idleConnTimeout {
 			continue // not idle enough yet
 		}
 		// Skip connections with actively running sessions
@@ -179,14 +179,14 @@ func (m *ACPConnManager) sweepOnce() {
 		// the initial scan (TOCTOU race). If it's no longer idle or the
 		// session started running, skip it.
 		conn.mu.Lock()
-		idle := time.Since(conn.lastUsed)
+		lastActivity := conn.lastActivityNano()
 		alive := conn.alive
 		conn.mu.Unlock()
 
 		if !alive {
 			continue // already dead
 		}
-		if idle < idleConnTimeout {
+		if time.Since(time.Unix(0, lastActivity)) < idleConnTimeout {
 			continue // recently used, no longer idle
 		}
 		if m.isSessionRunning != nil && m.isSessionRunning(sid) {
@@ -202,7 +202,7 @@ func (m *ACPConnManager) sweepOnce() {
 		m.mu.Unlock()
 
 		if ok {
-			slog.Info("acp: idle sweep closing connection", "clawbench_sid", sid, "idle_duration", idle)
+			slog.Info("acp: idle sweep closing connection", "clawbench_sid", sid, "idle_duration", time.Since(time.Unix(0, lastActivity)))
 			conn.close()
 		}
 	}
@@ -362,6 +362,28 @@ func (m *ACPConnManager) MarkIdle(clawbenchSID string) {
 		conn.lastUsed = time.Now()
 		conn.mu.Unlock()
 	}
+}
+
+// TouchSessionUpdate records the current time as the connection's most recent
+// SessionUpdate activity. It is lock-free (atomic store) so it can be called
+// from the ACP notification processing goroutine without risking a deadlock:
+// RPCs like NewSession hold c.mu while waiting for queued notifications to be
+// processed, so if this callback took c.mu it would block notification
+// processing and stall the RPC until timeout.
+func (c *ACPConn) TouchSessionUpdate() {
+	c.lastSessionUpdate.Store(time.Now().UnixNano())
+}
+
+// lastActivityNano returns the later of lastUsed and lastSessionUpdate as a
+// UnixNano timestamp, representing the last time the connection did any work
+// (either an explicit use or an incoming SessionUpdate from an async workflow).
+// Must be called without holding c.mu.
+func (c *ACPConn) lastActivityNano() int64 {
+	lastUsedNano := c.lastUsed.UnixNano()
+	if su := c.lastSessionUpdate.Load(); su > lastUsedNano {
+		return su
+	}
+	return lastUsedNano
 }
 
 // ACPCachedState holds the cached ACP state for a connection.
@@ -557,6 +579,15 @@ type ACPConn struct {
 	lastUsed  time.Time
 	alive     bool
 	startedAt time.Time // when the agent process was spawned
+
+	// lastSessionUpdate is the UnixNano timestamp of the most recent
+	// SessionUpdate event received from the agent, updated atomically (no
+	// lock) so the SessionUpdate callback can keep an async workflow's
+	// connection alive without blocking the ACP notification processing
+	// chain. A blocked notification chain would deadlock RPC calls like
+	// NewSession, which wait for queued notifications to be processed
+	// (see waitNotificationsUpTo in the ACP SDK).
+	lastSessionUpdate atomic.Int64
 
 	// cmdWaitOnce ensures cmd.Wait() is called exactly once; the result is
 	// cached in cmdWaitState for subsequent readers.

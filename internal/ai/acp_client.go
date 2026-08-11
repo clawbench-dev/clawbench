@@ -173,6 +173,17 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		c.mu.Unlock()
 	}
 
+	// Keep the connection alive for async workflows (e.g. /deep-research):
+	// record this SessionUpdate as activity so the idle sweep doesn't close a
+	// connection that is still receiving events even after Prompt returns and
+	// the session is unregistered from sessionRoutes. This MUST be lock-free
+	// (atomic) — this callback runs on the ACP notification processing
+	// goroutine, and RPCs like NewSession hold conn.mu while waiting for queued
+	// notifications to be processed. Taking conn.mu here would deadlock.
+	if c.connRef != nil {
+		c.connRef.TouchSessionUpdate()
+	}
+
 	// During LoadSession replay, collect messages in buffer instead of
 	// routing to WS stream channels. The load handler reads them after
 	// the LoadSession RPC returns.
@@ -191,6 +202,8 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	if !ok {
 		// No active stream for this session — drop the update.
 		// This can happen after a session is cancelled or the prompt completes.
+		// The connection activity was already recorded above, so async
+		// workflows that continue sending events stay alive.
 		return nil
 	}
 
