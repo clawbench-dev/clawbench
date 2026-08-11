@@ -1659,6 +1659,13 @@ defineExpose({
   display: none;
 }
 
+/* The nested container rendered by AttachmentTags adds its own 4px 6px padding,
+   which would push normal attachment cards below the quote card. Zero it so the
+   quote and file cards sit on the same horizontal line. */
+.chat-attachment-tags :deep(.chat-attachment-tags) {
+  padding: 0;
+}
+
 /* Base attachment card styles */
 .chat-file-attachment {
   display: inline-flex;
