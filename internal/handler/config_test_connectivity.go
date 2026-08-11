@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
@@ -391,6 +394,7 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	baseURL := resolveStringValue(values, "stt.base_url", model.ConfigInstance.STT.BaseURL)
 	sttModel := resolveStringValue(values, "stt.model", model.ConfigInstance.STT.Model)
 	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
+	language := resolveStringValue(values, "stt.language", model.ConfigInstance.STT.Language)
 
 	if baseURL == "" {
 		return ConnectivityTestResult{Success: false, Message: "STT base URL is required"}
@@ -399,45 +403,101 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		sttModel = "openai/whisper-large-v3"
 	}
 
-	url := strings.TrimRight(baseURL, "/") + "/v1/models"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	// Probe with a real transcription request instead of relying on
+	// /v1/models. Gateways (e.g. OneAPI) often don't enumerate every model in
+	// the models list even though the transcription endpoint accepts them, so
+	// a direct probe against /v1/audio/transcriptions is authoritative for the
+	// exact endpoint + model + auth the feature will actually use.
+	audio := makeMinimalWAV()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "probe.wav")
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
+	}
+	if _, err := part.Write(audio); err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
+	}
+	if err := writer.WriteField("model", sttModel); err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
+	}
+	if language != "" {
+		if err := writer.WriteField("language", language); err != nil {
+			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
+	}
+
+	url := strings.TrimRight(baseURL, "/") + "/v1/audio/transcriptions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
 	if err != nil {
 		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to create request: %v", err)}
 	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service unreachable at %s", baseURL)}
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service unreachable at %s: %v", baseURL, err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 
-	if resp.StatusCode != http.StatusOK {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service returned HTTP %d", resp.StatusCode)}
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable, transcription accepted for model '%s'", sttModel)}
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT auth failed (HTTP %d)", resp.StatusCode)}
+	case resp.StatusCode == http.StatusNotFound:
+		return ConnectivityTestResult{Success: false, Message: "STT endpoint or model not found (HTTP 404)"}
 	}
 
-	var modelsResp struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+	// Some servers reject an unknown model name with a 4xx body. Anything that
+	// isn't auth/404/model-not-found means the request reached the
+	// transcription handler with the model routed, which confirms connectivity.
+	if isSTTModelNotFound(respBody) {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service reachable, but model '%s' not recognized", sttModel)}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
-		return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable at %s, but could not parse models list", baseURL)}
-	}
+	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable at %s (probe returned HTTP %d)", baseURL, resp.StatusCode)}
+}
 
-	for _, m := range modelsResp.Data {
-		if m.ID == sttModel || strings.HasPrefix(m.ID, sttModel+":") {
-			return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable, model '%s' available", sttModel)}
+// isSTTModelNotFound reports whether an STT error body indicates an unknown model.
+func isSTTModelNotFound(body []byte) bool {
+	s := strings.ToLower(string(body))
+	for _, k := range []string{"model not found", "unknown model", "does not exist", "model_not_found", "no such model"} {
+		if strings.Contains(s, k) {
+			return true
 		}
 	}
+	return false
+}
 
-	return ConnectivityTestResult{
-		Success: false,
-		Message: fmt.Sprintf("STT service reachable at %s, but model '%s' not found", baseURL, sttModel),
-	}
+// makeMinimalWAV builds a tiny valid PCM WAV (16kHz mono 16-bit) with 0.5s of
+// silence, suitable as a connectivity probe payload.
+func makeMinimalWAV() []byte {
+	const sampleRate = 16000
+	dataBytes := sampleRate * 2 // 0.5s of 16-bit mono = 16000 bytes
+	buf := &bytes.Buffer{}
+	buf.WriteString("RIFF")
+	_ = binary.Write(buf, binary.LittleEndian, uint32(36+dataBytes))
+	buf.WriteString("WAVE")
+	buf.WriteString("fmt ")
+	_ = binary.Write(buf, binary.LittleEndian, uint32(16))
+	_ = binary.Write(buf, binary.LittleEndian, uint16(1)) // PCM
+	_ = binary.Write(buf, binary.LittleEndian, uint16(1)) // mono
+	_ = binary.Write(buf, binary.LittleEndian, uint32(sampleRate))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(sampleRate*2)) // byte rate
+	_ = binary.Write(buf, binary.LittleEndian, uint16(2))            // block align
+	_ = binary.Write(buf, binary.LittleEndian, uint16(16))           // bits per sample
+	buf.WriteString("data")
+	_ = binary.Write(buf, binary.LittleEndian, uint32(dataBytes))
+	buf.Write(make([]byte, dataBytes))
+	return buf.Bytes()
 }
 
 // dingtalkTokenURL is the DingTalk API URL for getting an access token.

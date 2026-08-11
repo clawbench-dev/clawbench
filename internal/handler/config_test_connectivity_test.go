@@ -48,20 +48,80 @@ func TestServeConfigTest_UnknownCategory(t *testing.T) {
 
 func TestSTTConnectivity(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" {
-			t.Fatalf("path = %q, want /v1/models", r.URL.Path)
+		if r.URL.Path != "/v1/audio/transcriptions" {
+			t.Fatalf("path = %q, want /v1/audio/transcriptions", r.URL.Path)
+		}
+		if got := r.FormValue("model"); got != "Qwen3-ASR-1.7B" {
+			t.Fatalf("model = %q, want Qwen3-ASR-1.7B", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"openai/whisper-large-v3"}]}`))
+		_, _ = w.Write([]byte(`{"text":""}`))
 	}))
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
 		"stt.base_url": srv.URL,
-		"stt.model":    "openai/whisper-large-v3",
+		"stt.model":    "Qwen3-ASR-1.7B",
 	})
 	if !res.Success {
 		t.Fatalf("expected success, got %+v", res)
+	}
+}
+
+func TestSTTConnectivity_AuthFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "m",
+	})
+	if res.Success {
+		t.Fatalf("expected failure for auth, got %+v", res)
+	}
+}
+
+func TestSTTConnectivity_ModelNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"model Qwen3-ASR-1.7B does not exist"}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "Qwen3-ASR-1.7B",
+	})
+	if res.Success {
+		t.Fatalf("expected failure for unknown model, got %+v", res)
+	}
+}
+
+func TestSTTConnectivity_Endpoint404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "m",
+	})
+	if res.Success {
+		t.Fatalf("expected failure for 404, got %+v", res)
+	}
+}
+
+func TestMakeMinimalWAV(t *testing.T) {
+	wav := makeMinimalWAV()
+	if len(wav) < 44 {
+		t.Fatalf("wav too short: %d", len(wav))
+	}
+	if string(wav[0:4]) != "RIFF" || string(wav[8:12]) != "WAVE" {
+		t.Fatalf("invalid RIFF/WAVE header")
 	}
 }
 
