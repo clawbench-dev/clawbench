@@ -5,7 +5,9 @@ const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(chann
 contextBridge.exposeInMainWorld('ClawBenchNative', {
   // sync
   isNativeApp: () => true,
-  getLanguage: () => (process.env.LANG || 'en').split('_')[0],
+  getLanguage: () => {
+    try { return ipcRenderer.sendSync('native:get-language') } catch { return 'en' }
+  },
   showServerDialog: () => { ipcRenderer.send('native:show-server-dialog') },
   openSession: (sessionId: string) => { ipcRenderer.send('native:open-session', sessionId) },
   setNativePushEnabled: (enabled: boolean) => { ipcRenderer.send('native:set-push-enabled', enabled) },
@@ -56,4 +58,5 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   shareFile: (path: string, mime: string) => invoke('native:share-file', path, mime),
   shareFiles: (paths: string, mimes: string) => invoke('native:share-files', paths, mimes),
   nativeNotify: (title: string, body: string, nav?: unknown) => invoke('native:notify', title, body, nav),
+  setTheme: (theme: string) => { ipcRenderer.send('native:set-theme', theme) },
 })

@@ -1904,6 +1904,7 @@ async function applyTheme(t) {
     document.documentElement.setAttribute('data-theme', t)
     setSetting('theme', t)
     document.documentElement.setAttribute('data-hljs-theme', t)
+    getNative()?.setTheme?.(t === 'light' ? 'light' : 'dark')
     const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
     await initMermaid()
     await reRenderMermaid()

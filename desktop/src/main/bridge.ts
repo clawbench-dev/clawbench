@@ -1,4 +1,4 @@
-import { app, ipcMain, shell, clipboard } from 'electron'
+import { app, ipcMain, shell, clipboard, nativeTheme } from 'electron'
 import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
@@ -17,6 +17,9 @@ let logListener: ((event: Electron.Event, level: number, message: string) => voi
 export function registerBridge(): void {
   initStore()
 
+  ipcMain.on('native:get-language', (e) => {
+    e.returnValue = (app.getLocale().split(/[-_]/)[0] || 'en').toLowerCase()
+  })
   ipcMain.handle('native:get-app-version', () => app.getVersion())
   ipcMain.handle('native:get-server-list', () => JSON.stringify(getStore().get('servers')))
   ipcMain.handle('native:get-saved-server-config', () => {
@@ -113,5 +116,8 @@ export function registerBridge(): void {
   ipcMain.on('native:set-push-enabled', (_e, enabled: boolean) => getStore().set('nativePushEnabled', enabled))
   ipcMain.on('native:update-last-seen', (_e, id: string) => { /* desktop has no SharedPreferences */ })
   ipcMain.on('native:keep-screen-on', (_e, on: boolean) => setKeepScreenOnImpl(on))
+  ipcMain.on('native:set-theme', (_e, theme: string) => {
+    nativeTheme.themeSource = theme === 'light' ? 'light' : 'dark'
+  })
   ipcMain.on('native:log', (_e, level: string, tag: string, msg: string) => { /* route to main log */ })
 }
