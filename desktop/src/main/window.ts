@@ -13,7 +13,6 @@ function loginPagePath(): string {
 export function createMainWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, show: false,
-    frame: false, // frameless: fully show the app UI, no OS title/menu bar
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false },
   })
   const serverUrl = getStore().get('serverUrl')
@@ -37,6 +36,13 @@ export function createMainWindow(): BrowserWindow {
   })
   mainWindow.on('closed', () => { mainWindow = null })
   return mainWindow
+}
+
+/** Navigate the main window back to the server-selection login page. */
+export function showLoginPage(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.loadFile(loginPagePath())
+  }
 }
 
 export function openSandboxWindow(port: number, protocol: string, host: string, path: string): void {

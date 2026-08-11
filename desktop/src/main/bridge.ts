@@ -6,7 +6,7 @@ import { getStore, initStore } from './store'
 import { getPassword, savePassword } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
-import { getMainWindow, createMainWindow, openSandboxWindow } from './window'
+import { getMainWindow, createMainWindow, openSandboxWindow, showLoginPage } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
 import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
@@ -108,11 +108,10 @@ export function registerBridge(): void {
     return Promise.resolve()
   })
 
-  ipcMain.on('native:show-server-dialog', () => getMainWindow()?.webContents.send('clawbench-show-server-dialog'))
+  ipcMain.on('native:show-server-dialog', () => showLoginPage())
   ipcMain.on('native:open-session', (_e, id: string) => dispatchOpenSession(id))
   ipcMain.on('native:set-push-enabled', (_e, enabled: boolean) => getStore().set('nativePushEnabled', enabled))
   ipcMain.on('native:update-last-seen', (_e, id: string) => { /* desktop has no SharedPreferences */ })
   ipcMain.on('native:keep-screen-on', (_e, on: boolean) => setKeepScreenOnImpl(on))
-  ipcMain.on('native:close-app', () => app.quit())
   ipcMain.on('native:log', (_e, level: string, tag: string, msg: string) => { /* route to main log */ })
 }

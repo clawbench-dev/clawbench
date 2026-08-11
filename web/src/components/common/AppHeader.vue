@@ -139,13 +139,6 @@
       <component v-else :is="PressureIcon" :size="15" class="pressure-icon" />
     </button>
 
-    <!-- Desktop (Electron frameless) close button -->
-    <button v-if="isDesktopApp" class="desktop-close" @click="closeDesktopApp" title="关闭" aria-label="关闭">
-      <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-        <path d="M0 0 L10 10 M10 0 L0 10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-      </svg>
-    </button>
-
     <!-- Server info + resources popup (both Web and APP mode) -->
     <PopupMenu v-model:show="resourcesMenuOpen" :target-element="serverBtnRef" :max-width="320" :max-height="440" :menu-items-count="10" anchor="right">
       <SystemResourcesPanel ref="resourcesPanelRef" :show-logout="isAppMode" :ws-status="wsStatus" @logout="handleLogout" />
@@ -177,13 +170,6 @@ import { getNative } from '@/utils/clawbenchNative'
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
 const { isAppMode } = useAppMode()
-
-// Electron desktop (frameless window) exposes closeApp — show an in-app close button.
-const isDesktopApp = computed(() => !!getNative()?.closeApp)
-
-function closeDesktopApp() {
-    getNative()?.closeApp?.()
-}
 const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
 const switchTab = inject<(tab: string) => void>('switchTab')
 
@@ -915,27 +901,6 @@ onUnmounted(() => {
     align-items: center;
     justify-content: center;
     margin-left: auto;
-}
-
-.desktop-close {
-    margin-left: 4px;
-    margin-right: 6px;
-    flex-shrink: 0;
-    width: 20px;
-    height: 20px;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: #ff4d4f;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.15s, color 0.15s;
-}
-.desktop-close:hover {
-    background: #ff4d4f;
-    color: #fff;
 }
 
 @media (hover: hover) {
