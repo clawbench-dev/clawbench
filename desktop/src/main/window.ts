@@ -1,5 +1,6 @@
 import { BrowserWindow, shell } from 'electron'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 
 let mainWindow: BrowserWindow | null = null
@@ -27,7 +28,15 @@ export function createMainWindow(): BrowserWindow {
   // server at the configured URL), so the user is never left with a hidden window.
   const showWindow = () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show() }
   mainWindow.once('ready-to-show', showWindow)
-  mainWindow.webContents.on('did-fail-load', () => { if (!mainWindow?.isVisible()) showWindow() })
+  mainWindow.webContents.on('did-fail-load', (_e, _code, _desc, failedUrl) => {
+    showWindow()
+    // Server page failed to load (unreachable) — fall back to the server-selection
+    // login page so the user can pick another server instead of a blank page.
+    const loginUrl = pathToFileURL(loginPagePath()).toString()
+    if (failedUrl && failedUrl !== loginUrl) {
+      mainWindow?.loadFile(loginPagePath())
+    }
+  })
   setTimeout(showWindow, 2000)
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {

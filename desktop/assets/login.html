@@ -1,145 +1,1134 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ClawBench 桌面版</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
-      background: #0f1115; color: #e8eaed; height: 100vh; display: flex;
-      align-items: center; justify-content: center;
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ClawBench</title>
+<script>
+  // i18n — loaded before DOM to avoid flash of wrong-language text
+  var I18N = {
+    en: {
+      slogan: 'From Terminal to Desktop',
+      subtitle: 'AI Workstation for Desktop',
+      password_label: 'Password',
+      password_placeholder: 'Password',
+      connect: 'Connect',
+      protocol: 'Protocol',
+      server_address: 'Server Address',
+      add_connect: 'Add & Connect',
+      cancel: 'Cancel',
+      add_server: 'Add Server',
+      confirm: 'Confirm',
+      delete: 'Delete',
+      delete_server_title: 'Delete Server',
+      delete_server_msg: 'Delete this server?',
+      saved_servers: 'Saved Servers',
+      authenticating: 'Authenticating...',
+      enter_password: 'Please enter password',
+      enter_address: 'Please enter server address',
+      connection_failed: 'Connection failed: ',
+      connect_error: 'Unable to connect. Check address and network.',
+      wrong_password: 'Wrong password',
+      too_many_attempts: 'Too many attempts'
+    },
+    zh: {
+      slogan: '从终端到桌面',
+      subtitle: '为桌面端打造的 AI 工作台',
+      password_label: '登录密码',
+      password_placeholder: '密码',
+      connect: '连 接',
+      protocol: '协议',
+      server_address: '服务器地址',
+      add_connect: '添 加 并 连 接',
+      cancel: '取 消',
+      add_server: '添加服务器',
+      confirm: '确认',
+      delete: '删除',
+      delete_server_title: '删除服务器',
+      delete_server_msg: '删除此服务器？',
+      saved_servers: '已保存服务器',
+      authenticating: '认证中...',
+      enter_password: '请输入密码',
+      enter_address: '请输入服务器地址',
+      connection_failed: '连接失败: ',
+      connect_error: '无法连接到服务器，请检查地址和网络。',
+      wrong_password: '密码错误',
+      too_many_attempts: '尝试次数过多'
     }
-    .card { width: 380px; background: #1a1d24; border: 1px solid #2a2e37; border-radius: 12px; padding: 26px; max-height: 90vh; overflow-y: auto; }
-    h1 { font-size: 20px; margin-bottom: 4px; }
-    .sub { color: #9aa0aa; font-size: 13px; margin-bottom: 18px; }
-    .saved-title { font-size: 13px; color: #9aa0aa; margin: 4px 0 10px; }
-    .server-item {
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      background: #0f1115; border: 1px solid #2a2e37; border-radius: 8px;
-      padding: 10px 12px; margin-bottom: 8px;
+  };
+  var LANG = 'en';
+  try { LANG = ClawBenchNative.getLanguage(); } catch(e) {}
+  if (!I18N[LANG]) LANG = 'en';
+  function t(key) { return I18N[LANG][key] || I18N['en'][key] || key; }
+</script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #1c2129;
+    --text-primary: #e6edf3;
+    --text-muted: #8b949e;
+    --text-hint: #484f58;
+    --accent-color: #58a6ff;
+    --accent-hover: #79b8ff;
+    --border-color: #30363d;
+    --color-red: #dc2626;
+    --server-indicator-size: 8px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Decorative background — matches LoginView.vue */
+  .bg-gradient {
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 20%, rgba(88, 166, 255, 0.08), transparent),
+      radial-gradient(ellipse 50% 60% at 80% 80%, rgba(88, 166, 255, 0.06), transparent);
+    pointer-events: none;
+  }
+
+  .bg-grid {
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(48, 54, 61, 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(48, 54, 61, 0.3) 1px, transparent 1px);
+    background-size: 48px 48px;
+    -webkit-mask-image: radial-gradient(ellipse 70% 70% at center, black, transparent);
+    mask-image: radial-gradient(ellipse 70% 70% at center, black, transparent);
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  .content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 380px;
+    padding: 0 24px;
+    gap: 36px;
+  }
+
+  /* Brand section */
+  .brand {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .logo-wrapper {
+    position: relative;
+    width: 96px;
+    height: 96px;
+    margin-bottom: 20px;
+  }
+
+  .logo {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    display: block;
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    object-fit: cover;
+  }
+
+  .logo-ring {
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid rgba(88, 166, 255, 0.3);
+    animation: ring-pulse 3s ease-in-out infinite;
+  }
+
+  @keyframes ring-pulse {
+    0%, 100% { opacity: 0.4; transform: scale(1); }
+    50% { opacity: 0.8; transform: scale(1.04); }
+  }
+
+  .title {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+
+  .slogan {
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--accent-color);
+    margin-bottom: 4px;
+    letter-spacing: 0.08em;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* Form card — matches LoginView.vue .login-form-card */
+  .form-card {
+    width: 100%;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 28px 24px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  }
+
+  /* Server list */
+  .server-list-header {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.02em;
+    font-weight: 500;
+  }
+
+  .server-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 0;
+    max-height: 160px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .server-list-divider {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 0 0 16px 0;
+  }
+
+  .server-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border-color);
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s;
+    font-size: 13px;
+    background: transparent;
+  }
+
+  .server-item:hover {
+    background: var(--bg-tertiary);
+    border-color: #484f58;
+  }
+
+  .server-item:active {
+    background: var(--bg-tertiary);
+    border-color: #484f58;
+  }
+
+  .server-item.active {
+    background: rgba(88, 166, 255, 0.06);
+    border: 1.5px solid var(--accent-color);
+    color: var(--text-primary);
+  }
+
+  .server-item-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  /* Radio-dot indicator for server selection */
+  .server-indicator {
+    flex-shrink: 0;
+    width: var(--server-indicator-size);
+    height: var(--server-indicator-size);
+    border-radius: 50%;
+    border: 1.5px solid var(--border-color);
+    background: transparent;
+    transition: background 0.15s, border-color 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .server-item.active .server-indicator {
+    border-color: var(--accent-color);
+    background: var(--accent-color);
+  }
+
+  .server-item-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--text-muted);
+    transition: color 0.15s;
+  }
+
+  .server-item.active .server-item-icon {
+    color: var(--accent-color);
+  }
+
+  .server-item-url {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .server-delete-btn {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .server-delete-btn:hover {
+    background: rgba(220, 38, 38, 0.1);
+    color: var(--color-red);
+  }
+
+  .server-item.active .server-delete-btn {
+    color: var(--text-muted);
+  }
+
+  .server-item.active .server-delete-btn:hover {
+    color: var(--color-red);
+    background: rgba(220, 38, 38, 0.12);
+  }
+
+  .field-group {
+    margin-bottom: 16px;
+  }
+
+  .field-group:last-of-type {
+    margin-bottom: 0;
+  }
+
+  .field-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+
+  /* Protocol radio */
+  .protocol-group {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 16px;
+  }
+
+  .protocol-group label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .protocol-group input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border-color);
+    border-radius: 50%;
+    position: relative;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+
+  .protocol-group input[type="radio"]:checked {
+    border-color: var(--accent-color);
+  }
+
+  .protocol-group input[type="radio"]:checked::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-color);
+  }
+
+  /* Host + Port row */
+  .host-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .host-row input:first-child {
+    flex: 1;
+  }
+
+  .host-row .colon {
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 44px;
+  }
+
+  .host-row input:last-child {
+    width: 90px;
+    flex-shrink: 0;
+  }
+
+  /* Input fields — matches LoginView.vue input style */
+  .input-with-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .input-icon {
+    position: absolute;
+    left: 12px;
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+    pointer-events: none;
+    flex-shrink: 0;
+  }
+
+  input[type="text"],
+  input[type="number"],
+  input[type="password"],
+  input[type="url"] {
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 15px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .input-with-icon input {
+    padding-left: 36px;
+  }
+
+  input::placeholder {
+    color: var(--text-hint);
+  }
+
+  input:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+  }
+
+  /* Connect button — matches LoginView.vue .login-btn */
+  .connect-btn {
+    width: 100%;
+    height: 46px;
+    margin-top: 20px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent-color);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .connect-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+    box-shadow: 0 4px 14px rgba(88, 166, 255, 0.3);
+  }
+
+  .connect-btn:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .connect-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  /* Spinner */
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Cancel button */
+  .cancel-btn {
+    width: 100%;
+    height: 40px;
+    margin-top: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .cancel-btn:hover {
+    background: var(--bg-tertiary);
+  }
+
+  /* Error — matches LoginView.vue .error */
+  .error {
+    margin-top: 14px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(220, 38, 38, 0.08);
+    border: 1px solid rgba(220, 38, 38, 0.2);
+    color: var(--color-red);
+    font-size: 13px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .error.visible {
+    display: flex;
+  }
+
+  .error svg {
+    flex-shrink: 0;
+  }
+
+  /* Add server button — dashed border style */
+  .add-server-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 10px;
+    margin-top: 12px;
+    border: 1px dashed var(--border-color);
+    border-radius: 10px;
+    background: transparent;
+    color: rgba(88, 166, 255, 0.7);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .add-server-btn:hover {
+    background: rgba(88, 166, 255, 0.06);
+    color: var(--accent-color);
+    border-color: var(--accent-color);
+  }
+
+  /* Version footer */
+  .version {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-hint);
+    text-align: center;
+  }
+
+  /* Confirm dialog — matches web DialogOverlay.vue */
+  .dlg-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+    padding: 0 20px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+
+  .dlg-overlay.visible {
+    opacity: 1;
+  }
+
+  .dlg-box {
+    background: var(--bg-secondary);
+    border-radius: 14px;
+    padding: 18px 16px 14px;
+    max-width: 320px;
+    width: 100%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    transform: scale(0.9);
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .dlg-overlay.visible .dlg-box {
+    transform: scale(1);
+  }
+
+  .dlg-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+
+  .dlg-msg {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: 14px;
+    white-space: pre-line;
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+
+  .dlg-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .dlg-btn {
+    padding: 6px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .dlg-btn:active { opacity: 0.7; }
+
+  .dlg-cancel {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+  }
+
+  .dlg-ok {
+    background: var(--color-red);
+    color: #fff;
+  }
+
+  /* Safe area padding for notch devices */
+  @supports (padding: env(safe-area-inset-bottom)) {
+    .content {
+      padding-bottom: env(safe-area-inset-bottom);
     }
-    .server-item .url { font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .server-item button { background: #4c8dff; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
-    .server-item button:hover { background: #3d7aef; }
-    .server-item .del { background: transparent; color: #9aa0aa; }
-    .server-item .del:hover { color: #ff6b6b; }
-    .divider { border: none; border-top: 1px solid #2a2e37; margin: 16px 0; }
-    label { display: block; font-size: 13px; color: #9aa0aa; margin: 12px 0 6px; }
-    input {
-      width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #2a2e37;
-      background: #0f1115; color: #e8eaed; font-size: 14px; outline: none;
-    }
-    input:focus { border-color: #4c8dff; }
-    button.primary {
-      width: 100%; margin-top: 18px; padding: 11px; border: none; border-radius: 8px;
-      background: #4c8dff; color: #fff; font-size: 15px; cursor: pointer;
-    }
-    button.primary:hover { background: #3d7aef; }
-    button.primary:disabled { background: #2a5a9e; cursor: not-allowed; }
-    .err { color: #ff6b6b; font-size: 13px; margin-top: 12px; min-height: 18px; }
-    .hint { color: #6b7280; font-size: 12px; margin-top: 14px; line-height: 1.6; }
-    .empty { color: #6b7280; font-size: 13px; padding: 6px 0; }
-  </style>
+  }
+</style>
 </head>
 <body>
-  <div class="card">
-    <h1>ClawBench 桌面版</h1>
-    <div class="sub">选择或添加服务器</div>
+  <div class="bg-gradient"></div>
+  <div class="bg-grid"></div>
 
-    <div class="saved-title">已保存服务器</div>
-    <div id="serverList"></div>
-    <div id="empty" class="empty" style="display:none;">暂无已保存服务器</div>
+  <div class="content">
+    <!-- Brand -->
+    <div class="brand">
+      <div class="logo-wrapper">
+        <img class="logo" src="logo.png" alt="ClawBench">
+        <div class="logo-ring"></div>
+      </div>
+      <h1 class="title">ClawBench</h1>
+      <p class="slogan" data-i18n="slogan">从终端到桌面</p>
+      <p class="subtitle" data-i18n="subtitle">为桌面端打造的 AI 工作台</p>
+    </div>
 
-    <hr class="divider" />
-    <label for="url">服务器地址</label>
-    <input id="url" type="text" placeholder="https://host:20000" autocomplete="off" />
-    <label for="pwd">密码（可选，保存后自动登录）</label>
-    <input id="pwd" type="password" placeholder="留空则不保存" autocomplete="off" />
-    <button id="connect" class="primary">连接</button>
-    <div id="err" class="err"></div>
-    <div class="hint">示例：https://192.168.1.100:20000</div>
+    <!-- Form -->
+    <div class="form-card">
+      <!-- Saved server list (shown when servers exist) -->
+      <div id="serverListSection" style="display:none;">
+        <div class="server-list-header" id="serverListHeader" data-i18n="saved_servers">已保存服务器</div>
+        <div id="serverListContainer" class="server-list"></div>
+        <hr class="server-list-divider" id="serverListDivider">
+      </div>
+
+      <!-- Login form for existing / current server -->
+      <form id="connectForm" onsubmit="return false;" style="display:none;">
+        <div id="passwordGroup" class="field-group">
+          <span class="field-label" data-i18n="password_label">登录密码</span>
+          <div class="input-with-icon">
+            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <input type="password" id="password" data-i18n-placeholder="password_placeholder" placeholder="密码">
+          </div>
+        </div>
+
+        <button type="submit" class="connect-btn" id="connectBtn">
+          <span id="btnText" data-i18n="connect">连 接</span>
+        </button>
+
+        <div class="error" id="errorMsg">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+          <span id="errorText"></span>
+        </div>
+      </form>
+
+      <!-- Add server form (hidden by default) -->
+      <form id="addServerForm" onsubmit="return false;" style="display:none;">
+        <!-- Protocol -->
+        <div class="field-group">
+          <span class="field-label" data-i18n="protocol">协议</span>
+          <div class="protocol-group">
+            <label>
+              <input type="radio" name="addProtocol" value="https" checked>
+              HTTPS
+            </label>
+            <label>
+              <input type="radio" name="addProtocol" value="http">
+              HTTP
+            </label>
+          </div>
+        </div>
+
+        <!-- Host + Port -->
+        <div class="field-group">
+          <span class="field-label" data-i18n="server_address">服务器地址</span>
+          <div class="host-row">
+            <input type="text" id="addHost" placeholder="192.168.1.100" autocorrect="off" autocapitalize="none" spellcheck="false">
+            <span class="colon">:</span>
+            <input type="number" id="addPort" value="20000" inputmode="numeric">
+          </div>
+        </div>
+
+        <!-- Password -->
+        <div class="field-group">
+          <span class="field-label" data-i18n="password_label">登录密码</span>
+          <div class="input-with-icon">
+            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <input type="password" id="addPassword" data-i18n-placeholder="password_placeholder" placeholder="密码">
+          </div>
+        </div>
+
+        <button type="submit" class="connect-btn" id="addConnectBtn">
+          <span id="addBtnText" data-i18n="add_connect">添 加 并 连 接</span>
+        </button>
+        <button type="button" class="cancel-btn" id="cancelAddBtn" data-i18n="cancel">取 消</button>
+
+        <div class="error" id="addErrorMsg">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+          <span id="addErrorText"></span>
+        </div>
+      </form>
+
+      <!-- Add server button (shown in main view when server list exists) -->
+      <button type="button" class="add-server-btn" id="addServerBtn" style="display:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span data-i18n="add_server">添加服务器</span>
+      </button>
+    </div>
+
+    <div class="version" id="version"></div>
   </div>
 
-  <script>
-    function native() { return window.ClawBenchNative || {} }
+  <!-- Custom confirm dialog -->
+  <div class="dlg-overlay" id="dlgOverlay" style="display:none;">
+    <div class="dlg-box">
+      <div class="dlg-title" id="dlgTitle"></div>
+      <div class="dlg-msg" id="dlgMsg"></div>
+      <div class="dlg-actions">
+        <button class="dlg-btn dlg-cancel" id="dlgCancel" data-i18n="cancel">取消</button>
+        <button class="dlg-btn dlg-ok" id="dlgOk" data-i18n="confirm">确认</button>
+      </div>
+    </div>
+  </div>
 
-    function setErr(msg) { document.getElementById('err').textContent = msg || '' }
+<script>
+  var connecting = false;
+  var savedServers = [];
 
-    function parseList(json) {
-      try {
-        var arr = JSON.parse(json || '[]')
-        return Array.isArray(arr) ? arr.filter(function (e) { return e && typeof e.url === 'string' }) : []
-      } catch (e) { return [] }
-    }
+  // SVG icons
+  var SVG_SERVER = '<svg class="server-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>';
+  var SVG_X = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
-    function renderServerList() {
-      var n = native()
-      var list = n.getServerList ? parseList(n.getServerList()) : []
-      var container = document.getElementById('serverList')
-      var empty = document.getElementById('empty')
-      container.innerHTML = ''
-      empty.style.display = list.length ? 'none' : 'block'
-      list.forEach(function (srv) {
-        var row = document.createElement('div')
-        row.className = 'server-item'
-        var url = document.createElement('span')
-        url.className = 'url'
-        url.textContent = srv.url
-        var connect = document.createElement('button')
-        connect.textContent = '连接'
-        connect.onclick = function () {
-          var pwd = (typeof srv.password === 'string') ? srv.password : ''
-          doConnect(srv.url, pwd)
-        }
-        var del = document.createElement('button')
-        del.className = 'del'
-        del.textContent = '✕'
-        del.onclick = function () {
-          if (n.removeServer) n.removeServer(srv.url)
-          renderServerList()
-        }
-        row.appendChild(url); row.appendChild(connect); row.appendChild(del)
-        container.appendChild(row)
-      })
-    }
+  function applyI18n() {
+    document.querySelectorAll('[data-i18n]').forEach(function(el) {
+      el.textContent = t(el.getAttribute('data-i18n'));
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) {
+      el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+    });
+  }
 
-    function doConnect(url, password) {
-      var n = native()
-      setErr('')
-      document.getElementById('connect').disabled = true
-      if (password && n.saveServer) n.saveServer(url, password)
-      if (password && n.setSSHPassword) n.setSSHPassword(password)
-      if (n.connectToServer) n.connectToServer(url, password)
-    }
+  window.addEventListener('DOMContentLoaded', function() {
+    // Apply i18n to all elements with data-i18n / data-i18n-placeholder
+    applyI18n();
 
-    document.getElementById('connect').addEventListener('click', function () {
-      var url = document.getElementById('url').value.trim()
-      var pwd = document.getElementById('pwd').value
-      if (!url) { setErr('请输入服务器地址'); return }
-      try {
-        var u = new URL(url)
-        if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error()
-      } catch (e) { setErr('地址格式无效，请包含 http(s)://'); return }
-      doConnect(url, pwd)
-    })
+    // Load server list (single source of truth)
+    loadServerList();
 
-    // Prefill last used server URL if any
+    // Version
     try {
-      var n = native()
-      if (n.getSavedServerConfig) {
-        var cfg = JSON.parse(n.getSavedServerConfig() || '{}')
-        if (cfg.host) {
-          var proto = cfg.protocol || 'https'
-          var port = cfg.port ? ':' + cfg.port : ''
-          var saved = proto + '://' + cfg.host + port
-          if (saved) document.getElementById('url').value = saved
-        }
-      }
-    } catch (e) {}
+      var ver = ClawBenchNative.getAppVersion();
+      if (ver) document.getElementById('version').textContent = 'v' + ver;
+    } catch(e) {}
 
-    renderServerList()
-  </script>
+    // Event: connect to existing server
+    document.getElementById('connectForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      if (connecting) return;
+      hideError('errorMsg');
+
+      var passwordEl = document.getElementById('password');
+      var passwordVisible = document.getElementById('passwordGroup').style.display !== 'none';
+      var password = passwordVisible ? passwordEl.value : (connectForm.getAttribute('data-saved-password') || '');
+
+      if (!password) {
+        showError('errorMsg', t('enter_password'));
+        passwordEl.focus();
+        return;
+      }
+
+      // Current server URL is stored as data attribute on the form
+      var url = document.getElementById('connectForm').getAttribute('data-url');
+      if (!url) return;
+
+      setConnecting(true);
+      try {
+        // Update saved password in case it was changed
+        ClawBenchNative.saveServer(url, password);
+        ClawBenchNative.connectToServer(url, password);
+      } catch(e) {
+        showError('errorMsg', t('connection_failed') + e.message);
+        setConnecting(false);
+      }
+    });
+
+    // Event: add and connect to new server
+    document.getElementById('addServerForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      if (connecting) return;
+      hideError('addErrorMsg');
+
+      var host = document.getElementById('addHost').value.trim();
+      var port = document.getElementById('addPort').value.trim();
+      var password = document.getElementById('addPassword').value;
+      var protocol = document.querySelector('input[name="addProtocol"]:checked').value;
+
+      if (!host) {
+        showError('addErrorMsg', t('enter_address'));
+        document.getElementById('addHost').focus();
+        return;
+      }
+      if (!port) {
+        port = (protocol === 'https') ? '443' : '80';
+      }
+
+      var url = protocol + '://' + host + ':' + port;
+      if (url.endsWith('/')) url = url.substring(0, url.length - 1);
+
+      setConnecting(true, true);
+      try {
+        // Save to native list first
+        ClawBenchNative.saveServer(url, password);
+        ClawBenchNative.connectToServer(url, password);
+      } catch(e) {
+        showError('addErrorMsg', t('connection_failed') + e.message);
+        setConnecting(false, true);
+      }
+    });
+
+    // Event: show add form
+    document.getElementById('addServerBtn').addEventListener('click', function() {
+      showAddForm();
+    });
+
+    // Event: cancel add form
+    document.getElementById('cancelAddBtn').addEventListener('click', function() {
+      hideAddForm();
+    });
+  });
+
+  function loadServerList() {
+    try {
+      var json = ClawBenchNative.getServerList();
+      savedServers = JSON.parse(json);
+      if (!Array.isArray(savedServers)) savedServers = [];
+    } catch(e) {
+      savedServers = [];
+    }
+    renderServerList();
+  }
+
+  function renderServerList() {
+    var container = document.getElementById('serverListContainer');
+    var section = document.getElementById('serverListSection');
+    var connectForm = document.getElementById('connectForm');
+    var addBtn = document.getElementById('addServerBtn');
+
+    if (savedServers.length === 0) {
+      // No saved servers — show the add form directly
+      section.style.display = 'none';
+      connectForm.style.display = 'none';
+      addBtn.style.display = 'none';
+      showAddForm();
+      return;
+    }
+
+    // Build server list HTML — default to first server in list
+    var html = '';
+    savedServers.forEach(function(srv, idx) {
+      var isActive = (idx === 0);
+      html += '<div class="server-item' + (isActive ? ' active' : '') + '" data-url="' + escHtml(srv.url) + '" onclick="selectServer(\'' + escJs(srv.url) + '\')">';
+      html += '  <div class="server-item-info">';
+      html += '    <span class="server-indicator"></span>';
+      html += '    ' + SVG_SERVER;
+      html += '    <span class="server-item-url">' + escHtml(formatHost(srv.url)) + '</span>';
+      html += '  </div>';
+      html += '  <button class="server-delete-btn" onclick="event.stopPropagation(); deleteServer(\'' + escJs(srv.url) + '\')" title="' + t('delete') + '">';
+      html += '    ' + SVG_X;
+      html += '  </button>';
+      html += '</div>';
+    });
+
+    container.innerHTML = html;
+    section.style.display = 'block';
+
+    // Show connect form and add button
+    connectForm.style.display = 'block';
+    addBtn.style.display = 'flex';
+
+    // Select first server by default
+    var selected = savedServers[0];
+
+    connectForm.setAttribute('data-url', selected.url);
+    connectForm.setAttribute('data-saved-password', selected.password || '');
+    // Hide password field if saved password exists; show if no password saved
+    var passwordGroup = document.getElementById('passwordGroup');
+    var passwordEl = document.getElementById('password');
+    if (selected.password) {
+      passwordGroup.style.display = 'none';
+      passwordEl.value = '';
+    } else {
+      passwordGroup.style.display = 'block';
+      passwordEl.value = '';
+      passwordEl.focus();
+    }
+  }
+
+  function selectServer(url) {
+    var srv = savedServers.find(function(s) { return s.url === url; });
+    if (!srv) return;
+
+    // Update active state visually
+    var items = document.querySelectorAll('.server-item');
+    items.forEach(function(el) {
+      if (el.getAttribute('data-url') === url) {
+        el.classList.add('active');
+      } else {
+        el.classList.remove('active');
+      }
+    });
+
+    // Update connect form
+    var connectForm = document.getElementById('connectForm');
+    var passwordGroup = document.getElementById('passwordGroup');
+    var passwordEl = document.getElementById('password');
+    connectForm.setAttribute('data-url', url);
+    connectForm.setAttribute('data-saved-password', srv.password || '');
+    hideError('errorMsg');
+    if (srv.password) {
+      passwordGroup.style.display = 'none';
+      passwordEl.value = '';
+    } else {
+      passwordGroup.style.display = 'block';
+      passwordEl.value = '';
+      passwordEl.focus();
+    }
+  }
+
+  function customConfirm(message, opts) {
+    opts = opts || {};
+    var title = opts.title || '';
+    var confirmText = opts.confirmText || t('confirm');
+    var cancelText = opts.cancelText || t('cancel');
+
+    return new Promise(function(resolve) {
+      var overlay = document.getElementById('dlgOverlay');
+      var titleEl = document.getElementById('dlgTitle');
+      var msgEl = document.getElementById('dlgMsg');
+      var okBtn = document.getElementById('dlgOk');
+      var cancelBtn = document.getElementById('dlgCancel');
+
+      titleEl.textContent = title;
+      titleEl.style.display = title ? 'block' : 'none';
+      msgEl.textContent = message;
+      okBtn.textContent = confirmText;
+      cancelBtn.textContent = cancelText;
+
+      overlay.style.display = 'flex';
+      // Force reflow before adding visible class for transition
+      overlay.offsetHeight;
+      overlay.classList.add('visible');
+
+      function cleanup(result) {
+        overlay.classList.remove('visible');
+        setTimeout(function() { overlay.style.display = 'none'; }, 200);
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onBackdrop);
+        resolve(result);
+      }
+
+      function onOk() { cleanup(true); }
+      function onCancel() { cleanup(false); }
+      function onBackdrop(e) { if (e.target === overlay) cleanup(false); }
+
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      overlay.addEventListener('click', onBackdrop);
+    });
+  }
+
+  function deleteServer(url) {
+    customConfirm(t('delete_server_msg'), { title: t('delete_server_title'), confirmText: t('delete') }).then(function(ok) {
+      if (!ok) return;
+      try {
+        ClawBenchNative.removeServer(url);
+      } catch(e) {}
+      loadServerList();
+    });
+  }
+
+  function showAddForm() {
+    document.getElementById('serverListSection').style.display = 'none';
+    document.getElementById('connectForm').style.display = 'none';
+    document.getElementById('addServerBtn').style.display = 'none';
+    document.getElementById('addServerForm').style.display = 'block';
+  }
+
+  function hideAddForm() {
+    document.getElementById('addServerForm').style.display = 'none';
+    document.getElementById('addErrorMsg').classList.remove('visible');
+    renderServerList();
+  }
+
+  function formatHost(url) {
+    try {
+      var u = new URL(url);
+      return u.origin;
+    } catch(e) {
+      return url;
+    }
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function escJs(s) {
+    return s.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"');
+  }
+
+  function showError(id, msg) {
+    var el = document.getElementById(id);
+    var textId = id === 'errorMsg' ? 'errorText' : 'addErrorText';
+    document.getElementById(textId).textContent = msg;
+    el.classList.add('visible');
+  }
+
+  function hideError(id) {
+    document.getElementById(id).classList.remove('visible');
+  }
+
+  function setConnecting(loading, isAddForm) {
+    connecting = loading;
+    var btnId = isAddForm ? 'addConnectBtn' : 'connectBtn';
+    var btn = document.getElementById(btnId);
+    if (loading) {
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner"></div><span>' + t('authenticating') + '</span>';
+    } else {
+      btn.disabled = false;
+      if (isAddForm) {
+        btn.innerHTML = '<span id="addBtnText">' + t('add_connect') + '</span>';
+      } else {
+        btn.innerHTML = '<span id="btnText">' + t('connect') + '</span>';
+      }
+    }
+  }
+
+  // Called by native code on connection failure
+  function onConnectError(msg) {
+    setConnecting(false);
+    setConnecting(false, true);
+    var addForm = document.getElementById('addServerForm');
+    if (addForm.style.display !== 'none') {
+      showError('addErrorMsg', msg || t('connect_error'));
+    } else {
+      showError('errorMsg', msg || t('connect_error'));
+      // Only show password field on auth errors (wrong password, too many attempts).
+      // Network/server errors should NOT reveal the password input — the user can't
+      // fix a connection issue by entering a different password.
+      var passwordGroup = document.getElementById('passwordGroup');
+      var passwordEl = document.getElementById('password');
+      if (msg && (msg.indexOf('密码错误') !== -1 || msg.indexOf('尝试次数过多') !== -1 ||
+                  msg.indexOf(t('wrong_password')) !== -1 || msg.indexOf(t('too_many_attempts')) !== -1)) {
+        passwordGroup.style.display = 'block';
+        passwordEl.value = '';
+        passwordEl.focus();
+      }
+    }
+  }
+
+  // Called by native code on connection success
+  function onConnectSuccess() {
+    setConnecting(false);
+    setConnecting(false, true);
+  }
+</script>
 </body>
 </html>
