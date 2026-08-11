@@ -76,7 +76,7 @@ type Config struct {
 		Kokoro            KokoroConfig   `yaml:"kokoro"`              // Kokoro-specific configuration (only used when engine: "kokoro")
 		MossNano          MossNanoConfig `yaml:"moss_nano"`           // MOSS-TTS-Nano-specific configuration (only used when engine: "moss-nano")
 	} `yaml:"tts"`
-	STT         STTConfig         `yaml:"stt"` // Speech-to-text (voice input) configuration
+	STT         STTConfig         `yaml:"stt"`          // Speech-to-text (voice input) configuration
 	Summarize   SummarizeConfig   `yaml:"summarize"`    // Shared summarization configuration (TTS + Tasks)
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
 	FRP         FRPConfig         `yaml:"frp"`          // FRP (Fast Reverse Proxy) client configuration
