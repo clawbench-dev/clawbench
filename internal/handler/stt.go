@@ -1,7 +1,7 @@
-//nolint:goconst // JSON response field names are domain strings
 package handler
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -47,6 +47,11 @@ func STTTranscribe(w http.ResponseWriter, r *http.Request) {
 	language := r.FormValue("language")
 	file, _, err := r.FormFile("file")
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{strReqError: "audio file too large"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: "missing audio file"})
 		return
 	}
