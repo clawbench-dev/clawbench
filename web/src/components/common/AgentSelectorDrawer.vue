@@ -7,10 +7,10 @@
     <div class="agent-list">
       <div v-if="agents.length === 0" class="agent-list-empty">{{ t('session.noAgentsTitle') }}</div>
       <div
-        v-for="agent in agents"
+        v-for="(agent, idx) in agents"
         :key="agent.id"
         class="agent-option"
-        :class="{ selected: agent.id === modelValue }"
+        :class="{ selected: agent.id === modelValue, 'agent-option-active': listNav.activeIndex.value === idx }"
         role="button"
         tabindex="0"
         @click="handleSelect(agent.id)"
@@ -41,6 +41,8 @@ import { Bot, Star } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import { useListNav } from '@/composables/useListNav'
+import { useListKeys } from '@/composables/useListKeys'
 import { useAgents } from '@/composables/useAgents'
 
 const { t } = useI18n()
@@ -90,6 +92,25 @@ function defaultModelName(agentId: string): string {
   return getAgentDefaultModelName(agentId) || ''
 }
 
+// ── Keyboard ↑/↓ + Enter navigation over the agent list ──
+const listNav = useListNav({
+  getCount: () => agents.value.length,
+  onConfirm: (idx) => handleSelect(agents.value[idx].id),
+  onActiveChange: scrollActiveIntoView,
+})
+// Document-level keys so navigation works regardless of where focus is inside the drawer
+useListKeys({ isOpen: () => props.open, nav: listNav })
+
+function scrollActiveIntoView(index: number) {
+  const items = document.querySelectorAll('.agent-list .agent-option')
+  const el = items[index]
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+  }
+}
+
+watch(agents, () => listNav.reset())
+
 // Auto-reset touch guard and preload agents when drawer opens
 watch(() => props.open, (val) => {
   if (val) {
@@ -137,6 +158,11 @@ watch(() => props.open, (val) => {
 
 .agent-option:hover {
   background: var(--bg-secondary, #f8f9fa);
+}
+
+.agent-option-active {
+  background: var(--bg-secondary, #f8f9fa);
+  border-radius: 0;
 }
 
 .agent-option:hover .agent-option-name {

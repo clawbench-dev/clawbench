@@ -14,7 +14,9 @@
           ref="inputRef"
           v-model="search.state.query"
           :placeholder="t('file.search.placeholder')"
-          @enter="onEnter"
+          @enter="listNav.confirm"
+          @down="listNav.down"
+          @up="listNav.up"
         />
         <button
           class="fs-toggle-btn"
@@ -53,9 +55,10 @@
           </div>
           <div class="fs-results">
             <div
-              v-for="r in search.state.results"
+              v-for="(r, idx) in search.state.results"
               :key="r.path"
               class="fs-result-item"
+              :class="{ 'fs-result-item-active': listNav.activeIndex.value === idx }"
               @click="onResultClick(r)"
             >
               <div class="fs-result-icon">
@@ -93,6 +96,8 @@ import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import { useFileSearch, type FileSearchResult } from '@/composables/useFileSearch'
+import { useListNav } from '@/composables/useListNav'
+import { useListKeys } from '@/composables/useListKeys'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import { appLog } from '@/utils/appLog'
 import { isThumbableExt } from '@/utils/fileManager'
@@ -176,14 +181,28 @@ function handleReset() {
   search.reset()
 }
 
+// ── Keyboard ↑/↓ + Enter navigation over results ──
+const listNav = useListNav({
+  getCount: () => search.state.results.length,
+  onConfirm: (idx) => onResultClick(search.state.results[idx]),
+  onActiveChange: scrollActiveIntoView,
+})
+// Document-level keys so navigation also works when focus leaves the search box
+useListKeys({ isOpen: () => props.open, nav: listNav })
+
+function scrollActiveIntoView(index) {
+  const items = document.querySelectorAll('.fs-result-item')
+  const el = items[index]
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+  }
+}
+
+watch(() => search.state.results, () => listNav.reset())
+
 function handleClose() {
   search.cancelSearch()
   emit('close')
-}
-
-function onEnter() {
-  // Immediate search on enter (skip debounce)
-  search.startSearch(props.currentDir, true)
 }
 
 function onResultClick(r: FileSearchResult) {
@@ -338,6 +357,11 @@ defineExpose({ focusSearchInput })
 
 .fs-result-item:hover {
   background: var(--bg-secondary, #f8f9fa);
+}
+
+.fs-result-item-active {
+  background: var(--bg-secondary, #f8f9fa);
+  border-radius: 0;
 }
 
 .fs-result-icon {

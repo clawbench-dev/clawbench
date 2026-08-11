@@ -230,5 +230,37 @@ describe('AgentSelectorDrawer', () => {
 
       expect(wrapper.emitted('select')).toBeTruthy()
     })
+
+    it('ArrowDown + Enter on the list confirms the highlighted agent', async () => {
+      const wrapper = mountDrawer({ open: true })
+      await flushPromises()
+
+      vi.advanceTimersByTime(500)
+
+      function key(key: string) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+      }
+      key('ArrowDown')
+      key('ArrowDown')
+      key('Enter')
+      await flushPromises()
+
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0]).toEqual(['agent-2'])
+    })
+
+    it('ArrowUp + Enter on the list confirms the last agent', async () => {
+      const wrapper = mountDrawer({ open: true })
+      await flushPromises()
+
+      vi.advanceTimersByTime(500)
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await flushPromises()
+
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0]).toEqual(['agent-2'])
+    })
   })
 })

@@ -19,7 +19,7 @@
     <!-- ═══ Search results list ═══ -->
     <div v-if="!selectedSession" class="session-search-body">
       <div class="session-search-input-row">
-        <SearchInput ref="inputRef" :model-value="searchState.query" :placeholder="t('sessionSearch.placeholder')" @update:model-value="search.setQuery" />
+        <SearchInput ref="inputRef" :model-value="searchState.query" :placeholder="t('sessionSearch.placeholder')" @update:model-value="search.setQuery" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
         <div class="mode-selector">
           <button class="mode-btn" :class="{ active: searchState.preferMode === 'hybrid' }" @click="setMode('hybrid')">{{ t('sessionSearch.modeHybrid') }}</button>
           <button class="mode-btn" :class="{ active: searchState.preferMode === 'fts' }" @click="setMode('fts')">{{ t('sessionSearch.modeFts') }}</button>
@@ -36,7 +36,7 @@
             {{ t('sessionSearch.resultCount', { count: searchState.results.length }) }}
             <span v-if="searchState.searchMode" class="session-search-mode">{{ searchModeLabel }}</span>
           </div>
-          <div v-for="session in searchState.results" :key="session.session_id" class="session-search-item" @click="selectedSession = session">
+          <div v-for="(session, idx) in searchState.results" :key="session.session_id" class="session-search-item" :class="{ 'session-search-item-active': listNav.activeIndex.value === idx }" @click="selectedSession = session">
             <div class="session-search-item-header">
               <span class="session-search-item-title">{{ session.session_title || t('sessionSearch.untitledSession') }}</span>
               <span class="session-search-item-meta">{{ formatRelativeTime(session.created_at) }}</span>
@@ -97,6 +97,8 @@ import { Search, ChevronLeft, User, Bot, RotateCcw, MessageSquare } from 'lucide
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import { useSessionSearch, type SessionSearchResult } from '@/composables/useSessionSearch'
+import { useListNav } from '@/composables/useListNav'
+import { useListKeys } from '@/composables/useListKeys'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { highlightTextByPositions } from '@/utils/searchUtils'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
@@ -122,6 +124,27 @@ function setMode(mode: 'hybrid' | 'fts') {
     search.setQuery(searchState.query)
   }
 }
+
+// ── Keyboard ↑/↓ + Enter navigation over results ──
+const listNav = useListNav({
+  getCount: () => searchState.results.length,
+  onConfirm: (idx) => {
+    selectedSession.value = searchState.results[idx]
+  },
+  onActiveChange: scrollActiveIntoView,
+})
+// Document-level keys so navigation also works when focus leaves the search box
+useListKeys({ isOpen: () => props.open, nav: listNav })
+
+function scrollActiveIntoView(index: number) {
+  const items = document.querySelectorAll('.session-search-item')
+  const el = items[index]
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+  }
+}
+
+watch(() => searchState.results, () => listNav.reset())
 
 const searchModeLabel = computed(() => {
   if (!searchState.searchMode) return ''
@@ -402,6 +425,11 @@ defineExpose({ focusSearchInput })
 
 .session-search-item:hover {
   background: var(--bg-secondary, #f8f9fa);
+}
+
+.session-search-item-active {
+  background: var(--bg-secondary, #f8f9fa);
+  border-radius: 0;
 }
 
 .session-search-item-header {

@@ -22,7 +22,7 @@
         v-for="(msg, idx) in messages"
         :key="msg.id || idx"
         class="msg-item"
-        :class="{ active: msg.id === activeId }"
+        :class="{ active: msg.id === activeId, 'msg-item-active': listNav.activeIndex.value === idx }"
         :aria-current="msg.id === activeId || undefined"
         tabindex="0"
         role="button"
@@ -49,6 +49,8 @@ import { useI18n } from 'vue-i18n'
 import { MessagesSquare, Split } from 'lucide-vue-next'
 import { truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import { useListNav } from '@/composables/useListNav'
+import { useListKeys } from '@/composables/useListKeys'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { ref, watch, nextTick } from 'vue'
 
@@ -62,13 +64,32 @@ const props = defineProps({
   jumping: Boolean,
 })
 
-defineEmits(['close', 'select', 'fork'])
+const emit = defineEmits(['close', 'select', 'fork'])
 
 const listRef = ref(null)
 
 function truncateText(msg) {
   return truncateUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
 }
+
+// ── Keyboard ↑/↓ + Enter navigation over the message index ──
+const listNav = useListNav({
+  getCount: () => props.messages.length,
+  onConfirm: (idx) => emit('select', props.messages[idx]),
+  onActiveChange: scrollActiveIntoView,
+})
+// Document-level keys so navigation works regardless of where focus is inside the drawer
+useListKeys({ isOpen: () => props.open, nav: listNav })
+
+function scrollActiveIntoView(index) {
+  const items = document.querySelectorAll('.panel-list .msg-item')
+  const el = items[index]
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+  }
+}
+
+watch(() => props.messages, () => listNav.reset())
 
 // Scroll the active message into view when the drawer opens.
 // Must wait for loading/jumping to finish so .panel-list is rendered (listRef is non-null).
@@ -176,6 +197,11 @@ watch([() => props.open, () => props.loading, () => props.jumping], async ([isOp
 
 .msg-item.active {
   background: var(--accent-bg, rgba(0, 102, 204, 0.06));
+}
+
+.msg-item-active {
+  background: var(--bg-tertiary);
+  border-radius: 0;
 }
 
 /* Timeline node */

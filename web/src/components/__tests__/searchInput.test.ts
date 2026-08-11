@@ -79,6 +79,22 @@ describe('SearchInput', () => {
     expect(wrapper.emitted('enter')).toBeTruthy()
   })
 
+  it('emits down on ArrowDown keydown', async () => {
+    const wrapper = mountInput()
+
+    await wrapper.find('input').trigger('keydown', { key: 'ArrowDown' })
+
+    expect(wrapper.emitted('down')).toBeTruthy()
+  })
+
+  it('emits up on ArrowUp keydown', async () => {
+    const wrapper = mountInput()
+
+    await wrapper.find('input').trigger('keydown', { key: 'ArrowUp' })
+
+    expect(wrapper.emitted('up')).toBeTruthy()
+  })
+
   it('applies focused class on focus', async () => {
     const wrapper = mountInput()
     const vm = wrapper.vm as any

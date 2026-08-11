@@ -9,14 +9,14 @@
     </template>
 
     <div class="toc-body">
-      <SearchInput v-model="searchQuery" :placeholder="t('toc.searchPlaceholder')" @dblclick="clearSearch" />
+      <SearchInput v-model="searchQuery" :placeholder="t('toc.searchPlaceholder')" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" @dblclick="clearSearch" />
       <div class="toc-list">
         <div v-if="filteredToc.length === 0" class="toc-empty">{{ searchQuery ? t('toc.noMatch') : t('toc.noHeadings') }}</div>
         <a
-          v-for="item in filteredToc"
+          v-for="(item, idx) in filteredToc"
           :key="item.id"
           class="toc-item"
-          :class="{ active: activeId === item.id }"
+          :class="{ active: activeId === item.id, 'toc-item-active': listNav.activeIndex.value === idx }"
           :data-level="item.level"
           @click.prevent="scrollTo(item)"
         >
@@ -43,6 +43,8 @@ import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
+import { useListNav } from '@/composables/useListNav'
+import { useListKeys } from '@/composables/useListKeys'
 import { extractToc, slugify } from '@/utils/toc.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
@@ -157,6 +159,25 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
 }, { immediate: true })
 
 watch(searchQuery, () => handleSearch())
+
+// ── Keyboard ↑/↓ + Enter navigation over TOC ──
+const listNav = useListNav({
+  getCount: () => filteredToc.value.length,
+  onConfirm: (idx) => scrollTo(filteredToc.value[idx]),
+  onActiveChange: scrollActiveIntoView,
+})
+// Document-level keys so navigation also works when focus leaves the search box
+useListKeys({ isOpen: () => props.open, nav: listNav })
+
+function scrollActiveIntoView(index) {
+  const items = document.querySelectorAll('.toc-item')
+  const el = items[index]
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+  }
+}
+
+watch(filteredToc, () => listNav.reset())
 
 function handleSearch() {
     const query = searchQuery.value.toLowerCase().trim()
@@ -294,6 +315,7 @@ watch(() => props.open, (val) => {
 }
 .toc-item:hover { background: var(--bg-tertiary); color: var(--accent-color); }
 .toc-item.active { color: var(--accent-color); border-left-color: var(--accent-color); background: var(--bg-tertiary); border-radius: 0; }
+.toc-item-active { color: var(--accent-color); background: var(--bg-tertiary); border-radius: 0; }
 .toc-item[data-level="2"] { padding-left: 20px; }
 .toc-item[data-level="3"] { padding-left: 32px; }
 .toc-item[data-level="4"] { padding-left: 44px; }

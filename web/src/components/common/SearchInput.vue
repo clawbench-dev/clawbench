@@ -10,6 +10,7 @@
       @focus="focused = true"
       @blur="focused = false"
       @keydown.enter="$emit('enter')"
+      @keydown="onKeydown"
       @dblclick="$emit('dblclick')"
     />
     <button v-if="modelValue" class="search-pill-clear" @click="$emit('update:modelValue', '')" :title="t('search.clear')">
@@ -30,7 +31,7 @@ const props = defineProps({
   placeholder: { type: String, default: '' },
 })
 
-defineEmits(['update:modelValue', 'enter', 'dblclick'])
+const emit = defineEmits(['update:modelValue', 'enter', 'dblclick', 'down', 'up'])
 
 const inputRef = ref(null)
 const focused = ref(false)
@@ -41,6 +42,18 @@ function focus() {
   el.focus()
   // Select existing content so typing replaces it (like a normal editor's find box)
   if (props.modelValue) el.select()
+}
+
+// Forward arrow-key navigation to the parent so the result list can be
+// traversed from the search box (like a normal editor's find box).
+function onKeydown(e) {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    emit('down')
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    emit('up')
+  }
 }
 
 defineExpose({ focus, inputRef, focused })

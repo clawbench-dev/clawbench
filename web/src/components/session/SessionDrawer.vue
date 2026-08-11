@@ -22,10 +22,10 @@
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
         <div
-          v-for="session in sessionsWithStatus"
+          v-for="(session, idx) in sessionsWithStatus"
           :key="session.id"
           class="session-row"
-          :class="{ active: session.id === currentSessionId, running: session.running }"
+          :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx }"
         >
           <span v-if="session.running" class="session-running-line"></span>
           <div
@@ -77,6 +77,8 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
+import { useListNav } from '@/composables/useListNav'
+import { useListKeys } from '@/composables/useListKeys'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -218,6 +220,28 @@ function selectSession(sessionId, backend) {
   bottomSheetRef.value?.close()
 }
 
+// ── Keyboard ↑/↓ + Enter navigation over the session list ──
+const listNav = useListNav({
+  getCount: () => sessionsWithStatus.value.length,
+  onConfirm: (idx) => {
+    const s = sessionsWithStatus.value[idx]
+    if (s) selectSession(s.id, s.backend)
+  },
+  onActiveChange: scrollActiveIntoView,
+})
+// Document-level keys so navigation works regardless of where focus is inside the drawer
+useListKeys({ isOpen: () => props.open, nav: listNav })
+
+function scrollActiveIntoView(index) {
+  const items = document.querySelectorAll('.session-list .session-item')
+  const el = items[index]
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+  }
+}
+
+watch(sessionsWithStatus, () => listNav.reset())
+
 function createSession(agentId) {
   agentSelectorDrawer.close()
   emit('create', agentId)
@@ -308,6 +332,13 @@ onUnmounted(() => {
 .session-item.active {
   border-left: 4px solid var(--accent-color, #0066cc);
   padding-left: 8px;
+}
+
+/* Keyboard ↑/↓ highlight — applied on the whole row so it covers the
+   archive button too (same treatment as .session-row:hover). */
+.session-row.session-row-active {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border-radius: 0;
 }
 
 .session-row.active {

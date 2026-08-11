@@ -43,7 +43,7 @@
         >
           <button
             class="model-item"
-            :class="{ current: m.id === currentModelId, 'is-default': m.id === defaultModelId }"
+            :class="{ current: m.id === currentModelId, 'is-default': m.id === defaultModelId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectModel(m)"
             @contextmenu.prevent="showDefaultMenu(m)"
             @touchstart="onTouchStart(m, $event)"
@@ -79,7 +79,7 @@
         >
           <button
             class="thinking-item"
-            :class="{ current: level.id === currentThinkingEffort, 'is-default': level.id === defaultThinkingEffort }"
+            :class="{ current: level.id === currentThinkingEffort, 'is-default': level.id === defaultThinkingEffort, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectThinkingEffort(level.id)"
             @contextmenu.prevent="showThinkingDefaultMenu(level.id)"
             @touchstart="onTouchStartThinking(level.id, $event)"
@@ -149,7 +149,7 @@
         >
           <button
             class="thinking-item"
-            :class="{ current: mode.id === currentModeId, 'is-default': mode.id === defaultModeId }"
+            :class="{ current: mode.id === currentModeId, 'is-default': mode.id === defaultModeId, 'nav-active': listNav.activeIndex.value === idx }"
             @click="selectMode(mode)"
             @contextmenu.prevent="showModeDefaultMenu(mode)"
             @touchstart="onTouchStartMode(mode, $event)"
@@ -200,6 +200,8 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
+import { useListNav } from '@/composables/useListNav'
+import { useListKeys } from '@/composables/useListKeys'
 import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
 import { apiPost } from '@/utils/api'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
@@ -283,6 +285,38 @@ const filteredModels = computed(() => {
   if (!q) return models.value
   return models.value.filter(m => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
 })
+
+// ── Keyboard ↑/↓ + Enter navigation over the active tab's list ──
+const listNav = useListNav({
+  getCount: () => {
+    if (activeTab.value === 'model') return filteredModels.value.length
+    if (activeTab.value === 'thinking') return thinkingLevels.value.length
+    if (activeTab.value === 'mode') return availableModes.value.length
+    return 0
+  },
+  onConfirm: (idx) => {
+    if (activeTab.value === 'model') selectModel(filteredModels.value[idx])
+    else if (activeTab.value === 'thinking') selectThinkingEffort(thinkingLevels.value[idx].id)
+    else if (activeTab.value === 'mode') selectMode(availableModes.value[idx])
+  },
+  onActiveChange: scrollActiveIntoView,
+})
+
+// Document-level keys so navigation works regardless of where focus is inside the drawer
+useListKeys({ isOpen: () => props.open, nav: listNav })
+
+function scrollActiveIntoView(index) {
+  const items = document.querySelectorAll('.model-list .model-item, .model-list .thinking-item')
+  const el = items[index]
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+  }
+}
+
+// Reset highlight when switching tabs or the model search changes
+// (thinkingLevels/availableModes are computed lazily, so we avoid watching them
+// directly to prevent eager evaluation in mocked/test contexts.)
+watch([activeTab, searchQuery], () => listNav.reset())
 
 // Reset search when tab changes or drawer reopens
 watch(() => props.open, (val) => {
@@ -690,6 +724,12 @@ defineExpose({
 .model-item:hover,
 .thinking-item:hover {
   background: var(--bg-tertiary, #f0f0f0);
+}
+
+.model-item.nav-active,
+.thinking-item.nav-active {
+  background: var(--bg-tertiary, #f0f0f0);
+  border-radius: 0;
 }
 
 .model-item.current,

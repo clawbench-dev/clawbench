@@ -110,9 +110,9 @@ function mountDrawer(props: Record<string, any> = {}) {
         'lucide-vue-next': LucideStub,
         HeaderMarquee: { template: '<span class="marquee-stub"><slot /></span>' },
         SearchInput: {
-          template: '<input class="search-input-stub" />',
+          template: '<input class="search-input-stub" @keydown.down.prevent="$emit(\'down\')" @keydown.up.prevent="$emit(\'up\')" @keydown.enter="$emit(\'enter\')" />',
           props: ['modelValue', 'placeholder'],
-          emits: ['update:modelValue', 'enter'],
+          emits: ['update:modelValue', 'enter', 'down', 'up'],
         },
         FileIcon: { template: '<span class="file-icon-stub" />' },
       },
@@ -224,8 +224,60 @@ describe('FileSearchDrawer', () => {
     expect(wrapper.emitted('selectFile')).toBeFalsy()
   })
 
-  it('clicking reset button calls reset', async () => {
+  it('ArrowDown then Enter confirms the highlighted result (equal to click)', async () => {
+    mockState.query = 'go'
+    mockState.results = [
+      { name: 'a.go', path: 'a.go', type: 'file', matchedIndices: [] },
+      { name: 'b.go', path: 'cmd/b.go', type: 'file', matchedIndices: [] },
+    ]
+    mockState.total = 2
     const wrapper = mountDrawer()
+
+    // ArrowDown twice → highlight second result, then Enter confirms it
+    await wrapper.find('input').trigger('keydown', { key: 'ArrowDown' })
+    await wrapper.find('input').trigger('keydown', { key: 'ArrowDown' })
+    await wrapper.find('input').trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('cmd')
+    expect(wrapper.emitted('selectFile')![0][0]).toBe('cmd/b.go')
+  })
+
+  it('ArrowUp then Enter confirms the last result', async () => {
+    mockState.query = 'go'
+    mockState.results = [
+      { name: 'a.go', path: 'a.go', type: 'file', matchedIndices: [] },
+      { name: 'b.go', path: 'cmd/b.go', type: 'file', matchedIndices: [] },
+    ]
+    mockState.total = 2
+    const wrapper = mountDrawer()
+
+    // ArrowUp from no selection → last result (b.go), Enter confirms it
+    await wrapper.find('input').trigger('keydown', { key: 'ArrowUp' })
+    await wrapper.find('input').trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('cmd')
+    expect(wrapper.emitted('selectFile')![0][0]).toBe('cmd/b.go')
+  })
+
+  it('Enter without navigation confirms the first result', async () => {
+    mockState.query = 'go'
+    mockState.results = [
+      { name: 'a.go', path: 'root/a.go', type: 'file', matchedIndices: [] },
+      { name: 'b.go', path: 'cmd/b.go', type: 'file', matchedIndices: [] },
+    ]
+    mockState.total = 2
+    const wrapper = mountDrawer()
+
+    await wrapper.find('input').trigger('keydown', { key: 'Enter' })
+
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('root')
+    expect(wrapper.emitted('selectFile')![0][0]).toBe('root/a.go')
+  })
+
+  it('clicking reset button calls reset', async () => {    const wrapper = mountDrawer()
     const buttons = wrapper.findAll('.fs-toggle-btn')
     await buttons[buttons.length - 1].trigger('click')
     expect(mockReset).toHaveBeenCalled()
