@@ -417,7 +417,7 @@ defineExpose({
 .search-result-text :deep(.hljs-selector-class) { color: #c18401; }
 .search-result-text :deep(.hljs-selector-id) { color: #4078f2; }
 .search-result-text :deep(mark) {
-  background: rgba(255, 230, 0, 0.5);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
@@ -453,7 +453,7 @@ defineExpose({
 [data-theme="dark"] .search-result-text .hljs-selector-class { color: #e5c07b; }
 [data-theme="dark"] .search-result-text .hljs-selector-id { color: #61afef; }
 [data-theme="dark"] .search-result-text mark {
-  background: rgba(255, 230, 0, 0.35);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
   color: inherit;
 }
 </style>

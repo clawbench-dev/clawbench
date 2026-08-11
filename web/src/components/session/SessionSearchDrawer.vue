@@ -442,7 +442,7 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-item-preview :deep(mark) {
-  background: rgba(255, 230, 0, 0.5);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
@@ -593,7 +593,7 @@ defineExpose({ focusSearchInput })
 }
 
 .detail-chunk-text :deep(mark.search-hl) {
-  background: rgba(255, 230, 0, 0.5);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
   border-radius: 2px;
   padding: 0 1px;
   color: inherit;
@@ -628,12 +628,12 @@ defineExpose({ focusSearchInput })
 <style>
 /* Dark theme overrides — non-scoped for [data-theme] selector */
 [data-theme="dark"] .session-search-item-preview mark {
-  background: rgba(255, 230, 0, 0.35);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
   color: inherit;
 }
 
 [data-theme="dark"] .detail-chunk-text mark.search-hl {
-  background: rgba(255, 230, 0, 0.35);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
   color: inherit;
 }
 

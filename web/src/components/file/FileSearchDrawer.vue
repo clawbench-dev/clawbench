@@ -373,7 +373,7 @@ defineExpose({ focusSearchInput })
 }
 
 .fs-result-name :deep(mark) {
-  background: rgba(255, 230, 0, 0.5);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
   color: inherit;
   padding: 0 1px;
 }
@@ -420,7 +420,7 @@ defineExpose({ focusSearchInput })
 <style>
 /* Dark theme for search highlights - non-scoped for [data-theme] */
 [data-theme="dark"] .fs-result-name mark {
-  background: rgba(255, 230, 0, 0.35);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
   color: inherit;
 }
 </style>
