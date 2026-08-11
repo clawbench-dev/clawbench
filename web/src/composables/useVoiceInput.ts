@@ -25,6 +25,20 @@ let mediaRecorder: MediaRecorder | null = null
 let ws: WebSocket | null = null
 let mediaStream: MediaStream | null = null
 
+function stopMediaStream() {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((t) => t.stop())
+    mediaStream = null
+  }
+}
+
+function pickMimeType(): string {
+  if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+    return 'audio/webm;codecs=opus'
+  }
+  return ''
+}
+
 function wsUrl(path: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   return `${proto}://${window.location.host}${path}`
@@ -68,7 +82,8 @@ export function useVoiceInput() {
     state.value = 'recording'
     isRecording.value = true
     const chunks: Blob[] = []
-    mediaRecorder = new MediaRecorder(mediaStream!, { mimeType: 'audio/webm' })
+    const mimeType = pickMimeType()
+    mediaRecorder = new MediaRecorder(mediaStream!, mimeType ? { mimeType } : undefined)
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
     mediaRecorder.onstop = async () => {
       state.value = 'transcribing'
@@ -87,6 +102,7 @@ export function useVoiceInput() {
       } finally {
         state.value = 'done'
         isRecording.value = false
+        stopMediaStream()
       }
     }
     mediaRecorder.start()
@@ -95,7 +111,8 @@ export function useVoiceInput() {
   function startStreaming() {
     state.value = 'recording'
     isRecording.value = true
-    mediaRecorder = new MediaRecorder(mediaStream!, { mimeType: 'audio/webm' })
+    const mimeType = pickMimeType()
+    mediaRecorder = new MediaRecorder(mediaStream!, mimeType ? { mimeType } : undefined)
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
         void e.data.arrayBuffer().then((ab) => { ws!.send(new Uint8Array(ab)) })
@@ -117,6 +134,11 @@ export function useVoiceInput() {
       error.value = '语音识别连接失败'
       cancel()
     }
+    ws.onclose = () => {
+      if (state.value === 'recording') {
+        cancel()
+      }
+    }
     mediaRecorder.onstop = () => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'end' }))
@@ -126,7 +148,7 @@ export function useVoiceInput() {
 
   function finalize() {
     if (ws) { ws.close(); ws = null }
-    if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null }
+    stopMediaStream()
     state.value = 'done'
     isRecording.value = false
   }
@@ -141,7 +163,7 @@ export function useVoiceInput() {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       try { mediaRecorder.stop() } catch { /* noop */ }
     }
-    if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null }
+    stopMediaStream()
     if (ws) { ws.close(); ws = null }
     state.value = 'idle'
     isRecording.value = false
