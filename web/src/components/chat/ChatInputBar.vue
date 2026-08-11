@@ -460,14 +460,19 @@ const VOICE_LONG_PRESS_MS = 500
 let voicePressTimer = null
 let voicePointerDown = false
 let voiceLongPressActive = false
+// Set when a long-press starts recording so the synthetic click fired on release
+// is suppressed in handleSendClick (mirrors quickSendJustTriggered).
+let voiceJustRecorded = false
 
 function onSendPointerDown() {
   voicePointerDown = true
   voiceLongPressActive = false
+  voiceJustRecorded = false
   if (voicePressTimer) { clearTimeout(voicePressTimer) }
   voicePressTimer = setTimeout(() => {
     if (voicePointerDown && !hasInputContent.value) {
       voiceLongPressActive = true
+      voiceJustRecorded = true
       void toggleVoice()
     }
   }, VOICE_LONG_PRESS_MS)
@@ -490,6 +495,9 @@ watch(voiceInputText, (val) => {
 })
 
 function onVoiceShortcut(e) {
+  // NOTE: Only the hardcoded Alt+Space shortcut is currently supported.
+  // stt.shortcut_key may hold other values; matching those is out of scope
+  // and would require a lookup table of key/alt/ctrl/meta/shift combos.
   const sc = voiceShortcutKey()
   if (sc === 'Alt+Space') {
     if (e.altKey && e.code === 'Space') {
@@ -1020,6 +1028,10 @@ async function toggleAttachMenu() {
 }
 
 function handleSendClick() {
+  if (voiceJustRecorded) {
+    voiceJustRecorded = false
+    return
+  }
   if (inputText.value.trim()) {
     emit('send', inputText.value.trim())
   } else if (props.attachedFiles.length > 0) {
@@ -1163,6 +1175,11 @@ onBeforeUnmount(() => {
     clearTimeout(quickSendPressTimer)
     quickSendPressTimer = null
   }
+  if (voicePressTimer) {
+    clearTimeout(voicePressTimer)
+    voicePressTimer = null
+  }
+  voiceInput.cancel()
   clearTimeout(pasteOverlayTimer)
 
   stopPlaceholderRotation()
@@ -1895,7 +1912,7 @@ defineExpose({
   50% { transform: scale(1.4); opacity: 0.6; }
 }
 .chat-send-btn.recording {
-  background: #ff3b30;
+  background: #ff3b30 !important;
 }
 .chat-send-btn.transcribing .spin-icon {
   animation: spin 1s linear infinite;

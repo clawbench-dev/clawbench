@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'
@@ -278,6 +278,30 @@ vi.mock('@/composables/useAgents', () => ({
 
 vi.mock('@/utils/appLog.ts', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
+// Mock useVoiceInput — controllable fake for voice input tests
+const mockVoiceToggle = vi.fn()
+const mockVoiceState = ref('idle')
+const mockVoiceInputText = ref('')
+const mockVoiceShortcutKey = vi.fn(() => 'Alt+Space')
+const mockVoiceCancel = vi.fn()
+vi.mock('@/composables/useVoiceInput', () => ({
+  useVoiceInput: () => ({
+    state: mockVoiceState,
+    inputText: mockVoiceInputText,
+    error: { value: '' },
+    isRecording: { value: false },
+    toggle: mockVoiceToggle,
+    start: vi.fn(),
+    stop: vi.fn(),
+    cancel: mockVoiceCancel,
+    reset: vi.fn(),
+    appendText: vi.fn(),
+    setState: vi.fn(),
+    setInputText: vi.fn(),
+    shortcutKey: mockVoiceShortcutKey,
+  }),
 }))
 
 // ── Timer leak prevention ───────────────────────────────────
@@ -1223,6 +1247,66 @@ describe('ChatInputBar', () => {
 
       expect(preventDefault).toHaveBeenCalled()
       expect(mockUploadAndAttach).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ type: 'image/png' })]))
+    })
+  })
+
+  describe('voice input', () => {
+    beforeEach(() => {
+      mockVoiceToggle.mockReset()
+      mockVoiceShortcutKey.mockReset()
+      mockVoiceShortcutKey.mockReturnValue('Alt+Space')
+      mockVoiceInputText.value = ''
+      mockVoiceState.value = 'idle'
+    })
+
+    it('long-press on send does not open quick-send menu', async () => {
+      vi.useFakeTimers()
+      const wrapper = mountBar()
+      wrapper.vm.inputText = ''
+      await wrapper.vm.$nextTick()
+      const sendBtn = wrapper.find('.chat-send-btn')
+      // Long-press starts recording
+      await sendBtn.trigger('pointerdown')
+      vi.advanceTimersByTime(600)
+      expect(mockVoiceToggle).toHaveBeenCalled()
+      // Release + synthetic click must NOT pop the quick-send menu
+      await sendBtn.trigger('pointerup')
+      await sendBtn.trigger('click')
+      expect(wrapper.vm.showQuickMenu).toBe(false)
+      expect(wrapper.emitted('send')).toBeFalsy()
+      vi.useRealTimers()
+    })
+
+    it('Alt+Space shortcut toggles voice input', async () => {
+      mockVoiceShortcutKey.mockReturnValue('Alt+Space')
+      const wrapper = mountBar()
+      await wrapper.vm.$nextTick()
+      const event = new KeyboardEvent('keydown', { altKey: true, code: 'Space' })
+      window.dispatchEvent(event)
+      expect(mockVoiceToggle).toHaveBeenCalled()
+    })
+
+    it('watch syncs recognized voice text into input', async () => {
+      const wrapper = mountBar()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      mockVoiceInputText.value = 'hello voice'
+      await wrapper.vm.$nextTick()
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('hello voice')
+    })
+
+    it('cleans up voice timer and recording on unmount', async () => {
+      vi.useFakeTimers()
+      const wrapper = mountBar()
+      const sendBtn = wrapper.find('.chat-send-btn')
+      await sendBtn.trigger('pointerdown')
+      wrapper.unmount()
+      expect(mockVoiceCancel).toHaveBeenCalled()
+      // Firing the pending long-press timer after unmount must not throw
+      vi.advanceTimersByTime(600)
+      vi.useRealTimers()
     })
   })
 })
