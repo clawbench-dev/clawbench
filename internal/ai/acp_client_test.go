@@ -133,6 +133,44 @@ func TestClawBenchACPClient_SessionUpdate_UnregisteredSession_DropsSilently(t *t
 	assert.NoError(t, err) // no error, just silently dropped
 }
 
+func TestClawBenchACPClient_SessionUpdate_TouchesConnRefForUnregisteredSession(t *testing.T) {
+	// Even for an unregistered session (async workflow after Prompt returns),
+	// SessionUpdate must record connection activity so the idle sweep does not
+	// close the connection while the workflow is still streaming events.
+	agent := &model.Agent{ID: "test-async-agent", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "session-async")
+
+	c := NewClawBenchACPClient()
+	c.connRef = conn
+
+	// Set lastUsed to an old time to verify TouchSessionUpdate advances it
+	old := time.Now().Add(-10 * time.Minute)
+	conn.mu.Lock()
+	conn.lastUsed = old
+	conn.mu.Unlock()
+
+	ctx := context.Background()
+	notif := acp.SessionNotification{
+		SessionId: acp.SessionId("unknown-sess"),
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Content: acp.ContentBlock{
+					Text: &acp.ContentBlockText{Text: "async progress"},
+				},
+			},
+		},
+	}
+
+	err := c.SessionUpdate(ctx, notif)
+	assert.NoError(t, err)
+
+	// The connection's lastActivityNano must be newer than the old lastUsed,
+	// proving TouchSessionUpdate was invoked for the unregistered session.
+	activity := conn.lastActivityNano()
+	assert.True(t, activity > old.UnixNano(),
+		"SessionUpdate should record activity on connRef for unregistered sessions")
+}
+
 func TestClawBenchACPClient_SessionUpdate_CachesCommands(t *testing.T) {
 	c := NewClawBenchACPClient()
 	ch := make(chan StreamEvent, 10)

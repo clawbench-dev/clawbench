@@ -130,6 +130,56 @@ func TestACPConnManager_MarkIdle_NonexistentConn(t *testing.T) {
 	})
 }
 
+// --- ACPConn.TouchSessionUpdate / lastActivityNano ---
+
+func TestACPConn_TouchSessionUpdate_UpdatesLastActivity(t *testing.T) {
+	conn := newACPConn(nil, "test-touch-sid")
+
+	// Set lastUsed to a known old time so lastActivityNano falls back to it
+	old := time.Now().Add(-10 * time.Minute)
+	conn.mu.Lock()
+	conn.lastUsed = old
+	conn.mu.Unlock()
+
+	// Before any SessionUpdate, lastActivityNano equals lastUsed
+	assert.Equal(t, old.UnixNano(), conn.lastActivityNano())
+
+	// TouchSessionUpdate records a newer activity timestamp
+	conn.TouchSessionUpdate()
+
+	after := conn.lastActivityNano()
+	assert.True(t, after > old.UnixNano(), "TouchSessionUpdate should advance lastActivityNano")
+}
+
+func TestACPConn_LastActivityNano_PrefersNewerSessionUpdate(t *testing.T) {
+	conn := newACPConn(nil, "test-activity-sid")
+
+	// lastUsed is fresh
+	now := time.Now()
+	conn.mu.Lock()
+	conn.lastUsed = now
+	conn.mu.Unlock()
+
+	// A newer SessionUpdate wins over lastUsed
+	conn.TouchSessionUpdate()
+
+	got := conn.lastActivityNano()
+	assert.True(t, got >= now.UnixNano(), "lastActivityNano should prefer the newer of lastUsed/lastSessionUpdate")
+}
+
+func TestACPConn_LastActivityNano_StaleSessionUpdateFallsBackToLastUsed(t *testing.T) {
+	conn := newACPConn(nil, "test-stale-sid")
+
+	// lastUsed is newer than the SessionUpdate timestamp
+	conn.mu.Lock()
+	conn.lastUsed = time.Now()
+	conn.mu.Unlock()
+	conn.lastSessionUpdate.Store(time.Now().Add(-30 * time.Minute).UnixNano())
+
+	got := conn.lastActivityNano()
+	assert.Equal(t, conn.lastUsed.UnixNano(), got, "lastActivityNano should fall back to lastUsed when SessionUpdate is stale")
+}
+
 // --- spawnLocked mutex release during cmd.Wait ---
 
 func TestACPConn_CancelTurn_DoesNotBlockOnDeadConn(t *testing.T) {
