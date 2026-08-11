@@ -880,32 +880,37 @@ describe('branchNames on nodes', () => {
 
 // ─── Fork line structure tests ─────────────────────────────────────────────
 
-describe('fork line structure: vertical + bezier (mirror of merge-in)', () => {
-  it('fork produces a vertical line segment before the bezier', () => {
+describe('fork line structure: bezier + vertical (mirror of merge-in)', () => {
+  it('fork vertical line sits on the branch lane, NOT overlapping the main line', () => {
     // SINGLE_MERGE: merge commit (row 1, lane 0) forks to feature (row 2, lane 1)
     const { lines } = computeGraphData(SINGLE_MERGE, ROW_HEIGHT, undefined) as any
 
-    // FORK vertical line: starts at childLane X (20) and stays on X=20 (vertical on lane 0)
+    // The fork's vertical segment must be on the branch lane (X=40), not on
+    // the main lane (X=20). Previously it ran on the main lane and was
+    // coincident with the main line for a full row.
     const forkVerts = lines.filter((l: any) => {
       if (l.path.includes('C') || l.fade) return false
-      // Vertical line on lane 0 (X=20) between merge commit and one row below
-      return l.path.startsWith('M20,') && l.color === '#e67e22' // parentLane color (orange)
+      return l.lane === 1 && l.color === '#e67e22' // parentLane color (orange)
     })
     expect(forkVerts.length).toBeGreaterThanOrEqual(1)
-    // The vertical line should go from childBottom to childRowBottom
-    // row 1: childCy = 96, childBottom = 101, childRowBottom = 128
     for (const v of forkVerts) {
-      expect(v.lane).toBe(1) // parentLane
+      expect(v.path.startsWith('M40,')).toBe(true) // branch lane X
     }
+
+    // No orange vertical should run on the main lane (X=20)
+    const mainLaneOrange = lines.filter((l: any) =>
+      !l.path.includes('C') && l.path.startsWith('M20,') && l.color === '#e67e22'
+    )
+    expect(mainLaneOrange).toHaveLength(0)
   })
 
-  it('fork bezier starts at childRowBottom (one row below the merge commit)', () => {
+  it('fork bezier starts at the merge node bottom (childBottom)', () => {
     const { lines } = computeGraphData(SINGLE_MERGE, ROW_HEIGHT, undefined) as any
-    // row 1 merge commit: childRowBottom = (1+1)*64 = 128
+    // row 1 merge commit: childCy = 96, childBottom = 101
     const forkBez = lines.find((l: any) => {
       if (!l.path.includes('C') || l.fade) return false
-      // Starts from lane 0 X=20 at y=128
-      return l.path.startsWith('M20,128')
+      // Starts from lane 0 X=20 at y=101 (the merge node's bottom edge)
+      return l.path.startsWith('M20,101')
     })
     expect(forkBez).toBeDefined()
     expect(forkBez.lane).toBe(1) // parentLane
@@ -914,27 +919,28 @@ describe('fork line structure: vertical + bezier (mirror of merge-in)', () => {
 
   it('fork bezier control points ensure tangential entry/exit (vertical tangent)', () => {
     const { lines } = computeGraphData(SINGLE_MERGE, ROW_HEIGHT, undefined) as any
-    const forkBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith('M20,128'))
+    const forkBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith('M20,101'))
     expect(forkBez).toBeDefined()
 
     // Parse the bezier: M startX,startY C cp1X,cp1Y cp2X,cp2Y endX,endY
     const nums = forkBez.path.match(/[\d.]+/g).map(Number)
     const [startX, startY, cp1X, cp1Y, cp2X, cp2Y, endX, endY] = nums
 
-    // cp1 should be at startX (tangential to vertical at start)
+    // cp1 should be at startX (tangential to vertical at start on the main lane)
     expect(cp1X).toBe(startX)
-    // cp2 should be at endX (tangential to vertical at end)
+    // cp2 should be at endX (tangential to vertical at end on the branch lane)
     expect(cp2X).toBe(endX)
-    // cp1 should be between startY and cp2Y (not inverted)
+    // Control points are monotonically increasing in Y (no inversion)
     expect(cp1Y).toBeGreaterThan(startY)
     expect(cp2Y).toBeGreaterThan(cp1Y)
+    expect(cp2Y).toBeLessThan(endY)
   })
 
   it('fork and merge-in bezier have mirrored control point ratios', () => {
     const { lines } = computeGraphData(SINGLE_MERGE, ROW_HEIGHT, undefined) as any
 
-    const forkBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith('M20,128'))
-    const mergeInBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith('M40,3'))
+    const forkBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith('M20,101'))
+    const mergeInBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith('M40,320'))
 
     expect(forkBez).toBeDefined()
     expect(mergeInBez).toBeDefined()
@@ -958,13 +964,53 @@ describe('fork line structure: vertical + bezier (mirror of merge-in)', () => {
 
   it('fork vertical line and bezier both use parentLane color', () => {
     const { lines } = computeGraphData(SINGLE_MERGE, ROW_HEIGHT, undefined) as any
-    // All FORK-related lines (vertical + bezier) should be orange (lane 1 color)
+    // All FORK-related lines (bezier + vertical) should be orange (lane 1 color)
     const forkLines = lines.filter((l: any) => {
       if (l.fade) return false
       // Lane 1 (feature branch) lines that are part of the FORK
       return l.lane === 1 && l.color === '#e67e22'
     })
-    expect(forkLines.length).toBeGreaterThanOrEqual(2) // vertical + bezier at minimum
+    expect(forkLines.length).toBeGreaterThanOrEqual(2) // bezier + vertical at minimum
+  })
+})
+
+// ─── Fork overlap regression: fork must not overlap the main line ──────────
+
+describe('fork does not overlap the main line', () => {
+  it('no fork vertical segment is coincident with a main-lane vertical line', () => {
+    // For every topology, assert that the fork's vertical (drawn on the branch
+    // lane) never shares X + Y-range with a main-lane (lane 0) vertical line.
+    const allRepos = [SINGLE_MERGE, MULTI_BRANCH, FREQUENT_MERGE, LONG_LIVED, OCTOPUS]
+    for (const data of allRepos) {
+      const { lines } = computeGraphData(data, ROW_HEIGHT, undefined) as any
+
+      // Collect all vertical segments (same X at start and end)
+      const verts: any[] = []
+      for (const l of lines) {
+        if (l.fade) continue
+        const n = l.path.match(/[\d.]+/g)
+        if (!n || n.length !== 4) continue
+        const [x0, y0, x1, y1] = n.map(Number)
+        if (Math.abs(x0 - x1) < 0.001) {
+          verts.push({ x: x0, lo: Math.min(y0, y1), hi: Math.max(y0, y1), color: l.color })
+        }
+      }
+
+      // Detect coincident overlaps between lines of different colors
+      for (let i = 0; i < verts.length; i++) {
+        for (let j = i + 1; j < verts.length; j++) {
+          const a = verts[i]
+          const b = verts[j]
+          if (Math.abs(a.x - b.x) < 0.001 && a.color !== b.color) {
+            const lo = Math.max(a.lo, b.lo)
+            const hi = Math.min(a.hi, b.hi)
+            // A >1px coincident overlap between different-colored verticals
+            // would render as a doubled/overlapping line.
+            expect(hi - lo).toBeLessThanOrEqual(1)
+          }
+        }
+      }
+    }
   })
 })
 

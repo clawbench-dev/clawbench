@@ -373,44 +373,52 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
         })
       } else if (pi > 0) {
         // Cross-lane fork: merge commit's non-first parent (the branch tip).
-        // Mirror of merge-in: short vertical line from the child node, then a
-        // smooth S-curve bezier to the parent lane, then a vertical line to the
-        // parent.  This is the exact mirror of merge-in's (vertical + bezier)
-        // structure, so both look equally smooth.
-        // Color uses the parent lane (the branch being merged in), not the child
-        // lane, so the line visually belongs to the merged branch.
+        // Mirror of merge-in: a short bezier leaves the merge node from the
+        // main lane and lands on the branch lane, then a vertical line runs
+        // down the branch lane to the branch tip.
+        //
+        // Previously this drew a vertical stub on the merge commit's own lane
+        // (childX) before the bezier. Because the merge commit sits on the
+        // main line, that stub ran coincident with the main line for a full
+        // row — the "branch merges into main then overlaps it" asymmetry.
+        // Putting the vertical on the branch lane (parentX) instead mirrors
+        // merge-in (which also draws its vertical on the branch lane) and
+        // eliminates the overlap.
+        //
+        // Color uses the parent lane (the branch being merged in), not the
+        // child lane, so the line visually belongs to the merged branch.
         const childX = laneCx(childLane)
         const parentX = laneCx(parentLane)
         const childBottom = childCy + 5
         const parentTop = parentCy - 5
 
-        // Mirror of merge-in: vertical line goes from child down to one row
-        // below, then bezier takes over (merge-in: vertical to parentRowTop, then
-        // bezier; fork: vertical to childRowBottom, then bezier).
+        // Bezier leaves the merge node and reaches the branch lane one row
+        // below the merge commit. This is the exact inverse mirror of
+        // merge-in: merge-in = long vertical + short bezier; fork = short
+        // bezier + long vertical.
         const childRowBottom = (row + 1) * rowHeight
-        const bezierFromY = childRowBottom
+        const bezierEndY = childRowBottom
 
-        // Draw vertical line from child to one row below
-        if (bezierFromY > childBottom) {
+        // Short bezier from the merge node onto the branch lane — control
+        // points stay on their respective X (childX at start, parentX at end)
+        // so the curve is tangential to the vertical at both ends.
+        const dy = bezierEndY - childBottom
+        const cp1Y = childBottom + dy * 0.25
+        const cp2Y = bezierEndY - dy * 0.25
+        lines.push({
+          path: `M${childX},${childBottom} C${childX},${cp1Y} ${parentX},${cp2Y} ${parentX},${bezierEndY}`,
+          color: laneColor(parentLane),
+          lane: parentLane,
+        })
+
+        // Vertical line on the branch lane down to the branch tip
+        if (parentTop > bezierEndY) {
           lines.push({
-            path: `M${childX},${childBottom} L${childX},${bezierFromY}`,
+            path: `M${parentX},${bezierEndY} L${parentX},${parentTop}`,
             color: laneColor(parentLane),
             lane: parentLane,
           })
         }
-
-        // Short bezier from child lane to parent lane — control points
-        // mirror merge-in: cp1 near start (stays on childX), cp2 near end
-        // (stays on parentX), keeping the curve tangential to vertical at
-        // both ends.
-        const dy = parentTop - bezierFromY
-        const cp1Y = bezierFromY + dy * 0.25
-        const cp2Y = parentTop - dy * 0.25
-        lines.push({
-          path: `M${childX},${bezierFromY} C${childX},${cp1Y} ${parentX},${cp2Y} ${parentX},${parentTop}`,
-          color: laneColor(parentLane),
-          lane: parentLane,
-        })
       } else {
         // Cross-lane merge-in: child's first parent is on a different lane.
         // Render as: vertical line(s) on branch lane from child down toward
