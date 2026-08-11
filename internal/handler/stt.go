@@ -75,6 +75,9 @@ func STTTranscribe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"text": text})
 }
 
+// sttWSWriteTimeout is the timeout for individual WebSocket writes.
+const sttWSWriteTimeout = 5 * time.Second
+
 // sttWS type constants (satisfy goconst, aligned with existing WS constants).
 const (
 	sttWSType   = "type"
@@ -184,7 +187,15 @@ func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 			}
 			msg := sttWSServerMsg{Type: sttWSText, Text: text}
 			data, _ := json.Marshal(msg)
-			if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
+
+			state.mu.Lock()
+			doneNow := state.done
+			state.mu.Unlock()
+			if doneNow {
+				continue
+			}
+
+			if err := writeSTTWSText(conn, data); err != nil {
 				cancel()
 				return
 			}
@@ -238,5 +249,12 @@ func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 
 	msg := sttWSServerMsg{Type: sttWSDone, Final: finalText}
 	data, _ := json.Marshal(msg)
-	_ = conn.Write(context.Background(), websocket.MessageText, data)
+	_ = writeSTTWSText(conn, data)
+}
+
+// writeSTTWSText sends a text message to the client with a write timeout.
+func writeSTTWSText(conn *websocket.Conn, data []byte) error {
+	writeCtx, cancel := context.WithTimeout(context.Background(), sttWSWriteTimeout)
+	defer cancel()
+	return conn.Write(writeCtx, websocket.MessageText, data)
 }
