@@ -495,12 +495,12 @@ watch(voiceInputText, (val) => {
 })
 
 function onVoiceShortcut(e) {
-  // NOTE: Only the hardcoded Alt+Space shortcut is currently supported.
+  // NOTE: Only the hardcoded F9 shortcut is currently supported.
   // stt.shortcut_key may hold other values; matching those is out of scope
   // and would require a lookup table of key/alt/ctrl/meta/shift combos.
   const sc = voiceShortcutKey()
-  if (sc === 'Alt+Space') {
-    if (e.altKey && e.code === 'Space') {
+  if (sc === 'F9') {
+    if (e.code === 'F9' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
       e.preventDefault()
       void toggleVoice()
     }

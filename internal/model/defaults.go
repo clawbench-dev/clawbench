@@ -209,7 +209,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.STT.ChunkMs = 1000
 	}
 	if cfg.STT.ShortcutKey == "" {
-		cfg.STT.ShortcutKey = "Alt+Space"
+		cfg.STT.ShortcutKey = "F9"
 	}
 
 	// --- RAG ---

@@ -1376,7 +1376,7 @@ export default {
       sttChunkMs: '流式切片间隔(ms)',
       sttChunkMsDesc: '流式识别时每间隔多少毫秒提交一次增量识别',
       sttShortcutKey: '录音快捷键',
-      sttShortcutKeyDesc: '触发录音的全局快捷键（默认 Alt+Space）',
+      sttShortcutKeyDesc: '触发录音的全局快捷键（默认 F9）',
       ragStatusSectionHeader: '运行状态',
       ragIndexSectionHeader: '索引与分块',
       ragVectorSectionHeader: '向量嵌入',

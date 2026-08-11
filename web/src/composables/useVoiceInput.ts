@@ -48,7 +48,7 @@ export function useVoiceInput() {
   const settings = useSettingsConfig()
 
   const shortcutKey = () =>
-    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.shortcut_key'] as string | undefined ?? 'Alt+Space'
+    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.shortcut_key'] as string | undefined ?? 'F9'
   const streaming = () =>
     Boolean((settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.streaming'] ?? false)
   const chunkMs = () =>

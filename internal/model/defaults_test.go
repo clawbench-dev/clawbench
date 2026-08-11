@@ -160,8 +160,8 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.STT.ChunkMs != 1000 {
 		t.Errorf("STT.ChunkMs = %d, want 1000", cfg.STT.ChunkMs)
 	}
-	if cfg.STT.ShortcutKey != "Alt+Space" {
-		t.Errorf("STT.ShortcutKey = %q, want Alt+Space", cfg.STT.ShortcutKey)
+	if cfg.STT.ShortcutKey != "F9" {
+		t.Errorf("STT.ShortcutKey = %q, want F9", cfg.STT.ShortcutKey)
 	}
 	if cfg.RAG.SearchPoolSize != 20 {
 		t.Errorf("RAG.SearchPoolSize = %d, want 20", cfg.RAG.SearchPoolSize)

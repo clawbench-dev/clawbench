@@ -96,7 +96,7 @@ type STTConfig struct {
 	Language    string `yaml:"language"`     // Language code (default: "zh")
 	Streaming   bool   `yaml:"streaming"`    // true=streaming incremental, false=non-streaming full (default: false)
 	ChunkMs     int    `yaml:"chunk_ms"`     // Streaming slice interval in ms (default: 1000)
-	ShortcutKey string `yaml:"shortcut_key"` // Recording shortcut (default: "Alt+Space")
+	ShortcutKey string `yaml:"shortcut_key"` // Recording shortcut (default: "F9")
 }
 
 // FileSearchConfig holds configuration for the file search feature.

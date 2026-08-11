@@ -1375,7 +1375,7 @@ export default {
       sttChunkMs: 'Streaming interval (ms)',
       sttChunkMsDesc: 'Interval in ms between incremental recognition submissions',
       sttShortcutKey: 'Recording shortcut',
-      sttShortcutKeyDesc: 'Global shortcut to trigger recording (default Alt+Space)',
+      sttShortcutKeyDesc: 'Global shortcut to trigger recording (default F9)',
       ragStatusSectionHeader: 'Status',
       ragIndexSectionHeader: 'Indexing & Chunking',
       ragVectorSectionHeader: 'Vector Embedding',

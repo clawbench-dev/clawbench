@@ -324,7 +324,7 @@ const serverDefaults: Record<string, unknown> = {
   'stt.language': 'zh',
   'stt.streaming': false,
   'stt.chunk_ms': 1000,
-  'stt.shortcut_key': 'Alt+Space',
+  'stt.shortcut_key': 'F9',
   'rag.base_url': 'http://localhost:11434',
   'rag.model': 'bge-m3',
   'rag.api_key': '',

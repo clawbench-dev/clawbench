@@ -284,7 +284,7 @@ vi.mock('@/utils/appLog.ts', () => ({
 const mockVoiceToggle = vi.fn()
 const mockVoiceState = ref('idle')
 const mockVoiceInputText = ref('')
-const mockVoiceShortcutKey = vi.fn(() => 'Alt+Space')
+const mockVoiceShortcutKey = vi.fn(() => 'F9')
 const mockVoiceCancel = vi.fn()
 vi.mock('@/composables/useVoiceInput', () => ({
   useVoiceInput: () => ({
@@ -1254,7 +1254,7 @@ describe('ChatInputBar', () => {
     beforeEach(() => {
       mockVoiceToggle.mockReset()
       mockVoiceShortcutKey.mockReset()
-      mockVoiceShortcutKey.mockReturnValue('Alt+Space')
+      mockVoiceShortcutKey.mockReturnValue('F9')
       mockVoiceInputText.value = ''
       mockVoiceState.value = 'idle'
     })
@@ -1277,11 +1277,11 @@ describe('ChatInputBar', () => {
       vi.useRealTimers()
     })
 
-    it('Alt+Space shortcut toggles voice input', async () => {
-      mockVoiceShortcutKey.mockReturnValue('Alt+Space')
+    it('F9 shortcut toggles voice input', async () => {
+      mockVoiceShortcutKey.mockReturnValue('F9')
       const wrapper = mountBar()
       await wrapper.vm.$nextTick()
-      const event = new KeyboardEvent('keydown', { altKey: true, code: 'Space' })
+      const event = new KeyboardEvent('keydown', { code: 'F9' })
       window.dispatchEvent(event)
       expect(mockVoiceToggle).toHaveBeenCalled()
     })
