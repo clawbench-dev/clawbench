@@ -195,6 +195,23 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.TTS.MaxCacheFiles = 100
 	}
 
+	// --- STT ---
+	if cfg.STT.BaseURL == "" {
+		cfg.STT.BaseURL = "http://localhost:8000/v1"
+	}
+	if cfg.STT.Model == "" {
+		cfg.STT.Model = "openai/whisper-large-v3"
+	}
+	if cfg.STT.Language == "" {
+		cfg.STT.Language = "zh"
+	}
+	if cfg.STT.ChunkMs <= 0 {
+		cfg.STT.ChunkMs = 1000
+	}
+	if cfg.STT.ShortcutKey == "" {
+		cfg.STT.ShortcutKey = "Alt+Space"
+	}
+
 	// --- RAG ---
 	// Bool zero-value trap: default to true when absent from config.
 	if !presence["rag.vector_enabled"] {

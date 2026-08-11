@@ -148,6 +148,21 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.TTS.Speed != 1.0 {
 		t.Errorf("TTS.Speed = %v, want 1.0", cfg.TTS.Speed)
 	}
+	if cfg.STT.BaseURL != "http://localhost:8000/v1" {
+		t.Errorf("STT.BaseURL = %q, want default", cfg.STT.BaseURL)
+	}
+	if cfg.STT.Model != "openai/whisper-large-v3" {
+		t.Errorf("STT.Model = %q, want default", cfg.STT.Model)
+	}
+	if cfg.STT.Language != "zh" {
+		t.Errorf("STT.Language = %q, want default", cfg.STT.Language)
+	}
+	if cfg.STT.ChunkMs != 1000 {
+		t.Errorf("STT.ChunkMs = %d, want 1000", cfg.STT.ChunkMs)
+	}
+	if cfg.STT.ShortcutKey != "Alt+Space" {
+		t.Errorf("STT.ShortcutKey = %q, want Alt+Space", cfg.STT.ShortcutKey)
+	}
 	if cfg.RAG.SearchPoolSize != 20 {
 		t.Errorf("RAG.SearchPoolSize = %d, want 20", cfg.RAG.SearchPoolSize)
 	}

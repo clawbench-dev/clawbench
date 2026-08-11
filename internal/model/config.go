@@ -76,6 +76,7 @@ type Config struct {
 		Kokoro            KokoroConfig   `yaml:"kokoro"`              // Kokoro-specific configuration (only used when engine: "kokoro")
 		MossNano          MossNanoConfig `yaml:"moss_nano"`           // MOSS-TTS-Nano-specific configuration (only used when engine: "moss-nano")
 	} `yaml:"tts"`
+	STT         STTConfig         `yaml:"stt"` // Speech-to-text (voice input) configuration
 	Summarize   SummarizeConfig   `yaml:"summarize"`    // Shared summarization configuration (TTS + Tasks)
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
 	FRP         FRPConfig         `yaml:"frp"`          // FRP (Fast Reverse Proxy) client configuration
@@ -85,6 +86,17 @@ type Config struct {
 	Feishu      FeishuConfig      `yaml:"feishu"`       // Feishu (飞书) enterprise bot push notifications
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
+}
+
+// STTConfig holds configuration for speech-to-text (voice input).
+type STTConfig struct {
+	BaseURL     string `yaml:"base_url"`     // vLLM OpenAI-compatible base URL (default: "http://localhost:8000/v1")
+	APIKey      string `yaml:"api_key"`      // API key (optional)
+	Model       string `yaml:"model"`        // Recognition model (default: "openai/whisper-large-v3")
+	Language    string `yaml:"language"`     // Language code (default: "zh")
+	Streaming   bool   `yaml:"streaming"`    // true=streaming incremental, false=non-streaming full (default: false)
+	ChunkMs     int    `yaml:"chunk_ms"`     // Streaming slice interval in ms (default: 1000)
+	ShortcutKey string `yaml:"shortcut_key"` // Recording shortcut (default: "Alt+Space")
 }
 
 // FileSearchConfig holds configuration for the file search feature.
