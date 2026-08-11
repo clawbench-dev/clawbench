@@ -2325,3 +2325,87 @@ func TestTriggerRestart_NilFunc(t *testing.T) {
 	// Should not panic when restartFunc is nil
 	TriggerRestart()
 }
+
+// --- STT config: applyConfigPatch, validation, GET response ---
+
+func TestApplyConfigPatch_STT(t *testing.T) {
+	origConfig := model.ConfigInstance
+	defer func() { model.ConfigInstance = origConfig }()
+
+	applyConfigPatch(map[string]any{
+		"stt": map[string]any{
+			"base_url":     "http://localhost:9000/v1",
+			"api_key":      "k",
+			"model":        "whisper-small",
+			"language":     "en",
+			"streaming":    true,
+			"chunk_ms":     float64(800),
+			"shortcut_key": "Ctrl+M",
+		},
+	})
+	cfg2 := model.ConfigInstance
+	if cfg2.STT.BaseURL != "http://localhost:9000/v1" {
+		t.Errorf("STT.BaseURL = %q, want http://localhost:9000/v1", cfg2.STT.BaseURL)
+	}
+	if cfg2.STT.APIKey != "k" {
+		t.Errorf("STT.APIKey = %q, want k", cfg2.STT.APIKey)
+	}
+	if cfg2.STT.Model != "whisper-small" {
+		t.Errorf("STT.Model = %q, want whisper-small", cfg2.STT.Model)
+	}
+	if cfg2.STT.Language != "en" {
+		t.Errorf("STT.Language = %q, want en", cfg2.STT.Language)
+	}
+	if !cfg2.STT.Streaming {
+		t.Error("STT.Streaming = false, want true")
+	}
+	if cfg2.STT.ChunkMs != 800 {
+		t.Errorf("STT.ChunkMs = %d, want 800", cfg2.STT.ChunkMs)
+	}
+	if cfg2.STT.ShortcutKey != "Ctrl+M" {
+		t.Errorf("STT.ShortcutKey = %q, want Ctrl+M", cfg2.STT.ShortcutKey)
+	}
+}
+
+func TestValidatePatchValues_STTBadURL(t *testing.T) {
+	err := validatePatchValues(map[string]any{
+		"stt": map[string]any{"base_url": "://bad"},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid stt.base_url, got nil")
+	}
+}
+
+func TestServeConfig_Get_STT(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.STT.BaseURL = "http://localhost:9000/v1"
+	cfg.STT.APIKey = "k"
+	cfg.STT.Model = "whisper-small"
+	cfg.STT.Language = "en"
+	cfg.STT.Streaming = true
+	cfg.STT.ChunkMs = 800
+	cfg.STT.ShortcutKey = "Ctrl+M"
+	model.ConfigInstance = cfg
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	stt, ok := resp["stt"].(map[string]any)
+	require.True(t, ok, "response should contain stt section")
+	assert.Equal(t, "http://localhost:9000/v1", stt["base_url"])
+	assert.Equal(t, "k", stt["api_key"])
+	assert.Equal(t, "whisper-small", stt["model"])
+	assert.Equal(t, "en", stt["language"])
+	assert.Equal(t, true, stt["streaming"])
+	assert.Equal(t, float64(800), stt["chunk_ms"])
+	assert.Equal(t, "Ctrl+M", stt["shortcut_key"])
+}

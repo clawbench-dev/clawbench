@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,6 +68,14 @@ var hotReloadFields = map[string]bool{
 	"tts.kokoro.lang":            true,
 	"tts.moss_nano.model_dir":    true,
 	"tts.moss_nano.backend":      true,
+	// STT — speech-to-text config, hot-reloadable
+	"stt.base_url":     true,
+	"stt.api_key":      true,
+	"stt.model":        true,
+	"stt.language":     true,
+	"stt.streaming":    true,
+	"stt.chunk_ms":     true,
+	"stt.shortcut_key": true,
 	// Summarize — reconstruct TTS summarizer
 	"summarize.tts_backend":      true,
 	"summarize.tts_model":        true,
@@ -179,6 +188,7 @@ type configResponse struct {
 	Upload              configUpload         `json:"upload"`
 	Terminal            configTerminal       `json:"terminal"`
 	TTS                 configTTS            `json:"tts"`
+	STT                 configSTT            `json:"stt"`
 	RAG                 configRAG            `json:"rag"`
 	PortForward         configPortForward    `json:"port_forward"`
 	FRP                 configFRP            `json:"frp"`
@@ -250,6 +260,16 @@ type configMossNano struct {
 type configAPI struct {
 	BaseURL string `json:"base_url"`
 	Key     string `json:"key"`
+}
+
+type configSTT struct {
+	BaseURL     string `json:"base_url"`
+	APIKey      string `json:"api_key"`
+	Model       string `json:"model"`
+	Language    string `json:"language"`
+	Streaming   bool   `json:"streaming"`
+	ChunkMs     int    `json:"chunk_ms"`
+	ShortcutKey string `json:"shortcut_key"`
 }
 
 type configRAG struct {
@@ -336,6 +356,13 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.kokoro.lang":                   true,
 	"tts.moss_nano.model_dir":           true,
 	"tts.moss_nano.backend":             true,
+	"stt.base_url":                      true,
+	"stt.api_key":                       true,
+	"stt.model":                         true,
+	"stt.language":                      true,
+	"stt.streaming":                     true,
+	"stt.chunk_ms":                      true,
+	"stt.shortcut_key":                  true,
 	"rag.vector_enabled":                true,
 	"rag.base_url":                      true,
 	"rag.model":                         true,
@@ -452,6 +479,15 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Speed:         cfg.TTS.Speed,
 			Voice:         cfg.TTS.Voice,
 			MaxCacheFiles: cfg.TTS.MaxCacheFiles,
+		},
+		STT: configSTT{
+			BaseURL:     cfg.STT.BaseURL,
+			APIKey:      cfg.STT.APIKey,
+			Model:       cfg.STT.Model,
+			Language:    cfg.STT.Language,
+			Streaming:   cfg.STT.Streaming,
+			ChunkMs:     cfg.STT.ChunkMs,
+			ShortcutKey: cfg.STT.ShortcutKey,
 		},
 		RAG: configRAG{
 			VectorEnabled:  cfg.RAG.VectorEnabled,
@@ -674,6 +710,20 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 					return fmt.Errorf("tts.moss_nano.backend must be one of: onnx,pytorch")
 				}
 			}
+		}
+	}
+
+	if sttVal, ok := patch["stt"].(map[string]any); ok {
+		if v, ok := sttVal["base_url"].(string); ok && v != "" {
+			if _, err := url.ParseRequestURI(v); err != nil {
+				return fmt.Errorf("stt.base_url must be a valid URL")
+			}
+		}
+		if v, ok := sttVal["chunk_ms"].(float64); ok && v <= 0 {
+			return fmt.Errorf("stt.chunk_ms must be positive")
+		}
+		if v, ok := sttVal["shortcut_key"].(string); ok && v == "" {
+			return fmt.Errorf("stt.shortcut_key must not be empty")
 		}
 	}
 
@@ -995,6 +1045,30 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			if v, ok := mossNano["backend"].(string); ok {
 				cfg.TTS.MossNano.Backend = v
 			}
+		}
+	}
+
+	if sttVal, ok := patch["stt"].(map[string]any); ok {
+		if v, ok := sttVal["base_url"].(string); ok {
+			cfg.STT.BaseURL = v
+		}
+		if v, ok := sttVal["api_key"].(string); ok {
+			cfg.STT.APIKey = v
+		}
+		if v, ok := sttVal["model"].(string); ok {
+			cfg.STT.Model = v
+		}
+		if v, ok := sttVal["language"].(string); ok {
+			cfg.STT.Language = v
+		}
+		if v, ok := sttVal["streaming"].(bool); ok {
+			cfg.STT.Streaming = v
+		}
+		if v, ok := sttVal["chunk_ms"].(float64); ok {
+			cfg.STT.ChunkMs = int(v)
+		}
+		if v, ok := sttVal["shortcut_key"].(string); ok {
+			cfg.STT.ShortcutKey = v
 		}
 	}
 
