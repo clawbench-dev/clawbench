@@ -56,11 +56,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 14 category rows', () => {
+  it('renders 15 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(14)
+    expect(rows.length).toBe(15)
   })
 
   it('renders category labels', () => {
@@ -92,7 +92,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'appearance', 'projectFiles', 'chat', 'agents', 'terminal',
-      'tts', 'stt', 'rag', 'portForward', 'frp', 'notification', 'security', 'debug', 'about',
+      'tts', 'stt', 'aiSummary', 'rag', 'portForward', 'frp', 'notification', 'security', 'debug', 'about',
     ]
 
     const rows = wrapper.findAll('.settings-index__row')

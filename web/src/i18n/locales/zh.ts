@@ -1202,6 +1202,7 @@ export default {
       terminal: '终端',
       tts: '语音朗读',
       stt: '语音识别',
+      aiSummary: 'AI 摘要',
       rag: 'RAG记忆',
       portForward: '端口转发',
       frp: '内网穿透 (frp)',

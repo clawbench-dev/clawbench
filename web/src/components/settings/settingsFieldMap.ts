@@ -248,7 +248,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   tts: [
     { type: 'item', spec: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'navigateTtsEngine', type: 'action', source: 'local', navigateTo: 'tts:tts_engine' } },
     { type: 'item', spec: { labelKey: 'settings.items.summarizeTtsSection', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'navigateSummarizeVoice', type: 'action', source: 'local', navigateTo: 'tts:summarization_voice' } },
-    { type: 'item', spec: { labelKey: 'settings.items.aiSummarySection', descriptionKey: 'settings.items.aiSummarySectionDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'tts:ai_summary' } },
   ],
   tts_engine: [
     { type: 'panel', config: {
@@ -337,7 +336,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       },
     }},
   ],
-  ai_summary: [
+  aiSummary: [
     { type: 'panel', config: {
       panelId: 'ai_summary',
       commonFields: [
@@ -456,10 +455,6 @@ export const subPagePanelMap: Record<string, { panelConfig: GroupPanelConfig; ti
   'tts:tts_engine': {
     panelConfig: getCategoryPanels('tts_engine')[0],
     titleKey: 'settings.items.ttsEngine',
-  },
-  'tts:ai_summary': {
-    panelConfig: getCategoryPanels('ai_summary')[0],
-    titleKey: 'settings.items.aiSummarySection',
   },
   'stt:stt_engine': {
     panelConfig: getCategoryPanels('stt_engine')[0],

@@ -289,6 +289,7 @@ import { useToast } from '@/composables/useToast'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useVoiceInput } from '@/composables/useVoiceInput'
 import { appLog } from '@/utils/appLog'
+import { apiGet } from '@/utils/api'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency } = useSessionIdentity()
@@ -479,6 +480,18 @@ function onRecommendationEvent(evt) {
   }
   recommendation.value = text.trim()
   showRecommendationChip.value = true
+}
+
+async function fetchLatestRecommendation(sessionId) {
+  if (!sessionId) return
+  try {
+    const data = await apiGet(`/api/chat/recommendation?session_id=${encodeURIComponent(sessionId)}`)
+    const text = data?.recommendation
+    if (!text || !text.trim()) return
+    onRecommendationEvent({ detail: { session_id: sessionId, recommendation: text } })
+  } catch (err) {
+    appLog.d('ChatInputBar', 'fetch latest recommendation failed', err)
+  }
 }
 
 function acceptRecommendation() {
@@ -760,6 +773,13 @@ watch(() => props.currentSessionId, (newId, oldId) => {
   // Restore draft for the new session (or clear if none)
   inputText.value = newId ? (draftCache.get(newId) || '') : ''
   // autoResizeTextarea is called automatically by the inputText watcher
+})
+
+// On session switch, fetch the latest persisted conversation recommendation
+// (对话推荐) so a recommendation generated while the client was offline can
+// still be shown. Reuses the same onRecommendationEvent handler as live events.
+watch(() => props.currentSessionId, (newId) => {
+  if (newId) fetchLatestRecommendation(newId)
 })
 
 const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || props.quoteData)

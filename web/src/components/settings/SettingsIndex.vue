@@ -32,6 +32,7 @@ import {
   Shield,
   Bug,
   Info,
+  Sparkles,
   ChevronRight,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -50,6 +51,7 @@ const categoryDefs = computed(() => [
   { id: 'terminal', icon: SquareTerminal },
   { id: 'tts', icon: Volume2 },
   { id: 'stt', icon: Mic },
+  { id: 'aiSummary', icon: Sparkles },
   { id: 'rag', icon: Brain },
   { id: 'portForward', icon: ArrowLeftRight },
   { id: 'frp', icon: Globe },

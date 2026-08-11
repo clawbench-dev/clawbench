@@ -1201,6 +1201,7 @@ export default {
       terminal: 'Terminal',
       tts: 'TTS Voice',
       stt: 'Speech Recognition',
+      aiSummary: 'AI Summary',
       rag: 'RAG Memory',
       portForward: 'Port Forward',
       frp: 'NAT Traversal (frp)',

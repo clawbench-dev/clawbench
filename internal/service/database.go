@@ -475,6 +475,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			error_msg TEXT NOT NULL DEFAULT '',
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
+
+		-- Conversation recommendations (对话推荐), persisted so recommendations
+		-- generated while the client was offline can be shown later.
+		CREATE TABLE IF NOT EXISTS chat_recommendations (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			project_path TEXT NOT NULL DEFAULT '',
+			recommendation TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_chat_rec_session ON chat_recommendations(session_id, id);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)

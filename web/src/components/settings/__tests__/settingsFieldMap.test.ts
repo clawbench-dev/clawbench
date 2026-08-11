@@ -182,7 +182,7 @@ describe('settingsFieldMap', () => {
   })
 
   it('ai_summary panel has shared model fields', () => {
-    const panels = getCategoryPanels('ai_summary')
+    const panels = getCategoryPanels('aiSummary')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
     expect(cfg.panelId).toBe('ai_summary')

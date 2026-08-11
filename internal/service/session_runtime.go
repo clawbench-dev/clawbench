@@ -505,6 +505,36 @@ func triggerChatRecommendation(sessionID, projectPath string, blocks []model.Con
 		},
 	})
 	slog.Info("chat recommendation emitted", slog.String("session_id", sessionID))
+
+	// Persist so the recommendation is available even if the client was offline
+	// when the session completed (e.g. APP not open at the time).
+	SaveChatRecommendation(sessionID, projectPath, recommendation)
+}
+
+// SaveChatRecommendation persists a conversation recommendation so it can be
+// fetched later (e.g. when a client that was offline opens the session).
+func SaveChatRecommendation(sessionID, projectPath, recommendation string) {
+	_, err := WriteExec(
+		"INSERT INTO chat_recommendations (session_id, project_path, recommendation) VALUES (?, ?, ?)",
+		sessionID, projectPath, recommendation,
+	)
+	if err != nil {
+		slog.Debug("failed to persist chat recommendation", slog.String("session_id", sessionID), slog.String("err", err.Error()))
+	}
+}
+
+// LatestChatRecommendation returns the most recent recommendation for a session.
+// Returns empty string if none exists.
+func LatestChatRecommendation(sessionID string) string {
+	var rec string
+	err := dbRead.QueryRow(
+		"SELECT recommendation FROM chat_recommendations WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&rec)
+	if err != nil {
+		return ""
+	}
+	return rec
 }
 
 // recentConversation returns the text of the most recent n messages in a

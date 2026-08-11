@@ -382,6 +382,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/chat/message-clusters/compute/cancel", middleware.Auth(ServeMessageClustersComputeCancel))
 	register("/api/chat/message-clusters/compute/status", middleware.Auth(ServeMessageClustersComputeStatus))
 
+	// Conversation recommendation (latest next-step suggestion for a session)
+	register("/api/chat/recommendation", middleware.Auth(ServeChatRecommendation))
+
 	// Self-upgrade
 	register("/api/upgrade/check", middleware.Auth(ServeUpgradeCheck))
 	register("/api/upgrade/start", middleware.Auth(ServeUpgradeStart))

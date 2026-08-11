@@ -124,3 +124,16 @@ func TestRecentConversation_LimitsAndOrders(t *testing.T) {
 	gotAll := recentConversation(sessionID, 0)
 	assert.Len(t, gotAll, 0, "n<=0 should return no context")
 }
+
+func TestSaveAndLatestChatRecommendation(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+	_ = db
+
+	// Persist then read back the latest recommendation.
+	SaveChatRecommendation("sess-rec-persist", "/test", "first rec")
+	SaveChatRecommendation("sess-rec-persist", "/test", "second rec")
+
+	assert.Equal(t, "second rec", LatestChatRecommendation("sess-rec-persist"))
+	assert.Equal(t, "", LatestChatRecommendation("no-such-session"))
+}
