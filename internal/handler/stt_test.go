@@ -3,16 +3,21 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/coder/websocket"
 )
 
 // sttTestProvider is a deterministic STT provider for tests.
 type sttTestProvider struct {
+	mu      sync.Mutex
 	text    string
 	errText string
 	lang    string
@@ -20,6 +25,8 @@ type sttTestProvider struct {
 }
 
 func (f *sttTestProvider) Transcribe(_ context.Context, r io.Reader, lang string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.lang = lang
 	b, _ := io.ReadAll(r)
 	f.audio = string(b)
@@ -173,6 +180,52 @@ func TestSTTTranscribe_BodyTooLarge(t *testing.T) {
 
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestSTTTranscribeWS_IncrementalAndFinal(t *testing.T) {
+	old := GetSTTProvider()
+	defer SetSTTProvider(old)
+	SetSTTProvider(&sttTestProvider{text: "识别文本"})
+
+	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/stt/transcribe/ws"
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.CloseNow()
+
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("AUDIO1")); err != nil {
+		t.Fatalf("write audio1: %v", err)
+	}
+
+	endCtl, _ := json.Marshal(sttWSControl{Type: sttWSEndCtl})
+	if err := conn.Write(ctx, websocket.MessageText, endCtl); err != nil {
+		t.Fatalf("write end: %v", err)
+	}
+
+	var finalText string
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		var m sttWSServerMsg
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if m.Type == sttWSDone {
+			finalText = m.Final
+			break
+		}
+	}
+
+	if finalText != "识别文本" {
+		t.Fatalf("final = %q, want 识别文本", finalText)
 	}
 }
 
