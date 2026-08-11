@@ -32,6 +32,17 @@ const scrollOffset = ref(0)
 let pointerStartX = 0
 let scrollStartOffset = 0
 
+// Fling inertia (velocity in px/ms, negative = moving left)
+const FLING_THRESHOLD = 0.3
+const FLING_DECAY = 0.93
+const FLING_STOP_VELOCITY = 0.02
+
+let velocityX = 0
+let lastMoveX = 0
+let lastMoveT = 0
+let rafId = null
+let lastFlingFrame = 0
+
 let ro = null
 
 function checkOverflow() {
@@ -63,16 +74,26 @@ function clampOffset(offset) {
 
 function onPointerDown(e) {
   if (!isOverflow.value) return
+  stopFling()
   isDragging.value = true
   pointerStartX = e.clientX
   scrollStartOffset = scrollOffset.value
+  velocityX = 0
+  lastMoveX = e.clientX
+  lastMoveT = performance.now()
   wrapperRef.value?.setPointerCapture?.(e.pointerId)
 }
 
 function onPointerMove(e) {
   if (!isDragging.value) return
+  const now = performance.now()
   const dx = e.clientX - pointerStartX
   scrollOffset.value = clampOffset(scrollStartOffset + dx)
+  // Sample velocity from the most recent move for a responsive fling.
+  const dt = now - lastMoveT
+  if (dt > 0) velocityX = (e.clientX - lastMoveX) / dt
+  lastMoveX = e.clientX
+  lastMoveT = now
   applyScroll()
 }
 
@@ -80,6 +101,39 @@ function onPointerUp(e) {
   if (!isDragging.value) return
   isDragging.value = false
   wrapperRef.value?.releasePointerCapture?.(e.pointerId)
+  if (Math.abs(velocityX) > FLING_THRESHOLD) startFling(velocityX)
+  velocityX = 0
+}
+
+function startFling(v) {
+  if (v === 0) return
+  velocityX = v
+  lastFlingFrame = performance.now()
+  const step = (now) => {
+    if (rafId === null) return
+    const dt = now - lastFlingFrame
+    lastFlingFrame = now
+    const prev = scrollOffset.value
+    scrollOffset.value = clampOffset(prev + velocityX * dt)
+    velocityX *= FLING_DECAY
+    // Stop when velocity dies out or we hit a clamp boundary (no further travel).
+    if (
+      Math.abs(velocityX) < FLING_STOP_VELOCITY ||
+      scrollOffset.value === prev
+    ) {
+      stopFling()
+      return
+    }
+    rafId = requestAnimationFrame(step)
+  }
+  rafId = requestAnimationFrame(step)
+}
+
+function stopFling() {
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId)
+    rafId = null
+  }
 }
 
 function normalizeWheelDelta(e) {
@@ -106,6 +160,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopFling()
   ro?.disconnect()
 })
 
@@ -117,7 +172,7 @@ watch(() => props.text, async () => {
   checkOverflow()
 })
 
-defineExpose({ checkOverflow, isOverflow, isDragging, scrollOffset, getMaxScroll, clampOffset, normalizeWheelDelta, onPointerDown, onPointerMove, onPointerUp, onWheel })
+defineExpose({ checkOverflow, isOverflow, isDragging, scrollOffset, getMaxScroll, clampOffset, normalizeWheelDelta, onPointerDown, onPointerMove, onPointerUp, onWheel, startFling, stopFling })
 </script>
 
 <style>
@@ -130,7 +185,10 @@ defineExpose({ checkOverflow, isOverflow, isDragging, scrollOffset, getMaxScroll
   width: 100%;
   max-width: 100%;
   user-select: none;
-  touch-action: pan-x;
+  /* pan-y only: the element handles horizontal drag itself via pointer events.
+     pan-x would let the browser claim horizontal gestures for native scrolling,
+     firing pointercancel after a few px and breaking the manual drag. */
+  touch-action: pan-y;
 }
 
 .hm-text {

@@ -56,6 +56,118 @@ describe('HeaderMarquee', () => {
     })
   }
 
+  it('does not fling when release velocity is below threshold', () => {
+    const wrapper = mountMarquee()
+    mockDimensions(wrapper)
+    const vm = wrapper.vm as any
+    vm.checkOverflow()
+
+    const rafQueue: FrameRequestCallback[] = []
+    const nowFn = vi.fn(() => 1000) // fixed clock → no movement time → velocity ~0
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb)
+      return rafQueue.length
+    })
+    vi.stubGlobal('performance', { now: nowFn })
+
+    vm.onPointerDown({ clientX: 100, pointerId: 1 })
+    vm.onPointerMove({ clientX: 90 })
+    vm.onPointerUp({ pointerId: 1 })
+    // velocity is ~0 (fixed dt/clock) → no fling animation queued
+    expect(rafQueue.length).toBe(0)
+  })
+
+  it('startFling animates offset toward clamp boundary then stops', () => {
+    const wrapper = mountMarquee()
+    mockDimensions(wrapper)
+    const vm = wrapper.vm as any
+    vm.checkOverflow() // maxScroll = 208
+
+    // deterministic rAF queue; clock advances 16.7ms per frame
+    let t = 0
+    const rafQueue: FrameRequestCallback[] = []
+    const nowFn = vi.fn(() => (t += 16.7))
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb)
+      return rafQueue.length
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    vi.stubGlobal('performance', { now: nowFn })
+
+    vm.scrollOffset = 0
+    vm.startFling(-10) // fast leftward fling
+    expect(rafQueue.length).toBe(1)
+
+    // run frames; offset should move and eventually clamp at -208
+    let guard = 0
+    while (rafQueue.length && guard++ < 5000) {
+      const cb = rafQueue.shift()!
+      cb(nowFn())
+    }
+    expect(vm.scrollOffset).toBe(-208) // clamped at boundary
+    expect(rafQueue.length).toBe(0) // animation self-terminated
+  })
+
+  it('fling stops immediately at the clamped boundary without overshoot', () => {
+    const wrapper = mountMarquee()
+    mockDimensions(wrapper)
+    const vm = wrapper.vm as any
+    vm.checkOverflow()
+    let t = 0
+    const rafQueue: FrameRequestCallback[] = []
+    const nowFn = vi.fn(() => (t += 16.7))
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb)
+      return rafQueue.length
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    vi.stubGlobal('performance', { now: nowFn })
+
+    // start at the left boundary; fling further left must clamp & stop on first frame
+    vm.scrollOffset = -208
+    vm.startFling(-50)
+    let guard = 0
+    while (rafQueue.length && guard++ < 5000) {
+      const cb = rafQueue.shift()!
+      cb(nowFn())
+    }
+    expect(vm.scrollOffset).toBe(-208)
+    expect(rafQueue.length).toBe(0)
+  })
+
+  it('onPointerDown cancels an in-flight fling animation', () => {
+    const wrapper = mountMarquee()
+    mockDimensions(wrapper)
+    const vm = wrapper.vm as any
+    vm.checkOverflow()
+    const rafQueue: FrameRequestCallback[] = []
+    const nowFn = vi.fn(() => 0)
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb)
+      return rafQueue.length
+    })
+    const cancelSpy = vi.fn()
+    vi.stubGlobal('cancelAnimationFrame', cancelSpy)
+    vi.stubGlobal('performance', { now: nowFn })
+
+    vm.startFling(-10)
+    expect(rafQueue.length).toBe(1)
+    vm.onPointerDown({ clientX: 50, pointerId: 2 })
+    expect(cancelSpy).toHaveBeenCalled()
+  })
+
+  it('uses touch-action pan-y so the browser does not steal horizontal drags', () => {
+    const wrapper = mountMarquee()
+    const wrapperEl = wrapper.find('.hm-wrapper').element as HTMLElement
+    // pan-y delegates vertical page scrolling to the browser but keeps
+    // horizontal gestures for the component's own pointer-drag handler.
+    // pan-x would let the browser claim horizontal swipes (native panning),
+    // firing pointercancel after a few px and making the drag only move a
+    // tiny amount before stopping.
+    const styles = getComputedStyle(wrapperEl)
+    expect(styles.touchAction).toBe('pan-y')
+  })
+
   it('renders slot content inside the wrapper', () => {
     const wrapper = mountMarquee()
     const textSpan = wrapper.find('.hm-text')
