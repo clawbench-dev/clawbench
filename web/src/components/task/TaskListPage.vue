@@ -266,7 +266,6 @@ onMounted(refresh)
   .task-item:hover {
     border-color: var(--accent-color, #0066cc);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-    transform: translateY(-1px);
   }
 }
 
