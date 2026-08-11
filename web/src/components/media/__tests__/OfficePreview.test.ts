@@ -66,6 +66,15 @@ describe('OfficePreview', () => {
     expect(wrapper.find('.office-preview-container').exists()).toBe(true)
   })
 
+  it('does not block native wheel scroll for word documents', async () => {
+    const wrapper = mountOffice({ file: { name: 'report.docx', path: 'report.docx', isOffice: true } })
+    const container = wrapper.find('.office-preview-container')
+    const evt = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
+    container.element.dispatchEvent(evt)
+    // onWheel only acts on PPT zoom; it must not preventDefault plain scroll.
+    expect(evt.defaultPrevented).toBe(false)
+  })
+
   it('shows loading overlay initially', () => {
     const wrapper = mountOffice()
     expect(wrapper.find('.office-loading-overlay').exists()).toBe(true)

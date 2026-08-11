@@ -1,5 +1,5 @@
 <template>
-  <div class="office-preview-container" @wheel.prevent="onWheel">
+  <div class="office-preview-container" @wheel="onWheel">
     <!-- Preview body — component always mounted to avoid dead-lock -->
     <div
       ref="bodyRef"
@@ -158,6 +158,8 @@ function onTouchEnd(e) {
 function onWheel(e) {
   if (!isPpt.value) return
   if (e.ctrlKey || e.metaKey) {
+    // Prevent browser page zoom while we zoom the PPT instead.
+    e.preventDefault()
     const delta = e.deltaY > 0 ? -0.1 : 0.1
     scale.value = Math.max(MIN_SCALE, Math.min(scale.value + delta, MAX_SCALE))
     applyPptScale()

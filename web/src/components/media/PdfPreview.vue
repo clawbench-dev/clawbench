@@ -1,7 +1,7 @@
 <template>
   <div class="pdf-preview-container">
     <!-- Pages -->
-    <div class="pdf-pages-scroll" ref="scrollRef" @scroll="onScroll" @touchstart.passive="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @touchcancel="onTouchEnd" @wheel.prevent="onWheel">
+    <div class="pdf-pages-scroll" ref="scrollRef" @scroll="onScroll" @touchstart.passive="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @touchcancel="onTouchEnd" @wheel="onWheel">
       <div class="pdf-pages-inner" :style="pagesInnerStyle">
         <div
           v-for="page in pageCount"
@@ -124,6 +124,13 @@ const error = ref('')
 const scrollRef = ref(null)
 const canvasRefs = {}
 
+// Per-page render bookkeeping to avoid concurrent renders of the same page.
+// Both the scale watcher (renderVisiblePages) and the IntersectionObserver can
+// request the same page at once; overlapping page.render() calls corrupt the
+// canvas (e.g. appears upside down on first paint) until a later re-render.
+const renderTasks = {} // pageNum -> RenderTask
+const renderGen = {} // pageNum -> generation counter
+
 // Observer for lazy rendering
 let observer = null
 const renderedPages = new Set()
@@ -204,10 +211,20 @@ async function renderPage(pageNum, force = false) {
   const canvas = canvasRefs[pageNum]
   if (!canvas) return
 
+  // Bump generation and cancel any in-flight render for this page so we never
+  // have two page.render() calls drawing to the same canvas concurrently.
+  const gen = (renderGen[pageNum] || 0) + 1
+  renderGen[pageNum] = gen
+  if (renderTasks[pageNum]) {
+    renderTasks[pageNum].cancel()
+    renderTasks[pageNum] = null
+  }
+
   renderedPages.add(pageNum)
 
   try {
     const page = await pdfDoc.getPage(pageNum)
+    if (renderGen[pageNum] !== gen) return
     const viewport = page.getViewport({ scale: scale.value })
     const ctx = canvas.getContext('2d')
 
@@ -218,9 +235,15 @@ async function renderPage(pageNum, force = false) {
     canvas.style.height = Math.floor(viewport.height) + 'px'
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-    await page.render({ canvasContext: ctx, viewport }).promise
+    const task = page.render({ canvasContext: ctx, viewport })
+    renderTasks[pageNum] = task
+    await task.promise
   } catch {
-    renderedPages.delete(pageNum)
+    if (renderGen[pageNum] === gen) renderedPages.delete(pageNum)
+  } finally {
+    if (renderGen[pageNum] === gen && renderTasks[pageNum]) {
+      renderTasks[pageNum] = null
+    }
   }
 }
 
@@ -313,6 +336,8 @@ function onTouchEnd(e) {
 // Ctrl+scroll-to-zoom (desktop)
 function onWheel(e) {
   if (e.ctrlKey || e.metaKey) {
+    // Prevent browser page zoom while we zoom the PDF instead.
+    e.preventDefault()
     const delta = e.deltaY > 0 ? -0.1 : 0.1
     scale.value = Math.max(MIN_SCALE, Math.min(scale.value + delta, MAX_SCALE))
   }
@@ -381,6 +406,16 @@ function handleDownload() {
   downloadFileByPath(props.file.path)
 }
 
+// Cancel all in-flight page renders (used on teardown / file switch).
+function cancelAllRenders() {
+  for (const key of Object.keys(renderTasks)) {
+    if (renderTasks[key]) {
+      renderTasks[key].cancel()
+      renderTasks[key] = null
+    }
+  }
+}
+
 // Lifecycle
 onMounted(() => {
   loadPdf()
@@ -388,6 +423,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (observer) { observer.disconnect(); observer = null }
+  cancelAllRenders()
   if (pdfDoc) { pdfDoc.destroy(); pdfDoc = null }
   if (scrollRafId) { cancelAnimationFrame(scrollRafId); scrollRafId = 0 }
 })
@@ -396,6 +432,7 @@ onUnmounted(() => {
 watch(() => props.file?.path, (newPath, oldPath) => {
   if (newPath && newPath !== oldPath) {
     if (observer) { observer.disconnect(); observer = null }
+    cancelAllRenders()
     if (pdfDoc) { pdfDoc.destroy(); pdfDoc = null }
     loadPdf()
   }
@@ -412,6 +449,7 @@ defineExpose({
   outline,
   scrollToPage,
   fitWidth,
+  renderPage,
 })
 </script>
 
