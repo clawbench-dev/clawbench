@@ -296,6 +296,26 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       needsVoiceReset: true,
     }},
   ],
+  stt: [
+    { type: 'item', spec: { labelKey: 'settings.items.sttSection', descriptionKey: 'settings.items.sttSectionDesc', key: 'navigateStt', type: 'action', source: 'local', navigateTo: 'stt:stt_engine' } },
+  ],
+  stt_engine: [
+    { type: 'panel', config: {
+      panelId: 'stt_engine',
+      commonFields: [
+        { labelKey: 'settings.items.sttBaseUrl', descriptionKey: 'settings.items.sttBaseUrlDesc', key: 'stt.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.sttHeader' },
+        { labelKey: 'settings.items.sttApiKey', descriptionKey: 'settings.items.sttApiKeyDesc', key: 'stt.api_key', type: 'password', source: 'server' },
+        { labelKey: 'settings.items.sttModel', descriptionKey: 'settings.items.sttModelDesc', key: 'stt.model', type: 'text', source: 'server' },
+        { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.language', type: 'text', source: 'server' },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.streaming', type: 'switch', source: 'server' },
+        { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100 },
+        { labelKey: 'settings.items.sttShortcutKey', descriptionKey: 'settings.items.sttShortcutKeyDesc', key: 'stt.shortcut_key', type: 'text', source: 'server' },
+      ],
+      requiredFields: ['stt.base_url', 'stt.model'],
+      hasConnectivityTest: true,
+      getTestCategories: (values) => [{ category: 'stt', values }],
+    }},
+  ],
   summarization_voice: [
     { type: 'panel', config: {
       panelId: 'summarization_voice',
@@ -415,6 +435,10 @@ export const subPagePanelMap: Record<string, { panelConfig: GroupPanelConfig; ti
   'tts:tts_engine': {
     panelConfig: getCategoryPanels('tts_engine')[0],
     titleKey: 'settings.items.ttsEngine',
+  },
+  'stt:stt_engine': {
+    panelConfig: getCategoryPanels('stt_engine')[0],
+    titleKey: 'settings.items.sttSection',
   },
 }
 

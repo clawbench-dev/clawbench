@@ -16,6 +16,7 @@ const i18n = createI18n({
           agents: 'Agent偏好',
           terminal: '终端',
           tts: 'TTS语音',
+          stt: '语音识别',
           rag: 'RAG记忆',
           portForward: '端口转发',
           frp: 'FRP内网穿透',
@@ -38,6 +39,7 @@ const globalStubs = {
   'lucide-bot': true,
   'lucide-terminal': true,
   'lucide-volume2': true,
+  'lucide-mic': true,
   'lucide-brain': true,
   'lucide-arrow-left-right': true,
   'lucide-globe': true,
@@ -54,11 +56,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 13 category rows', () => {
+  it('renders 14 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(13)
+    expect(rows.length).toBe(14)
   })
 
   it('renders category labels', () => {
@@ -90,7 +92,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'appearance', 'projectFiles', 'chat', 'agents', 'terminal',
-      'tts', 'rag', 'portForward', 'frp', 'notification', 'security', 'debug', 'about',
+      'tts', 'stt', 'rag', 'portForward', 'frp', 'notification', 'security', 'debug', 'about',
     ]
 
     const rows = wrapper.findAll('.settings-index__row')
