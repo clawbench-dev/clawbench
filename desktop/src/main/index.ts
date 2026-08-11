@@ -1,10 +1,12 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, Menu } from 'electron'
 import { initStore } from './store'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { checkForUpdate } from './updater'
 
 app.whenReady().then(() => {
+  // No OS menu bar — the app is fully UI-driven (frameless).
+  Menu.setApplicationMenu(null)
   initStore()
   registerBridge()
   createMainWindow()

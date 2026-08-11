@@ -113,5 +113,6 @@ export function registerBridge(): void {
   ipcMain.on('native:set-push-enabled', (_e, enabled: boolean) => getStore().set('nativePushEnabled', enabled))
   ipcMain.on('native:update-last-seen', (_e, id: string) => { /* desktop has no SharedPreferences */ })
   ipcMain.on('native:keep-screen-on', (_e, on: boolean) => setKeepScreenOnImpl(on))
+  ipcMain.on('native:close-app', () => app.quit())
   ipcMain.on('native:log', (_e, level: string, tag: string, msg: string) => { /* route to main log */ })
 }

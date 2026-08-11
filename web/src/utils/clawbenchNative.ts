@@ -69,6 +69,8 @@ export interface ClawBenchNative {
 
   /** Optional (Electron): show a native OS notification. Click dispatches session/task navigation. */
   nativeNotify?(title: string, body: string, nav?: NotificationNav): Promise<void>
+  /** Optional (Electron): quit the desktop app. */
+  closeApp?(): void
 }
 
 /** Navigation target for a native notification click. */

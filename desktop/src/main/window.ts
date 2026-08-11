@@ -13,6 +13,7 @@ function loginPagePath(): string {
 export function createMainWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, show: false,
+    frame: false, // frameless: fully show the app UI, no OS title/menu bar
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false },
   })
   const serverUrl = getStore().get('serverUrl')
