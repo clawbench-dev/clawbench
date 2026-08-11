@@ -77,11 +77,6 @@ export function useAcpSession(options: UseAcpSessionOptions) {
     }
   }
 
-  /** Remove an ACP session from the local list (e.g. after LoadSession failed with not-found). */
-  function removeAcpSession(acpSessionId: string): void {
-    acpSessions.value = acpSessions.value.filter(s => s.sessionId !== acpSessionId)
-  }
-
   /** Load an ACP session into a new ClawBench session. Returns the new sessionId, or 'not-found' if the session no longer exists on the agent side. */
   async function acpLoadSession(acpSessionId: string): Promise<string | null> {
     const aid = currentAgentId.value
@@ -106,8 +101,13 @@ export function useAcpSession(options: UseAcpSessionOptions) {
         } catch { /* ignore parse error */ }
         if (msgKey === 'ACPSessionNotFound') {
           toast.show(gt('chat.acpSession.sessionNotFound'), { type: 'error', icon: '⚠️' })
-          // Remove the stale session from the list so the user can't retry it
-          removeAcpSession(acpSessionId)
+          // The list is host-sourced (ListSessions). Don't permanently drop the
+          // entry from the local cache on a possibly-transient/misclassified load
+          // failure — that would permanently hide sessions that still exist on the
+          // agent side. Reconcile from the host instead: if the session genuinely
+          // no longer exists it won't be returned, otherwise it stays so the user
+          // can retry.
+          await loadAcpSessions()
           return 'not-found'
         } else {
           toast.show(gt('chat.acpSession.loadFailed'), { type: 'error', icon: '⚠️' })
@@ -140,7 +140,6 @@ export function useAcpSession(options: UseAcpSessionOptions) {
     nextCursor,
     loadAcpSessions,
     acpLoadSession,
-    removeAcpSession,
     clearAcpSessions,
   }
 }

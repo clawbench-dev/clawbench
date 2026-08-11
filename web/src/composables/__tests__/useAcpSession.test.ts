@@ -150,21 +150,56 @@ describe('useAcpSession', () => {
       expect(result).toBeNull()
     })
 
-    it('shows sessionNotFound toast for ACPSessionNotFound error', async () => {
-      mockFetch.mockResolvedValue({
-        ok: false,
-        json: () => Promise.resolve({ msgKey: 'ACPSessionNotFound' }),
-      })
+    it('shows sessionNotFound toast and reconciles from host for ACPSessionNotFound', async () => {
+      // First call: acp-load returns ACPSessionNotFound. Second call: reconcile
+      // the list from the host, which still has the session (it only disappears
+      // if the host no longer returns it).
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          json: () => Promise.resolve({ msgKey: 'ACPSessionNotFound' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ sessionId: 'acp-s1', title: 'Test', createdAt: '', updatedAt: '' }],
+            nextCursor: null,
+          }),
+        })
 
       const { acpLoadSession, acpSessions } = useAcpSession({ currentAgentId })
-      // Pre-populate sessions list so we can verify removal
+      // Pre-populate sessions list
       acpSessions.value = [{ sessionId: 'acp-s1', title: 'Test', createdAt: '', updatedAt: '' }]
 
       const result = await acpLoadSession('acp-s1')
 
       expect(result).toBe('not-found')
       expect(mockToastShow).toHaveBeenCalledWith('chat.acpSession.sessionNotFound', expect.objectContaining({ type: 'error' }))
-      // The stale session should be removed from the list
+      // Session is NOT permanently removed locally — it stays because the host
+      // still reports it. The list is re-fetched from the host.
+      expect(mockFetch).toHaveBeenLastCalledWith('/api/agents/agent-1/acp-sessions')
+      expect(acpSessions.value).toContainEqual(expect.objectContaining({ sessionId: 'acp-s1' }))
+    })
+
+    it('reconciles session away from list when host no longer returns it', async () => {
+      // acp-load returns ACPSessionNotFound; reconcile shows the host no longer
+      // has the session, so the entry disappears from the list.
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          json: () => Promise.resolve({ msgKey: 'ACPSessionNotFound' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [], nextCursor: null }),
+        })
+
+      const { acpLoadSession, acpSessions } = useAcpSession({ currentAgentId })
+      acpSessions.value = [{ sessionId: 'acp-s1', title: 'Test', createdAt: '', updatedAt: '' }]
+
+      const result = await acpLoadSession('acp-s1')
+
+      expect(result).toBe('not-found')
       expect(acpSessions.value).not.toContainEqual(expect.objectContaining({ sessionId: 'acp-s1' }))
     })
 

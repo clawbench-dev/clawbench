@@ -289,17 +289,29 @@ func isUnknownConfigOption(err error) bool {
 	return strings.Contains(reqErr.Error(), "Unknown config option")
 }
 
-// IsACPResourceNotFound checks whether the error indicates the ACP agent
-// could not find the requested resource.
+// IsACPResourceNotFound checks whether the error indicates the ACP agent could
+// not find the requested resource (specifically a session).
+//
+// ACP's "-32002 Resource not found" code is generic: it applies to any missing
+// resource (a file, a tool, an MCP server), not just sessions. To avoid
+// misreporting a load failure (e.g. a referenced file is missing) as "session
+// gone", only the canonical session-scoped form is treated as a missing session:
+//   - a RequestError with code -32002 whose message is "Resource not found", or
+//   - a plain error whose text references the session resource directly.
 func IsACPResourceNotFound(err error) bool {
 	var reqErr *acp.RequestError
 	if !errors.As(err, &reqErr) {
-		return strings.Contains(err.Error(), "Resource not found")
+		// Plain (non-JSON-RPC) error: only treat it as session-not-found when the
+		// message explicitly refers to the requested session.
+		msg := strings.ToLower(err.Error())
+		return strings.Contains(msg, "resource not found") && strings.Contains(msg, "session")
 	}
-	if reqErr.Code == -32002 && strings.Contains(reqErr.Message, "Resource not found") {
-		return true
+	if reqErr.Code != -32002 {
+		return false
 	}
-	return strings.Contains(reqErr.Error(), "Resource not found")
+	// Canonical resource-not-found: message is exactly / contains "Resource not found".
+	// Avoid matching internal errors (-32603) whose data happens to embed the phrase.
+	return strings.Contains(strings.ToLower(reqErr.Message), "resource not found")
 }
 
 // buildPromptBlocks constructs ACP ContentBlock list from the chat request.

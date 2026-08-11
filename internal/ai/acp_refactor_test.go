@@ -272,6 +272,35 @@ func TestRefactor_IsACPResourceNotFound(t *testing.T) {
 		}
 		assert.False(t, IsACPResourceNotFound(reqErr))
 	})
+
+	t.Run("request_error_internal_error_with_resource_not_found_data", func(t *testing.T) {
+		// -32603 Internal error whose data happens to embed "Resource not found"
+		// (e.g. a referenced file/tool missing during load) must NOT be treated as
+		// a missing session — previously the substring match on Error() caught this.
+		reqErr := &acp.RequestError{
+			Code:    -32603,
+			Message: "Internal error",
+			Data:    map[string]any{"details": "Resource not found: /path/to/file.txt"},
+		}
+		assert.False(t, IsACPResourceNotFound(reqErr))
+	})
+
+	t.Run("plain_error_resource_not_found_file", func(t *testing.T) {
+		// A plain error mentioning "Resource not found" but NOT a session should
+		// not be classified as a missing session.
+		err := fmt.Errorf("Resource not found: /path/to/tool")
+		assert.False(t, IsACPResourceNotFound(err))
+	})
+
+	t.Run("plain_error_resource_not_found_session", func(t *testing.T) {
+		err := fmt.Errorf("Resource not found: session abc-123")
+		assert.True(t, IsACPResourceNotFound(err))
+	})
+
+	t.Run("plain_error_resource_not_found_session_lowercase", func(t *testing.T) {
+		err := fmt.Errorf("resource not found: the requested session no longer exists")
+		assert.True(t, IsACPResourceNotFound(err))
+	})
 }
 
 // ---------------------------------------------------------------------------

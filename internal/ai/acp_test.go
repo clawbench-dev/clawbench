@@ -2255,8 +2255,14 @@ func TestIsACPResourceNotFound_WrappedRequestError(t *testing.T) {
 }
 
 func TestIsACPResourceNotFound_PlainError(t *testing.T) {
-	err := fmt.Errorf("Resource not found: some-id")
+	// A plain (non-JSON-RPC) error only counts as a missing session when the
+	// message explicitly references a session; an ambiguous resource-not-found
+	// (no session keyword) must NOT be classified as "session gone".
+	err := fmt.Errorf("Resource not found: session some-id")
 	assert.True(t, IsACPResourceNotFound(err))
+
+	ambiguous := fmt.Errorf("Resource not found: some-id")
+	assert.False(t, IsACPResourceNotFound(ambiguous))
 }
 
 func TestIsACPResourceNotFound_OtherCode(t *testing.T) {
