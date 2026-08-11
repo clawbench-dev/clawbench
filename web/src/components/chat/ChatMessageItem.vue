@@ -240,17 +240,11 @@ function handleOpenFilePayload(payload) {
 const copied = ref(false)
 function handleCopyMessage() {
   if (copied.value) return
-  const blocks = props.msg?.blocks || []
-  // Find the last text block (the conclusion)
-  let lastText = ''
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    if (blocks[i].type === 'text' && blocks[i].text?.trim()) {
-      lastText = blocks[i].text
-      break
-    }
-  }
-  if (!lastText) return
-  copyText(lastText, () => {
+  // Reuse the same text extraction as read-aloud: all text + AskUserQuestion
+  // blocks, falling back to the summary for summary-only (empty-blocks) view.
+  const text = msgText.value
+  if (!text) return
+  copyText(text, () => {
     copied.value = true
     setTimeout(() => { copied.value = false }, 1500)
   })

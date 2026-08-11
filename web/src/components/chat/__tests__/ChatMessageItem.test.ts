@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
@@ -20,7 +20,11 @@ vi.mock('@/composables/useLocalhostAnnotation', () => ({
 vi.mock('@/composables/useAutoSpeech', () => ({
   extractSpeakableText: (blocks: any[]) => {
     if (!blocks || blocks.length === 0) return ''
-    return 'test text'
+    const parts: string[] = []
+    for (const b of blocks) {
+      if (b.type === 'text' && b.text?.trim()) parts.push(b.text.trim())
+    }
+    return parts.join('\n')
   },
 }))
 
@@ -244,6 +248,54 @@ describe('ChatMessageItem', () => {
       msg: { id: 'test-id-42', role: 'user', content: 'hello', blocks: [] },
     })
     expect(wrapper.find('.chat-message').attributes('data-msg-key')).toBe('db-test-id-42')
+  })
+
+  describe('copy message button', () => {
+    beforeEach(async () => {
+      const { copyText } = await import('@/utils/clipboard')
+      copyText.mockClear()
+    })
+
+    it('copies the full speakable text (all text blocks, not just the last one)', async () => {
+      const { copyText } = await import('@/utils/clipboard')
+      const wrapper = createWrapper({
+        msg: {
+          id: 'cp1',
+          role: 'assistant',
+          content: '',
+          streaming: false,
+          blocks: [
+            { type: 'text', text: 'First paragraph' },
+            { type: 'tool_use', name: 'Write', done: true, file_path: '/a.ts' },
+            { type: 'text', text: 'Conclusion' },
+          ],
+        },
+      })
+      const btn = wrapper.find('button[aria-label="复制"]')
+      await btn.trigger('click')
+      expect(copyText).toHaveBeenCalledWith('First paragraph\nConclusion', expect.any(Function))
+    })
+
+    it('copies the summary when blocks are empty (summary-only view)', async () => {
+      const { copyText } = await import('@/utils/clipboard')
+      const wrapper = createWrapper({
+        msg: { id: 'cp2', role: 'assistant', content: '', blocks: [], summary: 'A brief summary', streaming: false },
+      })
+      const btn = wrapper.find('button[aria-label="复制"]')
+      await btn.trigger('click')
+      expect(copyText).toHaveBeenCalledWith('A brief summary', expect.any(Function))
+    })
+
+    it('does not copy and shows no copied state when there is no copyable text', async () => {
+      const { copyText } = await import('@/utils/clipboard')
+      const wrapper = createWrapper({
+        msg: { id: 'cp3', role: 'assistant', content: '', blocks: [{ type: 'thinking', text: 'thought', done: true }], streaming: false },
+      })
+      const btn = wrapper.find('button[aria-label="复制"]')
+      await btn.trigger('click')
+      expect(copyText).not.toHaveBeenCalled()
+      expect(btn.classes()).not.toContain('is-copied')
+    })
   })
 
   describe('cancelled marker', () => {
