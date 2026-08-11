@@ -207,9 +207,9 @@ func testSummarizeVoice(ctx context.Context, values map[string]any) Connectivity
 		return ConnectivityTestResult{Success: true, Message: "Voice summary backend is not protocol mode, no test needed"}
 	}
 
-	baseURL := resolveStringValue(values, "summarize.tts_api.base_url", model.ConfigInstance.Summarize.TTSAPI.BaseURL)
-	apiKey := resolveStringValue(values, "summarize.tts_api.key", model.ConfigInstance.Summarize.TTSAPI.Key)
-	modelName := resolveStringValue(values, "summarize.tts_model", model.ConfigInstance.Summarize.TTSModel)
+	baseURL := resolveStringValue(values, "ai_summary.api.base_url", model.ConfigInstance.AISummary.API.BaseURL)
+	apiKey := resolveStringValue(values, "ai_summary.api.key", model.ConfigInstance.AISummary.API.Key)
+	modelName := resolveStringValue(values, "ai_summary.model", model.ConfigInstance.AISummary.Model)
 
 	if baseURL == "" {
 		return ConnectivityTestResult{Success: false, Message: "TTS API base URL is required"}

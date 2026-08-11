@@ -447,6 +447,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Load configuration — config/config.yaml is optional
 	var cfg model.Config
 	var presence map[string]bool
+	// Legacy values extracted from the raw map for migration (summarize.tts_model
+	// / tts_api were removed from the typed struct).
+	var legacySummaryBaseURL, legacySummaryKey, legacySummaryModel string
 
 	// Search for config in priority order:
 	// 1. <DataDir>/config/config.yaml (data directory)
@@ -463,6 +466,21 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		}
 		presence = model.ParsePresenceMap(raw)
 
+		// Capture legacy summarize model/API config for migration.
+		if apiMap, ok := raw["summarize"].(map[string]any); ok {
+			if legacyBase, ok := apiMap["tts_api"].(map[string]any); ok {
+				if b, ok := legacyBase["base_url"].(string); ok && b != "" {
+					legacySummaryBaseURL = b
+				}
+				if k, ok := legacyBase["key"].(string); ok && k != "" {
+					legacySummaryKey = k
+				}
+			}
+			if m, ok := apiMap["tts_model"].(string); ok && m != "" {
+				legacySummaryModel = m
+			}
+		}
+
 		// Parse into typed config struct
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to parse %s: %v\n", configPath, err)
@@ -474,6 +492,16 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		os.Exit(1)
 	}
 	// If file doesn't exist: cfg stays zero-value, presence is nil → all defaults apply
+
+	// Migrate legacy TTS summary model config (summarize.tts_model / tts_api)
+	// into the new shared ai_summary section so existing configs keep working.
+	if cfg.AISummary.API.BaseURL == "" && legacySummaryBaseURL != "" {
+		cfg.AISummary.API.BaseURL = legacySummaryBaseURL
+		cfg.AISummary.API.Key = legacySummaryKey
+	}
+	if cfg.AISummary.Model == "" {
+		cfg.AISummary.Model = legacySummaryModel
+	}
 
 	// Apply all defaults (returns auto-generated password if created)
 	autoPassword := model.ApplyDefaults(&cfg, presence)
@@ -741,18 +769,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		ttsSummarizer = summarize.NewSimple()
 		slog.Info("tts summarizer configured", slog.String("backend", summarizeBackendSimple))
 	case summarizeBackendAPI:
-		if cfg.Summarize.TTSAPI.BaseURL == "" {
-			slog.Error("summarize.tts_backend is \"api\" but summarize.tts_api.base_url is not configured")
+		ttsSummarizer = buildAISummarizer(cfg)
+		if ttsSummarizer == nil {
+			slog.Error("summarize.tts_backend is \"api\" but ai_summary.api.base_url is not configured")
 			os.Exit(1)
-		}
-		if summarize.IsAnthropicURL(cfg.Summarize.TTSAPI.BaseURL) {
-			s := summarize.NewAnthropic(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
-			ttsSummarizer = s
-			slog.Info("tts summarizer configured", slog.String("backend", summarizeBackendAPI), slog.String("format", "anthropic"), slog.String("model", s.Model))
-		} else {
-			s := summarize.NewOpenAI(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
-			ttsSummarizer = s
-			slog.Info("tts summarizer configured", slog.String("backend", summarizeBackendAPI), slog.String("format", "openai"), slog.String("model", s.Model))
 		}
 	}
 	handler.SetSummarizer(ttsSummarizer)
@@ -1421,19 +1441,29 @@ func newMossNanoTTSProvider(cfg model.Config) *speech.MossNanoProvider {
 	return m
 }
 
+// buildAISummarizer creates an LLM summarizer from the shared ai_summary config.
+// Returns nil if ai_summary.api.base_url is empty.
+func buildAISummarizer(cfg model.Config) summarize.Summarizer {
+	if cfg.AISummary.API.BaseURL == "" {
+		return nil
+	}
+	s := summarize.NewAISummarizer(cfg.AISummary)
+	slog.Info("ai summarizer configured", slog.String("format", cfg.AISummary.Format), slog.String("base_url", cfg.AISummary.API.BaseURL))
+	return s
+}
+
 // newTTSSummarizer creates a TTS summarizer from config for hot-reload.
 func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
 	switch cfg.Summarize.TTSBackend {
 	case "", summarizeBackendSimple:
 		return summarize.NewSimple()
 	case summarizeBackendAPI:
-		if cfg.Summarize.TTSAPI.BaseURL == "" {
-			slog.Warn("hot-reload: summarize.tts_backend is \"api\" but tts_api.base_url is empty, falling back to simple")
+		s := buildAISummarizer(cfg)
+		if s == nil {
+			slog.Warn("hot-reload: summarize.tts_backend is \"api\" but ai_summary.api.base_url is empty, falling back to simple")
 			return summarize.NewSimple()
-		} else if summarize.IsAnthropicURL(cfg.Summarize.TTSAPI.BaseURL) {
-			return summarize.NewAnthropic(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
 		}
-		return summarize.NewOpenAI(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
+		return s
 	default:
 		slog.Warn("hot-reload: unsupported tts_backend, falling back to simple", slog.String("backend", cfg.Summarize.TTSBackend))
 		return summarize.NewSimple()

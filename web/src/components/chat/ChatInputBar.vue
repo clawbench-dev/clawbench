@@ -63,6 +63,15 @@
           <span>{{ t('chat.attach.uploading') }}</span>
         </div>
       </Transition>
+      <!-- Conversation recommendation chip (对话推荐) — shown when input already has text -->
+      <Transition name="paste-fade">
+        <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
+          <Sparkles :size="14" :stroke-width="1.5" class="recommendation-icon" />
+          <span class="recommendation-text">{{ recommendation }}</span>
+          <button class="recommendation-accept" @click.stop="acceptRecommendation" :title="t('chat.recommendationFill')">{{ t('chat.recommendationFill') }}</button>
+          <button class="recommendation-close" @click.stop="dismissRecommendation" :title="t('common.remove')">×</button>
+        </div>
+      </Transition>
       <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
       <div v-if="quoteData || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
         <!-- Quote selection card (same size as file cards, accent-colored) -->
@@ -260,7 +269,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, Minimize2 } from 'lucide-vue-next'
+import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, Minimize2, Sparkles } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -451,6 +460,36 @@ const emit = defineEmits([
 ])
 
 const inputText = ref('')
+
+// ── Conversation recommendation (对话推荐) ───────────────
+// The server emits a chat_recommendation WS event after each assistant reply.
+// When the input is empty we auto-fill it; otherwise we show a dismissible chip
+// that fills the input on tap.
+const recommendation = ref('')
+const showRecommendationChip = ref(false)
+
+function onRecommendationEvent(evt) {
+  const detail = evt.detail || {}
+  const text = detail.recommendation
+  if (!text || !text.trim()) return
+  if (!inputText.value.trim()) {
+    inputText.value = text.trim()
+    showRecommendationChip.value = false
+    return
+  }
+  recommendation.value = text.trim()
+  showRecommendationChip.value = true
+}
+
+function acceptRecommendation() {
+  if (!recommendation.value) return
+  inputText.value = recommendation.value
+  showRecommendationChip.value = false
+}
+
+function dismissRecommendation() {
+  showRecommendationChip.value = false
+}
 
 // ── Voice input (ASR) ───────────────────────────────
 const voiceInput = useVoiceInput()
@@ -1164,12 +1203,14 @@ onMounted(() => {
   startPlaceholderRotation()
   window.addEventListener('paste', handleWindowPaste, true)
   window.addEventListener('keydown', onVoiceShortcut)
+  window.addEventListener('clawbench-recommendation', onRecommendationEvent)
 })
 
 onBeforeUnmount(() => {
   pasteUploadGeneration++
   window.removeEventListener('paste', handleWindowPaste, true)
   window.removeEventListener('keydown', onVoiceShortcut)
+  window.removeEventListener('clawbench-recommendation', onRecommendationEvent)
   stopMachine.destroy()
   if (quickSendPressTimer) {
     clearTimeout(quickSendPressTimer)
@@ -1664,6 +1705,55 @@ defineExpose({
    quote and file cards sit on the same horizontal line. */
 .chat-attachment-tags :deep(.chat-attachment-tags) {
   padding: 0;
+}
+
+/* Conversation recommendation chip (对话推荐) */
+.recommendation-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: var(--color-accent-soft, rgba(88, 120, 255, 0.12));
+  border: 1px solid rgba(88, 120, 255, 0.35);
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.recommendation-icon {
+  flex-shrink: 0;
+  color: var(--color-accent, #5878ff);
+}
+
+.recommendation-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recommendation-accept {
+  flex-shrink: 0;
+  border: none;
+  background: var(--color-accent, #5878ff);
+  color: #fff;
+  border-radius: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.recommendation-close {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
 }
 
 /* Base attachment card styles */

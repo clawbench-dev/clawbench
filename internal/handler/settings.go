@@ -39,6 +39,7 @@ var hotReloadFields = map[string]bool{
 	"chat.initial_messages":             true,
 	"chat.page_size":                    true,
 	"chat.system_prompt_interval":       true,
+	"chat.recommend_enabled":            true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
 	"session.archive_retention_days":    true,
@@ -76,11 +77,12 @@ var hotReloadFields = map[string]bool{
 	"stt.streaming":    true,
 	"stt.chunk_ms":     true,
 	"stt.shortcut_key": true,
-	// Summarize — reconstruct TTS summarizer
-	"summarize.tts_backend":      true,
-	"summarize.tts_model":        true,
-	"summarize.tts_api.base_url": true,
-	"summarize.tts_api.key":      true,
+	// Summarize — reconstruct TTS summarizer from shared ai_summary
+	"summarize.tts_backend":   true,
+	"ai_summary.model":        true,
+	"ai_summary.format":       true,
+	"ai_summary.api.base_url": true,
+	"ai_summary.api.key":      true,
 	// FRP — in-process frp service; enabled can be toggled, other fields hot-reload
 	"frp.enabled":         true,
 	"frp.server_addr":     true,
@@ -193,6 +195,7 @@ type configResponse struct {
 	PortForward         configPortForward    `json:"port_forward"`
 	FRP                 configFRP            `json:"frp"`
 	Summarize           configSummarize      `json:"summarize"`
+	AISummary           configAISummary      `json:"ai_summary"`
 	DingTalk            configDingTalk       `json:"dingtalk"`
 	Feishu              configFeishu         `json:"feishu"`
 	PushMode            string               `json:"push_mode"`
@@ -200,9 +203,10 @@ type configResponse struct {
 }
 
 type configChat struct {
-	InitialMessages      int `json:"initial_messages"`
-	PageSize             int `json:"page_size"`
-	SystemPromptInterval int `json:"system_prompt_interval"`
+	InitialMessages      int  `json:"initial_messages"`
+	PageSize             int  `json:"page_size"`
+	SystemPromptInterval int  `json:"system_prompt_interval"`
+	RecommendEnabled     bool `json:"recommend_enabled"`
 }
 
 type configSession struct {
@@ -300,9 +304,13 @@ type configFRP struct {
 }
 
 type configSummarize struct {
-	TTSBackend string     `json:"tts_backend"`
-	TTSModel   string     `json:"tts_model"`
-	TTSAPI     *configAPI `json:"tts_api,omitempty"`
+	TTSBackend string `json:"tts_backend"`
+}
+
+type configAISummary struct {
+	Model  string     `json:"model"`
+	Format string     `json:"format"`
+	API    *configAPI `json:"api,omitempty"`
 }
 
 type configDingTalk struct {
@@ -331,6 +339,7 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.initial_messages":             true,
 	"chat.page_size":                    true,
 	"chat.system_prompt_interval":       true,
+	"chat.recommend_enabled":            true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
 	"session.archive_retention_days":    true,
@@ -383,9 +392,10 @@ var PatchableConfigPaths = map[string]bool{
 	"frp.remote_port":                   true,
 	"frp.ssh_remote_port":               true,
 	"summarize.tts_backend":             true,
-	"summarize.tts_model":               true,
-	"summarize.tts_api.base_url":        true,
-	"summarize.tts_api.key":             true,
+	"ai_summary.model":                  true,
+	"ai_summary.format":                 true,
+	"ai_summary.api.base_url":           true,
+	"ai_summary.api.key":                true,
 	"localhost_auth_exempt":             true,
 	"dingtalk.enabled":                  true,
 	"dingtalk.app_key":                  true,
@@ -453,6 +463,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			InitialMessages:      cfg.Chat.InitialMessages,
 			PageSize:             cfg.Chat.PageSize,
 			SystemPromptInterval: cfg.Chat.SystemPromptInterval,
+			RecommendEnabled:     cfg.Chat.RecommendEnabled,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -515,7 +526,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		},
 		Summarize: configSummarize{
 			TTSBackend: cfg.Summarize.TTSBackend,
-			TTSModel:   cfg.Summarize.TTSModel,
+		},
+		AISummary: configAISummary{
+			Model:  cfg.AISummary.Model,
+			Format: cfg.AISummary.Format,
 		},
 		DingTalk: configDingTalk{
 			Enabled:   cfg.DingTalk.Enabled,
@@ -536,11 +550,11 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		},
 	}
 
-	// Conditionally populate Summarize TTS API sub-config when backend is "api"
-	if cfg.Summarize.TTSBackend == "api" {
-		resp.Summarize.TTSAPI = &configAPI{
-			BaseURL: cfg.Summarize.TTSAPI.BaseURL,
-			Key:     cfg.Summarize.TTSAPI.Key,
+	// Conditionally populate AISummary API sub-config when a base URL is set
+	if cfg.AISummary.API.BaseURL != "" {
+		resp.AISummary.API = &configAPI{
+			BaseURL: cfg.AISummary.API.BaseURL,
+			Key:     cfg.AISummary.API.Key,
 		}
 	}
 
@@ -730,7 +744,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	// ── Cross-field consistency checks ──────────────────────────
 	cfg := model.ConfigInstance
 
-	// 1b. When summarize.tts_backend is "api", summarize.tts_api.base_url must not be empty.
+	// 1b. When summarize.tts_backend is "api", ai_summary.api.base_url must not be empty.
 	effectiveTTSBackend := cfg.Summarize.TTSBackend
 	ttsBackendSwitchedToAPI := false
 	if summarize, ok := patch["summarize"].(map[string]any); ok {
@@ -742,16 +756,16 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 	if effectiveTTSBackend == "api" && !ttsBackendSwitchedToAPI {
-		effectiveTTSBaseURL := cfg.Summarize.TTSAPI.BaseURL
-		if summarize, ok := patch["summarize"].(map[string]any); ok {
-			if ttsAPI, ok := summarize["tts_api"].(map[string]any); ok {
-				if v, ok := ttsAPI["base_url"].(string); ok {
+		effectiveTTSBaseURL := cfg.AISummary.API.BaseURL
+		if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
+			if api, ok := aiSummary["api"].(map[string]any); ok {
+				if v, ok := api["base_url"].(string); ok {
 					effectiveTTSBaseURL = v
 				}
 			}
 		}
 		if effectiveTTSBaseURL == "" {
-			return fmt.Errorf("summarize.tts_api.base_url is required when summarize.tts_backend is \"api\"")
+			return fmt.Errorf("ai_summary.api.base_url is required when summarize.tts_backend is \"api\"")
 		}
 	}
 
@@ -833,6 +847,22 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if v, ok := summarize["tts_backend"].(string); ok {
 			if !validSummarizeBackends[v] {
 				return fmt.Errorf("summarize.tts_backend must be one of: , simple, api")
+			}
+		}
+	}
+
+	// Validate ai_summary section
+	if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
+		if v, ok := aiSummary["format"].(string); ok && v != "" {
+			if v != "openai" && v != "anthropic" {
+				return fmt.Errorf("ai_summary.format must be one of: openai, anthropic (empty = auto-detect)")
+			}
+		}
+		if api, ok := aiSummary["api"].(map[string]any); ok {
+			if v, ok := api["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("ai_summary.api.base_url must be a valid URL")
+				}
 			}
 		}
 	}
@@ -946,6 +976,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := chat["system_prompt_interval"].(float64); ok {
 			cfg.Chat.SystemPromptInterval = int(v)
+		}
+		if v, ok := chat["recommend_enabled"].(bool); ok {
+			cfg.Chat.RecommendEnabled = v
 		}
 	}
 
@@ -1142,16 +1175,21 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := summarize["tts_backend"].(string); ok {
 			cfg.Summarize.TTSBackend = v
 		}
-		if v, ok := summarize["tts_model"].(string); ok {
-			cfg.Summarize.TTSModel = v
+	}
+
+	if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
+		if v, ok := aiSummary["model"].(string); ok {
+			cfg.AISummary.Model = v
 		}
-		// Summarize TTS API sub-config
-		if ttsAPI, ok := summarize["tts_api"].(map[string]any); ok {
-			if v, ok := ttsAPI["base_url"].(string); ok {
-				cfg.Summarize.TTSAPI.BaseURL = v
+		if v, ok := aiSummary["format"].(string); ok {
+			cfg.AISummary.Format = v
+		}
+		if api, ok := aiSummary["api"].(map[string]any); ok {
+			if v, ok := api["base_url"].(string); ok {
+				cfg.AISummary.API.BaseURL = v
 			}
-			if v, ok := ttsAPI["key"].(string); ok {
-				cfg.Summarize.TTSAPI.Key = v
+			if v, ok := api["key"].(string); ok {
+				cfg.AISummary.API.Key = v
 			}
 		}
 	}
@@ -1218,6 +1256,7 @@ func applyHotReloadGlobals() {
 	model.ChatInitialMessages = cfg.Chat.InitialMessages
 	model.ChatPageSize = cfg.Chat.PageSize
 	model.ChatSystemPromptInterval = cfg.Chat.SystemPromptInterval
+	model.ChatRecommendEnabled = cfg.Chat.RecommendEnabled
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
 	model.UploadMaxSizeMB = cfg.Upload.MaxSizeMB

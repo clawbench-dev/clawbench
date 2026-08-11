@@ -212,12 +212,15 @@ tts:
   speed: 1
 
 summarize:
-  tts_backend: "api"
-  tts_model: "gpt-4o-mini"
-  tts_api:
+  tts_backend: "api"                # 语音摘要类型（""/simple/api）
+
+# 共享的 AI 模型配置（语音摘要 + 对话推荐共用）
+ai_summary:
+  model: "gpt-4o-mini"
+  format: "openai"                  # openai / anthropic（留空自动识别）
+  api:
     base_url: "https://api.openai.com/v1/chat/completions"  # 完整端点 URL
     key: "sk-xxx"                                             # API Key
-    format: "openai"                                          # API 格式（默认: openai）
 ```
 
 ### Anthropic 格式
@@ -230,11 +233,13 @@ tts:
 
 summarize:
   tts_backend: "api"
-  tts_model: "claude-3-5-haiku-latest"
-  tts_api:
+
+ai_summary:
+  model: "claude-3-5-haiku-latest"
+  format: "anthropic"
+  api:
     base_url: "https://api.anthropic.com/v1/messages"
     key: "sk-ant-xxx"
-    format: "anthropic"
 ```
 
 ### Ollama 本地推理（通过 API 后端）
@@ -251,10 +256,12 @@ tts:
 
 summarize:
   tts_backend: "api"
-  tts_model: "gemma3:270m"
-  tts_api:
+
+ai_summary:
+  model: "gemma3:270m"
+  format: "openai"
+  api:
     base_url: "http://localhost:11434/v1/chat/completions"  # Ollama 的 OpenAI 兼容端点
-    format: "openai"
 ```
 
 > 💡 `gemma3:270m` 模型仅 291MB，适合快速总结。如需更好质量，可换 `qwen3:0.6b` 或更大模型，只需修改 `model` 即可。

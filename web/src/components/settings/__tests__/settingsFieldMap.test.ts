@@ -171,7 +171,7 @@ describe('settingsFieldMap', () => {
     const cfg = panels[0]
     expect(cfg.panelId).toBe('summarization_voice')
     expect(cfg.entrySelector).toBeUndefined()
-    expect(cfg.requiredFields).toEqual(['summarize.tts_api.base_url'])
+    expect(cfg.requiredFields).toEqual([])
     expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
     expect((cfg.hasConnectivityTest as Function)({ 'summarize.tts_backend': 'api' })).toBe(true)
     expect((cfg.hasConnectivityTest as Function)({ 'summarize.tts_backend': 'simple' })).toBe(false)
@@ -179,16 +179,32 @@ describe('settingsFieldMap', () => {
     const ttsBackend = cfg.commonFields.find(f => f.key === 'summarize.tts_backend')
     expect(ttsBackend).toBeDefined()
     expect(ttsBackend!.type).toBe('select')
+  })
 
-    const ttsApiBaseURL = cfg.commonFields.find(f => f.key === 'summarize.tts_api.base_url')
-    expect(ttsApiBaseURL).toBeDefined()
-    expect(ttsApiBaseURL!.sectionHeader).toBe('settings.items.summarizeTtsApiHeader')
+  it('ai_summary panel has shared model fields', () => {
+    const panels = getCategoryPanels('ai_summary')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.panelId).toBe('ai_summary')
 
-    const ttsModel = cfg.commonFields.find(f => f.key === 'summarize.tts_model')
-    expect(ttsModel).toBeDefined()
+    const baseUrl = cfg.commonFields.find(f => f.key === 'ai_summary.api.base_url')
+    expect(baseUrl).toBeDefined()
+    expect(baseUrl!.type).toBe('text')
 
-    const ttsApiKey = cfg.commonFields.find(f => f.key === 'summarize.tts_api.key')
-    expect(ttsApiKey).toBeDefined()
+    const model = cfg.commonFields.find(f => f.key === 'ai_summary.model')
+    expect(model).toBeDefined()
+
+    const format = cfg.commonFields.find(f => f.key === 'ai_summary.format')
+    expect(format).toBeDefined()
+    expect(format!.type).toBe('select')
+
+    const apiKey = cfg.commonFields.find(f => f.key === 'ai_summary.api.key')
+    expect(apiKey).toBeDefined()
+    expect(apiKey!.type).toBe('password')
+
+    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'ai_summary.api.base_url': 'https://x' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
 
   // ── RAG panel ──

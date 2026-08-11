@@ -50,10 +50,11 @@ type Config struct {
 		MaxFiles  int `yaml:"max_files"`   // Maximum number of files per upload (default: 20)
 	} `yaml:"upload"`
 	Chat struct {
-		InitialMessages      int `yaml:"initial_messages"`       // Number of messages to load initially (default: 20)
-		PageSize             int `yaml:"page_size"`              // Number of messages per lazy-load batch (default: 20)
-		SessionPageSize      int `yaml:"session_page_size"`      // Number of sessions per page in session list (default: 10)
-		SystemPromptInterval int `yaml:"system_prompt_interval"` // Re-inject system prompt every N assistant turns (0=never, default: 10)
+		InitialMessages      int  `yaml:"initial_messages"`       // Number of messages to load initially (default: 20)
+		PageSize             int  `yaml:"page_size"`              // Number of messages per lazy-load batch (default: 20)
+		SessionPageSize      int  `yaml:"session_page_size"`      // Number of sessions per page in session list (default: 10)
+		SystemPromptInterval int  `yaml:"system_prompt_interval"` // Re-inject system prompt every N assistant turns (0=never, default: 10)
+		RecommendEnabled     bool `yaml:"recommend_enabled"`      // 对话推荐: generate a next-step recommendation after each assistant reply (default: false)
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 10)
@@ -77,7 +78,8 @@ type Config struct {
 		MossNano          MossNanoConfig `yaml:"moss_nano"`           // MOSS-TTS-Nano-specific configuration (only used when engine: "moss-nano")
 	} `yaml:"tts"`
 	STT         STTConfig         `yaml:"stt"`          // Speech-to-text (voice input) configuration
-	Summarize   SummarizeConfig   `yaml:"summarize"`    // Shared summarization configuration (TTS + Tasks)
+	AISummary   AISummaryConfig   `yaml:"ai_summary"`   // Shared AI model configuration (TTS summary + next-step recommendation)
+	Summarize   SummarizeConfig   `yaml:"summarize"`    // Voice reading summary: only the summary-type selection (uses AISummary for "api")
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
 	FRP         FRPConfig         `yaml:"frp"`          // FRP (Fast Reverse Proxy) client configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
@@ -131,13 +133,20 @@ type FeishuConfig struct {
 	Users     []string `yaml:"users"`      // Static Feishu open_id list for single-chat push
 }
 
-// SummarizeConfig holds configuration for voice/TTS summarization.
-// Chat/task reading summaries always extract the conclusion; only voice
-// summarization is configurable.
+// AISummaryConfig holds the shared AI model configuration used by both the
+// voice/TTS summarizer (when summarize.tts_backend is "api") and the
+// next-step recommendation feature (chat.recommend_enabled).
+type AISummaryConfig struct {
+	Model  string    `yaml:"model"`  // Model name (empty = backend default)
+	Format string    `yaml:"format"` // API format: "openai" / "anthropic" (empty = auto-detect from base_url)
+	API    APIConfig `yaml:"api"`    // API endpoint + key
+}
+
+// SummarizeConfig holds configuration for voice/TTS reading summaries.
+// It only selects the summary type; the detailed model/API configuration
+// lives in AISummaryConfig (shared with next-step recommendation).
 type SummarizeConfig struct {
-	TTSBackend string    `yaml:"tts_backend"` // Voice/TTS summarization backend: "" (disabled), "simple" (extract conclusion), "api" (LLM)
-	TTSModel   string    `yaml:"tts_model"`   // Model for TTS summarization (empty = backend default)
-	TTSAPI     APIConfig `yaml:"tts_api"`     // API config for voice/TTS summarization (used when tts_backend is "api")
+	TTSBackend string `yaml:"tts_backend"` // Voice/TTS summarization type: "" (disabled), "simple" (extract conclusion), "api" (LLM via AISummaryConfig)
 }
 
 // RAGConfig holds configuration for the RAG history memory system.
@@ -209,10 +218,11 @@ var (
 	UploadMaxFiles  int // Default: 20
 
 	// Chat UI config (set from config, with defaults)
-	ChatInitialMessages      int // Default: 20
-	ChatPageSize             int // Default: 20
-	ChatSessionPageSize      int // Default: 10
-	ChatSystemPromptInterval int // Re-inject system prompt every N assistant turns (0=never, default: 10)
+	ChatInitialMessages      int  // Default: 20
+	ChatPageSize             int  // Default: 20
+	ChatSessionPageSize      int  // Default: 10
+	ChatSystemPromptInterval int  // Re-inject system prompt every N assistant turns (0=never, default: 10)
+	ChatRecommendEnabled     bool // 对话推荐: generate next-step recommendation after each assistant reply (default: false)
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 10

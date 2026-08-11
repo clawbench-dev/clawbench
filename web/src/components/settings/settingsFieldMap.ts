@@ -128,6 +128,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server' } },
+    { type: 'item', spec: { labelKey: 'settings.items.chatRecommendEnabled', descriptionKey: 'settings.items.chatRecommendEnabledDesc', key: 'chat.recommend_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.recommendSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true } } },
@@ -246,6 +247,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   tts: [
     { type: 'item', spec: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'navigateTtsEngine', type: 'action', source: 'local', navigateTo: 'tts:tts_engine' } },
     { type: 'item', spec: { labelKey: 'settings.items.summarizeTtsSection', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'navigateSummarizeVoice', type: 'action', source: 'local', navigateTo: 'tts:summarization_voice' } },
+    { type: 'item', spec: { labelKey: 'settings.items.aiSummarySection', descriptionKey: 'settings.items.aiSummarySectionDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'tts:ai_summary' } },
   ],
   tts_engine: [
     { type: 'panel', config: {
@@ -325,12 +327,30 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
           { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
           { labelKey: 'settings.items.summarizeApi', value: 'api' },
         ]},
-        { labelKey: 'settings.items.ttsApiBaseUrl', descriptionKey: 'settings.items.ttsApiBaseUrlDesc', key: 'summarize.tts_api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.summarizeTtsApiHeader', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
-        { labelKey: 'settings.items.summarizeTtsModel', descriptionKey: 'settings.items.summarizeTtsModelDesc', key: 'summarize.tts_model', type: 'text', source: 'server', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
-        { labelKey: 'settings.items.ttsApiKey', descriptionKey: 'settings.items.ttsApiKeyDesc', key: 'summarize.tts_api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
+        { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'aiSummaryRef', type: 'info', source: 'local', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
       ],
-      requiredFields: ['summarize.tts_api.base_url'],
+      requiredFields: [],
       hasConnectivityTest: (v) => v['summarize.tts_backend'] === 'api',
+      getTestCategories(values) {
+        return [{ category: 'summarize_voice', values }]
+      },
+    }},
+  ],
+  ai_summary: [
+    { type: 'panel', config: {
+      panelId: 'ai_summary',
+      commonFields: [
+        { labelKey: 'settings.items.aiSummaryModel', descriptionKey: 'settings.items.aiSummaryModelDesc', key: 'ai_summary.model', type: 'text', source: 'server', sectionHeader: 'settings.items.aiSummaryApiHeader' },
+        { labelKey: 'settings.items.aiSummaryFormat', descriptionKey: 'settings.items.aiSummaryFormatDesc', key: 'ai_summary.format', type: 'select', source: 'server', options: [
+          { labelKey: 'settings.items.aiSummaryFormatAuto', value: '' },
+          { labelKey: 'settings.items.aiSummaryFormatOpenAI', value: 'openai' },
+          { labelKey: 'settings.items.aiSummaryFormatAnthropic', value: 'anthropic' },
+        ]},
+        { labelKey: 'settings.items.aiSummaryBaseUrl', descriptionKey: 'settings.items.aiSummaryBaseUrlDesc', key: 'ai_summary.api.base_url', type: 'text', source: 'server' },
+        { labelKey: 'settings.items.aiSummaryApiKey', descriptionKey: 'settings.items.aiSummaryApiKeyDesc', key: 'ai_summary.api.key', type: 'password', source: 'server' },
+      ],
+      requiredFields: [],
+      hasConnectivityTest: (v) => !!v['ai_summary.api.base_url'],
       getTestCategories(values) {
         return [{ category: 'summarize_voice', values }]
       },
@@ -435,6 +455,10 @@ export const subPagePanelMap: Record<string, { panelConfig: GroupPanelConfig; ti
   'tts:tts_engine': {
     panelConfig: getCategoryPanels('tts_engine')[0],
     titleKey: 'settings.items.ttsEngine',
+  },
+  'tts:ai_summary': {
+    panelConfig: getCategoryPanels('ai_summary')[0],
+    titleKey: 'settings.items.aiSummarySection',
   },
   'stt:stt_engine': {
     panelConfig: getCategoryPanels('stt_engine')[0],

@@ -272,8 +272,8 @@ func TestPersist_SummarizeTTSModel(t *testing.T) {
 
 	model.ConfigInstance = model.Config{}
 
-	cfg := patchAndReadConfig(t, `{"summarize":{"tts_model":"gpt-4o-mini"}}`)
-	assert.Equal(t, "gpt-4o-mini", getNestedValue(cfg, "summarize.tts_model"))
+	cfg := patchAndReadConfig(t, `{"ai_summary":{"model":"gpt-4o-mini"}}`)
+	assert.Equal(t, "gpt-4o-mini", getNestedValue(cfg, "ai_summary.model"))
 }
 
 func TestPersist_TTSMaxCacheFiles(t *testing.T) {
@@ -391,8 +391,8 @@ func TestPersist_SummarizeTTSAPIBaseURL(t *testing.T) {
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.Summarize.TTSBackend = "api"
 
-	cfg := patchAndReadConfig(t, `{"summarize":{"tts_api":{"base_url":"https://api.openai.com/v1/chat"}}}`)
-	assert.Equal(t, "https://api.openai.com/v1/chat", getNestedValue(cfg, "summarize.tts_api.base_url"))
+	cfg := patchAndReadConfig(t, `{"ai_summary":{"api":{"base_url":"https://api.openai.com/v1/chat"}}}`)
+	assert.Equal(t, "https://api.openai.com/v1/chat", getNestedValue(cfg, "ai_summary.api.base_url"))
 }
 
 func TestPersist_SummarizeTTSAPIKey(t *testing.T) {
@@ -401,10 +401,10 @@ func TestPersist_SummarizeTTSAPIKey(t *testing.T) {
 
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.Summarize.TTSBackend = "api"
-	model.ConfigInstance.Summarize.TTSAPI.BaseURL = "https://api.openai.com/v1"
+	model.ConfigInstance.AISummary.API.BaseURL = "https://api.openai.com/v1"
 
-	cfg := patchAndReadConfig(t, `{"summarize":{"tts_api":{"key":"sk-1234567890abcdef"}}}`)
-	assert.Equal(t, "sk-1234567890abcdef", getNestedValue(cfg, "summarize.tts_api.key"))
+	cfg := patchAndReadConfig(t, `{"ai_summary":{"api":{"key":"sk-1234567890abcdef"}}}`)
+	assert.Equal(t, "sk-1234567890abcdef", getNestedValue(cfg, "ai_summary.api.key"))
 }
 
 // ─── RAG section ──────────────────────────────────────

@@ -124,6 +124,11 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.SystemPromptInterval <= 0 {
 		cfg.Chat.SystemPromptInterval = 10
 	}
+	// RecommendEnabled: bool zero-value (false) is the intentional default.
+	// Use presence map to distinguish "user wrote false" from "user omitted the field".
+	if p, ok := presence["chat.recommend_enabled"]; !ok || !p {
+		cfg.Chat.RecommendEnabled = false
+	}
 
 	// --- Session ---
 	if cfg.Session.MaxCount <= 0 {
@@ -178,6 +183,14 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 	if cfg.Summarize.TTSBackend == "" {
 		cfg.Summarize.TTSBackend = "simple"
+	}
+
+	// --- AISummary (shared AI model config) ---
+	// Legacy TTS summary config (summarize.tts_model / summarize.tts_api) is
+	// migrated in main.go from the raw YAML map (fields removed from the typed
+	// struct, so they no longer unmarshal). Here we only ensure a format default.
+	if cfg.AISummary.API.BaseURL != "" && cfg.AISummary.Format == "" {
+		cfg.AISummary.Format = "openai"
 	}
 	if cfg.TTS.Speed <= 0 {
 		cfg.TTS.Speed = 1.0

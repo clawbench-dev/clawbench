@@ -67,3 +67,10 @@ type SummaryUpdateData struct {
 	ProjectPath  string              `json:"projectPath,omitempty"`
 	SessionID    string              `json:"sessionID,omitempty"`
 }
+
+// ChatRecommendationData is the data payload for "chat_recommendation" events.
+type ChatRecommendationData struct {
+	SessionID      string `json:"session_id"`
+	ProjectPath    string `json:"project_path,omitempty"`
+	Recommendation string `json:"recommendation"` // concise next-step suggestion to auto-fill / show
+}

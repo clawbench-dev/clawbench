@@ -180,10 +180,10 @@ func TestTestSummarizeVoice_AnthropicSuccess(t *testing.T) {
 
 	// Use /v1/messages suffix so auto-detection identifies this as Anthropic format
 	result := testSummarizeVoice(context.Background(), map[string]any{
-		"summarize.tts_backend":      "api",
-		"summarize.tts_api.base_url": srv.URL + "/v1/messages",
-		"summarize.tts_api.key":      "test-key",
-		"summarize.tts_model":        "claude-3-haiku",
+		"summarize.tts_backend":   "api",
+		"ai_summary.api.base_url": srv.URL + "/v1/messages",
+		"ai_summary.api.key":      "test-key",
+		"ai_summary.model":        "claude-3-haiku",
 	})
 	assert.True(t, result.Success)
 	assert.Contains(t, result.Message, "anthropic")
@@ -636,9 +636,9 @@ func TestTestSummarizeVoice_DefaultModel(t *testing.T) {
 	defer srv.Close()
 
 	result := testSummarizeVoice(context.Background(), map[string]any{
-		"summarize.tts_backend":      strAPI,
-		"summarize.tts_api.base_url": srv.URL,
-		"summarize.tts_api.key":      "test-key",
+		"summarize.tts_backend":   strAPI,
+		"ai_summary.api.base_url": srv.URL,
+		"ai_summary.api.key":      "test-key",
 		// No model provided — should default to "gpt-4o-mini"
 	})
 	assert.True(t, result.Success)

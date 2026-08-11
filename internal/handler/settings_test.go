@@ -51,7 +51,7 @@ func TestServeConfig_Get(t *testing.T) {
 	cfg.PortForward.Enabled = true
 	cfg.PortForward.Port = 20001
 	cfg.Summarize.TTSBackend = "simple"
-	cfg.Summarize.TTSModel = ""
+	cfg.AISummary.Model = ""
 	model.ConfigInstance = cfg
 
 	req := newRequest(t, http.MethodGet, "/api/config", nil)

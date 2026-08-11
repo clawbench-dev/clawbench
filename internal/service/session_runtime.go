@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -444,6 +445,60 @@ func triggerChatSummarization(sessionID string) {
 
 	projectPath := GetSessionProjectPath(sessionID)
 	summarizeTarget("chat_message", lastAssistant.ID, blocks, projectPath, sessionID)
+
+	// 对话推荐: if enabled, generate a next-step recommendation from the
+	// assistant's conclusion and emit it to the frontend (auto-fill/建议 chip).
+	triggerChatRecommendation(sessionID, projectPath, blocks)
+}
+
+// triggerChatRecommendation generates a next-step recommendation (对话推荐) after
+// an assistant reply completes, using the shared ai_summary LLM config. Emits a
+// chat_recommendation WS event when a recommendation is produced.
+func triggerChatRecommendation(sessionID, projectPath string, blocks []model.ContentBlock) {
+	if !model.ConfigInstance.Chat.RecommendEnabled {
+		return
+	}
+	if model.ConfigInstance.AISummary.API.BaseURL == "" {
+		return
+	}
+	conclusion := summarize.ExtractLastAnswerFromBlocks(blocks)
+	if strings.TrimSpace(conclusion) == "" {
+		return
+	}
+
+	summarizer := summarize.NewAISummarizer(model.ConfigInstance.AISummary)
+	if summarizer == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	recommendation, err := summarize.RecommendNextStep(ctx, summarizer, conclusion, "zh")
+	if err != nil {
+		slog.Debug("chat recommendation failed", slog.String("session_id", sessionID), slog.String("err", err.Error()))
+		return
+	}
+	recommendation = strings.TrimSpace(recommendation)
+	if recommendation == "" {
+		return
+	}
+
+	mgr := ws.GetManager()
+	if mgr == nil {
+		return
+	}
+	mgr.BroadcastEvent(ws.ServerMessage{
+		Type:  ws.MessageTypeEvent,
+		ID:    ws.GenerateEventID(),
+		Event: "chat_recommendation",
+		Data: ws.ChatRecommendationData{
+			SessionID:      sessionID,
+			ProjectPath:    projectPath,
+			Recommendation: recommendation,
+		},
+	})
+	slog.Info("chat recommendation emitted", slog.String("session_id", sessionID))
 }
 
 // getLastAssistantBlocks returns the last assistant message and its parsed content blocks.

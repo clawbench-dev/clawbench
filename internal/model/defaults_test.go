@@ -610,6 +610,49 @@ func TestApplyDefaults_SummarizeTTSBackendNonAgent(t *testing.T) {
 	}
 }
 
+func TestApplyDefaults_ChatRecommendEnabledDefaultFalse(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Chat.RecommendEnabled {
+		t.Error("Chat.RecommendEnabled should default to false")
+	}
+}
+
+func TestApplyDefaults_ChatRecommendEnabledPresenceTrue(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	presence := map[string]bool{"chat.recommend_enabled": true}
+	cfg.Chat.RecommendEnabled = true
+	ApplyDefaults(&cfg, presence)
+	if !cfg.Chat.RecommendEnabled {
+		t.Error("Chat.RecommendEnabled should stay true when explicitly set")
+	}
+}
+
+func TestApplyDefaults_AISummaryFormatDefault(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.AISummary.API.BaseURL = "https://api.openai.com/v1"
+	ApplyDefaults(&cfg, nil)
+	if cfg.AISummary.Format != "openai" {
+		t.Errorf("AISummary.Format = %q, want %q (defaulted when base_url set)", cfg.AISummary.Format, "openai")
+	}
+}
+
+func TestApplyDefaults_AISummaryEmptyBaseURLNoFormat(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.AISummary.Format != "" {
+		t.Errorf("AISummary.Format = %q, want empty when no base_url", cfg.AISummary.Format)
+	}
+}
+
 func TestApplyDefaults_RAGExplicitOverridesOllama(t *testing.T) {
 	setupTestBinDir(t)
 

@@ -25,10 +25,12 @@ A: 可以。将 `summarize.tts_backend` 设为 `"api"` 并配置 Ollama 的 Open
 ```yaml
 summarize:
   tts_backend: "api"
-  tts_model: "gemma3:270m"
-  tts_api:
+
+ai_summary:
+  model: "gemma3:270m"
+  format: "openai"
+  api:
     base_url: "http://localhost:11434/v1/chat/completions"
-    format: "openai"
 ```
 
 TTS 引擎本身也支持本地离线方案（piper / kokoro / moss-nano），两者搭配可实现完全离线的语音朗读。其中 moss-nano 支持多语言和音色克隆，48kHz 高音质输出。

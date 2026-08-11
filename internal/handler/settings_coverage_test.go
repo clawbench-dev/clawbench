@@ -550,16 +550,16 @@ func TestServeConfigPatch_SummarizeTTSBackendAPIWithoutBaseURL(t *testing.T) {
 
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.Summarize.TTSBackend = "api"
-	model.ConfigInstance.Summarize.TTSAPI.BaseURL = ""
+	model.ConfigInstance.AISummary.API.BaseURL = ""
 
-	body := `{"summarize":{"tts_model":"test"}}`
+	body := `{"ai_summary":{"model":"test"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "tts_api.base_url")
+	assert.Contains(t, w.Body.String(), "ai_summary.api.base_url")
 }
 
 func TestServeConfigPatch_SummarizeTTSBackendSwitchedToAPI(t *testing.T) {
@@ -579,53 +579,53 @@ func TestServeConfigPatch_SummarizeTTSBackendSwitchedToAPI(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestServeConfigPatch_SummarizeTTSAPISubConfig(t *testing.T) {
+func TestServeConfigPatch_AISummaryAPISubConfig(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.Summarize.TTSBackend = "api"
-	model.ConfigInstance.Summarize.TTSAPI.BaseURL = "https://example.com"
+	model.ConfigInstance.AISummary.API.BaseURL = "https://example.com"
 
-	body := `{"summarize":{"tts_api":{"base_url":"https://updated.com","key":"test-key"}}}`
+	body := `{"ai_summary":{"api":{"base_url":"https://updated.com","key":"test-key"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "https://updated.com", model.ConfigInstance.Summarize.TTSAPI.BaseURL)
-	assert.Equal(t, "test-key", model.ConfigInstance.Summarize.TTSAPI.Key)
+	assert.Equal(t, "https://updated.com", model.ConfigInstance.AISummary.API.BaseURL)
+	assert.Equal(t, "test-key", model.ConfigInstance.AISummary.API.Key)
 }
 
-// --- summarize.tts_model patch ---
+// --- ai_summary.model patch ---
 
-func TestServeConfigPatch_SummarizeTTSModel(t *testing.T) {
+func TestServeConfigPatch_AISummaryModel(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
 
-	body := `{"summarize":{"tts_model":"gpt-4"}}`
+	body := `{"ai_summary":{"model":"gpt-4"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "gpt-4", model.ConfigInstance.Summarize.TTSModel)
+	assert.Equal(t, "gpt-4", model.ConfigInstance.AISummary.Model)
 }
 
-// --- ServeConfig GET: TTSAPI conditional sub-config ---
+// --- ServeConfig GET: AISummary API conditional sub-config ---
 
-func TestServeConfig_Get_TTSAPISubConfig(t *testing.T) {
+func TestServeConfig_Get_AISummaryAPISubConfig(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.Summarize.TTSBackend = "api"
-	model.ConfigInstance.Summarize.TTSAPI.BaseURL = "https://tts.example.com"
-	model.ConfigInstance.Summarize.TTSAPI.Key = "tts-key"
+	model.ConfigInstance.AISummary.API.BaseURL = "https://tts.example.com"
+	model.ConfigInstance.AISummary.API.Key = "tts-key"
 
 	req := newRequest(t, http.MethodGet, "/api/config", nil)
 	w := callHandler(ServeConfig, req)
@@ -634,8 +634,8 @@ func TestServeConfig_Get_TTSAPISubConfig(t *testing.T) {
 	var resp configResponse
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	require.NotNil(t, resp.Summarize.TTSAPI)
-	assert.Equal(t, "https://tts.example.com", resp.Summarize.TTSAPI.BaseURL)
+	require.NotNil(t, resp.AISummary.API)
+	assert.Equal(t, "https://tts.example.com", resp.AISummary.API.BaseURL)
 }
 
 // --- ServeConfig GET: PushMode field ---

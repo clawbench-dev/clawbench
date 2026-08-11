@@ -1309,4 +1309,63 @@ describe('ChatInputBar', () => {
       vi.useRealTimers()
     })
   })
+
+  // ── Conversation recommendation (对话推荐) ─────────────────
+
+  function dispatchRecommendation(recommendation: string) {
+    window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 's1', recommendation } }))
+  }
+
+  it('auto-fills the input when empty on recommendation event', async () => {
+    const wrapper = mountBar()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('继续实现功能')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('stores recommendation without overwriting existing input', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'existing draft'
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('下一步建议')
+    await wrapper.vm.$nextTick()
+    // Non-empty branch: input is preserved, recommendation is captured for the chip
+    expect(wrapper.vm.inputText).toBe('existing draft')
+    expect(wrapper.vm.recommendation).toBe('下一步建议')
+    wrapper.unmount()
+  })
+
+  it('fills the input when the recommendation is accepted', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'existing draft'
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('采纳的建议')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('采纳的建议')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('ignores recommendation with empty text', async () => {
+    const wrapper = mountBar()
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('   ')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('cleans up recommendation listener on unmount', async () => {
+    const wrapper = mountBar()
+    const removeSpy = vi.spyOn(window, 'removeEventListener')
+    wrapper.unmount()
+    expect(removeSpy).toHaveBeenCalledWith('clawbench-recommendation', expect.any(Function))
+  })
 })
