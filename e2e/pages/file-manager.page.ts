@@ -59,9 +59,9 @@ export class FileManagerPage {
     return this.page.locator('.file-item:not(.dir-item), .grid-item:not(.grid-dir)').first()
   }
 
-  /** Navigate into a directory by clicking it */
+  /** Navigate into a directory by double-clicking it (single click only selects on PC) */
   async openDirectory(name: string) {
-    await this.getFileItem(name).click()
+    await this.getFileItem(name).dblclick()
   }
 
   /** Open a file in the viewer by double-clicking it */

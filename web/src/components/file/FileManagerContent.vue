@@ -162,12 +162,14 @@
     <!-- File list -->
     <div v-if="viewMode === 'list'" class="file-list" ref="fileListRef"
       @click="handleItemClick"
+      @dblclick="handleItemDblClick"
       @contextmenu.prevent="handleCtxMenu"
       v-long-press="onContainerLongPress"
       @dragenter.prevent="onDragEnter"
-      @dragover.prevent
+      @dragover.prevent="onContainerDragOver"
       @dragleave="onDragLeave"
       @drop.prevent="onDrop"
+      @dragend="onDragEnd"
     >
       <div v-if="isDragOver" class="drop-overlay">
         <Upload :size="32" :stroke-width="1.5" />
@@ -200,7 +202,8 @@
             active: !multiSelect.active && selectedPath === itemPath(entry.name),
             'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
             'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
-            'cut-item': isCutItem(itemPath(entry.name))
+            'cut-item': isCutItem(itemPath(entry.name)),
+            'drag-target': dropTargetPath === itemPath(entry.name) && entry.type === 'dir'
           }"
           :data-action="entry.type === 'dir' ? 'dir' : 'file'"
           :data-path="itemPath(entry.name)"
@@ -225,12 +228,14 @@
     <!-- File grid -->
     <div v-else class="file-grid" ref="fileGridRef"
       @click="handleItemClick"
+      @dblclick="handleItemDblClick"
       @contextmenu.prevent="handleCtxMenu"
       v-long-press="onContainerLongPress"
       @dragenter.prevent="onDragEnter"
-      @dragover.prevent
+      @dragover.prevent="onContainerDragOver"
       @dragleave="onDragLeave"
       @drop.prevent="onDrop"
+      @dragend="onDragEnd"
     >
       <div v-if="isDragOver" class="drop-overlay">
         <Upload :size="32" :stroke-width="1.5" />
@@ -262,7 +267,8 @@
           'grid-active': !multiSelect.active && selectedPath === itemPath(entry.name),
           'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
           'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
-          'cut-item': isCutItem(itemPath(entry.name))
+          'cut-item': isCutItem(itemPath(entry.name)),
+          'drag-target': dropTargetPath === itemPath(entry.name) && entry.type === 'dir'
         }"
         :data-action="entry.type === 'dir' ? 'dir' : 'file'"
         :data-path="itemPath(entry.name)"
@@ -412,6 +418,7 @@ import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipe
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { setAttachDragData, hasAttachDragData, buildAttachDragImage } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
@@ -421,6 +428,7 @@ import FileSearchDrawer from './FileSearchDrawer.vue'
 
 const toast = inject('toast', null)
 const { isAppMode } = useAppMode()
+const { isPC } = usePlatformDetect()
 const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
@@ -432,6 +440,10 @@ const folderInputRef = ref(null)
 // Drag-and-drop state (shared between file-list and file-grid)
 const isDragOver = ref(false)
 const dragCounter = ref(0)
+
+// Internal file-manager move drag state
+const dragSourcePaths = ref(null)   // source entry paths being dragged (null = no internal move drag)
+const dropTargetPath = ref(null)    // directory item currently hovered as a drop target
 
 // Paste overlay feedback
 const isPasteOver = ref(false)
@@ -474,24 +486,77 @@ function onDragLeave() {
 }
 
 async function onDrop(e) {
-  dragCounter.value = 0
-  isDragOver.value = false
-  const files = Array.from(e.dataTransfer?.files || [])
-  if (files.length === 0) return
-  await handleFileDropToDirStructured(files, props.currentDir || '.')
-  emit('refresh')
+    dragCounter.value = 0
+    isDragOver.value = false
+    dropTargetPath.value = null
+    const files = Array.from(e.dataTransfer?.files || [])
+    // Internal file-manager move drag (source dragged from this same list)
+    if (dragSourcePaths.value?.length) {
+        e.preventDefault()
+        await handleInternalMoveDrop(e)
+        return
+    }
+    if (files.length === 0) return
+    await handleFileDropToDirStructured(files, props.currentDir || '.')
+    emit('refresh')
 }
 
-/** Start an internal drag of a file/dir so it can be dropped onto the chat column. */
+/** Highlight a directory as the move-drop target while dragging over it. */
+function onContainerDragOver(e) {
+    e.preventDefault()
+    if (!dragSourcePaths.value?.length) return
+    const item = e.target.closest('.file-item, .grid-item')
+    dropTargetPath.value = item && item.dataset.action === 'dir' ? item.dataset.path : null
+}
+
+/** Reset internal move-drag state when the drag ends (drop or cancel). */
+function onDragEnd() {
+    dragSourcePaths.value = null
+    dropTargetPath.value = null
+    dragCounter.value = 0
+    isDragOver.value = false
+}
+
+/** Resolve the set of paths being dragged: a full multi-selection if the dragged item is selected. */
+function collectDraggedPaths(entry, path) {
+    if (multiSelect.active && multiSelect.selected.has(path)) {
+        return [...multiSelect.selected]
+    }
+    return [path]
+}
+
+/** Move the internal drag source(s) into the directory under the cursor (or the current dir). */
+async function handleInternalMoveDrop(e) {
+    const srcPaths = dragSourcePaths.value || []
+    dragSourcePaths.value = null
+    dropTargetPath.value = null
+    if (!srcPaths.length) return
+    const target = e.target.closest('.file-item, .grid-item')
+    const targetDir = target && target.dataset.action === 'dir'
+        ? target.dataset.path
+        : props.currentDir.replace(/^\/+/, '')
+    const entries = srcPaths.map(p => ({ name: p.split('/').pop(), path: p }))
+    const allOk = await transferEntries(entries, targetDir, true)
+    emit('refresh')
+    if (allOk) {
+        if (toast) toast.show(t('file.toast.moved'), { icon: '✅', type: 'success', duration: 1500 })
+    } else {
+        if (toast) toast.show(t('common.operationFailed'), { icon: '❌', type: 'error', duration: 2000 })
+    }
+}
+
+/** Start an internal drag of a file/dir so it can be dropped onto the chat column
+ * or moved onto another directory in the file manager. */
 function onItemDragStart(entry, e) {
-  if (!isWideScreen.value) return
-  const path = itemPath(entry.name)
-  setAttachDragData(e.dataTransfer, path, entry.type === 'dir')
-  e.dataTransfer.effectAllowed = 'copy'
-  // Use a flat, semi-transparent chip as the ghost instead of the OS snapshot,
-  // which bleeds the item's selected/accent background into a gradient fade.
-  const ghost = buildAttachDragImage(entry.name, entry.type === 'dir')
-  e.dataTransfer.setDragImage(ghost, 14, 16)
+    if (!isWideScreen.value) return
+    const path = itemPath(entry.name)
+    dragSourcePaths.value = collectDraggedPaths(entry, path)
+    setAttachDragData(e.dataTransfer, path, entry.type === 'dir')
+    e.dataTransfer.effectAllowed = 'move'
+    // Use a flat, semi-transparent chip as the ghost instead of the OS snapshot,
+    // which bleeds the item's selected/accent background into a gradient fade.
+    const ghost = buildAttachDragImage(entry.name, entry.type === 'dir')
+    e.dataTransfer.setDragImage(ghost, 14, 16)
 }
 
 // ── Clipboard paste handler ──
@@ -851,18 +916,48 @@ async function doPaste() {
     const entry = ctxMenu.entry
     closeCtxMenu()
     const destDir = getDestDir(entry)
-    const api = clipboard.isCut ? '/api/file/move' : '/api/file/copy'
-    appLog.d(TAG, '[doPaste] api:', api, 'destDir:', destDir, 'entries:', clipboard.entries.map(e => e.path))
+    appLog.d(TAG, '[doPaste] destDir:', destDir, 'entries:', clipboard.entries.map(e => e.path))
+    const allOk = await transferEntries(clipboard.entries, destDir, clipboard.isCut)
+    // Only clear clipboard on successful cut-paste; on failure keep entries so user can retry
+    if (clipboard.isCut && allOk) {
+        // If the currently viewed file was moved, clear it to avoid
+        // refreshCurrentFile hitting 404 and showing "file not found"
+        const currentFilePath = store.state.currentFile?.path
+        if (currentFilePath && clipboard.entries.some(e => e.path === currentFilePath)) {
+            store.closeCurrentFile(currentFilePath)
+        }
+        clipboard.entries = []
+    }
+    emit('refresh')
+    if (allOk) {
+        if (toast) toast.show(clipboard.isCut ? t('file.toast.moved') : t('common.copied'), { icon: '✅', type: 'success', duration: 1500 })
+    } else {
+        if (toast) toast.show(t('common.operationFailed'), { icon: '❌', type: 'error', duration: 2000 })
+    }
+}
+
+/**
+ * Move/copy a list of entries into a destination directory via the file API.
+ * Shared by clipboard paste (doPaste) and drag-and-drop move.
+ * Returns true if every transfer succeeded.
+ */
+async function transferEntries(entries, destDir, isMove) {
+    const api = isMove ? '/api/file/move' : '/api/file/copy'
     let allOk = true
-    for (const srcEntry of clipboard.entries) {
+    for (const srcEntry of entries) {
         try {
             let destPath = (destDir ? destDir + '/' : '') + srcEntry.name
-            // Cut to same location is a no-op — skip the API call
-            if (clipboard.isCut && srcEntry.path === destPath) {
-                appLog.d(TAG, '[doPaste] same-path no-op, skipping:', srcEntry.path)
+            // Move to the same location is a no-op — skip the API call
+            if (isMove && srcEntry.path === destPath) {
+                appLog.d(TAG, '[transfer] same-path no-op, skipping:', srcEntry.path)
                 continue
             }
-            appLog.d(TAG, '[doPaste] moving:', srcEntry.path, '→', destPath)
+            // Guard: don't move a directory into itself or one of its descendants
+            if (isMove && (srcEntry.path === destDir || destDir.startsWith(srcEntry.path + '/'))) {
+                appLog.d(TAG, '[transfer] skip self-nesting move:', srcEntry.path, '→', destDir)
+                continue
+            }
+            appLog.d(TAG, '[transfer]', isMove ? 'moving' : 'copying', srcEntry.path, '→', destPath)
             let resp = await fetch(api, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -880,30 +975,15 @@ async function doPaste() {
             }
             if (!resp.ok) {
                 const errBody = await resp.text().catch(() => '')
-                appLog.e(TAG, '[doPaste] API error:', resp.status, errBody, 'src:', srcEntry.path, 'dest:', destPath)
+                appLog.e(TAG, '[transfer] API error:', resp.status, errBody, 'src:', srcEntry.path, 'dest:', destPath)
                 allOk = false
             }
         } catch (err) {
-            appLog.e(TAG, '[doPaste] exception:', err, 'src:', srcEntry.path)
+            appLog.e(TAG, '[transfer] exception:', err, 'src:', srcEntry.path)
             allOk = false
         }
     }
-    // Only clear clipboard on successful cut-paste; on failure keep entries so user can retry
-    if (clipboard.isCut && allOk) {
-        // If the currently viewed file was moved, clear it to avoid
-        // refreshCurrentFile hitting 404 and showing "file not found"
-        const currentFilePath = store.state.currentFile?.path
-        if (currentFilePath && clipboard.entries.some(e => e.path === currentFilePath)) {
-            store.closeCurrentFile(currentFilePath)
-        }
-        clipboard.entries = []
-    }
-    emit('refresh')
-    if (allOk) {
-        if (toast) toast.show(clipboard.isCut ? t('file.toast.moved') : t('common.copied'), { icon: '✅', type: 'success', duration: 1500 })
-    } else {
-        if (toast) toast.show(t('common.operationFailed'), { icon: '❌', type: 'error', duration: 2000 })
-    }
+    return allOk
 }
 
 async function doNewFile() {
@@ -1066,6 +1146,14 @@ function handleItemClick(e) {
     const action = item.dataset.action
     const path = item.dataset.path
 
+    // PC Ctrl/Cmd+click toggles multi-select without entering the explicit mode first
+    if (isPC.value && (e.ctrlKey || e.metaKey)) {
+        if (!multiSelect.active) enterMultiSelect()
+        selectedPath.value = path
+        toggleSelect(path)
+        return
+    }
+
     // Multi-select mode: toggle selection on click (also track last item for Space key)
     if (multiSelect.active) {
         selectedPath.value = path
@@ -1074,6 +1162,23 @@ function handleItemClick(e) {
     }
 
     selectedPath.value = path
+    // PC: single click only selects — opening requires a double-click (or Enter).
+    if (isPC.value) return
+    openItem(action, path)
+}
+
+function handleItemDblClick(e) {
+    if (props.dirLoading) return
+    const item = e.target.closest('.file-item, .grid-item')
+    if (!item) return
+    if (multiSelect.active) return
+    const action = item.dataset.action
+    const path = item.dataset.path
+    selectedPath.value = path
+    openItem(action, path)
+}
+
+function openItem(action, path) {
     if (action === 'dir') {
         emit('navigateDir', path)
     } else {
@@ -1853,6 +1958,11 @@ function currentFileForClipboard() {
     background: var(--bg-tertiary, #f0f0f0);
 }
 
+.file-item.dir-item.drag-target {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
+}
+
 .file-item.dir-item.active {
     color: white;
 }
@@ -2048,6 +2158,11 @@ function currentFileForClipboard() {
 .grid-item.ctx-highlight .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--bg-tertiary, #f5f5f5));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 40%, transparent);
+}
+
+.grid-item.drag-target {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
 }
 
 .grid-thumb {

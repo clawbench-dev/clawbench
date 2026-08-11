@@ -1199,10 +1199,16 @@ function handleJumpPdfPage(pageNum) {
     fileOverlayRef.value?.pdfScrollToPage(pageNum)
 }
 
-watch(() => currentFile.value, (_f) => {
+watch(() => currentFile.value, (file, prevFile) => {
     tocDrawer.close()
     detailsDrawer.close()
     markdownViewMode.value = 'rendered'
+    // When the open file is closed while the user is on the file-view tab,
+    // fall back to the file manager tab automatically.
+    if (!file && prevFile) {
+        const currentTab = isWideScreen.value ? leftTab.value : activeTab.value
+        if (currentTab === 'view') switchTab('browse')
+    }
 })
 
 function toggleHidden() {

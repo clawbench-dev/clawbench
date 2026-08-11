@@ -56,6 +56,11 @@ vi.mock('@/composables/useEdgeSwipeBack', () => ({
   PRIORITY_PAGE: 0,
 }))
 
+const mockIsPC = { value: false }
+vi.mock('@/composables/usePlatformDetect', () => ({
+  usePlatformDetect: () => ({ isPC: mockIsPC }),
+}))
+
 const mockHandleFileSelectToDir = vi.fn()
 const mockHandleFileDropToDir = vi.fn()
 
@@ -233,6 +238,7 @@ beforeEach(() => {
   mockHandleFileSelectToDir.mockReset()
   mockHandleFileDropToDir.mockReset()
   mockHandleFileDropToDir.mockResolvedValue(undefined)
+  mockIsPC.value = false
 })
 
 // ── Rendering ──
@@ -276,7 +282,7 @@ describe('FileManagerContent — rendering', () => {
 // ── Navigation events ──
 
 describe('FileManagerContent — handleItemClick', () => {
-  it('emits navigateDir when clicking a directory', async () => {
+  it('mobile: emits navigateDir when clicking a directory', async () => {
     const wrapper = mountContent()
     const dirItem = wrapper.find('.dir-item')
     await dirItem.trigger('click')
@@ -285,12 +291,91 @@ describe('FileManagerContent — handleItemClick', () => {
     expect(wrapper.emitted('navigateDir')![0][0]).toContain('src')
   })
 
-  it('emits selectFile when clicking a file', async () => {
+  it('mobile: emits selectFile when clicking a file', async () => {
     const wrapper = mountContent()
     const fileItems = wrapper.findAll('.file-item:not(.dir-item)')
     await fileItems[0].trigger('click')
 
     expect(wrapper.emitted('selectFile')).toBeTruthy()
+  })
+
+  it('PC: single click only selects, does not navigate or open', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    const dirItem = wrapper.find('.dir-item')
+    await dirItem.trigger('click')
+
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+    expect(wrapper.vm.selectedPath).toContain('src')
+  })
+
+  it('PC: double-click emits navigateDir for a directory', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    const dirItem = wrapper.find('.dir-item')
+    await dirItem.trigger('dblclick')
+
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+    expect(wrapper.emitted('navigateDir')![0][0]).toContain('src')
+  })
+
+  it('PC: double-click emits selectFile for a file', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    const fileItems = wrapper.findAll('.file-item:not(.dir-item)')
+    await fileItems[0].trigger('dblclick')
+
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+  })
+
+  it('PC: double-click does not open in multi-select mode', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    // Enter multi-select via Ctrl+Shift+M
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }))
+    await nextTick()
+    const dirItem = wrapper.find('.dir-item')
+    await dirItem.trigger('dblclick')
+
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+  })
+
+  it('PC: Ctrl+click enters multi-select and selects the item without opening', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    const dirItem = wrapper.find('.dir-item')
+    await dirItem.trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(wrapper.vm.multiSelectState.selected.has('src')).toBe(true)
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+  })
+
+  it('PC: Ctrl+click accumulates multiple selections', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await wrapper.find('.dir-item').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.size).toBe(2)
+  })
+
+  it('PC: Ctrl+click toggles an already-selected item off', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    const srcDir = wrapper.find('.dir-item')
+    await srcDir.trigger('click', { ctrlKey: true })
+    await srcDir.trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    expect(wrapper.vm.multiSelectState.selected.has('src')).toBe(false)
   })
 
   it('does not emit when dirLoading is true', async () => {
@@ -1165,6 +1250,74 @@ describe('FileManagerContent — drag-and-drop upload', () => {
       preventDefault: vi.fn(),
     })
     expect(mockHandleFileDropToDir).not.toHaveBeenCalled()
+  })
+})
+
+// ── Drag-and-drop move (PC) ──
+
+describe('FileManagerContent — drag-and-drop move (PC)', () => {
+  const movedCalls: { path: string; dest: string }[] = []
+
+  beforeEach(() => {
+    movedCalls.length = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: any, opts: any) => {
+      if (String(url).endsWith('/api/file/move')) {
+        movedCalls.push(JSON.parse(opts.body))
+      }
+      return { ok: true, status: 200, text: async () => '' }
+    }))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('moves a dragged file into the directory it is dropped on', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await nextTick()
+
+    const dt = { setData: vi.fn(), setDragImage: vi.fn() }
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+    await wrapper.find('.dir-item').trigger('drop', { dataTransfer: { files: [] } })
+    await nextTick()
+
+    expect(movedCalls).toHaveLength(1)
+    expect(movedCalls[0]).toEqual({ path: 'test.ts', dest: 'src/test.ts' })
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+  })
+
+  it('moves all selected items when dragging from a Ctrl multi-selection', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await nextTick()
+
+    // Build a Ctrl multi-selection of two files
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+
+    const dt = { setData: vi.fn(), setDragImage: vi.fn() }
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dragstart', { dataTransfer: dt })
+    await wrapper.find('.dir-item').trigger('drop', { dataTransfer: { files: [] } })
+    await nextTick()
+
+    const moved = movedCalls.map(c => c.path).sort()
+    expect(moved).toEqual(['readme.md', 'test.ts'])
+  })
+
+  it('skips moving a directory into itself (self-nesting guard)', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    await nextTick()
+
+    const dt = { setData: vi.fn(), setDragImage: vi.fn() }
+    // Drag the "src" directory and drop it onto itself
+    await wrapper.find('.dir-item').trigger('dragstart', { dataTransfer: dt })
+    await wrapper.find('.dir-item').trigger('drop', { dataTransfer: { files: [] } })
+    await nextTick()
+
+    expect(movedCalls).toHaveLength(0)
   })
 })
 
