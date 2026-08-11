@@ -1330,6 +1330,70 @@ func TestSQLiteStore_SearchFTS_SpecialOperatorsNoCrash(t *testing.T) {
 	}
 }
 
+func TestSQLiteStore_SearchFTS_AnyTermORRanking(t *testing.T) {
+	// OR semantics: a query term should match a chunk containing any single term,
+	// not just the full contiguous phrase. Chunks matching more terms rank higher.
+	store := setupSQLiteStore(t)
+
+	chunkA := Chunk{
+		SessionID: testSession1, MessageID: 1, ChunkText: "database query optimization",
+		ChunkTextSegmented: "database query optimization", ChunkIndex: 0,
+		TokenCount: 3, Embedding: makeTestEmbedding(), HasEmbedding: true,
+		ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+		CreatedAt: time.Now().Truncate(time.Millisecond),
+	}
+	chunkB := Chunk{
+		SessionID: testSession2, MessageID: 1, ChunkText: "database storage engine",
+		ChunkTextSegmented: "database storage engine", ChunkIndex: 0,
+		TokenCount: 3, Embedding: makeTestEmbedding(), HasEmbedding: true,
+		ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+		CreatedAt: time.Now().Truncate(time.Millisecond),
+	}
+	require.NoError(t, store.InsertChunks([]Chunk{chunkA, chunkB}))
+
+	// Any-term (OR) match: "engine query" must match chunkA via "query" alone and
+	// chunkB via "engine" alone, even though each chunk lacks the other query term.
+	hits, err := store.SearchFTS("engine query", 10, "", "", "", "", "", "", "")
+	require.NoError(t, err)
+	var foundA, foundB bool
+	for _, h := range hits {
+		if h.SessionID == chunkA.SessionID {
+			foundA = true
+		}
+		if h.SessionID == chunkB.SessionID {
+			foundB = true
+		}
+	}
+	assert.True(t, foundA, "OR semantics should match chunkA via the single term 'query'")
+	assert.True(t, foundB, "OR semantics should match chunkB via the single term 'engine'")
+
+	// More matching terms rank higher and order is irrelevant: "database storage"
+	// matches chunkA (1 term) and chunkB (2 terms, in reversed order vs the query).
+	hits, err = store.SearchFTS("database storage", 10, "", "", "", "", "", "", "")
+	require.NoError(t, err)
+	assert.Len(t, hits, 2)
+	assert.Equal(t, testSession2, hits[0].SessionID, "chunk matching more terms should rank higher")
+	assert.Equal(t, testSession1, hits[1].SessionID)
+}
+
+func TestSQLiteStore_SearchFTS_EmptyQuery(t *testing.T) {
+	// Empty/whitespace-only queries must not produce an FTS5 syntax error.
+	store := setupSQLiteStore(t)
+	chunk := Chunk{
+		SessionID: testSession1, MessageID: 1, ChunkText: "database query",
+		ChunkTextSegmented: "database query", ChunkIndex: 0,
+		TokenCount: 2, Embedding: makeTestEmbedding(), HasEmbedding: true,
+		ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+		CreatedAt: time.Now().Truncate(time.Millisecond),
+	}
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	for _, q := range []string{"", "   "} {
+		hits, err := store.SearchFTS(q, 10, "", "", "", "", "", "", "")
+		require.NoError(t, err, "empty query should not error: %q", q)
+		assert.Empty(t, hits, "empty query should return no hits")
+	}
+}
+
 func TestSQLiteStore_SearchFTS_DoubleQuotesInQuery(t *testing.T) {
 	// Queries containing double quotes should be handled correctly
 	// (double quotes are escaped by doubling in FTS5 phrase syntax).

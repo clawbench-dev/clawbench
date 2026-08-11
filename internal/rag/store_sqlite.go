@@ -579,15 +579,26 @@ func (s *Store) HasFTSData() bool {
 
 // SearchFTS performs BM25 full-text search using SQLite FTS5.
 func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, role, sessionID, excludeSessionID, fromTime, toTime string) ([]SearchHit, error) {
-	// Segment the query for Chinese support
-	segmentedQuery := SegmentText(queryText)
+	// Segment the query for Chinese support and split into individual terms.
+	tokens := SegmentTokens(queryText)
 
-	// Wrap in FTS5 phrase syntax (double-quoted) to treat the entire segmented
-	// string as a literal phrase. This prevents FTS5 special operators (AND, OR,
-	// NOT, NEAR, *, "") in user input from causing FTS5 syntax errors (ISS-283).
-	// Any embedded double-quote characters are escaped by doubling them.
-	escapedQuery := strings.ReplaceAll(segmentedQuery, `"`, `""`)
-	ftsQuery := `"` + escapedQuery + `"`
+	// Build an OR query over the individual terms: any term may match, and
+	// BM25 ranks chunks matching more terms higher. Order of terms is irrelevant.
+	// Each term is wrapped in double quotes so FTS5 special operators (AND, OR,
+	// NOT, NEAR, *, "") in user input are treated as plain text (ISS-283); any
+	// embedded double-quote characters are escaped by doubling them.
+	quotedTerms := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
+		if strings.TrimSpace(tok) == "" {
+			continue
+		}
+		quotedTerms = append(quotedTerms, `"`+strings.ReplaceAll(tok, `"`, `""`)+`"`)
+	}
+	if len(quotedTerms) == 0 {
+		// Empty or whitespace-only query: no terms to match, return no results.
+		return nil, nil
+	}
+	ftsQuery := strings.Join(quotedTerms, " OR ")
 
 	// Use FTS5 MATCH with BM25 ranking
 	query := `
