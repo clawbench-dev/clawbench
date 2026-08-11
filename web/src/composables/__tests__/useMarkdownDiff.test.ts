@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { extractBlocks, computeMarkdownDiff, computeCharDiff, offscreenExtractBlocks, charDiffToLines, contentToDiffLines, contentToDiffLinesWithCtx, isDiffBlock, extractBlockElements, computeCodeDiffMarkers, diffMarkers, diffDrawerVisible, diffDrawerMarker, diffOldContent, diffOldFilePath, openDiffDrawer, closeDiffDrawer, clearDiffMarkers } from '@/composables/useMarkdownDiff'
+import { extractBlocks, computeMarkdownDiff, computeCharDiff, offscreenExtractBlocks, charDiffToLines, contentToDiffLines, contentToDiffLinesWithCtx, isDiffBlock, extractBlockElements, computeCodeDiffMarkers, diffMarkers, diffDrawerVisible, diffDrawer, diffDrawerMarker, diffOldContent, diffOldFilePath, openDiffDrawer, closeDiffDrawer, clearDiffMarkers } from '@/composables/useMarkdownDiff'
+import { onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer'
+import { _setWideScreenForTest, resetWideScreenState } from '@/composables/useWideScreenLayout'
 
 // Mock globals for renderMarkdown
 vi.mock('@/utils/globals', () => ({
@@ -601,6 +603,8 @@ describe('computeCodeDiffMarkers', () => {
 describe('diff drawer state', () => {
   afterEach(() => {
     clearDiffMarkers()
+    resetTabDrawerState()
+    resetWideScreenState()
   })
 
   it('openDiffDrawer sets marker and opens drawer', () => {
@@ -632,6 +636,26 @@ describe('diff drawer state', () => {
 
     expect(diffDrawerMarker.value).toBeNull()
     expect(diffDrawerVisible.value).toBe(false)
+  })
+
+  it('diff drawer is effectively open when the file-view tab (view) is active', () => {
+    // FileViewer (which renders DiffDrawer) lives in the 'view' tab. The
+    // drawer must open on marker click there — it must NOT be gated to another
+    // tab (e.g. 'browse'), otherwise effectiveOpen stays false and clicking a
+    // diff marker appears to do nothing.
+    _setWideScreenForTest(false) // force narrow (single-pane) mode determinism
+    const marker = {
+      id: 'view-tab-marker',
+      type: 'modified' as const,
+      label: 'M',
+      blockSelector: ':scope',
+      charDiff: null,
+      ariaLabel: 'Modified: P',
+    }
+    onTabSwitch('view')
+    openDiffDrawer(marker)
+
+    expect(diffDrawer.effectiveOpen.value).toBe(true)
   })
 
   it('clearDiffMarkers resets all diff state', () => {

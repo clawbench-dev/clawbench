@@ -794,7 +794,7 @@ export function offscreenExtractBlocks(content: string): BlockInfo[] {
  */
 export const diffMarkers = ref<DiffMarker[]>([])
 export const diffDrawerVisible = ref(false)
-export const diffDrawer = _useTabDrawer('browse', diffDrawerVisible)
+export const diffDrawer = _useTabDrawer('view', diffDrawerVisible)
 export const diffDrawerMarker = shallowRef<DiffMarker | null>(null)
 /** Full file content before changes (for undo) */
 export const diffOldContent = ref<string | null>(null)
