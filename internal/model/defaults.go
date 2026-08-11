@@ -227,7 +227,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.RAG.BatchSize = 50
 	}
 	if cfg.RAG.SearchLimit <= 0 {
-		cfg.RAG.SearchLimit = 20
+		cfg.RAG.SearchLimit = 100
 	}
 	if cfg.RAG.SearchPoolSize <= 0 {
 		cfg.RAG.SearchPoolSize = 20

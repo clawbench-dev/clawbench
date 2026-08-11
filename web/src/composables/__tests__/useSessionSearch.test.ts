@@ -93,7 +93,12 @@ describe('useSessionSearch', () => {
       }))
     })
 
-    it('clears results for empty query', async () => {
+    it('browses all sessions for empty query', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
+
       const { state, search } = useSessionSearch()
       state.results = [{ session_id: 's1' }] as any
       state.total = 1
@@ -105,7 +110,12 @@ describe('useSessionSearch', () => {
       expect(state.total).toBe(0)
       expect(state.loading).toBe(false)
       expect(state.error).toBeNull()
-      expect(mockFetch).not.toHaveBeenCalled()
+      expect(state.searchMode).toBe('recent')
+      // Empty query fetches the recent-session list instead of a stale result.
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid' }),
+      }))
     })
 
     it('handles HTTP errors', async () => {
@@ -230,27 +240,39 @@ describe('useSessionSearch', () => {
       }))
     })
 
-    it('clears results for empty query without debouncing', () => {
+    it('browses all sessions for empty query without debouncing', () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
+
       const { state, setQuery } = useSessionSearch()
       state.results = [{ session_id: 's1' }] as any
       state.total = 1
 
       setQuery('')
 
-      expect(state.results).toEqual([])
-      expect(state.total).toBe(0)
-      expect(state.loading).toBe(false)
-      expect(mockFetch).not.toHaveBeenCalled()
+      expect(state.query).toBe('')
+      // Browse fires immediately (no debounce) since the list is preloaded.
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid' }),
+      }))
     })
 
-    it('clears results for whitespace-only query', () => {
-      const { state, setQuery } = useSessionSearch()
-      state.results = [{ session_id: 's1' }] as any
+    it('browses all sessions for whitespace-only query', () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
 
+      const { setQuery } = useSessionSearch()
       setQuery('   ')
 
-      expect(state.results).toEqual([])
-      expect(mockFetch).not.toHaveBeenCalled()
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid' }),
+      }))
     })
   })
 

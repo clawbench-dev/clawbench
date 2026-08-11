@@ -390,14 +390,25 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Query == "" {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
-		return
-	}
 
 	searchLimit := model.ConfigInstance.RAG.SearchLimit
 	if searchLimit <= 0 {
-		searchLimit = 20
+		searchLimit = 100
+	}
+
+	// Empty query → "browse all" mode: list the project's sessions newest-first
+	// instead of rejecting the request.
+	if req.Query == "" {
+		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSearchFailed")
+			return
+		}
+		if result.Sessions == nil {
+			result.Sessions = []rag.SessionSearchResult{}
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
 	}
 
 	searchPoolSize := model.ConfigInstance.RAG.SearchPoolSize

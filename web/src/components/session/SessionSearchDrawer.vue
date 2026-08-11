@@ -27,8 +27,7 @@
       </div>
 
       <div class="session-search-content">
-        <div v-if="!searchState.query.trim()" class="session-search-empty">{{ t('sessionSearch.noQuery') }}</div>
-        <div v-else-if="searchState.loading" class="session-search-empty">{{ t('sessionSearch.searching') }}</div>
+        <div v-if="searchState.loading" class="session-search-empty">{{ t('sessionSearch.searching') }}</div>
         <div v-else-if="searchState.error" class="session-search-error">{{ searchState.error }}</div>
         <div v-else-if="searchState.results.length === 0" class="session-search-empty">{{ t('sessionSearch.noResults') }}</div>
         <div v-else class="session-search-results">
@@ -45,7 +44,7 @@
             <div class="session-search-item-footer">
               <span v-if="session.archived" class="session-search-item-archived">{{ t('sessionSearch.archived') }}</span>
               <span v-if="session.backend" class="session-search-item-backend">{{ session.backend }}</span>
-              <span class="session-search-item-chunks">{{ t('sessionSearch.chunks', { count: session.match_count }) }}</span>
+              <span v-if="!isBrowseMode && session.chunks.length > 0" class="session-search-item-chunks">{{ t('sessionSearch.chunks', { count: session.match_count }) }}</span>
             </div>
           </div>
         </div>
@@ -57,7 +56,7 @@
       <!-- Session meta bar -->
       <div class="detail-meta-bar">
         <span v-if="selectedSession.backend" class="detail-meta-badge detail-meta-backend">{{ selectedSession.backend }}</span>
-        <span class="detail-meta-badge detail-meta-count">{{ t('sessionSearch.chunks', { count: selectedSession.match_count }) }}</span>
+        <span v-if="!isBrowseMode && selectedSession.chunks.length > 0" class="detail-meta-badge detail-meta-count">{{ t('sessionSearch.chunks', { count: selectedSession.match_count }) }}</span>
         <span class="detail-meta-time">{{ formatRelativeTime(selectedSession.created_at) }}</span>
       </div>
 
@@ -110,8 +109,8 @@ const { t } = useI18n()
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; resume: [session: SessionSearchResult]; open: [session: SessionSearchResult] }>()
 
-const { state: searchState, setQuery, clear } = useSessionSearch()
-const search = { state: searchState, setQuery, clear }
+const { state: searchState, setQuery, browse, clear } = useSessionSearch()
+const search = { state: searchState, setQuery, browse, clear }
 
 const selectedSession = ref<SessionSearchResult | null>(null)
 const inputRef = ref<InstanceType<typeof SearchInput> | null>(null)
@@ -150,6 +149,10 @@ const searchModeLabel = computed(() => {
   if (!searchState.searchMode) return ''
   return searchState.searchMode === 'hybrid' ? t('sessionSearch.modeHybrid') : t('sessionSearch.modeFts')
 })
+
+// Browse mode (empty query) lists all sessions newest-first; its preview chunk
+// is not a search hit, so the match count label is hidden.
+const isBrowseMode = computed(() => searchState.searchMode === 'recent')
 
 // ── Back handler for drilldown ──
 const unregisterBack = registerBackHandler({
@@ -297,6 +300,8 @@ watch(() => props.open, async (val) => {
     // Wait for BottomSheet slide-up animation (250ms) to complete before focusing
     await new Promise(r => setTimeout(r, 300))
     inputRef.value?.focus()
+    // Default to browsing all sessions newest-first (no query entered)
+    search.browse()
   } else {
     search.clear()
     selectedSession.value = null

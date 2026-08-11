@@ -18,6 +18,7 @@ const (
 	SearchModeHybrid SearchMode = "hybrid" // Vector + FTS with RRF fusion
 	SearchModeVector SearchMode = "vector" // Vector similarity only
 	SearchModeFTS    SearchMode = "fts"    // Full-text search only (BM25)
+	SearchModeRecent SearchMode = "recent" // Browse all sessions newest-first (empty query)
 )
 
 // SearchParams holds the parameters for a RAG search request.
@@ -219,6 +220,51 @@ type SessionSearchResponse struct {
 	Mode     SearchMode            `json:"mode"`
 }
 
+// RecentSessions lists the project's sessions newest-first (reverse
+// chronological order) for the "browse all" state of session search, when no
+// query has been entered yet. It returns up to limit sessions with title,
+// backend, project, archived flag, creation time and message count.
+func RecentSessions(ctx context.Context, projectPath string, limit int) (*SessionSearchResponse, error) {
+	sessions, err := service.GetRecentSessions(projectPath, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]SessionSearchResult, 0, len(sessions))
+	for _, s := range sessions {
+		res := SessionSearchResult{
+			SessionID:    s.ID,
+			SessionTitle: s.Title,
+			Backend:      s.Backend,
+			ProjectPath:  s.ProjectPath,
+			Archived:     s.Archived,
+			CreatedAt:    s.CreatedAt,
+			// No search happened in browse mode — no match count.
+			MatchCount: 0,
+			Chunks:     []ChunkHit{},
+		}
+		// Attach the session's first message as a preview chunk so the detail
+		// view (and list preview) has content to show without any search query.
+		if s.FirstContent != "" {
+			res.Chunks = append(res.Chunks, ChunkHit{
+				ChunkID:        s.FirstMessageID,
+				ChunkText:      s.FirstContent,
+				MatchPositions: []MatchRange{},
+				Role:           s.FirstRole,
+				MessageID:      s.FirstMessageID,
+				CreatedAt:      s.FirstCreatedAt,
+			})
+		}
+		out = append(out, res)
+	}
+
+	return &SessionSearchResponse{
+		Sessions: out,
+		Total:    len(out),
+		Mode:     SearchModeRecent,
+	}, nil
+}
+
 // RAGSessionSearch performs RAG search and aggregates results by session.
 // It fetches an expanded pool of chunks, groups by session_id with a per-session
 // chunk cap, and returns up to searchLimit sessions sorted by best chunk score.
@@ -348,7 +394,8 @@ func getSessionArchivedStatus(sessionIDs map[string]bool) map[string]bool {
 		args[i] = id
 	}
 	rows, err := service.ReadDB().Query(
-		"SELECT id, archived FROM chat_sessions WHERE id IN ("+placeholders+")", args...)
+		"SELECT id, archived FROM chat_sessions WHERE id IN ("+placeholders+")", args...,
+	)
 	if err != nil {
 		return archivedMap
 	}

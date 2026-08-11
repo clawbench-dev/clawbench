@@ -185,6 +185,19 @@ func helperCreateSession(t *testing.T, projectPath, backend, title string) strin
 	return id
 }
 
+// insertSessionWithTime inserts a chat session row with an explicit creation
+// time and archived flag, used by recent-session listing tests.
+func insertSessionWithTime(t *testing.T, projectPath, id, title, createdAt string, archived bool) {
+	t.Helper()
+	archivedInt := 0
+	if archived {
+		archivedInt = 1
+	}
+	_, err := service.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_path, backend, title, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?)",
+		id, projectPath, title, archivedInt, createdAt, createdAt)
+	require.NoError(t, err)
+}
+
 // helperCreateScheduledSession creates a scheduled session and asserts success.
 func helperCreateScheduledSession(t *testing.T, _, backend, title string) string {
 	t.Helper()
@@ -1660,6 +1673,66 @@ func TestGetSessionsPaged_LimitLessThanTotal_HasMore(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.True(t, hasMore)
+}
+
+func TestGetRecentSessions_NewestFirstIncludesArchived(t *testing.T) {
+	setupDB(t)
+
+	// Insert with explicit created_at in non-chronological order.
+	insertSessionWithTime(t, "/project", "old", "Old", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "new", "New", "2024-03-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "arch", "Archived", "2024-02-01 10:00:00", true)
+
+	sessions, err := service.GetRecentSessions("/project", 0)
+	assert.NoError(t, err)
+	require.Len(t, sessions, 3)
+	// Reverse chronological order (newest first).
+	assert.Equal(t, "new", sessions[0].ID)
+	assert.Equal(t, "arch", sessions[1].ID)
+	assert.Equal(t, "old", sessions[2].ID)
+	// Archived sessions are included with the flag set.
+	assert.True(t, sessions[1].Archived)
+	assert.False(t, sessions[2].Archived)
+}
+
+func TestGetRecentSessions_ProjectScopedAndLimited(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "a", "A", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "b", "B", "2024-01-02 10:00:00", false)
+	insertSessionWithTime(t, "/other", "c", "C", "2024-01-03 10:00:00", false)
+
+	// Other project must be excluded.
+	sessions, err := service.GetRecentSessions("/project", 0)
+	assert.NoError(t, err)
+	require.Len(t, sessions, 2)
+
+	// Limit truncates the newest-first list.
+	sessions, err = service.GetRecentSessions("/project", 1)
+	assert.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, "b", sessions[0].ID)
+}
+
+func TestGetRecentSessions_EmptyProjectBrowsesAll(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "a", "A", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/other", "b", "B", "2024-01-02 10:00:00", false)
+
+	// Empty project path → across all projects (CLI global browse).
+	sessions, err := service.GetRecentSessions("", 0)
+	assert.NoError(t, err)
+	require.Len(t, sessions, 2)
+	assert.Equal(t, "b", sessions[0].ID)
+}
+
+func TestGetRecentSessions_NoSessions(t *testing.T) {
+	setupDB(t)
+
+	sessions, err := service.GetRecentSessions("/project", 0)
+	assert.NoError(t, err)
+	assert.Len(t, sessions, 0)
 }
 
 func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {

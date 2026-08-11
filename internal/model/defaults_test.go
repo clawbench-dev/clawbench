@@ -399,8 +399,8 @@ func TestApplyDefaults_RAGDefaults(t *testing.T) {
 	if cfg.RAG.BatchSize != 50 {
 		t.Errorf("RAG.BatchSize = %d, want 50", cfg.RAG.BatchSize)
 	}
-	if cfg.RAG.SearchLimit != 20 {
-		t.Errorf("RAG.SearchLimit = %d, want 20", cfg.RAG.SearchLimit)
+	if cfg.RAG.SearchLimit != 100 {
+		t.Errorf("RAG.SearchLimit = %d, want 100", cfg.RAG.SearchLimit)
 	}
 	if cfg.RAG.RetentionDays != 90 {
 		t.Errorf("RAG.RetentionDays = %d, want 90", cfg.RAG.RetentionDays)

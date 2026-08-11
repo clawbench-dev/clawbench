@@ -71,17 +71,7 @@ export function useSessionSearch() {
     state.searchMode = ''
   }
 
-  async function search(q: string) {
-    const trimmed = q.trim()
-    if (!trimmed) {
-      state.results = []
-      state.total = 0
-      state.loading = false
-      state.error = null
-      state.searchMode = ''
-      return
-    }
-
+  async function doFetch(q: string) {
     cancelPending()
     state.loading = true
     state.error = null
@@ -92,7 +82,7 @@ export function useSessionSearch() {
       const res = await fetch('/api/rag/session-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: trimmed, prefer_mode: state.preferMode }),
+        body: JSON.stringify({ q, prefer_mode: state.preferMode }),
         signal: abortController.signal,
       })
 
@@ -117,14 +107,21 @@ export function useSessionSearch() {
     }
   }
 
+  // Browse all sessions newest-first when there is no query to search for.
+  function browse() {
+    return doFetch('')
+  }
+
+  function search(q: string) {
+    return doFetch(q.trim())
+  }
+
   function setQuery(q: string) {
     state.query = q
     cancelPending()
     if (!q.trim()) {
-      state.results = []
-      state.total = 0
-      state.loading = false
-      state.error = null
+      // Empty query → browse all sessions newest-first instead of a stale list.
+      browse()
       return
     }
     debounceTimer = setTimeout(() => {
@@ -136,5 +133,5 @@ export function useSessionSearch() {
     cancelPending()
   })
 
-  return { state, setQuery, search, clear }
+  return { state, setQuery, search, browse, clear }
 }

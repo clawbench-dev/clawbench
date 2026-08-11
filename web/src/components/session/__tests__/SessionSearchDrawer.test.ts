@@ -136,10 +136,13 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.session-search-body').exists()).toBe(true)
   })
 
-  it('shows no query message when query is empty', () => {
-    mockSearchState.mockReturnValue(createState({ query: '' }))
+  it('lists browsed sessions when query is empty', () => {
+    mockSearchState.mockReturnValue(createState({ query: '', results: [sampleResult], total: 1 }))
     const wrapper = mountDrawer()
-    expect(wrapper.find('.session-search-empty').text()).toContain('Enter a query')
+    expect(wrapper.find('.session-search-item').exists()).toBe(true)
+    expect(wrapper.find('.session-search-item-title').text()).toBe('My Session')
+    // No "enter a query" placeholder blocks the browse list.
+    expect(wrapper.find('.session-search-empty').exists()).toBe(false)
   })
 
   it('shows searching state', () => {

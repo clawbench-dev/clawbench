@@ -632,14 +632,92 @@ func TestServeRAGSessionSearch_MethodCheck(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-func TestServeRAGSessionSearch_MissingQuery(t *testing.T) {
+func TestServeRAGSessionSearch_EmptyQueryBrowsesRecentSessions(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
+
+	// Insert sessions in non-chronological order to verify newest-first output.
+	insertSession(t, env.ProjectDir, "sess-old", "Old session", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "sess-new", "New session", "2024-03-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "sess-arch", "Archived session", "2024-02-01 10:00:00", true)
 
 	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Sessions []struct {
+			SessionID  string `json:"session_id"`
+			Title      string `json:"session_title"`
+			Archived   bool   `json:"archived"`
+			MatchCount int    `json:"match_count"`
+		} `json:"sessions"`
+		Total int    `json:"total"`
+		Mode  string `json:"mode"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, result.Total)
+	assert.Equal(t, "recent", result.Mode)
+	require.Len(t, result.Sessions, 3)
+	// Newest first (reverse chronological).
+	assert.Equal(t, "sess-new", result.Sessions[0].SessionID)
+	assert.Equal(t, "sess-arch", result.Sessions[1].SessionID)
+	assert.Equal(t, "sess-old", result.Sessions[2].SessionID)
+	// Archived sessions are included.
+	assert.True(t, result.Sessions[1].Archived)
+	// Browse mode has no search hits, so no match count is reported.
+	assert.Zero(t, result.Sessions[0].MatchCount)
+	assert.Zero(t, result.Sessions[1].MatchCount)
+	assert.Zero(t, result.Sessions[2].MatchCount)
+}
+
+func TestServeRAGSessionSearch_EmptyQueryRemoteNoProjectDenied(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	// Default RemoteAddr is 192.0.2.1 (non-localhost)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeRAGSessionSearch_EmptyQueryIncludesFirstChunk(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "sess-c", "Session", "2024-01-01 10:00:00", false)
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, 'user', 'First message here', ?, 'claude')",
+		env.ProjectDir, "sess-c",
+	)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Sessions []struct {
+			SessionID  string `json:"session_id"`
+			MatchCount int    `json:"match_count"`
+			Chunks     []struct {
+				ChunkText string `json:"chunk_text"`
+				Role      string `json:"role"`
+			} `json:"chunks"`
+		} `json:"sessions"`
+	}
+	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	require.Len(t, result.Sessions, 1)
+	assert.Zero(t, result.Sessions[0].MatchCount)
+	// The first message is attached as a preview chunk for the detail view.
+	require.Len(t, result.Sessions[0].Chunks, 1)
+	assert.Equal(t, "First message here", result.Sessions[0].Chunks[0].ChunkText)
+	assert.Equal(t, "user", result.Sessions[0].Chunks[0].Role)
 }
 
 func TestServeRAGSessionSearch_RemoteNoProjectDenied(t *testing.T) {
@@ -902,6 +980,20 @@ func setupRAGStore(t *testing.T) *rag.Store {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+// insertSession inserts a chat session row for session-search browse tests.
+func insertSession(t *testing.T, projectPath, id, title, createdAt string, archived bool) {
+	t.Helper()
+	archivedInt := 0
+	if archived {
+		archivedInt = 1
+	}
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?)",
+		id, projectPath, title, archivedInt, createdAt, createdAt,
+	)
+	require.NoError(t, err)
 }
 
 // setupWorkingMockEmbedder creates a mock EmbeddingClient backed by a test server
