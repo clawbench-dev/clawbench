@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 import { nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import FileViewer from '../FileViewer.vue'
 
@@ -361,16 +361,42 @@ describe('FileViewer', () => {
       return (wrapper.vm as any).$.setupState
     }
 
-    it('toggles editing via FileHeader toggleEdit emit', async () => {
+    it('enters edit mode via FileHeader toggleEdit emit', async () => {
       const wrapper = mountViewer({ file: editableFile })
-      expect(setupState(wrapper).editing).toBe(false)
+      const ss = setupState(wrapper)
+      expect(ss.editing).toBe(false)
       const header = wrapper.findComponent({ name: 'FileHeader' })
       header.vm.$emit('toggleEdit')
       await nextTick()
-      expect(setupState(wrapper).editing).toBe(true)
-      header.vm.$emit('toggleEdit')
+      expect(ss.editing).toBe(true)
+    })
+
+    it('does not exit edit mode via header Edit when the exit guard cannot confirm', async () => {
+      // Exiting edit now routes through guardExitEdit, which needs the (async)
+      // CodeMirror editor's handleExit. When the editor isn't reachable in the
+      // test env the guard aborts safely — edit mode must not be lost.
+      mockHandleExit.mockReset()
+      const wrapper = mountViewer({ file: editableFile })
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
       await nextTick()
-      expect(setupState(wrapper).editing).toBe(false)
+      expect(ss.editing).toBe(true)
+      await ss.handleToggleEdit()
+      await flushPromises()
+      expect(ss.editing).toBe(true)
+    })
+
+    it('keeps editing when exiting via header Edit is cancelled while dirty', async () => {
+      mockHandleExit.mockReset()
+      const wrapper = mountViewer({ file: editableFile })
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      expect(ss.editing).toBe(true)
+      mockHandleExit.mockResolvedValue(false)
+      await ss.handleToggleEdit()
+      await flushPromises()
+      expect(ss.editing).toBe(true)
     })
 
     it('calls saveFile with path and content and stays in edit mode on success', async () => {
@@ -503,6 +529,58 @@ describe('FileViewer', () => {
       await ss.handleToggleViewRequest()
       expect(mockHandleExit).toHaveBeenCalled()
       expect(wrapper.emitted('toggleView')).toBeFalsy()
+      expect(ss.editing).toBe(true)
+    })
+  })
+
+  describe('guarded file navigation while editing', () => {
+    beforeEach(async () => {
+      ;(await import('@/composables/useFileEditor'))._resetForTesting()
+      mockHandleExit.mockReset()
+      mockHandleExit.mockResolvedValue(true)
+    })
+
+    function setupState(wrapper: ReturnType<typeof mount>) {
+      return (wrapper.vm as any).$.setupState
+    }
+
+    it('emits navigateBack immediately when not editing', async () => {
+      const wrapper = mountViewer()
+      await setupState(wrapper).handleNavBack()
+      expect(wrapper.emitted('navigateBack')).toBeTruthy()
+      expect(mockHandleExit).not.toHaveBeenCalled()
+    })
+
+    it('emits navigateForward immediately when not editing', async () => {
+      const wrapper = mountViewer()
+      await setupState(wrapper).handleNavForward()
+      expect(wrapper.emitted('navigateForward')).toBeTruthy()
+      expect(mockHandleExit).not.toHaveBeenCalled()
+    })
+
+    it('emits overlayClose immediately when not editing', async () => {
+      const wrapper = mountViewer()
+      await setupState(wrapper).handleOverlayCloseRequest()
+      expect(wrapper.emitted('overlayClose')).toBeTruthy()
+      expect(mockHandleExit).not.toHaveBeenCalled()
+    })
+
+    it('emits delete with the path immediately when not editing', async () => {
+      const wrapper = mountViewer()
+      await setupState(wrapper).handleDeleteRequest('main.ts')
+      expect(wrapper.emitted('delete')?.[0]).toEqual(['main.ts'])
+      expect(mockHandleExit).not.toHaveBeenCalled()
+    })
+
+    it('does not navigate back when editing and the exit is cancelled (stays editing)', async () => {
+      const wrapper = mountViewer()
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      expect(ss.editing).toBe(true)
+      mockHandleExit.mockResolvedValue(false)
+      await ss.handleNavBack()
+      expect(wrapper.emitted('navigateBack')).toBeFalsy()
       expect(ss.editing).toBe(true)
     })
   })

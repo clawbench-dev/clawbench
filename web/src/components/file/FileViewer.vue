@@ -12,7 +12,7 @@
       :sticky-scroll="stickyScroll"
       :overlay-open="fileNav.overlayOpen.value"
       :editing="editing"
-      @delete="emit('delete', file.path)"
+      @delete="handleDeleteRequest(file.path)"
       @toggle-view="handleToggleViewRequest"
       @toggle-edit="handleToggleEdit"
       @show-details="emit('showDetails')"
@@ -24,7 +24,7 @@
       @toggle-line-numbers="toggleLineNumbers"
       @toggle-sticky-scroll="toggleStickyScroll"
       @refresh="emit('refresh')"
-      @overlay-close="emit('overlayClose')"
+      @overlay-close="handleOverlayCloseRequest"
       @share-external="emit('shareExternal')"
       @export-html="handleExportHtml"
       @fit-width="handleFitWidth"
@@ -127,7 +127,7 @@
           :view-mode="markdownViewMode"
           :word-wrap="wordWrap"
           :show-line-numbers="showLineNumbers"
-          @delete="emit('delete', file.path)"
+          @delete="handleDeleteRequest(file.path)"
           @show-details="emit('showDetails')"
           @open-git-history="emit('openGitHistory')"
         />
@@ -227,7 +227,7 @@
         type="button"
         :title="t('file.overlay.back')"
         :aria-label="t('file.overlay.back')"
-        @click.stop="emit('navigateBack')"
+        @click.stop="handleNavBack"
       >
         <ChevronLeft :size="18" />
       </button>
@@ -237,7 +237,7 @@
         type="button"
         :title="t('file.overlay.forward')"
         :aria-label="t('file.overlay.forward')"
-        @click.stop="emit('navigateForward')"
+        @click.stop="handleNavForward"
       >
         <ChevronRight :size="18" />
       </button>
@@ -362,26 +362,54 @@ async function handleSaveAndExit(content) {
 }
 
 function handleToggleEdit() {
+    if (editing.value) {
+        // Exiting edit mode via the header Edit button: confirm unsaved changes
+        // (save/discard/cancel) exactly like the back gesture and navigation.
+        return guardExitEdit(() => {})
+    }
     const saved = captureScrollFrom(getScrollEl())
-    editing.value = !editing.value
+    editing.value = true
     restoreScrollAfter(saved)
+}
+
+// Confirm-and-exit edit mode before an action that would leave the current
+// file's edit view. If there are unsaved changes, CodeMirrorViewer.handleExit
+// prompts save/discard/cancel; the action only runs once edit mode has really
+// ended (save completed or changes discarded). Returns true if the action may
+// proceed, false if the user cancelled or a save failed.
+async function guardExitEdit(action) {
+    if (editing.value) {
+        const exited = await cmEditorRef.value?.handleExit?.()
+        if (exited !== true) return false
+        // The "save and exit" path clears editing asynchronously; wait for it so
+        // dependent UI (e.g. MarkdownPreview gated on !editing) is consistent.
+        await waitEditingCleared()
+        if (editing.value) return false // save still in flight / failed — abort
+    }
+    action()
+    return true
 }
 
 // Preview / toggle-view request. When a markdown file is being edited, the
 // rendered preview is gated on `!editing`, so opening it must first exit edit
-// mode. Mirror the bottom X button exactly (CodeMirrorViewer.handleExit, which
-// confirms save/discard/cancel when dirty) and only flip the view mode once the
-// edit has really ended. If the user cancels the exit, stay put.
-async function handleToggleViewRequest() {
-    if (editing.value) {
-        const exited = await cmEditorRef.value?.handleExit?.()
-        if (exited !== true) return
-        // The "save and exit" path clears editing asynchronously in handleSave;
-        // wait for it so MarkdownPreview (gated on !editing) actually renders.
-        await waitEditingCleared()
-        if (editing.value) return // save still in flight / failed — don't flip yet
-    }
-    emit('toggleView')
+// mode (with dirty confirmation). If the user cancels, stay put.
+function handleToggleViewRequest() {
+    return guardExitEdit(() => emit('toggleView'))
+}
+
+// File navigation / closing all leave the current edit view, so they go through
+// the same dirty-save confirmation as the back gesture and toggle-view.
+function handleNavBack() {
+    return guardExitEdit(() => emit('navigateBack'))
+}
+function handleNavForward() {
+    return guardExitEdit(() => emit('navigateForward'))
+}
+function handleOverlayCloseRequest() {
+    return guardExitEdit(() => emit('overlayClose'))
+}
+function handleDeleteRequest(path) {
+    return guardExitEdit(() => emit('delete', path))
 }
 
 // Resolve once edit mode has been left, or after a timeout so callers never
