@@ -70,6 +70,19 @@ export function canSendInput(inputText: string): boolean {
 }
 
 /**
+ * Strip the project root prefix from an absolute in-project path so it can be
+ * opened as a project-relative file. Returns the path unchanged when it is not
+ * under the given root (e.g. external paths starting with '/').
+ */
+export function relativizeProjectPath(filePath: string, projectRoot: string): string {
+  if (!filePath) return filePath
+  if (projectRoot && filePath.startsWith(projectRoot + '/')) {
+    return filePath.slice(projectRoot.length + 1)
+  }
+  return filePath
+}
+
+/**
  * Build a message that embeds quoted code as a fenced code block.
  * The code block includes language prefix, file path, and optional line range
  * so the AI can identify the source context precisely.

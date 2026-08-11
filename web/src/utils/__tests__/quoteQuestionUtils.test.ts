@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage } from '@/utils/quoteQuestionUtils'
+import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage, relativizeProjectPath } from '@/utils/quoteQuestionUtils'
 
 // --- closestElement ---
 
@@ -323,5 +323,28 @@ describe('buildQuoteMessage', () => {
   it('embeds quoted code with language but no line numbers', () => {
     const result = buildQuoteMessage('explain', 'some code', '/main.go', 'go', 0, 0)
     expect(result).toBe('explain\n\n```go:/main.go\nsome code\n```')
+  })
+})
+
+describe('relativizeProjectPath', () => {
+  it('strips the project root prefix from an in-project absolute path', () => {
+    expect(relativizeProjectPath('/home/user/proj/src/a.ts', '/home/user/proj')).toBe('src/a.ts')
+  })
+
+  it('returns the path unchanged when not under the project root', () => {
+    expect(relativizeProjectPath('/other/dir/b.ts', '/home/user/proj')).toBe('/other/dir/b.ts')
+  })
+
+  it('returns a project-relative path unchanged', () => {
+    expect(relativizeProjectPath('src/a.ts', '/home/user/proj')).toBe('src/a.ts')
+  })
+
+  it('handles empty path and empty root', () => {
+    expect(relativizeProjectPath('', '/home/user/proj')).toBe('')
+    expect(relativizeProjectPath('src/a.ts', '')).toBe('src/a.ts')
+  })
+
+  it('does not strip a root-prefixed sibling path (e.g. proj-other)', () => {
+    expect(relativizeProjectPath('/home/user/proj-other/a.ts', '/home/user/proj')).toBe('/home/user/proj-other/a.ts')
   })
 })

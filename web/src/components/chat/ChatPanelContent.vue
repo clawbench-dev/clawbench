@@ -184,7 +184,7 @@ import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, shouldShowSummary } from '@/utils/chatSessionUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
-import { buildQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
+import { buildQuoteMessage, relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
 import { dedupeFiles } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
@@ -248,27 +248,27 @@ const dialog = useDialog()
 const notification = useNotification()
 const autoSpeech = useAutoSpeech()
 const theme = inject('theme', ref('light'))
-const switchTab = inject('switchTab', () => {})
 const { openFilePath } = useFilePathAnnotation()
 
 async function handleFileTagClick(filePath) {
     if (filePath) {
         // Attachment paths from backend are absolute; strip projectRoot prefix
         // so openFilePath doesn't treat in-project files as external.
-        const root = store.state.projectRoot
-        const relPath = root && filePath.startsWith(root + '/') ? filePath.slice(root.length + 1) : filePath
+        const relPath = relativizeProjectPath(filePath, store.state.projectRoot)
         // openFilePath decides the destination tab itself (file → view, dir → browse).
         await openFilePath(relPath)
     }
 }
 
-function handleQuoteClick() {
+async function handleQuoteClick() {
     const q = quoteData.value
-    if (q?.filePath) {
-        store.selectFile(q.filePath).then(() => {
-            switchTab('view')
-        })
-    }
+    if (!q?.filePath) return
+    // Quote paths from the editor may be absolute project paths; strip the
+    // projectRoot prefix so openFilePath doesn't treat them as external.
+    const relPath = relativizeProjectPath(q.filePath, store.state.projectRoot)
+    // openFilePath opens the file (→ view tab) and dispatches open-file-overlay
+    // with the line range, so the quoted selection is scrolled into view and flashed.
+    await openFilePath(relPath, q.startLine, q.endLine)
 }
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
