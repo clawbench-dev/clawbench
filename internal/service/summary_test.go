@@ -1,22 +1,18 @@
 package service
 
 import (
-	"context"
 	"database/sql"
-	"strings"
 	"testing"
-	"time"
 
 	"clawbench/internal/model"
-	"clawbench/internal/summarize"
 
 	"github.com/stretchr/testify/assert"
 )
 
-// --- AsyncSummarize tests ---
+// --- summarizeSimple / summarizeTarget tests ---
 
 // setupTestDBForAsyncSummary creates an in-memory DB with summaries table
-func setupTestDBForAsyncSummary(t *testing.T) (*sql.DB, func()) {
+func setupTestDBForAsyncSummary(t *testing.T) func() {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -47,84 +43,74 @@ func setupTestDBForAsyncSummary(t *testing.T) (*sql.DB, func()) {
 		cleanup()
 		db.Close()
 	}
-	return db, teardown
+	return teardown
 }
 
-func TestAsyncSummarize_ShortText(t *testing.T) {
-	_, dbTeardown := setupTestDBForAsyncSummary(t)
+func TestSummarizeSimple_ExtractsConclusion(t *testing.T) {
+	dbTeardown := setupTestDBForAsyncSummary(t)
 	defer dbTeardown()
 
-	origInstance := taskSummarizerInstance
-	defer func() { taskSummarizerInstance = origInstance }()
-
-	// Create a TaskSummarizer with a mock pipeline (should not be called for short text)
-	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-		return "should not be called", nil
+	// Multi-block: intro text, tool_use, then conclusion text.
+	// Always-extract must save only the conclusion (text after last tool_use).
+	conclusion := "最终结论：所有改动已完成并测试通过。"
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "让我检查一下..."},
+		{Type: "tool_use", Text: "read_file"},
+		{Type: "text", Text: conclusion},
 	}
-	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
-	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 
-	// Short text block — should save empty summary
-	blocks := []model.ContentBlock{{Type: "text", Text: "短"}}
-
-	AsyncSummarize("chat_message", 1, blocks, "/test", "session-1")
-
-	// Wait for goroutine to complete
-	time.Sleep(200 * time.Millisecond)
+	summarizeSimple("chat_message", 1, blocks, "/test", "session-1")
 
 	summary, found := GetSummary("chat_message", 1)
 	assert.True(t, found)
-	assert.Equal(t, "", summary) // short text = empty summary
+	assert.Equal(t, conclusion, summary)
 }
 
-func TestAsyncSummarize_NormalText(t *testing.T) {
-	_, dbTeardown := setupTestDBForAsyncSummary(t)
+func TestSummarizeSimple_NoTextSavesNothing(t *testing.T) {
+	dbTeardown := setupTestDBForAsyncSummary(t)
 	defer dbTeardown()
 
-	origInstance := taskSummarizerInstance
-	defer func() { taskSummarizerInstance = origInstance }()
+	// No text block (only tool_use) → nothing to extract, no summary saved.
+	blocks := []model.ContentBlock{{Type: "tool_use", Text: "read_file"}}
 
-	// Create mock pipeline that returns a summary
-	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-		return "## 精简总结\n\n关键结论。", nil
-	}
-	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
-	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
+	summarizeSimple("chat_message", 2, blocks, "/test", "session-2")
 
-	// Long text block
-	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
-	blocks := []model.ContentBlock{{Type: "text", Text: longText}}
-
-	AsyncSummarize("chat_message", 2, blocks, "/test", "session-2")
-
-	// Wait for goroutine to complete
-	time.Sleep(200 * time.Millisecond)
-
-	summary, found := GetSummary("chat_message", 2)
-	assert.True(t, found)
-	assert.Contains(t, summary, "精简总结")
-}
-
-func TestAsyncSummarize_NilSummarizer(t *testing.T) {
-	_, dbTeardown := setupTestDBForAsyncSummary(t)
-	defer dbTeardown()
-
-	origInstance := taskSummarizerInstance
-	defer func() { taskSummarizerInstance = origInstance }()
-
-	// nil summarizer — should return immediately, no goroutine
-	taskSummarizerInstance = nil
-
-	blocks := []model.ContentBlock{{Type: "text", Text: "some text"}}
-
-	// Should not panic or create goroutine
-	AsyncSummarize("chat_message", 3, blocks, "/test", "session-3")
-
-	time.Sleep(100 * time.Millisecond)
-
-	// No summary should be saved
-	_, found := GetSummary("chat_message", 3)
+	_, found := GetSummary("chat_message", 2)
 	assert.False(t, found)
+}
+
+func TestSummarizeTarget_AlwaysExtractsConclusion(t *testing.T) {
+	dbTeardown := setupTestDBForAsyncSummary(t)
+	defer dbTeardown()
+
+	// summarizeTarget is the shared entry point and must behave exactly like
+	// summarizeSimple: always extract the last answer, no AI call, no threshold.
+	conclusion := "答案就是 42。"
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "先看看..."},
+		{Type: "tool_use", Text: "Bash"},
+		{Type: "text", Text: conclusion},
+	}
+
+	summarizeTarget("chat_message", 3, blocks, "/test", "session-3")
+
+	summary, found := GetSummary("chat_message", 3)
+	assert.True(t, found)
+	assert.Equal(t, conclusion, summary)
+}
+
+func TestSummarizeTarget_SingleShortTextStillExtracted(t *testing.T) {
+	dbTeardown := setupTestDBForAsyncSummary(t)
+	defer dbTeardown()
+
+	// Short text: no threshold — always-extract saves the conclusion directly.
+	blocks := []model.ContentBlock{{Type: "text", Text: "Short answer"}}
+
+	summarizeTarget("chat_message", 4, blocks, "/test", "session-4")
+
+	summary, found := GetSummary("chat_message", 4)
+	assert.True(t, found)
+	assert.Equal(t, "Short answer", summary)
 }
 
 // --- MigrateTaskExecutionSummaries tests ---
@@ -266,68 +252,4 @@ func TestMigrateTaskExecutionSummaries_Idempotent(t *testing.T) {
 	var taskExecCount int
 	_ = dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&taskExecCount)
 	assert.Equal(t, 0, taskExecCount)
-}
-
-func TestAsyncSummarize_BackendError(t *testing.T) {
-	_, dbTeardown := setupTestDBForAsyncSummary(t)
-	defer dbTeardown()
-
-	origInstance := taskSummarizerInstance
-	defer func() { taskSummarizerInstance = origInstance }()
-
-	// Mock pipeline that returns error
-	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-		return "", context.DeadlineExceeded
-	}
-	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
-	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
-
-	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
-	blocks := []model.ContentBlock{{Type: "text", Text: longText}}
-
-	AsyncSummarize("chat_message", 4, blocks, "/test", "session-4")
-
-	time.Sleep(200 * time.Millisecond)
-
-	// Fallback: SimpleSummarizer should be used as fallback on backend error
-	summary, found := GetSummary("chat_message", 4)
-	assert.True(t, found, "summary should exist as fallback on backend error")
-	assert.NotEmpty(t, summary, "fallback summary should not be empty")
-	// SimpleSummarizer strips markdown (no-op for plain text) and truncates
-	assert.Equal(t, longText, summary, "plain text below 1000 runes should pass through SimpleSummarizer unchanged")
-}
-
-func TestAsyncSummarize_BackendError_ExtractsConclusion(t *testing.T) {
-	_, dbTeardown := setupTestDBForAsyncSummary(t)
-	defer dbTeardown()
-
-	origInstance := taskSummarizerInstance
-	defer func() { taskSummarizerInstance = origInstance }()
-
-	// Mock pipeline that returns error
-	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-		return "", context.DeadlineExceeded
-	}
-	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
-	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
-
-	// Multi-block with tool_use — fallback should extract the conclusion
-	// (text after last tool_use), not the intro text
-	conclusionText := strings.Repeat("这是最终结论内容，比较长。", 30)
-	blocks := []model.ContentBlock{
-		{Type: "text", Text: "让我检查一下..."},
-		{Type: "tool_use", Text: "read_file"},
-		{Type: "text", Text: conclusionText},
-	}
-
-	AsyncSummarize("chat_message", 5, blocks, "/test", "session-5")
-
-	time.Sleep(200 * time.Millisecond)
-
-	summary, found := GetSummary("chat_message", 5)
-	assert.True(t, found, "summary should exist as fallback on backend error")
-	assert.NotEmpty(t, summary, "fallback summary should not be empty")
-	// SimpleSummarizer processes the conclusion text (stripped markdown + truncated),
-	// but for plain Chinese text below 1000 runes it should be unchanged.
-	assert.Equal(t, conclusionText, summary, "fallback should use ExtractLastAnswerFromBlocks + SimpleSummarizer")
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -427,50 +426,11 @@ func ForceCancelSession(sessionID string) {
 	}()
 }
 
-// chatSummaryEnabled controls whether chat message auto-summarization is active.
-// Set during server startup based on config. Uses atomic.Bool for safe concurrent
-// access from HTTP handlers (write) and session completion goroutines (read).
-var chatSummaryEnabled atomic.Bool
-
-// chatSummaryMode controls how chat messages are summarized.
-// "simple" = extract last text after tool_use (no AI call)
-// "ai" = use AI summarizer via AsyncSummarize
-// "" = disabled (no summarization)
-var chatSummaryMode atomic.Value // stores string
-
-func init() {
-	chatSummaryEnabled.Store(true) // default enabled
-}
-
-// SetChatSummaryEnabled configures whether chat messages are auto-summarized on completion.
-func SetChatSummaryEnabled(enabled bool) {
-	chatSummaryEnabled.Store(enabled)
-}
-
-// SetChatSummaryMode sets the chat summarization mode.
-func SetChatSummaryMode(mode string) {
-	chatSummaryMode.Store(mode)
-}
-
-// GetChatSummaryMode returns the current chat summarization mode.
-func GetChatSummaryMode() string {
-	v := chatSummaryMode.Load()
-	if v == nil {
-		return ""
-	}
-	return v.(string) //nolint:errcheck // type assertion is safe: only string values are stored via chatSummaryMode.Store
-}
-
-// triggerChatSummarization triggers async summarization for the last assistant
+// triggerChatSummarization triggers summarization for the last assistant
 // message(s) in a session when it completes normally.
 // Skipped for cancelled/disconnected sessions (those use skipEvent=true in SetSessionRunning).
-// Delegates the mode-specific strategy to the shared summarizeTarget so that
-// interactive chat and scheduled tasks behave identically.
+// Reading summaries always extract the conclusion (no AI), matching scheduled tasks.
 func triggerChatSummarization(sessionID string) {
-	if GetChatSummaryMode() == "" || !chatSummaryEnabled.Load() {
-		return
-	}
-
 	lastAssistant, blocks := getLastAssistantBlocks(sessionID)
 	if lastAssistant == nil || len(blocks) == 0 {
 		return

@@ -41,7 +41,6 @@ type Scheduler struct {
 	mu                sync.Mutex
 	runningExecutions sync.Map // key: executionID, value: *RunningExecution
 	taskRunning       sync.Map // key: taskID (int64), value: struct{}{} — atomic check-and-set to prevent duplicate executions (ISS-187)
-	taskSummarizer    *summarize.TaskSummarizer
 }
 
 // NewScheduler creates a new Scheduler instance.
@@ -56,12 +55,6 @@ func NewScheduler() *Scheduler {
 func (s *Scheduler) Start() {
 	s.cron.Start()
 	slog.Info("scheduler started")
-}
-
-// SetTaskSummarizer sets the task summarizer for generating execution summaries.
-// Must be called before Start() to ensure all task executions use the summarizer.
-func (s *Scheduler) SetTaskSummarizer(ts *summarize.TaskSummarizer) {
-	s.taskSummarizer = ts
 }
 
 // Stop halts the cron scheduler.
@@ -150,11 +143,6 @@ func (s *Scheduler) RemoveRunningExecution(execID string) {
 // Returns (value, loaded) where loaded=true means the task was already marked running.
 func (s *Scheduler) TriggerTaskLoadOrStore(taskID int64) (any, bool) {
 	return s.taskRunning.LoadOrStore(taskID, struct{}{})
-}
-
-// TaskSummarizer returns the current task summarizer instance. Used for testing.
-func (s *Scheduler) TaskSummarizer() *summarize.TaskSummarizer {
-	return s.taskSummarizer
 }
 
 // TaskCount returns the number of registered cron tasks.

@@ -3636,7 +3636,7 @@ func TestGetChatHistoryPagedViewSummaryKeepsEmptySummaryContent(t *testing.T) {
 		`{"blocks":[{"type":"text","text":"too short to summarize"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	// Empty summary = text too short. This is what AsyncSummarize persists for short replies.
+	// Empty summary — the frontend omits content for summarized messages.
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "", nil))
 
 	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0, true)

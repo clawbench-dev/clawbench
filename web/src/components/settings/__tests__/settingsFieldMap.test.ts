@@ -37,7 +37,6 @@ describe('settingsFieldMap', () => {
     expect(map['tts.piper.model_path']).toBeTruthy()
     expect(map['tts.kokoro.model_path']).toBeTruthy()
     expect(map['tts.moss_nano.model_dir']).toBeTruthy()
-    expect(map['summarize.api.base_url']).toBeTruthy()
   })
 
   it('includes previously missing rag.search_pool_size', () => {
@@ -72,7 +71,7 @@ describe('settingsFieldMap', () => {
     const expectedCategories = [
       'appearance', 'agents', 'projectFiles', 'chat', 'debug', 'security', 'about',
       'notification',
-      'terminal', 'tts', 'tts_engine', 'summarization_text', 'summarization_voice', 'rag', 'portForward', 'frp',
+      'terminal', 'tts', 'tts_engine', 'summarization_voice', 'rag', 'portForward', 'frp',
     ]
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
@@ -99,7 +98,6 @@ describe('settingsFieldMap', () => {
   it('categoryHasPanels identifies panel categories', () => {
     expect(categoryHasPanels('terminal')).toBe(true)
     expect(categoryHasPanels('tts')).toBe(false)
-    expect(categoryHasPanels('summarization_text')).toBe(true)
     expect(categoryHasPanels('summarization_voice')).toBe(true)
     expect(categoryHasPanels('rag')).toBe(true)
     expect(categoryHasPanels('portForward')).toBe(true)
@@ -113,7 +111,6 @@ describe('settingsFieldMap', () => {
   it('isPanelOnlyCategory identifies panel-only categories', () => {
     expect(isPanelOnlyCategory('terminal')).toBe(true)
     expect(isPanelOnlyCategory('tts')).toBe(false)
-    expect(isPanelOnlyCategory('summarization_text')).toBe(true)
     expect(isPanelOnlyCategory('summarization_voice')).toBe(true)
     expect(isPanelOnlyCategory('rag')).toBe(true)
     expect(isPanelOnlyCategory('portForward')).toBe(true)
@@ -167,33 +164,6 @@ describe('settingsFieldMap', () => {
   })
 
   // ── Summarization panels ──
-
-  it('summarization_text panel has text summary fields', () => {
-    const panels = getCategoryPanels('summarization_text')
-    expect(panels.length).toBe(1)
-    const cfg = panels[0]
-    expect(cfg.panelId).toBe('summarization_text')
-    expect(cfg.entrySelector).toBeUndefined()
-    expect(cfg.requiredFields).toEqual(['summarize.api.base_url'])
-    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
-    expect((cfg.hasConnectivityTest as Function)({ 'summarize.backend': 'api' })).toBe(true)
-    expect((cfg.hasConnectivityTest as Function)({ 'summarize.backend': 'simple' })).toBe(false)
-    expect((cfg.hasConnectivityTest as Function)({ 'summarize.backend': '' })).toBe(false)
-
-    const textBackend = cfg.commonFields.find(f => f.key === 'summarize.backend')
-    expect(textBackend).toBeDefined()
-    expect(textBackend!.type).toBe('select')
-
-    const apiBaseURL = cfg.commonFields.find(f => f.key === 'summarize.api.base_url')
-    expect(apiBaseURL).toBeDefined()
-    expect(apiBaseURL!.sectionHeader).toBe('settings.items.apiHeader')
-
-    const model = cfg.commonFields.find(f => f.key === 'summarize.model')
-    expect(model).toBeDefined()
-
-    const apiKey = cfg.commonFields.find(f => f.key === 'summarize.api.key')
-    expect(apiKey).toBeDefined()
-  })
 
   it('summarization_voice panel has voice summary fields', () => {
     const panels = getCategoryPanels('summarization_voice')
@@ -317,7 +287,6 @@ describe('settingsFieldMap', () => {
   // ── Sub-page route helpers (data-driven) ──
 
   it('isSubPageRoute identifies colon-separated IDs except agents', () => {
-    expect(isSubPageRoute('chat:summarization_text')).toBe(true)
     expect(isSubPageRoute('tts:summarization_voice')).toBe(true)
     expect(isSubPageRoute('tts:tts_engine')).toBe(true)
     expect(isSubPageRoute('agents:codebuddy')).toBe(false)
@@ -327,10 +296,6 @@ describe('settingsFieldMap', () => {
   })
 
   it('getSubPagePanel returns panel config for valid sub-routes', () => {
-    const textPanel = getSubPagePanel('chat:summarization_text')
-    expect(textPanel).toBeDefined()
-    expect(textPanel!.panelId).toBe('summarization_text')
-
     const voicePanel = getSubPagePanel('tts:summarization_voice')
     expect(voicePanel).toBeDefined()
     expect(voicePanel!.panelId).toBe('summarization_voice')
@@ -346,7 +311,6 @@ describe('settingsFieldMap', () => {
   })
 
   it('getSubPageTitleKey returns title i18n key for valid sub-routes', () => {
-    expect(getSubPageTitleKey('chat:summarization_text')).toBe('settings.items.summarizeTextSection')
     expect(getSubPageTitleKey('tts:summarization_voice')).toBe('settings.items.summarizeTtsSection')
     expect(getSubPageTitleKey('tts:tts_engine')).toBe('settings.items.ttsEngine')
   })

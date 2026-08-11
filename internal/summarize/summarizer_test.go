@@ -77,7 +77,29 @@ func TestLanguageName_Empty(t *testing.T) {
 
 // --- summarizePipeline.Summarize with language ---
 
-func TestSummarizePipeline_ShortText_SkipsLLM(t *testing.T) {
+func TestSummarizePipeline_ShortText_StillCallsLLM(t *testing.T) {
+	var passCalled bool
+	var capturedText string
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		passCalled = true
+		capturedText = text
+		return "润色后的结果", nil
+	}
+
+	s := summarizePipeline{
+		passFn:     passFn,
+		basePrompt: "base prompt",
+	}
+
+	shortText := "短文本"
+	result, err := s.Summarize(context.Background(), shortText, "zh")
+	assert.NoError(t, err)
+	assert.Equal(t, "润色后的结果", result)
+	assert.True(t, passCalled)
+	assert.Equal(t, shortText, capturedText)
+}
+
+func TestSummarizePipeline_EmptyText_SkipsLLM(t *testing.T) {
 	var passCalled bool
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
 		passCalled = true
@@ -89,10 +111,9 @@ func TestSummarizePipeline_ShortText_SkipsLLM(t *testing.T) {
 		basePrompt: "base prompt",
 	}
 
-	shortText := "短文本不需要总结"
-	result, err := s.Summarize(context.Background(), shortText, "zh")
+	result, err := s.Summarize(context.Background(), "", "zh")
 	assert.NoError(t, err)
-	assert.Contains(t, result, "短文本")
+	assert.Equal(t, "", result)
 	assert.False(t, passCalled)
 }
 
@@ -212,8 +233,14 @@ func TestSummarizePipeline_PassFnError(t *testing.T) {
 // --- summarizePipeline with PreserveMarkdown ---
 
 func TestSummarizePipeline_PreserveMarkdown_ShortText(t *testing.T) {
+	var passCalled bool
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		passCalled = true
+		return "**润色结果**", nil
+	}
+
 	s := summarizePipeline{
-		passFn:     func(ctx context.Context, text, systemPrompt string, pass int) (string, error) { return "", nil },
+		passFn:     passFn,
 		basePrompt: "Base",
 		opts:       SummarizeOption{PreserveMarkdown: true},
 	}
@@ -221,8 +248,8 @@ func TestSummarizePipeline_PreserveMarkdown_ShortText(t *testing.T) {
 	shortText := "**短文本**"
 	result, err := s.Summarize(context.Background(), shortText, "zh")
 	assert.NoError(t, err)
-	// With PreserveMarkdown, short text should be returned as-is (no stripping)
-	assert.Equal(t, "**短文本**", result)
+	assert.True(t, passCalled)
+	assert.Equal(t, "**润色结果**", result)
 }
 
 func TestSummarizePipeline_PreserveMarkdown_LongText_NoStripOnOutput(t *testing.T) {
@@ -263,10 +290,16 @@ func TestSummarizePipeline_NoPreserveMarkdown_StripsOnOutput(t *testing.T) {
 
 // --- prepareTextForSummarization ---
 
-func TestPrepareTextForSummarization_ShortText(t *testing.T) {
+func TestPrepareTextForSummarization_ShortTextStillSummarizes(t *testing.T) {
 	text := "短文本"
 	cleaned, needs := prepareTextForSummarization(text, false)
 	assert.Equal(t, text, cleaned)
+	assert.True(t, needs)
+}
+
+func TestPrepareTextForSummarization_EmptyText(t *testing.T) {
+	cleaned, needs := prepareTextForSummarization("", false)
+	assert.Equal(t, "", cleaned)
 	assert.False(t, needs)
 }
 
@@ -291,7 +324,7 @@ func TestPrepareTextForSummarization_Truncation(t *testing.T) {
 func TestPrepareTextForSummarization_PreserveMarkdown(t *testing.T) {
 	text := "**bold** and `code`"
 	cleaned, needs := prepareTextForSummarization(text, true)
-	assert.False(t, needs)
+	assert.True(t, needs)
 	// With PreserveMarkdown, markdown should be preserved
 	assert.Equal(t, text, cleaned)
 }
@@ -299,7 +332,7 @@ func TestPrepareTextForSummarization_PreserveMarkdown(t *testing.T) {
 func TestPrepareTextForSummarization_NoPreserveMarkdown(t *testing.T) {
 	text := "**bold** and `code`"
 	cleaned, needs := prepareTextForSummarization(text, false)
-	assert.False(t, needs)
+	assert.True(t, needs)
 	// Without PreserveMarkdown, markdown should be stripped
 	assert.NotContains(t, cleaned, "**")
 	assert.NotContains(t, cleaned, "`")

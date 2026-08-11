@@ -8,7 +8,6 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
-	"clawbench/internal/summarize"
 
 	_ "modernc.org/sqlite"
 
@@ -1732,23 +1731,6 @@ func TestCleanZombieExecutions_NoZombies(t *testing.T) {
 	err = s.LoadTasksFromDB("/proj")
 	assert.NoError(t, err)
 	s.Stop()
-}
-
-// ---------- SetTaskSummarizer ----------
-
-func TestSetTaskSummarizer(t *testing.T) {
-	s := service.NewScheduler()
-	defer s.Stop()
-
-	// Initially nil
-	assert.Nil(t, s.TaskSummarizer())
-
-	// Set a summarizer
-	ts := &summarize.TaskSummarizer{}
-	s.SetTaskSummarizer(ts)
-
-	// Verify it was set
-	assert.Equal(t, ts, s.TaskSummarizer(), "TaskSummarizer should be set and retrievable")
 }
 
 // ---------- AddRunningExecution / RemoveRunningExecution ----------

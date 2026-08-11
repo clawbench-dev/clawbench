@@ -16,22 +16,12 @@ ClawBench supports TTS speech synthesis, automatically summarizing and reading a
 
 ## Summarization Backend
 
-Long texts are automatically summarized before reading aloud, controlled by `summarize.backend` (shared by TTS voice and scheduled task summarization):
+Long texts are automatically summarized before reading aloud, controlled by `summarize.tts_backend`:
 
 | Backend | Description | Network Requirement |
 |---------|-------------|-------------------|
 | `simple` | Plain text cleaning (default), zero latency | None |
-| `mmx-cli` | mmx text chat (lightweight and fast) | Requires mmx CLI |
-| `claude` | Claude CLI (high summarization quality) | Requires claude CLI |
-| `codebuddy` | CodeBuddy CLI | Requires codebuddy CLI |
-| `opencode` | OpenCode CLI | Requires opencode CLI |
-| `codex` | Codex CLI | Requires codex CLI |
-| `qoder` | Qoder CLI (Alibaba coding agent) | Requires qoder CLI |
-| `vecli` | VeCLI (Volcengine Doubao) | Requires vecli CLI |
-| `deepseek` | CodeWhale (requires v0.8.33+) | Requires deepseek CLI |
-| `pi` | Pi (minimalist coding agent) | Requires pi CLI |
 | `api` | Remote AI API (OpenAI/Anthropic format) | Requires URL and API Key configuration |
-| `ollama` | ~~Deprecated, use `api` + `format: "openai"` instead~~ | — |
 
 ## Text Processing Parameters
 
@@ -219,9 +209,9 @@ tts:
   speed: 1
 
 summarize:
-  backend: "api"
-  model: "gpt-4o-mini"
-  api:
+  tts_backend: "api"
+  tts_model: "gpt-4o-mini"
+  tts_api:
     base_url: "https://api.openai.com/v1/chat/completions"  # Full endpoint URL
     key: "sk-xxx"                                             # API Key
     format: "openai"                                          # API format (default: openai)
@@ -236,9 +226,9 @@ tts:
   speed: 1
 
 summarize:
-  backend: "api"
-  model: "claude-3-5-haiku-latest"
-  api:
+  tts_backend: "api"
+  tts_model: "claude-3-5-haiku-latest"
+  tts_api:
     base_url: "https://api.anthropic.com/v1/messages"
     key: "sk-ant-xxx"
     format: "anthropic"
@@ -257,9 +247,9 @@ tts:
   speed: 1
 
 summarize:
-  backend: "api"
-  model: "gemma3:270m"
-  api:
+  tts_backend: "api"
+  tts_model: "gemma3:270m"
+  tts_api:
     base_url: "http://localhost:11434/v1/chat/completions"  # Ollama OpenAI-compatible endpoint
     format: "openai"
 ```

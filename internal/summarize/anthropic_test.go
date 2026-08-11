@@ -28,11 +28,24 @@ func TestNewAnthropic_CustomConfig(t *testing.T) {
 	assert.Equal(t, "key-abc", s.Key)
 }
 
-func TestAnthropicSummarizer_ShortText(t *testing.T) {
-	s := NewAnthropic("https://example.com/v1/messages", "key", "")
-	result, err := s.Summarize(context.Background(), "这是一段短文本", "zh")
+func TestAnthropicSummarizer_ShortText_StillCallsLLM(t *testing.T) {
+	var receivedReq anthropicRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := json.NewDecoder(r.Body).Decode(&receivedReq)
+		assert.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(anthropicResponse{
+			Content: []anthropicContentBlock{
+				{Type: "text", Text: "润色后的内容。"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "key", "")
+	result, err := s.Summarize(context.Background(), "短文本", "zh")
 	assert.NoError(t, err)
-	assert.Equal(t, "这是一段短文本", result)
+	assert.Equal(t, "润色后的内容。", result)
 }
 
 func TestAnthropicSummarizer_APICall(t *testing.T) {

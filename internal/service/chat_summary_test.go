@@ -1,15 +1,10 @@
 package service
 
 import (
-	"context"
 	"database/sql"
-	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"clawbench/internal/model"
-	"clawbench/internal/summarize"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -172,52 +167,9 @@ func TestEnrichMessagesWithSummaries_DifferentTargetType(t *testing.T) {
 
 // --- triggerChatSummarization ---
 
-func TestTriggerChatSummarization_Disabled(t *testing.T) {
-	_, teardown := setupTestDBForChatSummary(t)
-	defer teardown()
-
-	origEnabled := chatSummaryEnabled.Load()
-	origMode := GetChatSummaryMode()
-	defer func() {
-		chatSummaryEnabled.Store(origEnabled)
-		SetChatSummaryMode(origMode)
-	}()
-
-	chatSummaryEnabled.Store(false)
-	// Should return immediately without error
-	triggerChatSummarization("nonexistent-session")
-}
-
-func TestTriggerChatSummarization_DisabledMode(t *testing.T) {
-	_, teardown := setupTestDBForChatSummary(t)
-	defer teardown()
-
-	origEnabled := chatSummaryEnabled.Load()
-	origMode := GetChatSummaryMode()
-	defer func() {
-		chatSummaryEnabled.Store(origEnabled)
-		SetChatSummaryMode(origMode)
-	}()
-
-	// mode == "" means disabled, even if chatSummaryEnabled is true
-	SetChatSummaryMode("")
-	chatSummaryEnabled.Store(true)
-	triggerChatSummarization("nonexistent-session")
-}
-
-func TestTriggerChatSummarization_SimpleMode_ExtractsLastAnswer(t *testing.T) {
+func TestTriggerChatSummarization_ExtractsLastAnswer(t *testing.T) {
 	db, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
-
-	origEnabled := chatSummaryEnabled.Load()
-	origMode := GetChatSummaryMode()
-	defer func() {
-		chatSummaryEnabled.Store(origEnabled)
-		SetChatSummaryMode(origMode)
-	}()
-
-	SetChatSummaryMode("simple")
-	chatSummaryEnabled.Store(true)
 
 	// Insert session + messages
 	sessionID := "test-simple-session"
@@ -228,25 +180,15 @@ func TestTriggerChatSummarization_SimpleMode_ExtractsLastAnswer(t *testing.T) {
 
 	triggerChatSummarization(sessionID)
 
-	// Should have saved the last text block as summary
+	// Always-extract: should have saved the last text block (conclusion) as summary
 	summary, found := GetSummary("chat_message", 101)
 	assert.True(t, found)
 	assert.Equal(t, "The answer is 42.", summary)
 }
 
-func TestTriggerChatSummarization_SimpleMode_NoTextAfterToolUse(t *testing.T) {
+func TestTriggerChatSummarization_NoTextAfterToolUse(t *testing.T) {
 	db, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
-
-	origEnabled := chatSummaryEnabled.Load()
-	origMode := GetChatSummaryMode()
-	defer func() {
-		chatSummaryEnabled.Store(origEnabled)
-		SetChatSummaryMode(origMode)
-	}()
-
-	SetChatSummaryMode("simple")
-	chatSummaryEnabled.Store(true)
 
 	sessionID := "test-simple-notext"
 	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
@@ -258,167 +200,5 @@ func TestTriggerChatSummarization_SimpleMode_NoTextAfterToolUse(t *testing.T) {
 
 	// No text block at all → no summary saved
 	_, found := GetSummary("chat_message", 111)
-	assert.False(t, found)
-}
-
-func TestSetChatSummaryMode(t *testing.T) {
-	origMode := GetChatSummaryMode()
-	defer SetChatSummaryMode(origMode)
-
-	SetChatSummaryMode("simple")
-	assert.Equal(t, "simple", GetChatSummaryMode())
-
-	SetChatSummaryMode("ai")
-	assert.Equal(t, "ai", GetChatSummaryMode())
-
-	SetChatSummaryMode("")
-	assert.Equal(t, "", GetChatSummaryMode())
-}
-
-func TestSetChatSummaryEnabled(t *testing.T) {
-	origEnabled := chatSummaryEnabled.Load()
-	defer func() { chatSummaryEnabled.Store(origEnabled) }()
-
-	SetChatSummaryEnabled(false)
-	assert.False(t, chatSummaryEnabled.Load())
-
-	SetChatSummaryEnabled(true)
-	assert.True(t, chatSummaryEnabled.Load())
-}
-
-func TestSetChatSummaryEnabled_ConcurrentSafe(t *testing.T) {
-	// ISS-181: chatSummaryEnabled uses atomic.Bool for safe concurrent access
-	origEnabled := chatSummaryEnabled.Load()
-	defer func() { chatSummaryEnabled.Store(origEnabled) }()
-
-	var wg sync.WaitGroup
-	const goroutines = 20
-
-	// Concurrent writers
-	for i := range goroutines {
-		wg.Add(1)
-		go func(val bool) {
-			defer wg.Done()
-			SetChatSummaryEnabled(val)
-		}(i%2 == 0)
-	}
-
-	// Concurrent readers
-	for range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_ = chatSummaryEnabled.Load()
-		}()
-	}
-
-	wg.Wait()
-	// No panic = test passed (data race would be caught by race detector)
-}
-
-func TestSetTaskSummarizerInstance(t *testing.T) {
-	origInstance := taskSummarizerInstance
-	defer func() { taskSummarizerInstance = origInstance }()
-
-	// Set to nil
-	SetTaskSummarizerInstance(nil)
-	assert.Nil(t, taskSummarizerInstance)
-
-	// Set to a real instance via pipeline
-	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-		return "summary", nil
-	}
-	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
-	instance := summarize.NewTaskSummarizerFromPipeline(pipeline)
-	SetTaskSummarizerInstance(instance)
-	assert.Equal(t, instance, taskSummarizerInstance)
-}
-
-func TestAsyncSummarize_WithWSBroadcast(t *testing.T) {
-	_, dbTeardown := setupTestDBForAsyncSummary(t)
-	defer dbTeardown()
-
-	origInstance := taskSummarizerInstance
-	defer func() { taskSummarizerInstance = origInstance }()
-
-	// Create mock pipeline that returns a summary
-	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-		return "Summary text", nil
-	}
-	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
-	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
-
-	// Long text block
-	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
-	blocks := []model.ContentBlock{{Type: "text", Text: longText}}
-
-	AsyncSummarize("chat_message", 100, blocks, "/test", "session-ws")
-
-	// Wait for goroutine to complete (including WS broadcast)
-	time.Sleep(300 * time.Millisecond)
-
-	summary, found := GetSummary("chat_message", 100)
-	assert.True(t, found)
-	assert.Contains(t, summary, "Summary text")
-}
-
-func TestAsyncSummarize_SaveSummaryError(t *testing.T) {
-	db, dbTeardown := setupTestDBForAsyncSummary(t)
-	defer dbTeardown()
-
-	origInstance := taskSummarizerInstance
-	defer func() { taskSummarizerInstance = origInstance }()
-
-	// Create mock pipeline that returns a summary
-	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-		return "Summary text", nil
-	}
-	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
-	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
-
-	// Drop the summaries table to force SaveSummary to fail
-	_, _ = db.Exec("DROP TABLE summaries")
-
-	// Long text block — will trigger SaveSummary which will fail
-	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
-	blocks := []model.ContentBlock{{Type: "text", Text: longText}}
-
-	// Should not panic even when SaveSummary fails
-	AsyncSummarize("chat_message", 200, blocks, "/test", "session-err")
-
-	time.Sleep(300 * time.Millisecond)
-
-	// No summary saved since table was dropped
-	_, found := GetSummary("chat_message", 200)
-	assert.False(t, found)
-}
-
-func TestAsyncSummarize_ShortTextSaveError(t *testing.T) {
-	db, dbTeardown := setupTestDBForAsyncSummary(t)
-	defer dbTeardown()
-
-	origInstance := taskSummarizerInstance
-	defer func() { taskSummarizerInstance = origInstance }()
-
-	// Create a mock pipeline that returns done (for short text path)
-	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-		return "", nil
-	}
-	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
-	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
-
-	// Drop the summaries table to force SaveSummary to fail
-	_, _ = db.Exec("DROP TABLE summaries")
-
-	// Short text block — will try to save empty summary, which will fail
-	blocks := []model.ContentBlock{{Type: "text", Text: "短"}}
-
-	// Should not panic even when SaveSummary fails for short text
-	AsyncSummarize("chat_message", 300, blocks, "/test", "session-short-err")
-
-	time.Sleep(300 * time.Millisecond)
-
-	// No summary saved since table was dropped
-	_, found := GetSummary("chat_message", 300)
 	assert.False(t, found)
 }

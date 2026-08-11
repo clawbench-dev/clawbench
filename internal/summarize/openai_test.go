@@ -28,11 +28,25 @@ func TestNewOpenAI_CustomConfig(t *testing.T) {
 	assert.Equal(t, "sk-abc", s.Key)
 }
 
-func TestOpenAISummarizer_ShortText(t *testing.T) {
-	s := NewOpenAI("https://example.com/v1/chat/completions", "key", "")
-	result, err := s.Summarize(context.Background(), "这是一段短文本", "zh")
+func TestOpenAISummarizer_ShortText_StillCallsLLM(t *testing.T) {
+	var receivedReq openaiChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := json.NewDecoder(r.Body).Decode(&receivedReq)
+		assert.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(openaiChatResponse{
+			Choices: []openaiChoice{
+				{Message: openaiChatMessage{Role: "assistant", Content: "润色后的内容。"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "")
+	result, err := s.Summarize(context.Background(), "短文本", "zh")
 	assert.NoError(t, err)
-	assert.Equal(t, "这是一段短文本", result)
+	assert.Equal(t, "润色后的内容。", result)
+	assert.Equal(t, "短文本", receivedReq.Messages[1].Content)
 }
 
 func TestOpenAISummarizer_APICall(t *testing.T) {

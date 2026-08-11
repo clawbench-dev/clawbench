@@ -170,33 +170,6 @@ func TestGetCancelReason_NonStringValue(t *testing.T) {
 	assert.Equal(t, "", reason)
 }
 
-// --- ChatSummary mode tests ---
-
-func TestSetChatSummaryMode_GetChatSummaryMode(t *testing.T) {
-	origMode := GetChatSummaryMode()
-	defer SetChatSummaryMode(origMode)
-
-	SetChatSummaryMode("simple")
-	assert.Equal(t, "simple", GetChatSummaryMode())
-
-	SetChatSummaryMode("ai")
-	assert.Equal(t, "ai", GetChatSummaryMode())
-
-	SetChatSummaryMode("")
-	assert.Equal(t, "", GetChatSummaryMode())
-}
-
-func TestSetChatSummaryEnabled_Runtime(t *testing.T) {
-	origEnabled := chatSummaryEnabled.Load()
-	defer chatSummaryEnabled.Store(origEnabled)
-
-	SetChatSummaryEnabled(false)
-	assert.False(t, chatSummaryEnabled.Load())
-
-	SetChatSummaryEnabled(true)
-	assert.True(t, chatSummaryEnabled.Load())
-}
-
 // --- CancelSession ---
 
 func TestCancelSession_WithCancelFunc(t *testing.T) {
@@ -1589,21 +1562,11 @@ func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 	assert.Equal(t, "/home/user/project", data.ProjectPath)
 }
 
-// --- triggerChatSummarization simple mode with WS broadcast ---
+// --- triggerChatSummarization with WS broadcast ---
 
-func TestTriggerChatSummarization_SimpleMode_BroadcastsWSUpdate(t *testing.T) {
+func TestTriggerChatSummarization_BroadcastsWSUpdate(t *testing.T) {
 	db, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
-
-	origEnabled := chatSummaryEnabled.Load()
-	origMode := GetChatSummaryMode()
-	defer func() {
-		chatSummaryEnabled.Store(origEnabled)
-		SetChatSummaryMode(origMode)
-	}()
-
-	SetChatSummaryMode("simple")
-	chatSummaryEnabled.Store(true)
 
 	// Set up WS manager to capture broadcast
 	mgr := ws.NewManagerForTest()
@@ -1635,54 +1598,11 @@ func TestTriggerChatSummarization_SimpleMode_BroadcastsWSUpdate(t *testing.T) {
 	assert.Equal(t, "summary_update", buffered[0].Event)
 }
 
-// --- triggerChatSummarization AI mode with nil summarizer ---
+// --- triggerChatSummarization with SaveSummary error ---
 
-func TestTriggerChatSummarization_AIMode_NilSummarizer_ReturnsEarly(t *testing.T) {
+func TestTriggerChatSummarization_SaveSummaryError(t *testing.T) {
 	db, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
-
-	origEnabled := chatSummaryEnabled.Load()
-	origMode := GetChatSummaryMode()
-	origSummarizer := taskSummarizerInstance
-	defer func() {
-		chatSummaryEnabled.Store(origEnabled)
-		SetChatSummaryMode(origMode)
-		taskSummarizerInstance = origSummarizer
-	}()
-
-	SetChatSummaryMode("ai")
-	chatSummaryEnabled.Store(true)
-	taskSummarizerInstance = nil // No summarizer available
-
-	sessionID := "test-ai-nil"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (300, '/test', 'user', 'hello', ?, 0)", sessionID)
-	assistantContent := `{"blocks":[{"type":"text","text":"Answer"}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (301, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
-
-	// Should not panic with nil summarizer
-	triggerChatSummarization(sessionID)
-
-	// No summary should be saved (AI mode, no summarizer)
-	_, found := GetSummary("chat_message", 301)
-	assert.False(t, found)
-}
-
-// --- triggerChatSummarization simple mode with SaveSummary error ---
-
-func TestTriggerChatSummarization_SimpleMode_SaveSummaryError(t *testing.T) {
-	db, teardown := setupTestDBForChatSummary(t)
-	defer teardown()
-
-	origEnabled := chatSummaryEnabled.Load()
-	origMode := GetChatSummaryMode()
-	defer func() {
-		chatSummaryEnabled.Store(origEnabled)
-		SetChatSummaryMode(origMode)
-	}()
-
-	SetChatSummaryMode("simple")
-	chatSummaryEnabled.Store(true)
 
 	// Drop summaries table to force SaveSummary error
 	_, _ = db.Exec("DROP TABLE summaries")
@@ -2170,32 +2090,23 @@ func TestFinalizeOrphanedMessages_UserCancelNoWarning(t *testing.T) {
 	assert.Equal(t, 1, len(blocks))
 }
 
-// --- triggerChatSummarization: enabled=false path ---
+// --- triggerChatSummarization always runs (no enable/disable switch) ---
 
-func TestTriggerChatSummarization_EnabledFalse(t *testing.T) {
+func TestTriggerChatSummarization_AlwaysExtracts(t *testing.T) {
 	db, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
 
-	origEnabled := chatSummaryEnabled.Load()
-	origMode := GetChatSummaryMode()
-	defer func() {
-		chatSummaryEnabled.Store(origEnabled)
-		SetChatSummaryMode(origMode)
-	}()
-
-	SetChatSummaryMode("simple")
-	chatSummaryEnabled.Store(false)
-
-	sessionID := "test-enabled-false"
+	sessionID := "test-enabled-always"
 	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
 	assistantContent := `{"blocks":[{"type":"text","text":"Answer"}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (601, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
-	// Should not create a summary when enabled is false
+	// Summarization is always enabled — a summary should be created.
 	triggerChatSummarization(sessionID)
 
-	_, found := GetSummary("chat_message", 601)
-	assert.False(t, found, "no summary should be created when chatSummaryEnabled is false")
+	summary, found := GetSummary("chat_message", 601)
+	assert.True(t, found, "summary should always be created (no disable switch)")
+	assert.Equal(t, "Answer", summary)
 }
 
 // --- getLastAssistantBlocks tests ---
@@ -2328,17 +2239,6 @@ func TestSummarizeChatSimple_EmptyExtractedText(t *testing.T) {
 	// No summary should be saved
 	_, found := GetSummary("chat_message", lastAssistant.ID)
 	assert.False(t, found, "no summary should be created for empty extracted text")
-}
-
-// --- GetChatSummaryMode nil value (defensive) ---
-
-func TestGetChatSummaryMode_EmptyString(t *testing.T) {
-	origMode := GetChatSummaryMode()
-	defer SetChatSummaryMode(origMode)
-
-	SetChatSummaryMode("")
-	mode := GetChatSummaryMode()
-	assert.Equal(t, "", mode, "should return empty string when mode is empty")
 }
 
 // --- RespondPermission ---

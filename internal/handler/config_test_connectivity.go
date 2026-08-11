@@ -37,7 +37,7 @@ const (
 )
 
 type connectivityTestRequest struct {
-	Category string         `json:"category"` // "frp" | "summarize_text" | "summarize_voice" | "rag" | "dingtalk" | "port_forward" | "tts"
+	Category string         `json:"category"` // "frp" | "summarize_voice" | "rag" | "dingtalk" | "port_forward" | "tts"
 	Values   map[string]any `json:"values"`   // Flat dot-path key-value map from the form
 }
 
@@ -67,8 +67,6 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 	switch req.Category {
 	case "frp":
 		result = testFRP(ctx, req.Values)
-	case "summarize_text":
-		result = testSummarizeText(ctx, req.Values)
 	case "summarize_voice":
 		result = testSummarizeVoice(ctx, req.Values)
 	case "rag":
@@ -194,28 +192,6 @@ func testFRP(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		Success: true,
 		Message: fmt.Sprintf("Successfully connected to %s", target),
 	}
-}
-
-// ── Summarize Text ───────────────────────────────────────────
-
-func testSummarizeText(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	backend := resolveStringValue(values, "summarize.backend", model.ConfigInstance.Summarize.Backend)
-	if backend != strAPI {
-		return ConnectivityTestResult{Success: true, Message: "Text summary backend is not protocol mode, no test needed"}
-	}
-
-	baseURL := resolveStringValue(values, "summarize.api.base_url", model.ConfigInstance.Summarize.API.BaseURL)
-	apiKey := resolveStringValue(values, "summarize.api.key", model.ConfigInstance.Summarize.API.Key)
-	modelName := resolveStringValue(values, "summarize.model", model.ConfigInstance.Summarize.Model)
-
-	if baseURL == "" {
-		return ConnectivityTestResult{Success: false, Message: "API base URL is required"}
-	}
-	if modelName == "" {
-		modelName = "gpt-4o-mini"
-	}
-
-	return testAPISummarizer(ctx, baseURL, apiKey, modelName)
 }
 
 // ── Summarize Voice ──────────────────────────────────────────

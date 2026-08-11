@@ -131,7 +131,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true } } },
-    { type: 'item', spec: { labelKey: 'settings.items.summarizeTextSection', descriptionKey: 'settings.items.summarizeTextBackendDesc', key: 'navigateSummarizeText', type: 'action', source: 'local', navigateTo: 'chat:summarization_text' } },
   ],
   projectFiles: [
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectsMaxCount', descriptionKey: 'settings.items.recentProjectsMaxCountDesc', key: 'recent_projects.max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.projectSectionHeader' } },
@@ -297,26 +296,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       needsVoiceReset: true,
     }},
   ],
-  summarization_text: [
-    { type: 'panel', config: {
-      panelId: 'summarization_text',
-      commonFields: [
-        { labelKey: 'settings.items.summarizeTextBackend', descriptionKey: 'settings.items.summarizeTextBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', options: [
-          { labelKey: 'settings.items.summarizeDisabled', value: '' },
-          { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
-          { labelKey: 'settings.items.summarizeApi', value: 'api' },
-        ]},
-        { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader', dependsOn: { key: 'summarize.backend', values: ['api'] } },
-        { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api'] } },
-        { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api'] } },
-      ],
-      requiredFields: ['summarize.api.base_url'],
-      hasConnectivityTest: (v) => v['summarize.backend'] === 'api',
-      getTestCategories(values) {
-        return [{ category: 'summarize_text', values }]
-      },
-    }},
-  ],
   summarization_voice: [
     { type: 'panel', config: {
       panelId: 'summarization_voice',
@@ -429,10 +408,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
  * - SettingsPage uses the titleKey for the header bar
  */
 export const subPagePanelMap: Record<string, { panelConfig: GroupPanelConfig; titleKey: string }> = {
-  'chat:summarization_text': {
-    panelConfig: getCategoryPanels('summarization_text')[0],
-    titleKey: 'settings.items.summarizeTextSection',
-  },
   'tts:summarization_voice': {
     panelConfig: getCategoryPanels('summarization_voice')[0],
     titleKey: 'settings.items.summarizeTtsSection',

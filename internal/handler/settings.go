@@ -67,13 +67,9 @@ var hotReloadFields = map[string]bool{
 	"tts.kokoro.lang":            true,
 	"tts.moss_nano.model_dir":    true,
 	"tts.moss_nano.backend":      true,
-	// Summarize — reconstruct summarizer
-	"summarize.backend":          true,
+	// Summarize — reconstruct TTS summarizer
 	"summarize.tts_backend":      true,
-	"summarize.model":            true,
 	"summarize.tts_model":        true,
-	"summarize.api.base_url":     true,
-	"summarize.api.key":          true,
 	"summarize.tts_api.base_url": true,
 	"summarize.tts_api.key":      true,
 	// FRP — in-process frp service; enabled can be toggled, other fields hot-reload
@@ -284,11 +280,8 @@ type configFRP struct {
 }
 
 type configSummarize struct {
-	Backend    string     `json:"backend"`
 	TTSBackend string     `json:"tts_backend"`
-	Model      string     `json:"model"`
 	TTSModel   string     `json:"tts_model"`
-	API        *configAPI `json:"api,omitempty"`
 	TTSAPI     *configAPI `json:"tts_api,omitempty"`
 }
 
@@ -362,12 +355,8 @@ var PatchableConfigPaths = map[string]bool{
 	"frp.auto_port":                     true,
 	"frp.remote_port":                   true,
 	"frp.ssh_remote_port":               true,
-	"summarize.backend":                 true,
 	"summarize.tts_backend":             true,
-	"summarize.model":                   true,
 	"summarize.tts_model":               true,
-	"summarize.api.base_url":            true,
-	"summarize.api.key":                 true,
 	"summarize.tts_api.base_url":        true,
 	"summarize.tts_api.key":             true,
 	"localhost_auth_exempt":             true,
@@ -489,9 +478,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			SSHRemotePort: cfg.FRP.SSHRemotePort,
 		},
 		Summarize: configSummarize{
-			Backend:    cfg.Summarize.Backend,
 			TTSBackend: cfg.Summarize.TTSBackend,
-			Model:      cfg.Summarize.Model,
 			TTSModel:   cfg.Summarize.TTSModel,
 		},
 		DingTalk: configDingTalk{
@@ -513,13 +500,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		},
 	}
 
-	// Conditionally populate Summarize API sub-config when each backend is "api"
-	if cfg.Summarize.Backend == "api" {
-		resp.Summarize.API = &configAPI{
-			BaseURL: cfg.Summarize.API.BaseURL,
-			Key:     cfg.Summarize.API.Key,
-		}
-	}
+	// Conditionally populate Summarize TTS API sub-config when backend is "api"
 	if cfg.Summarize.TTSBackend == "api" {
 		resp.Summarize.TTSAPI = &configAPI{
 			BaseURL: cfg.Summarize.TTSAPI.BaseURL,
@@ -699,33 +680,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	// ── Cross-field consistency checks ──────────────────────────
 	cfg := model.ConfigInstance
 
-	// 1. When summarize.backend is "api", summarize.api.base_url must not be empty.
-	//    Skip when the patch *switches* backend to "api" — the user hasn't had a
-	//    chance to fill in the API sub-config yet (frontend auto-saves one field at a time).
-	effectiveBackend := cfg.Summarize.Backend
-	backendSwitchedToAPI := false
-	if summarize, ok := patch["summarize"].(map[string]any); ok {
-		if v, ok := summarize["backend"].(string); ok {
-			if v == "api" && cfg.Summarize.Backend != "api" {
-				backendSwitchedToAPI = true
-			}
-			effectiveBackend = v
-		}
-	}
-	if effectiveBackend == "api" && !backendSwitchedToAPI {
-		effectiveBaseURL := cfg.Summarize.API.BaseURL
-		if summarize, ok := patch["summarize"].(map[string]any); ok {
-			if api, ok := summarize["api"].(map[string]any); ok {
-				if v, ok := api["base_url"].(string); ok {
-					effectiveBaseURL = v
-				}
-			}
-		}
-		if effectiveBaseURL == "" {
-			return fmt.Errorf("summarize.api.base_url is required when summarize.backend is \"api\"")
-		}
-	}
-
 	// 1b. When summarize.tts_backend is "api", summarize.tts_api.base_url must not be empty.
 	effectiveTTSBackend := cfg.Summarize.TTSBackend
 	ttsBackendSwitchedToAPI := false
@@ -826,11 +780,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 
 	// Validate summarize section
 	if summarize, ok := patch["summarize"].(map[string]any); ok {
-		if v, ok := summarize["backend"].(string); ok {
-			if !validSummarizeBackends[v] {
-				return fmt.Errorf("summarize.backend must be one of: , simple, api")
-			}
-		}
 		if v, ok := summarize["tts_backend"].(string); ok {
 			if !validSummarizeBackends[v] {
 				return fmt.Errorf("summarize.tts_backend must be one of: , simple, api")
@@ -1116,26 +1065,11 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if summarize, ok := patch["summarize"].(map[string]any); ok {
-		if v, ok := summarize["backend"].(string); ok {
-			cfg.Summarize.Backend = v
-		}
 		if v, ok := summarize["tts_backend"].(string); ok {
 			cfg.Summarize.TTSBackend = v
 		}
-		if v, ok := summarize["model"].(string); ok {
-			cfg.Summarize.Model = v
-		}
 		if v, ok := summarize["tts_model"].(string); ok {
 			cfg.Summarize.TTSModel = v
-		}
-		// Summarize API sub-config
-		if api, ok := summarize["api"].(map[string]any); ok {
-			if v, ok := api["base_url"].(string); ok {
-				cfg.Summarize.API.BaseURL = v
-			}
-			if v, ok := api["key"].(string); ok {
-				cfg.Summarize.API.Key = v
-			}
 		}
 		// Summarize TTS API sub-config
 		if ttsAPI, ok := summarize["tts_api"].(map[string]any); ok {

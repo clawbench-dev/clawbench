@@ -119,24 +119,13 @@ type FeishuConfig struct {
 	Users     []string `yaml:"users"`      // Static Feishu open_id list for single-chat push
 }
 
-// SummarizeConfig holds summarization configuration for text and voice.
+// SummarizeConfig holds configuration for voice/TTS summarization.
+// Chat/task reading summaries always extract the conclusion; only voice
+// summarization is configurable.
 type SummarizeConfig struct {
-	Backend     string    `yaml:"backend"`      // Text/chat/task summarization backend: "" (disabled), "simple" (extract conclusion), "api" (LLM)
-	TTSBackend  string    `yaml:"tts_backend"`  // Voice/TTS summarization backend: "" (disabled), "simple" (extract conclusion), "api" (LLM)
-	Model       string    `yaml:"model"`        // Model for text summarization (empty = backend default)
-	TTSModel    string    `yaml:"tts_model"`    // Model for TTS summarization (empty = backend default)
-	ChatSummary *bool     `yaml:"chat_summary"` // Enable auto-summarization for chat messages (default: true, nil = true)
-	API         APIConfig `yaml:"api"`          // API config for text/chat/task summarization (used when backend is "api")
-	TTSAPI      APIConfig `yaml:"tts_api"`      // API config for voice/TTS summarization (used when tts_backend is "api")
-}
-
-// IsChatSummaryEnabled returns whether chat message auto-summarization is enabled.
-// Defaults to true when ChatSummary is nil (not explicitly set).
-func (s SummarizeConfig) IsChatSummaryEnabled() bool {
-	if s.ChatSummary == nil {
-		return true
-	}
-	return *s.ChatSummary
+	TTSBackend string    `yaml:"tts_backend"` // Voice/TTS summarization backend: "" (disabled), "simple" (extract conclusion), "api" (LLM)
+	TTSModel   string    `yaml:"tts_model"`   // Model for TTS summarization (empty = backend default)
+	TTSAPI     APIConfig `yaml:"tts_api"`     // API config for voice/TTS summarization (used when tts_backend is "api")
 }
 
 // RAGConfig holds configuration for the RAG history memory system.

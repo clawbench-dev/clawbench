@@ -142,8 +142,8 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.TTS.Engine != "edge" {
 		t.Errorf("TTS.Engine = %q, want %q", cfg.TTS.Engine, "edge")
 	}
-	if cfg.Summarize.Backend != "simple" {
-		t.Errorf("Summarize.Backend = %q, want %q", cfg.Summarize.Backend, "simple")
+	if cfg.Summarize.TTSBackend != "simple" {
+		t.Errorf("Summarize.TTSBackend = %q, want %q", cfg.Summarize.TTSBackend, "simple")
 	}
 	if cfg.TTS.Speed != 1.0 {
 		t.Errorf("TTS.Speed = %v, want 1.0", cfg.TTS.Speed)
@@ -567,22 +567,6 @@ func TestApplyDefaults_FRPDefaults(t *testing.T) {
 	}
 }
 
-func TestApplyDefaults_SummarizeBackendMigration(t *testing.T) {
-	setupTestBinDir(t)
-
-	// Test legacy agent backend migration for Summarize.Backend
-	for _, backend := range []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "mimo"} {
-		t.Run("backend_"+backend, func(t *testing.T) {
-			cfg := Config{}
-			cfg.Summarize.Backend = backend
-			ApplyDefaults(&cfg, nil)
-			if cfg.Summarize.Backend != "api" {
-				t.Errorf("Summarize.Backend = %q after migration from %q, want %q", cfg.Summarize.Backend, backend, "api")
-			}
-		})
-	}
-}
-
 func TestApplyDefaults_SummarizeTTSBackendMigration(t *testing.T) {
 	setupTestBinDir(t)
 
@@ -599,17 +583,13 @@ func TestApplyDefaults_SummarizeTTSBackendMigration(t *testing.T) {
 	}
 }
 
-func TestApplyDefaults_SummarizeBackendNonAgent(t *testing.T) {
+func TestApplyDefaults_SummarizeTTSBackendNonAgent(t *testing.T) {
 	setupTestBinDir(t)
 
 	// Non-agent backends should NOT be migrated
 	cfg := Config{}
-	cfg.Summarize.Backend = "api"
 	cfg.Summarize.TTSBackend = "simple"
 	ApplyDefaults(&cfg, nil)
-	if cfg.Summarize.Backend != "api" {
-		t.Errorf("Summarize.Backend = %q, want %q (non-agent backend should not be migrated)", cfg.Summarize.Backend, "api")
-	}
 	if cfg.Summarize.TTSBackend != "simple" {
 		t.Errorf("Summarize.TTSBackend = %q, want %q (non-agent backend should not be migrated)", cfg.Summarize.TTSBackend, "simple")
 	}

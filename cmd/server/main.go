@@ -828,44 +828,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Initialize and start scheduler (MUST be after agents are loaded so model.Agents is populated)
 	scheduler := service.NewScheduler()
 
-	// Initialize task summarizer if summarization backend is configured (MUST be before scheduler.Start())
-	if cfg.Summarize.Backend == summarizeBackendSimple {
-		// Simple mode: extract final answer for chat, SimpleSummarizer for tasks
-		pipeline := summarize.NewPipelineWithOpts(
-			func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-				return summarize.NewSimplePreserveMarkdown().Summarize(ctx, text, "")
-			},
-			"",
-			summarize.SummarizeOption{PreserveMarkdown: true},
-		)
-		taskSummarizer := summarize.NewTaskSummarizerFromPipeline(pipeline)
-		scheduler.SetTaskSummarizer(taskSummarizer)
-		service.SetTaskSummarizerInstance(taskSummarizer)
-		service.SetChatSummaryMode(summarizeBackendSimple)
-		service.SetChatSummaryEnabled(cfg.Summarize.IsChatSummaryEnabled())
-		slog.Info("task summarizer configured", slog.String("backend", summarizeBackendSimple))
-	} else if cfg.Summarize.Backend != "" {
-		taskSummarizer, err := initTaskSummarizer(cfg)
-		if err != nil {
-			slog.Warn(
-				"failed to create task summarizer, task summaries will be disabled",
-				slog.String("backend", cfg.Summarize.Backend),
-				slog.String("err", err.Error()),
-			)
-		} else {
-			scheduler.SetTaskSummarizer(taskSummarizer)
-			// Also set the global instance for AsyncSummarize (chat messages + task executions)
-			service.SetTaskSummarizerInstance(taskSummarizer)
-			service.SetChatSummaryMode("ai")
-			service.SetChatSummaryEnabled(cfg.Summarize.IsChatSummaryEnabled())
-			slog.Info(
-				"task summarizer configured",
-				slog.String("backend", cfg.Summarize.Backend),
-			)
-		}
-	}
-	// else: cfg.Summarize.Backend == "" — fully disabled, no taskSummarizerInstance
-
 	// Load all tasks from all projects
 	if err := scheduler.LoadTasksFromDB(""); err != nil {
 		slog.Warn("failed to load scheduled tasks", slog.String("err", err.Error()))
@@ -1244,55 +1206,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	slog.Info("server stopped")
 }
 
-// initTaskSummarizer creates a TaskSummarizer based on the summarize.backend config.
-// Supports: "simple" (extract conclusion), "api" (OpenAI/Anthropic HTTP).
-func initTaskSummarizer(cfg model.Config) (*summarize.TaskSummarizer, error) {
-	backend := cfg.Summarize.Backend
-	modelName := cfg.Summarize.Model
-
-	switch backend {
-	case summarizeBackendSimple:
-		// Simple summarizer: truncate-only, no AI call. Wrap in pipeline with PreserveMarkdown.
-		pipeline := summarize.NewPipelineWithOpts(
-			func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-				return summarize.NewSimplePreserveMarkdown().Summarize(ctx, text, "")
-			},
-			"", // use default prompt
-			summarize.SummarizeOption{PreserveMarkdown: true},
-		)
-		return summarize.NewTaskSummarizerFromPipeline(pipeline), nil
-
-	case summarizeBackendAPI:
-		if cfg.Summarize.API.BaseURL == "" {
-			return nil, fmt.Errorf("summarize.backend is \"api\" but summarize.api.base_url is not configured")
-		}
-		// For API backends, auto-detect OpenAI/Anthropic from URL and wrap in a pipeline
-		// with PreserveMarkdown=true and task-specific prompt.
-		if summarize.IsAnthropicURL(cfg.Summarize.API.BaseURL) {
-			s := summarize.NewAnthropic(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, modelName)
-			pipeline := summarize.NewPipelineWithOpts(
-				s.DoSummarizePass,
-				summarize.TaskSummarizePrompt(),
-				summarize.SummarizeOption{PreserveMarkdown: true},
-			)
-			return summarize.NewTaskSummarizerFromPipeline(pipeline), nil
-		}
-		s := summarize.NewOpenAI(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, modelName)
-		pipeline := summarize.NewPipelineWithOpts(
-			s.DoSummarizePass,
-			summarize.TaskSummarizePrompt(),
-			summarize.SummarizeOption{PreserveMarkdown: true},
-		)
-		return summarize.NewTaskSummarizerFromPipeline(pipeline), nil
-
-	default:
-		return nil, fmt.Errorf("unsupported summarize backend: %q (must be \"\", \"simple\", or \"api\")", backend)
-	}
-}
-
 // hotReloadReconfigure is called by applyHotReloadGlobals() after a successful
 // config PATCH to reconfigure subsystems that support hot-reload.
-// It recreates TTS provider, TTS/task summarizers, and reconfigures terminal.
+// It recreates TTS provider, TTS summarizer, and reconfigures terminal.
 func hotReloadReconfigure(port int) {
 	cfg := model.ConfigInstance
 
@@ -1304,9 +1220,6 @@ func hotReloadReconfigure(port int) {
 	// --- Summarize: reconstruct TTS summarizer ---
 	ttsSummarizer := newTTSSummarizer(cfg)
 	handler.SetSummarizer(ttsSummarizer)
-
-	// --- Summarize: reconstruct task summarizer ---
-	hotReloadTaskSummarizer(cfg)
 
 	// --- Terminal: reconfigure or toggle enabled ---
 	hotReloadTerminal(cfg, port)
@@ -1508,35 +1421,6 @@ func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
 	default:
 		slog.Warn("hot-reload: unsupported tts_backend, falling back to simple", slog.String("backend", cfg.Summarize.TTSBackend))
 		return summarize.NewSimple()
-	}
-}
-
-// hotReloadTaskSummarizer reconstructs the task summarizer on hot-reload.
-func hotReloadTaskSummarizer(cfg model.Config) {
-	if cfg.Summarize.Backend != "" {
-		taskSummarizer, err := initTaskSummarizer(cfg)
-		if err != nil {
-			slog.Warn("hot-reload: failed to recreate task summarizer",
-				slog.String("backend", cfg.Summarize.Backend), slog.String("error", err.Error()))
-			return
-		}
-		if sched := service.GlobalScheduler; sched != nil {
-			sched.SetTaskSummarizer(taskSummarizer)
-		}
-		service.SetTaskSummarizerInstance(taskSummarizer)
-		if cfg.Summarize.Backend == summarizeBackendSimple {
-			service.SetChatSummaryMode(summarizeBackendSimple)
-		} else {
-			service.SetChatSummaryMode("ai")
-		}
-		service.SetChatSummaryEnabled(cfg.Summarize.IsChatSummaryEnabled())
-		slog.Info("hot-reload: summarizer reconfigured", slog.String("backend", cfg.Summarize.Backend))
-	} else {
-		// Disabled
-		service.SetTaskSummarizerInstance(nil)
-		service.SetChatSummaryMode("")
-		service.SetChatSummaryEnabled(false)
-		slog.Info("hot-reload: summarizer disabled")
 	}
 }
 

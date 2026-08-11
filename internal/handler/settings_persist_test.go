@@ -256,26 +256,24 @@ func TestPersist_TTSFormat(t *testing.T) {
 	assert.Equal(t, "mp3", getNestedValue(cfg, "tts.format"))
 }
 
-func TestPersist_SummarizeBackend(t *testing.T) {
+func TestPersist_SummarizeTTSBackend(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
-	// Set up initial config with base_url so the cross-field check passes
 	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.Summarize.API.BaseURL = "https://api.openai.com/v1"
 
-	cfg := patchAndReadConfig(t, `{"summarize":{"backend":"api"}}`)
-	assert.Equal(t, "api", getNestedValue(cfg, "summarize.backend"))
+	cfg := patchAndReadConfig(t, `{"summarize":{"tts_backend":"simple"}}`)
+	assert.Equal(t, "simple", getNestedValue(cfg, "summarize.tts_backend"))
 }
 
-func TestPersist_SummarizeModel(t *testing.T) {
+func TestPersist_SummarizeTTSModel(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
 
-	cfg := patchAndReadConfig(t, `{"summarize":{"model":"gpt-4o-mini"}}`)
-	assert.Equal(t, "gpt-4o-mini", getNestedValue(cfg, "summarize.model"))
+	cfg := patchAndReadConfig(t, `{"summarize":{"tts_model":"gpt-4o-mini"}}`)
+	assert.Equal(t, "gpt-4o-mini", getNestedValue(cfg, "summarize.tts_model"))
 }
 
 func TestPersist_TTSMaxCacheFiles(t *testing.T) {
@@ -386,24 +384,27 @@ func TestPersist_MossNanoBackend(t *testing.T) {
 
 // ─── TTS API sub-config ──────────────────────────────────────
 
-func TestPersist_APIBaseURL(t *testing.T) {
+func TestPersist_SummarizeTTSAPIBaseURL(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Summarize.TTSBackend = "api"
 
-	cfg := patchAndReadConfig(t, `{"summarize":{"api":{"base_url":"https://api.openai.com/v1/chat"}}}`)
-	assert.Equal(t, "https://api.openai.com/v1/chat", getNestedValue(cfg, "summarize.api.base_url"))
+	cfg := patchAndReadConfig(t, `{"summarize":{"tts_api":{"base_url":"https://api.openai.com/v1/chat"}}}`)
+	assert.Equal(t, "https://api.openai.com/v1/chat", getNestedValue(cfg, "summarize.tts_api.base_url"))
 }
 
-func TestPersist_APIKey(t *testing.T) {
+func TestPersist_SummarizeTTSAPIKey(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Summarize.TTSBackend = "api"
+	model.ConfigInstance.Summarize.TTSAPI.BaseURL = "https://api.openai.com/v1"
 
-	cfg := patchAndReadConfig(t, `{"summarize":{"api":{"key":"sk-1234567890abcdef"}}}`)
-	assert.Equal(t, "sk-1234567890abcdef", getNestedValue(cfg, "summarize.api.key"))
+	cfg := patchAndReadConfig(t, `{"summarize":{"tts_api":{"key":"sk-1234567890abcdef"}}}`)
+	assert.Equal(t, "sk-1234567890abcdef", getNestedValue(cfg, "summarize.tts_api.key"))
 }
 
 // ─── RAG section ──────────────────────────────────────

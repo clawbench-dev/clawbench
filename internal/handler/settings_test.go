@@ -50,9 +50,7 @@ func TestServeConfig_Get(t *testing.T) {
 	cfg.RAG.RetentionDays = 30
 	cfg.PortForward.Enabled = true
 	cfg.PortForward.Port = 20001
-	cfg.Summarize.Backend = "simple"
 	cfg.Summarize.TTSBackend = "simple"
-	cfg.Summarize.Model = ""
 	cfg.Summarize.TTSModel = ""
 	model.ConfigInstance = cfg
 
@@ -94,7 +92,6 @@ func TestServeConfig_Get(t *testing.T) {
 
 	// Verify summarize section
 	summarize, _ := resp["summarize"].(map[string]any)
-	assert.Equal(t, "simple", summarize["backend"])
 	assert.Equal(t, "simple", summarize["tts_backend"])
 
 	// When engine=edge, engine-specific sub-configs should NOT be present
@@ -217,78 +214,6 @@ func TestServeConfig_Get_ConditionalMossNanoSubConfig(t *testing.T) {
 	assert.Equal(t, "Junhao", tts["voice"])
 }
 
-func TestServeConfig_Get_ConditionalAPISubConfig(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.TTS.Engine = "edge"
-	cfg.Summarize.Backend = "api"
-	cfg.Summarize.API.BaseURL = "https://api.openai.com/v1/chat/completions"
-	cfg.Summarize.API.Key = "sk-1234567890abcdefghijklmnopqrstuvwxyz"
-	cfg.Summarize.Model = "gpt-4o-mini"
-	model.ConfigInstance = cfg
-
-	req := newRequest(t, http.MethodGet, "/api/config", nil)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-
-	summarize, _ := resp["summarize"].(map[string]any)
-	assert.Contains(t, summarize, "api")
-
-	api, _ := summarize["api"].(map[string]any)
-	assert.Equal(t, "https://api.openai.com/v1/chat/completions", api["base_url"])
-	// API key is returned in full (frontend uses type="password" for secure display)
-	assert.Equal(t, "sk-1234567890abcdefghijklmnopqrstuvwxyz", api["key"])
-}
-
-func TestServeConfig_Get_APIMaskShortKey(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.Summarize.Backend = "api"
-	cfg.Summarize.API.Key = "short"
-	model.ConfigInstance = cfg
-
-	req := newRequest(t, http.MethodGet, "/api/config", nil)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-
-	summarize, _ := resp["summarize"].(map[string]any)
-	api, _ := summarize["api"].(map[string]any)
-	assert.Equal(t, "short", api["key"])
-}
-
-func TestServeConfig_Get_APIMaskEmptyKey(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.Summarize.Backend = "api"
-	cfg.Summarize.API.Key = ""
-	model.ConfigInstance = cfg
-
-	req := newRequest(t, http.MethodGet, "/api/config", nil)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-
-	summarize, _ := resp["summarize"].(map[string]any)
-	api, _ := summarize["api"].(map[string]any)
-	assert.Equal(t, "", api["key"])
-}
-
 func TestServeConfig_Get_MethodNotAllowed(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -365,76 +290,6 @@ func TestServeConfig_Patch_PiperSubConfig(t *testing.T) {
 	assert.Equal(t, 0.3, model.ConfigInstance.TTS.Piper.SentenceSilence)
 }
 
-func TestServeConfig_Patch_APISubConfig(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"summarize":{"model":"gpt-4o-mini","api":{"base_url":"https://api.example.com/v1/chat"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "https://api.example.com/v1/chat", model.ConfigInstance.Summarize.API.BaseURL)
-	assert.Equal(t, "gpt-4o-mini", model.ConfigInstance.Summarize.Model)
-}
-
-func TestServeConfig_Patch_APIKeyMasked(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	// PATCH with key containing *** is now accepted (maskAPIKey removed)
-	body := `{"summarize":{"api":{"key":"sk-1***xyz"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestServeConfig_Patch_APIKeyFull(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"summarize":{"api":{"key":"sk-1234567890abcdef"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "sk-1234567890abcdef", model.ConfigInstance.Summarize.API.Key)
-}
-
-func TestServeConfig_Patch_SummarizeSection(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"summarize":{"backend":"api","model":"gpt-4o-mini","api":{"base_url":"https://api.example.com/v1"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "api", model.ConfigInstance.Summarize.Backend)
-	assert.Equal(t, "gpt-4o-mini", model.ConfigInstance.Summarize.Model)
-}
-
 func TestServeConfig_Patch_MossNanoInvalidBackend(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -490,19 +345,6 @@ func TestServeConfig_Patch_InvalidEngine(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestServeConfig_Patch_InvalidSummarizeBackend(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	body := `{"summarize":{"backend":"nonexistent"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestServeConfig_Patch_InvalidSummarizeTtsBackend(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -515,20 +357,6 @@ func TestServeConfig_Patch_InvalidSummarizeTtsBackend(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "summarize.tts_backend must be one of")
-}
-
-func TestServeConfig_Patch_LegacyAgentBackendRejected(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Agent backends (claude, codebuddy, etc.) are no longer valid
-	body := `{"summarize":{"backend":"claude"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestServeConfig_Patch_NegativeNumber(t *testing.T) {
@@ -648,69 +476,6 @@ func TestServeConfig_Patch_DefaultAgent(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "claude", model.ConfigInstance.DefaultAgent)
 	assert.Equal(t, "claude", model.DefaultAgentID)
-}
-
-func TestServeConfig_Patch_SummarizeAPIWithoutBaseURL(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Set up config with empty api.base_url
-	cfg := model.Config{}
-	cfg.Summarize.Backend = "simple" // current value is not "api"
-	cfg.Summarize.API.BaseURL = ""   // no base URL configured
-	model.ConfigInstance = cfg
-
-	// Switch backend to "api" without providing base_url — should succeed
-	// because the user hasn't had a chance to fill in the API sub-config yet
-	// (frontend auto-saves one field at a time, same as tts.engine switch).
-	body := `{"summarize":{"backend":"api"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestServeConfig_Patch_SummarizeAPIAlreadySetWithoutBaseURL(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// backend is already "api" but base_url is missing — should reject
-	cfg := model.Config{}
-	cfg.Summarize.Backend = "api"
-	cfg.Summarize.API.BaseURL = ""
-	model.ConfigInstance = cfg
-
-	// Patch another field while backend is already "api" — base_url should be required
-	body := `{"summarize":{"model":"gpt-4o"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "base_url is required")
-}
-
-func TestServeConfig_Patch_SummarizeAPIWithBaseURL(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Set up config with base_url already configured
-	cfg := model.Config{}
-	cfg.Summarize.Backend = "simple"
-	cfg.Summarize.API.BaseURL = "https://api.openai.com/v1"
-	model.ConfigInstance = cfg
-
-	// Patch backend to "api" — should succeed because base_url exists
-	body := `{"summarize":{"backend":"api"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestServeConfig_Patch_PiperEngineWithoutModelPath(t *testing.T) {
@@ -1140,23 +905,6 @@ func TestServeConfig_Patch_KokoroEmptyLang(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "tts.kokoro.lang must not be empty")
 }
 
-func TestServeConfig_Patch_TasksInvalidSummarizeBackend(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"summarize":{"backend":"nonexistent"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "summarize.backend must be one of")
-}
-
 func TestServeConfig_Patch_SessionNegativeMaxCount(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -1223,27 +971,6 @@ func TestServeConfig_Patch_ChatNegativeSystemPromptInterval(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "chat.system_prompt_interval must be non-negative")
-}
-
-// --- Cross-field consistency: summarize.backend api with base_url in patch ---
-
-func TestServeConfig_Patch_TasksAPIWithBaseURLInPatch(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.Summarize.API.BaseURL = ""
-	cfg.Summarize.Backend = "simple"
-	model.ConfigInstance = cfg
-
-	// summarize.backend=api with summarize.api.base_url provided in same patch
-	body := `{"summarize":{"backend":"api","api":{"base_url":"https://api.openai.com/v1"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // --- Cross-field: piper engine with model_path in same patch ---
@@ -1970,45 +1697,6 @@ func TestServeConfig_Patch_DefaultAgentEmptyAgents(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	body := `{"default_agent":"anything"}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// --- validatePatchValues: summarize.api.base_url in patch while backend is api ---
-
-func TestServeConfig_Patch_SummarizeAPIBaseURLInPatchWhileAPI(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.Summarize.Backend = "api"
-	cfg.Summarize.API.BaseURL = ""
-	model.ConfigInstance = cfg
-
-	body := `{"summarize":{"api":{"base_url":"https://api.openai.com/v1"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "https://api.openai.com/v1", model.ConfigInstance.Summarize.API.BaseURL)
-}
-
-// --- validatePatchValues: summarize.api.key with *** (maskAPIKey removed, now accepted) ---
-
-func TestServeConfig_Patch_SummarizeAPIKeyWithStars(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"summarize":{"api":{"key":"sk-1***xyz"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
