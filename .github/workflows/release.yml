@@ -502,6 +502,8 @@ jobs:
   build-desktop-linux:
     name: Build Desktop Linux
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -517,6 +519,16 @@ jobs:
           npm ci
           npm run build
 
+      - name: Zip desktop (Linux)
+        run: |
+          cd desktop/release
+          zip -r clawbench-desktop-linux-x64.zip linux-unpacked
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          files: desktop/release/clawbench-desktop-linux-x64.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux-package
@@ -525,6 +537,8 @@ jobs:
   build-desktop-windows:
     name: Build Desktop Windows
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -540,6 +554,15 @@ jobs:
           npm ci
           npm run build
 
+      - name: Zip desktop (Windows)
+        shell: pwsh
+        run: Compress-Archive -Path desktop/release/win-unpacked -DestinationPath desktop/release/clawbench-desktop-windows-x64.zip
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          files: desktop/release/clawbench-desktop-windows-x64.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-windows-package
@@ -548,6 +571,8 @@ jobs:
   build-desktop-macos:
     name: Build Desktop macOS
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -571,6 +596,19 @@ jobs:
           npx tsc -p tsconfig.json
           npx electron-builder --dir --arm64
           npx electron-builder --dir --x64
+
+      - name: Zip desktop (macOS)
+        run: |
+          cd desktop/release
+          zip -r clawbench-desktop-darwin-arm64.zip mac-arm64
+          zip -r clawbench-desktop-darwin-x64.zip mac-x64
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          files: |
+            desktop/release/clawbench-desktop-darwin-arm64.zip
+            desktop/release/clawbench-desktop-darwin-x64.zip
 
       - uses: actions/upload-artifact@v4
         with:
