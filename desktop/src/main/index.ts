@@ -19,6 +19,13 @@ app.whenReady().then(() => {
   registerBridge()
   createMainWindow()
 
+  // Grant microphone access so voice input (getUserMedia) works in the
+  // desktop shell when the server is served over a secure context
+  // (localhost or HTTPS). Deny other permission requests by default.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'media')
+  })
+
   // Ctrl+F5 (Cmd+Shift+R on macOS): hard refresh clearing cached resources.
   const accelerator = process.platform === 'darwin' ? 'CommandOrControl+Shift+R' : 'Control+F5'
   globalShortcut.register(accelerator, () => { void clearCacheAndReload() })

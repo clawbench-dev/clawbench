@@ -49,6 +49,15 @@ describe('useVoiceInput', () => {
     expect(v.error.value).toBeTruthy()
   })
 
+  it('reports a clear error when mediaDevices is missing (insecure context)', async () => {
+    vi.stubGlobal('navigator', {}) // no mediaDevices → non-secure context
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.toggle()
+    expect(v.state.value).toBe('idle')
+    expect(v.error.value).toContain('HTTPS')
+  })
+
   it('non-streaming release stops media tracks and nulls the stream', async () => {
     const track = { stop: vi.fn() }
     const stream = { getTracks: () => [track] }

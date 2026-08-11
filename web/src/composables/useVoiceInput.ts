@@ -12,6 +12,7 @@
  */
 import { ref } from 'vue'
 import { useSettingsConfig } from './useSettingsConfig'
+import { useToast } from './useToast'
 import { appLog } from '@/utils/appLog'
 
 export type VoiceInputState = 'idle' | 'recording' | 'transcribing' | 'done'
@@ -46,6 +47,13 @@ function wsUrl(path: string): string {
 
 export function useVoiceInput() {
   const settings = useSettingsConfig()
+  const toast = useToast()
+
+  // fail records the error and surfaces it to the user via a toast.
+  function fail(msg: string): void {
+    error.value = msg
+    toast.show(msg, { icon: '⚠️', type: 'error', duration: 6000 })
+  }
 
   const shortcutKey = () =>
     (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.shortcut_key'] as string | undefined ?? 'F9'
@@ -67,10 +75,18 @@ export function useVoiceInput() {
   async function start() {
     if (state.value !== 'idle') return
     error.value = ''
+    // navigator.mediaDevices only exists in a secure context (HTTPS or
+    // localhost). If it's missing the page was served over plain HTTP on a
+    // remote host, so the microphone is unreachable regardless of permission.
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      fail('语音输入需要 HTTPS 或 localhost 环境（当前页面不是安全上下文，无法访问麦克风）')
+      appLog.w('VoiceInput', 'voice input requires secure context (HTTPS or localhost)')
+      return
+    }
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
     } catch (e) {
-      error.value = '麦克风权限被拒绝或不可用'
+      fail('麦克风权限被拒绝或不可用')
       appLog.e('VoiceInput', 'getUserMedia failed', e)
       return
     }
@@ -101,7 +117,7 @@ export function useVoiceInput() {
         if (!resp.ok) throw new Error((data as Record<string, unknown>).error as string ?? 'transcribe failed')
         appendText((data as Record<string, unknown>).text as string ?? '')
       } catch (e) {
-        error.value = '语音识别失败'
+        fail('语音识别失败')
         appLog.e('VoiceInput', 'non-streaming transcribe failed', e)
       } finally {
         state.value = 'done'
@@ -135,7 +151,7 @@ export function useVoiceInput() {
     }
     ws.onopen = () => mediaRecorder!.start(chunkMs())
     ws.onerror = () => {
-      error.value = '语音识别连接失败'
+      fail('语音识别连接失败')
       cancel()
     }
     ws.onclose = () => {
