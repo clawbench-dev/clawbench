@@ -45,6 +45,12 @@ export function registerBridge(): void {
   ipcMain.handle('native:connect-to-server', (_e, url: string, password: string) => {
     getStore().set('serverUrl', url)
     if (password) savePassword(password)
+    // Ensure the connected server is in the saved list so the login page shows it.
+    const servers = getStore().get('servers')
+    if (!servers.some(s => s.url === url)) {
+      servers.unshift({ url, password: password || '' })
+      getStore().set('servers', servers)
+    }
     const w = getMainWindow()
     if (w) { w.loadURL(url) }
     else { createMainWindow() }
@@ -116,8 +122,11 @@ export function registerBridge(): void {
   ipcMain.on('native:set-push-enabled', (_e, enabled: boolean) => getStore().set('nativePushEnabled', enabled))
   ipcMain.on('native:update-last-seen', (_e, id: string) => { /* desktop has no SharedPreferences */ })
   ipcMain.on('native:keep-screen-on', (_e, on: boolean) => setKeepScreenOnImpl(on))
+  ipcMain.on('native:get-theme', (e) => { e.returnValue = getStore().get('theme') || 'dark' })
   ipcMain.on('native:set-theme', (_e, theme: string) => {
-    nativeTheme.themeSource = theme === 'light' ? 'light' : 'dark'
+    const t = theme === 'light' ? 'light' : 'dark'
+    getStore().set('theme', t)
+    nativeTheme.themeSource = t
   })
   ipcMain.on('native:log', (_e, level: string, tag: string, msg: string) => { /* route to main log */ })
 }

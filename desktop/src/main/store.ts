@@ -6,6 +6,7 @@ export interface ServerListSchema {
   serverUrl: string
   sshPasswordEncrypted: string | null
   nativePushEnabled: boolean
+  theme: 'dark' | 'light'
 }
 
 const defaults: ServerListSchema = {
@@ -13,6 +14,7 @@ const defaults: ServerListSchema = {
   serverUrl: '',
   sshPasswordEncrypted: null,
   nativePushEnabled: true,
+  theme: 'dark',
 }
 
 let store: Store<ServerListSchema> | null = null

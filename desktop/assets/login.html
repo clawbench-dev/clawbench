@@ -60,6 +60,11 @@
   try { LANG = ClawBenchNative.getLanguage(); } catch(e) {}
   if (!I18N[LANG]) LANG = 'en';
   function t(key) { return I18N[LANG][key] || I18N['en'][key] || key; }
+  // Follow the main interface theme (dark/light) when available.
+  try {
+    var THEME = (ClawBenchNative.getTheme && ClawBenchNative.getTheme()) || 'dark';
+    document.documentElement.setAttribute('data-theme', THEME === 'light' ? 'light' : 'dark');
+  } catch(e) {}
 </script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -76,6 +81,19 @@
     --border-color: #30363d;
     --color-red: #dc2626;
     --server-indicator-size: 8px;
+  }
+
+  [data-theme="light"] {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-tertiary: #eef1f4;
+    --text-primary: #1f2328;
+    --text-muted: #59636e;
+    --text-hint: #8c959f;
+    --accent-color: #0969da;
+    --accent-hover: #0a7ceb;
+    --border-color: #d0d7de;
+    --color-red: #d1242f;
   }
 
   body {
