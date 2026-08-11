@@ -1872,10 +1872,11 @@ function currentFileForClipboard() {
 .file-item.active .file-icon-wrap,
 .file-item.ms-selected .file-icon-wrap,
 .file-item.ctx-highlight .file-icon-wrap {
+    box-sizing: border-box;
     border-radius: 6px;
     padding: 2px;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
