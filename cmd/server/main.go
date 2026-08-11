@@ -49,6 +49,7 @@ import (
 	"clawbench/internal/speech"
 	"clawbench/internal/ssh"
 	"clawbench/internal/startup"
+	"clawbench/internal/stt"
 	"clawbench/internal/summarize"
 	"clawbench/internal/terminal"
 	"clawbench/internal/version"
@@ -611,6 +612,16 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		)
 	}
 	handler.SetSpeechProvider(ttsProvider)
+
+	// Initialize STT (speech-to-text) provider from config
+	sttProvider := newSTTProvider(cfg)
+	handler.SetSTTProvider(sttProvider)
+	slog.Info(
+		"stt provider configured",
+		slog.String("base_url", cfg.STT.BaseURL),
+		slog.String("model", cfg.STT.Model),
+		slog.Bool("streaming", cfg.STT.Streaming),
+	)
 
 	fileHandler, err := service.NewFileHandler(cfg.LogDir, "clawbench", cfg.LogMaxDays)
 	if err != nil {
@@ -1217,6 +1228,11 @@ func hotReloadReconfigure(port int) {
 	handler.SetSpeechProvider(ttsProvider)
 	slog.Info("hot-reload: TTS provider reconfigured", slog.String("engine", cfg.TTS.Engine))
 
+	// --- STT: recreate provider on config change ---
+	sttProvider := newSTTProvider(cfg)
+	handler.SetSTTProvider(sttProvider)
+	slog.Info("hot-reload: STT provider reconfigured", slog.String("base_url", cfg.STT.BaseURL))
+
 	// --- Summarize: reconstruct TTS summarizer ---
 	ttsSummarizer := newTTSSummarizer(cfg)
 	handler.SetSummarizer(ttsSummarizer)
@@ -1560,4 +1576,9 @@ func hotReloadFRP(cfg model.Config, port int) {
 			slog.Info("hot-reload: FRP disabled")
 		}
 	}
+}
+
+// newSTTProvider builds the STT provider from config.
+func newSTTProvider(cfg model.Config) stt.STTProvider {
+	return stt.NewVLLMProvider(cfg.STT.BaseURL, cfg.STT.Model, cfg.STT.APIKey, cfg.STT.Language)
 }

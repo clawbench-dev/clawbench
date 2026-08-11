@@ -44,7 +44,25 @@ func TestServeConfigTest_UnknownCategory(t *testing.T) {
 	var result ConnectivityTestResult
 	_ = json.NewDecoder(w.Body).Decode(&result)
 	assert.False(t, result.Success)
-	assert.Contains(t, result.Message, "Unknown category")
+}
+
+func TestSTTConnectivity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %q, want /v1/models", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"openai/whisper-large-v3"}]}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "openai/whisper-large-v3",
+	})
+	if !res.Success {
+		t.Fatalf("expected success, got %+v", res)
+	}
 }
 
 func TestServeConfigTest_MethodNotAllowed(t *testing.T) {

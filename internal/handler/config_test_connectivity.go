@@ -79,6 +79,8 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 		result = testPortForward(ctx, req.Values)
 	case "tts":
 		result = testTTS(ctx, req.Values)
+	case "stt":
+		result = testSTT(ctx, req.Values)
 	default:
 		result = ConnectivityTestResult{Success: false, Message: "Unknown category: " + req.Category}
 	}
@@ -379,6 +381,62 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	return ConnectivityTestResult{
 		Success: false,
 		Message: fmt.Sprintf("RAG service reachable at %s, but model '%s' not found", baseURL, ragModel),
+	}
+}
+
+// ── STT ──────────────────────────────────────────────────────
+
+// testSTT tests connectivity to the vLLM STT (Whisper) service.
+func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	baseURL := resolveStringValue(values, "stt.base_url", model.ConfigInstance.STT.BaseURL)
+	sttModel := resolveStringValue(values, "stt.model", model.ConfigInstance.STT.Model)
+	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
+
+	if baseURL == "" {
+		return ConnectivityTestResult{Success: false, Message: "STT base URL is required"}
+	}
+	if sttModel == "" {
+		sttModel = "openai/whisper-large-v3"
+	}
+
+	url := strings.TrimRight(baseURL, "/") + "/v1/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to create request: %v", err)}
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service unreachable at %s", baseURL)}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service returned HTTP %d", resp.StatusCode)}
+	}
+
+	var modelsResp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
+		return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable at %s, but could not parse models list", baseURL)}
+	}
+
+	for _, m := range modelsResp.Data {
+		if m.ID == sttModel || strings.HasPrefix(m.ID, sttModel+":") {
+			return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable, model '%s' available", sttModel)}
+		}
+	}
+
+	return ConnectivityTestResult{
+		Success: false,
+		Message: fmt.Sprintf("STT service reachable at %s, but model '%s' not found", baseURL, sttModel),
 	}
 }
 
