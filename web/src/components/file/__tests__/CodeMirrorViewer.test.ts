@@ -307,7 +307,7 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     await clickExit(wrapper)
     expect(dialogMocks.confirm).toHaveBeenCalledTimes(1)
     expect(wrapper.emitted('exitEdit')).toBeFalsy()
-    expect(wrapper.emitted('save')?.[0][0]).toBe('hello!\n')
+    expect(wrapper.emitted('saveAndExit')?.[0][0]).toBe('hello!\n')
   })
 
   it('prompts on exit when dirty and discards on dont-save', async () => {

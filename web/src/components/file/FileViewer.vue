@@ -145,6 +145,7 @@
           :editable="editing"
           :saving="saving"
           @save="handleSave"
+          @save-and-exit="handleSaveAndExit"
           @cancel="editing = false"
           @exit-edit="editing = false"
         />
@@ -208,6 +209,7 @@
           :editable="editing"
           :saving="saving"
           @save="handleSave"
+          @save-and-exit="handleSaveAndExit"
           @cancel="editing = false"
           @exit-edit="editing = false"
         />
@@ -344,13 +346,18 @@ onBeforeUnmount(() => {
     }
 })
 
+// Save and stay in edit mode. Clicking save / Ctrl+S only persists the file,
+// it does not leave the edit view so the user can keep making edits.
 async function handleSave(content) {
-    const saved = captureScrollFrom(getScrollEl())
+    await saveFile(props.file?.path || '', content)
+}
+
+// Save and then exit edit mode. Used by the exit flows (back / toggle view)
+// which confirm save-or-discard; only these paths leave the edit view.
+async function handleSaveAndExit(content) {
     const ok = await saveFile(props.file?.path || '', content)
     if (ok) {
         editing.value = false
-        // Save reloads the file content (which can reset scroll), so restore it.
-        restoreScrollAfter(saved)
     }
 }
 

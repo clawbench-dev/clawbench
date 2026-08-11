@@ -373,7 +373,7 @@ describe('FileViewer', () => {
       expect(setupState(wrapper).editing).toBe(false)
     })
 
-    it('calls saveFile with path and content and exits edit mode on success', async () => {
+    it('calls saveFile with path and content and stays in edit mode on success', async () => {
       mockSaveFile.mockResolvedValue(true)
       const wrapper = mountViewer({ file: editableFile })
       const ss = setupState(wrapper)
@@ -381,7 +381,28 @@ describe('FileViewer', () => {
       await nextTick()
       await ss.handleSave('const x = 2')
       expect(mockSaveFile).toHaveBeenCalledWith('/tmp/main.ts', 'const x = 2')
+      expect(ss.editing).toBe(true)
+    })
+
+    it('saveAndExit calls saveFile and exits edit mode on success', async () => {
+      mockSaveFile.mockResolvedValue(true)
+      const wrapper = mountViewer({ file: editableFile })
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      await ss.handleSaveAndExit('const x = 2')
+      expect(mockSaveFile).toHaveBeenCalledWith('/tmp/main.ts', 'const x = 2')
       expect(ss.editing).toBe(false)
+    })
+
+    it('saveAndExit stays in edit mode when save fails', async () => {
+      mockSaveFile.mockResolvedValue(false)
+      const wrapper = mountViewer({ file: editableFile })
+      const ss = setupState(wrapper)
+      ss.handleToggleEdit()
+      await nextTick()
+      await ss.handleSaveAndExit('const x = 2')
+      expect(ss.editing).toBe(true)
     })
 
     it('stays in edit mode when save fails', async () => {

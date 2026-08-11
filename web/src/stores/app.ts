@@ -508,6 +508,21 @@ async function deleteFile(filePath: string): Promise<void> {
     appLog.d(TAG, '[deleteFile] done, dirEntries count:', state.dirEntries.length)
 }
 
+// Update the in-memory content of the currently open file after a save, without
+// re-fetching from disk. The text we just wrote IS the on-disk state, so a
+// network round-trip would only reset the editor's dirty flag (savedSnapshot)
+// at the cost of a request + potential scroll flash. Instead we update the
+// content in place: the editor's content watch then sees doc === content, so it
+// skips the rebuild and merely re-syncs the saved snapshot (clears "dirty").
+function markSaved(path: string, content: string): void {
+    if (state.currentFile?.path !== path) return
+    state.currentFile.content = content
+    state.currentFile.truncated = false
+    state.currentFile.tooLarge = false
+    state.currentFile.isBinary = false
+    saveOpenFile()
+}
+
 async function deleteFiles(paths: string[]): Promise<void> {
     if (!paths.length) return
     appLog.d(TAG, '[deleteFiles] start:', paths.length, 'files')
@@ -574,6 +589,7 @@ export const store = {
     loadGitBranch,
     loadFiles,
     selectFile,
+    markSaved,
     closeCurrentFile,
     deleteFile,
     deleteFiles,

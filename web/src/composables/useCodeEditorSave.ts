@@ -18,7 +18,10 @@ export function useCodeEditorSave() {
                 body: JSON.stringify({ path, content }),
             })
             if (!resp.ok) throw new Error('write failed')
-            await store.selectFile(path, false, false, false)
+            // Update the in-memory content in place — no re-fetch needed. The
+            // text just written IS the on-disk state, so reloading would only
+            // add a network round-trip and scroll flash with no benefit.
+            store.markSaved(path, content)
             show(t('file.editor.saved'), { icon: '✅', type: 'success', duration: 2000 })
             return true
         } catch {

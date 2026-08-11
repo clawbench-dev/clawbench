@@ -237,3 +237,39 @@ describe('saveOpenFile / loadOpenFile / clearStaleOpenFile', () => {
     expect(loadOpenFile()).toBe('file-a.ts')
   })
 })
+
+describe('markSaved', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    store.state.projectRoot = ''
+    store.state.currentFile = null
+  })
+
+  it('updates the current file content in place and clears transient flags', () => {
+    store.state.currentFile = {
+      name: 'main.go',
+      path: '/tmp/main.go',
+      content: 'old',
+      truncated: true,
+      tooLarge: true,
+      isBinary: true,
+    }
+    store.markSaved('/tmp/main.go', 'package main')
+    expect(store.state.currentFile?.content).toBe('package main')
+    expect(store.state.currentFile?.truncated).toBe(false)
+    expect(store.state.currentFile?.tooLarge).toBe(false)
+    expect(store.state.currentFile?.isBinary).toBe(false)
+  })
+
+  it('does nothing when the path does not match the current file', () => {
+    store.state.currentFile = { name: 'main.go', path: '/tmp/main.go', content: 'old' }
+    store.markSaved('/tmp/other.go', 'new')
+    expect(store.state.currentFile?.content).toBe('old')
+  })
+
+  it('does nothing when no file is open', () => {
+    store.state.currentFile = null
+    store.markSaved('/tmp/main.go', 'new')
+    expect(store.state.currentFile).toBeNull()
+  })
+})

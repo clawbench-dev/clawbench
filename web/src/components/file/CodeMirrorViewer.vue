@@ -49,7 +49,7 @@ const props = defineProps({
     editable: { type: Boolean, default: false },
     saving: { type: Boolean, default: false },
 })
-const emit = defineEmits(['save', 'cancel', 'exitEdit'])
+const emit = defineEmits(['save', 'saveAndExit', 'cancel', 'exitEdit'])
 
 const { t } = useI18n()
 const editorHost = ref(null)
@@ -529,8 +529,8 @@ async function handleExit() {
         onExtraAction: () => {},
     })
     if (choice === true) {
-        // Save and exit (FileViewer's handleSave reloads content and leaves edit mode).
-        emit('save', getValue())
+        // Save and exit (FileViewer's handleSaveAndExit reloads content and leaves edit mode).
+        emit('saveAndExit', getValue())
         return true
     } else if (choice === null) {
         // Discard changes and exit.
