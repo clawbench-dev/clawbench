@@ -2,6 +2,7 @@ package stt
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,16 +35,11 @@ func TestVLLMTranscribe_Success(t *testing.T) {
 			t.Fatalf("missing file field: %v", err)
 		}
 		defer file.Close()
-		var buf strings.Builder
-		b := make([]byte, 32)
-		for {
-			n, err := file.Read(b)
-			buf.Write(b[:n])
-			if err != nil {
-				break
-			}
+		body, err := io.ReadAll(file)
+		if err != nil {
+			t.Fatalf("read file field: %v", err)
 		}
-		gotBody = []byte(buf.String())
+		gotBody = body
 		if got := r.FormValue("model"); got != "whisper-model" {
 			t.Fatalf("model field = %q, want whisper-model", got)
 		}
@@ -138,5 +134,47 @@ func TestVLLMTranscribe_EmptyText(t *testing.T) {
 	}
 	if text != "" {
 		t.Fatalf("text = %q, want empty", text)
+	}
+}
+
+func TestNewVLLMProvider(t *testing.T) {
+	p := NewVLLMProvider("http://x/v1/", "m", "k", "zh")
+	if p.BaseURL != "http://x/v1" {
+		t.Fatalf("BaseURL = %q, want http://x/v1", p.BaseURL)
+	}
+	if p.Model != "m" {
+		t.Fatalf("Model = %q, want m", p.Model)
+	}
+	if p.APIKey != "k" {
+		t.Fatalf("APIKey = %q, want k", p.APIKey)
+	}
+	if p.Language != "zh" {
+		t.Fatalf("Language = %q, want zh", p.Language)
+	}
+	if p.HTTPClient == nil {
+		t.Fatal("HTTPClient is nil")
+	}
+	if p.HTTPClient.Timeout == 0 {
+		t.Fatal("HTTPClient Timeout is zero")
+	}
+}
+
+func TestVLLMTranscribe_LanguageOverride(t *testing.T) {
+	var gotLanguage string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(1 << 20)
+		gotLanguage = r.FormValue("language")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"ok"}`))
+	}))
+	defer srv.Close()
+
+	p := newVLLM(srv.URL, "m")
+	p.Language = "en"
+	if _, err := p.Transcribe(context.Background(), strings.NewReader("x"), "ja"); err != nil {
+		t.Fatalf("Transcribe error: %v", err)
+	}
+	if gotLanguage != "ja" {
+		t.Fatalf("language field = %q, want ja", gotLanguage)
 	}
 }

@@ -37,8 +37,8 @@ func NewVLLMProvider(baseURL, model, apiKey, language string) *VLLMProvider {
 	}
 }
 
-// sttTranscribeResponse is the OpenAI-compatible transcription response.
-type sttTranscribeResponse struct {
+// openaiTranscribeResponse is the OpenAI-compatible transcription response.
+type openaiTranscribeResponse struct {
 	Text string `json:"text"`
 }
 
@@ -68,11 +68,6 @@ func (p *VLLMProvider) Transcribe(ctx context.Context, audioReader io.Reader, la
 		lang = language
 	}
 
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, audioReader); err != nil {
-		return "", fmt.Errorf("stt: read audio: %w", err)
-	}
-
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
@@ -80,10 +75,12 @@ func (p *VLLMProvider) Transcribe(ctx context.Context, audioReader io.Reader, la
 	if err != nil {
 		return "", fmt.Errorf("stt: create form file: %w", err)
 	}
-	if _, err := part.Write(buf.Bytes()); err != nil {
+	if _, err := io.Copy(part, audioReader); err != nil {
 		return "", fmt.Errorf("stt: write audio: %w", err)
 	}
-	_ = writer.WriteField("model", p.Model)
+	if err := writer.WriteField("model", p.Model); err != nil {
+		return "", fmt.Errorf("stt: write model field: %w", err)
+	}
 	if lang != "" {
 		_ = writer.WriteField("language", lang)
 	}
@@ -115,7 +112,7 @@ func (p *VLLMProvider) Transcribe(ctx context.Context, audioReader io.Reader, la
 		return "", fmt.Errorf("stt: API returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var transResp sttTranscribeResponse
+	var transResp openaiTranscribeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&transResp); err != nil {
 		return "", fmt.Errorf("stt: decode response: %w", err)
 	}
