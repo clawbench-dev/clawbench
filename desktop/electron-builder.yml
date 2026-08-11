@@ -12,8 +12,11 @@ files:
   - "!**/node_modules/.cache"
 win:
   target: dir
+  icon: build/icon.png
   signAndEditExecutable: false
 mac:
   target: dir
+  icon: build/icon.png
 linux:
   target: dir
+  icon: build/icon.png
