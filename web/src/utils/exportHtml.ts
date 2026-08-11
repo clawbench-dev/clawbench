@@ -762,7 +762,7 @@ ${tocCss}
 .markdown-body .lightbox-img-wrap .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; cursor: pointer; z-index: 2; pointer-events: auto; }
 @media (hover: hover) { .markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon { display: flex; align-items: center; justify-content: center; } }
 .markdown-body .lightbox-img-wrap .lightbox-expand-icon::after { content: '\\2922'; font-size: 14px; line-height: 1; }
-.markdown-body .mermaid { position: relative; }
+.markdown-body .mermaid, .markdown-body .mermaid-dual { position: relative; }
 .markdown-body .mermaid .lightbox-expand-icon, .markdown-body .mermaid-dual .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; font-size: 14px; line-height: 24px; text-align: center; cursor: pointer; z-index: 2; align-items: center; justify-content: center; }
 .markdown-body .mermaid .lightbox-expand-icon::after, .markdown-body .mermaid-dual .lightbox-expand-icon::after { content: '\\2922'; }
 @media (hover: hover) { .markdown-body .mermaid:hover .lightbox-expand-icon, .markdown-body .mermaid-dual:hover .lightbox-expand-icon { display: flex; } }
