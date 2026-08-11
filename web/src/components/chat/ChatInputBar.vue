@@ -95,9 +95,13 @@
           @focus="onTextareaFocus"
           @blur="onTextareaBlur"
           ></textarea>
-        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent }" @click.stop="handleSendClick" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
+        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent, recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
+          <!-- Recording: red pulsing dot -->
+          <span v-if="voiceState === 'recording'" class="voice-recording-dot"></span>
+          <!-- Transcribing: loading spinner -->
+          <Loader2 v-else-if="voiceState === 'transcribing'" class="spin-icon" :size="16" />
           <!-- Empty input: green lightning (quick-menu shortcut) -->
-          <Zap v-if="!hasInputContent" :size="16" />
+          <Zap v-else-if="!hasInputContent" :size="16" />
           <!-- Queue mode: inbox with down arrow (enqueue) -->
           <Inbox v-else-if="loading" :size="16" />
           <!-- Normal mode: paper plane (send) -->
@@ -274,6 +278,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useFileUpload } from '@/composables/useFileUpload'
+import { useVoiceInput } from '@/composables/useVoiceInput'
 import { appLog } from '@/utils/appLog'
 
 const { t } = useI18n()
@@ -446,6 +451,54 @@ const emit = defineEmits([
 ])
 
 const inputText = ref('')
+
+// ── Voice input (ASR) ───────────────────────────────
+const voiceInput = useVoiceInput()
+const { state: voiceState, inputText: voiceInputText, toggle: toggleVoice, shortcutKey: voiceShortcutKey } = voiceInput
+
+const VOICE_LONG_PRESS_MS = 500
+let voicePressTimer = null
+let voicePointerDown = false
+let voiceLongPressActive = false
+
+function onSendPointerDown() {
+  voicePointerDown = true
+  voiceLongPressActive = false
+  if (voicePressTimer) { clearTimeout(voicePressTimer) }
+  voicePressTimer = setTimeout(() => {
+    if (voicePointerDown && !hasInputContent.value) {
+      voiceLongPressActive = true
+      void toggleVoice()
+    }
+  }, VOICE_LONG_PRESS_MS)
+}
+
+function onSendPointerUp() {
+  voicePointerDown = false
+  if (voicePressTimer) { clearTimeout(voicePressTimer); voicePressTimer = null }
+  if (voiceLongPressActive) {
+    voiceLongPressActive = false
+    void toggleVoice()
+  }
+}
+
+// Sync recognized voice text into the input box (never auto-sends).
+watch(voiceInputText, (val) => {
+  if (val && val !== inputText.value) {
+    inputText.value = val
+  }
+})
+
+function onVoiceShortcut(e) {
+  const sc = voiceShortcutKey()
+  if (sc === 'Alt+Space') {
+    if (e.altKey && e.code === 'Space') {
+      e.preventDefault()
+      void toggleVoice()
+    }
+  }
+}
+
 const rootRef = ref(null)
 const textareaRef = ref(null)
 const isDragOver = ref(false)
@@ -1098,11 +1151,13 @@ onMounted(() => {
   fetchItems()
   startPlaceholderRotation()
   window.addEventListener('paste', handleWindowPaste, true)
+  window.addEventListener('keydown', onVoiceShortcut)
 })
 
 onBeforeUnmount(() => {
   pasteUploadGeneration++
   window.removeEventListener('paste', handleWindowPaste, true)
+  window.removeEventListener('keydown', onVoiceShortcut)
   stopMachine.destroy()
   if (quickSendPressTimer) {
     clearTimeout(quickSendPressTimer)
@@ -1826,6 +1881,24 @@ defineExpose({
 @keyframes spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
+}
+
+.voice-recording-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff3b30;
+  animation: voice-pulse 1s ease-in-out infinite;
+}
+@keyframes voice-pulse {
+  0%, 100% { transform: scale(0.8); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.6; }
+}
+.chat-send-btn.recording {
+  background: #ff3b30;
+}
+.chat-send-btn.transcribing .spin-icon {
+  animation: spin 1s linear infinite;
 }
 
 .chat-action-label {
