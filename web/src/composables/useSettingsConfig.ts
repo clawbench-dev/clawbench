@@ -303,6 +303,7 @@ const serverDefaults: Record<string, unknown> = {
   'chat.page_size': 20,
   'chat.system_prompt_interval': 10,
   'chat.recommend_enabled': false,
+  'chat.recommend_context_messages': 3,
   'session.max_count': 10,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,

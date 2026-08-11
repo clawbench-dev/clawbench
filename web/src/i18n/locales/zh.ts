@@ -1374,6 +1374,8 @@ export default {
       recommendSectionHeader: '对话推荐',
       chatRecommendEnabled: '对话推荐',
       chatRecommendEnabledDesc: '每条助手回复后，基于结论推荐下一步操作；输入框为空时自动填入',
+      chatRecommendContextMessages: '参考用户消息数',
+      chatRecommendContextMessagesDesc: '生成推荐时参考的最近用户消息条数，帮助 AI 理解你的意图（0 为不参考）',
       ttsSpeed: '语速',
       ttsSpeedDesc: '语音播放速率，1.0 为正常速度',
       ttsVoice: '语音',

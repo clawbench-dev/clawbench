@@ -3,21 +3,23 @@ package summarize
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"clawbench/internal/model"
 )
 
 // recommendNextStepPrompt is the system prompt for the next-step recommendation
 // (对话推荐) feature. It asks the model to produce a single, concise action the
-// user can take next, based on the assistant's conclusion.
-const recommendNextStepPrompt = `You are a conversation continuation assistant. Based on the AI assistant's conclusion below, suggest exactly ONE concise next step for the user to take.
+// user can take next, based on the recent conversation context and conclusion.
+const recommendNextStepPrompt = `You are a conversation continuation assistant. Based on the recent conversation and the AI assistant's latest conclusion, suggest exactly ONE concise next step for the user to take.
 
 Requirements:
 1. Output only the next-step suggestion — a short, natural-language instruction the user could paste into the chat input to continue.
-2. It should be specific and actionable (e.g. a clarifying question, a concrete task, a command to run, or a direction to explore).
-3. Do not add markdown, bullet lists, prefixes, quotes, or meta-phrases like "Next step:" or "You could try".
-4. Output in the requested language.
-5. If there is no reasonable next step, output a single short question inviting the user to clarify or continue.`
+2. It should be specific and actionable (e.g. a clarifying question, a concrete task, a command to run, or a direction to explore). Take the user's recent intent into account.
+3. If a listed quick command fits the next step, you may reference it (e.g. "用快捷指令「生成测试」"), otherwise ignore them.
+4. Do not add markdown, bullet lists, prefixes, quotes, or meta-phrases like "Next step:" or "You could try".
+5. Output in the requested language.
+6. If there is no reasonable next step, output a single short question inviting the user to clarify or continue.`
 
 // recommendPassProvider is implemented by LLM summarizers that expose their
 // single-pass call (OpenAISummarizer / AnthropicSummarizer). Used to build a
@@ -47,18 +49,45 @@ func NewAISummarizer(cfg model.AISummaryConfig) Summarizer {
 }
 
 // RecommendNextStep generates a concise next-step suggestion based on the
-// assistant's conclusion. It reuses the summarizer's LLM pass with a dedicated
-// recommendation prompt. Returns an error if the summarizer backend does not
-// support recommendation (e.g. the "simple" extract-conclusion summarizer).
-func RecommendNextStep(ctx context.Context, s Summarizer, conclusion, language string) (string, error) {
+// assistant's conclusion plus recent conversation context (user messages full
+// text, assistant messages their conclusion) and any available quick commands.
+// It reuses the summarizer's LLM pass with a dedicated recommendation prompt.
+// Returns an error if the summarizer backend does not support recommendation
+// (e.g. the "simple" extract-conclusion summarizer).
+func RecommendNextStep(ctx context.Context, s Summarizer, conversation, quickCommands []string, conclusion, language string) (string, error) {
 	pp, ok := s.(recommendPassProvider)
 	if !ok {
 		return "", fmt.Errorf("summarizer backend does not support next-step recommendation")
 	}
 	pipeline := NewPipelineWithOpts(pp.DoSummarizePass, recommendNextStepPrompt, SummarizeOption{PreserveMarkdown: false})
-	result, err := pipeline.Summarize(ctx, conclusion, language)
+	input := buildRecommendInput(conversation, quickCommands, conclusion)
+	result, err := pipeline.Summarize(ctx, input, language)
 	if err != nil {
 		return "", err
 	}
 	return result, nil
+}
+
+// buildRecommendInput assembles the recent conversation, available quick
+// commands, and the assistant's conclusion into the user-side text fed to the
+// recommendation pipeline.
+func buildRecommendInput(conversation, quickCommands []string, conclusion string) string {
+	var b strings.Builder
+	if len(conversation) > 0 {
+		b.WriteString("Recent conversation (user messages in full, assistant messages as conclusion):\n")
+		for i, m := range conversation {
+			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, m))
+		}
+		b.WriteString("\n")
+	}
+	if len(quickCommands) > 0 {
+		b.WriteString("Available quick commands (label: command) — you may suggest using one if it fits:\n")
+		for _, q := range quickCommands {
+			b.WriteString("- " + q + "\n")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("Assistant's latest conclusion:\n")
+	b.WriteString(conclusion)
+	return b.String()
 }

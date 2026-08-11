@@ -129,6 +129,9 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if p, ok := presence["chat.recommend_enabled"]; !ok || !p {
 		cfg.Chat.RecommendEnabled = false
 	}
+	if cfg.Chat.RecommendContextMessages <= 0 {
+		cfg.Chat.RecommendContextMessages = 3
+	}
 
 	// --- Session ---
 	if cfg.Session.MaxCount <= 0 {

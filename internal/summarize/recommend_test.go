@@ -59,12 +59,38 @@ func TestNewAISummarizer_AutoDetectFromURL(t *testing.T) {
 
 func TestRecommendNextStep_UnsupportedBackend(t *testing.T) {
 	// The "simple" summarizer does not expose DoSummarizePass → error.
-	_, err := RecommendNextStep(context.Background(), NewSimple(), "conclusion", "zh")
+	_, err := RecommendNextStep(context.Background(), NewSimple(), nil, nil, "conclusion", "zh")
 	if err == nil {
 		t.Fatal("expected error for simple summarizer, got nil")
 	}
 	if !strings.Contains(err.Error(), "does not support") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildRecommendInput_WithHistory(t *testing.T) {
+	out := buildRecommendInput([]string{"user msg 1", "user msg 2"}, []string{"生成测试: run tests", "写文档: write doc"}, "the conclusion")
+	if !strings.Contains(out, "Recent conversation") {
+		t.Fatalf("expected conversation section, got: %q", out)
+	}
+	if !strings.Contains(out, "1. user msg 1") || !strings.Contains(out, "2. user msg 2") {
+		t.Fatalf("expected chronological conversation, got: %q", out)
+	}
+	if !strings.Contains(out, "Available quick commands") || !strings.Contains(out, "生成测试: run tests") {
+		t.Fatalf("expected quick commands section, got: %q", out)
+	}
+	if !strings.Contains(out, "Assistant's latest conclusion:") || !strings.Contains(out, "the conclusion") {
+		t.Fatalf("expected conclusion section, got: %q", out)
+	}
+}
+
+func TestBuildRecommendInput_NoHistory(t *testing.T) {
+	out := buildRecommendInput(nil, nil, "conclusion only")
+	if strings.Contains(out, "Recent conversation") || strings.Contains(out, "Available quick commands") {
+		t.Fatalf("empty sections should be omitted, got: %q", out)
+	}
+	if !strings.Contains(out, "conclusion only") {
+		t.Fatalf("conclusion missing, got: %q", out)
 	}
 }
 
@@ -79,7 +105,7 @@ func TestRecommendNextStep_OpenAI(t *testing.T) {
 	defer srv.Close()
 
 	s := NewOpenAI(srv.URL, "key", "gpt-4o-mini")
-	out, err := RecommendNextStep(context.Background(), s, "The build passed.", "zh")
+	out, err := RecommendNextStep(context.Background(), s, []string{"please fix tests"}, nil, "The build passed.", "zh")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -99,7 +125,7 @@ func TestRecommendNextStep_Anthropic(t *testing.T) {
 	defer srv.Close()
 
 	s := NewAnthropic(srv.URL, "key", "claude-3-haiku")
-	out, err := RecommendNextStep(context.Background(), s, "Done.", "en")
+	out, err := RecommendNextStep(context.Background(), s, []string{"summarize this"}, nil, "Done.", "en")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +141,7 @@ func TestRecommendNextStep_APIFailure(t *testing.T) {
 	defer srv.Close()
 
 	s := NewOpenAI(srv.URL, "bad", "gpt-4o-mini")
-	_, err := RecommendNextStep(context.Background(), s, "text", "zh")
+	_, err := RecommendNextStep(context.Background(), s, nil, nil, "text", "zh")
 	if err == nil {
 		t.Fatal("expected error on API failure, got nil")
 	}

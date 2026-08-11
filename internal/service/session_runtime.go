@@ -471,10 +471,16 @@ func triggerChatRecommendation(sessionID, projectPath string, blocks []model.Con
 		return
 	}
 
+	// Gather the most recent conversation turns (user messages in full,
+	// assistant messages as their conclusion) so the recommendation can account
+	// for the user's recent intent.
+	conversation := recentConversation(sessionID, model.ConfigInstance.Chat.RecommendContextMessages)
+	commands := quickCommandList(projectPath)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	recommendation, err := summarize.RecommendNextStep(ctx, summarizer, conclusion, "zh")
+	recommendation, err := summarize.RecommendNextStep(ctx, summarizer, conversation, commands, conclusion, "zh")
 	if err != nil {
 		slog.Debug("chat recommendation failed", slog.String("session_id", sessionID), slog.String("err", err.Error()))
 		return
@@ -499,6 +505,72 @@ func triggerChatRecommendation(sessionID, projectPath string, blocks []model.Con
 		},
 	})
 	slog.Info("chat recommendation emitted", slog.String("session_id", sessionID))
+}
+
+// recentConversation returns the text of the most recent n messages in a
+// session. User messages are included in full; assistant messages are reduced
+// to their conclusion (text after the last tool_use). Limited to n messages
+// (0 or negative = no context).
+func recentConversation(sessionID string, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	messages, err := GetMessagesBySessionID(sessionID)
+	if err != nil {
+		slog.Debug("chat recommendation: failed to load messages for context", slog.String("session_id", sessionID), slog.String("err", err.Error()))
+		return nil
+	}
+	var texts []string
+	for i := len(messages) - 1; i >= 0 && len(texts) < n; i-- {
+		var text string
+		if messages[i].Role == "user" {
+			text = ExtractPlainText(messages[i].Content)
+		} else if messages[i].Role == "assistant" {
+			text = assistantConclusion(messages[i].Content)
+		} else {
+			continue
+		}
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		texts = append([]string{text}, texts...) // keep chronological order
+	}
+	return texts
+}
+
+// assistantConclusion extracts the conclusion text from an assistant message's
+// blocks content (text after the last tool_use).
+func assistantConclusion(content string) string {
+	if !strings.HasPrefix(content, `{"blocks":`) {
+		return content
+	}
+	var wrapper struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	if json.Unmarshal([]byte(content), &wrapper) != nil {
+		return content
+	}
+	return summarize.ExtractLastAnswerFromBlocks(wrapper.Blocks)
+}
+
+// quickCommandList returns the quick-send commands available for a project,
+// formatted as "label: command" for the recommendation prompt.
+func quickCommandList(projectPath string) []string {
+	items, err := GetChatQuickSend(projectPath)
+	if err != nil {
+		slog.Debug("chat recommendation: failed to load quick commands", slog.String("project", projectPath), slog.String("err", err.Error()))
+		return nil
+	}
+	commands := make([]string, 0, len(items))
+	for _, it := range items {
+		label := strings.TrimSpace(it.Label)
+		cmd := strings.TrimSpace(it.Command)
+		if label == "" && cmd == "" {
+			continue
+		}
+		commands = append(commands, label+": "+cmd)
+	}
+	return commands
 }
 
 // getLastAssistantBlocks returns the last assistant message and its parsed content blocks.

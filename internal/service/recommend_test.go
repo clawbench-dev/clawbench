@@ -105,3 +105,22 @@ func TestTriggerChatRecommendation_EmptyConclusion(t *testing.T) {
 		t.Fatalf("expected no events for empty conclusion, got %d", len(evts))
 	}
 }
+
+func TestRecentConversation_LimitsAndOrders(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "sess-rec-ctx"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (300, '/test', 'user', 'first', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (301, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"reply1\"}]}', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (302, '/test', 'user', 'second', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (303, '/test', 'user', 'third', ?, 0)", sessionID)
+
+	got := recentConversation(sessionID, 3)
+	// Most recent 3 messages: user "third", user "second", assistant conclusion "reply1"
+	assert.Equal(t, []string{"reply1", "second", "third"}, got, "should return the most recent n messages in chronological order")
+
+	gotAll := recentConversation(sessionID, 0)
+	assert.Len(t, gotAll, 0, "n<=0 should return no context")
+}

@@ -40,6 +40,7 @@ var hotReloadFields = map[string]bool{
 	"chat.page_size":                    true,
 	"chat.system_prompt_interval":       true,
 	"chat.recommend_enabled":            true,
+	"chat.recommend_context_messages":   true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
 	"session.archive_retention_days":    true,
@@ -203,10 +204,11 @@ type configResponse struct {
 }
 
 type configChat struct {
-	InitialMessages      int  `json:"initial_messages"`
-	PageSize             int  `json:"page_size"`
-	SystemPromptInterval int  `json:"system_prompt_interval"`
-	RecommendEnabled     bool `json:"recommend_enabled"`
+	InitialMessages          int  `json:"initial_messages"`
+	PageSize                 int  `json:"page_size"`
+	SystemPromptInterval     int  `json:"system_prompt_interval"`
+	RecommendEnabled         bool `json:"recommend_enabled"`
+	RecommendContextMessages int  `json:"recommend_context_messages"`
 }
 
 type configSession struct {
@@ -340,6 +342,7 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.page_size":                    true,
 	"chat.system_prompt_interval":       true,
 	"chat.recommend_enabled":            true,
+	"chat.recommend_context_messages":   true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
 	"session.archive_retention_days":    true,
@@ -460,10 +463,11 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		LocalhostAuthExempt: cfg.LocalhostAuthExempt,
 		DefaultAgent:        cfg.DefaultAgent,
 		Chat: configChat{
-			InitialMessages:      cfg.Chat.InitialMessages,
-			PageSize:             cfg.Chat.PageSize,
-			SystemPromptInterval: cfg.Chat.SystemPromptInterval,
-			RecommendEnabled:     cfg.Chat.RecommendEnabled,
+			InitialMessages:          cfg.Chat.InitialMessages,
+			PageSize:                 cfg.Chat.PageSize,
+			SystemPromptInterval:     cfg.Chat.SystemPromptInterval,
+			RecommendEnabled:         cfg.Chat.RecommendEnabled,
+			RecommendContextMessages: cfg.Chat.RecommendContextMessages,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -979,6 +983,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := chat["recommend_enabled"].(bool); ok {
 			cfg.Chat.RecommendEnabled = v
+		}
+		if v, ok := chat["recommend_context_messages"].(float64); ok {
+			cfg.Chat.RecommendContextMessages = int(v)
 		}
 	}
 

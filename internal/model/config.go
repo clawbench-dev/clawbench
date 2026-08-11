@@ -50,11 +50,12 @@ type Config struct {
 		MaxFiles  int `yaml:"max_files"`   // Maximum number of files per upload (default: 20)
 	} `yaml:"upload"`
 	Chat struct {
-		InitialMessages      int  `yaml:"initial_messages"`       // Number of messages to load initially (default: 20)
-		PageSize             int  `yaml:"page_size"`              // Number of messages per lazy-load batch (default: 20)
-		SessionPageSize      int  `yaml:"session_page_size"`      // Number of sessions per page in session list (default: 10)
-		SystemPromptInterval int  `yaml:"system_prompt_interval"` // Re-inject system prompt every N assistant turns (0=never, default: 10)
-		RecommendEnabled     bool `yaml:"recommend_enabled"`      // 对话推荐: generate a next-step recommendation after each assistant reply (default: false)
+		InitialMessages          int  `yaml:"initial_messages"`           // Number of messages to load initially (default: 20)
+		PageSize                 int  `yaml:"page_size"`                  // Number of messages per lazy-load batch (default: 20)
+		SessionPageSize          int  `yaml:"session_page_size"`          // Number of sessions per page in session list (default: 10)
+		SystemPromptInterval     int  `yaml:"system_prompt_interval"`     // Re-inject system prompt every N assistant turns (0=never, default: 10)
+		RecommendEnabled         bool `yaml:"recommend_enabled"`          // 对话推荐: generate a next-step recommendation after each assistant reply (default: false)
+		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 对话推荐参考的最近用户消息条数 (default: 3)
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 10)

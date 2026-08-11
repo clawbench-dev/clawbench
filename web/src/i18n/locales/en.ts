@@ -1373,6 +1373,8 @@ export default {
       recommendSectionHeader: 'Conversation Recommendation',
       chatRecommendEnabled: 'Conversation Recommendation',
       chatRecommendEnabledDesc: 'After each assistant reply, suggest a next step based on the conclusion; auto-fill when the input is empty',
+      chatRecommendContextMessages: 'Recent User Messages',
+      chatRecommendContextMessagesDesc: 'Number of recent user messages to consider when generating a recommendation (0 = none)',
       ttsSpeed: 'Speed',
       ttsSpeedDesc: 'Speech playback rate, 1.0 is normal speed',
       ttsVoice: 'Voice',

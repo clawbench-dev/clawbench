@@ -449,7 +449,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	var presence map[string]bool
 	// Legacy values extracted from the raw map for migration (summarize.tts_model
 	// / tts_api were removed from the typed struct).
-	var legacySummaryBaseURL, legacySummaryKey, legacySummaryModel string
+	var legacySummaryBaseURL, legacySummaryKey, legacySummaryModel, legacySummaryFormat string
 
 	// Search for config in priority order:
 	// 1. <DataDir>/config/config.yaml (data directory)
@@ -474,6 +474,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 				}
 				if k, ok := legacyBase["key"].(string); ok && k != "" {
 					legacySummaryKey = k
+				}
+				if f, ok := legacyBase["format"].(string); ok && f != "" {
+					legacySummaryFormat = f
 				}
 			}
 			if m, ok := apiMap["tts_model"].(string); ok && m != "" {
@@ -501,6 +504,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	if cfg.AISummary.Model == "" {
 		cfg.AISummary.Model = legacySummaryModel
+	}
+	// Migrate the API format too, so anthropic endpoints are not defaulted to
+	// "openai" (which would cause the recommendation/summary call to fail).
+	if cfg.AISummary.Format == "" {
+		cfg.AISummary.Format = legacySummaryFormat
 	}
 
 	// Apply all defaults (returns auto-generated password if created)
