@@ -83,7 +83,7 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 		return
 	}
 	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
-		if t, err := http.ParseTime(ims); err == nil && !lastMod.After(t) {
+		if imsTime, parseErr := http.ParseTime(ims); parseErr == nil && !lastMod.After(imsTime) {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
