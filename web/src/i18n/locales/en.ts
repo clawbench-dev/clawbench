@@ -1160,6 +1160,8 @@ export default {
       recommend: 'Recommend',
       recommended: 'Recommended',
       recommendationFill: 'Fill',
+      recommendationExpand: 'Expand',
+      recommendationCollapse: 'Collapse',
     },
     permission: {
       title: 'Permission Request',

@@ -16,9 +16,10 @@ const recommendNextStepPrompt = `You are a conversation continuation assistant. 
 Requirements:
 1. Output only the next-step suggestion — a short, natural-language instruction the user could paste into the chat input to continue.
 2. It should be specific and actionable (e.g. a clarifying question, a concrete task, a command to run, or a direction to explore). Take the user's recent intent into account.
-3. If a listed quick command fits the next step, you may reference it (e.g. "用快捷指令「生成测试」"), otherwise ignore them.
+3. The quick commands listed in the context are the user's frequently-used commands for you to reference, not tools you can call directly. If one fits the next step, suggest it by name (e.g. "用快捷指令「生成测试」"), otherwise ignore them.
 4. Do not add markdown, bullet lists, prefixes, quotes, or meta-phrases like "Next step:" or "You could try".
-5. Output in the requested language.`
+5. Output in the requested language.
+6. The suggestion is the user's next message sent to the AI assistant, so phrase it as a directive for the AI — never ask the user a question.`
 
 // recommendPassProvider is implemented by LLM summarizers that expose their
 // single-pass call (OpenAISummarizer / AnthropicSummarizer). Used to build a
@@ -80,7 +81,7 @@ func buildRecommendInput(conversation, quickCommands []string, conclusion string
 		b.WriteString("\n")
 	}
 	if len(quickCommands) > 0 {
-		b.WriteString("Available quick commands (label: command) — you may suggest using one if it fits:\n")
+		b.WriteString("以下是我的常用指令，请在合适的时候使用（格式：label: command）：\n")
 		for _, q := range quickCommands {
 			b.WriteString("- " + q + "\n")
 		}

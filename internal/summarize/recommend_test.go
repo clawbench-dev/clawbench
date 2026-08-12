@@ -76,7 +76,12 @@ func TestBuildRecommendInput_WithHistory(t *testing.T) {
 	if !strings.Contains(out, "1. user msg 1") || !strings.Contains(out, "2. user msg 2") {
 		t.Fatalf("expected chronological conversation, got: %q", out)
 	}
-	if !strings.Contains(out, "Available quick commands") || !strings.Contains(out, "生成测试: run tests") {
+	// Quick commands are framed as the user's frequently-used commands to be
+	// referenced when appropriate — not as callable tools.
+	if !strings.Contains(out, "以下是我的常用指令") {
+		t.Fatalf("expected quick commands framed as user's frequently-used commands, got: %q", out)
+	}
+	if !strings.Contains(out, "生成测试: run tests") {
 		t.Fatalf("expected quick commands section, got: %q", out)
 	}
 	if !strings.Contains(out, "Assistant's latest conclusion:") || !strings.Contains(out, "the conclusion") {
@@ -86,7 +91,7 @@ func TestBuildRecommendInput_WithHistory(t *testing.T) {
 
 func TestBuildRecommendInput_NoHistory(t *testing.T) {
 	out := buildRecommendInput(nil, nil, "conclusion only")
-	if strings.Contains(out, "Recent conversation") || strings.Contains(out, "Available quick commands") {
+	if strings.Contains(out, "Recent conversation") || strings.Contains(out, "以下是我的常用指令") {
 		t.Fatalf("empty sections should be omitted, got: %q", out)
 	}
 	if !strings.Contains(out, "conclusion only") {
@@ -106,6 +111,14 @@ func TestRecommendNextStepPrompt_NoClarifyFallback(t *testing.T) {
 	}
 	if !strings.Contains(recommendNextStepPrompt, "exactly ONE concise next step") {
 		t.Fatalf("prompt must still require exactly one next step, got: %q", recommendNextStepPrompt)
+	}
+}
+
+// TestRecommendNextStepPrompt_NoUserQuestion guards that the recommendation is
+// phrased as the user's next message to the AI, not a question back to the user.
+func TestRecommendNextStepPrompt_NoUserQuestion(t *testing.T) {
+	if !strings.Contains(recommendNextStepPrompt, "never ask the user a question") {
+		t.Fatalf("prompt must instruct not to ask the user a question, got: %q", recommendNextStepPrompt)
 	}
 }
 

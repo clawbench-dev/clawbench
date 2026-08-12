@@ -569,7 +569,8 @@ func recentConversation(sessionID string, n int) []string {
 }
 
 // assistantConclusion extracts the conclusion text from an assistant message's
-// blocks content (text after the last tool_use).
+// blocks content (text after the last tool_use), appending any AskUserQuestion
+// cards so the recommendation prompt can reference the options.
 func assistantConclusion(content string) string {
 	if !strings.HasPrefix(content, `{"blocks":`) {
 		return content
@@ -580,7 +581,60 @@ func assistantConclusion(content string) string {
 	if json.Unmarshal([]byte(content), &wrapper) != nil {
 		return content
 	}
-	return summarize.ExtractLastAnswerFromBlocks(wrapper.Blocks)
+	conclusion := summarize.ExtractLastAnswerFromBlocks(wrapper.Blocks)
+	if q := askQuestionText(wrapper.Blocks); q != "" {
+		conclusion += q
+	}
+	return conclusion
+}
+
+// askQuestionText renders any AskUserQuestion cards in the assistant blocks as
+// plain text, reusing extractSummaryCards to parse them. Covers both the
+// <ask-question> tag form (cards.AskQuestions) and the converted AskUserQuestion
+// tool_use form (cards.Tools[].Input["questions"]).
+func askQuestionText(blocks []model.ContentBlock) string {
+	cards := extractSummaryCards(blocks)
+	var qs []model.AskQuestionCard
+	qs = append(qs, cards.AskQuestions...)
+	for _, tool := range cards.Tools {
+		if !strings.EqualFold(tool.Name, "AskUserQuestion") {
+			continue
+		}
+		raw, ok := tool.Input["questions"]
+		if !ok {
+			continue
+		}
+		data, err := json.Marshal(raw)
+		if err != nil {
+			continue
+		}
+		var parsed []model.AskQuestionCard
+		if json.Unmarshal(data, &parsed) != nil {
+			continue
+		}
+		qs = append(qs, parsed...)
+	}
+	if len(qs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n[AI asks the user to choose]\n")
+	for _, q := range qs {
+		if q.Question != "" {
+			b.WriteString("Question: " + q.Question + "\n")
+		}
+		for _, o := range q.Options {
+			if o.Label == "" {
+				continue
+			}
+			if o.Description != "" {
+				b.WriteString("- " + o.Label + " (" + o.Description + ")\n")
+			} else {
+				b.WriteString("- " + o.Label + "\n")
+			}
+		}
+	}
+	return b.String()
 }
 
 // quickCommandList returns the quick-send commands available for a project,

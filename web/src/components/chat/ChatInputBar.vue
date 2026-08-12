@@ -49,9 +49,8 @@
     <Transition name="paste-fade">
       <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
         <Sparkles :size="14" :stroke-width="1.5" class="recommendation-icon" />
-        <span class="recommendation-text">{{ recommendation }}</span>
+        <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('chat.recommendationCollapse') : t('chat.recommendationExpand')">{{ recommendation }}</span>
         <button class="recommendation-accept" @click.stop="acceptRecommendation" :title="t('tool.askUser.recommendationFill')">{{ t('tool.askUser.recommendationFill') }}</button>
-        <button class="recommendation-close" @click.stop="dismissRecommendation" :title="t('common.remove')">×</button>
       </div>
     </Transition>
     <!-- Input container -->
@@ -484,18 +483,23 @@ const rec = useChatRecommendation({
 })
 const { current: recommendation, show: showRecommendationChip } = rec
 
+// Whether the recommendation banner is expanded to show its full text (default
+// collapsed to a single line). Reset whenever a new recommendation arrives.
+const recommendationExpanded = ref(false)
+
 function onRecommendationEvent(evt) {
   const detail = evt.detail || {}
   rec.upsert(detail.session_id, detail.recommendation)
+  recommendationExpanded.value = false
+}
+
+function toggleRecommendationExpand() {
+  recommendationExpanded.value = !recommendationExpanded.value
 }
 
 function acceptRecommendation() {
   const text = rec.accept()
   if (text) inputText.value = text
-}
-
-function dismissRecommendation() {
-  rec.dismiss()
 }
 
 // Clear any currently surfaced recommendation (chip + stored text).
@@ -779,6 +783,8 @@ watch(() => props.currentSessionId, (newId, oldId) => {
 // its own slot (immediate if already cached, otherwise fetched) — the displayed
 // value is derived from the active session's slot, so no cross-session leakage.
 watch(() => props.currentSessionId, (newId) => {
+  // A new conversation starts with a collapsed banner.
+  recommendationExpanded.value = false
   if (newId) rec.ensureFetched(newId)
 })
 
@@ -1764,6 +1770,12 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+  word-break: break-word;
+}
+
+.recommendation-text.expanded {
+  white-space: normal;
 }
 
 .recommendation-accept {
@@ -1775,17 +1787,6 @@ defineExpose({
   padding: 3px 10px;
   font-size: 12px;
   cursor: pointer;
-}
-
-.recommendation-close {
-  flex-shrink: 0;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 2px;
 }
 
 /* Base attachment card styles */

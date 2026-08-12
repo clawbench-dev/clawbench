@@ -1437,6 +1437,32 @@ describe('ChatInputBar', () => {
     wrapper.unmount()
   })
 
+  it('toggles the recommendation banner expanded state on click', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('一个很长的推荐内容')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationExpanded).toBe(false)
+    wrapper.vm.toggleRecommendationExpand()
+    expect(wrapper.vm.recommendationExpanded).toBe(true)
+    wrapper.vm.toggleRecommendationExpand()
+    expect(wrapper.vm.recommendationExpanded).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('starts collapsed when a new recommendation arrives', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('第一条')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.toggleRecommendationExpand()
+    expect(wrapper.vm.recommendationExpanded).toBe(true)
+    dispatchRecommendation('第二条')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationExpanded).toBe(false)
+    wrapper.unmount()
+  })
+
   it('cleans up recommendation listener on unmount', async () => {
     const wrapper = mountBar()
     const removeSpy = vi.spyOn(window, 'removeEventListener')

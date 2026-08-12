@@ -1161,6 +1161,8 @@ export default {
       recommend: '推荐',
       recommended: '已推荐',
       recommendationFill: '填入',
+      recommendationExpand: '展开',
+      recommendationCollapse: '收起',
     },
     permission: {
       title: '权限请求',
