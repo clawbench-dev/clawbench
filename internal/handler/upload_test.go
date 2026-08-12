@@ -1005,8 +1005,15 @@ func TestUploadFile_RelPath(t *testing.T) {
 		defer teardown()
 
 		// filepath.IsAbs is platform-specific: an absolute path must be rooted
-		// for the current OS (e.g. "/etc/evil" on Unix, "C:\\evil" on Windows).
-		absPath := filepath.Join(string(filepath.Separator), "etc", "evil")
+		// for the current OS. On Unix "/etc/evil" is absolute; on Windows a path
+		// needs a drive letter (e.g. "C:\\evil"), since a root-relative "\etc"
+		// is not reported as absolute (volumeNameLen returns 0).
+		var absPath string
+		if runtime.GOOS == "windows" {
+			absPath = filepath.Join(`C:`, "evil")
+		} else {
+			absPath = filepath.Join(string(filepath.Separator), "etc", "evil")
+		}
 		req := createMultipartUploadRequestRel(t, "evil.txt", "x", absPath)
 		withProjectCookie(req, env.ProjectDir)
 
