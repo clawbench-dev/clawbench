@@ -42,6 +42,13 @@
       >
         <PlusIcon :size="14" />
       </button>
+      <button
+        class="terminal-tab-add terminal-theme-btn"
+        @click="openThemeMenu"
+        :title="t('terminal.theme')"
+      >
+        <PaletteIcon :size="14" />
+      </button>
     </div>
 
     <!-- Terminal viewport — one container per tab -->
@@ -166,6 +173,51 @@
       @saved="onKeyConfigSaved"
     />
 
+    <!-- Terminal theme picker -->
+    <PopupMenu
+      v-model:show="themeMenuOpen"
+      :target-element="themeMenuTarget"
+      :max-width="240"
+      :max-height="320"
+      :menu-items-count="6"
+      anchor="right"
+    >
+      <div class="theme-picker" @click.stop>
+        <div class="theme-picker-title">{{ t('terminal.theme') }}</div>
+        <input
+          v-model="themeSearch"
+          class="theme-search-input"
+          type="text"
+          :placeholder="t('terminal.themeSearchPlaceholder')"
+        />
+        <div v-if="themeLoading" class="theme-picker-status">{{ t('terminal.themeLoading') }}</div>
+        <div v-else-if="themeLoadError" class="theme-picker-status theme-picker-error">
+          <span>{{ t('terminal.themeLoadFailed') }}</span>
+          <button class="theme-retry-btn" @click="ensureThemesLoaded">{{ t('common.retry') }}</button>
+        </div>
+        <div v-else class="theme-picker-list">
+          <button
+            class="theme-item"
+            :class="{ active: themeSelection === TERMINAL_THEME_AUTO }"
+            @click="selectTheme(TERMINAL_THEME_AUTO)"
+          >
+            <span class="theme-item-name">{{ t('terminal.themeFollowApp') }}</span>
+            <span v-if="themeSelection === TERMINAL_THEME_AUTO" class="theme-item-check">✓</span>
+          </button>
+          <button
+            v-for="id in filteredThemes"
+            :key="id"
+            class="theme-item"
+            :class="{ active: themeSelection === id }"
+            @click="selectTheme(id)"
+          >
+            <span class="theme-item-name">{{ formatThemeName(id) }}</span>
+            <span v-if="themeSelection === id" class="theme-item-check">✓</span>
+          </button>
+        </div>
+      </div>
+    </PopupMenu>
+
   </div>
 </template>
 
@@ -202,8 +254,19 @@ import {
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
 import { shouldAutoRefocusTerminal } from '@/utils/terminalBlurUtils'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
+import {
+  TERMINAL_THEME_AUTO,
+  TERMINAL_THEME_STORAGE_KEY,
+  THEME_IDS,
+  formatThemeName,
+  loadThemesModule,
+  resolveTheme,
+  isAppDarkTheme,
+  darkTheme,
+  lightTheme,
+} from '@/utils/terminalThemes'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -347,35 +410,56 @@ function getWsUrl(cwd?: string, cols?: number, rows?: number) {
 }
 
 // Theme
-function getXtermTheme() {
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
-  return isDark ? darkTheme : lightTheme
+function getXtermTheme(): Record<string, unknown> {
+  return (isAppDarkTheme() ? darkTheme : lightTheme) as Record<string, unknown>
 }
 
-const darkTheme = {
-  background: '#1e1e2e',
-  foreground: '#cdd6f4',
-  cursor: '#f5e0dc',
-  cursorAccent: '#1e1e2e',
-  selectionBackground: '#585b7066',
-  black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af',
-  blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#bac2de',
-  brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1',
-  brightYellow: '#f9e2af', brightBlue: '#89b4fa', brightMagenta: '#f5c2e7',
-  brightCyan: '#94e2d5', brightWhite: '#a6adc8',
+// Terminal theme state + selection (persisted to localConfig)
+const themeSelection = ref<string>((localConfig.terminalTheme as string) || TERMINAL_THEME_AUTO)
+const themeMenuOpen = ref(false)
+const themeMenuTarget = ref<HTMLElement | null>(null)
+const themeSearch = ref('')
+const themeLoading = ref(false)
+const themeLoadError = ref(false)
+const allThemes = ref<Record<string, unknown> | null>(null)
+
+const filteredThemes = computed(() => {
+  const q = themeSearch.value.trim().toLowerCase()
+  if (!q) return THEME_IDS
+  return THEME_IDS.filter((id) => id.toLowerCase().includes(q) || formatThemeName(id).toLowerCase().includes(q))
+})
+
+async function ensureThemesLoaded() {
+  if (allThemes.value || themeLoading.value) return
+  themeLoading.value = true
+  themeLoadError.value = false
+  try {
+    allThemes.value = await loadThemesModule()
+  } catch {
+    themeLoadError.value = true
+  } finally {
+    themeLoading.value = false
+  }
 }
 
-const lightTheme = {
-  background: '#eff1f5',
-  foreground: '#4c4f69',
-  cursor: '#dc8a78',
-  cursorAccent: '#eff1f5',
-  selectionBackground: '#acb0be66',
-  black: '#bcc0cc', red: '#d20f39', green: '#40a02b', yellow: '#df8e1d',
-  blue: '#1e66f5', magenta: '#ea76cb', cyan: '#179299', white: '#4c4f69',
-  brightBlack: '#9ca0b0', brightRed: '#d20f39', brightGreen: '#40a02b',
-  brightYellow: '#df8e1d', brightBlue: '#1e66f5', brightMagenta: '#ea76cb',
-  brightCyan: '#179299', brightWhite: '#6c6f85',
+async function applyTheme(selection: string) {
+  themeSelection.value = selection
+  setLocalConfig(TERMINAL_THEME_STORAGE_KEY, selection)
+  const theme = await resolveTheme(selection, isAppDarkTheme())
+  tabManager.updateTheme(theme as Record<string, unknown>)
+  document.documentElement.style.setProperty('--terminal-bg', theme.background || '')
+}
+
+function openThemeMenu(e: Event) {
+  themeMenuTarget.value = e.currentTarget as HTMLElement
+  themeMenuOpen.value = true
+  ensureThemesLoaded()
+}
+
+function selectTheme(selection: string) {
+  themeMenuOpen.value = false
+  themeSearch.value = ''
+  applyTheme(selection)
 }
 
 // Tab manager
@@ -904,6 +988,7 @@ let themeObserver: MutationObserver | null = null
 onMounted(async () => {
   isMounted.value = true
 
+  applyTheme(themeSelection.value).catch(() => {})
   // Fetch quick commands in the background — don't block terminal setup
   fetchCommands().catch(() => { /* ignore */ })
 
@@ -914,7 +999,9 @@ onMounted(async () => {
   nextTick(refreshToolbarFade)
 
   themeObserver = new MutationObserver(() => {
-    tabManager.updateTheme(getXtermTheme())
+    if (themeSelection.value === TERMINAL_THEME_AUTO) {
+      tabManager.updateTheme(getXtermTheme())
+    }
   })
   themeObserver.observe(document.documentElement, {
     attributes: true,
@@ -1135,6 +1222,8 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   cursor: not-allowed;
 }
 
+.terminal-theme-btn { color: var(--text-muted); }
+
 /* Symbol bar transition */
 .symbol-bar-enter-active {
   transition: all 0.15s ease-out;
@@ -1167,7 +1256,7 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: #1e1e2e;
+  background: var(--terminal-bg, #1e1e2e);
 }
 
 .terminal-container :deep(.xterm-scrollable-element > .scrollbar.vertical),
@@ -1184,11 +1273,11 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 }
 
 [data-theme="dark"] .terminal-container {
-  background: #1e1e2e;
+  background: var(--terminal-bg, #1e1e2e);
 }
 
 :root:not([data-theme="dark"]) .terminal-container {
-  background: #eff1f5;
+  background: var(--terminal-bg, #eff1f5);
 }
 
 .terminal-rebuild-overlay {
@@ -1453,6 +1542,7 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 .toolbar-btn.btn-modifier, .toolbar-btn.btn-nav, .toolbar-btn.btn-arrow, .toolbar-btn.btn-symbol, .toolbar-btn.btn-action { background: transparent; }
 .toolbar-btn.btn-symbol { color: var(--toolbar-key-text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; font-weight: 700; }
 
+
 .selection-copy-bar {
   position: absolute;
   left: 12px;
@@ -1515,4 +1605,26 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   background: var(--border-color);
   margin: 4px 0;
 }
+
+/* Terminal theme picker (unscoped because PopupMenu teleports to body) */
+.theme-picker { padding: 6px; }
+.theme-picker-title { font-size: 12px; font-weight: 600; color: var(--text-muted); padding: 2px 6px 6px; }
+.theme-search-input {
+  width: 100%; box-sizing: border-box; padding: 6px 8px; margin-bottom: 6px;
+  border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-secondary); color: var(--text-primary); font-size: 13px; outline: none;
+}
+.theme-search-input:focus { border-color: var(--accent-color); }
+.theme-picker-status { padding: 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.theme-picker-error { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.theme-retry-btn { padding: 4px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 13px; }
+.theme-picker-list { max-height: 220px; overflow-y: auto; }
+.theme-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; padding: 6px 8px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-primary); font-size: 13px; text-align: left; cursor: pointer;
+}
+.theme-item:hover { background: var(--bg-hover, rgba(128,128,128,0.1)); }
+.theme-item.active { background: color-mix(in srgb, var(--accent-color) 12%, transparent); color: var(--accent-color); }
+.theme-item-check { color: var(--accent-color); font-weight: 700; }
 </style>
