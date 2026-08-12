@@ -12,6 +12,7 @@ ClawBench 是移动优先的 AI 工作站，将 AI CLI 工具（CodeBuddy、Clau
 ./build.sh                # 完整构建（Go 二进制 + Vue 前端）
 ./build.sh --windows      # 交叉编译：Windows amd64
 ./build.sh --linux        # 交叉编译：Linux amd64
+./build.sh --linux-arm64  # 交叉编译：Linux arm64
 ./build.sh --darwin       # 交叉编译：macOS arm64
 
 ./dev-server.sh           # 开发模式（Vite HMR 代理到后端）
@@ -48,10 +49,11 @@ npm test                             # Vitest 前端测试
 | 包 | 职责 |
 |---|------|
 | `internal/handler/` | HTTP 端点，所有 `/api/` 路由经 `middleware.Auth` 鉴权，聊天通过 WebSocket 流式传输 |
-| `internal/service/` | 业务逻辑：聊天持久化、自动摘要、调度器、SQLite、Schema 迁移、Agent 存储、会话归档留存期自动清理（SessionCleanupWorker） |
+| `internal/service/` | 业务逻辑：聊天持久化、自动摘要、对话推荐、调度器、SQLite、Schema 迁移、Agent 存储、会话归档留存期自动清理（SessionCleanupWorker）、桌面端升级检查 |
 | `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）。13 个后端子包通过 `ai.RegisterBackend()` 注册 |
 | `internal/model/` | 数据模型、后端注册表、模型发现、28 个 LLM Provider |
 | `internal/speech/` | TTS：Edge TTS、Piper、Kokoro、MOSS-TTS-Nano |
+| `internal/stt/` | STT（语音输入）：vLLM Whisper，流式/非流式双端点 |
 | `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类分析（ClusterWorker：Union-Find + Sørensen-Dice） |
 | `internal/terminal/` | Web 终端：PTY 会话、环形缓冲回放、多标签 |
 | `internal/ws/` | WebSocket 事件通道，StreamHub 会话级扇出，Manager 广播+重连缓冲回放 |
@@ -59,7 +61,7 @@ npm test                             # Vitest 前端测试
 | `internal/push/` | IM 机器人推送：`common/`（共享接口+会话命令）、`dingtalk/`（钉钉 Stream API）、`feishu/`（飞书 Lark SDK WebSocket+互动卡片） |
 | `internal/proxy/` | HTTP 反向代理+端口转发 |
 | `internal/symbol/` | 基于 tree-sitter 的代码符号提取（纯 Go，无 CGO） |
-| `internal/summarize/` | 文本摘要 |
+| `internal/summarize/` | 文本摘要、对话推荐（next-step recommendation） |
 | `internal/system/` | 系统资源监控：CPU、内存、磁盘、网络实时采集与推送 |
 | `internal/cli/` | AI Agent 自助命令：task、rag、migrate |
 | `internal/middleware/` | 鉴权、请求日志、panic 恢复、请求 ID |

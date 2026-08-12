@@ -199,6 +199,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Message Queue**: Messages queue when AI is busy, sent sequentially
 - **Message Clusters**: Auto-analyze chat history patterns, group semantically similar user messages into clusters, one-click add to Quick Send; Union-Find + Sørensen-Dice similarity, on-demand computation with progress tracking
 - **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; toggle between summary/original via bottom banner; TTS playback also uses the summary
+- **Conversation Recommendation**: Automatically generates a next-step suggestion after AI reply; recommendation banner above input box, one-click to accept; aware of quick commands and project context
 - **@ Commands**: Type `@chatsearch` to search conversation history, `@task` to manage scheduled tasks — autocomplete popup menu, purple command badge in user messages
 - **RAG Results Card**: RAG search results in AI responses rendered as purple-themed cards; click to open detail drawer, one-click resume conversation
 - **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion; thinking content lazy-loaded — after stream ends, only thumbnail is kept, full text loaded on demand when expanded
@@ -235,6 +236,12 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **5 TTS Engines**: Edge TTS (free, native Go implementation, no external dependency), MiniMax (best quality), Piper / Kokoro / MOSS-Nano (local offline)
 - **Summarization Backends**: simple (text-only cleanup) and api (OpenAI/Anthropic compatible) modes
 - See [TTS Deployment Guide](docs/TTS.en.md)
+
+### 🎤 Voice Input (STT)
+- Microphone recording → ASR recognition → text filled into chat input, no typing needed on mobile
+- **Dual Mode**: Streaming (WebSocket real-time incremental + final full recognition) and non-streaming (one-shot recognition after recording)
+- **vLLM Whisper Engine**: Connect via OpenAI-compatible endpoint, supports local deployment
+- **Shortcut Key**: Configurable shortcut key (default F9) to toggle recording
 
 ### 📂 Git Integration
 - Project-level / file-level commit history browsing
