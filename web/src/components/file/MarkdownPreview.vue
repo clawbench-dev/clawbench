@@ -30,6 +30,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
+import { isThumbExtension, buildThumbUrl } from '@/utils/chatRenderUtils.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -198,7 +199,17 @@ function fixLocalImagePaths(html: string): string {
             if (part === '..') { normalized.pop(); continue }
             normalized.push(encodeURIComponent(part))
         }
-        return match.replace(`src="${src}"`, `src="/api/local-file/${normalized.join('/')}?t=${imageTimestamp.value}"`)
+        const rel = normalized.join('/')
+        const fullSrc = `/api/local-file/${rel}?t=${imageTimestamp.value}`
+        // Raster formats the thumb endpoint can decode → use a lightweight JPEG
+        // thumbnail for the inline src (kept stable so ETag revalidation refreshes
+        // it when the source file changes) and keep the full image for the lightbox.
+        // Other formats (svg/webp/gif/… ) keep serving the original full-size file.
+        const thumbSrc = isThumbExtension(src) ? buildThumbUrl(rel) : null
+        const replacement = thumbSrc
+            ? `src="${thumbSrc}" data-full-src="${fullSrc}"`
+            : `src="${fullSrc}"`
+        return match.replace(`src="${src}"`, replacement)
     })
     // Add lightbox-img class to all <img> tags for lightbox activation
     result = result.replace(/<img(\s+[^>]*?)>/gi, (_match: string, attrs: string) => {

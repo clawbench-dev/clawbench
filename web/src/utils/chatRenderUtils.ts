@@ -16,10 +16,10 @@ const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv
  * thumbnail (standard-library decoders). SVG/WebP/AVIF/TIFF are excluded and
  * keep serving the original file. GIF is excluded to preserve animation.
  */
-const THUMB_EXTENSIONS = ['.png', '.jpg', '.jpeg']
+export const THUMB_EXTENSIONS = ['.png', '.jpg', '.jpeg']
 
 /** Default inline thumbnail width passed to /api/file/thumb (clamped 50–800 by backend). */
-const THUMB_DEFAULT_WIDTH = 800
+export const THUMB_DEFAULT_WIDTH = 800
 
 /**
  * Rewrite a project-relative media path to a /api/local-file/ URL.
@@ -82,9 +82,18 @@ export function rewriteImageUrls(html: string, projectRoot: string): string {
 }
 
 /** True if the file path has an extension the thumb endpoint can rasterize. */
-function isThumbExtension(path: string): boolean {
+export function isThumbExtension(path: string): boolean {
   const lower = path.toLowerCase()
   return THUMB_EXTENSIONS.some(ext => lower.endsWith(ext))
+}
+
+/**
+ * Build a thumbnail URL for a project-relative, already-segment-encoded path.
+ * The URL is kept stable (no cache-buster) so the backend's ETag/Last-Modified
+ * revalidation returns fresh content as soon as the source file changes.
+ */
+export function buildThumbUrl(relPath: string, width: number = THUMB_DEFAULT_WIDTH): string {
+  return `/api/file/thumb?path=${relPath}&w=${width}`
 }
 
 /** Escape HTML special characters in attribute values to prevent XSS (ISS-247) */

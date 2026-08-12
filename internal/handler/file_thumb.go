@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 
@@ -68,6 +69,26 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 		return
 	}
 
+	// Revalidation: derive a validator from the source file's metadata so the
+	// thumbnail refreshes immediately when the source image changes, and returns
+	// a cheap 304 when it hasn't. Checked BEFORE decode/encode to avoid wasted work.
+	// HTTP dates only have 1s precision, so truncate modTime for Last-Modified /
+	// If-Modified-Since; keep raw precision in the ETag for exact matching.
+	modTime := info.ModTime().UTC()
+	lastMod := modTime.Truncate(time.Second)
+	etag := fmt.Sprintf(`"%x-%x"`, modTime.UnixNano(), info.Size())
+
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+		if t, err := http.ParseTime(ims); err == nil && !lastMod.After(t) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
 	// Parse width parameter
 	widthStr := r.URL.Query().Get("w")
 	targetWidth := thumbDefaultWidth
@@ -121,7 +142,11 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// no-cache: always revalidate against the source file (via ETag/Last-Modified)
+	// before reusing a cached thumbnail, so file changes reflect immediately.
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Last-Modified", lastMod.Format(http.TimeFormat))
+	w.Header().Set("ETag", etag)
 	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 	_, _ = buf.WriteTo(w)
 }

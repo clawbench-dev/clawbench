@@ -71,7 +71,11 @@ func TestFileThumb(t *testing.T) {
 		w := callHandler(FileThumb, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, "image/jpeg", w.Header().Get("Content-Type"))
-		assert.Equal(t, "public, max-age=86400", w.Header().Get("Cache-Control"))
+		assert.Equal(t, "no-cache", w.Header().Get("Cache-Control"))
+		// Thumbnail should carry validators derived from the source file so the
+		// browser can revalidate and get fresh content when the file changes.
+		assert.NotEmpty(t, w.Header().Get("ETag"))
+		assert.NotEmpty(t, w.Header().Get("Last-Modified"))
 		// Response body should be non-empty (valid JPEG data)
 		assert.Greater(t, w.Body.Len(), 0)
 	})
@@ -123,6 +127,81 @@ func TestFileThumb(t *testing.T) {
 
 		w := callHandler(FileThumb, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("UnchangedFile_IfNoneMatch_Returns304", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestPNG(t, env.ProjectDir, "photo.png", 100, 80)
+
+		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(FileThumb, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		etag := w.Header().Get("ETag")
+		require.NotEmpty(t, etag)
+
+		// Revalidate with the same ETag → 304 (no re-encode).
+		req2 := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		withProjectCookie(req2, env.ProjectDir)
+		req2.Header.Set("If-None-Match", etag)
+
+		w2 := callHandler(FileThumb, req2)
+		assert.Equal(t, http.StatusNotModified, w2.Code)
+		assert.Equal(t, 0, w2.Body.Len())
+	})
+
+	t.Run("ChangedFile_IfNoneMatch_ReturnsFreshThumbnail", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		rel := "photo.png"
+		createTestPNG(t, env.ProjectDir, rel, 100, 80)
+
+		getThumb := func() (int, string) {
+			req := newRequest(t, http.MethodGet, "/api/file/thumb?path="+rel+"&w=50", nil)
+			withProjectCookie(req, env.ProjectDir)
+			w := callHandler(FileThumb, req)
+			return w.Code, w.Header().Get("ETag")
+		}
+
+		code, oldEtag := getThumb()
+		require.Equal(t, http.StatusOK, code)
+		require.NotEmpty(t, oldEtag)
+
+		// Overwrite the source image with different dimensions → new mtime/size.
+		createTestPNG(t, env.ProjectDir, rel, 200, 160)
+
+		code, newEtag := getThumb()
+		assert.Equal(t, http.StatusOK, code)
+		assert.NotEmpty(t, newEtag)
+		assert.NotEqual(t, oldEtag, newEtag, "thumbnail validator must change when the source file changes")
+	})
+
+	t.Run("UnchangedFile_IfModifiedSince_Returns304", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestPNG(t, env.ProjectDir, "photo.png", 100, 80)
+
+		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(FileThumb, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		lastMod := w.Header().Get("Last-Modified")
+		require.NotEmpty(t, lastMod)
+
+		// Revalidate with a Last-Modified equal to (or after) the file's mtime → 304.
+		req2 := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		withProjectCookie(req2, env.ProjectDir)
+		req2.Header.Set("If-Modified-Since", lastMod)
+
+		w2 := callHandler(FileThumb, req2)
+		assert.Equal(t, http.StatusNotModified, w2.Code)
+		assert.Equal(t, 0, w2.Body.Len())
 	})
 
 	t.Run("JPGImage_ReturnsJPEG", func(t *testing.T) {
