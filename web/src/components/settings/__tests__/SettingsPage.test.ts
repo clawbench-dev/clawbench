@@ -217,7 +217,7 @@ describe('SettingsPage', () => {
 
   // ─── Category routing (all via SettingsCategory now) ──
   describe('category routing', () => {
-    const panelCategoryIds = ['terminal', 'tts_engine', 'summarization_voice', 'rag', 'portForward', 'frp', 'notification']
+    const panelCategoryIds = ['terminal', 'tts_engine', 'aiSummary', 'rag', 'portForward', 'frp', 'notification']
     const flatCategoryIds = ['appearance', 'projectFiles', 'chat', 'agents', 'security', 'debug', 'about']
 
     it('categoryHasPanels identifies panel categories', () => {
