@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, defineComponent } from 'vue'
 import GitCommitList from '@/components/git/GitCommitList.vue'
 
 // ── Mocks ────────────────────────────────────────────────────
@@ -35,11 +35,18 @@ vi.mock('lucide-vue-next', () => ({
 }))
 
 vi.mock('@/components/common/SearchInput.vue', () => ({
-  default: { template: '<input class="search-stub" />' },
+  default: defineComponent({
+    props: { modelValue: String, placeholder: String },
+    emits: ['update:modelValue', 'enter', 'down', 'up'],
+    template: '<input class="search-stub" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" @keydown.enter="$emit(\'enter\')" />',
+  }),
 }))
 
 vi.mock('@/components/git/GitGraph.vue', () => ({
-  default: { template: '<div class="graph-stub" />' },
+  default: defineComponent({
+    props: { commits: Array, collapsed: Boolean, 'row-height': Number },
+    template: '<div class="graph-stub" :data-collapsed="String(collapsed)" />',
+  }),
 }))
 
 vi.mock('@/utils/gitGraph', () => ({
@@ -95,6 +102,10 @@ describe('GitCommitList', () => {
     mockDisconnect.mockClear()
     mockUnobserve.mockClear()
     lastObserverCallback = null
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   describe('IntersectionObserver', () => {
@@ -155,17 +166,200 @@ describe('GitCommitList', () => {
       // unobserveList should not throw even when no observer is active
       expect(() => wrapper.vm.unobserveList()).not.toThrow()
     })
+
+    it('unobserveList() disconnects an active observer', async () => {
+      const wrapper = mountList()
+      await flushPromises()
+      await nextTick()
+      setupObserver(wrapper)
+      expect(mockDisconnect).not.toHaveBeenCalled()
+      wrapper.vm.unobserveList()
+      expect(mockDisconnect).toHaveBeenCalled()
+    })
   })
 
-  describe('exposed methods', () => {
-    it('observeList() is exposed on component instance', () => {
-      const wrapper = mountList()
-      expect(typeof wrapper.vm.observeList).toBe('function')
+  describe('empty, loading and error states', () => {
+    it('shows notGitRepo empty state when not a git repo', () => {
+      const wrapper = mountList({ isGit: false })
+      expect(wrapper.text()).toContain('git.commitList.notGitRepo')
+      expect(wrapper.find('.drilldown-header').exists()).toBe(false)
     })
 
-    it('unobserveList() is exposed on component instance', () => {
+    it('shows untracked empty state when commits empty and untracked', () => {
+      const wrapper = mountList({ commits: [], untracked: true })
+      expect(wrapper.text()).toContain('git.commitList.untrackedFile')
+    })
+
+    it('shows noCommits when commits empty and not untracked', () => {
+      const wrapper = mountList({ commits: [], untracked: false })
+      expect(wrapper.text()).toContain('git.commitList.noCommits')
+    })
+
+    it('shows loading spinner when loading', () => {
+      const wrapper = mountList({ loading: true })
+      expect(wrapper.find('.git-history-loading').exists()).toBe(true)
+    })
+
+    it('shows error message when error is set', () => {
+      const wrapper = mountList({ error: 'boom' })
+      expect(wrapper.find('.git-history-error').text()).toBe('boom')
+    })
+
+    it('shows loadingAll text when searchLoading is true', () => {
+      const wrapper = mountList({ searchLoading: true })
+      expect(wrapper.text()).toContain('git.commitList.loadingAll')
+    })
+
+    it('shows loading text when commits empty, isGit and not untracked', () => {
+      const wrapper = mountList({ commits: [], untracked: false })
+      expect(wrapper.text()).toContain('git.commitList.loading')
+    })
+  })
+
+  describe('header actions', () => {
+    it('emits refresh when refresh button is clicked', async () => {
       const wrapper = mountList()
-      expect(typeof wrapper.vm.unobserveList).toBe('function')
+      const btn = wrapper.findAll('.drilldown-refresh-btn')[0]
+      await btn.trigger('click')
+      expect(wrapper.emitted('refresh')).toBeTruthy()
+    })
+
+    it('emits manage when manage button is clicked (non-file mode)', async () => {
+      const wrapper = mountList()
+      const btn = wrapper.findAll('.drilldown-refresh-btn')[1]
+      await btn.trigger('click')
+      expect(wrapper.emitted('manage')).toBeTruthy()
+    })
+
+    it('hides manage button in file mode', () => {
+      const wrapper = mountList({ mode: 'file' })
+      expect(wrapper.findAll('.drilldown-refresh-btn')).toHaveLength(1)
+    })
+
+    it('disables refresh button while loading', () => {
+      const wrapper = mountList({ loading: true })
+      const btn = wrapper.findAll('.drilldown-refresh-btn')[0]
+      expect(btn.attributes('disabled')).toBeDefined()
+    })
+  })
+
+  describe('commit rows', () => {
+    it('emits select when a commit item is clicked', async () => {
+      const wrapper = mountList()
+      await wrapper.find('.drilldown-item').trigger('click')
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0][0]).toBe(wrapper.props('commits')[0])
+    })
+
+    it('marks the selected commit row', async () => {
+      const wrapper = mountList({ selectedSHA: 'sha0'.padEnd(40, '0') })
+      const item = wrapper.find('.drilldown-item')
+      expect(item.classes()).toContain('drilldown-item-selected')
+    })
+
+    it('renders ref tags with correct classes', () => {
+      const wrapper = mountList({
+        commits: [{
+          sha: 'a'.repeat(40), msg: 'm', date: '2025-01-01', author: 'A',
+          refs: ['HEAD', 'tag: v1.0', 'main'],
+        }],
+      })
+      const tags = wrapper.findAll('.git-ref-tag')
+      expect(tags).toHaveLength(3)
+      expect(tags[0].classes()).toContain('ref-head')
+      expect(tags[1].classes()).toContain('ref-tag')
+      expect(tags[2].classes()).toContain('ref-branch')
+    })
+
+    it('hides sha tag for working-tree commits (isWT)', () => {
+      const wrapper = mountList({
+        commits: [{ sha: 'b'.repeat(40), msg: 'wt', date: '2025-01-01', author: 'A', refs: [], isWT: true }],
+      })
+      expect(wrapper.find('.git-commit-sha').exists()).toBe(false)
+    })
+
+    it('renders author name when present', () => {
+      const wrapper = mountList()
+      expect(wrapper.find('.drilldown-item').text()).toContain('Test')
+    })
+  })
+
+  describe('search', () => {
+    it('filters displayed commits by search query', async () => {
+      const wrapper = mountList()
+      wrapper.vm.commitSearch = 'Commit 1'
+      await nextTick()
+      const items = wrapper.findAll('.drilldown-item')
+      expect(items).toHaveLength(1)
+      expect(items[0].text()).toContain('Commit 1')
+    })
+
+    it('shows graph hint while searching', async () => {
+      const wrapper = mountList()
+      wrapper.vm.commitSearch = 'Commit'
+      await nextTick()
+      expect(wrapper.find('.commit-list-graph-hint').exists()).toBe(true)
+      expect(wrapper.find('.commit-list-graph').exists()).toBe(false)
+    })
+
+    it('debounces search emission by 300ms', async () => {
+      vi.useFakeTimers()
+      const wrapper = mountList()
+      wrapper.vm.commitSearch = 'Commit'
+      await nextTick()
+      vi.advanceTimersByTime(150)
+      expect(wrapper.emitted('search')).toBeFalsy()
+      vi.advanceTimersByTime(150)
+      expect(wrapper.emitted('search')).toBeTruthy()
+      expect(wrapper.emitted('search')![0][0]).toBe('Commit')
+    })
+
+    it('does not filter when query is blank', () => {
+      const wrapper = mountList()
+      wrapper.vm.commitSearch = '   '
+      expect(wrapper.vm.commitSearch).toBe('   ')
+    })
+  })
+
+  describe('touch swipe graph toggle', () => {
+    it('collapses graph on left swipe', async () => {
+      const wrapper = mountList()
+      const content = wrapper.find('.commit-list-content')
+      await content.trigger('touchstart', { touches: [{ clientX: 120, clientY: 10 }] })
+      await content.trigger('touchend', { changedTouches: [{ clientX: 40, clientY: 10 }] })
+      const graph = wrapper.find('.graph-stub')
+      expect(graph.attributes('data-collapsed')).toBe('true')
+    })
+
+    it('expands graph on right swipe', async () => {
+      const wrapper = mountList()
+      const content = wrapper.find('.commit-list-content')
+      await content.trigger('touchstart', { touches: [{ clientX: 40, clientY: 10 }] })
+      await content.trigger('touchend', { changedTouches: [{ clientX: 120, clientY: 10 }] })
+      const graph = wrapper.find('.graph-stub')
+      expect(graph.attributes('data-collapsed')).toBe('false')
+    })
+
+    it('ignores small swipes below threshold', async () => {
+      const wrapper = mountList()
+      const content = wrapper.find('.commit-list-content')
+      await content.trigger('touchstart', { touches: [{ clientX: 100, clientY: 10 }] })
+      await content.trigger('touchend', { changedTouches: [{ clientX: 90, clientY: 10 }] })
+      const graph = wrapper.find('.graph-stub')
+      expect(graph.attributes('data-collapsed')).toBe('false')
+    })
+  })
+
+  describe('lifecycle', () => {
+    it('clears the search timer on unmount', async () => {
+      vi.useFakeTimers()
+      const wrapper = mountList()
+      wrapper.vm.commitSearch = 'Commit'
+      vi.advanceTimersByTime(150)
+      wrapper.unmount()
+      vi.advanceTimersByTime(200)
+      // Timer cleared on unmount, so no search emit fires
+      expect(wrapper.emitted('search')).toBeFalsy()
     })
   })
 })

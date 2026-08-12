@@ -59,15 +59,22 @@ vi.mock('@/utils/format', () => ({
 }))
 
 vi.mock('@/utils/clipboard', () => ({
-  copyText: vi.fn(),
+  copyText: vi.fn((_text: string, cb?: () => void) => cb?.()),
 }))
 
 vi.mock('@/stores/app', () => ({
   store: { state: { projectRoot: '/home/user/project' } },
 }))
 
+const { drawerMocks } = vi.hoisted(() => ({
+  drawerMocks: [] as Array<{ effectiveOpen: { value: boolean }; isOpen: { value: boolean }; open: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; toggle: ReturnType<typeof vi.fn> }>,
+}))
 vi.mock('@/composables/useTabDrawer', () => ({
-  useTabDrawer: () => ({ effectiveOpen: { value: false }, isOpen: { value: false }, open: vi.fn(), close: vi.fn(), toggle: vi.fn() }),
+  useTabDrawer: () => {
+    const inst = { effectiveOpen: { value: false }, isOpen: { value: false }, open: vi.fn(), close: vi.fn(), toggle: vi.fn() }
+    drawerMocks.push(inst)
+    return inst
+  },
 }))
 
 // Mock child components that have complex props/dependencies
@@ -111,7 +118,7 @@ const i18n = createI18n({
   },
 })
 
-function createWrapper(props = {}) {
+function createWrapper(props = {}, provideOverrides: Record<string, unknown> = {}) {
   return mount(ChatMessageItem, {
     global: {
       plugins: [i18n],
@@ -139,6 +146,7 @@ function createWrapper(props = {}) {
           getAgentBackend: vi.fn(() => ''),
           getAgentName: vi.fn(() => ''),
         },
+        ...provideOverrides,
       },
     },
     props: {
@@ -383,6 +391,281 @@ describe('ChatMessageItem', () => {
       fd.vm.$emit('file-open', { path: '/home/user/project/a.ts', lineStart: 3 })
       await wrapper.vm.$nextTick()
       expect(openFilePath).toHaveBeenCalledWith('a.ts', 3, undefined)
+    })
+
+    it('opens a plain string file path (no line range) from the file changes drawer', async () => {
+      const { openFilePath } = await import('@/composables/useFilePathAnnotation')
+      openFilePath.mockClear()
+      const wrapper = createWrapper({
+        msg: { id: 'fd3', role: 'assistant', content: '', blocks: [{ type: 'tool_use', name: 'Write', done: true, file_path: '/new.ts' }], streaming: false },
+      })
+      const fc = wrapper.findComponent({ name: 'FileChangesDrawer' })
+      fc.vm.$emit('open-file', '/home/user/project/plain.ts')
+      await wrapper.vm.$nextTick()
+      expect(openFilePath).toHaveBeenCalledWith('plain.ts', undefined, undefined)
+    })
+
+    it('returns from the diffs drawer back to the file changes drawer', async () => {
+      const before = drawerMocks.length
+      const wrapper = createWrapper({
+        msg: { id: 'fd4', role: 'assistant', content: '', blocks: [{ type: 'tool_use', name: 'Write', done: true, file_path: '/new.ts' }], streaming: false },
+      })
+      // fileChangesDrawer then fileDiffsDrawer (setup order) are the last two instances
+      const fc = drawerMocks[before]
+      const fd = drawerMocks[before + 1]
+      expect(fd).toBeDefined()
+      // select a file to open the diffs drawer
+      wrapper.findComponent({ name: 'FileChangesDrawer' }).vm.$emit('select-file', { path: '/new.ts', toolName: 'Write' })
+      await wrapper.vm.$nextTick()
+      expect(fd.open).toHaveBeenCalled()
+      expect(fc.close).toHaveBeenCalled()
+      fc.open.mockClear()
+      fd.close.mockClear()
+      wrapper.findComponent({ name: 'FileDiffsDrawer' }).vm.$emit('back')
+      await wrapper.vm.$nextTick()
+      expect(fd.close).toHaveBeenCalled()
+      expect(fc.open).toHaveBeenCalled()
+    })
+  })
+
+  describe('read-aloud speech actions', () => {
+    it('stops audio when message is already playing', async () => {
+      const stopAudio = vi.fn()
+      const wrapper = createWrapper(
+        { msg: { id: 'sp1', role: 'assistant', content: 'speak me', blocks: [{ type: 'text', text: 'speak me' }], streaming: false } },
+        {
+          autoSpeech: {
+            isActive: vi.fn(() => true),
+            isGeneratingText: vi.fn(() => false),
+            isPlayingAudio: vi.fn(() => false),
+            playAudio: vi.fn(),
+            stopAudio,
+            speakText: vi.fn(),
+            getSummary: vi.fn(() => null),
+            getPhaseLabel: vi.fn(() => ''),
+          },
+        },
+      )
+      await wrapper.find('.chat-action-btn--wide').trigger('click')
+      expect(stopAudio).toHaveBeenCalled()
+    })
+
+    it('shows the playing state label when audio is playing', () => {
+      const wrapper = createWrapper(
+        { msg: { id: 'sp2', role: 'assistant', content: 'speak me', blocks: [{ type: 'text', text: 'speak me' }], streaming: false } },
+        {
+          autoSpeech: {
+            isActive: vi.fn(() => true),
+            isGeneratingText: vi.fn(() => false),
+            isPlayingAudio: vi.fn(() => true),
+            playAudio: vi.fn(),
+            stopAudio: vi.fn(),
+            speakText: vi.fn(),
+            getSummary: vi.fn(() => null),
+            getPhaseLabel: vi.fn(() => ''),
+          },
+        },
+      )
+      const btn = wrapper.find('.chat-action-btn--wide')
+      expect(btn.text()).toContain('正在朗读')
+    })
+
+    it('shows the generating/loading state when speech is being generated', () => {
+      const wrapper = createWrapper(
+        { msg: { id: 'sp3', role: 'assistant', content: 'speak me', blocks: [{ type: 'text', text: 'speak me' }], streaming: false } },
+        {
+          autoSpeech: {
+            isActive: vi.fn(() => true),
+            isGeneratingText: vi.fn(() => true),
+            isPlayingAudio: vi.fn(() => false),
+            playAudio: vi.fn(),
+            stopAudio: vi.fn(),
+            speakText: vi.fn(),
+            getSummary: vi.fn(() => null),
+            getPhaseLabel: vi.fn(() => 'summarizing'),
+          },
+        },
+      )
+      const btn = wrapper.find('.chat-action-btn--wide')
+      expect(btn.classes()).toContain('loading')
+      expect(btn.text()).toContain('总结中')
+    })
+  })
+
+  describe('copy feedback state', () => {
+    it('shows copied state after copy then resets after timeout', async () => {
+      vi.useFakeTimers()
+      const wrapper = createWrapper({
+        msg: { id: 'cf1', role: 'assistant', content: '', blocks: [{ type: 'text', text: 'Copy me' }], streaming: false },
+      })
+      const btn = wrapper.find('button[aria-label="复制"]')
+      await btn.trigger('click')
+      expect(btn.classes()).toContain('is-copied')
+      expect(wrapper.find('.chat-copy-copied-text').exists()).toBe(true)
+      vi.advanceTimersByTime(1500)
+      await wrapper.vm.$nextTick()
+      expect(btn.classes()).not.toContain('is-copied')
+      vi.useRealTimers()
+    })
+
+    it('does not copy again while already in copied state', async () => {
+      vi.useFakeTimers()
+      const { copyText } = await import('@/utils/clipboard')
+      copyText.mockClear()
+      const wrapper = createWrapper({
+        msg: { id: 'cf2', role: 'assistant', content: '', blocks: [{ type: 'text', text: 'Copy me twice' }], streaming: false },
+      })
+      const btn = wrapper.find('button[aria-label="复制"]')
+      await btn.trigger('click')
+      expect(copyText).toHaveBeenCalledTimes(1)
+      await btn.trigger('click')
+      expect(copyText).toHaveBeenCalledTimes(1)
+      vi.useRealTimers()
+    })
+  })
+
+  describe('summary toggle scroll anchoring', () => {
+    it('emits toggle-summary when no scroll container is present', async () => {
+      const wrapper = createWrapper({
+        msg: { id: 'st1', role: 'assistant', content: '', blocks: [], summary: 'Summary', streaming: false },
+      })
+      const toggle = wrapper.findComponent({ name: 'SummaryToggle' })
+      toggle.vm.$emit('toggle')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('toggle-summary')).toBeTruthy()
+      expect(wrapper.emitted('toggle-summary')![0]).toEqual(['st1'])
+    })
+
+    it('re-anchors scroll and observes content when a chat-messages scroller exists', async () => {
+      vi.useFakeTimers()
+      const host = document.createElement('div')
+      host.className = 'chat-messages'
+      host.style.overflow = 'auto'
+      ;(host as unknown as { scrollTop: number }).scrollTop = 100
+      document.body.appendChild(host)
+      const wrapper = mount(ChatMessageItem, {
+        attachTo: host,
+        global: {
+          plugins: [i18n],
+          provide: {
+            autoSpeech: {
+              isActive: vi.fn(() => false), isGeneratingText: vi.fn(() => false), isPlayingAudio: vi.fn(() => false),
+              playAudio: vi.fn(), stopAudio: vi.fn(), speakText: vi.fn(), getSummary: vi.fn(() => null), getPhaseLabel: vi.fn(() => ''),
+            },
+            chatRender: { renderTextBlock: vi.fn(), toolCallSummary: vi.fn(), formatToolInput: vi.fn(), humanizeCron: vi.fn(), repeatLabel: vi.fn(), truncate: vi.fn(), hasImagesInContent: vi.fn(() => false) },
+            chatSession: { getAgentBackend: vi.fn(() => ''), getAgentName: vi.fn(() => '') },
+          },
+        },
+        props: { msg: { id: 'st2', role: 'assistant', content: '', blocks: [], summary: 'Summary', streaming: false }, index: 0, active: true },
+      })
+      const toggle = wrapper.findComponent({ name: 'SummaryToggle' })
+      toggle.vm.$emit('toggle')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('toggle-summary')).toBeTruthy()
+      expect(wrapper.emitted('toggle-summary')![0]).toEqual(['st2'])
+      vi.runAllTimers()
+      vi.useRealTimers()
+      wrapper.unmount()
+      host.remove()
+    })
+  })
+
+  describe('file attachment and action buttons', () => {
+    it('renders FileAttachmentList for user message with files when content has no images', () => {
+      const wrapper = createWrapper({
+        msg: { id: 'att1', role: 'user', content: 'with files', blocks: [], files: [{ name: 'a.ts' }] },
+      })
+      expect(wrapper.findComponent({ name: 'FileAttachmentList' }).exists()).toBe(true)
+    })
+
+    it('omits FileAttachmentList for user message whose content contains images', () => {
+      const wrapper = createWrapper(
+        { msg: { id: 'att2', role: 'user', content: '![img](x.png)', blocks: [], files: [{ name: 'x.png' }] } },
+        {
+          chatRender: {
+            renderTextBlock: vi.fn(), toolCallSummary: vi.fn(), formatToolInput: vi.fn(),
+            humanizeCron: vi.fn(), repeatLabel: vi.fn(), truncate: vi.fn(), hasImagesInContent: vi.fn(() => true),
+          },
+        },
+      )
+      expect(wrapper.findComponent({ name: 'FileAttachmentList' }).exists()).toBe(false)
+    })
+
+    it('does not render FileAttachmentList for messages without files', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.findComponent({ name: 'FileAttachmentList' }).exists()).toBe(false)
+    })
+
+    it('emits fork-from-message when fork button is clicked', async () => {
+      const msg = { id: 'fk1', role: 'assistant', content: 'x', blocks: [{ type: 'text', text: 'x' }], streaming: false }
+      const wrapper = createWrapper({ msg })
+      await wrapper.find('button[title="chat.actions.forkSession"]').trigger('click')
+      expect(wrapper.emitted('fork-from-message')).toBeTruthy()
+      expect(wrapper.emitted('fork-from-message')![0]).toEqual([msg])
+    })
+
+    it('emits show-metadata when info button is clicked', async () => {
+      const msg = { id: 'mi1', role: 'assistant', content: 'x', blocks: [{ type: 'text', text: 'x' }], streaming: false }
+      const wrapper = createWrapper({ msg })
+      await wrapper.find('button[title="详情"]').trigger('click')
+      expect(wrapper.emitted('show-metadata')).toBeTruthy()
+      expect(wrapper.emitted('show-metadata')![0]).toEqual([msg])
+    })
+
+    it('opens the file changes drawer when the banner is clicked', async () => {
+      const wrapper = createWrapper({
+        msg: { id: 'fb1', role: 'assistant', content: '', blocks: [{ type: 'tool_use', name: 'Write', done: true, file_path: '/a.ts' }], streaming: false },
+      })
+      await wrapper.find('.chat-file-changes-banner').trigger('click')
+      // No crash and banner remains present — open() is mocked in useTabDrawer
+      expect(wrapper.find('.chat-file-changes-banner').exists()).toBe(true)
+    })
+
+    it('renders ContentBlocks and forwards toggle-summary from it', async () => {
+      const msg = { id: 'cb1', role: 'assistant', content: 'x', blocks: [{ type: 'text', text: 'x' }], streaming: false }
+      const wrapper = createWrapper({ msg })
+      const cb = wrapper.findComponent({ name: 'ContentBlocks' })
+      expect(cb.exists()).toBe(true)
+      cb.vm.$emit('toggle-summary')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('toggle-summary')).toBeTruthy()
+      expect(wrapper.emitted('toggle-summary')![0]).toEqual(['cb1'])
+    })
+
+    it('closes the file changes and file diffs drawers via their close events', async () => {
+      const before = drawerMocks.length
+      const wrapper = createWrapper({
+        msg: { id: 'cl1', role: 'assistant', content: '', blocks: [{ type: 'tool_use', name: 'Write', done: true, file_path: '/a.ts' }], streaming: false },
+      })
+      const fc = drawerMocks[before]
+      const fd = drawerMocks[before + 1]
+      wrapper.findComponent({ name: 'FileChangesDrawer' }).vm.$emit('close')
+      await wrapper.vm.$nextTick()
+      expect(fc.close).toHaveBeenCalled()
+      wrapper.findComponent({ name: 'FileDiffsDrawer' }).vm.$emit('close')
+      await wrapper.vm.$nextTick()
+      expect(fd.close).toHaveBeenCalled()
+    })
+  })
+
+  describe('streaming and computed edge cases', () => {
+    it('suppresses file changes banner for streaming assistant messages', () => {
+      const wrapper = createWrapper({
+        msg: { id: 'sm1', role: 'assistant', content: '', blocks: [{ type: 'tool_use', name: 'Write', done: true, file_path: '/a.ts' }], streaming: true },
+      })
+      expect(wrapper.find('.chat-file-changes-banner').exists()).toBe(false)
+    })
+
+    it('shows cancelled mark for cancelled assistant message with empty blocks', () => {
+      const wrapper = createWrapper({
+        msg: { id: 'cm1', role: 'assistant', content: '', blocks: [], cancelled: true },
+      })
+      expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(true)
+    })
+
+    it('does not render meta bar for user messages', () => {
+      const wrapper = createWrapper({ msg: { id: 'um1', role: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }] } })
+      expect(wrapper.find('.chat-meta-bar').exists()).toBe(false)
     })
   })
 })

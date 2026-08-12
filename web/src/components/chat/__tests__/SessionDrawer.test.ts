@@ -542,4 +542,378 @@ describe('SessionDrawer', () => {
     const empty = wrapper.find('.model-empty')
     expect(empty.exists()).toBe(true)
   })
+
+  // ── Long-press suppression of click selection ──
+
+  it('selectModel does nothing when a long-press was just triggered', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.longPressTriggered = true
+    wrapper.vm.selectModel({ id: 'claude-opus-4-5', name: 'Claude Opus 4.5' })
+    expect(wrapper.emitted('switch-model')).toBeFalsy()
+  })
+
+  it('selectThinkingEffort does nothing when a long-press was just triggered', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.longPressTriggered = true
+    wrapper.vm.selectThinkingEffort('low')
+    expect(wrapper.emitted('switch-thinking-effort')).toBeFalsy()
+  })
+
+  it('selectMode does nothing when a long-press was just triggered', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.longPressTriggered = true
+    wrapper.vm.selectMode({ id: 'ask', name: 'Ask' })
+    expect(wrapper.emitted('switch-mode')).toBeFalsy()
+  })
+
+  it('selectModel emits switch-model and close', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.selectModel({ id: 'claude-opus-4-5', name: 'Claude Opus 4.5' })
+    expect(wrapper.emitted('switch-model')).toBeTruthy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  // ── Set default via star button error handling ──
+
+  it('setDefaultModel shows error toast when patchAgentPref rejects', async () => {
+    mockAgents.updateAgentField.mockClear()
+    vi.mocked(patchAgentPref).mockRejectedValue(new Error('fail'))
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultModel({ id: 'claude-opus-4-5', name: 'Claude Opus 4.5' })
+    // no throw; agent field not updated
+    expect(mockAgents.updateAgentField).not.toHaveBeenCalledWith('claude', 'preferredModel', 'claude-opus-4-5')
+  })
+
+  it('setDefaultThinkingEffort shows error toast when patchAgentPref rejects', async () => {
+    mockAgents.updateAgentField.mockClear()
+    vi.mocked(patchAgentPref).mockRejectedValue(new Error('fail'))
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultThinkingEffort('low')
+    expect(mockAgents.updateAgentField).not.toHaveBeenCalledWith('claude', 'preferredThinkingEffort', 'low')
+  })
+
+  // ── Set default mode ──
+
+  it('setDefaultMode calls patchAgentPref and updates agent field', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultMode({ id: 'ask', name: 'Ask' })
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_mode', 'ask')
+    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredMode', 'ask')
+  })
+
+  it('setDefaultMode shows error toast when patchAgentPref rejects', async () => {
+    mockAgents.updateAgentField.mockClear()
+    vi.mocked(patchAgentPref).mockRejectedValue(new Error('fail'))
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultMode({ id: 'ask', name: 'Ask' })
+    expect(mockAgents.updateAgentField).not.toHaveBeenCalledWith('claude', 'preferredMode', 'ask')
+  })
+
+  // ── Set default transport (with thinking-effort cleanup) ──
+
+  it('setDefaultTransport clears preferred thinking effort when not valid for CLI', async () => {
+    const claude = mockAgents.agents.value.find(a => a.id === 'claude')!
+    const originalPref = claude.preferredThinkingEffort
+    claude.preferredThinkingEffort = 'ultra' // not in CLI valid levels
+    const wrapper = mountDrawer()
+
+    await wrapper.vm.setDefaultTransport('cli')
+
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'transport', 'cli')
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_thinking_effort', '')
+    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredThinkingEffort', '')
+    claude.preferredThinkingEffort = originalPref
+  })
+
+  it('setDefaultTransport keeps preferred thinking effort when valid for CLI', async () => {
+    vi.mocked(patchAgentPref).mockClear()
+    const wrapper = mountDrawer() // claude preferredThinkingEffort = 'high'
+    await wrapper.vm.setDefaultTransport('cli')
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'transport', 'cli')
+    expect(patchAgentPref).not.toHaveBeenCalledWith('claude', 'preferred_thinking_effort', '')
+  })
+
+  it('setDefaultTransport keeps preferred thinking effort when valid for ACP', async () => {
+    vi.mocked(patchAgentPref).mockClear()
+    const wrapper = mountDrawer() // claude preferredThinkingEffort = 'high', ACP levels include high
+    await wrapper.vm.setDefaultTransport('acp-stdio')
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'transport', 'acp-stdio')
+    expect(patchAgentPref).not.toHaveBeenCalledWith('claude', 'preferred_thinking_effort', '')
+  })
+
+  it('setDefaultTransport shows error toast when patchAgentPref rejects', async () => {
+    mockAgents.updateAgentField.mockClear()
+    vi.mocked(patchAgentPref).mockRejectedValue(new Error('fail'))
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultTransport('cli')
+    expect(mockAgents.updateAgentField).not.toHaveBeenCalledWith('claude', 'transport', 'cli')
+  })
+
+  // ── Thinking levels in different transport modes ──
+
+  it('uses static thinking levels for CLI transport', async () => {
+    const wrapper = mountDrawer()
+    mockIdentity.currentTransport.value = 'cli'
+    wrapper.vm._setActiveTab('thinking')
+    await nextTick()
+    const rawState = (wrapper.vm as any).$.devtoolsRawSetupState
+    expect(rawState.isACP.value).toBe(false)
+    expect(rawState.thinkingLevels.value).toEqual([
+      { id: 'low', name: 'low' },
+      { id: 'medium', name: 'medium' },
+      { id: 'high', name: 'high' },
+    ])
+    mockIdentity.currentTransport.value = 'acp-stdio'
+  })
+
+  it('returns empty thinking levels when ACP has no reported levels', async () => {
+    const wrapper = mountDrawer()
+    const origLevels = mockIdentity.availableThinkingEfforts.value
+    mockIdentity.availableThinkingEfforts.value = []
+    mockIdentity.currentTransport.value = 'acp-stdio'
+    wrapper.vm._setActiveTab('thinking')
+    await nextTick()
+    const rawState = (wrapper.vm as any).$.devtoolsRawSetupState
+    expect(rawState.thinkingLevels.value).toEqual([])
+    mockIdentity.availableThinkingEfforts.value = origLevels
+  })
+
+  it('falls back to agent transport when session transport is unset', async () => {
+    const wrapper = mountDrawer()
+    mockIdentity.currentTransport.value = ''
+    const rawState = (wrapper.vm as any).$.devtoolsRawSetupState
+    expect(rawState.isACP.value).toBe(true) // claude transport === 'acp-stdio'
+    mockIdentity.currentTransport.value = 'acp-stdio'
+  })
+
+  // ── Reset search/active tab on reopen ──
+
+  it('resets search query and active tab when drawer is reopened', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setActiveTab('thinking')
+    wrapper.vm._setSearchQuery('sonnet')
+    await nextTick()
+    await wrapper.setProps({ open: false })
+    await wrapper.setProps({ open: true })
+    await nextTick()
+    expect(wrapper.vm._getActiveTab()).toBe('model')
+    expect(wrapper.vm._getSearchQuery()).toBe('')
+  })
+
+  // ── Long-press popup → set as default ──
+
+  it('opens popup menu on long-press of a model and sets it as default', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountDrawer()
+    const first = wrapper.find('.model-item')
+    wrapper.vm.onTouchStart({ id: 'claude-opus-4-5', name: 'Claude Opus 4.5' }, { target: first.element })
+    vi.advanceTimersByTime(500)
+    await nextTick()
+    expect(wrapper.vm.showDefaultPopupMenu).toBe(true)
+    expect(wrapper.vm.longPressTriggered).toBe(true)
+    expect(wrapper.vm.pendingDefaultModel).toBe('claude-opus-4-5')
+    const popupBtn = wrapper.find('.popup-set-default')
+    expect(popupBtn.exists()).toBe(true)
+    await popupBtn.trigger('click')
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_model', 'claude-opus-4-5')
+    expect(wrapper.vm.showDefaultPopupMenu).toBe(false)
+    vi.useRealTimers()
+  })
+
+  it('opens popup menu on long-press of a thinking level and sets it as default', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountDrawer()
+    wrapper.vm._setActiveTab('thinking')
+    await nextTick()
+    const first = wrapper.find('.thinking-item')
+    wrapper.vm.onTouchStartThinking('low', { target: first.element })
+    vi.advanceTimersByTime(500)
+    await nextTick()
+    expect(wrapper.vm.showDefaultPopupMenu).toBe(true)
+    expect(wrapper.vm.pendingDefaultThinking).toBe('low')
+    wrapper.vm.setAsDefault()
+    await nextTick()
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_thinking_effort', 'low')
+    vi.useRealTimers()
+  })
+
+  it('opens popup menu on long-press of a mode', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountDrawer()
+    wrapper.vm._setActiveTab('mode')
+    await nextTick()
+    const first = wrapper.find('.thinking-item')
+    wrapper.vm.onTouchStartMode({ id: 'ask', name: 'Ask' }, { target: first.element })
+    vi.advanceTimersByTime(500)
+    await nextTick()
+    expect(wrapper.vm.showDefaultPopupMenu).toBe(true)
+    expect(wrapper.vm.pendingDefaultMode).toBe('ask')
+    wrapper.vm.setAsDefault()
+    await nextTick()
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_mode', 'ask')
+    vi.useRealTimers()
+  })
+
+  it('clears the long-press timer and resets flag on touchend', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountDrawer()
+    wrapper.vm.longPressTriggered = true
+    wrapper.vm.onTouchEnd()
+    vi.advanceTimersByTime(100)
+    expect(wrapper.vm.longPressTriggered).toBe(false)
+    vi.useRealTimers()
+  })
+
+  it('clears the long-press timer on touchmove', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountDrawer()
+    const first = wrapper.find('.model-item')
+    wrapper.vm.onTouchStart({ id: 'm1', name: 'M1' }, { target: first.element })
+    wrapper.vm.onTouchMove()
+    vi.advanceTimersByTime(500)
+    await nextTick()
+    expect(wrapper.vm.showDefaultPopupMenu).toBe(false)
+    expect(wrapper.vm.longPressTriggered).toBe(false)
+    vi.useRealTimers()
+  })
+
+  // ── Context menu → set as default ──
+
+  it('opens popup menu via context menu on a model', async () => {
+    const wrapper = mountDrawer()
+    const first = wrapper.find('.model-item')
+    await first.trigger('contextmenu')
+    await nextTick()
+    expect(wrapper.vm.showDefaultPopupMenu).toBe(true)
+    expect(wrapper.vm.pendingDefaultModel).toBe('claude-sonnet-4-6')
+  })
+
+  it('opens popup menu via context menu on a thinking level', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setActiveTab('thinking')
+    await nextTick()
+    const first = wrapper.find('.thinking-item')
+    await first.trigger('contextmenu')
+    await nextTick()
+    expect(wrapper.vm.showDefaultPopupMenu).toBe(true)
+    expect(wrapper.vm.pendingDefaultThinking).toBe('low')
+  })
+
+  it('opens popup menu via context menu on a mode', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setActiveTab('mode')
+    await nextTick()
+    const first = wrapper.find('.thinking-item')
+    await first.trigger('contextmenu')
+    await nextTick()
+    expect(wrapper.vm.showDefaultPopupMenu).toBe(true)
+    expect(wrapper.vm.pendingDefaultMode).toBe('code')
+  })
+
+  // ── Transport tab rendering ──
+
+  it('renders both ACP and CLI transport options for an ACP+CLI agent', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setActiveTab('transport')
+    await nextTick()
+    const names = wrapper.findAll('.thinking-item .model-item-name').map(n => n.text())
+    expect(names).toContain('chat.transportSwitcher.acp')
+    expect(names).toContain('chat.transportSwitcher.cli')
+  })
+
+  it('selects CLI transport via the transport tab button', async () => {
+    const { restoreOriginalModels, invalidateACPStateCache } = await import('@/composables/useAgents')
+    const wrapper = mountDrawer()
+    mockIdentity.currentTransport.value = 'acp-stdio'
+    wrapper.vm._setActiveTab('transport')
+    await nextTick()
+    const cliBtn = wrapper.findAll('.thinking-item').find(b => b.text().includes('chat.transportSwitcher.cli'))!
+    await cliBtn.trigger('click')
+    await nextTick()
+    expect(mockIdentity.currentTransport.value).toBe('cli')
+    expect(restoreOriginalModels).toHaveBeenCalled()
+    expect(invalidateACPStateCache).toHaveBeenCalled()
+    expect(wrapper.emitted('switch-transport')).toBeTruthy()
+    mockIdentity.currentTransport.value = 'acp-stdio'
+  })
+
+  // ── Auto-approve toggle ──
+
+  it('toggles auto-approve from the mode tab checkbox', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setActiveTab('mode')
+    await nextTick()
+    const checkbox = wrapper.find('.auto-approve-section input[type="checkbox"]')
+    expect(checkbox.exists()).toBe(true)
+    await checkbox.setValue(true)
+    expect(mockIdentity.toggleAutoApprove).toHaveBeenCalled()
+  })
+
+  // ── Empty transport tab for non-ACP/CLI agent ──
+
+  it('does not show ACP transport option for an agent without ACP support', async () => {
+    const wrapper = mountDrawer({ agentId: 'kimi' })
+    wrapper.vm._setActiveTab('transport')
+    await nextTick()
+    const names = wrapper.findAll('.thinking-item .model-item-name').map(n => n.text())
+    expect(names).not.toContain('chat.transportSwitcher.acp')
+    expect(names).toContain('chat.transportSwitcher.cli')
+  })
+
+  // ── Model star set-as-default button ──
+
+  it('sets a model as default via the star button', async () => {
+    const wrapper = mountDrawer()
+    const nonDefaultStar = wrapper.findAll('.set-default-btn')[0] // opus is non-default
+    await nonDefaultStar.trigger('click')
+    await nextTick()
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_model', 'claude-opus-4-5')
+  })
+
+  // ── Keyboard list navigation (useListNav + useListKeys) ──
+
+  it('navigates and selects a model via keyboard', async () => {
+    Element.prototype.scrollIntoView = vi.fn()
+    const wrapper = mount(SessionDrawer, { props: { open: true, agentId: 'claude' }, attachTo: document.body })
+    await nextTick()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await nextTick()
+    expect(wrapper.emitted('switch-model')).toBeTruthy()
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('navigates and selects a thinking effort via keyboard', async () => {
+    const wrapper = mount(SessionDrawer, { props: { open: true, agentId: 'claude' }, attachTo: document.body })
+    wrapper.vm._setActiveTab('thinking')
+    await nextTick()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await nextTick()
+    expect(wrapper.emitted('switch-thinking-effort')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('navigates and selects a mode via keyboard', async () => {
+    const wrapper = mount(SessionDrawer, { props: { open: true, agentId: 'claude' }, attachTo: document.body })
+    wrapper.vm._setActiveTab('mode')
+    await nextTick()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await nextTick()
+    expect(wrapper.emitted('switch-mode')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('ignores keyboard navigation when the list has no items (transport tab)', async () => {
+    const wrapper = mount(SessionDrawer, { props: { open: true, agentId: 'claude' }, attachTo: document.body })
+    wrapper.vm._setActiveTab('transport')
+    await nextTick()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await nextTick()
+    expect(wrapper.emitted('switch-transport')).toBeFalsy()
+    wrapper.unmount()
+  })
 })

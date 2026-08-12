@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref, nextTick } from 'vue'
+import { nextTick } from 'vue'
 import SessionDrawer from '@/components/session/SessionDrawer.vue'
 
 // ── Mocks ────────────────────────────────────────────────────
@@ -29,21 +29,20 @@ vi.mock('@/stores/app', () => ({
   },
 }))
 
-const { mockLoadAgents, mockGetAgentBackend, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent } = vi.hoisted(() => ({
+const { mockLoadAgents, mockGetAgentBackend, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent, mockAgentsHolder, mockDialogHolder } = vi.hoisted(() => ({
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockGetAgentBackend: vi.fn(() => ''),
   mockGetAgentName: vi.fn(() => 'Agent'),
   mockIsDefaultAgent: vi.fn(() => false),
   mockGetAgentDefaultModelName: vi.fn(() => ''),
   mockSetDefaultAgent: vi.fn().mockResolvedValue(undefined),
+  mockAgentsHolder: { list: [] as any[] },
+  mockDialogHolder: { confirm: null as null | ((msg: string, opts?: any) => Promise<boolean>), lastOptions: null as any },
 }))
 
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
-    agents: ref([
-      { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' },
-      { id: 'agent-2', name: 'Agent Two', backend: 'acp', specialty: 'Design' },
-    ]),
+    agents: { value: mockAgentsHolder.list },
     loadAgents: mockLoadAgents,
     getAgentBackend: mockGetAgentBackend,
     getAgentName: mockGetAgentName,
@@ -55,7 +54,10 @@ vi.mock('@/composables/useAgents', () => ({
 
 vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({
-    confirm: vi.fn().mockResolvedValue(true),
+    confirm: (msg: string, opts?: any) => {
+      mockDialogHolder.lastOptions = opts
+      return mockDialogHolder.confirm!(msg, opts)
+    },
   }),
 }))
 
@@ -133,6 +135,12 @@ describe('SessionDrawer', () => {
       ok: true,
       json: () => Promise.resolve({ sessions: [], hasMore: false, totalCount: 0 }),
     })
+    mockAgentsHolder.list = [
+      { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' },
+      { id: 'agent-2', name: 'Agent Two', backend: 'acp', specialty: 'Design' },
+    ]
+    mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
+    mockDialogHolder.lastOptions = null
   })
 
   describe('session counter', () => {
@@ -418,6 +426,202 @@ describe('SessionDrawer', () => {
       await flushPromises()
 
       expect(wrapper.vm.sessionBarColor).toBe('var(--accent-color, #0066cc)')
+    })
+
+    it('returns accent color when maxCount is 0', async () => {
+      const { store } = await import('@/stores/app')
+      store.state.sessionCount = 0
+      store.state.sessionMaxCount = 0
+
+      const wrapper = mountDrawer()
+      await flushPromises()
+
+      expect(wrapper.vm.sessionBarColor).toBe('var(--accent-color, #0066cc)')
+    })
+  })
+
+  describe('header actions', () => {
+    it('emits open-session-search when the search button is clicked', async () => {
+      const wrapper = mountDrawer()
+      await flushPromises()
+      const btn = wrapper.findAll('.header-action-btn')[0]
+      await btn.trigger('click')
+      expect(wrapper.emitted('open-session-search')).toBeTruthy()
+    })
+
+    it('opens agent selector when the create button is clicked with multiple agents', async () => {
+      const wrapper = mountDrawer()
+      await flushPromises()
+      const btn = wrapper.findAll('.header-action-btn')[1]
+      await btn.trigger('click')
+      await nextTick()
+      expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(true)
+    })
+  })
+
+  describe('single-agent creation', () => {
+    it('emits create directly when only one agent exists', async () => {
+      mockAgentsHolder.list = [{ id: 'agent-1', name: 'Agent One', backend: 'cli' }]
+      const wrapper = mountDrawer()
+      await flushPromises()
+
+      await wrapper.vm.handleCreateClick()
+      await nextTick()
+
+      expect(wrapper.emitted('create')).toBeTruthy()
+      expect(wrapper.emitted('create')![0]).toEqual(['agent-1'])
+      // Should NOT open the selector for a single agent
+      expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(false)
+    })
+
+    it('openAgentSelector emits create directly for a single agent', async () => {
+      mockAgentsHolder.list = [{ id: 'agent-1', name: 'Agent One', backend: 'cli' }]
+      const wrapper = mountDrawer()
+      await flushPromises()
+
+      await wrapper.vm.openAgentSelector()
+      await nextTick()
+
+      expect(wrapper.emitted('create')).toBeTruthy()
+      expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(false)
+    })
+  })
+
+  describe('loadMoreSessions', () => {
+    it('appends more sessions when hasMore is true', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
+          hasMore: true,
+          totalCount: 1,
+        }),
+      })
+      const wrapper = mountDrawer()
+      await flushPromises()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // Next page returns a second session
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's2', title: 'S2', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }],
+          hasMore: false,
+          totalCount: 2,
+        }),
+      })
+      wrapper.vm.hasMore = true
+      await wrapper.vm.loadMoreSessions()
+      await flushPromises()
+
+      expect(wrapper.vm.sessions.length).toBe(2)
+      expect(wrapper.vm.sessions[1].id).toBe('s2')
+      expect(wrapper.vm.hasMore).toBe(false)
+    })
+
+    it('does nothing when hasMore is false', async () => {
+      const wrapper = mountDrawer()
+      await flushPromises()
+      wrapper.vm.hasMore = false
+      await wrapper.vm.loadMoreSessions()
+      expect(wrapper.vm.sessions.length).toBe(0)
+    })
+
+    it('does nothing when already loading more', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
+          hasMore: true,
+          totalCount: 1,
+        }),
+      })
+      const wrapper = mountDrawer()
+      await flushPromises()
+      await wrapper.vm.loadSessions()
+      wrapper.vm.hasMore = true
+      wrapper.vm.loadingMore = true
+      await wrapper.vm.loadMoreSessions()
+      expect(wrapper.vm.sessions.length).toBe(1)
+    })
+
+    it('handles loadMore fetch errors gracefully', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
+          hasMore: true,
+          totalCount: 1,
+        }),
+      })
+      const wrapper = mountDrawer()
+      await flushPromises()
+      await wrapper.vm.loadSessions()
+
+      wrapper.vm.hasMore = true
+      wrapper.vm.loadingMore = false
+      mockFetch.mockRejectedValueOnce(new Error('network'))
+      await wrapper.vm.loadMoreSessions()
+      await flushPromises()
+      expect(wrapper.vm.loadingMore).toBe(false)
+    })
+  })
+
+  describe('loadSessions error handling', () => {
+    it('clears sessions when the fetch rejects', async () => {
+      const wrapper = mountDrawer()
+      await flushPromises()
+      wrapper.vm.sessions = [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }]
+      mockFetch.mockRejectedValueOnce(new Error('boom'))
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      expect(wrapper.vm.sessions.length).toBe(0)
+      expect(wrapper.vm.loading).toBe(false)
+    })
+  })
+
+  describe('archiveSession with destroy', () => {
+    it('emits destroy via the dialog extra action', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
+          hasMore: false,
+          totalCount: 1,
+        }),
+      })
+      const wrapper = mountDrawer()
+      await flushPromises()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await wrapper.vm.archiveSession('s1')
+      // Capture the onExtraAction passed to the dialog
+      const onExtra = mockDialogHolder.lastOptions?.onExtraAction
+      expect(typeof onExtra).toBe('function')
+      onExtra()
+      expect(wrapper.emitted('destroy')).toBeTruthy()
+      expect(wrapper.emitted('destroy')![0]).toEqual(['s1'])
+    })
+  })
+
+  describe('open watcher', () => {
+    it('reloads sessions when opened', async () => {
+      const wrapper = mountDrawer({ open: false })
+      await flushPromises()
+      // Simulate opening after mount
+      await wrapper.setProps({ open: true })
+      await flushPromises()
+      expect(mockFetch).toHaveBeenCalled()
+    })
+  })
+
+  describe('lifecycle', () => {
+    it('unmounts cleanly without throwing', async () => {
+      const wrapper = mountDrawer()
+      await flushPromises()
+      expect(() => wrapper.unmount()).not.toThrow()
     })
   })
 })

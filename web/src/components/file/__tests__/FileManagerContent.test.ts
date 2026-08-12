@@ -3,6 +3,14 @@ import { mount } from '@vue/test-utils'
 import { nextTick, reactive, ref, computed, readonly, defineComponent } from 'vue'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
+// jsdom does not implement CSS.escape (used by scrollToEntryAndSelect). Polyfill it.
+const cssGlobal = globalThis as unknown as { CSS?: { escape?: (v: string) => string } }
+if (typeof cssGlobal.CSS === 'undefined') {
+  cssGlobal.CSS = {}
+}
+if (typeof cssGlobal.CSS.escape !== 'function') {
+  cssGlobal.CSS.escape = (v: string) => String(v).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`)
+}
 // Plugin to register the long-press directive globally
 const LongPressPlugin = {
   install(app) {
@@ -35,16 +43,25 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
 }))
 
+const mockIsAppMode = ref(false)
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: { value: false } }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode }),
 }))
 
+const mockDialogConfirm = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
+const mockDialogPrompt = vi.hoisted(() => vi.fn(() => Promise.resolve('newfile.txt')))
+const mockDialogAlert = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({
-    confirm: vi.fn(() => Promise.resolve(true)),
-    prompt: vi.fn(() => Promise.resolve('newfile.txt')),
-    alert: vi.fn(() => Promise.resolve()),
+    confirm: mockDialogConfirm,
+    prompt: mockDialogPrompt,
+    alert: mockDialogAlert,
   }),
+}))
+
+const mockDownloadFileByPath = vi.hoisted(() => vi.fn())
+vi.mock('@/utils/download', () => ({
+  downloadFileByPath: mockDownloadFileByPath,
 }))
 
 vi.mock('@/composables/useTerminalStatus', () => ({
@@ -63,15 +80,23 @@ vi.mock('@/composables/usePlatformDetect', () => ({
 
 const mockHandleFileSelectToDir = vi.fn()
 const mockHandleFileDropToDir = vi.fn()
+const mockHandleFileDropToDirStructured = vi.fn()
+const mockHandleFolderSelect = vi.fn()
+const mockDirUploading = ref(false)
+const mockDirUploadProgress = ref(0)
+const mockDirUploadTotal = ref(0)
+const mockDirUploadDone = ref(0)
 
 vi.mock('@/composables/useFileUpload', () => ({
   useFileUpload: () => ({
-    dirUploading: { value: false },
-    dirUploadProgress: { value: 0 },
-    dirUploadTotal: { value: 0 },
-    dirUploadDone: { value: 0 },
+    dirUploading: mockDirUploading,
+    dirUploadProgress: mockDirUploadProgress,
+    dirUploadTotal: mockDirUploadTotal,
+    dirUploadDone: mockDirUploadDone,
     handleFileSelectToDir: mockHandleFileSelectToDir,
     handleFileDropToDir: mockHandleFileDropToDir,
+    handleFileDropToDirStructured: mockHandleFileDropToDirStructured,
+    handleFolderSelect: mockHandleFolderSelect,
   }),
 }))
 
@@ -81,10 +106,12 @@ vi.mock('@/composables/useFileNavStack', () => ({
   }),
 }))
 
+const mockToolbarCollapsedIds = vi.hoisted(() => ([]))
+
 vi.mock('@/composables/useToolbarOverflow', () => ({
   useToolbarOverflow: () => ({
     inlineIds: computed(() => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'multiselect', 'hidden']),
-    collapsedIds: computed(() => []),
+    collapsedIds: computed(() => mockToolbarCollapsedIds),
     contentWidth: ref(800),
     startObserving: vi.fn(),
     stopObserving: vi.fn(),
@@ -152,6 +179,7 @@ vi.mock('@/components/file/FileSearchDrawer.vue', () => ({
   default: defineComponent({
     props: ['open', 'currentDir'],
     emits: ['close', 'navigateDir', 'selectFile'],
+    methods: { focusSearchInput: () => {} },
     template: '<div class="file-search-drawer-stub" v-if="open" @click="$emit(\'close\')" />',
   }),
 }))
@@ -238,7 +266,23 @@ beforeEach(() => {
   mockHandleFileSelectToDir.mockReset()
   mockHandleFileDropToDir.mockReset()
   mockHandleFileDropToDir.mockResolvedValue(undefined)
+  mockHandleFileDropToDirStructured.mockReset()
+  mockHandleFileDropToDirStructured.mockResolvedValue(undefined)
+  mockHandleFolderSelect.mockReset()
+  mockHandleFolderSelect.mockResolvedValue(undefined)
   mockIsPC.value = false
+  mockIsAppMode.value = false
+  mockToolbarCollapsedIds.length = 0
+  mockDirUploading.value = false
+  mockDirUploadProgress.value = 0
+  mockDirUploadTotal.value = 0
+  mockDirUploadDone.value = 0
+  mockDialogConfirm.mockReset()
+  mockDialogConfirm.mockResolvedValue(true)
+  mockDialogPrompt.mockReset()
+  mockDialogPrompt.mockResolvedValue('newfile.txt')
+  mockDialogAlert.mockReset()
+  mockDownloadFileByPath.mockReset()
 })
 
 // ── Rendering ──
@@ -1158,7 +1202,7 @@ describe('FileManagerContent — drag-and-drop upload', () => {
     await fileList.trigger('drop', dropEvent)
     await nextTick()
 
-    expect(mockHandleFileDropToDir).toHaveBeenCalled()
+    expect(mockHandleFileDropToDirStructured).toHaveBeenCalled()
     expect(wrapper.emitted('refresh')).toBeTruthy()
   })
 
@@ -1224,7 +1268,7 @@ describe('FileManagerContent — drag-and-drop upload', () => {
     })
     await nextTick()
 
-    expect(mockHandleFileDropToDir).toHaveBeenCalledWith([mockFile], 'src')
+    expect(mockHandleFileDropToDirStructured).toHaveBeenCalledWith([mockFile], 'src')
   })
 
   it('uses "." as upload target when currentDir is empty', async () => {
@@ -1238,7 +1282,7 @@ describe('FileManagerContent — drag-and-drop upload', () => {
     })
     await nextTick()
 
-    expect(mockHandleFileDropToDir).toHaveBeenCalledWith([mockFile], '.')
+    expect(mockHandleFileDropToDirStructured).toHaveBeenCalledWith([mockFile], '.')
   })
 
   it('does not call handleFileDropToDir when drop has no files', async () => {
@@ -1449,5 +1493,774 @@ describe('FileManagerContent — clipboard paste upload', () => {
 
     const uploadedFiles = mockHandleFileDropToDir.mock.calls[0][0]
     expect(uploadedFiles[0].name).toMatch(/^clipboard_\d+\.jpg$/)
+  })
+})
+
+// ── New file / folder creation ──
+
+describe('FileManagerContent — create file/folder', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' })))
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('doNewFile via toolbar button creates a file and emits refresh', async () => {
+    const wrapper = mountContent()
+    const btns = wrapper.findAll('.toolbar-btn')
+    const newFileBtn = btns.find(b => b.attributes('title') === '新建文件')
+    expect(newFileBtn).toBeTruthy()
+    await newFileBtn!.trigger('click')
+    await nextTick()
+    await nextTick()
+
+    expect(mockDialogPrompt).toHaveBeenCalled()
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+    expect(mockToastShow).toHaveBeenCalled()
+  })
+
+  it('doNewFolder via toolbar button creates a folder and emits refresh', async () => {
+    const wrapper = mountContent()
+    const btns = wrapper.findAll('.toolbar-btn')
+    const newFolderBtn = btns.find(b => b.attributes('title') === '新建文件夹')
+    expect(newFolderBtn).toBeTruthy()
+    await newFolderBtn!.trigger('click')
+    await nextTick()
+    await nextTick()
+
+    expect(mockDialogPrompt).toHaveBeenCalled()
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+    expect(mockToastShow).toHaveBeenCalled()
+  })
+
+  it('doNewFile does nothing when prompt is cancelled (empty name)', async () => {
+    mockDialogPrompt.mockResolvedValue('')
+    const wrapper = mountContent()
+    await wrapper.vm.doNewFile()
+    await nextTick()
+
+    expect(wrapper.emitted('refresh')).toBeFalsy()
+  })
+
+  it('doNewFile shows failure toast when the create API fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: 'boom' }), text: async () => '' })))
+    const wrapper = mountContent()
+    await wrapper.vm.doNewFile()
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalled()
+    expect(wrapper.emitted('refresh')).toBeFalsy()
+  })
+
+  it('doNewFile shows failure toast when the create API throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network') }))
+    const wrapper = mountContent()
+    await wrapper.vm.doNewFile()
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalled()
+  })
+})
+
+// ── Context menu file/dir actions ──
+
+describe('FileManagerContent — context menu actions', () => {
+  it('doDelete emits delete for the entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+    await wrapper.vm.doDelete()
+
+    expect(wrapper.emitted('delete')).toBeTruthy()
+    expect(wrapper.emitted('delete')![0]).toEqual(['test.ts'])
+    expect(wrapper.vm.ctxMenu.visible).toBe(false)
+  })
+
+  it('doOpenTerminal emits openTerminal with currentDir for a file entry', async () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'a.ts', path: 'src/a.ts' }
+    await nextTick()
+    await wrapper.vm.doOpenTerminal()
+
+    expect(wrapper.emitted('openTerminal')).toBeTruthy()
+    expect(wrapper.emitted('openTerminal')![0]).toEqual(['src'])
+  })
+
+  it('doOpenTerminal emits openTerminal with the dir path for a directory entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+    await wrapper.vm.doOpenTerminal()
+
+    expect(wrapper.emitted('openTerminal')![0]).toEqual(['src'])
+  })
+
+  it('doOpenAsProject shows failure toast when the API rejects', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net') }))
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+    await wrapper.vm.doOpenAsProject()
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalled()
+  })
+
+  it('doOpenAsProject shows failure detail toast when the API returns !ok', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, text: async () => '{"error":"denied"}' })))
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+    await wrapper.vm.doOpenAsProject()
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('doOpenAsProject does nothing for a non-directory entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'a.ts', path: 'a.ts' }
+    await nextTick()
+    await wrapper.vm.doOpenAsProject()
+
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+  })
+
+  it('doDownload calls downloadFileByPath for the entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+    await wrapper.vm.doDownload()
+
+    expect(mockDownloadFileByPath).toHaveBeenCalledWith('test.ts', 'test.ts')
+  })
+
+  it('doAttachToChat adds the file to chat when not attached', async () => {
+    mockHasAttachedFile.mockReturnValue(false)
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+    await wrapper.vm.doAttachToChat()
+
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts')
+    expect(mockToastShow).toHaveBeenCalled()
+  })
+
+  it('doAttachToChat removes the file from chat when already attached', async () => {
+    mockHasAttachedFile.mockReturnValue(true)
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+    await wrapper.vm.doAttachToChat()
+
+    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
+  })
+
+  it('toggleAttach adds the file to chat when not attached', async () => {
+    mockHasAttachedFile.mockReturnValue(false)
+    const wrapper = mountContent()
+    await wrapper.vm.toggleAttach('test.ts')
+
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts')
+  })
+
+  it('toggleAttach removes the file from chat when already attached', async () => {
+    mockHasAttachedFile.mockReturnValue(true)
+    const wrapper = mountContent()
+    await wrapper.vm.toggleAttach('test.ts')
+
+    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
+  })
+
+  it('doArchiveDir archives a directory via context menu', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const res = { ok: true, status: 200, blob: async () => new Blob(['zip']) }
+      return res
+    }))
+    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:x'), revokeObjectURL: vi.fn() })
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+    await wrapper.vm.doArchiveDir()
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('doArchive shows failure toast when the API returns !ok', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: 'x' }), blob: async () => new Blob() })))
+    const wrapper = mountContent()
+    await wrapper.vm.doArchive(['a.ts'], 'a.zip')
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('doArchive does nothing when no paths are given', async () => {
+    const wrapper = mountContent()
+    await wrapper.vm.doArchive([], 'x.zip')
+    expect(mockToastShow).not.toHaveBeenCalled()
+  })
+})
+
+// ── Clipboard paste (doPaste) ──
+
+describe('FileManagerContent — clipboard paste (doPaste)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, text: async () => '' })))
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('pastes a copied entry into the current directory via copy API', async () => {
+    const wrapper = mountContent({ currentDir: '' })
+    await nextTick()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    // Seed the clipboard as a copy operation
+    await wrapper.vm.doCopy()
+    await nextTick()
+
+    await wrapper.vm.doPaste()
+    await nextTick()
+
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+    expect(mockToastShow).toHaveBeenCalled()
+  })
+
+  it('doPaste does nothing when clipboard is empty', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+    await wrapper.vm.doPaste()
+
+    expect(wrapper.emitted('refresh')).toBeFalsy()
+  })
+})
+
+// ── Multi-select action bar ──
+
+describe('FileManagerContent — multi-select action bar', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, text: async () => '', blob: async () => new Blob() })))
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('renders the multi-select action bar when items are selected', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    await nextTick()
+
+    expect(wrapper.find('.ms-action-bar').exists()).toBe(true)
+  })
+
+  it('doBatchCopy copies all selected entries', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+    await nextTick()
+
+    await wrapper.vm.doBatchCopy()
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalled()
+    expect(wrapper.vm.clipboard.entries).toHaveLength(2)
+  })
+
+  it('doBatchCut cuts all selected entries', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+    await nextTick()
+
+    await wrapper.vm.doBatchCut()
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalled()
+    expect(wrapper.vm.clipboard.isCut).toBe(true)
+    expect(wrapper.vm.clipboard.entries).toHaveLength(2)
+  })
+
+  it('doBatchDelete confirms then emits batchDelete and exits multi-select', async () => {
+    mockDialogConfirm.mockResolvedValue(true)
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+    await nextTick()
+
+    await wrapper.vm.doBatchDelete()
+    await nextTick()
+
+    expect(wrapper.emitted('batchDelete')).toBeTruthy()
+    expect(wrapper.vm.multiSelectState.active).toBe(false)
+  })
+
+  it('doBatchDelete does not emit when confirmation is declined', async () => {
+    mockDialogConfirm.mockResolvedValue(false)
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    await nextTick()
+
+    await wrapper.vm.doBatchDelete()
+    await nextTick()
+
+    expect(wrapper.emitted('batchDelete')).toBeFalsy()
+  })
+
+  it('doBatchDelete does nothing when nothing is selected', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+
+    await wrapper.vm.doBatchDelete()
+    expect(wrapper.emitted('batchDelete')).toBeFalsy()
+  })
+
+  it('doBatchArchive archives all selected paths', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    await nextTick()
+
+    await wrapper.vm.doBatchArchive()
+    await nextTick()
+
+    expect(wrapper.vm.multiSelectState.active).toBe(false)
+  })
+
+  it('toggleSelectAll selects all visible entries', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+
+    wrapper.vm.toggleSelectAll()
+    await nextTick()
+
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(3)
+  })
+
+  it('toggleSelectAll deselects all visible entries when all selected', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('src')
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+    await nextTick()
+
+    wrapper.vm.toggleSelectAll()
+    await nextTick()
+
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(0)
+  })
+
+  it('isAllSelected is false when no entries match selection', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('other.ts')
+    await nextTick()
+
+    expect(wrapper.vm.isAllSelected).toBe(false)
+  })
+
+  it('renders the multi-select info bar with select-all button when active', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+
+    expect(wrapper.find('.ms-info-bar').exists()).toBe(true)
+    const exitBtn = wrapper.find('.ms-info-btn')
+    await exitBtn.trigger('click')
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.active).toBe(false)
+  })
+})
+
+// ── View mode grid ──
+
+describe('FileManagerContent — grid view', () => {
+  it('renders grid layout with grid items', async () => {
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+
+    expect(wrapper.find('.file-grid').exists()).toBe(true)
+    expect(wrapper.findAll('.grid-item').length).toBe(3)
+  })
+
+  it('grid: single click on a directory navigates in mobile mode', async () => {
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    const dirItem = wrapper.find('.grid-item[data-path="src"]')
+    await dirItem.trigger('click')
+
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+  })
+
+  it('grid: double-click on a file emits selectFile', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    const fileItem = wrapper.find('.grid-item[data-path="test.ts"]')
+    await fileItem.trigger('dblclick')
+
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+  })
+
+  it('grid: right-click opens the context menu with the entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    const fileItem = wrapper.find('.grid-item[data-path="test.ts"]')
+    await fileItem.trigger('contextmenu')
+    await nextTick()
+
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('test.ts')
+  })
+
+  it('view toggle button switches between list and grid', async () => {
+    const wrapper = mountContent()
+    const btns = wrapper.findAll('.toolbar-btn')
+    const toggleBtn = btns.find(b => b.attributes('title') === '网格' || b.attributes('title') === '列表')
+    expect(toggleBtn).toBeTruthy()
+    await toggleBtn!.trigger('click')
+    await nextTick()
+    expect(wrapper.vm.viewMode).toBe('grid')
+    await toggleBtn!.trigger('click')
+    await nextTick()
+    expect(wrapper.vm.viewMode).toBe('list')
+  })
+})
+
+// ── Upload ──
+
+describe('FileManagerContent — upload', () => {
+  it('triggerUpload clicks the hidden file input', async () => {
+    const wrapper = mountContent()
+    const clickSpy = vi.spyOn(wrapper.vm.uploadInputRef, 'click').mockImplementation(() => {})
+    await wrapper.vm.triggerUpload()
+    expect(clickSpy).toHaveBeenCalled()
+    clickSpy.mockRestore()
+  })
+
+  it('triggerFolderUpload clicks the hidden folder input (PC only)', async () => {
+    const wrapper = mountContent()
+    expect(wrapper.find('input[webkitdirectory]').exists()).toBe(true)
+    const clickSpy = vi.spyOn(wrapper.vm.folderInputRef, 'click').mockImplementation(() => {})
+    await wrapper.vm.triggerFolderUpload()
+    expect(clickSpy).toHaveBeenCalled()
+    clickSpy.mockRestore()
+  })
+
+  it('onUploadFileSelect calls handleFileSelectToDir and emits refresh', async () => {
+    mockHandleFileSelectToDir.mockResolvedValue(undefined)
+    const wrapper = mountContent({ currentDir: 'src' })
+    const changeEvent = { target: { files: [] } }
+    await wrapper.vm.onUploadFileSelect(changeEvent)
+
+    expect(mockHandleFileSelectToDir).toHaveBeenCalledWith(changeEvent, 'src')
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+  })
+
+  it('onFolderUploadSelect calls handleFolderSelect and emits refresh', async () => {
+    mockHandleFolderSelect.mockResolvedValue(undefined)
+    const wrapper = mountContent({ currentDir: 'src' })
+    const changeEvent = { target: { files: [] } }
+    await wrapper.vm.onFolderUploadSelect(changeEvent)
+
+    expect(mockHandleFolderSelect).toHaveBeenCalledWith(changeEvent, 'src')
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+  })
+
+  it('renders upload progress bar when dirUploading is true', async () => {
+    mockDirUploading.value = true
+    mockDirUploadProgress.value = 50
+    mockDirUploadTotal.value = 4
+    mockDirUploadDone.value = 2
+    const wrapper = mountContent()
+    await nextTick()
+
+    expect(wrapper.find('.dir-upload-progress').exists()).toBe(true)
+    expect(wrapper.find('.dir-upload-progress-text').text()).toContain('2/4')
+  })
+})
+// ── Long-press & container drag state ──
+
+describe('FileManagerContent — long-press & drag state', () => {
+  it('onLongPress opens the context menu for an entry', async () => {
+    const wrapper = mountContent()
+    const entry = { type: 'file', name: 'test.ts' }
+    await wrapper.vm.onLongPress(entry, { touches: [{ clientX: 100, clientY: 200 }] })
+    await nextTick()
+
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('test.ts')
+  })
+
+  it('onContainerLongPress opens the context menu for empty area', async () => {
+    const wrapper = mountContent()
+    const e = { touches: [{ clientX: 10, clientY: 20 }], target: document.createElement('div') }
+    await wrapper.vm.onContainerLongPress(e)
+    await nextTick()
+
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+  })
+
+  it('onDragEnd resets drag state', async () => {
+    const wrapper = mountContent()
+    wrapper.vm._setIsDragOver(true)
+    wrapper.vm.dropTargetPath = 'src'
+    await nextTick()
+    await wrapper.vm.onDragEnd()
+
+    expect(wrapper.vm.isDragOver).toBe(false)
+    expect(wrapper.vm.dropTargetPath).toBeNull()
+    expect(wrapper.vm.dragCounter).toBe(0)
+  })
+
+  it('onContainerDragOver sets dropTargetPath when hovering a directory', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.dragSourcePaths = ['test.ts']
+    await nextTick()
+    const dirItem = wrapper.find('.dir-item')
+    await dirItem.trigger('dragover', { preventDefault: vi.fn() })
+
+    expect(wrapper.vm.dropTargetPath).toBe('src')
+  })
+
+  it('onContainerDragOver clears dropTargetPath when hovering a non-directory', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.dragSourcePaths = ['test.ts']
+    await nextTick()
+    const fileItem = wrapper.find('.file-item[data-path="test.ts"]')
+    await fileItem.trigger('dragover', { preventDefault: vi.fn() })
+
+    expect(wrapper.vm.dropTargetPath).toBeNull()
+  })
+})
+
+// ── Internal move helpers ──
+
+describe('FileManagerContent — internal move helpers', () => {
+  it('collectDraggedPaths returns the full multi-selection when the item is selected', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+    await nextTick()
+
+    const paths = wrapper.vm.collectDraggedPaths({ name: 'test.ts' }, 'test.ts')
+    expect(paths).toEqual(['test.ts', 'readme.md'])
+  })
+
+  it('collectDraggedPaths returns just the item path when not multi-selected', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = false
+    const paths = wrapper.vm.collectDraggedPaths({ name: 'test.ts' }, 'test.ts')
+    expect(paths).toEqual(['test.ts'])
+  })
+
+  it('getDestDir returns the entry path for a directory', () => {
+    const wrapper = mountContent()
+    expect(wrapper.vm.getDestDir({ type: 'dir', path: 'src' })).toBe('src')
+  })
+
+  it('getDestDir returns the parent dir for a nested file', () => {
+    const wrapper = mountContent()
+    expect(wrapper.vm.getDestDir({ type: 'file', path: 'src/a.ts' })).toBe('src')
+  })
+
+  it('getDestDir returns currentDir when entry is falsy', () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+    expect(wrapper.vm.getDestDir(null)).toBe('src')
+  })
+
+  it('scrollToEntryAndSelect selects a path without a container', async () => {
+    const wrapper = mountContent()
+    await wrapper.vm.scrollToEntryAndSelect('test.ts', { openFile: true })
+    expect(wrapper.vm._getSelectedPath()).toBe('test.ts')
+  })
+
+  it('highlight-file-item event triggers scrollToEntryAndSelect', async () => {
+    const wrapper = mountContent()
+    window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: 'readme.md' } }))
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
+  })
+})
+
+// ── Dropdown positioning & close ──
+
+describe('FileManagerContent — dropdowns', () => {
+  it('opening the sort dropdown updates its position style', async () => {
+    const wrapper = mountContent()
+    await wrapper.vm.updateSortMenuStyle()
+    expect(wrapper.vm.sortMenuStyle).toHaveProperty('position', 'fixed')
+  })
+
+  it('opening the more dropdown updates its position style', async () => {
+    mockToolbarCollapsedIds.push('refresh', 'uploadFolder')
+    const wrapper = mountContent()
+    await nextTick()
+    // The more dropdown button is only rendered when collapsed items exist
+    await wrapper.vm.updateMoreMenuStyle()
+    expect(wrapper.vm.moreMenuStyle).toHaveProperty('position', 'fixed')
+  })
+
+  it('document click outside dropdown closes open menus', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.sortMenuOpen = true
+    wrapper.vm.moreMenuOpen = true
+    await nextTick()
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+    expect(wrapper.vm.sortMenuOpen).toBe(false)
+    expect(wrapper.vm.moreMenuOpen).toBe(false)
+  })
+
+  it('onSortSelect emits toggleSort and closes the menu', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.sortMenuOpen = true
+    await wrapper.vm.onSortSelect('time')
+    expect(wrapper.emitted('toggleSort')).toBeTruthy()
+    expect(wrapper.emitted('toggleSort')![0]).toEqual(['time'])
+    expect(wrapper.vm.sortMenuOpen).toBe(false)
+  })
+})
+
+// ── Thumbnails ──
+
+describe('FileManagerContent — thumbnails', () => {
+  it('thumbUrl builds a thumbnail URL from currentDir and name', () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+    expect(wrapper.vm.thumbUrl({ name: 'a.png' })).toContain('/api/file/thumb')
+  })
+
+  it('onThumbError marks the entry so isThumbLoaded returns false', () => {
+    const wrapper = mountContent()
+    const entry = { name: 'a.png' }
+    wrapper.vm.onThumbError(entry)
+    expect(wrapper.vm.isThumbLoaded(entry)).toBe(false)
+  })
+})
+
+// ── Sort menu & more menu via template handlers ──
+
+describe('FileManagerContent — sort dropdown items', () => {
+  it('clicking the sort button opens the dropdown and a name option emits toggleSort', async () => {
+    const wrapper = mountContent()
+    const sortBtn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '排序')
+    expect(sortBtn).toBeTruthy()
+    await sortBtn!.trigger('click')
+    await nextTick()
+
+    const sortItems = wrapper.findAll('.toolbar-dropdown-item')
+    expect(sortItems.length).toBeGreaterThan(0)
+    await sortItems[0].trigger('click')
+    expect(wrapper.emitted('toggleSort')).toBeTruthy()
+    expect(wrapper.emitted('toggleSort')![0][0]).toBe('name')
+  })
+})
+
+// ── Format date today branch ──
+
+describe('FileManagerContent — formatDate today', () => {
+  it('returns a time-only string for a date that is today', () => {
+    const wrapper = mountContent()
+    const now = new Date().toISOString()
+    const result = wrapper.vm.formatDate(now)
+    expect(result).toMatch(/\d{2}:\d{2}/)
+  })
+
+  it('returns a date string for a past date', () => {
+    const wrapper = mountContent()
+    const result = wrapper.vm.formatDate('2020-01-01T12:00:00Z')
+    expect(result).toBeTruthy()
+  })
+})
+
+// ── Truncation ──
+
+describe('FileManagerContent — truncation', () => {
+  it('renders the truncate hint when entries exceed MAX_VISIBLE_ENTRIES', async () => {
+    const manyEntries = Array.from({ length: 1005 }, (_, i) => ({
+      name: `file${i}.txt`,
+      type: 'file' as const,
+      modified: '2025-01-01T00:00:00Z',
+      size: i,
+    }))
+    const wrapper = mountContent({ entries: manyEntries })
+    await nextTick()
+
+    expect(wrapper.find('.truncate-hint').exists()).toBe(true)
+    expect(wrapper.findAll('.file-item').length).toBe(1000)
+  }, 20000)
+
+  it('does not render the truncate hint for a small entry list', () => {
+    const wrapper = mountContent()
+    expect(wrapper.find('.truncate-hint').exists()).toBe(false)
+  })
+})
+
+// ── Search drawer navigation events ──
+
+describe('FileManagerContent — search drawer navigation', () => {
+  it('onSearchNavigateDir emits navigateDir', async () => {
+    const wrapper = mountContent()
+    await wrapper.vm.onSearchNavigateDir('src')
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('src')
+  })
+
+  it('onSearchSelectFile emits selectFile', async () => {
+    const wrapper = mountContent()
+    await wrapper.vm.onSearchSelectFile('src/test.ts')
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+    expect(wrapper.emitted('selectFile')![0][0]).toBe('src/test.ts')
+  })
+
+  it('focusSearchInput does not throw when no search drawer is mounted', async () => {
+    const wrapper = mountContent()
+    expect(() => wrapper.vm.focusSearchInput()).not.toThrow()
+  })
+})
+
+// ── Empty state text ──
+
+describe('FileManagerContent — empty state text', () => {
+  it('shows emptyDir message when a currentDir is set and no entries', () => {
+    const wrapper = mountContent({ entries: [], currentDir: 'src' })
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+  })
+
+  it('shows noFiles message when no currentDir and no entries', () => {
+    const wrapper = mountContent({ entries: [], currentDir: '' })
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
   })
 })

@@ -28,10 +28,11 @@ const i18n = createI18n({
   messages: { en: {} },
 })
 
-function mountSheet(props = {}) {
+function mountSheet(props = {}, opts: { attach?: boolean } = {}) {
   return mount(UserMsgIndexDrawer, {
     props: { open: true, messages: [], ...props },
     global: { plugins: [i18n] },
+    attachTo: opts.attach ? document.body : undefined,
   })
 }
 
@@ -131,6 +132,87 @@ describe('UserMsgIndexDrawer', () => {
       expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith(
         { block: 'center', behavior: 'smooth' },
       )
+    })
+
+    it('shows empty state when there are no messages', () => {
+      const wrapper = mountSheet({ open: true, messages: [], loading: false, jumping: false })
+      expect(wrapper.find('.panel-empty').exists()).toBe(true)
+    })
+
+    it('shows loading state in preference to the empty state', () => {
+      const wrapper = mountSheet({ open: true, messages: [], loading: true })
+      expect(wrapper.find('.panel-loading').exists()).toBe(true)
+      expect(wrapper.find('.panel-empty').exists()).toBe(false)
+    })
+
+    it('navigates the list via keyboard and emits select on Enter', async () => {
+      Element.prototype.scrollIntoView = vi.fn()
+      const messages = [
+        { id: 1, content: 'One', role: 'user' },
+        { id: 2, content: 'Two', role: 'user' },
+      ]
+      const wrapper = mountSheet({ open: true, messages }, { attach: true })
+      await wrapper.vm.$nextTick()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0]).toEqual([messages[0]])
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('moves down to the second item with repeated ArrowDown presses', async () => {
+      Element.prototype.scrollIntoView = vi.fn()
+      const messages = [
+        { id: 1, content: 'One', role: 'user' },
+        { id: 2, content: 'Two', role: 'user' },
+      ]
+      const wrapper = mountSheet({ open: true, messages }, { attach: true })
+      await wrapper.vm.$nextTick()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0]).toEqual([messages[1]])
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('scrolls the active message into view once loading finishes', async () => {
+      Element.prototype.scrollIntoView = vi.fn()
+      const messages = Array.from({ length: 5 }, (_, i) => ({
+        id: i + 1,
+        content: `Message ${i + 1}`,
+        role: 'user',
+      }))
+      const wrapper = mountSheet({ open: true, messages, activeId: 3, loading: true })
+      await wrapper.vm.$nextTick()
+
+      await wrapper.setProps({ loading: false })
+      await wrapper.vm.$nextTick()
+
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith(
+        { block: 'center', behavior: 'smooth' },
+      )
+    })
+
+    it('re-renders the list when the messages prop changes', async () => {
+      const wrapper = mountSheet({ open: true, messages: [{ id: 1, content: 'A', role: 'user' }] })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findAll('.msg-item')).toHaveLength(1)
+
+      await wrapper.setProps({ messages: [
+        { id: 1, content: 'A', role: 'user' },
+        { id: 2, content: 'B', role: 'user' },
+      ] })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findAll('.msg-item')).toHaveLength(2)
     })
   })
 })

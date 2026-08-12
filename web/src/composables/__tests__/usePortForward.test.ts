@@ -66,8 +66,10 @@ vi.mock('@/composables/useSessionIdentity', () => ({
     useSessionIdentity: () => ({ currentSessionId: ref('test-session-id') }),
 }))
 
+const mockTunnelStatusFromPorts = vi.fn(() => 'ok')
+
 vi.mock('@/utils/portForwardUtils', () => ({
-    tunnelStatusFromPorts: () => 'ok',
+    tunnelStatusFromPorts: () => mockTunnelStatusFromPorts(),
     buildPortUrl: (port: number, protocol?: string, path?: string) => {
         const scheme = protocol || 'http'
         const urlPath = path || '/'
@@ -87,6 +89,8 @@ describe('usePortForward', () => {
         mockApiDelete.mockReset()
         mockIsAppMode.value = false
         mockToastShow.mockReset()
+        mockTunnelStatusFromPorts.mockReset()
+        mockTunnelStatusFromPorts.mockImplementation(() => 'ok')
         delete (window as any).ClawBenchNative
     })
 
@@ -1270,6 +1274,383 @@ describe('usePortForward', () => {
             await loadPorts(true)
 
             expect(connectingPorts.value.has(3000)).toBe(false)
+        })
+    })
+
+    describe('tunnel health native & polling', () => {
+        it('unregisterPort removes the native forward in app mode', async () => {
+            mockIsAppMode.value = true
+            mockApiDelete.mockResolvedValue({})
+            mockApiGet.mockResolvedValue({ ports: [] })
+            const mockRemove = vi.fn().mockResolvedValue(undefined)
+            ;(window as any).ClawBenchNative = { removeForwardedPort: mockRemove }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { unregisterPort } = usePortForward()
+
+            await unregisterPort(3000)
+
+            expect(mockRemove).toHaveBeenCalledWith(3000)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('checkTunnelHealth marks degraded in app mode when native connected but ports degraded', async () => {
+            mockIsAppMode.value = true
+            mockTunnelStatusFromPorts.mockImplementation(() => 'degraded')
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true }] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+                return {}
+            })
+            ;(window as any).ClawBenchNative = { isTunnelConnected: async () => true }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelMessage, tunnelChecking } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('degraded')
+            expect(tunnelMessage.value).toBe('portForward.tunnelDegraded')
+            expect(tunnelChecking.value).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('checkTunnelHealth marks ok in app mode when native connected and ports ok', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true }] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+                return {}
+            })
+            ;(window as any).ClawBenchNative = { isTunnelConnected: async () => true }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelChecking } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('ok')
+            expect(tunnelChecking.value).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('checkTunnelHealth marks disconnected in app mode with native error details', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
+                return {}
+            })
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                getTunnelError: async () => 'native ssh error',
+                getTunnelErrorType: async () => 'auth',
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelMessage, tunnelError, tunnelErrorType, tunnelChecking } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('disconnected')
+            expect(tunnelMessage.value).toBe('portForward.tunnelDisconnected')
+            expect(tunnelError.value).toBe('native ssh error')
+            expect(tunnelErrorType.value).toBe('auth')
+            expect(tunnelChecking.value).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('checkTunnelHealth falls back to server stats when native tunnel status unavailable', async () => {
+            mockIsAppMode.value = true
+            // Native has no isTunnelConnected — getNativeTunnelStatus returns null.
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true, enabled: true }] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+                return {}
+            })
+            ;(window as any).ClawBenchNative = {}
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('ok')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('checkTunnelHealth tolerates native isTunnelConnected throwing', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+                return {}
+            })
+            ;(window as any).ClawBenchNative = { isTunnelConnected: async () => { throw new Error('bridge') } }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('ok')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('checkTunnelHealth treats non-boolean native tunnel status as unavailable', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+                return {}
+            })
+            ;(window as any).ClawBenchNative = { isTunnelConnected: async () => 'yes' as any }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('ok')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('checkTunnelHealth handles native error type getter throwing', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
+                return {}
+            })
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                getTunnelError: async () => 'err',
+                getTunnelErrorType: async () => { throw new Error('boom') },
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelErrorType } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('disconnected')
+            expect(tunnelErrorType.value).toBe('')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('checkTunnelHealth handles native error getter failures and invalid error types', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
+                return {}
+            })
+            ;(window as any).ClawBenchNative = {
+                isTunnelConnected: async () => false,
+                getTunnelError: async () => { throw new Error('boom') },
+                getTunnelErrorType: async () => 'bogus' as any,
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelError, tunnelErrorType } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('disconnected')
+            expect(tunnelError.value).toBe('')
+            expect(tunnelErrorType.value).toBe('')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('checkTunnelHealth returns early when SSH enabled but connectionStats null', async () => {
+            mockIsAppMode.value = false
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+                return {}
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelChecking } = usePortForward()
+
+            tunnelStatus.value = 'ok' as any
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('unknown')
+            expect(tunnelChecking.value).toBe(false)
+        })
+
+        it('checkTunnelHealth marks degraded from server stats when ports degraded', async () => {
+            mockIsAppMode.value = false
+            mockTunnelStatusFromPorts.mockImplementation(() => 'degraded')
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: false, enabled: true }] }
+                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+                return {}
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelMessage } = usePortForward()
+
+            await checkTunnelHealth()
+
+            expect(tunnelStatus.value).toBe('degraded')
+            expect(tunnelMessage.value).toBe('portForward.tunnelDegraded')
+        })
+    })
+
+    describe('tunnel poll timer', () => {
+        it('poll stops when native reports connected and status is ok', async () => {
+            mockIsAppMode.value = true
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
+            })
+            ;(window as any).ClawBenchNative = { isTunnelConnected: async () => true }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelMessage } = usePortForward()
+
+            // Force a degraded state so a poll is started.
+            mockTunnelStatusFromPorts.mockImplementation(() => 'degraded')
+            await checkTunnelHealth()
+            expect(tunnelStatus.value).toBe('degraded')
+
+            // Native now reports connected and status recovers to ok → poll stops.
+            mockTunnelStatusFromPorts.mockImplementation(() => 'ok')
+            await vi.advanceTimersByTimeAsync(5000)
+
+            expect(tunnelStatus.value).toBe('ok')
+            expect(tunnelMessage.value).toBe('')
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('poll recovers via server-side check when native status is null', async () => {
+            mockIsAppMode.value = true
+            mockApiGet
+                .mockResolvedValueOnce({ ports: [] })                                                       // checkTunnelHealth loadPorts
+                .mockResolvedValueOnce({ enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: false, clientCount: 0, activeChannels: 0 } }) // checkTunnelHealth loadSSHInfo → disconnected, starts poll
+                .mockResolvedValueOnce({ enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } })   // poll loadSSHInfo → connected
+                .mockResolvedValueOnce({ ports: [] })                                                       // poll loadPorts
+            ;(window as any).ClawBenchNative = { isTunnelConnected: async () => null }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelMessage } = usePortForward()
+
+            await checkTunnelHealth()
+            expect(tunnelStatus.value).toBe('disconnected')
+
+            await vi.advanceTimersByTimeAsync(5000)
+
+            expect(tunnelStatus.value).toBe('ok')
+            expect(tunnelMessage.value).toBe('')
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('poll stays degraded when native connected but ports degraded', async () => {
+            mockIsAppMode.value = true
+            mockTunnelStatusFromPorts.mockImplementation(() => 'degraded')
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [] }
+                return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
+            })
+            ;(window as any).ClawBenchNative = { isTunnelConnected: async () => true }
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelMessage } = usePortForward()
+
+            await checkTunnelHealth()
+            expect(tunnelStatus.value).toBe('degraded')
+
+            await vi.advanceTimersByTimeAsync(5000)
+
+            expect(tunnelStatus.value).toBe('degraded')
+            expect(tunnelMessage.value).toBe('portForward.tunnelDegraded')
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('poll stays degraded when server connected but ports degraded', async () => {
+            mockIsAppMode.value = false
+            mockTunnelStatusFromPorts.mockImplementation(() => 'degraded')
+            mockApiGet
+                .mockResolvedValueOnce({ ports: [] })
+                .mockResolvedValueOnce({ enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: false, clientCount: 0, activeChannels: 0 } })
+                .mockResolvedValueOnce({ enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } })
+                .mockResolvedValueOnce({ ports: [] })
+            ;(window as any).ClawBenchNative = {}
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelMessage } = usePortForward()
+
+            await checkTunnelHealth()
+            expect(tunnelStatus.value).toBe('disconnected')
+
+            await vi.advanceTimersByTimeAsync(5000)
+
+            expect(tunnelStatus.value).toBe('degraded')
+            expect(tunnelMessage.value).toBe('portForward.tunnelDegraded')
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('poll recovers to ok when server says disconnected but ports are active', async () => {
+            mockIsAppMode.value = false
+            mockApiGet
+                .mockResolvedValueOnce({ ports: [] })                                                       // checkTunnelHealth loadPorts
+                .mockResolvedValueOnce({ enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: false, clientCount: 0, activeChannels: 0 } }) // checkTunnelHealth loadSSHInfo → disconnected, starts poll
+                .mockResolvedValueOnce({ enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: false, clientCount: 0, activeChannels: 0 } }) // poll loadSSHInfo → still disconnected
+                .mockResolvedValueOnce({ ports: [{ port: 3000, name: 'App', protocol: 'http', active: true, enabled: true }] })              // poll loadPorts → active ports
+            ;(window as any).ClawBenchNative = {}
+
+            vi.useFakeTimers()
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { checkTunnelHealth, tunnelStatus, tunnelMessage } = usePortForward()
+
+            await checkTunnelHealth()
+            expect(tunnelStatus.value).toBe('disconnected')
+
+            await vi.advanceTimersByTimeAsync(5000)
+
+            expect(tunnelStatus.value).toBe('ok')
+            expect(tunnelMessage.value).toBe('')
+
+            vi.useRealTimers()
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
         })
     })
 

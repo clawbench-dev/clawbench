@@ -48,6 +48,7 @@ describe('useNotification', () => {
 
     afterEach(() => {
         vi.restoreAllMocks()
+        delete (window as any).ClawBenchNative
     })
 
     // ── requestNotificationPermission ──
@@ -296,6 +297,57 @@ describe('useNotification', () => {
             const closeSpy = vi.spyOn(notification, 'close')
             closeAllNotifications()
             expect(closeSpy).toHaveBeenCalled()
+        })
+    })
+
+    // ── native host path ──
+
+    describe('showBrowserNotification native host', () => {
+        it('routes to nativeNotify when a native host with nativeNotify is present', async () => {
+            ;(globalThis as any).Notification = MockNotification
+            MockNotification.permission = 'granted'
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const nativeNotify = vi.fn().mockResolvedValue(undefined)
+            ;(window as any).ClawBenchNative = { nativeNotify }
+
+            const { showBrowserNotification } = await import('@/composables/useNotification')
+            showBrowserNotification('Native Title', { body: 'Native body', nav: 'settings' })
+
+            expect(nativeNotify).toHaveBeenCalledWith('Native Title', 'Native body', 'settings')
+            // Native path should not create a browser Notification instance
+            expect(mockNotificationInstances).toHaveLength(0)
+        })
+
+        it('routes to nativeNotify with empty body and no nav when omitted', async () => {
+            ;(globalThis as any).Notification = MockNotification
+            MockNotification.permission = 'denied'
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const nativeNotify = vi.fn().mockResolvedValue(undefined)
+            ;(window as any).ClawBenchNative = { nativeNotify }
+
+            const { showBrowserNotification } = await import('@/composables/useNotification')
+            showBrowserNotification('Native Title')
+
+            expect(nativeNotify).toHaveBeenCalledWith('Native Title', '', undefined)
+        })
+
+        it('ignores nativeNotify rejection', async () => {
+            ;(globalThis as any).Notification = MockNotification
+            MockNotification.permission = 'granted'
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const nativeNotify = vi.fn().mockRejectedValue(new Error('native failed'))
+            ;(window as any).ClawBenchNative = { nativeNotify }
+
+            const { showBrowserNotification } = await import('@/composables/useNotification')
+            expect(() => showBrowserNotification('Native Title')).not.toThrow()
+            await Promise.resolve()
+            expect(nativeNotify).toHaveBeenCalled()
         })
     })
 

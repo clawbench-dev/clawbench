@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, ref, defineComponent } from 'vue'
 import SearchDrawer from '@/components/common/SearchDrawer.vue'
@@ -42,10 +42,13 @@ vi.mock('@/components/common/HeaderMarquee.vue', () => ({
   }),
 }))
 
+const { mockInputFocus } = vi.hoisted(() => ({ mockInputFocus: vi.fn() }))
+
 vi.mock('@/components/common/SearchInput.vue', () => ({
   default: defineComponent({
     props: { modelValue: String, placeholder: String },
     emits: ['update:modelValue', 'enter', 'dblclick'],
+    methods: { focus: mockInputFocus },
     template: '<input class="search-input-stub" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" @keydown.enter="$emit(\'enter\')" />',
   }),
 }))
@@ -84,9 +87,14 @@ vi.mock('@/utils/searchUtils.ts', () => ({
   },
   highlightText: (text: string, q: string) => text.replace(new RegExp(q, 'gi'), '<mark>$&</mark>'),
   BLOCK_TAGS: new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'PRE', 'BLOCKQUOTE', 'DIV']),
+  shouldCorrectAfterSettle: () => ({ index: -1, corrected: false }),
 }))
 
 describe('SearchDrawer', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   function mountDrawer(props = {}) {
     return mount(SearchDrawer, {
       props: {
@@ -299,5 +307,190 @@ describe('SearchDrawer', () => {
     expect(wrapper.emitted('close')).toBeTruthy()
 
     document.body.removeChild(container)
+  })
+
+  // ── notFound with query interpolation ──
+
+  it('shows notFound message interpolating the query', async () => {
+    const wrapper = mountDrawer({
+      file: { path: '/src/main.ts', name: 'main.ts', content: 'hello world' },
+    })
+
+    wrapper.vm._setQuery('xyz')
+    await nextTick()
+
+    expect(wrapper.find('.search-empty').text()).toContain('Not found: xyz')
+  })
+
+  // ── Rendered view: isRenderedView computed variations ──
+
+  it('isRenderedView is true for html files in rendered mode', () => {
+    const wrapper = mountDrawer({
+      file: { path: '/src/index.html', name: 'index.html', content: '<p>hi</p>' },
+      viewMode: 'rendered',
+    })
+    expect(wrapper.vm.isRenderedView).toBe(true)
+  })
+
+  it('isRenderedView is false for html files when viewMode is not rendered', () => {
+    const wrapper = mountDrawer({
+      file: { path: '/src/index.html', name: 'index.html', content: '<p>hi</p>' },
+      viewMode: 'raw',
+    })
+    expect(wrapper.vm.isRenderedView).toBe(false)
+  })
+
+  it('isRenderedView is false for non-markdown/html files even in rendered mode', () => {
+    const wrapper = mountDrawer({
+      file: { path: '/src/main.ts', name: 'main.ts', content: 'x' },
+      viewMode: 'rendered',
+    })
+    expect(wrapper.vm.isRenderedView).toBe(false)
+  })
+
+  // ── Rendered view: searchRenderedContent edge cases ──
+
+  it('rendered search returns empty when no .markdown-body container exists', async () => {
+    const wrapper = mountDrawer({
+      file: { path: '/src/test.md', name: 'test.md', content: '# Test' },
+      viewMode: 'rendered',
+    })
+
+    wrapper.vm._setQuery('anything')
+    await nextTick()
+
+    expect(wrapper.vm._getResults().length).toBe(0)
+  })
+
+  it('rendered search finds matches across multiple blocks', async () => {
+    const container = document.createElement('div')
+    container.className = 'markdown-body'
+    const p1 = document.createElement('p')
+    p1.textContent = 'alpha target beta'
+    const p2 = document.createElement('p')
+    p2.textContent = 'gamma target delta'
+    container.appendChild(p1)
+    container.appendChild(p2)
+    document.body.appendChild(container)
+
+    const wrapper = mountDrawer({
+      file: { path: '/src/test.md', name: 'test.md', content: '# Test' },
+      viewMode: 'rendered',
+    })
+
+    wrapper.vm._setQuery('target')
+    await nextTick()
+
+    const results = wrapper.vm._getResults()
+    expect(results.length).toBe(2)
+
+    document.body.removeChild(container)
+  })
+
+  it('rendered search skips text nodes without a matching block', async () => {
+    const container = document.createElement('div')
+    container.className = 'markdown-body'
+    const plain = document.createElement('span')
+    plain.textContent = 'no match here'
+    container.appendChild(plain)
+    document.body.appendChild(container)
+
+    const wrapper = mountDrawer({
+      file: { path: '/src/test.md', name: 'test.md', content: '# Test' },
+      viewMode: 'rendered',
+    })
+
+    wrapper.vm._setQuery('nomatch')
+    await nextTick()
+    expect(wrapper.vm._getResults().length).toBe(0)
+
+    document.body.removeChild(container)
+  })
+
+  // ── focusSearchInput exposed method ──
+
+  it('focusSearchInput focuses the search input', () => {
+    const wrapper = mountDrawer({
+      file: { path: '/src/main.ts', name: 'main.ts', content: 'hello' },
+    })
+    wrapper.vm.focusSearchInput()
+    expect(mockInputFocus).toHaveBeenCalled()
+  })
+
+  // ── open watcher focuses input after slide-up delay ──
+
+  it('focuses the input shortly after the drawer opens', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountDrawer({ open: false, file: { path: '/a', name: 'a.ts', content: 'x' } })
+    await wrapper.setProps({ open: true })
+    vi.advanceTimersByTime(300)
+    await nextTick()
+    expect(mockInputFocus).toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  // ── query clears when file path changes ──
+
+  it('clears the query when the file path changes', async () => {
+    const wrapper = mountDrawer({
+      file: { path: '/src/a.ts', name: 'a.ts', content: 'hello' },
+    })
+    wrapper.vm._setQuery('hello')
+    await nextTick()
+    expect(wrapper.vm._getQuery()).toBe('hello')
+
+    await wrapper.setProps({ file: { path: '/src/b.ts', name: 'b.ts', content: 'world' } })
+    await nextTick()
+
+    // The watcher resets query to '' when file path changes
+    expect(wrapper.vm._getQuery()).toBe('')
+  })
+
+  // ── Rendered jump re-centering within a scrollable ancestor ──
+
+  it('rendered jump scrolls within a scrollable ancestor', async () => {
+    vi.useFakeTimers()
+    // jsdom lacks scrollIntoView on elements — patch the prototype so the
+    // success path of scrollToRenderedMatch can run.
+    const protoScroll = vi.fn()
+    Element.prototype.scrollIntoView = protoScroll
+
+    const scroller = document.createElement('div')
+    scroller.style.overflowY = 'auto'
+    scroller.style.height = '10px'
+    // jsdom does no layout — stub dimensions so getScrollParent detects it
+    Object.defineProperty(scroller, 'scrollHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 100, configurable: true })
+    const container = document.createElement('div')
+    container.className = 'markdown-body'
+    const p = document.createElement('p')
+    p.style.lineHeight = '60px'
+    p.textContent = 'recenter target here'
+    container.appendChild(p)
+    scroller.appendChild(container)
+    document.body.appendChild(scroller)
+
+    const wrapper = mountDrawer({
+      file: { path: '/src/test.md', name: 'test.md', content: '# Test' },
+      viewMode: 'rendered',
+    })
+
+    wrapper.vm._setQuery('target')
+    await nextTick()
+    const results = wrapper.vm._getResults()
+    expect(results.length).toBe(1)
+
+    wrapper.vm._jumpTo(results[0])
+    expect(protoScroll).toHaveBeenCalled()
+
+    // Fire a couple of correction polls (80ms each) so the settle logic runs.
+    vi.advanceTimersByTime(160)
+    await nextTick()
+
+    // Unmount while the correction timer is active → onBeforeUnmount clears it
+    wrapper.unmount()
+
+    document.body.removeChild(scroller)
+    vi.useRealTimers()
   })
 })
