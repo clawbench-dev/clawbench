@@ -49,6 +49,7 @@ sequenceDiagram
 ### 功能清单
 
 - **历史浏览**：支持项目级和文件级两种历史视图，ASCII 图形化展示 commit graph，可查看每个 commit 的详细 diff。用户快速了解项目的演进脉络
+- **文件 Diff 抽屉**：`FileDiffsDrawer` 展示提交中所有文件的变更列表，支持 prev/next 顺序导航（`useDiffNavigation`），用户无需返回文件列表即可逐个浏览文件差异。合并提交的文件按分支分组展示
 - **Worktree 管理**：创建、切换、浏览 Git Worktree。Worktree 让用户在不同分支上并行工作，切换项目目录即可进入不同工作环境——这是移动端多任务开发的关键能力
 - **分支操作**：列出所有分支、Checkout 切换、内联操作按钮删除。移动端不方便输入 `git checkout`，图形化操作降低了交互成本
 - **标签管理**：列出所有标签、内联操作按钮删除。与分支管理共享交互模式
