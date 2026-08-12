@@ -484,6 +484,15 @@ function onRecommendationEvent(evt) {
 
 async function fetchLatestRecommendation(sessionId) {
   if (!sessionId) return
+  // While the assistant is still outputting, the persisted recommendation belongs
+  // to the previous reply and would be stale — don't surface it.
+  if (props.loading) return
+  // Only surface a recommendation when the conversation is sitting on an
+  // assistant reply. After the user sends a new message the last message is a
+  // user message, so the previous recommendation is stale — don't show it.
+  const msgs = props.messages || []
+  const last = msgs[msgs.length - 1]
+  if (!last || last.role !== 'assistant') return
   try {
     const data = await apiGet(`/api/chat/recommendation?session_id=${encodeURIComponent(sessionId)}`)
     const text = data?.recommendation
