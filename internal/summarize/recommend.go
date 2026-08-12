@@ -16,7 +16,7 @@ const recommendNextStepPrompt = `You are a conversation continuation assistant. 
 Requirements:
 1. Output only the next-step suggestion — a short, natural-language instruction the user could paste into the chat input to continue.
 2. It should be specific and actionable (e.g. a clarifying question, a concrete task, a command to run, or a direction to explore). Take the user's recent intent into account.
-3. The quick commands listed in the context are the user's frequently-used commands for you to reference, not tools you can call directly. If one fits the next step, suggest it by name (e.g. "用快捷指令「生成测试」"), otherwise ignore them.
+3. The quick commands listed in the context are the user's frequently-used commands for you to reference, not tools you can call directly. If one fits the next step, recommend it by keeping its original command text as-is so the user can use it directly — do not paraphrase or merely name the label (e.g. output the command itself, not "用快捷指令「生成测试」"); otherwise ignore them.
 4. Do not add markdown, bullet lists, prefixes, quotes, or meta-phrases like "Next step:" or "You could try".
 5. Output in the requested language.
 6. The suggestion is the user's next message sent to the AI assistant, so phrase it as a directive for the AI — never ask the user a question.`

@@ -122,6 +122,14 @@ func TestRecommendNextStepPrompt_NoUserQuestion(t *testing.T) {
 	}
 }
 
+// TestRecommendNextStepPrompt_KeepCommandOriginal guards that a recommended
+// quick command preserves its original command text so the user can use it as-is.
+func TestRecommendNextStepPrompt_KeepCommandOriginal(t *testing.T) {
+	if !strings.Contains(recommendNextStepPrompt, "keeping its original command text") {
+		t.Fatalf("prompt must instruct keeping the quick command's original text, got: %q", recommendNextStepPrompt)
+	}
+}
+
 func TestRecommendNextStep_OpenAI(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer key" {
