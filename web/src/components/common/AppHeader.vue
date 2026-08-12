@@ -1015,6 +1015,14 @@ onUnmounted(() => {
     color: #fff;
 }
 
+/* Selected state: give the file-type icon a background chip (file-manager style)
+   so its colored glyph stays readable instead of blending into the accent row. */
+.app-menu-item.active .item-icon.file-type-icon {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    padding: 1px;
+}
+
 .app-menu-item .item-label {
     flex: 0 1 auto;
     min-width: 0;
