@@ -1415,9 +1415,10 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 }
 
 .symbol-bar {
-  padding: 3px 6px 0;
+  padding: 3px 6px 3px;
   background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
   border-radius: 0;
 }
 
