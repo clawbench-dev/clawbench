@@ -1753,6 +1753,11 @@ export default {
     symbolGroupBracket: 'Brackets',
     symbolGroupQuote: 'Quotes',
     symbolGroupShell: 'Shell Special',
+    theme: 'Theme',
+    themeFollowApp: 'Follow App Theme',
+    themeSearchPlaceholder: 'Search themes...',
+    themeLoading: 'Loading themes...',
+    themeLoadFailed: 'Failed to load themes. Please retry.',
   },
   welcomeInfo: {
     title: 'Welcome to ClawBench',

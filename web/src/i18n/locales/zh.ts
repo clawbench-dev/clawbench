@@ -1754,6 +1754,11 @@ export default {
     symbolGroupBracket: '括号',
     symbolGroupQuote: '引号',
     symbolGroupShell: 'Shell 特殊',
+    theme: '主题',
+    themeFollowApp: '跟随 App 主题',
+    themeSearchPlaceholder: '搜索主题...',
+    themeLoading: '加载主题中...',
+    themeLoadFailed: '主题加载失败，请重试',
   },
   welcomeInfo: {
     title: '欢迎使用 ClawBench',
