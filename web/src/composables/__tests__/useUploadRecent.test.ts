@@ -43,6 +43,17 @@ describe('useUploadRecent', () => {
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/upload/recent')
   })
 
+  it('fetchRecentUploads normalizes a null body to an empty array', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(null),
+    } as Response)
+
+    await fetchRecentUploads()
+
+    expect(recentUploads.value).toEqual([])
+  })
+
   it('fetchRecentUploads non-ok: does not update recentUploads', async () => {
     recentUploads.value = [{ name: 'existing.txt', path: '/a', size: 1, modTime: '' }]
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({

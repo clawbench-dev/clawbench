@@ -14,7 +14,11 @@ async function fetchRecentShares() {
   try {
     const res = await fetch('/api/share-in/recent')
     if (res.ok) {
-      recentShares.value = await res.json()
+      const data = await res.json()
+      // Normalize to an array. A nil slice on the backend is encoded as `null`
+      // when the (existing but empty) share-in dir has no files; assigning null
+      // here would crash the AttachDrawer Shares tab on `recentShares.length`.
+      recentShares.value = Array.isArray(data) ? data : []
     }
   } catch (e) {
     appLog.w('ShareIn', 'Failed to fetch recent shares', e)

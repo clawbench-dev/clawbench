@@ -41,6 +41,19 @@ describe('useShareIn', () => {
     expect(recentShares.value).toEqual(files)
   })
 
+  it('fetchRecentShares normalizes a null body to an empty array', async () => {
+    // The backend encodes a nil slice as `null` when the (existing but empty)
+    // share-in dir has no files. The frontend must treat it as an empty array,
+    // otherwise the AttachDrawer Shares tab crashes on `recentShares.length`.
+    mockFetch.mockResolvedValue({ ok: true, json: async () => null })
+
+    const { useShareIn } = await import('@/composables/useShareIn.ts')
+    const { recentShares, fetchRecentShares } = useShareIn()
+    await fetchRecentShares()
+
+    expect(recentShares.value).toEqual([])
+  })
+
   it('deleteRecentShare success: sends DELETE and removes from list', async () => {
     const files = [
       { name: 'a.txt', path: '.clawbench/share-in/a.txt', size: 10, modTime: 't' },

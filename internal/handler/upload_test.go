@@ -261,6 +261,24 @@ func TestShareInRecent(t *testing.T) {
 		assert.Empty(t, result)
 	})
 
+	t.Run("EmptyExistingShareInDir_ReturnsArrayNotNull", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// Directory exists but is empty → the handler must encode `[]`, NOT
+		// `null`. A null body makes the frontend AttachDrawer crash on
+		// `recentShares.length` when the Shares tab is clicked.
+		shareInDir := filepath.Join(env.ProjectDir, ".clawbench", "share-in")
+		_ = os.MkdirAll(shareInDir, 0o755)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", http.NoBody)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "[]", strings.TrimSpace(w.Body.String()))
+	})
+
 	t.Run("ReturnsFilesSortedByModTime", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
@@ -330,6 +348,23 @@ func TestUploadRecent(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &result)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
+	})
+
+	t.Run("EmptyExistingUploadsDir_ReturnsArrayNotNull", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// Directory exists but is empty → must encode `[]`, NOT `null` (see
+		// the share-in case above).
+		uploadsDir := filepath.Join(env.ProjectDir, ".clawbench", "uploads")
+		_ = os.MkdirAll(uploadsDir, 0o755)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/upload/recent", http.NoBody)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "[]", strings.TrimSpace(w.Body.String()))
 	})
 
 	t.Run("ReturnsFilesSortedByModTime", func(t *testing.T) {

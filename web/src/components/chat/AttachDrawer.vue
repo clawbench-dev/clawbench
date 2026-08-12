@@ -87,7 +87,7 @@
 
       <!-- Recently shared -->
       <template v-if="activeTab === 'shares'">
-        <div v-if="recentShares.length === 0" class="ad-empty">{{ t('chat.attach.emptyShares') }}</div>
+        <div v-if="!recentShares?.length" class="ad-empty">{{ t('chat.attach.emptyShares') }}</div>
         <button
           v-for="item in recentShares" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
@@ -126,7 +126,7 @@
           </div>
         </button>
         <!-- Completed uploads from server -->
-        <div v-if="recentUploads.length === 0 && pendingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
+        <div v-if="!recentUploads?.length && pendingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
         <button
           v-for="item in recentUploads" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"

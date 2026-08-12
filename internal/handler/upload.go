@@ -227,7 +227,11 @@ func listRecentFiles(projectPath, dirPath string, limit int) []recentFile {
 		return []recentFile{}
 	}
 
-	var files []recentFile
+	// Non-nil empty slice so the JSON body is `[]` rather than `null` when the
+	// directory exists but is empty. A `null` body makes the frontend
+	// AttachDrawer crash on `recentShares.length` when the Shares/Uploads tab is
+	// clicked.
+	files := make([]recentFile, 0)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
