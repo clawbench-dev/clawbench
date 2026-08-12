@@ -408,34 +408,17 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	// the models list even though the transcription endpoint accepts them, so
 	// a direct probe against /v1/audio/transcriptions is authoritative for the
 	// exact endpoint + model + auth the feature will actually use.
-	audio := makeMinimalWAV()
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "probe.wav")
+	body, contentType, err := buildSTTProbe(sttModel, language)
 	if err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
-	}
-	if _, err := part.Write(audio); err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
-	}
-	if err := writer.WriteField("model", sttModel); err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
-	}
-	if language != "" {
-		if err := writer.WriteField("language", language); err != nil {
-			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
-		}
-	}
-	if err := writer.Close(); err != nil {
 		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
 	}
 
 	url := strings.TrimRight(baseURL, "/") + "/v1/audio/transcriptions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to create request: %v", err)}
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -464,6 +447,33 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service reachable, but model '%s' not recognized", sttModel)}
 	}
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable at %s (probe returned HTTP %d)", baseURL, resp.StatusCode)}
+}
+
+// buildSTTProbe builds a multipart transcription probe body (silence WAV +
+// model/language fields) and returns the body and its Content-Type header.
+func buildSTTProbe(sttModel, language string) (*bytes.Buffer, string, error) {
+	audio := makeMinimalWAV()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "probe.wav")
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := part.Write(audio); err != nil {
+		return nil, "", err
+	}
+	if err := writer.WriteField("model", sttModel); err != nil {
+		return nil, "", err
+	}
+	if language != "" {
+		if err := writer.WriteField("language", language); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return &body, writer.FormDataContentType(), nil
 }
 
 // isSTTModelNotFound reports whether an STT error body indicates an unknown model.

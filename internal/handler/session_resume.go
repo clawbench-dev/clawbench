@@ -25,6 +25,7 @@ const (
 	strContent   = "content"
 	strSessionID = "sessionId"
 	strError     = "error"
+	strToolUse   = "tool_use"
 )
 
 // getOrCreateConnForLoadFn is the function signature for obtaining an ACP
@@ -324,7 +325,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 				// chat_tool_calls alongside the message.
 				var toolCalls []model.ContentBlock
 				for _, b := range blocks {
-					if b.Type == "tool_use" && b.ID != "" {
+					if b.Type == strToolUse && b.ID != "" {
 						toolCalls = append(toolCalls, b)
 					}
 				}
@@ -373,7 +374,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 				for event := range ch {
 					// Skip non-content events (mode_update, config_update, etc.)
 					switch event.Type {
-					case strContent, "thinking", "thinking_done", "tool_use", "tool_result", "warning", strError:
+					case strContent, "thinking", "thinking_done", strToolUse, "tool_result", "warning", strError:
 						ai.AccumulateBlock(&blocks, event)
 					}
 				}

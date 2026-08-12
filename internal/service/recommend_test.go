@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -11,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func setupRecommendTest(t *testing.T) (*ws.Manager, *ws.ClientSubscription, func()) {
+func setupRecommendTest(t *testing.T) (*ws.ClientSubscription, func()) {
 	db, teardown := setupTestDBForChatSummary(t)
 	_ = db
 
@@ -26,11 +27,11 @@ func setupRecommendTest(t *testing.T) (*ws.Manager, *ws.ClientSubscription, func
 		teardown()
 		model.ConfigInstance = model.Config{}
 	}
-	return mgr, sub, cleanup
+	return sub, cleanup
 }
 
 func TestTriggerChatRecommendation_Disabled(t *testing.T) {
-	_, sub, cleanup := setupRecommendTest(t)
+	sub, cleanup := setupRecommendTest(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{} // RecommendEnabled = false
@@ -45,7 +46,7 @@ func TestTriggerChatRecommendation_Disabled(t *testing.T) {
 }
 
 func TestTriggerChatRecommendation_NoAISummary(t *testing.T) {
-	_, sub, cleanup := setupRecommendTest(t)
+	sub, cleanup := setupRecommendTest(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -66,7 +67,7 @@ func TestTriggerChatRecommendation_EmitsEvent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, sub, cleanup := setupRecommendTest(t)
+	sub, cleanup := setupRecommendTest(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -91,7 +92,7 @@ func TestTriggerChatRecommendation_EmitsEvent(t *testing.T) {
 }
 
 func TestTriggerChatRecommendation_EmptyConclusion(t *testing.T) {
-	_, sub, cleanup := setupRecommendTest(t)
+	sub, cleanup := setupRecommendTest(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -134,6 +135,6 @@ func TestSaveAndLatestChatRecommendation(t *testing.T) {
 	SaveChatRecommendation("sess-rec-persist", "/test", "first rec")
 	SaveChatRecommendation("sess-rec-persist", "/test", "second rec")
 
-	assert.Equal(t, "second rec", LatestChatRecommendation("sess-rec-persist"))
-	assert.Equal(t, "", LatestChatRecommendation("no-such-session"))
+	assert.Equal(t, "second rec", LatestChatRecommendation(context.Background(), "sess-rec-persist"))
+	assert.Equal(t, "", LatestChatRecommendation(context.Background(), "no-such-session"))
 }

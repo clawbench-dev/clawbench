@@ -168,7 +168,7 @@ func TestSTTTranscribe_BodyTooLarge(t *testing.T) {
 	writer := multipart.NewWriter(&buf)
 	part, _ := writer.CreateFormFile("file", "recording.webm")
 	chunk := bytes.Repeat([]byte("A"), 1024*1024)
-	for i := 0; i < 11; i++ {
+	for range 11 {
 		_, _ = part.Write(chunk)
 	}
 	_ = writer.Close()

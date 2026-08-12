@@ -75,16 +75,16 @@ func (p *VLLMProvider) Transcribe(ctx context.Context, audioReader io.Reader, la
 	if err != nil {
 		return "", fmt.Errorf("stt: create form file: %w", err)
 	}
-	if _, err := io.Copy(part, audioReader); err != nil {
+	if _, err = io.Copy(part, audioReader); err != nil {
 		return "", fmt.Errorf("stt: write audio: %w", err)
 	}
-	if err := writer.WriteField("model", p.Model); err != nil {
+	if err = writer.WriteField("model", p.Model); err != nil {
 		return "", fmt.Errorf("stt: write model field: %w", err)
 	}
 	if lang != "" {
 		_ = writer.WriteField("language", lang)
 	}
-	if err := writer.Close(); err != nil {
+	if err = writer.Close(); err != nil {
 		return "", fmt.Errorf("stt: close multipart: %w", err)
 	}
 

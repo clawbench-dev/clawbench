@@ -14,6 +14,9 @@ func IsAnthropicURL(u string) bool {
 }
 
 const (
+	// roleUser is the standard "user" chat role used by all recommendation
+	// request builders (OpenAI + Anthropic compatible).
+	roleUser = "user"
 	// defaultTTSPrompt is the fallback prompt used when the external file is not found.
 	// A language directive (e.g. "Output in Chinese.") is appended at load time.
 	defaultTTSPrompt = `You are a text condenser for TTS voice playback. Your job is to faithfully condense the given text into natural spoken language that can be read aloud as-is.

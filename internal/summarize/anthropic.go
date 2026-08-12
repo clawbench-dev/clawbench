@@ -113,7 +113,7 @@ func (s *AnthropicSummarizer) DoRecommendPass(ctx context.Context, systemPrompt,
 		Model:  s.Model,
 		System: systemPrompt,
 		Messages: []anthropicRecommendMessage{
-			{Role: "user", Content: content},
+			{Role: roleUser, Content: content},
 		},
 		MaxTokens:   1024,
 		Temperature: 0.3,
@@ -175,7 +175,7 @@ func (s *AnthropicSummarizer) DoSummarizePass(ctx context.Context, text, systemP
 		Model:  s.Model,
 		System: systemPrompt,
 		Messages: []anthropicMessage{
-			{Role: "user", Content: text},
+			{Role: roleUser, Content: text},
 		},
 		MaxTokens:   1024,
 		Temperature: 0.3,

@@ -190,7 +190,7 @@ const listNav = useListNav({
 // Document-level keys so navigation also works when focus leaves the search box
 useListKeys({ isOpen: () => props.open, nav: listNav })
 
-function scrollActiveIntoView(index) {
+function scrollActiveIntoView(index: number) {
   const items = document.querySelectorAll('.fs-result-item')
   const el = items[index]
   if (el && typeof el.scrollIntoView === 'function') {

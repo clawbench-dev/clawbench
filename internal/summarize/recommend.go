@@ -102,7 +102,7 @@ func buildRollingContext(conversation []string, conclusion string) string {
 	if len(conversation) > 0 {
 		b.WriteString("Recent conversation (user messages in full, assistant messages as conclusion):\n")
 		for i, m := range conversation {
-			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, m))
+			fmt.Fprintf(&b, "%d. %s\n", i+1, m)
 		}
 		b.WriteString("\n")
 	}

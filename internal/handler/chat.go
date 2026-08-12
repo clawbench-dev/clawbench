@@ -942,7 +942,7 @@ func buildForkContext(sessionID string) string {
 				if b.Text != "" {
 					msgParts = append(msgParts, b.Text)
 				}
-			case "tool_use":
+			case strToolUse:
 				tcJSON := service.FormatToolUseBlock(b, toolCallMap)
 				if tcJSON != "" {
 					msgParts = append(msgParts, tcJSON)

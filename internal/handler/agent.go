@@ -751,6 +751,7 @@ func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
 		"nextCursor": nextCursor,
 	})
 }
+
 // findExistingACPSessions returns a set of ACP session IDs that already
 // exist in ClawBench's session manager (active or archived). These are the
 // ACP sessions the user has already loaded/used, so they are filtered out of

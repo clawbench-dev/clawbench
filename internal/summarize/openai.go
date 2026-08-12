@@ -63,9 +63,9 @@ func (s *OpenAISummarizer) DoRecommendPass(ctx context.Context, systemPrompt, st
 	messages := make([]openaiChatMessage, 0, 3)
 	messages = append(messages, openaiChatMessage{Role: "system", Content: systemPrompt})
 	if stable != "" {
-		messages = append(messages, openaiChatMessage{Role: "user", Content: stable})
+		messages = append(messages, openaiChatMessage{Role: roleUser, Content: stable})
 	}
-	messages = append(messages, openaiChatMessage{Role: "user", Content: rolling})
+	messages = append(messages, openaiChatMessage{Role: roleUser, Content: rolling})
 
 	reqBody := openaiChatRequest{
 		Model:       s.Model,
@@ -134,7 +134,7 @@ func (s *OpenAISummarizer) DoSummarizePass(ctx context.Context, text, systemProm
 		Model: s.Model,
 		Messages: []openaiChatMessage{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: text},
+			{Role: roleUser, Content: text},
 		},
 		Temperature: 0.3,
 		MaxTokens:   1024,

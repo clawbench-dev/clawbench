@@ -367,7 +367,7 @@ func ttsExtractConclusion(messageID int64) string { //nolint:gocyclo,gocognit //
 	// Append AskUserQuestion text (questions + options) so TTS reads them
 	var aqParts []string
 	for _, b := range blocks {
-		if b.Type != "tool_use" || b.Name != "AskUserQuestion" {
+		if b.Type != strToolUse || b.Name != "AskUserQuestion" {
 			continue
 		}
 		questions, ok := b.Input["questions"]

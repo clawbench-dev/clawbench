@@ -30,7 +30,7 @@ func ServeChatRecommendation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec := service.LatestChatRecommendation(sessionID)
+	rec := service.LatestChatRecommendation(r.Context(), sessionID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id":     sessionID,
 		"recommendation": rec,

@@ -528,9 +528,9 @@ func SaveChatRecommendation(sessionID, projectPath, recommendation string) {
 
 // LatestChatRecommendation returns the most recent recommendation for a session.
 // Returns empty string if none exists.
-func LatestChatRecommendation(sessionID string) string {
+func LatestChatRecommendation(ctx context.Context, sessionID string) string {
 	var rec string
-	err := dbRead.QueryRow(
+	err := dbRead.QueryRowContext(ctx,
 		"SELECT recommendation FROM chat_recommendations WHERE session_id = ? ORDER BY id DESC LIMIT 1",
 		sessionID,
 	).Scan(&rec)
@@ -556,11 +556,12 @@ func recentConversation(sessionID string, n int) []string {
 	var texts []string
 	for i := len(messages) - 1; i >= 0 && len(texts) < n; i-- {
 		var text string
-		if messages[i].Role == "user" {
+		switch messages[i].Role {
+		case "user":
 			text = ExtractPlainText(messages[i].Content)
-		} else if messages[i].Role == "assistant" {
+		case "assistant":
 			text = assistantConclusion(messages[i].Content)
-		} else {
+		default:
 			continue
 		}
 		if strings.TrimSpace(text) == "" {

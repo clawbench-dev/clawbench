@@ -90,6 +90,10 @@ const (
 	sttWSEndCtl = "end"
 )
 
+// errSTTWSEnd is the sentinel returned by handleSTTWSMessage when the
+// client sends the "end" control frame, signaling a clean stream completion.
+var errSTTWSEnd = errors.New("stt ws: end")
+
 // sttWSControl is a client text control message over the streaming WS.
 type sttWSControl struct {
 	Type string `json:"type"` // "end"
@@ -168,38 +172,10 @@ func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 			case <-ticker.C:
 			case <-newAudio:
 			}
-
-			state.mu.Lock()
-			done := state.done
-			start := state.offset
-			seg := append([]byte(nil), state.buffer.Bytes()[start:]...)
-			state.offset = state.buffer.Len()
-			state.mu.Unlock()
-
-			if done || len(seg) == 0 {
-				continue
-			}
-
-			text, terr := provider.Transcribe(ctx, bytes.NewReader(seg), cfg.STT.Language)
-			if terr != nil {
-				slog.Debug("stt ws: incremental transcribe failed", slog.String("error", terr.Error()))
-				continue
-			}
-			if text == "" {
-				continue
-			}
-			msg := sttWSServerMsg{Type: sttWSText, Text: text}
-			data, _ := json.Marshal(msg)
-
-			state.mu.Lock()
-			doneNow := state.done
-			state.mu.Unlock()
-			if doneNow {
-				continue
-			}
-
-			if err := writeSTTWSText(conn, data); err != nil {
+			if stop, abort := streamIncrementalChunk(ctx, state, provider, conn, cfg.STT.Language); abort {
 				cancel()
+				return
+			} else if stop {
 				return
 			}
 		}
@@ -213,31 +189,9 @@ func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 				readErr <- rerr
 				return
 			}
-			switch mt {
-			case websocket.MessageBinary:
-				state.mu.Lock()
-				if state.buffer.Len()+len(msg) > sttWSMaxAudioBytes {
-					state.mu.Unlock()
-					errData, _ := json.Marshal(sttWSServerMsg{Type: sttWSError})
-					_ = writeSTTWSText(conn, errData)
-					readErr <- errors.New("stt ws: audio exceeds limit")
-					return
-				}
-				state.buffer.Write(msg)
-				state.mu.Unlock()
-				select {
-				case newAudio <- struct{}{}:
-				default:
-				}
-			case websocket.MessageText:
-				var ctl sttWSControl
-				if json.Unmarshal(msg, &ctl) == nil && ctl.Type == sttWSEndCtl {
-					state.mu.Lock()
-					state.done = true
-					state.mu.Unlock()
-					readErr <- nil
-					return
-				}
+			if rerr = handleSTTWSMessage(state, newAudio, conn, mt, msg); rerr != nil {
+				readErr <- rerr
+				return
 			}
 		}
 	}()
@@ -260,6 +214,77 @@ func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 	msg := sttWSServerMsg{Type: sttWSDone, Final: finalText}
 	data, _ := json.Marshal(msg)
 	_ = writeSTTWSText(conn, data)
+}
+
+// streamIncrementalChunk transcribes the newly-appended audio segment and
+// sends the incremental text. It returns (stop, abort): stop=true when the
+// stream has finished and the goroutine should exit cleanly; abort=true when a
+// write error occurred and the whole connection should be cancelled.
+func streamIncrementalChunk(ctx context.Context, state *sttStreamState, provider stt.STTProvider, conn *websocket.Conn, language string) (bool, bool) {
+	state.mu.Lock()
+	done := state.done
+	start := state.offset
+	seg := append([]byte(nil), state.buffer.Bytes()[start:]...)
+	state.offset = state.buffer.Len()
+	state.mu.Unlock()
+
+	if done || len(seg) == 0 {
+		return true, false
+	}
+
+	text, terr := provider.Transcribe(ctx, bytes.NewReader(seg), language)
+	if terr != nil {
+		slog.Debug("stt ws: incremental transcribe failed", slog.String("error", terr.Error()))
+		return false, false
+	}
+	if text == "" {
+		return false, false
+	}
+	msg := sttWSServerMsg{Type: sttWSText, Text: text}
+	data, _ := json.Marshal(msg)
+
+	state.mu.Lock()
+	doneNow := state.done
+	state.mu.Unlock()
+	if doneNow {
+		return false, false
+	}
+
+	if err := writeSTTWSText(conn, data); err != nil {
+		return false, true
+	}
+	return false, false
+}
+
+// handleSTTWSMessage processes a single STT WebSocket frame. Binary frames
+// append audio to the streaming buffer (bounded); a text "end" control frame
+// marks the stream done. Returns a non-nil error to terminate the read loop.
+func handleSTTWSMessage(state *sttStreamState, newAudio chan struct{}, conn *websocket.Conn, mt websocket.MessageType, msg []byte) error {
+	switch mt {
+	case websocket.MessageBinary:
+		state.mu.Lock()
+		if state.buffer.Len()+len(msg) > sttWSMaxAudioBytes {
+			state.mu.Unlock()
+			errData, _ := json.Marshal(sttWSServerMsg{Type: sttWSError})
+			_ = writeSTTWSText(conn, errData)
+			return errors.New("stt ws: audio exceeds limit")
+		}
+		state.buffer.Write(msg)
+		state.mu.Unlock()
+		select {
+		case newAudio <- struct{}{}:
+		default:
+		}
+	case websocket.MessageText:
+		var ctl sttWSControl
+		if json.Unmarshal(msg, &ctl) == nil && ctl.Type == sttWSEndCtl {
+			state.mu.Lock()
+			state.done = true
+			state.mu.Unlock()
+			return errSTTWSEnd
+		}
+	}
+	return nil
 }
 
 // writeSTTWSText sends a text message to the client with a write timeout.
