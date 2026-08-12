@@ -640,22 +640,26 @@ func askQuestionText(blocks []model.ContentBlock) string {
 	return b.String()
 }
 
-// quickCommandList returns the quick-send commands available for a project,
-// formatted as "label: command" for the recommendation prompt.
+// quickCommandList returns the quick-send command bodies available for a
+// project, so the recommendation can suggest the actual command to run.
 func quickCommandList(projectPath string) []string {
 	items, err := GetChatQuickSend(projectPath)
 	if err != nil {
 		slog.Debug("chat recommendation: failed to load quick commands", slog.String("project", projectPath), slog.String("err", err.Error()))
 		return nil
 	}
+	return quickCommandDetails(items)
+}
+
+// quickCommandDetails extracts just the command body from each item, omitting
+// the label, so the recommendation recommends the command itself rather than
+// its title.
+func quickCommandDetails(items []ChatQuickSendItem) []string {
 	commands := make([]string, 0, len(items))
 	for _, it := range items {
-		label := strings.TrimSpace(it.Label)
-		cmd := strings.TrimSpace(it.Command)
-		if label == "" && cmd == "" {
-			continue
+		if cmd := strings.TrimSpace(it.Command); cmd != "" {
+			commands = append(commands, cmd)
 		}
-		commands = append(commands, label+": "+cmd)
 	}
 	return commands
 }

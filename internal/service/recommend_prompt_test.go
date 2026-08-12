@@ -52,3 +52,23 @@ func TestAssistantConclusion_PlainText(t *testing.T) {
 		t.Fatalf("expected pass-through, got: %q", out)
 	}
 }
+
+// TestQuickCommandDetails_OmitsLabel verifies only the command body is injected
+// (no "label: " prefix), so the recommendation recommends the actual command.
+func TestQuickCommandDetails_OmitsLabel(t *testing.T) {
+	items := []ChatQuickSendItem{
+		{Label: "生成测试", Command: "run tests"},
+		{Label: "", Command: "  run lint  "},
+		{Label: "空命令", Command: "   "},
+	}
+	out := quickCommandDetails(items)
+	want := []string{"run tests", "run lint"}
+	if len(out) != len(want) {
+		t.Fatalf("expected %d commands, got %d: %v", len(want), len(out), out)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Fatalf("command[%d] = %q, want %q", i, out[i], want[i])
+		}
+	}
+}
