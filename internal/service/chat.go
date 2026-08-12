@@ -835,6 +835,74 @@ func GetSessionCount(projectPath string) (int, error) {
 	return count, err
 }
 
+// NextSessionNumber atomically allocates the next auto-title number for a
+// project's chat sessions and returns it (1, 2, 3, ...).
+//
+// The returned number is the larger of (a) the persisted per-project monotonic
+// counter and (b) the current active session count, plus one. Two properties
+// follow:
+//
+//   - Monotonic: the counter only ever increases and is independent of the
+//     active count, so archiving/deleting a session never makes a later
+//     auto-titled session reuse an earlier number (no duplicate "新会话 N").
+//   - Unified across agents: the counter is per-project, not per-backend, so
+//     switching agents does not reset the numbering.
+//
+// Taking the max with the active count also keeps explicitly-named sessions
+// (created via CreateSession with a real title) counted, matching the legacy
+// "New Session N" numbering where N reflected how many sessions existed.
+func NextSessionNumber(projectPath string) (int, error) {
+	tx, err := WriteBegin()
+	if err != nil {
+		return 0, err
+	}
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+
+	// Ensure a row exists so the UPDATE below is reliable. Not a data race:
+	// writeMu is held for the whole transaction.
+	if _, err := tx.Exec(
+		"INSERT INTO project_meta (project_path, next_session_number) VALUES (?, 0) ON CONFLICT(project_path) DO NOTHING",
+		projectPath,
+	); err != nil {
+		return 0, err
+	}
+
+	var counter int
+	if err := tx.QueryRow(
+		"SELECT next_session_number FROM project_meta WHERE project_path = ?",
+		projectPath,
+	).Scan(&counter); err != nil {
+		return 0, err
+	}
+
+	var activeCount int
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'",
+		projectPath,
+	).Scan(&activeCount); err != nil {
+		return 0, err
+	}
+
+	next := counter
+	if activeCount > next {
+		next = activeCount
+	}
+	next++
+
+	if _, err := tx.Exec(
+		"UPDATE project_meta SET next_session_number = ?, updated_at = CURRENT_TIMESTAMP WHERE project_path = ?",
+		next, projectPath,
+	); err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return next, nil
+}
+
 // RecentSession is a lightweight listing row used by session search's "browse
 // all" mode (empty query): every chat session for the project, newest first,
 // including archived ones that can still be resumed/restored. First* fields

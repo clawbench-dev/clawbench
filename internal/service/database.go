@@ -244,6 +244,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			is_default INTEGER NOT NULL DEFAULT 0
 		);
+		CREATE TABLE IF NOT EXISTS project_meta (
+			project_path TEXT PRIMARY KEY,
+			next_session_number INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_path TEXT NOT NULL,

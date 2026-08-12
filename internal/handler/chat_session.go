@@ -122,13 +122,16 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		}
 		title := req.Title
 		if title == "" {
-			// Numbering is unified across agents per project — count all chat
-			// sessions regardless of backend so switching agents does not
-			// reset the counter (e.g. two claude sessions then a codebuddy
-			// session should be "New Session 3", not "New Session 1").
-			existingSessions, err := service.GetSessions(projectPath, "")
+			// Numbering is unified across agents per project and monotonic, so
+			// switching agents does not reset the counter (e.g. two claude
+			// sessions then a codebuddy session should be "New Session 3", not
+			// "New Session 1"). The counter is persisted per project rather than
+			// derived from the active session count, so archiving/deleting
+			// sessions never causes a later session to reuse an earlier number
+			// (which previously produced duplicate "新会话 N" titles).
+			n, err := service.NextSessionNumber(projectPath)
 			if err == nil {
-				title = T(r, "NewSessionN", map[string]any{"N": len(existingSessions) + 1})
+				title = T(r, "NewSessionN", map[string]any{"N": n})
 			} else {
 				title = T(r, "NewSession")
 			}

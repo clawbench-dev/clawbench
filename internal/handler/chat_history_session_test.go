@@ -603,6 +603,41 @@ func TestServeSessions_Post_AutoTitle(t *testing.T) {
 	assert.NotEmpty(t, result["title"])
 }
 
+func TestServeSessions_Post_AutoTitle_NoDuplicateAfterArchive(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	newSessionTitle := func() string {
+		req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{
+			"backend": "claude",
+		})
+		req = withProjectCookie(req, env.ProjectDir)
+		w := callHandler(ServeSessions, req)
+		assertOK(t, w)
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		return result["title"].(string)
+	}
+
+	first := newSessionTitle()
+	assert.NotEmpty(t, first)
+
+	// Archive the first session — it drops out of the active session count.
+	sessions, err := service.GetSessions(env.ProjectDir, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessions[0].ID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ArchiveSession, req)
+	assertOK(t, w)
+
+	second := newSessionTitle()
+	assert.NotEmpty(t, second)
+	// Regression: the old count-based numbering would have produced the same
+	// title again ("新会话 1"), creating a duplicate.
+	assert.NotEqual(t, first, second, "auto-titles must never collide after archiving a session")
+}
+
 func TestServeSessions_Post_LimitExceeded(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

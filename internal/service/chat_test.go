@@ -59,6 +59,12 @@ CREATE TABLE IF NOT EXISTS recent_projects (
 	accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	is_default INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS project_meta (
+	project_path TEXT PRIMARY KEY,
+	next_session_number INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_path TEXT NOT NULL,
@@ -660,6 +666,51 @@ func TestArchiveSession_DeletedSessionNotInGetSessions(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.NotEqual(t, archivedSID, sessions[0].ID)
+}
+
+// ---------- NextSessionNumber ----------
+
+func TestNextSessionNumber_MonotonicAcrossBackends(t *testing.T) {
+	setupDB(t)
+
+	n1, err := service.NextSessionNumber("/proj")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, n1)
+
+	// Different backend must NOT reset the counter — numbering is per-project.
+	n2, err := service.NextSessionNumber("/proj")
+	assert.NoError(t, err)
+	assert.Equal(t, 2, n2)
+
+	// A different project has its own independent counter.
+	m1, err := service.NextSessionNumber("/other")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, m1)
+
+	n3, err := service.NextSessionNumber("/proj")
+	assert.NoError(t, err)
+	assert.Equal(t, 3, n3)
+}
+
+func TestNextSessionNumber_DoesNotReuseNumberAfterArchive(t *testing.T) {
+	setupDB(t)
+
+	// Root cause regression: numbering used len(current sessions)+1, which
+	// dropped after archiving and caused duplicate "新会话 N" titles.
+	n1, err := service.NextSessionNumber("/proj")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, n1)
+
+	sid := helperCreateSession(t, "/proj", "claude", "New Session 1")
+
+	err = service.ArchiveSession("/proj", "claude", sid)
+	assert.NoError(t, err)
+
+	// Even though there are now zero active sessions, the next number must be
+	// 2, not 1, so auto-titles never collide.
+	n2, err := service.NextSessionNumber("/proj")
+	assert.NoError(t, err)
+	assert.Equal(t, 2, n2)
 }
 
 // ---------- GetSessions ----------
