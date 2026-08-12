@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -726,9 +727,10 @@ func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
 
 	// Filter out ACP sessions that already exist in ClawBench's session manager.
 	// Each loaded ACP session has source_session_id = "acp:{acpSessionId}".
-	// Active sessions: user already has this conversation — don't show it.
-	// Archived sessions: will be hard-deleted and recreated on load,
-	// so also don't show them to avoid confusion.
+	// The @resume drawer shows only "native" ACP sessions — sessions the user has
+	// not yet loaded into ClawBench. Sessions that already exist locally (active
+	// or archived) are excluded so the user resumes them from the local session
+	// list instead of re-loading from the agent.
 	if len(sessions) > 0 {
 		acpSessionIDs := make([]string, len(sessions))
 		for i, s := range sessions {
@@ -737,7 +739,7 @@ func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
 		existingACP := findExistingACPSessions(acpSessionIDs)
 		filtered := make([]acp.SessionInfo, 0, len(sessions))
 		for _, s := range sessions {
-			if !existingACP["acp:"+string(s.SessionId)] {
+			if !existingACP[string(s.SessionId)] {
 				filtered = append(filtered, s)
 			}
 		}
@@ -749,31 +751,44 @@ func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
 		"nextCursor": nextCursor,
 	})
 }
-
-// findExistingACPSessions returns a set of source_session_id values
-// (formatted as "acp:{acpSessionId}") for ACP sessions that already
-// exist in ClawBench's session manager (active or archived).
-// This is used to filter out already-loaded sessions from the ACP
-// session list displayed in the @resume drawer.
+// findExistingACPSessions returns a set of ACP session IDs that already
+// exist in ClawBench's session manager (active or archived). These are the
+// ACP sessions the user has already loaded/used, so they are filtered out of
+// the @resume drawer's "native" list.
+//
+// A session can be matched to an ACP session id in two ways:
+//   - source_session_id = "acp:{acpSessionId}" — set when a session is created
+//     via ACP load/resume.
+//   - external_session_id = "{acpSessionId}" — the raw session id reported by
+//     the backend (e.g. opencode's "ses_..."), captured on every run.
+//
+// Matching both covers sessions created through either path.
 func findExistingACPSessions(acpSessionIDs []string) map[string]bool {
 	if len(acpSessionIDs) == 0 {
 		return nil
 	}
-	// Build IN clause placeholders
-	placeholders := ""
-	sourceIDs := make([]any, len(acpSessionIDs))
-	for i, sid := range acpSessionIDs {
-		if i > 0 {
-			placeholders += ","
+	// Build IN clause placeholders (each id appears twice: prefixed and raw).
+	ph := ""
+	vals := make([]any, 0, len(acpSessionIDs)*2)
+	for _, sid := range acpSessionIDs {
+		if ph != "" {
+			ph += ","
 		}
-		placeholders += "?"
-		sourceIDs[i] = "acp:" + sid
+		ph += "?,?"
+		vals = append(vals, "acp:"+sid, sid)
 	}
 
 	result := make(map[string]bool)
+
+	// Four placeholders per id total (2 per IN clause). Build the arg slice
+	// with explicit capacity to avoid overlapping-append aliasing.
+	args := make([]any, 0, len(vals)*2)
+	args = append(args, vals...)
+	args = append(args, vals...)
+
 	rows, err := service.ReadDB().Query( // background DB query, no request context available in this helper
-		"SELECT source_session_id FROM chat_sessions WHERE source_session_id IN ("+placeholders+")",
-		sourceIDs...,
+		"SELECT source_session_id, external_session_id FROM chat_sessions WHERE source_session_id IN ("+ph+") OR external_session_id IN ("+ph+")",
+		args...,
 	)
 	if err != nil {
 		slog.Warn("handler: failed to query existing ACP sessions for filtering", "error", err)
@@ -782,9 +797,18 @@ func findExistingACPSessions(acpSessionIDs []string) map[string]bool {
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		var sourceID string
-		if err := rows.Scan(&sourceID); err == nil {
-			result[sourceID] = true
+		var sourceID, extID sql.NullString
+		if err := rows.Scan(&sourceID, &extID); err == nil {
+			// Mark each returned ACP id as existing if its "acp:"-prefixed
+			// source id or its raw external id matches.
+			for _, sid := range acpSessionIDs {
+				if sourceID.Valid && sourceID.String == "acp:"+sid {
+					result[sid] = true
+				}
+				if extID.Valid && extID.String == sid {
+					result[sid] = true
+				}
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {

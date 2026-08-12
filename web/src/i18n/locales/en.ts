@@ -172,6 +172,8 @@ export default {
       hoursAgo: '{n}h ago',
       daysAgo: '{n}d ago',
       resuming: 'Resuming session...',
+      searchPlaceholder: 'Search sessions...',
+      noResults: 'No matching sessions',
     },
     actions: {
       session: 'Chat',
@@ -548,6 +550,7 @@ export default {
     archived: 'Archived',
     modeHybrid: 'Hybrid',
     modeFts: 'Full-text',
+    loadExternalSession: 'External Session',
   },
   task: {
     title: 'Scheduled tasks',

@@ -224,8 +224,24 @@ func TestFindExistingACPSessions_FindsActiveSession(t *testing.T) {
 	require.NoError(t, err)
 
 	result := findExistingACPSessions([]string{"test-acp-123", "test-acp-456"})
-	assert.True(t, result["acp:test-acp-123"], "should find existing session for test-acp-123")
-	assert.False(t, result["acp:test-acp-456"], "should not find session for test-acp-456")
+	assert.True(t, result["test-acp-123"], "should find existing session for test-acp-123")
+	assert.False(t, result["test-acp-456"], "should not find session for test-acp-456")
+}
+
+func TestFindExistingACPSessions_FindsExternalSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A session whose raw backend session id is stored in external_session_id
+	// (the common case for opencode ses_... ids) — no acp: prefix.
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, external_session_id) VALUES (?, ?, 'opencode', 'Native', ?)",
+		"cb-ext-1", env.ProjectDir, "ses_00c202c74ffeZdhwsMNwtbwPm5",
+	)
+	require.NoError(t, err)
+
+	result := findExistingACPSessions([]string{"ses_00c202c74ffeZdhwsMNwtbwPm5"})
+	assert.True(t, result["ses_00c202c74ffeZdhwsMNwtbwPm5"], "should find session via external_session_id")
 }
 
 func TestFindExistingACPSessions_FindsArchivedSession(t *testing.T) {
@@ -240,7 +256,7 @@ func TestFindExistingACPSessions_FindsArchivedSession(t *testing.T) {
 	require.NoError(t, err)
 
 	result := findExistingACPSessions([]string{"archived-acp-123"})
-	assert.True(t, result["acp:archived-acp-123"], "should find archived session")
+	assert.True(t, result["archived-acp-123"], "should find archived session")
 }
 
 func TestFindExistingACPSessions_EmptyInput(t *testing.T) {
@@ -703,6 +719,59 @@ func TestServeACPSessions_FilterExistingSessions(t *testing.T) {
 	sessions, ok := resp["sessions"].([]any)
 	require.True(t, ok, "sessions should be an array")
 	assert.Len(t, sessions, 1, "existing ACP session should be filtered out")
+}
+
+func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agentID := "acp-list-filter-ext"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Backend: "opencode", Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+
+	// A session whose raw backend id (e.g. opencode ses_...) is stored only in
+	// external_session_id — source_session_id stays NULL (the common case).
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, external_session_id, session_type) VALUES (?, ?, 'opencode', 'Native', ?, 'chat')",
+		"cb-ext-1", env.ProjectDir, "ses_00c202c74ffeZdhwsMNwtbwPm5",
+	)
+	require.NoError(t, err)
+
+	mgr := ai.GetACPConnManager()
+	connKey := "__list_sessions__:" + agentID
+	agent := model.Agents[agentID]
+	conn := newACPConnForHandlerTest(agent, connKey)
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest(connKey, "acp-sid-filter-ext")
+	conn.SetListSessionsFnForTest(func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
+		return []acp.SessionInfo{
+			{SessionId: "ses_00c202c74ffeZdhwsMNwtbwPm5", Title: stringPtr("Already loaded")},
+			{SessionId: "ses_00otherNativeId1234567890", Title: stringPtr("New native")},
+		}, nil, nil
+	})
+	mgr.SetConnForTest(connKey, conn)
+	defer mgr.CloseConn(connKey)
+
+	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPSessions(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err = json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	sessions, ok := resp["sessions"].([]any)
+	require.True(t, ok, "sessions should be an array")
+	require.Len(t, sessions, 1, "session matching external_session_id should be filtered out")
+	first := sessions[0].(map[string]any)
+	assert.Equal(t, "ses_00otherNativeId1234567890", first["sessionId"])
 }
 
 // --- ServeACPLoadSession: replay path tests ---

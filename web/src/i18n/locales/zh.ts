@@ -172,6 +172,8 @@ export default {
       hoursAgo: '{n}小时前',
       daysAgo: '{n}天前',
       resuming: '正在恢复会话...',
+      searchPlaceholder: '搜索会话...',
+      noResults: '无匹配会话',
     },
     actions: {
       session: '会话',
@@ -548,6 +550,7 @@ export default {
     archived: '已归档',
     modeHybrid: '混合',
     modeFts: '全文',
+    loadExternalSession: '外部会话',
   },
   task: {
     title: '定时任务',

@@ -233,7 +233,6 @@
                     @open="switchTab('chat')"
                     @open-file="handleSelectFile"
                     @task-card-click="onTaskCardClick"
-                    @open-acp-sessions="acpSessionDrawer.open()"
                     @open-session-search="sessionSearchDrawer.open()"
                   />
                 </TabPanel>
@@ -293,6 +292,7 @@
         @close="sessionSearchDrawer.close()"
         @open="handleOpenFromSearch"
         @resume="handleResumeFromSearch"
+        @open-acp-sessions="handleOpenAcpSessionsFromSearch"
       />
 
       <!-- ACP session resume drawer -->
@@ -1028,6 +1028,11 @@ async function handleResumeFromSearch(session) {
 async function handleAcpSessionSelect(sessionId) {
   await sessionIdentity.switchSession(sessionId)
   acpSessionDrawer.close()
+}
+
+function handleOpenAcpSessionsFromSearch() {
+  sessionSearchDrawer.close()
+  acpSessionDrawer.open()
 }
 
 /** Register global DOM event listeners (idempotent — safe to call multiple times). */

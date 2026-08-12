@@ -27,11 +27,6 @@
           :title="t('chat.actions.userMsgIndex')">
           <MessagesSquare :size="14" />
         </button>
-        <button v-if="showResumeBtn" class="chat-action-btn"
-          @click="$emit('open-acp-sessions')"
-          :title="t('chat.acpSession.title')">
-          <RotateCcw :size="14" />
-        </button>
         <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
           @click="handleArchive"
           :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
@@ -268,7 +263,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, RotateCcw, Minimize2, Sparkles } from 'lucide-vue-next'
+import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, Minimize2, Sparkles } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -293,7 +288,7 @@ import { apiGet } from '@/utils/api'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency } = useSessionIdentity()
-const { supportsACP, hasPreferredMode, agentCanResume } = useAgents()
+const { supportsACP, hasPreferredMode } = useAgents()
 const toast = useToast()
 const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 
@@ -311,7 +306,6 @@ const isACPTransport = computed(() => {
 })
 
 const showModeInfo = computed(() => isACP.value && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
-const showResumeBtn = computed(() => isACPTransport.value && !!props.currentAgentId && agentCanResume(props.currentAgentId))
 
 function onModeClick() {
   if (modeMouseLongFired) {
@@ -455,7 +449,6 @@ const emit = defineEmits([
   'archive-session',
   'destroy-session',
   'open-user-msg-index',
-  'open-acp-sessions',
   'switch-model',
   'switch-thinking-effort',
   'switch-mode',

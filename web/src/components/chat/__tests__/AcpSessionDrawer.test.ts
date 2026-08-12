@@ -50,8 +50,12 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
-    getAgentName: (id: string) => id,
+    getAgentBackend: () => 'claude',
   }),
+}))
+
+vi.mock('@/utils/backendNames', () => ({
+  getBackendDisplayName: (id: string) => (id === 'claude' ? 'Claude' : id),
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -59,8 +63,7 @@ vi.mock('vue-i18n', () => ({
 }))
 
 vi.mock('lucide-vue-next', () => ({
-  History: { name: 'HistoryIcon', render: () => null },
-  RotateCw: { name: 'RotateCwIcon', render: () => null },
+  Import: { name: 'ImportIcon', render: () => null },
   Loader2: { name: 'Loader2Icon', render: () => null },
 }))
 
@@ -78,6 +81,23 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
           <div class="bs-footer"><slot name="footer" /></div>
         </div>
       </div>`,
+  }),
+}))
+
+vi.mock('@/components/common/AgentIcon.vue', () => ({
+  default: defineComponent({
+    name: 'AgentIcon',
+    props: { backend: String, name: String, size: Number },
+    template: '<span class="agent-icon" />',
+  }),
+}))
+
+vi.mock('@/components/common/SearchInput.vue', () => ({
+  default: defineComponent({
+    name: 'SearchInput',
+    props: { modelValue: String, placeholder: String },
+    emits: ['update:modelValue'],
+    template: '<input class="search-input-stub" :value="modelValue" />',
   }),
 }))
 

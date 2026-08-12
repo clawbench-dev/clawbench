@@ -5,6 +5,10 @@
       <template v-if="!selectedSession">
         <Search :size="16" class="bs-header-icon" />
         <span class="bs-header-title">{{ t('sessionSearch.title') }}</span>
+        <button class="acp-resume-header-btn" @click.stop="emit('open-acp-sessions')" :title="t('sessionSearch.loadExternalSession')">
+          <Import :size="13" />
+          <span>{{ t('sessionSearch.loadExternalSession') }}</span>
+        </button>
       </template>
       <!-- Drilldown detail view -->
       <template v-else>
@@ -92,7 +96,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUpdate, onBeforeUnmount, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, ChevronLeft, User, Bot, RotateCcw, MessageSquare } from 'lucide-vue-next'
+import { Search, ChevronLeft, User, Bot, RotateCcw, Import, MessageSquare } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import { useSessionSearch, type SessionSearchResult } from '@/composables/useSessionSearch'
@@ -107,7 +111,7 @@ import { formatRelativeTime } from '@/utils/format'
 const { t } = useI18n()
 
 const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ close: []; resume: [session: SessionSearchResult]; open: [session: SessionSearchResult] }>()
+const emit = defineEmits<{ close: []; resume: [session: SessionSearchResult]; open: [session: SessionSearchResult]; 'open-acp-sessions': [] }>()
 
 const { state: searchState, setQuery, browse, clear } = useSessionSearch()
 const search = { state: searchState, setQuery, browse, clear }
@@ -528,6 +532,30 @@ defineExpose({ focusSearchInput })
 
 .detail-back-btn:hover {
   background: rgba(0, 102, 204, 0.1);
+}
+
+/* ACP "load external session" button — right side of the search header */
+.acp-resume-header-btn {
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  background: none;
+  color: var(--text-secondary, #495057);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s;
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.acp-resume-header-btn:hover {
+  background: rgba(0, 102, 204, 0.1);
+  color: var(--accent-color, #4a90d9);
 }
 
 /* Higher specificity than .bs-header-title so flex:1 reliably wins, keeping the

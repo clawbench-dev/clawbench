@@ -103,7 +103,6 @@
       @archive-session="() => manager.archiveCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @destroy-session="() => manager.destroyCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @open-user-msg-index="handleOpenUserMsgIndex"
-      @open-acp-sessions="$emit('open-acp-sessions')"
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
@@ -213,7 +212,7 @@ const props = defineProps({
     currentFile: Object,
     currentDir: String,
 })
-const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click', 'open-acp-sessions', 'open-session-search'])
+const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click', 'open-session-search'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()

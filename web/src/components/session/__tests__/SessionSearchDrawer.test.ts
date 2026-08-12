@@ -136,6 +136,14 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.session-search-body').exists()).toBe(true)
   })
 
+  it('emits open-acp-sessions when the ACP resume button is clicked', async () => {
+    const wrapper = mountDrawer()
+    const btn = wrapper.find('.acp-resume-header-btn')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    expect(wrapper.emitted('open-acp-sessions')).toBeTruthy()
+  })
+
   it('lists browsed sessions when query is empty', () => {
     mockSearchState.mockReturnValue(createState({ query: '', results: [sampleResult], total: 1 }))
     const wrapper = mountDrawer()
