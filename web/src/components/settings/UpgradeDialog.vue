@@ -25,6 +25,17 @@
           <span class="ug-ver-latest">{{ state.latest_version }}</span>
         </div>
 
+        <!-- Release notes link -->
+        <a
+          v-if="!checking && !isInProgress && !isCompleted && !isFailed && hasUpgrade && releaseNotesUrl"
+          class="ug-release-link"
+          :href="releaseNotesUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {{ t('upgrade.releaseNotes', { version: state.latest_version }) }}
+        </a>
+
         <!-- No upgrade available -->
         <div v-if="!checking && !isInProgress && !isCompleted && !isFailed && !hasUpgrade && state.latest_version" class="ug-no-upgrade">
           <p>{{ t('upgrade.alreadyLatest') }}</p>
@@ -78,7 +89,7 @@ let unregisterBack: (() => void) | null = null
 defineExpose({ show })
 
 const { t } = useI18n()
-const { state, checking, hasUpgrade, isInProgress, isRestarting, isCompleted, isFailed, checkUpgrade, startUpgrade } = useUpgrade()
+const { state, checking, hasUpgrade, isInProgress, isRestarting, isCompleted, isFailed, checkUpgrade, startUpgrade, releaseNotesUrl } = useUpgrade()
 
 /** Show the dialog and check for upgrades */
 function show() {
@@ -191,6 +202,21 @@ watch(visible, (v) => {
 .ug-ver-current { color: var(--text-secondary); }
 .ug-arrow { color: var(--text-muted); }
 .ug-ver-latest { color: var(--accent-color); font-weight: 600; }
+
+.ug-release-link {
+  display: block;
+  text-align: center;
+  margin: 0 16px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent-color);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ug-release-link:hover {
+  text-decoration: underline;
+}
 
 .ug-progress-area {
   padding: 20px 16px;
