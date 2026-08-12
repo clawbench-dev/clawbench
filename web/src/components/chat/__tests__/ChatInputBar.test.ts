@@ -5,7 +5,6 @@ import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
-import { apiGet } from '@/utils/api'
 
 vi.mock('@/utils/api', () => ({
   apiGet: vi.fn().mockResolvedValue(undefined),
@@ -1326,8 +1325,12 @@ describe('ChatInputBar', () => {
     window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 's1', recommendation } }))
   }
 
+  // A conversation ending on an assistant reply — the precondition for showing
+  // the recommendation banner.
+  const ASSISTANT_LAST_MSG = [{ role: 'assistant', content: 'done' }]
+
   it('shows the recommendation chip without modifying empty input', async () => {
-    const wrapper = mountBar({ currentSessionId: 's1' })
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('')
     dispatchRecommendation('继续实现功能')
@@ -1340,7 +1343,7 @@ describe('ChatInputBar', () => {
   })
 
   it('shows the recommendation chip with existing input preserved', async () => {
-    const wrapper = mountBar({ currentSessionId: 's1' })
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
     wrapper.vm.inputText = 'existing draft'
     await wrapper.vm.$nextTick()
     dispatchRecommendation('下一步建议')
@@ -1353,7 +1356,7 @@ describe('ChatInputBar', () => {
   })
 
   it('ignores a recommendation belonging to a different session', async () => {
-    const wrapper = mountBar({ currentSessionId: 's1' })
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
     await wrapper.vm.$nextTick()
     // A background session finishes a reply → its recommendation is dispatched
     // globally, but must not surface while the active session is s1.
@@ -1385,7 +1388,7 @@ describe('ChatInputBar', () => {
   })
 
   it('fills the input when the recommendation is accepted', async () => {
-    const wrapper = mountBar({ currentSessionId: 's1' })
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
     wrapper.vm.inputText = 'existing draft'
     await wrapper.vm.$nextTick()
     dispatchRecommendation('采纳的建议')
@@ -1407,21 +1410,20 @@ describe('ChatInputBar', () => {
     wrapper.unmount()
   })
 
-  it('does not show a stale recommendation for a session that is still streaming', async () => {
-    const wrapper = mountBar({ loading: true })
+  it('does not surface a recommendation while the session is streaming', async () => {
+    const wrapper = mountBar({ loading: true, currentSessionId: 's1' })
     await wrapper.vm.$nextTick()
-    vi.mocked(apiGet).mockResolvedValue({ recommendation: 'stale suggestion' })
-    await wrapper.vm.fetchLatestRecommendation('s1')
+    dispatchRecommendation('stale suggestion')
     await wrapper.vm.$nextTick()
     // While the assistant is still outputting, the previous reply's
-    // recommendation must not surface.
-    expect(wrapper.vm.recommendation).toBe('')
+    // recommendation must not be surfaced (the banner is gated on loading).
+    expect(wrapper.vm.recommendation).toBe('stale suggestion')
     expect(wrapper.vm.showRecommendationChip).toBe(false)
     wrapper.unmount()
   })
 
   it('clears the recommendation chip via clearRecommendation (used when streaming starts)', async () => {
-    const wrapper = mountBar({ loading: false, currentSessionId: 's1' })
+    const wrapper = mountBar({ loading: false, currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
     await wrapper.vm.$nextTick()
     dispatchRecommendation('显示的建议')
     await wrapper.vm.$nextTick()

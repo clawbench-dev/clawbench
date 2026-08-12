@@ -288,6 +288,7 @@ import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useVoiceInput } from '@/composables/useVoiceInput'
+import { useChatRecommendation } from '@/composables/useChatRecommendation'
 import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 
@@ -465,59 +466,42 @@ const emit = defineEmits([
 const inputText = ref('')
 
 // ── Conversation recommendation (对话推荐) ───────────────
-// The server emits a chat_recommendation WS event after each assistant reply.
-// Every recommendation is surfaced through a dismissible chip (regardless of
-// whether the input already has text) that fills the input on tap.
-const recommendation = ref('')
-const showRecommendationChip = ref(false)
+// Recommendation state is bound per session via useChatRecommendation: the
+// displayed value is derived from the currently active session's slot, so a
+// recommendation from another session can never leak into the active view.
+const rec = useChatRecommendation({
+  activeSessionId: () => props.currentSessionId || undefined,
+  loading: () => props.loading,
+  isLastMessageAssistant: () => {
+    const msgs = props.messages || []
+    const last = msgs[msgs.length - 1]
+    return !!last && last.role === 'assistant'
+  },
+  fetchRemote: async (sessionId) => {
+    const data = await apiGet(`/api/chat/recommendation?session_id=${encodeURIComponent(sessionId)}`)
+    return data?.recommendation || ''
+  },
+})
+const { current: recommendation, show: showRecommendationChip } = rec
 
 function onRecommendationEvent(evt) {
   const detail = evt.detail || {}
-  const text = detail.recommendation
-  if (!text || !text.trim()) return
-  // The chat_recommendation WS event is broadcast for every session (e.g. a
-  // background session finishing a reply). Only surface a recommendation that
-  // belongs to the currently active conversation.
-  if (detail.session_id && detail.session_id !== props.currentSessionId) return
-  recommendation.value = text.trim()
-  showRecommendationChip.value = true
-}
-
-async function fetchLatestRecommendation(sessionId) {
-  if (!sessionId) return
-  // While the assistant is still outputting, the persisted recommendation belongs
-  // to the previous reply and would be stale — don't surface it.
-  if (props.loading) return
-  // Only surface a recommendation when the conversation is sitting on an
-  // assistant reply. After the user sends a new message the last message is a
-  // user message, so the previous recommendation is stale — don't show it.
-  const msgs = props.messages || []
-  const last = msgs[msgs.length - 1]
-  if (!last || last.role !== 'assistant') return
-  try {
-    const data = await apiGet(`/api/chat/recommendation?session_id=${encodeURIComponent(sessionId)}`)
-    const text = data?.recommendation
-    if (!text || !text.trim()) return
-    onRecommendationEvent({ detail: { session_id: sessionId, recommendation: text } })
-  } catch (err) {
-    appLog.d('ChatInputBar', 'fetch latest recommendation failed', err)
-  }
+  rec.upsert(detail.session_id, detail.recommendation)
 }
 
 function acceptRecommendation() {
-  if (!recommendation.value) return
-  inputText.value = recommendation.value
-  showRecommendationChip.value = false
+  const text = rec.accept()
+  if (text) inputText.value = text
 }
 
 function dismissRecommendation() {
-  clearRecommendation()
+  rec.dismiss()
 }
 
 // Clear any currently surfaced recommendation (chip + stored text).
 function clearRecommendation() {
-  recommendation.value = ''
-  showRecommendationChip.value = false
+  const id = props.currentSessionId
+  if (id) rec.invalidate(id)
 }
 
 // ── Voice input (ASR) ───────────────────────────────
@@ -791,11 +775,11 @@ watch(() => props.currentSessionId, (newId, oldId) => {
   // autoResizeTextarea is called automatically by the inputText watcher
 })
 
-// On session switch, fetch the latest persisted conversation recommendation
-// (对话推荐) so a recommendation generated while the client was offline can
-// still be shown. Reuses the same onRecommendationEvent handler as live events.
+// On session switch, restore the persisted recommendation for that session into
+// its own slot (immediate if already cached, otherwise fetched) — the displayed
+// value is derived from the active session's slot, so no cross-session leakage.
 watch(() => props.currentSessionId, (newId) => {
-  if (newId) fetchLatestRecommendation(newId)
+  if (newId) rec.ensureFetched(newId)
 })
 
 const quoteItems = computed(() => props.quotes.length > 0
@@ -803,9 +787,10 @@ const quoteItems = computed(() => props.quotes.length > 0
   : props.quoteData ? [props.quoteData] : [])
 
 // When a new assistant message starts streaming, any previously surfaced
-// recommendation belongs to the last completed reply and is stale — hide it.
+// recommendation belongs to the last completed reply and is stale — invalidate
+// the active session's slot so the in-flight value can't be reused.
 watch(() => props.loading, (val) => {
-  if (val) clearRecommendation()
+  if (val && props.currentSessionId) rec.invalidate(props.currentSessionId)
 })
 
 const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || quoteItems.value.length > 0)
@@ -1754,13 +1739,13 @@ defineExpose({
   padding: 0;
 }
 
-/* Conversation recommendation chip (对话推荐) */
+/* Conversation recommendation banner (对话推荐) — rendered above the input box */
 .recommendation-chip {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 4px 6px;
-  padding: 6px 8px;
+  margin: 0 0 6px;
+  padding: 6px 10px;
   border-radius: 10px;
   background: var(--color-accent-soft, rgba(88, 120, 255, 0.12));
   border: 1px solid rgba(88, 120, 255, 0.35);
