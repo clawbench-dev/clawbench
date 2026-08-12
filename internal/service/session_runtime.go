@@ -660,41 +660,31 @@ func quickCommandList(projectPath string) []string {
 	return commands
 }
 
-// projectContextFiles are the project instruction files loaded (in order) as
+// projectContextFiles are the project context files loaded (in order) as
 // stable recommendation context. Their content rarely changes, so it forms a
 // good prompt-cacheable prefix.
-var projectContextFiles = []string{"AGENTS.md", "CLAUDE.md", "CODEBUDDY.md", "GEMINI.md"}
+var projectContextFiles = []string{"AGENTS.md", "CLAUDE.md", "CODEBUDDY.md", "GEMINI.md", "README.md"}
 
-// projectContextFallbackFile is used only when none of the dedicated instruction
-// files above exist, so the recommendation still has minimal project awareness.
-const projectContextFallbackFile = "README.md"
-
-// projectContextMaxBytes caps how much of each file is injected, so a very large
-// AGENTS.md (or README.md fallback) cannot bloat the cheap recommendation call.
+// projectContextMaxBytes caps how much of the chosen file is injected, so a very
+// large AGENTS.md (or README.md) cannot bloat the cheap recommendation call.
 const projectContextMaxBytes = 4096
 
-// projectContext loads the project's instruction files (AGENTS.md, CLAUDE.md,
-// CODEBUDDY.md, GEMINI.md) as bounded, deterministic strings for the
-// recommendation's stable context. Files that are missing, unreadable, or empty
-// are skipped. If none of those exist, README.md is used as a final fallback.
-// The byte prefix stays stable across turns, which is what lets prompt caching
-// hit.
+// projectContext loads the project context files (AGENTS.md, CLAUDE.md,
+// CODEBUDDY.md, GEMINI.md, README.md) as a bounded, deterministic string for the
+// recommendation's stable context. Only the FIRST non-empty file in the chain is
+// used — files are never stacked. Missing, unreadable, or empty files are
+// skipped. The byte prefix stays stable across turns, which is what lets prompt
+// caching hit.
 func projectContext(projectPath string) []string {
 	if projectPath == "" {
 		return nil
 	}
-	var out []string
 	for _, name := range projectContextFiles {
 		if text := readContextFile(projectPath, name); text != "" {
-			out = append(out, "--- "+name+" ---\n"+text)
+			return []string{"--- " + name + " ---\n" + text}
 		}
 	}
-	if len(out) == 0 {
-		if text := readContextFile(projectPath, projectContextFallbackFile); text != "" {
-			out = append(out, "--- "+projectContextFallbackFile+" ---\n"+text)
-		}
-	}
-	return out
+	return nil
 }
 
 // readContextFile reads a single project file, capped at projectContextMaxBytes,
