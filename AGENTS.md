@@ -12,6 +12,7 @@ ClawBench 是移动优先的 AI 工作站，将 AI CLI 工具（CodeBuddy、Clau
 ./build.sh                # 完整构建（Go 二进制 + Vue 前端）
 ./build.sh --windows      # 交叉编译：Windows amd64
 ./build.sh --linux        # 交叉编译：Linux amd64
+./build.sh --linux-arm64  # 交叉编译：Linux arm64
 ./build.sh --darwin       # 交叉编译：macOS arm64
 
 ./dev-server.sh           # 开发模式（Vite HMR 代理到后端）

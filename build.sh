@@ -27,6 +27,10 @@ for arg in "$@"; do
             TARGET_OS="linux"
             TARGET_ARCH="amd64"
             ;;
+        --linux-arm64)
+            TARGET_OS="linux"
+            TARGET_ARCH="arm64"
+            ;;
         --darwin)
             TARGET_OS="darwin"
             TARGET_ARCH="arm64"
@@ -153,7 +157,7 @@ elif command -v go >/dev/null 2>&1; then
         if [ "$TARGET_OS" = "windows" ]; then
             BINARY_NAME="${NAME}.exe"
         fi
-        GOOS=$TARGET_OS GOARCH=$TARGET_ARCH go build -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go cross-compile failed" >&2; exit 1; }
+        GOOS=$TARGET_OS GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go cross-compile failed" >&2; exit 1; }
         echo "  Cross-compiled: $BINARY_NAME ($TARGET_OS/$TARGET_ARCH)"
     else
         go build -ldflags "$LDFLAGS" -o "$NAME" ./cmd/server || { echo "ERROR: Go build failed" >&2; exit 1; }
@@ -298,6 +302,7 @@ else
     echo "Build options:"
     echo "  ./build.sh --windows        # Windows amd64"
     echo "  ./build.sh --linux          # Linux amd64"
+    echo "  ./build.sh --linux-arm64    # Linux arm64"
     echo "  ./build.sh --darwin         # macOS arm64 (Apple Silicon)"
     echo "  ./build.sh --darwin-amd64   # macOS amd64 (Intel)"
     echo "  ./build.sh --target=darwin/arm64"
