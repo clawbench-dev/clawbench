@@ -117,12 +117,12 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	if preSpawnAcpSID != "" {
 		acpSID := preSpawnAcpSID
 
-		// Some ACP agents support LoadSession but not ResumeSession (e.g. the
-		// pi-acp bridge adapter only implements session/load, session/list,
-		// session/new, and session/delete — it rejects session/resume with
-		// "Method not found"). When the backend advertises LoadSession support,
-		// recover the previous session via LoadSession so the conversation
-		// context is preserved instead of erroring out on ResumeSession.
+		// Some ACP agents support LoadSession but not ResumeSession (they only
+		// implement session/load, session/list, session/new, and session/delete,
+		// rejecting session/resume with "Method not found"). When the backend
+		// advertises LoadSession support, recover the previous session via
+		// LoadSession so the conversation context is preserved instead of
+		// erroring out on ResumeSession.
 		if c.supportsLoadSession() {
 			slog.Info("acp conn: recovering previous session via LoadSession",
 				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
@@ -187,9 +187,9 @@ func (c *ACPConn) snapshotCachedConfig() cachedConfigSnapshot {
 }
 
 // supportsLoadSession reports whether the backend advertises LoadSession
-// capability (from BackendSpec.ACPLoadSession). Some ACP agents (e.g. the
-// pi-acp bridge) support LoadSession but not ResumeSession, so this drives
-// which recovery path ensureAliveWithSession uses after a process death.
+// capability (from BackendSpec.ACPLoadSession). Some ACP agents support
+// LoadSession but not ResumeSession, so this drives which recovery path
+// ensureAliveWithSession uses after a process death.
 //
 // NOTE: Must be called with c.mu held (ensureAliveWithSession holds it), so it
 // reads the agent fields directly instead of calling the lock-acquiring
