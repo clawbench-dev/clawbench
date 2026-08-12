@@ -46,6 +46,21 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('ta.focus()')
   })
 
+  it('provides a theme switcher button in the tab bar', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+    expect(source).toContain('PaletteIcon')
+    expect(source).toContain('openThemeMenu')
+    expect(source).toContain("t('terminal.theme')")
+  })
+
+  it('theme popup lists Follow App Theme + searchable theme ids', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+    expect(source).toContain('themeFollowApp')
+    expect(source).toContain('themeSearchPlaceholder')
+    expect(source).toContain('filteredThemes')
+    expect(source).toContain('formatThemeName(id)')
+  })
+
   it('keeps terminal virtual keys in a borderless, transparent overlay system', () => {
     for (const path of terminalComponentPaths) {
       const source = readTerminalComponent(path)

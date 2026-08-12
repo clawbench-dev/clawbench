@@ -24,7 +24,6 @@ declare module 'xterm-theme' {
 
   export const AdventureTime: XtermTheme
   export const Dracula: XtermTheme
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const themes: Record<string, XtermTheme>
   export default themes
 }
