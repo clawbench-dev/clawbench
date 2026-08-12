@@ -186,13 +186,13 @@ describe('SettingsAgentDetail', () => {
   describe('delete agent', () => {
     it('renders delete row', () => {
       const wrapper = mountDetail()
-      expect(wrapper.find('.settings-agent-detail__delete-row').exists()).toBe(true)
+      expect(wrapper.find('.settings-agent-detail__delete-btn').exists()).toBe(true)
     })
 
     it('shows error toast when trying to delete default agent', async () => {
       mockDefaultAgentId.value = 'test-agent'
       const wrapper = mountDetail()
-      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-btn')
       await deleteRow.trigger('click')
       expect(mockToastShow).toHaveBeenCalledWith('Cannot delete default agent', expect.any(Object))
       expect(mockDeleteAgent).not.toHaveBeenCalled()
@@ -202,7 +202,7 @@ describe('SettingsAgentDetail', () => {
       mockDefaultAgentId.value = 'other-agent'
       mockDialogConfirm.mockResolvedValueOnce(false)
       const wrapper = mountDetail()
-      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-btn')
       await deleteRow.trigger('click')
       expect(mockDialogConfirm).toHaveBeenCalled()
     })
@@ -211,7 +211,7 @@ describe('SettingsAgentDetail', () => {
       mockDefaultAgentId.value = 'other-agent'
       mockDialogConfirm.mockResolvedValueOnce(true)
       const wrapper = mountDetail()
-      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-btn')
       await deleteRow.trigger('click')
       expect(mockDeleteAgent).toHaveBeenCalledWith('test-agent')
       expect(mockToastShow).toHaveBeenCalledWith('Deleted', expect.any(Object))
@@ -222,7 +222,7 @@ describe('SettingsAgentDetail', () => {
       mockDefaultAgentId.value = 'other-agent'
       mockDialogConfirm.mockResolvedValueOnce(false)
       const wrapper = mountDetail()
-      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-btn')
       await deleteRow.trigger('click')
       expect(mockDeleteAgent).not.toHaveBeenCalled()
     })
@@ -232,7 +232,7 @@ describe('SettingsAgentDetail', () => {
       mockDialogConfirm.mockResolvedValueOnce(true)
       mockDeleteAgent.mockRejectedValueOnce(new Error('fail'))
       const wrapper = mountDetail()
-      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-btn')
       await deleteRow.trigger('click')
       expect(mockToastShow).toHaveBeenCalledWith('Delete failed', expect.any(Object))
     })

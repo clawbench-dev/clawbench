@@ -1,28 +1,34 @@
 <template>
   <div class="settings-agent-detail">
-    <SettingsItem
-      v-for="(item, index) in items"
-      :key="item.key"
-      :label="item.label"
-      :description="item.description"
-      :type="item.type"
-      :model-value="getItemValue(item)"
-      :options="item.options"
-      :warning="item.warning"
-      :force-close="activeKey !== null && activeKey !== item.key"
-      :no-divider="isLastInSection(items, index)"
-      @update:model-value="(v: unknown) => handleUpdate(item, v)"
-      @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
-    />
-    <!-- Copy agent -->
-    <div class="settings-agent-detail__action-row" @click="startCopy">
-      <Copy :size="16" class="settings-agent-detail__action-icon" />
-      <span class="settings-agent-detail__action-label">{{ t('settings.items.agentCopy') }}</span>
-    </div>
-    <!-- Delete agent -->
-    <div class="settings-agent-detail__delete-row" @click="handleDelete">
-      <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
-      <span class="settings-agent-detail__delete-label">{{ t('settings.items.agentDelete') }}</span>
+    <SettingsCard
+      v-for="group in groups"
+      :key="group.title"
+      :title="group.title"
+    >
+      <SettingsItem
+        v-for="item in group.items"
+        :key="item.key"
+        :label="item.label"
+        :description="item.description"
+        :type="item.type"
+        :model-value="getItemValue(item)"
+        :options="item.options"
+        :warning="item.warning"
+        :force-close="activeKey !== null && activeKey !== item.key"
+        @update:model-value="(v: unknown) => handleUpdate(item, v)"
+        @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
+      />
+    </SettingsCard>
+    <!-- Copy / delete on the same row -->
+    <div class="settings-agent-detail__actions">
+      <button class="settings-agent-detail__action-btn" @click="startCopy">
+        <Copy :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ t('settings.items.agentCopy') }}</span>
+      </button>
+      <button class="settings-agent-detail__delete-btn" @click="handleDelete">
+        <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
+        <span>{{ t('settings.items.agentDelete') }}</span>
+      </button>
     </div>
     <CopyAgentDialog
       v-if="copying"
@@ -38,6 +44,7 @@ import { computed, ref, onMounted } from 'vue'
 import { Copy, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
+import SettingsCard from './SettingsCard.vue'
 import CopyAgentDialog from './CopyAgentDialog.vue'
 import { useAgents } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
@@ -244,6 +251,23 @@ const items = computed<AgentItem[]>(() => {
   return result
 })
 
+// Group the agent items into cards by header items.
+const groups = computed<{ title: string; items: AgentItem[] }[]>(() => {
+  const out: { title: string; items: AgentItem[] }[] = []
+  let cur: { title: string; items: AgentItem[] } | null = null
+  for (const item of items.value) {
+    if (item.type === 'header') {
+      if (cur) out.push(cur)
+      cur = { title: item.label, items: [] }
+    } else {
+      if (!cur) cur = { title: t('settings.items.agentSectionPreference'), items: [] }
+      cur.items.push(item)
+    }
+  }
+  if (cur) out.push(cur)
+  return out
+})
+
 function getItemValue(item: AgentItem): unknown {
   if (item.type === 'header') return undefined
   if (item.value !== undefined) return item.value
@@ -339,13 +363,6 @@ function handleEditToggle(key: string, open: boolean) {
   }
 }
 
-/** Check if item at index is the last in its section (last item overall, or next item is a header). */
-function isLastInSection(items: AgentItem[], index: number): boolean {
-  if (index >= items.length - 1) return true
-  const nextItem = items[index + 1]
-  return nextItem?.type === 'header'
-}
-
 function startCopy() {
   copying.value = true
 }
@@ -384,67 +401,46 @@ async function handleDelete() {
 
 <style scoped>
 .settings-agent-detail {
-  padding: 8px 0;
+  padding: 8px;
   background: var(--bg-secondary);
   min-height: 100%;
 }
 
-.settings-agent-detail__action-row {
+.settings-agent-detail__actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.settings-agent-detail__action-btn,
+.settings-agent-detail__delete-btn {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 48px;
-  padding: 8px 16px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
   cursor: pointer;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 500;
 }
 
-@media (hover: hover) {
-  .settings-agent-detail__action-row:hover {
-    background: var(--bg-secondary);
-  }
-}
-
-.settings-agent-detail__action-row:active {
-  background: var(--bg-tertiary);
-}
-
-.settings-agent-detail__action-icon {
-  flex-shrink: 0;
-}
-
-.settings-agent-detail__action-label {
-  white-space: nowrap;
-}
-
-.settings-agent-detail__delete-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 48px;
-  padding: 8px 16px;
-  cursor: pointer;
-  background: var(--bg-primary);
+.settings-agent-detail__delete-btn {
   color: #e74c3c;
-  font-size: 15px;
-  font-weight: 500;
 }
 
 @media (hover: hover) {
-  .settings-agent-detail__delete-row:hover {
-    background: var(--bg-secondary);
+  .settings-agent-detail__action-btn:hover,
+  .settings-agent-detail__delete-btn:hover {
+    background: var(--bg-tertiary);
   }
 }
 
-.settings-agent-detail__delete-row:active {
-  background: var(--bg-tertiary);
-}
-
+.settings-agent-detail__action-icon,
 .settings-agent-detail__delete-icon {
   flex-shrink: 0;
 }

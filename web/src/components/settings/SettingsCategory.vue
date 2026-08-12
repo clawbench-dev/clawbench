@@ -19,38 +19,40 @@
   </div>
   <!-- Standard settings category with mixed items + panels -->
   <div v-else class="settings-category">
-    <template v-for="entry in renderList" :key="entry.type === 'item' ? entry.spec.key : entry.config.panelId">
-      <!-- Section header for flat items -->
-      <template v-if="entry.type === 'item' && entry.spec.sectionHeader">
-        <div class="settings-category__section-header">{{ t(entry.spec.sectionHeader) }}</div>
-      </template>
-      <!-- Flat item -->
-      <SettingsItem
-        v-if="entry.type === 'item'"
-        :label="getItemLabel(entry.spec)"
-        :description="entry.spec.descriptionKey ? t(entry.spec.descriptionKey) : ''"
-        :type="entry.spec.type"
-        :model-value="getItemValue(entry.spec)"
-        :options="resolveItemOptions(entry.spec)"
-        :min="entry.spec.min"
-        :max="entry.spec.max"
-        :step="entry.spec.step"
-        :needs-restart="entry.spec.needsRestart"
-        :force-close="activeKey !== null && activeKey !== entry.spec.key"
-        :no-divider="false"
-        :default-value="entry.spec.defaultValue"
-        :display-format="entry.spec.displayFormat"
-        :display-transform="entry.spec.displayTransform"
-        @update:model-value="(v: unknown) => handleUpdate(entry.spec, v)"
-        @click="handleClick(entry.spec)"
-        @edit-toggle="(open: boolean) => handleEditToggle(entry.spec.key, open)"
-        @discard="handleDiscard"
-      />
+    <template v-for="card in cards" :key="card.type === 'group' ? 'group-' + (card.title || 'basic') : card.config.panelId">
+      <!-- Flat items grouped into a card -->
+      <SettingsCard
+        v-if="card.type === 'group'"
+        :title="card.title"
+      >
+        <SettingsItem
+          v-for="item in card.items"
+          :key="item.key"
+          :label="getItemLabel(item)"
+          :description="item.descriptionKey ? t(item.descriptionKey) : ''"
+          :type="item.type"
+          :model-value="getItemValue(item)"
+          :options="resolveItemOptions(item)"
+          :min="item.min"
+          :max="item.max"
+          :step="item.step"
+          :needs-restart="item.needsRestart"
+          :force-close="activeKey !== null && activeKey !== item.key"
+          :no-divider="false"
+          :default-value="item.defaultValue"
+          :display-format="item.displayFormat"
+          :display-transform="item.displayTransform"
+          @update:model-value="(v: unknown) => handleUpdate(item, v)"
+          @click="handleClick(item)"
+          @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
+          @discard="handleDiscard"
+        />
+      </SettingsCard>
       <!-- Group panel — C2 fix: arrow closure passes panelId -->
       <SettingsGroupPanel
         v-else
-        :config="entry.config"
-        :show-title="shouldShowPanelTitle(entry.config)"
+        :config="card.config"
+        :show-title="shouldShowPanelTitle(card.config)"
         @restart-needed="(fields) => $emit('restartNeeded', fields)"
       />
     </template>
@@ -72,6 +74,7 @@ import { computed, ref, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
+import SettingsCard from './SettingsCard.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
@@ -164,6 +167,46 @@ const renderList = computed(() => {
   }
 
   return result
+})
+
+// ── Group flat items into cards by section header ──
+
+const basicGroupTitle = computed(() => t('settings.categories.basic'))
+
+interface CardGroup { type: 'group'; title: string; items: ItemSpec[] }
+interface CardPanel { type: 'panel'; config: GroupPanelConfig }
+type RenderCard = CardGroup | CardPanel
+
+const cards = computed<RenderCard[]>(() => {
+  const out: RenderCard[] = []
+  const otherItems: ItemSpec[] = []
+  let cur: CardGroup | null = null
+  const flush = () => { if (cur) { out.push(cur); cur = null } }
+  for (const entry of renderList.value) {
+    if (entry.type === 'item') {
+      if (entry.spec.sectionHeader) {
+        const header = t(entry.spec.sectionHeader)
+        if (!cur || cur.title !== header) {
+          flush()
+          cur = { type: 'group', title: header, items: [] }
+        }
+        cur.items.push(entry.spec)
+      } else {
+        // Header-less items all merge into a single "其他" group (at the end),
+        // so a page can never have more than one "其他" card.
+        flush()
+        otherItems.push(entry.spec)
+      }
+    } else {
+      flush()
+      out.push({ type: 'panel', config: entry.config })
+    }
+  }
+  flush()
+  if (otherItems.length > 0) {
+    out.push({ type: 'group', title: basicGroupTitle.value, items: otherItems })
+  }
+  return out
 })
 
 // ── Panel title visibility ──
@@ -330,17 +373,7 @@ function handleDiscard() {
 
 <style scoped>
 .settings-category {
-  padding: 0;
+  padding: 8px;
   background: var(--bg-secondary);
-  min-height: 100%;
-}
-
-.settings-category__section-header {
-  font-size: 12px;
-  color: var(--text-muted);
-  padding: 10px 16px 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 500;
 }
 </style>

@@ -1,17 +1,19 @@
 <template>
   <div class="settings-index">
-    <div
-      v-for="cat in categories"
-      :key="cat.id"
-      class="settings-index__row"
-      @click="$emit('navigate', cat.id)"
-    >
-      <div class="settings-index__left">
-        <component :is="cat.icon" class="settings-index__icon" :size="18" />
-        <span class="settings-index__label">{{ cat.label }}</span>
+    <SettingsCard>
+      <div
+        v-for="cat in categories"
+        :key="cat.id"
+        class="settings-index__row"
+        @click="$emit('navigate', cat.id)"
+      >
+        <div class="settings-index__left">
+          <component :is="cat.icon" class="settings-index__icon" :size="18" />
+          <span class="settings-index__label">{{ cat.label }}</span>
+        </div>
+        <ChevronRight class="settings-index__arrow" :size="18" />
       </div>
-      <ChevronRight class="settings-index__arrow" :size="18" />
-    </div>
+    </SettingsCard>
   </div>
 </template>
 
@@ -36,6 +38,7 @@ import {
   ChevronRight,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import SettingsCard from './SettingsCard.vue'
 
 defineEmits<{
   navigate: [categoryId: string]
@@ -71,7 +74,7 @@ const categories = computed(() =>
 
 <style scoped>
 .settings-index {
-  padding: 0;
+  padding: 8px;
   background: var(--bg-secondary);
   min-height: 100%;
 }
@@ -84,7 +87,7 @@ const categories = computed(() =>
   padding: 0 16px;
   cursor: pointer;
   gap: 12px;
-  background: var(--bg-primary);
+  background: transparent;
   position: relative;
 }
 

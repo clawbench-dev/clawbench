@@ -1,10 +1,11 @@
 <template>
   <div class="group-panel">
     <!-- Panel title separator -->
-    <div v-if="showTitle && config.titleKey" class="group-panel__title">
+    <div class="group-panel__card">
+    <!-- Panel title as header row inside the card -->
+    <div v-if="showTitle && config.titleKey" class="group-panel__header">
       {{ t(config.titleKey) }}
     </div>
-
     <!-- Enable toggle row -->
     <div v-if="config.enableKey" class="group-panel__enable-row">
       <div class="group-panel__enable-left">
@@ -88,8 +89,8 @@
       </template>
     </template>
 
-    <!-- Sticky bottom save bar -->
-    <div class="group-panel__save-bar">
+    <!-- Footer inside the card -->
+    <div class="group-panel__footer">
       <div v-if="serverError" class="group-panel__error">{{ serverError }}</div>
       <div v-if="hotReloadWarning" class="group-panel__warning">{{ hotReloadWarning }}</div>
       <div v-if="needsRestartHint" class="group-panel__restart-hint">
@@ -113,6 +114,7 @@
           {{ saving ? t('settings.panel.saving') : t('settings.panel.save') }}
         </button>
       </div>
+    </div>
     </div>
 
     <!-- Connectivity test results -->
@@ -506,29 +508,55 @@ watch(localValues, () => {
 
 <style scoped>
 .group-panel {
-  background: var(--bg-secondary);
-  padding: 4px 0;
+  background: transparent;
 }
 
-.group-panel__title {
+/* Panel title as a header row inside the card */
+.group-panel__header {
   font-size: 12px;
   color: var(--text-muted);
-  padding: 10px 16px 4px;
+  padding: 8px 16px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 500;
-  border-top: 0.5px solid var(--border-color);
-  margin-top: 4px;
+  position: relative;
+}
+.group-panel__header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 16px;
+  right: 0;
+  height: 0.5px;
+  background: var(--border-color);
 }
 
-/* Enable toggle row */
+/* Compact iOS-style card container */
+.group-panel__card {
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-primary);
+  margin-bottom: 8px;
+}
+.group-panel__card :deep(.settings-item) {
+  background: transparent;
+  padding: 8px 16px;
+}
+.group-panel__card :deep(.settings-item::after) {
+  left: 16px;
+}
+.group-panel__card :deep(.settings-item:last-child::after) {
+  display: none;
+}
+
+/* Enable toggle row (first row of the card) */
 .group-panel__enable-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
   min-height: 48px;
-  background: var(--bg-primary);
+  background: transparent;
   position: relative;
 }
 
@@ -606,7 +634,7 @@ watch(localValues, () => {
   padding: 0 16px;
   min-height: 48px;
   cursor: pointer;
-  background: var(--bg-primary);
+  background: transparent;
   position: relative;
 }
 
@@ -670,24 +698,21 @@ watch(localValues, () => {
 .group-panel__section-header {
   font-size: 12px;
   color: var(--text-muted);
-  padding: 10px 16px 4px;
+  padding: 8px 16px 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 500;
 }
 
 /* Sticky save bar (I3 fix) */
-.group-panel__save-bar {
-  position: sticky;
-  bottom: 0;
+/* Footer row inside the card (save / test buttons) */
+.group-panel__footer {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  background: var(--bg-primary);
+  background: transparent;
   border-top: 0.5px solid var(--border-color);
   padding: 8px 16px;
-  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
-  z-index: 10;
 }
 
 .group-panel__save-row {

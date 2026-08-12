@@ -427,18 +427,18 @@ describe('SettingsGroupPanel', () => {
   describe('title', () => {
     it('shows title when showTitle is true and config has titleKey', () => {
       const wrapper = mountPanel(makeSimpleConfig(), true)
-      expect(wrapper.find('.group-panel__title').exists()).toBe(true)
+      expect(wrapper.find('.group-panel__header').exists()).toBe(true)
     })
 
     it('hides title when showTitle is false', () => {
       const wrapper = mountPanel(makeSimpleConfig(), false)
-      expect(wrapper.find('.group-panel__title').exists()).toBe(false)
+      expect(wrapper.find('.group-panel__header').exists()).toBe(false)
     })
 
     it('hides title when config has no titleKey', () => {
       const config: GroupPanelConfig = { panelId: 'test', commonFields: [] }
       const wrapper = mountPanel(config, true)
-      expect(wrapper.find('.group-panel__title').exists()).toBe(false)
+      expect(wrapper.find('.group-panel__header').exists()).toBe(false)
     })
   })
 
