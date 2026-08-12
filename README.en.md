@@ -49,6 +49,10 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 |-----------------|-----------------|----------------|------------|-----------------|
 | ![Agent Selection](docs/screenshots/agent-selector.png) | ![AI Conversation](docs/screenshots/chat-panel.png) | ![ACP Permission](docs/screenshots/acp-permission.png) | ![RAG Search](docs/screenshots/rag-search.png) | ![Session Manager](docs/screenshots/session-manager.png) |
 
+| Conversation Recommendation |
+|------------------------------|
+| ![Conversation Recommendation](docs/screenshots/conversation-recommendation.png) |
+
 | Scheduled Tasks | Create Task | Task Card |
 |-----------------|-------------|-----------|
 | ![Scheduled Tasks](docs/screenshots/scheduled-tasks.png) | ![Create Task](docs/screenshots/task-create.png) | ![Task Card](docs/screenshots/schedule-proposal.png) |
