@@ -364,28 +364,6 @@ func (m *ACPConnManager) MarkIdle(clawbenchSID string) {
 	}
 }
 
-// TouchSessionUpdate records the current time as the connection's most recent
-// SessionUpdate activity. It is lock-free (atomic store) so it can be called
-// from the ACP notification processing goroutine without risking a deadlock:
-// RPCs like NewSession hold c.mu while waiting for queued notifications to be
-// processed, so if this callback took c.mu it would block notification
-// processing and stall the RPC until timeout.
-func (c *ACPConn) TouchSessionUpdate() {
-	c.lastSessionUpdate.Store(time.Now().UnixNano())
-}
-
-// lastActivityNano returns the later of lastUsed and lastSessionUpdate as a
-// UnixNano timestamp, representing the last time the connection did any work
-// (either an explicit use or an incoming SessionUpdate from an async workflow).
-// Must be called without holding c.mu.
-func (c *ACPConn) lastActivityNano() int64 {
-	lastUsedNano := c.lastUsed.UnixNano()
-	if su := c.lastSessionUpdate.Load(); su > lastUsedNano {
-		return su
-	}
-	return lastUsedNano
-}
-
 // ACPCachedState holds the cached ACP state for a connection.
 type ACPCachedState struct {
 	Mode          *ModeState
@@ -635,6 +613,28 @@ type ACPConn struct {
 	// listSessionsFn overrides ListSessions for testing. If nil, the real
 	// ACP JSON-RPC call is used.
 	listSessionsFn func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error)
+}
+
+// TouchSessionUpdate records the current time as the connection's most recent
+// SessionUpdate activity. It is lock-free (atomic store) so it can be called
+// from the ACP notification processing goroutine without risking a deadlock:
+// RPCs like NewSession hold c.mu while waiting for queued notifications to be
+// processed, so if this callback took c.mu it would block notification
+// processing and stall the RPC until timeout.
+func (c *ACPConn) TouchSessionUpdate() {
+	c.lastSessionUpdate.Store(time.Now().UnixNano())
+}
+
+// lastActivityNano returns the later of lastUsed and lastSessionUpdate as a
+// UnixNano timestamp, representing the last time the connection did any work
+// (either an explicit use or an incoming SessionUpdate from an async workflow).
+// Must be called without holding c.mu.
+func (c *ACPConn) lastActivityNano() int64 {
+	lastUsedNano := c.lastUsed.UnixNano()
+	if su := c.lastSessionUpdate.Load(); su > lastUsedNano {
+		return su
+	}
+	return lastUsedNano
 }
 
 // Cwd returns the project working directory for this connection,
