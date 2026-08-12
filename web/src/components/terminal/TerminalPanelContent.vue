@@ -42,6 +42,7 @@
       >
         <PlusIcon :size="14" />
       </button>
+      <template v-if="isPC">
       <button
         class="terminal-tab-add terminal-theme-btn"
         @click="openThemeMenu"
@@ -49,6 +50,15 @@
       >
         <PaletteIcon :size="14" />
       </button>
+      <button
+        class="terminal-tab-add"
+        ref="cmdBtnTopRef"
+        @click="openCommands"
+        :title="t('terminal.quickCommands')"
+      >
+        <ZapIcon :size="14" />
+      </button>
+      </template>
     </div>
 
     <!-- Terminal viewport — one container per tab -->
@@ -109,7 +119,7 @@
           <TextCursorInputIcon v-else :size="14" />
         </button>
         <button class="toolbar-btn modifier gesture-toggle" :class="{ active: showSymbolBar }" @click="toggleSymbolBar()" @contextmenu.prevent :title="t('terminal.symbols')">
-          <HashIcon :size="14" />
+          <OmegaIcon :size="14" />
         </button>
         <div class="scroll-wrapper" :class="{ 'scroll-fade-left': toolbarScrollFade.left, 'scroll-fade-right': toolbarScrollFade.right }">
           <div ref="toolbarScrollRef" class="toolbar-scroll" @scroll="updateToolbarScrollFade">
@@ -125,10 +135,13 @@
             <template v-if="def.id === 'shift_tab'"><span class="shift-tab-label">Shift</span><span class="shift-tab-label">Tab</span></template>
             <template v-else>{{ def.label }}</template>
           </button>
-          <!-- Quick commands button (always present) -->
+          <!-- Quick commands / theme / settings buttons -->
           <div class="key-group">
-            <button ref="cmdBtnRef" class="toolbar-btn btn-action" @click="showCommands = !showCommands" :title="t('terminal.quickCommands')">
+            <button ref="cmdBtnRef" class="toolbar-btn btn-action" @click="openCommands" :title="t('terminal.quickCommands')">
               <ZapIcon :size="14" />
+            </button>
+            <button class="toolbar-btn btn-action" @click="openThemeMenu" :title="t('terminal.theme')">
+              <PaletteIcon :size="14" />
             </button>
             <!-- Settings button (always present) -->
             <button class="toolbar-btn btn-action" @click="keyConfigDrawer.open()" :title="t('terminal.keyConfigTitle')">
@@ -142,7 +155,7 @@
     </template>
 
     <!-- Quick commands popup -->
-    <PopupMenu v-model:show="showCommands" :target-element="cmdBtnRef" :max-width="220" :max-height="280" :menu-items-count="visibleCommands.length + 1">
+    <PopupMenu v-model:show="showCommands" :target-element="isPC ? cmdBtnTopRef : cmdBtnRef" :max-width="220" :max-height="280" :menu-items-count="visibleCommands.length + 1">
       <div class="quick-send-title">{{ t('terminal.quickCommands') }}</div>
       <button v-for="cmd in visibleCommands" :key="cmd.id" class="quick-send-item" @click="executeCommand(cmd)">
         {{ cmd.label }}
@@ -266,7 +279,7 @@ import {
   lightTheme,
 } from '@/utils/terminalThemes'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -314,6 +327,7 @@ const selectionActive = ref(false)
 const selectedText = ref('')
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
+const cmdBtnTopRef = ref<HTMLElement | null>(null)
 const showSymbolBar = ref(false)
 const rebuildingTabId = ref<string | null>(null)
 
@@ -380,6 +394,10 @@ function handleSymbolClick(sym: string) {
 function toggleSymbolBar() {
   showSymbolBar.value = !showSymbolBar.value
   focusTerminal()
+}
+
+function openCommands() {
+  showCommands.value = !showCommands.value
 }
 
 function onKeyConfigSaved() {
