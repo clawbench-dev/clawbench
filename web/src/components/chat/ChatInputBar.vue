@@ -45,6 +45,15 @@
         <span class="chat-action-label">{{ t('chat.actions.autoSpeech') }}</span>
       </button>
     </div>
+    <!-- Conversation recommendation banner (对话推荐) — sits above the input box so it never steals input space -->
+    <Transition name="paste-fade">
+      <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
+        <Sparkles :size="14" :stroke-width="1.5" class="recommendation-icon" />
+        <span class="recommendation-text">{{ recommendation }}</span>
+        <button class="recommendation-accept" @click.stop="acceptRecommendation" :title="t('tool.askUser.recommendationFill')">{{ t('tool.askUser.recommendationFill') }}</button>
+        <button class="recommendation-close" @click.stop="dismissRecommendation" :title="t('common.remove')">×</button>
+      </div>
+    </Transition>
     <!-- Input container -->
     <div class="chat-input-container"
       @dragenter="onDragEnter"
@@ -61,15 +70,6 @@
         <div v-if="isPasteOver" class="paste-overlay">
           <Loader2 :size="18" class="paste-spinner-icon" />
           <span>{{ t('chat.attach.uploading') }}</span>
-        </div>
-      </Transition>
-      <!-- Conversation recommendation chip (对话推荐) — shown when input already has text -->
-      <Transition name="paste-fade">
-        <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
-          <Sparkles :size="14" :stroke-width="1.5" class="recommendation-icon" />
-          <span class="recommendation-text">{{ recommendation }}</span>
-          <button class="recommendation-accept" @click.stop="acceptRecommendation" :title="t('chat.recommendationFill')">{{ t('chat.recommendationFill') }}</button>
-          <button class="recommendation-close" @click.stop="dismissRecommendation" :title="t('common.remove')">×</button>
         </div>
       </Transition>
       <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
@@ -466,8 +466,8 @@ const inputText = ref('')
 
 // ── Conversation recommendation (对话推荐) ───────────────
 // The server emits a chat_recommendation WS event after each assistant reply.
-// When the input is empty we auto-fill it; otherwise we show a dismissible chip
-// that fills the input on tap.
+// Every recommendation is surfaced through a dismissible chip (regardless of
+// whether the input already has text) that fills the input on tap.
 const recommendation = ref('')
 const showRecommendationChip = ref(false)
 
@@ -475,11 +475,10 @@ function onRecommendationEvent(evt) {
   const detail = evt.detail || {}
   const text = detail.recommendation
   if (!text || !text.trim()) return
-  if (!inputText.value.trim()) {
-    inputText.value = text.trim()
-    showRecommendationChip.value = false
-    return
-  }
+  // The chat_recommendation WS event is broadcast for every session (e.g. a
+  // background session finishing a reply). Only surface a recommendation that
+  // belongs to the currently active conversation.
+  if (detail.session_id && detail.session_id !== props.currentSessionId) return
   recommendation.value = text.trim()
   showRecommendationChip.value = true
 }
@@ -512,6 +511,12 @@ function acceptRecommendation() {
 }
 
 function dismissRecommendation() {
+  clearRecommendation()
+}
+
+// Clear any currently surfaced recommendation (chip + stored text).
+function clearRecommendation() {
+  recommendation.value = ''
   showRecommendationChip.value = false
 }
 
@@ -796,6 +801,12 @@ watch(() => props.currentSessionId, (newId) => {
 const quoteItems = computed(() => props.quotes.length > 0
   ? props.quotes
   : props.quoteData ? [props.quoteData] : [])
+
+// When a new assistant message starts streaming, any previously surfaced
+// recommendation belongs to the last completed reply and is stale — hide it.
+watch(() => props.loading, (val) => {
+  if (val) clearRecommendation()
+})
 
 const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || quoteItems.value.length > 0)
 
@@ -1274,6 +1285,7 @@ defineExpose({
   clearInput,
   saveDraft,
   clearInputPreserveDraft,
+  clearRecommendation,
   inputText,
   deleteDraft: (sessionId) => { draftCache.delete(sessionId) },
   hasDraft: (sessionId) => draftCache.has(sessionId),

@@ -18,8 +18,7 @@ Requirements:
 2. It should be specific and actionable (e.g. a clarifying question, a concrete task, a command to run, or a direction to explore). Take the user's recent intent into account.
 3. If a listed quick command fits the next step, you may reference it (e.g. "用快捷指令「生成测试」"), otherwise ignore them.
 4. Do not add markdown, bullet lists, prefixes, quotes, or meta-phrases like "Next step:" or "You could try".
-5. Output in the requested language.
-6. If there is no reasonable next step, output a single short question inviting the user to clarify or continue.`
+5. Output in the requested language.`
 
 // recommendPassProvider is implemented by LLM summarizers that expose their
 // single-pass call (OpenAISummarizer / AnthropicSummarizer). Used to build a

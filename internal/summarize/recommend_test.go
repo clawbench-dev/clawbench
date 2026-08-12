@@ -94,6 +94,21 @@ func TestBuildRecommendInput_NoHistory(t *testing.T) {
 	}
 }
 
+// TestRecommendNextStepPrompt_NoClarifyFallback guards the removal of the old
+// "no reasonable next step" fallback requirement. The recommendation must always
+// propose a concrete next step and never defer to a clarifying question.
+func TestRecommendNextStepPrompt_NoClarifyFallback(t *testing.T) {
+	if strings.Contains(recommendNextStepPrompt, "no reasonable next step") {
+		t.Fatalf("prompt must not contain the clarify-fallback requirement, got: %q", recommendNextStepPrompt)
+	}
+	if strings.Contains(recommendNextStepPrompt, "inviting the user to clarify") {
+		t.Fatalf("prompt must not contain the clarify-fallback requirement, got: %q", recommendNextStepPrompt)
+	}
+	if !strings.Contains(recommendNextStepPrompt, "exactly ONE concise next step") {
+		t.Fatalf("prompt must still require exactly one next step, got: %q", recommendNextStepPrompt)
+	}
+}
+
 func TestRecommendNextStep_OpenAI(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer key" {

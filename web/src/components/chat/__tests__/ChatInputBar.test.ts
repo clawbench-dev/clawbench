@@ -3,6 +3,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'
+import enLocale from '@/i18n/locales/en'
+import zhLocale from '@/i18n/locales/zh'
+import { apiGet } from '@/utils/api'
+
+vi.mock('@/utils/api', () => ({
+  apiGet: vi.fn().mockResolvedValue(undefined),
+}))
 
 const i18n = createI18n({
   legacy: false,
@@ -65,6 +72,9 @@ const i18n = createI18n({
         },
       },
       common: { copy: 'Copy', remove: 'Remove', cancel: 'Cancel' },
+      tool: {
+        askUser: { recommendationFill: 'Fill' },
+      },
     },
   },
 })
@@ -1316,31 +1326,66 @@ describe('ChatInputBar', () => {
     window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 's1', recommendation } }))
   }
 
-  it('auto-fills the input when empty on recommendation event', async () => {
-    const wrapper = mountBar()
+  it('shows the recommendation chip without modifying empty input', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1' })
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('')
     dispatchRecommendation('继续实现功能')
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.inputText).toBe('继续实现功能')
-    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    // The input is left untouched; the recommendation is captured for the chip.
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.vm.recommendation).toBe('继续实现功能')
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
     wrapper.unmount()
   })
 
-  it('stores recommendation without overwriting existing input', async () => {
-    const wrapper = mountBar()
+  it('shows the recommendation chip with existing input preserved', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1' })
     wrapper.vm.inputText = 'existing draft'
     await wrapper.vm.$nextTick()
     dispatchRecommendation('下一步建议')
     await wrapper.vm.$nextTick()
-    // Non-empty branch: input is preserved, recommendation is captured for the chip
+    // Input is preserved, recommendation is captured for the chip.
     expect(wrapper.vm.inputText).toBe('existing draft')
     expect(wrapper.vm.recommendation).toBe('下一步建议')
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
     wrapper.unmount()
   })
 
+  it('ignores a recommendation belonging to a different session', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1' })
+    await wrapper.vm.$nextTick()
+    // A background session finishes a reply → its recommendation is dispatched
+    // globally, but must not surface while the active session is s1.
+    window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 'other-session', recommendation: 'B的建议' } }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendation).toBe('')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    // A recommendation for the active session is shown.
+    window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 's1', recommendation: 'A的建议' } }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendation).toBe('A的建议')
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('resolves the chip accept-button label under tool.askUser.recommendationFill in both locales', () => {
+    // The chip's accept button must show a translated label, not the raw key.
+    const en = createI18n({ legacy: false, locale: 'en', messages: { en: enLocale } })
+    const zh = createI18n({ legacy: false, locale: 'zh', messages: { zh: zhLocale } })
+    expect(en.global.t('tool.askUser.recommendationFill')).toBe('Fill')
+    expect(zh.global.t('tool.askUser.recommendationFill')).toBe('填入')
+  })
+
+  it('does not resolve the stale chat.recommendationFill key (would render the raw key)', () => {
+    const en = createI18n({ legacy: false, locale: 'en', messages: { en: enLocale } })
+    // The previous template used this non-existent key, which rendered the raw
+    // key string in the chip. A missing key must resolve to the key itself.
+    expect(en.global.t('chat.recommendationFill')).toBe('chat.recommendationFill')
+  })
+
   it('fills the input when the recommendation is accepted', async () => {
-    const wrapper = mountBar()
+    const wrapper = mountBar({ currentSessionId: 's1' })
     wrapper.vm.inputText = 'existing draft'
     await wrapper.vm.$nextTick()
     dispatchRecommendation('采纳的建议')
@@ -1353,11 +1398,39 @@ describe('ChatInputBar', () => {
   })
 
   it('ignores recommendation with empty text', async () => {
-    const wrapper = mountBar()
+    const wrapper = mountBar({ currentSessionId: 's1' })
     await wrapper.vm.$nextTick()
     dispatchRecommendation('   ')
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('does not show a stale recommendation for a session that is still streaming', async () => {
+    const wrapper = mountBar({ loading: true })
+    await wrapper.vm.$nextTick()
+    vi.mocked(apiGet).mockResolvedValue({ recommendation: 'stale suggestion' })
+    await wrapper.vm.fetchLatestRecommendation('s1')
+    await wrapper.vm.$nextTick()
+    // While the assistant is still outputting, the previous reply's
+    // recommendation must not surface.
+    expect(wrapper.vm.recommendation).toBe('')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('clears the recommendation chip via clearRecommendation (used when streaming starts)', async () => {
+    const wrapper = mountBar({ loading: false, currentSessionId: 's1' })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('显示的建议')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
+    wrapper.vm.clearRecommendation()
+    await wrapper.vm.$nextTick()
+    // Once a new assistant message begins streaming, the old recommendation is
+    // no longer relevant and must be hidden.
+    expect(wrapper.vm.recommendation).toBe('')
     expect(wrapper.vm.showRecommendationChip).toBe(false)
     wrapper.unmount()
   })
