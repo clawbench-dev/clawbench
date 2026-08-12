@@ -55,7 +55,7 @@ type Config struct {
 		SessionPageSize          int  `yaml:"session_page_size"`          // Number of sessions per page in session list (default: 10)
 		SystemPromptInterval     int  `yaml:"system_prompt_interval"`     // Re-inject system prompt every N assistant turns (0=never, default: 10)
 		RecommendEnabled         bool `yaml:"recommend_enabled"`          // 对话推荐: generate a next-step recommendation after each assistant reply (default: false)
-		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 对话推荐参考的最近用户消息条数 (default: 3)
+		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 对话推荐参考的最近消息条数（用户+助手） (default: 10)
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 10)

@@ -130,7 +130,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.Chat.RecommendEnabled = false
 	}
 	if cfg.Chat.RecommendContextMessages <= 0 {
-		cfg.Chat.RecommendContextMessages = 3
+		cfg.Chat.RecommendContextMessages = 10
 	}
 
 	// --- Session ---
