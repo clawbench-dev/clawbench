@@ -1004,7 +1004,10 @@ func TestUploadFile_RelPath(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := createMultipartUploadRequestRel(t, "evil.txt", "x", "/etc/evil")
+		// filepath.IsAbs is platform-specific: an absolute path must be rooted
+		// for the current OS (e.g. "/etc/evil" on Unix, "C:\\evil" on Windows).
+		absPath := filepath.Join(string(filepath.Separator), "etc", "evil")
+		req := createMultipartUploadRequestRel(t, "evil.txt", "x", absPath)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(UploadFile, req)
