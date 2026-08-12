@@ -21,8 +21,14 @@ func init() {
 		Spec: model.BackendSpec{
 			ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Specialty: "极简编程智能体",
 			ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
+			AcpCommand:           "npx -y pi-acp@latest",
+			ACPLoadSession:       true,
 			InstallCmd:           "npm install -g @earendil-works/pi-coding-agent",
 			SortOrder:            8,
+		},
+		ACP: &backends.ACPPlugin{
+			ToolCallIDPrefixes: PiACPToolCallIDPrefixes,
+			InputRemaps:        PiACPInputRemaps,
 		},
 	})
 }
