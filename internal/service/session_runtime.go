@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -476,11 +478,12 @@ func triggerChatRecommendation(sessionID, projectPath string, blocks []model.Con
 	// for the user's recent intent.
 	conversation := recentConversation(sessionID, model.ConfigInstance.Chat.RecommendContextMessages)
 	commands := quickCommandList(projectPath)
+	projContext := projectContext(projectPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	recommendation, err := summarize.RecommendNextStep(ctx, summarizer, conversation, commands, conclusion, "zh")
+	recommendation, err := summarize.RecommendNextStep(ctx, summarizer, conversation, commands, projContext, conclusion, "zh")
 	if err != nil {
 		slog.Debug("chat recommendation failed", slog.String("session_id", sessionID), slog.String("err", err.Error()))
 		return
@@ -655,6 +658,60 @@ func quickCommandList(projectPath string) []string {
 		commands = append(commands, label+": "+cmd)
 	}
 	return commands
+}
+
+// projectContextFiles are the project instruction files loaded (in order) as
+// stable recommendation context. Their content rarely changes, so it forms a
+// good prompt-cacheable prefix.
+var projectContextFiles = []string{"AGENTS.md", "CLAUDE.md", "CODEBUDDY.md", "GEMINI.md"}
+
+// projectContextFallbackFile is used only when none of the dedicated instruction
+// files above exist, so the recommendation still has minimal project awareness.
+const projectContextFallbackFile = "README.md"
+
+// projectContextMaxBytes caps how much of each file is injected, so a very large
+// AGENTS.md (or README.md fallback) cannot bloat the cheap recommendation call.
+const projectContextMaxBytes = 4096
+
+// projectContext loads the project's instruction files (AGENTS.md, CLAUDE.md,
+// CODEBUDDY.md, GEMINI.md) as bounded, deterministic strings for the
+// recommendation's stable context. Files that are missing, unreadable, or empty
+// are skipped. If none of those exist, README.md is used as a final fallback.
+// The byte prefix stays stable across turns, which is what lets prompt caching
+// hit.
+func projectContext(projectPath string) []string {
+	if projectPath == "" {
+		return nil
+	}
+	var out []string
+	for _, name := range projectContextFiles {
+		if text := readContextFile(projectPath, name); text != "" {
+			out = append(out, "--- "+name+" ---\n"+text)
+		}
+	}
+	if len(out) == 0 {
+		if text := readContextFile(projectPath, projectContextFallbackFile); text != "" {
+			out = append(out, "--- "+projectContextFallbackFile+" ---\n"+text)
+		}
+	}
+	return out
+}
+
+// readContextFile reads a single project file, capped at projectContextMaxBytes,
+// returning "" if the file is missing, unreadable, or empty/whitespace-only.
+func readContextFile(projectPath, name string) string {
+	data, err := os.ReadFile(filepath.Join(projectPath, name))
+	if err != nil {
+		return ""
+	}
+	text := string(data)
+	if len(text) > projectContextMaxBytes {
+		text = text[:projectContextMaxBytes]
+	}
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return text
 }
 
 // getLastAssistantBlocks returns the last assistant message and its parsed content blocks.

@@ -21,11 +21,14 @@ Requirements:
 5. Output in the requested language.
 6. The suggestion is the user's next message sent to the AI assistant, so phrase it as a directive for the AI — never ask the user a question.`
 
-// recommendPassProvider is implemented by LLM summarizers that expose their
-// single-pass call (OpenAISummarizer / AnthropicSummarizer). Used to build a
-// recommendation pipeline with a dedicated prompt.
+// recommendPassProvider is implemented by LLM summarizers that expose a
+// caching-aware recommendation call (OpenAISummarizer / AnthropicSummarizer).
+// It splits the payload into a stable prefix (project context + quick commands,
+// eligible for prompt caching) and a rolling tail (recent conversation +
+// conclusion), so repeated recommendations reuse a cached prefix instead of
+// reprocessing the whole window every turn.
 type recommendPassProvider interface {
-	DoSummarizePass(ctx context.Context, text, systemPrompt string, pass int) (string, error)
+	DoRecommendPass(ctx context.Context, systemPrompt, stable, rolling string) (string, error)
 }
 
 // NewAISummarizer builds an LLM summarizer from the shared AISummaryConfig.
@@ -50,40 +53,56 @@ func NewAISummarizer(cfg model.AISummaryConfig) Summarizer {
 
 // RecommendNextStep generates a concise next-step suggestion based on the
 // assistant's conclusion plus recent conversation context (user messages full
-// text, assistant messages their conclusion) and any available quick commands.
-// It reuses the summarizer's LLM pass with a dedicated recommendation prompt.
+// text, assistant messages their conclusion), quick commands, and project
+// context files. The payload is split into a stable prefix (project context +
+// quick commands) and a rolling tail (conversation + conclusion) so providers
+// with prompt caching (Anthropic cache_control, OpenAI-style automatic prefix
+// caching) can reuse the stable prefix across turns.
 // Returns an error if the summarizer backend does not support recommendation
 // (e.g. the "simple" extract-conclusion summarizer).
-func RecommendNextStep(ctx context.Context, s Summarizer, conversation, quickCommands []string, conclusion, language string) (string, error) {
+func RecommendNextStep(ctx context.Context, s Summarizer, conversation, quickCommands, projectContext []string, conclusion, language string) (string, error) {
 	pp, ok := s.(recommendPassProvider)
 	if !ok {
 		return "", fmt.Errorf("summarizer backend does not support next-step recommendation")
 	}
-	pipeline := NewPipelineWithOpts(pp.DoSummarizePass, recommendNextStepPrompt, SummarizeOption{PreserveMarkdown: false})
-	input := buildRecommendInput(conversation, quickCommands, conclusion)
-	result, err := pipeline.Summarize(ctx, input, language)
-	if err != nil {
-		return "", err
-	}
-	return result, nil
+	stable := buildStableContext(quickCommands, projectContext)
+	rolling := buildRollingContext(conversation, conclusion)
+	prompt := recommendNextStepPrompt + "\n\nOutput in " + languageName(language) + "."
+	return pp.DoRecommendPass(ctx, prompt, stable, rolling)
 }
 
-// buildRecommendInput assembles the recent conversation, available quick
-// commands, and the assistant's conclusion into the user-side text fed to the
-// recommendation pipeline.
-func buildRecommendInput(conversation, quickCommands []string, conclusion string) string {
+// buildStableContext assembles the cacheable prefix: project context files and
+// the user's quick commands. This content is stable across recommendation turns
+// for a given project, so it is the part eligible for prompt caching. It returns
+// an empty string when there is nothing to cache.
+func buildStableContext(quickCommands, projectContext []string) string {
+	var b strings.Builder
+	if len(projectContext) > 0 {
+		b.WriteString("Project context (rules and conventions from the project's instruction files):\n")
+		for _, c := range projectContext {
+			b.WriteString(c + "\n")
+		}
+		b.WriteString("\n")
+	}
+	if len(quickCommands) > 0 {
+		b.WriteString("以下是我的常用指令，请在合适的时候使用：\n")
+		for _, q := range quickCommands {
+			b.WriteString("- " + q + "\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// buildRollingContext assembles the non-cacheable tail: the recent conversation
+// (user messages in full, assistant messages as conclusion) plus the assistant's
+// latest conclusion. This content changes every turn.
+func buildRollingContext(conversation []string, conclusion string) string {
 	var b strings.Builder
 	if len(conversation) > 0 {
 		b.WriteString("Recent conversation (user messages in full, assistant messages as conclusion):\n")
 		for i, m := range conversation {
 			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, m))
-		}
-		b.WriteString("\n")
-	}
-	if len(quickCommands) > 0 {
-		b.WriteString("以下是我的常用指令，请在合适的时候使用（格式：label: command）：\n")
-		for _, q := range quickCommands {
-			b.WriteString("- " + q + "\n")
 		}
 		b.WriteString("\n")
 	}

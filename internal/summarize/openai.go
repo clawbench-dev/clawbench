@@ -54,6 +54,65 @@ type openaiChatMessage struct {
 	Content string `json:"content"`
 }
 
+// DoRecommendPass performs the recommendation call using an OpenAI-compatible
+// Chat Completions endpoint. The stable prefix (project context + quick
+// commands) is sent as its own user message before the rolling conversation
+// tail, so providers with automatic prefix caching (OpenAI, DeepSeek, etc.) can
+// reuse the stable prefix across turns without reprocessing the whole window.
+func (s *OpenAISummarizer) DoRecommendPass(ctx context.Context, systemPrompt, stable, rolling string) (string, error) {
+	messages := make([]openaiChatMessage, 0, 3)
+	messages = append(messages, openaiChatMessage{Role: "system", Content: systemPrompt})
+	if stable != "" {
+		messages = append(messages, openaiChatMessage{Role: "user", Content: stable})
+	}
+	messages = append(messages, openaiChatMessage{Role: "user", Content: rolling})
+
+	reqBody := openaiChatRequest{
+		Model:       s.Model,
+		Messages:    messages,
+		Temperature: 0.3,
+		MaxTokens:   1024,
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("openai recommend request marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.BaseURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return "", fmt.Errorf("openai recommend request create: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.Key)
+
+	resp, err := s.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("openai recommend request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("openai API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var chatResp openaiChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		return "", fmt.Errorf("openai response decode: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 {
+		return "", fmt.Errorf("openai returned no choices")
+	}
+
+	result := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	if result == "" {
+		return "", fmt.Errorf("openai returned empty recommendation output")
+	}
+	return result, nil
+}
+
 // openaiChatResponse is the response body for OpenAI Chat Completions API.
 type openaiChatResponse struct {
 	Choices []openaiChoice `json:"choices"`

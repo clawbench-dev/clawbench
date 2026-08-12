@@ -3,6 +3,7 @@ package summarize
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,8 +59,8 @@ func TestNewAISummarizer_AutoDetectFromURL(t *testing.T) {
 }
 
 func TestRecommendNextStep_UnsupportedBackend(t *testing.T) {
-	// The "simple" summarizer does not expose DoSummarizePass → error.
-	_, err := RecommendNextStep(context.Background(), NewSimple(), nil, nil, "conclusion", "zh")
+	// The "simple" summarizer does not expose DoRecommendPass → error.
+	_, err := RecommendNextStep(context.Background(), NewSimple(), nil, nil, nil, "conclusion", "zh")
 	if err == nil {
 		t.Fatal("expected error for simple summarizer, got nil")
 	}
@@ -68,31 +69,48 @@ func TestRecommendNextStep_UnsupportedBackend(t *testing.T) {
 	}
 }
 
-func TestBuildRecommendInput_WithHistory(t *testing.T) {
-	out := buildRecommendInput([]string{"user msg 1", "user msg 2"}, []string{"生成测试: run tests", "写文档: write doc"}, "the conclusion")
+func TestBuildStableContext_ProjectAndCommands(t *testing.T) {
+	out := buildStableContext(
+		[]string{"run tests", "write doc"},
+		[]string{"--- AGENTS.md ---\nBuild with ./build.sh"},
+	)
+	if !strings.Contains(out, "Project context") {
+		t.Fatalf("expected project context section, got: %q", out)
+	}
+	if !strings.Contains(out, "AGENTS.md") || !strings.Contains(out, "./build.sh") {
+		t.Fatalf("expected project context content, got: %q", out)
+	}
+	if !strings.Contains(out, "以下是我的常用指令") {
+		t.Fatalf("expected quick commands section, got: %q", out)
+	}
+	if !strings.Contains(out, "run tests") {
+		t.Fatalf("expected quick command, got: %q", out)
+	}
+}
+
+func TestBuildStableContext_Empty(t *testing.T) {
+	if out := buildStableContext(nil, nil); out != "" {
+		t.Fatalf("expected empty stable context when nothing provided, got: %q", out)
+	}
+}
+
+func TestBuildRollingContext_ConversationAndConclusion(t *testing.T) {
+	out := buildRollingContext([]string{"user msg 1", "user msg 2"}, "the conclusion")
 	if !strings.Contains(out, "Recent conversation") {
 		t.Fatalf("expected conversation section, got: %q", out)
 	}
 	if !strings.Contains(out, "1. user msg 1") || !strings.Contains(out, "2. user msg 2") {
 		t.Fatalf("expected chronological conversation, got: %q", out)
 	}
-	// Quick commands are framed as the user's frequently-used commands to be
-	// referenced when appropriate — not as callable tools.
-	if !strings.Contains(out, "以下是我的常用指令") {
-		t.Fatalf("expected quick commands framed as user's frequently-used commands, got: %q", out)
-	}
-	if !strings.Contains(out, "生成测试: run tests") {
-		t.Fatalf("expected quick commands section, got: %q", out)
-	}
 	if !strings.Contains(out, "Assistant's latest conclusion:") || !strings.Contains(out, "the conclusion") {
 		t.Fatalf("expected conclusion section, got: %q", out)
 	}
 }
 
-func TestBuildRecommendInput_NoHistory(t *testing.T) {
-	out := buildRecommendInput(nil, nil, "conclusion only")
-	if strings.Contains(out, "Recent conversation") || strings.Contains(out, "以下是我的常用指令") {
-		t.Fatalf("empty sections should be omitted, got: %q", out)
+func TestBuildRollingContext_NoConversation(t *testing.T) {
+	out := buildRollingContext(nil, "conclusion only")
+	if strings.Contains(out, "Recent conversation") {
+		t.Fatalf("empty conversation should be omitted, got: %q", out)
 	}
 	if !strings.Contains(out, "conclusion only") {
 		t.Fatalf("conclusion missing, got: %q", out)
@@ -141,7 +159,7 @@ func TestRecommendNextStep_OpenAI(t *testing.T) {
 	defer srv.Close()
 
 	s := NewOpenAI(srv.URL, "key", "gpt-4o-mini")
-	out, err := RecommendNextStep(context.Background(), s, []string{"please fix tests"}, nil, "The build passed.", "zh")
+	out, err := RecommendNextStep(context.Background(), s, []string{"please fix tests"}, nil, nil, "The build passed.", "zh")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,22 +169,56 @@ func TestRecommendNextStep_OpenAI(t *testing.T) {
 }
 
 func TestRecommendNextStep_Anthropic(t *testing.T) {
+	var capturedBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("x-api-key") != "key" {
 			t.Errorf("unexpected auth header: %q", r.Header.Get("x-api-key"))
 		}
+		body, _ := io.ReadAll(r.Body)
+		capturedBody = string(body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"Ask a clarifying question."}]}`))
 	}))
 	defer srv.Close()
 
 	s := NewAnthropic(srv.URL, "key", "claude-3-haiku")
-	out, err := RecommendNextStep(context.Background(), s, []string{"summarize this"}, nil, "Done.", "en")
+	// Stable prefix above the cache threshold so cache_control is attached.
+	stable := strings.Repeat("project context rule\n", 200)
+	out, err := RecommendNextStep(context.Background(), s, []string{"summarize this"}, nil, []string{stable}, "Done.", "en")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out != "Ask a clarifying question." {
 		t.Fatalf("unexpected output: %q", out)
+	}
+	if !strings.Contains(capturedBody, `"cache_control":{"type":"ephemeral"}`) {
+		t.Fatalf("expected cache_control on stable prefix, got body: %s", capturedBody)
+	}
+	if !strings.Contains(capturedBody, "project context rule") {
+		t.Fatalf("expected stable prefix in request body, got: %s", capturedBody)
+	}
+	if !strings.Contains(capturedBody, "summarize this") {
+		t.Fatalf("expected rolling conversation in request body, got: %s", capturedBody)
+	}
+}
+
+func TestRecommendNextStep_AnthropicSmallStableNoCache(t *testing.T) {
+	var capturedBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		capturedBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer srv.Close()
+
+	s := NewAnthropic(srv.URL, "key", "claude-3-haiku")
+	_, err := RecommendNextStep(context.Background(), s, []string{"x"}, nil, []string{"tiny"}, "Done.", "en")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(capturedBody, "cache_control") {
+		t.Fatalf("small stable prefix must not enable caching, got body: %s", capturedBody)
 	}
 }
 
@@ -177,7 +229,7 @@ func TestRecommendNextStep_APIFailure(t *testing.T) {
 	defer srv.Close()
 
 	s := NewOpenAI(srv.URL, "bad", "gpt-4o-mini")
-	_, err := RecommendNextStep(context.Background(), s, nil, nil, "text", "zh")
+	_, err := RecommendNextStep(context.Background(), s, nil, nil, nil, "text", "zh")
 	if err == nil {
 		t.Fatal("expected error on API failure, got nil")
 	}
