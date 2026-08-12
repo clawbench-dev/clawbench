@@ -22,7 +22,7 @@ const i18n = createI18n({ legacy: false, locale: 'zh', messages: { zh: {}, en: {
  * Replicate the fixLocalImagePaths logic from MarkdownPreview.vue
  * to test the encoding behavior independently.
  */
-function fixLocalImagePaths(html: string, currentDir: string, imageTimestamp: number): string {
+function fixLocalImagePaths(html: string, currentDir: string, imageTimestamp: number, thumbWidth = 800): string {
     return html.replace(/<img\s+([^>]*src=[^>]*)>/gi, (match, attrs) => {
         const srcMatch = attrs.match(/src="([^"]*)"/)
         if (!srcMatch) return match
@@ -44,7 +44,7 @@ function fixLocalImagePaths(html: string, currentDir: string, imageTimestamp: nu
         const rel = normalized.join('/')
         const fullSrc = `/api/local-file/${rel}?t=${imageTimestamp}`
         // Raster formats the thumb endpoint can decode → inline thumbnail + full for lightbox.
-        const thumbSrc = isThumbExtension(src) ? buildThumbUrl(rel) : null
+        const thumbSrc = isThumbExtension(src) ? buildThumbUrl(rel, thumbWidth) : null
         const replacement = thumbSrc
             ? `src="${thumbSrc}" data-full-src="${fullSrc}"`
             : `src="${fullSrc}"`
@@ -195,6 +195,12 @@ describe('fixLocalImagePaths — thumbnail compression for raster images', () =>
         const result = fixLocalImagePaths('<img src="logo.PNG">', '', timestamp)
         expect(result).toContain('src="/api/file/thumb?path=logo.PNG&w=800"')
         expect(result).toContain('data-full-src')
+    })
+
+    it('uses mobile thumbnail width when device is not PC', () => {
+        const result = fixLocalImagePaths('<img src="assets/logo.png">', 'docs', timestamp, 480)
+        expect(result).toContain('src="/api/file/thumb?path=docs/assets/logo.png&w=480"')
+        expect(result).toContain(`data-full-src="/api/local-file/docs/assets/logo.png?t=${timestamp}"`)
     })
 })
 

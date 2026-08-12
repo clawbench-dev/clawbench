@@ -2,7 +2,8 @@ import { marked, katex, DOMPurify } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
 import { annotateCodeBlockHeaders, annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
-import { rewriteImageUrls, convertAudioLinks, convertVideoLinks } from '@/utils/chatRenderUtils.ts'
+import { rewriteImageUrls, convertAudioLinks, convertVideoLinks, getThumbWidth } from '@/utils/chatRenderUtils.ts'
+import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { annotateCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { annotateWorktreePaths } from '@/composables/useWorktreeAnnotation.ts'
@@ -103,7 +104,10 @@ const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-pat
 // DOMPurify default allowed URI schemes, plus "file:" so local file links
 // survive sanitization. Such links are opened in-app (not by the browser) —
 // click handlers and a document-level guard preventDefault before navigation.
-const DOMPURIFY_ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i
+// The trailing alternative must match a FULL relative path (e.g. img/logo.png,
+// ./a.png, ../b.png) — a single non-scheme char after the prefix would only
+// match "img/" and let DOMPurify strip the src of relative markdown images.
+const DOMPURIFY_ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file):|[^a-z]|[a-z+.-]+(?:[/?#][\s\S]*)?$)/i
 
 /**
  * 渲染Markdown内容为HTML（统一管线，所有调用方共用）
@@ -171,8 +175,9 @@ export function renderMarkdown(
     if (!skipEnhancements) {
         const projectRoot = store.state.projectRoot
         const homeDir = store.state.homeDir
+        const { isPC } = usePlatformDetect()
 
-        html = rewriteImageUrls(html, projectRoot)
+        html = rewriteImageUrls(html, projectRoot, getThumbWidth(isPC.value))
         html = convertAudioLinks(html, projectRoot)
         html = convertVideoLinks(html, projectRoot)
 

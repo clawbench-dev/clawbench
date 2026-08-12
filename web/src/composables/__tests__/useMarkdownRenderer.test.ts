@@ -54,6 +54,7 @@ vi.mock('@/utils/chatRenderUtils', () => ({
   rewriteImageUrls: (html: string) => html,
   convertAudioLinks: (html: string) => html,
   convertVideoLinks: (html: string) => html,
+  getThumbWidth: () => 800,
   parseAskQuestionContent: vi.fn(),
 }))
 

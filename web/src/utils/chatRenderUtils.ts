@@ -18,8 +18,19 @@ const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv
  */
 export const THUMB_EXTENSIONS = ['.png', '.jpg', '.jpeg']
 
-/** Default inline thumbnail width passed to /api/file/thumb (clamped 50–800 by backend). */
+/** Desktop (PC) inline thumbnail width passed to /api/file/thumb (clamped 50–800 by backend). */
 export const THUMB_DEFAULT_WIDTH = 800
+/** Mobile inline thumbnail width — smaller viewport needs a smaller, cheaper thumbnail. */
+export const THUMB_MOBILE_WIDTH = 480
+
+/**
+ * Resolve the inline thumbnail width for the current device. Phones/tablets
+ * have small viewports, so a 480px thumbnail is sharp enough and decodes much
+ * cheaper than the desktop 800px. Pure function: callers inject isPC.
+ */
+export function getThumbWidth(isPC: boolean): number {
+  return isPC ? THUMB_DEFAULT_WIDTH : THUMB_MOBILE_WIDTH
+}
 
 /**
  * Rewrite a project-relative media path to a /api/local-file/ URL.
@@ -50,7 +61,7 @@ function resolveLocalMediaSrc(src: string, projectRoot?: string): string {
  * URL is stored in data-full-src (used by the lightbox to show the full image).
  * Skips absolute/external URLs. Applies thumbnail styling.
  */
-export function rewriteImageUrls(html: string, projectRoot: string): string {
+export function rewriteImageUrls(html: string, projectRoot: string, thumbWidth: number = THUMB_DEFAULT_WIDTH): string {
   return html.replace(/<img([^>]*)>/g, (_match, attrs) => {
     let cleanAttrs = attrs.replace(/\s*style="[^"]*"/i, '').replace(/\s*class="[^"]*"/i, '')
     const srcMatch = cleanAttrs.match(/\bsrc="([^"]*)"/)
@@ -71,7 +82,7 @@ export function rewriteImageUrls(html: string, projectRoot: string): string {
             // rel is already segment-encoded (CJK → %XX); the backend decodes
             // the query param once, so pass it through unencoded.
             const fullSrc = escapeHtmlAttr(rewritten)
-            const thumbSrc = `/api/file/thumb?path=${rel}&w=${THUMB_DEFAULT_WIDTH}`
+            const thumbSrc = buildThumbUrl(rel, thumbWidth)
             cleanAttrs = cleanAttrs.replace(/src="[^"]*"/, `src="${thumbSrc}" data-full-src="${fullSrc}"`)
           }
         }

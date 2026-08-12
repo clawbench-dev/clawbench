@@ -5,6 +5,15 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+vi.mock('@/composables/usePlatformDetect', () => {
+  const isPC = { value: false }
+  return {
+    usePlatformDetect: () => ({ isPC }),
+    _setIsPCForTest: (val: boolean) => { isPC.value = val },
+    _resetPlatformForTest: () => { isPC.value = false },
+  }
+})
+
 vi.mock('@/utils/tableRowExpand.ts', () => {
   const parseTableDataFromElement = vi.fn()
   const onTableMouseDown = vi.fn()
@@ -20,10 +29,12 @@ vi.mock('@/utils/tableRowExpand.ts', () => {
 
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { parseTableDataFromElement, isTableDragClick } from '@/utils/tableRowExpand.ts'
+import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect.ts'
 
 describe('useTableRowExpand', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    _resetPlatformForTest()
   })
 
   it('initializes with null modal state', () => {
@@ -94,6 +105,50 @@ describe('useTableRowExpand', () => {
     Object.defineProperty(event, 'pointerType', { value: 'mouse', writable: false })
     expect(handleTableRowClick(event)).toBe(false)
     tbody.remove()
+  })
+
+  it('handleTableRowClick returns false on PC even for a touch click (no row viewer on PC)', () => {
+    _setIsPCForTest(true)
+    const { handleTableRowClick, tableRowModal } = useTableRowExpand()
+    const table = document.createElement('table')
+    table.setAttribute('data-table-idx', '0')
+    const tbody = document.createElement('tbody')
+    const tr = document.createElement('tr')
+    tr.setAttribute('data-row-idx', '0')
+    tbody.appendChild(tr)
+    table.appendChild(tbody)
+    document.body.appendChild(table)
+
+    const event = new MouseEvent('click', { bubbles: true })
+    Object.defineProperty(event, 'target', { value: tr, writable: false })
+    Object.defineProperty(event, 'pointerType', { value: 'touch', writable: false })
+    ;(isTableDragClick as ReturnType<typeof vi.fn>).mockReturnValue(false)
+    ;(parseTableDataFromElement as ReturnType<typeof vi.fn>).mockReturnValue({
+      headers: ['Name'], rows: [['Alice']],
+    })
+
+    expect(handleTableRowClick(event)).toBe(false)
+    expect(tableRowModal.value).toBeNull()
+
+    table.remove()
+  })
+
+  it('handleTableRowClick does not open the row viewer when clicking the lightbox expand icon', () => {
+    const { handleTableRowClick, tableRowModal } = useTableRowExpand()
+    const tr = document.createElement('tr')
+    tr.setAttribute('data-row-idx', '0')
+    const icon = document.createElement('span')
+    icon.className = 'lightbox-expand-icon'
+    tr.appendChild(icon)
+    document.body.appendChild(tr)
+
+    const event = new MouseEvent('click', { bubbles: true })
+    Object.defineProperty(event, 'target', { value: icon, writable: false })
+    Object.defineProperty(event, 'pointerType', { value: 'touch', writable: false })
+
+    expect(handleTableRowClick(event)).toBe(false)
+    expect(tableRowModal.value).toBeNull()
+    tr.remove()
   })
 
   it('handleTableRowClick returns false when pointerType is undefined', () => {

@@ -6,6 +6,9 @@ import {
   parseAskQuestionContent,
   AUDIO_EXTENSIONS,
   VIDEO_EXTENSIONS,
+  getThumbWidth,
+  THUMB_DEFAULT_WIDTH,
+  THUMB_MOBILE_WIDTH,
 } from '@/utils/chatRenderUtils.ts'
 
 // ─── rewriteImageUrls ────────────────────────────────────────────────────────
@@ -254,6 +257,31 @@ describe('rewriteImageUrls', () => {
     const html = '<img src="test.png" alt="description">'
     const result = rewriteImageUrls(html, projectRoot)
     expect(result).toContain('alt="description"')
+  })
+
+  it('uses the supplied mobile thumbnail width when provided', () => {
+    const html = '<img src="images/foo.png">'
+    const result = rewriteImageUrls(html, projectRoot, getThumbWidth(false))
+    expect(result).toContain('src="/api/file/thumb?path=images/foo.png&w=480"')
+    expect(result).toContain('data-full-src="/api/local-file/images/foo.png"')
+  })
+})
+
+// ─── getThumbWidth ───────────────────────────────────────────────────────────
+
+describe('getThumbWidth', () => {
+  it('uses desktop width on PC', () => {
+    expect(getThumbWidth(true)).toBe(THUMB_DEFAULT_WIDTH)
+    expect(getThumbWidth(true)).toBe(800)
+  })
+
+  it('uses smaller mobile width on phones', () => {
+    expect(getThumbWidth(false)).toBe(THUMB_MOBILE_WIDTH)
+    expect(getThumbWidth(false)).toBe(480)
+  })
+
+  it('mobile width is smaller than desktop width', () => {
+    expect(THUMB_MOBILE_WIDTH).toBeLessThan(THUMB_DEFAULT_WIDTH)
   })
 })
 

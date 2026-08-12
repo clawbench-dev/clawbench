@@ -30,7 +30,8 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
-import { isThumbExtension, buildThumbUrl } from '@/utils/chatRenderUtils.ts'
+import { isThumbExtension, buildThumbUrl, getThumbWidth } from '@/utils/chatRenderUtils.ts'
+import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -111,6 +112,7 @@ const { handleDblClick } = useDoubleClickCopy({
 })
 
 const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri } = useFilePathAnnotation()
+const { isPC } = usePlatformDetect()
 
 function handleClick(event: MouseEvent) {
     // Code block header buttons (copy/wrap)
@@ -205,7 +207,7 @@ function fixLocalImagePaths(html: string): string {
         // thumbnail for the inline src (kept stable so ETag revalidation refreshes
         // it when the source file changes) and keep the full image for the lightbox.
         // Other formats (svg/webp/gif/… ) keep serving the original full-size file.
-        const thumbSrc = isThumbExtension(src) ? buildThumbUrl(rel) : null
+        const thumbSrc = isThumbExtension(src) ? buildThumbUrl(rel, getThumbWidth(isPC.value)) : null
         const replacement = thumbSrc
             ? `src="${thumbSrc}" data-full-src="${fullSrc}"`
             : `src="${fullSrc}"`
