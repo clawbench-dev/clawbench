@@ -293,6 +293,7 @@
         @close="sessionSearchDrawer.close()"
         @open="handleOpenFromSearch"
         @resume="handleResumeFromSearch"
+        @destroy="handleDestroyFromSearch"
         @open-acp-sessions="handleOpenAcpSessionsFromSearch"
       />
 
@@ -1025,6 +1026,22 @@ async function handleResumeFromSearch(session) {
   } catch {
     toast.show(gt('sessionSearch.resumeFailed'), { icon: '⚠️', type: 'error' })
   }
+}
+
+async function handleDestroyFromSearch(session) {
+  if (!session?.session_id) return
+  const title = session.session_title || gt('sessionSearch.untitledSession')
+  const confirmed = await searchConfirmDialog.confirm(
+    gt('sessionSearch.destroyConfirm', { title }),
+    {
+      title: gt('sessionSearch.destroy'),
+      confirmText: gt('common.confirm'),
+      dangerous: true,
+    }
+  )
+  if (!confirmed) return
+  sessionSearchDrawer.close()
+  sessionIdentity.destroySession(session.session_id)
 }
 
 async function handleAcpSessionSelect(sessionId) {

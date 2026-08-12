@@ -538,6 +538,8 @@ export default {
     resultCount: '{count} sessions found',
     chunks: '{count} matches',
     resume: 'Resume Session',
+    destroy: 'Delete permanently',
+    destroyConfirm: 'Permanently delete session "{title}"? This cannot be undone. All messages, tool calls, and related data will be removed.',
     open: 'Open Session',
     openSession: 'Open',
     resumeConfirm: 'Resume session "{title}"?',

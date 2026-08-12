@@ -18,6 +18,7 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.roleUser': 'User',
       'sessionSearch.roleAssistant': 'Assistant',
       'sessionSearch.resume': 'Resume Session',
+      'sessionSearch.destroy': 'Delete permanently',
       'sessionSearch.openSession': 'Open',
       'sessionSearch.modeHybrid': 'Hybrid',
       'sessionSearch.modeFts': 'Full-text',
@@ -296,6 +297,47 @@ describe('SessionSearchDrawer', () => {
     await wrapper.find('.detail-resume-btn').trigger('click')
     expect(wrapper.emitted('resume')).toBeTruthy()
     expect(wrapper.emitted('open')).toBeFalsy()
+  })
+
+  it('shows destroy button only for archived session in detail view', async () => {
+    const archivedResult = { ...sampleResult, archived: true }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [archivedResult] }))
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectedSession = archivedResult
+    instance.update()
+    await flushPromises()
+
+    expect(wrapper.find('.detail-destroy-btn').exists()).toBe(true)
+    expect(wrapper.find('.detail-destroy-btn').text()).toBe('Delete permanently')
+  })
+
+  it('does not show destroy button for non-archived session in detail view', async () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectedSession = sampleResult
+    instance.update()
+    await flushPromises()
+
+    expect(wrapper.find('.detail-destroy-btn').exists()).toBe(false)
+  })
+
+  it('emits destroy when destroy button is clicked on archived session', async () => {
+    const archivedResult = { ...sampleResult, archived: true }
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [archivedResult] }))
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectedSession = archivedResult
+    instance.update()
+    await flushPromises()
+
+    await wrapper.find('.detail-destroy-btn').trigger('click')
+    expect(wrapper.emitted('destroy')).toBeTruthy()
+    expect(wrapper.emitted('destroy')![0][0]).toStrictEqual(archivedResult)
   })
 
   it('emits close when handleClose is triggered', async () => {

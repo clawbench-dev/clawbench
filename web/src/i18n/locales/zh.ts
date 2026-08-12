@@ -538,6 +538,8 @@ export default {
     resultCount: '找到 {count} 个会话',
     chunks: '{count} 处匹配',
     resume: '恢复会话',
+    destroy: '永久删除',
+    destroyConfirm: '永久删除会话"{title}"？此操作不可恢复，所有消息、工具调用和相关数据将被删除。',
     open: '打开会话',
     openSession: '打开',
     resumeConfirm: '恢复会话"{title}"？',
