@@ -167,13 +167,12 @@ func TestACPInitRegistration(t *testing.T) {
 
 	t.Run("pi", func(t *testing.T) {
 		p := mustLookup(t, "pi")
-		ACP := mustACP(t, p)
-		// Pi supports ACP via the pi-acp bridge adapter.
-		if ACP.InputRemaps["oldText"] != "old_string" {
-			t.Errorf("expected oldText->old_string for pi ACP, got %q", ACP.InputRemaps["oldText"])
+		// Pi ACP is disabled (unstable) — ACP plugin should be nil.
+		if p.ACP != nil {
+			t.Fatal("expected pi ACP to be nil (ACP disabled)")
 		}
-		if ACP.ToolCallIDPrefixes["read"] != "Read" {
-			t.Errorf("expected read->Read for pi ACP, got %q", ACP.ToolCallIDPrefixes["read"])
+		if p.Spec.AcpCommand != "" {
+			t.Errorf("expected pi AcpCommand to be empty (ACP disabled), got %q", p.Spec.AcpCommand)
 		}
 	})
 
