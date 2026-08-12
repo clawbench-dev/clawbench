@@ -13,6 +13,8 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -104,38 +106,30 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	}
 	slog.Info("acp perf: ensureAliveWithSession.spawnLocked", "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(spawnStart))
 
-	// LoadSession branch
+	// LoadSession branch — explicit load request (acp-load endpoint).
 	if c.loadTargetSID != "" {
 		loadSID := c.loadTargetSID
 		c.loadTargetSID = "" // clear to prevent reuse on next call
-
-		loadCtx, loadCancel := context.WithTimeout(ctx, 60*time.Second)
-		defer loadCancel()
-
-		c.loadSessionActive.Store(true)
-		loadStart := time.Now()
-		loadResp, err := c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
-			SessionId:  acp.SessionId(loadSID),
-			Cwd:        cwd,
-			McpServers: []acp.McpServer{},
-		})
-		slog.Info("acp perf: ensureAliveWithSession.LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID, "elapsed", time.Since(loadStart), "error", err)
-
-		if err != nil {
-			c.alive = false
-			return false, fmt.Errorf("acp: session/load: %w", err)
-		}
-
-		c.acpSID = loadSID
-		c.lastLoadSessionResp = &loadResp
-		c.lastUsed = time.Now()
-		slog.Info("acp conn: loaded session via LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID)
-		return true, nil
+		return c.recoverViaLoadSession(ctx, cwd, loadSID)
 	}
 
-	// Try ResumeSession if we had a previous session
+	// Recover a previous session after the process died.
 	if preSpawnAcpSID != "" {
 		acpSID := preSpawnAcpSID
+
+		// Some ACP agents support LoadSession but not ResumeSession (e.g. the
+		// pi-acp bridge adapter only implements session/load, session/list,
+		// session/new, and session/delete — it rejects session/resume with
+		// "Method not found"). When the backend advertises LoadSession support,
+		// recover the previous session via LoadSession so the conversation
+		// context is preserved instead of erroring out on ResumeSession.
+		if c.supportsLoadSession() {
+			slog.Info("acp conn: recovering previous session via LoadSession",
+				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
+			return c.recoverViaLoadSession(ctx, cwd, acpSID)
+		}
+
+		// Otherwise, recover via ResumeSession.
 		err := c.recoverViaResumeSession(ctx, cwd, acpSID, prevConfig)
 		if err == nil {
 			return false, nil // recovered successfully
@@ -190,6 +184,73 @@ func (c *ACPConn) snapshotCachedConfig() cachedConfigSnapshot {
 		model:  c.currentModelID,
 		effort: c.currentThinkingEffortID,
 	}
+}
+
+// supportsLoadSession reports whether the backend advertises LoadSession
+// capability (from BackendSpec.ACPLoadSession). Some ACP agents (e.g. the
+// pi-acp bridge) support LoadSession but not ResumeSession, so this drives
+// which recovery path ensureAliveWithSession uses after a process death.
+//
+// NOTE: Must be called with c.mu held (ensureAliveWithSession holds it), so it
+// reads the agent fields directly instead of calling the lock-acquiring
+// accessors (which would deadlock).
+func (c *ACPConn) supportsLoadSession() bool {
+	backend := ""
+	agentID := ""
+	if c.agent != nil {
+		backend = c.agent.Backend
+		agentID = c.agent.ID
+	}
+	if backend != "" {
+		if spec := model.FindSpecByBackend(backend); spec != nil && spec.ACPLoadSession {
+			return true
+		}
+	}
+	if agentID == "" {
+		return false
+	}
+	return GetAgentCapabilityRegistry().GetLoadSession(agentID)
+}
+
+// recoverViaLoadSession recovers a session via LoadSession and returns
+// isNew=true (the session was re-established on a fresh process).
+func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string) (bool, error) {
+	loadCtx, loadCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer loadCancel()
+
+	c.loadSessionActive.Store(true)
+	loadStart := time.Now()
+	loadResp, err := c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
+		SessionId:  acp.SessionId(loadSID),
+		Cwd:        cwd,
+		McpServers: []acp.McpServer{},
+	})
+	slog.Info("acp perf: ensureAliveWithSession.LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID, "elapsed", time.Since(loadStart), "error", err)
+
+	if err != nil {
+		c.alive = false
+		c.loadSessionActive.Store(false)
+		return false, fmt.Errorf("acp: session/load: %w", err)
+	}
+
+	c.acpSID = loadSID
+	c.lastLoadSessionResp = &loadResp
+	c.lastUsed = time.Now()
+
+	// Drain the LoadSession replay buffer and clear the active flag. During
+	// automatic recovery after a process death, the replayed messages are
+	// already persisted in ClawBench's DB (they were captured before the process
+	// died), so they must not be routed to the live stream. Leaving
+	// loadSessionActive set would cause all subsequent SessionUpdate
+	// notifications (including the new prompt's output) to be swallowed into the
+	// buffer instead of reaching the stream, hanging the conversation.
+	if c.client != nil {
+		c.client.GetAndClearLoadSessionBuf()
+	}
+	c.loadSessionActive.Store(false)
+
+	slog.Info("acp conn: loaded session via LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID)
+	return true, nil
 }
 
 // recoverViaResumeSession recovers a session via ResumeSession and re-applies config.

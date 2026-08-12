@@ -37,6 +37,7 @@ type acpTestConfig struct {
 	// Capability flags
 	HasThinking     bool // Whether backend supports thinking_effort configuration
 	SupportsConfig  bool // Whether backend supports set_config RPC (mode/model/thinking)
+	LoadSession     bool // Whether backend supports session/load recovery (e.g. pi-acp)
 
 	// Agent construction parameters
 	DefaultModel       string   // Default model ID
@@ -210,6 +211,37 @@ var acpBackends = []acpTestConfig{
 		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
 	},
 	{
+		ID:             "pi",
+		Backend:        "pi",
+		AcpCommand:     "npx -y pi-acp@latest",
+		DefaultCmd:     "pi",
+		Timeout:        90 * time.Second,
+		HasThinking:    true,
+		SupportsConfig: true,
+		LoadSession:    true,
+		DefaultModel:   "minimax-cn/MiniMax-M3",
+		ThinkingLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
+		AltModels:      []string{"minimax-cn/MiniMax-M2.7"},
+		// pi-acp supports LoadSession but NOT ResumeSession, and its "mode" is a
+		// thinking level (no plan/build modes). So process-death/ResumeSession
+		// test points and ModeSwitch do not apply; the rest of the base suite
+		// (session lifecycle, config, state, model/thinking switches) runs.
+		SupportedTests: map[string]bool{
+			AcpNewSessionCreateAndCapture: true,
+			AcpConnReuseSameSession:       true,
+			AcpIdleSweepRecycled:          true,
+			AcpExplicitCloseNewSession:    true,
+			AcpSessionCapabilities:        true,
+			AcpStateModeThinkingCommands:  true,
+			AcpStateReemittedOnSecondPrompt: true,
+			AcpLongRunningMultipleTurns:   true,
+			AcpModelSwitch:                true,
+			AcpThinkingEffortSwitch:       true,
+			AcpUnsupportedConfig:          true,
+			AcpConfigDedup:                true,
+		},
+	},
+	{
 		ID:             "copilot",
 		Backend:        "copilot",
 		AcpCommand:     "copilot --acp",
@@ -296,7 +328,39 @@ func requireACPBackendAvailable(t *testing.T, cfg acpTestConfig) {
 func setupACPTestEnvForConfig(t *testing.T, cfg acpTestConfig) *acpTestEnv {
 	t.Helper()
 	agent := buildACPAgent(cfg)
+	if cfg.LoadSession {
+		// Register LoadSession capability so process-death recovery uses the
+		// session/load path (matching production where BackendSpec.ACPLoadSession
+		// drives this). pi-acp supports LoadSession but not ResumeSession.
+		// We register both the model BackendSpec (authoritative source used by
+		// supportsLoadSession) and the capability registry flag.
+		registerACPBackendSpecForTest(t, cfg, agent)
+		GetAgentCapabilityRegistry().UpdateLoadSession(agent.ID, true)
+	}
 	return setupACPTestEnvForAgent(t, agent)
+}
+
+// registerACPBackendSpecForTest registers a BackendSpec for the given config so
+// model.FindSpecByBackend resolves the backend during integration tests (where
+// the backend sub-packages are not imported). Without this, process-death
+// recovery would not know the agent supports session/load.
+func registerACPBackendSpecForTest(t *testing.T, cfg acpTestConfig, agent *model.Agent) {
+	t.Helper()
+	reg := model.GetBackendRegistry()
+	for i := range reg {
+		if reg[i].Backend == cfg.Backend {
+			return // already registered
+		}
+	}
+	spec := model.BackendSpec{
+		ID:             cfg.ID,
+		Backend:        cfg.Backend,
+		DefaultCmd:     cfg.DefaultCmd,
+		Name:           cfg.ID,
+		AcpCommand:     cfg.AcpCommand,
+		ACPLoadSession: cfg.LoadSession,
+	}
+	model.BackendRegistry = append(model.BackendRegistry, spec)
 }
 
 // ---------------------------------------------------------------------------
