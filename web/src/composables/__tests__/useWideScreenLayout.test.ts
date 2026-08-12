@@ -11,6 +11,7 @@ import {
   resolveLeftTabOnEnter,
   resolveActivePaneOnEnter,
   setActivePane,
+  setLeftCollapsed,
   computeIsWideScreen,
   WIDE_SCREEN_DOCK_TABS,
   WIDE_SCREEN_LEFT_TAB_KEY,
@@ -126,6 +127,42 @@ describe('useWideScreenLayout', () => {
     switchLeftTab('terminal')
     expect(isWideScreen.value).toBe(true)
     expect(leftTab.value).toBe('terminal')
+  })
+})
+
+describe('leftCollapsed (dock tab toggle)', () => {
+  it('defaults to expanded (false)', () => {
+    const { leftCollapsed } = useWideScreenLayout()
+    expect(leftCollapsed.value).toBe(false)
+  })
+
+  it('setLeftCollapsed toggles the shared state', () => {
+    const { leftCollapsed } = useWideScreenLayout()
+    setLeftCollapsed(true)
+    expect(leftCollapsed.value).toBe(true)
+    setLeftCollapsed(false)
+    expect(leftCollapsed.value).toBe(false)
+  })
+
+  it('resetWideScreenState resets to expanded', () => {
+    setLeftCollapsed(true)
+    resetWideScreenState()
+    const { leftCollapsed } = useWideScreenLayout()
+    expect(leftCollapsed.value).toBe(false)
+  })
+
+  it('switchLeftTab expands the collapsed pane when switching to a different tab', () => {
+    const { leftCollapsed } = useWideScreenLayout()
+    switchLeftTab('history')
+    setLeftCollapsed(true)
+    expect(leftCollapsed.value).toBe(true)
+    // Switching to a different tab expands
+    switchLeftTab('tasks')
+    expect(leftCollapsed.value).toBe(false)
+    // Re-clicking the same tab does NOT switch (stays collapsed) — toggle handled elsewhere
+    setLeftCollapsed(true)
+    switchLeftTab('tasks')
+    expect(leftCollapsed.value).toBe(true)
   })
 })
 

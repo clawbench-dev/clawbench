@@ -28,6 +28,12 @@ const leftTab = ref<string>('browse')
 const splitRatio = ref(0.5)
 /** Wide-screen focus tracking: which pane the user is currently working in. */
 const activePane = ref<'left' | 'right'>('right')
+/**
+ * Wide-screen left pane collapsed state. When true, the left column is hidden
+ * and the chat (right) pane takes the full width. Toggled by clicking the
+ * currently-active dock tab again (VS Code-style).
+ */
+const leftCollapsed = ref(false)
 let initialized = false
 let sideEffects: ((tab: string) => void) | null = null
 let setActiveTab: ((tab: string) => void) | null = null
@@ -82,7 +88,7 @@ function initWideScreen() {
 /** Returns the shared wide-screen state refs (initializes once). */
 export function useWideScreenLayout() {
   initWideScreen()
-  return { isWideScreen, leftTab, splitRatio, activePane }
+  return { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed }
 }
 
 /** Ref access for useTabDrawer (init once, return only the refs it needs). */
@@ -94,6 +100,11 @@ export function getWideScreenState() {
 /** Record which pane the user is currently working in (drives focus-aware shortcuts). */
 export function setActivePane(pane: 'left' | 'right') {
   activePane.value = pane
+}
+
+/** Collapse (true) or expand (false) the wide-screen left pane. */
+export function setLeftCollapsed(collapsed: boolean) {
+  leftCollapsed.value = collapsed
 }
 
 /**
@@ -114,6 +125,7 @@ export function switchLeftTab(tab: string) {
   if (!WIDE_SCREEN_DOCK_TABS.includes(tab)) return
   if (leftTab.value === tab) return
   leftTab.value = tab
+  leftCollapsed.value = false
   try {
     localStorage.setItem(WIDE_SCREEN_LEFT_TAB_KEY, tab)
   } catch {
@@ -148,6 +160,7 @@ export function resetWideScreenState() {
   splitRatio.value = 0.5
   isWideScreen.value = false
   activePane.value = 'right'
+  leftCollapsed.value = false
   sideEffects = null
   setActiveTab = null
 }

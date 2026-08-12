@@ -27,7 +27,7 @@
         <!-- Wide-screen vertical dock (non-chat tabs only) -->
         <div v-show="isWideScreen" class="wide-dock" ref="wideDockRef">
           <div class="wide-dock-center">
-            <div class="dock-active-indicator wide-dock-active-indicator" :style="wideDockIndicatorStyle"></div>
+            <div class="dock-active-indicator wide-dock-active-indicator" v-show="!leftCollapsed" :style="wideDockIndicatorStyle"></div>
             <!-- Primary tabs (always visible) -->
             <div v-for="tab in WIDE_SCREEN_PRIMARY_TABS" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
@@ -76,6 +76,7 @@
           <SplitView
             :enabled="isWideScreen"
             :ratio="splitRatio"
+            :collapsed="leftCollapsed"
             @update:ratio="onSplitRatioChange"
           >
             <template #left>
@@ -476,6 +477,7 @@ import {
   resolveActivePaneOnEnter,
   switchLeftTab,
   setSplitRatio,
+  setLeftCollapsed,
   registerWideScreenCallbacks,
 } from './composables/useWideScreenLayout'
 import 'highlight.js/styles/github.css'
@@ -579,7 +581,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
 const activeTab = ref('chat')
 
 // ── Wide-screen layout state ──
-const { isWideScreen, leftTab, splitRatio, activePane } = useWideScreenLayout()
+const { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed } = useWideScreenLayout()
 
 const chatActive = computed(() => (isWideScreen.value ? 'chat' : activeTab.value))
 const leftPanelActive = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
@@ -1551,8 +1553,19 @@ registerWideScreenCallbacks({
 
 // ── Wide-screen vertical dock helpers ──
 function handleWideDockTabClick(tab) {
+  // Clicking the already-active tab toggles the left pane collapsed (VS Code-style).
+  // Clicking a different tab expands (if needed) and switches to it.
+  if (tab === leftTab.value) {
+    const collapsing = !leftCollapsed.value
+    setLeftCollapsed(collapsing)
+    // When collapsing, the visible pane is chat — route focus there so its
+    // global shortcuts (send, voice, etc.) stay active.
+    if (collapsing) setActivePane('right')
+    return
+  }
   // Clicking a dock item means the user intends to work in the left pane.
   setActivePane('left')
+  setLeftCollapsed(false)
   switchLeftTab(tab)
 }
 
@@ -1609,7 +1622,8 @@ function wideDockTabTitle(tab) {
 }
 function wideDockBtnClass(tab) {
   return {
-    active: leftTab.value === tab,
+    // When the left pane is collapsed no dock tab is active (VS Code-style).
+    active: leftTab.value === tab && !leftCollapsed.value,
     'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && leftTab.value !== 'tasks',
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && leftTab.value !== 'tasks',
     'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
@@ -1769,7 +1783,7 @@ function handleOverflowOutsideClick(e) {
 
 // ── Wide-screen dock overflow state ──
 const wideOverflowMenuOpen = ref(false)
-const wideOverflowTabActive = computed(() => widePopupOverflowTabs.value.includes(leftTab.value))
+const wideOverflowTabActive = computed(() => !leftCollapsed.value && widePopupOverflowTabs.value.includes(leftTab.value))
 
 const wideOverflowPopupStyle = computed(() => {
   const btn = wideOverflowBtnRef.value
@@ -1815,6 +1829,7 @@ function toggleWideOverflowMenu() {
 
 function handleWideOverflowSelect(tab) {
   if (leftTab.value === tab) {
+    setLeftCollapsed(!leftCollapsed.value)
     wideOverflowMenuOpen.value = false
     return
   }

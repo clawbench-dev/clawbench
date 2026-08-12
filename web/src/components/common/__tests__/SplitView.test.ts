@@ -97,6 +97,22 @@ describe('SplitView', () => {
     expect(root.style.getPropertyValue('--split-gutter')).toBe('12px')
   })
 
+  it('collapsed=true (enabled): hides left pane and divider, right pane remains', () => {
+    wrapper = mountSplit({ enabled: true, ratio: 0.4, collapsed: true })
+    expect(wrapper.find('.split-view__divider').exists()).toBe(false)
+    const left = wrapper.find('.split-view__left')
+    expect(left.classes()).toContain('split-view__left--collapsed')
+    // Left slot content is still mounted (slot hidden via wrapper), right visible
+    expect(wrapper.find('.pane-right').exists()).toBe(true)
+  })
+
+  it('collapsed=true (disabled): ignored — normal split behavior', () => {
+    wrapper = mountSplit({ enabled: false, collapsed: true })
+    expect(wrapper.find('.split-view__divider').exists()).toBe(false)
+    const left = wrapper.find('.split-view__left')
+    expect(left.classes()).not.toContain('split-view__left--collapsed')
+  })
+
   it('aria-valuenow/min/max are on the same percentage scale', async () => {
     const rect = { left: 0, width: 1000, top: 0, bottom: 0, height: 600, right: 1000, x: 0, y: 0, toJSON() {} }
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect as DOMRect)

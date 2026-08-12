@@ -5,11 +5,11 @@
     :class="{ 'split-view--active': enabled }"
     :style="{ '--split-gutter': `${gutterSize}px` }"
   >
-    <div class="split-view__left" :style="leftStyle">
+    <div class="split-view__left" :class="{ 'split-view__left--collapsed': enabled && collapsed }" :style="leftStyle">
       <slot name="left" />
     </div>
     <div
-      v-if="enabled"
+      v-if="enabled && !collapsed"
       ref="dividerRef"
       class="split-view__divider"
       role="separator"
@@ -39,12 +39,14 @@ const props = withDefaults(defineProps<{
   minRight?: number
   gutterSize?: number
   title?: string
+  collapsed?: boolean
 }>(), {
   ratio: 0.5,
   minLeft: MIN_PANEL_WIDTH,
   minRight: MIN_PANEL_WIDTH,
   gutterSize: 1,
   title: '拖动调整面板宽度',
+  collapsed: false,
 })
 
 const emit = defineEmits<{ (e: 'update:ratio', ratio: number): void }>()
@@ -154,6 +156,12 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   min-width: 320px;
   max-width: calc(100% - 320px - var(--split-gutter, 1px));
+}
+/* Collapsed: hide the left pane entirely so the right pane takes full width.
+   display:none (rather than width:0) also removes the pane from the flex
+   container, letting the right pane fill the whole row. */
+.split-view--active .split-view__left--collapsed {
+  display: none;
 }
 .split-view--active .split-view__right {
   flex: 1 1 auto;
