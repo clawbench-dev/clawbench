@@ -865,6 +865,72 @@ func TestUploadFile_CustomDir(t *testing.T) {
 	})
 }
 
+func TestUploadFile_RelPathDot(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// relpath="." cleans to ".", so resolveRelPathDir returns the target dir
+	// unchanged and the file lands directly in target/.
+	req := createMultipartUploadRequestRel(t, "dot.txt", "dot", ".")
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(UploadFile, req)
+	assertOK(t, w)
+
+	_, err := os.Stat(filepath.Join(env.ProjectDir, "target", "dot.txt"))
+	assert.NoError(t, err)
+}
+
+func TestUploadFile_RelPathMkdirAllFail(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping MkdirAll fail test on Windows")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("skipping as root: root bypasses filesystem permissions")
+	}
+
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A read-only target dir lets the relpath pass the isPathUnderBase check
+	// but makes os.MkdirAll for the nested subdirectory fail → 500.
+	targetDir := filepath.Join(env.ProjectDir, "target")
+	_ = os.MkdirAll(targetDir, 0o755)
+	_ = os.Chmod(targetDir, 0o555)
+	defer func() { _ = os.Chmod(targetDir, 0o755) }()
+
+	req := createMultipartUploadRequestRel(t, "x.txt", "x", "sub/file")
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(UploadFile, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestUploadFile_RelPathSymlinkOutside(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping symlink test on Windows")
+	}
+
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	outsideDir := filepath.Join(os.TempDir(), "clawbench_rel_outside")
+	_ = os.MkdirAll(outsideDir, 0o755)
+	defer func() { _ = os.RemoveAll(outsideDir) }()
+
+	// Symlink inside the target dir that resolves outside it → isPathUnderBase
+	// fails and the upload is rejected with 403.
+	targetDir := filepath.Join(env.ProjectDir, "target")
+	_ = os.MkdirAll(targetDir, 0o755)
+	_ = os.Symlink(outsideDir, filepath.Join(targetDir, "evil"))
+
+	req := createMultipartUploadRequestRel(t, "x.txt", "x", "evil")
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(UploadFile, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 func TestUploadFile_RelPath(t *testing.T) {
 	t.Run("NestedRelPath_CreatesStructure", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)

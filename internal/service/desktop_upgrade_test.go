@@ -1,9 +1,15 @@
 package service
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"clawbench/internal/platform"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,4 +55,111 @@ func TestFetchDesktopLatestFrom(t *testing.T) {
 	assert.Contains(t, res.Downloads["win32-x64"], ts.URL)
 	assert.Contains(t, res.Downloads["darwin-arm64"], ts.URL)
 	assert.Contains(t, res.Downloads["linux-x64"], ts.URL)
+}
+
+func TestFetchDesktopLatestFrom_NewRequestError(t *testing.T) {
+	// base with an invalid URL makes http.NewRequestWithContext fail on the
+	// first platform, returning the error.
+	orig := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = orig }()
+
+	_, err := fetchDesktopLatestFrom("http://exa mple.com")
+	require.Error(t, err)
+}
+
+func TestFetchDesktopLatestFrom_DoError(t *testing.T) {
+	// Client that always fails → upgradeHTTPClient.Do returns error on the
+	// first platform.
+	orig := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = orig }()
+
+	upgradeHTTPClient = &http.Client{
+		Timeout: 1 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return nil, fmt.Errorf("connection refused")
+			},
+		},
+	}
+
+	_, err := fetchDesktopLatestFrom("https://registry.npmjs.org")
+	require.Error(t, err)
+}
+
+func TestFetchDesktopLatestFrom_DecodeError(t *testing.T) {
+	orig := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = orig }()
+
+	// Server returns 200 but invalid JSON → json.Decode fails.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("not valid json"))
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+	_, err := fetchDesktopLatestFrom(ts.URL)
+	require.Error(t, err)
+}
+
+func TestFetchDesktopLatestFrom_EmptyTarballSkipsPlatform(t *testing.T) {
+	orig := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = orig }()
+
+	// All platforms return an empty tarball → skipped, result stays empty.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"0.1.0","dist":{"tarball":"","integrity":""}}`))
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+	res, err := fetchDesktopLatestFrom(ts.URL)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Empty(t, res.Version)
+	assert.Empty(t, res.Downloads)
+}
+
+func TestRewriteTarballURL(t *testing.T) {
+	// Tarball not from npmjs → returned unchanged (fall-through branch).
+	assert.Equal(t,
+		"https://other.example.com/x.tgz",
+		rewriteTarballURL("https://other.example.com/x.tgz", "https://registry.npmmirror.com"))
+	// base == npmjs → returned unchanged.
+	assert.Equal(t,
+		"https://registry.npmjs.org/x.tgz",
+		rewriteTarballURL("https://registry.npmjs.org/x.tgz", "https://registry.npmjs.org"))
+	// npmjs tarball + non-npmjs base → rewritten to base (rewrite branch).
+	assert.Equal(t,
+		"https://registry.npmmirror.com/x.tgz",
+		rewriteTarballURL("https://registry.npmjs.org/x.tgz", "https://registry.npmmirror.com"))
+}
+
+func TestFetchDesktopLatest_UsesRegistryBase(t *testing.T) {
+	orig := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = orig }()
+
+	// Serve every requested registry path from a test server.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"0.5.0","dist":{"tarball":"https://registry.npmjs.org/pkg/-/x.tgz"}}`))
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+	origTransport := upgradeHTTPClient.Transport
+	upgradeHTTPClient.Transport = &rewritingTransport{targetURL: ts.URL, orig: origTransport}
+	defer func() { upgradeHTTPClient.Transport = origTransport }()
+
+	// Force non-China registry base so requests go to npmjs.org (rewritten to ts).
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2) // non-China
+
+	res, err := FetchDesktopLatest()
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, "0.5.0", res.Version)
+	assert.NotEmpty(t, res.Downloads)
 }

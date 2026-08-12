@@ -217,3 +217,121 @@ func TestAnthropicSummarizer_MultipleContentBlocks(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "第一部分。第二部分。", result)
 }
+
+func TestAnthropicDoRecommendPass_CacheableStable(t *testing.T) {
+	var received anthropicRecommendRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		assert.Equal(t, "2023-06-01", r.Header.Get("anthropic-version"))
+		assert.Equal(t, "rec-key", r.Header.Get("x-api-key"))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(anthropicResponse{
+			Content: []anthropicContentBlock{{Type: "text", Text: "推荐的操作。"}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "rec-key", "claude-3-5-haiku-latest")
+	stable := strings.Repeat("a", minCacheableRunes)
+	result, err := s.DoRecommendPass(context.Background(), "sys", stable, "rolling")
+	assert.NoError(t, err)
+	assert.Equal(t, "推荐的操作。", result)
+	assert.Equal(t, "claude-3-5-haiku-latest", received.Model)
+	assert.Equal(t, "sys", received.System)
+	assert.Len(t, received.Messages, 1)
+	assert.Len(t, received.Messages[0].Content, 2)
+	assert.NotNil(t, received.Messages[0].Content[0].CacheControl)
+	assert.Equal(t, "ephemeral", received.Messages[0].Content[0].CacheControl.Type)
+}
+
+func TestAnthropicDoRecommendPass_SmallStable(t *testing.T) {
+	var received anthropicRecommendRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(anthropicResponse{
+			Content: []anthropicContentBlock{{Type: "text", Text: "ok"}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "key", "claude-3-5-haiku-latest")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "short stable", "rolling")
+	assert.NoError(t, err)
+	assert.Len(t, received.Messages[0].Content, 2)
+	assert.Nil(t, received.Messages[0].Content[0].CacheControl)
+}
+
+func TestAnthropicDoRecommendPass_EmptyStable(t *testing.T) {
+	var received anthropicRecommendRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(anthropicResponse{
+			Content: []anthropicContentBlock{{Type: "text", Text: "ok"}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "key", "claude-3-5-haiku-latest")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "", "rolling")
+	assert.NoError(t, err)
+	assert.Len(t, received.Messages[0].Content, 1)
+}
+
+func TestAnthropicDoRecommendPass_ErrorStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, "bad key")
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "bad-key", "claude-3-5-haiku-latest")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "status 401")
+}
+
+func TestAnthropicDoRecommendPass_DecodeError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, "not-json")
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "key", "claude-3-5-haiku-latest")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "decode")
+}
+
+func TestAnthropicDoRecommendPass_EmptyOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(anthropicResponse{
+			Content: []anthropicContentBlock{{Type: "text", Text: "   "}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "key", "claude-3-5-haiku-latest")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "empty recommendation output")
+}
+
+func TestAnthropicDoRecommendPass_RequestCreateError(t *testing.T) {
+	s := NewAnthropic("http://exa mple.com", "key", "claude-3-5-haiku-latest")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+}
+
+func TestAnthropicDoRecommendPass_ConnectionRefused(t *testing.T) {
+	s := NewAnthropic("http://127.0.0.1:1", "key", "claude-3-5-haiku-latest")
+	s.HTTPClient.Timeout = 2 * time.Second
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "anthropic recommend request")
+}

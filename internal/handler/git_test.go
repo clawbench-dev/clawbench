@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 
@@ -872,6 +873,53 @@ func TestGetProjectHistory_CacheHitsAndInvalidates(t *testing.T) {
 	// initGitRepo already created an initial commit, so total is 3.
 	commits3, _ := getProjectHistory(env.ProjectDir, 0)
 	assert.Equal(t, 3, len(commits3))
+}
+
+func TestProjectHistoryHeadSHA_NotGitRepo(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// env.ProjectDir is not a git repo → git rev-parse HEAD fails → "".
+	assert.Equal(t, "", projectHistoryHeadSHA(env.ProjectDir))
+}
+
+func TestGetProjectHistory_CacheEviction(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	initGitRepo(t, env.ProjectDir)
+
+	// Save and replace the shared cache so the test is deterministic.
+	projectHistoryCache.Lock()
+	origEntries := projectHistoryCache.entries
+	projectHistoryCache.entries = make(map[string]projectHistoryCacheEntry)
+	// 100 fresh entries.
+	for i := range 100 {
+		key := fmt.Sprintf("%s|fresh%d|head", env.ProjectDir, i)
+		projectHistoryCache.entries[key] = projectHistoryCacheEntry{commits: nil, hasMore: false, loadedAt: time.Now()}
+	}
+	// One expired entry (older than the TTL) that must be evicted first.
+	expiredKey := fmt.Sprintf("%s|expired|head", env.ProjectDir)
+	projectHistoryCache.entries[expiredKey] = projectHistoryCacheEntry{commits: nil, hasMore: false, loadedAt: time.Now().Add(-time.Hour)}
+	projectHistoryCache.Unlock()
+
+	defer func() {
+		projectHistoryCache.Lock()
+		projectHistoryCache.entries = origEntries
+		projectHistoryCache.Unlock()
+	}()
+
+	// This call computes a fresh key (real HEAD sha, skip=0) and, before
+	// inserting it, triggers the eviction block because the cache is full.
+	commits, _ := getProjectHistory(env.ProjectDir, 0)
+	assert.GreaterOrEqual(t, len(commits), 1)
+
+	projectHistoryCache.Lock()
+	defer projectHistoryCache.Unlock()
+	// The expired entry should have been evicted by the expiry loop.
+	_, ok := projectHistoryCache.entries[expiredKey]
+	assert.False(t, ok, "expired cache entry should have been evicted")
+	// After evicting expired + oldest + inserting the new entry, size ≤ 100.
+	assert.LessOrEqual(t, len(projectHistoryCache.entries), 100)
 }
 
 // --- parseWorktreePorcelain ---

@@ -214,3 +214,114 @@ func TestOpenAISummarizer_NoKey(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, authHeader)
 }
+
+func TestOpenAIDoRecommendPass_Success(t *testing.T) {
+	var received openaiChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		assert.Equal(t, "Bearer rec-key", r.Header.Get("Authorization"))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(openaiChatResponse{
+			Choices: []openaiChoice{{Message: openaiChatMessage{Role: "assistant", Content: "推荐的操作。"}}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "rec-key", "gpt-4o-mini")
+	result, err := s.DoRecommendPass(context.Background(), "sys", "stable prefix", "rolling")
+	assert.NoError(t, err)
+	assert.Equal(t, "推荐的操作。", result)
+	assert.Equal(t, "gpt-4o-mini", received.Model)
+	assert.Equal(t, 1024, received.MaxTokens)
+	assert.Len(t, received.Messages, 3)
+	assert.Equal(t, "system", received.Messages[0].Role)
+	assert.Equal(t, "stable prefix", received.Messages[1].Content)
+	assert.Equal(t, "rolling", received.Messages[2].Content)
+}
+
+func TestOpenAIDoRecommendPass_EmptyStable(t *testing.T) {
+	var received openaiChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(openaiChatResponse{
+			Choices: []openaiChoice{{Message: openaiChatMessage{Role: "assistant", Content: "ok"}}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "gpt-4o-mini")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "", "rolling")
+	assert.NoError(t, err)
+	assert.Len(t, received.Messages, 2)
+}
+
+func TestOpenAIDoRecommendPass_ErrorStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, "model down")
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "gpt-4o-mini")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "status 500")
+}
+
+func TestOpenAIDoRecommendPass_DecodeError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, "not-json")
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "gpt-4o-mini")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "decode")
+}
+
+func TestOpenAIDoRecommendPass_NoChoices(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(openaiChatResponse{Choices: []openaiChoice{}})
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "gpt-4o-mini")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no choices")
+}
+
+func TestOpenAIDoRecommendPass_EmptyOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(openaiChatResponse{
+			Choices: []openaiChoice{{Message: openaiChatMessage{Role: "assistant", Content: "  "}}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "gpt-4o-mini")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "empty recommendation output")
+}
+
+func TestOpenAIDoRecommendPass_RequestCreateError(t *testing.T) {
+	s := NewOpenAI("http://exa mple.com", "key", "gpt-4o-mini")
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+}
+
+func TestOpenAIDoRecommendPass_ConnectionRefused(t *testing.T) {
+	s := NewOpenAI("http://127.0.0.1:1", "key", "gpt-4o-mini")
+	s.HTTPClient.Timeout = 2 * time.Second
+	_, err := s.DoRecommendPass(context.Background(), "sys", "stable", "rolling")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "openai recommend request")
+}

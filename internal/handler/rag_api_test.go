@@ -720,6 +720,21 @@ func TestServeRAGSessionSearch_EmptyQueryIncludesFirstChunk(t *testing.T) {
 	assert.Equal(t, "user", result.Sessions[0].Chunks[0].Role)
 }
 
+func TestServeRAGSessionSearch_BrowseModeDBError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Drop chat_sessions so GetRecentSessions fails → RecentSessions returns an
+	// error → the handler responds 503.
+	_, err := service.UnsafeDBForTest().Exec("DROP TABLE chat_sessions")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
 func TestServeRAGSessionSearch_RemoteNoProjectDenied(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

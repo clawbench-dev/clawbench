@@ -2,12 +2,17 @@ package stt
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) { return 0, fmt.Errorf("read boom") }
 
 // mustCompileTimeAssert ensures VLLMProvider implements STTProvider.
 var _ STTProvider = (*VLLMProvider)(nil)
@@ -156,6 +161,64 @@ func TestNewVLLMProvider(t *testing.T) {
 	}
 	if p.HTTPClient.Timeout == 0 {
 		t.Fatal("HTTPClient Timeout is zero")
+	}
+}
+
+func TestVLLMTranscribe_AudioReadError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("request should not be sent when audio read fails")
+	}))
+	defer srv.Close()
+
+	p := newVLLM(srv.URL, "m")
+	if _, err := p.Transcribe(context.Background(), errorReader{}, ""); err == nil {
+		t.Fatal("expected error for audio read failure, got nil")
+	}
+}
+
+func TestVLLMTranscribe_RequestCreateError(t *testing.T) {
+	p := newVLLM("http://exa mple.com", "m")
+	if _, err := p.Transcribe(context.Background(), strings.NewReader("x"), ""); err == nil {
+		t.Fatal("expected error for invalid URL, got nil")
+	}
+}
+
+func TestVLLMTranscribe_MissingClientUsesDefault(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"ok"}`))
+	}))
+	defer srv.Close()
+
+	p := newVLLM(srv.URL, "m")
+	p.HTTPClient = nil
+	if _, err := p.Transcribe(context.Background(), strings.NewReader("x"), ""); err != nil {
+		t.Fatalf("Transcribe error: %v", err)
+	}
+	if gotPath != "/v1/audio/transcriptions" {
+		t.Fatalf("path = %q, want /v1/audio/transcriptions", gotPath)
+	}
+}
+
+func TestVLLMTranscribe_RequestFailed(t *testing.T) {
+	p := newVLLM("http://127.0.0.1:1", "m")
+	if _, err := p.Transcribe(context.Background(), strings.NewReader("x"), ""); err == nil {
+		t.Fatal("expected error for failed request, got nil")
+	}
+}
+
+func TestVLLMTranscribe_DecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`not-json`))
+	}))
+	defer srv.Close()
+
+	p := newVLLM(srv.URL, "m")
+	if _, err := p.Transcribe(context.Background(), strings.NewReader("x"), ""); err == nil {
+		t.Fatal("expected error for invalid response JSON, got nil")
 	}
 }
 
