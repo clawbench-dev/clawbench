@@ -111,6 +111,10 @@ const legacyKeys: Record<string, {
     key: 'clawbench-terminal-font-size',
     format: 'raw',
   },
+  terminalTheme: {
+    key: '',
+    format: 'raw',
+  },
   androidLogCapture: {
     key: '',
     format: 'raw',
@@ -240,6 +244,7 @@ export function getZoomedViewport(): { width: number; height: number } {
 
 const localDefaults: Record<string, string | boolean | number | null> = {
   theme: 'auto',
+  terminalTheme: 'auto',
   locale: 'zh',
   autoSpeech: false,
   showHidden: false,
