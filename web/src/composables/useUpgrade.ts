@@ -8,6 +8,8 @@ import { compareVersions } from '@/utils/version'
 const TAG = 'Upgrade'
 const MAX_POLL_DURATION = 5 * 60 * 1000 // 5 minutes
 
+const RELEASES_BASE_URL = 'https://github.com/xulongzhe/clawbench/releases/tag/'
+
 export interface UpgradeState {
   phase: string
   current_version: string
@@ -187,6 +189,14 @@ export function useUpgrade() {
     localStorage.setItem(SKIP_KEY, version)
   }
 
+  /** GitHub release notes URL for the target (latest) version */
+  const releaseNotesUrl = computed(() => {
+    const latest = state.latest_version
+    if (!latest) return ''
+    const tag = `v${latest.replace(/^v/, '')}`
+    return `${RELEASES_BASE_URL}${tag}`
+  })
+
   /** Whether upgrade is in progress */
   const isInProgress = computed(() => {
     const p = state.phase
@@ -222,6 +232,7 @@ export function useUpgrade() {
     state,
     checking,
     hasUpgrade,
+    releaseNotesUrl,
     showProgressDialog,
     isInProgress,
     isRestarting,

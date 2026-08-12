@@ -7,6 +7,9 @@
         </div>
         <p class="up-body">{{ t('upgrade.promptMessage', { version: latestVersion, currentVersion }) }}</p>
         <div class="up-version-badge">v{{ latestVersion }}</div>
+        <a v-if="releaseNotesUrl" class="up-release-link" :href="releaseNotesUrl" target="_blank" rel="noopener noreferrer">
+          {{ t('upgrade.releaseNotes', { version: latestVersion }) }}
+        </a>
         <div class="up-footer">
           <button class="up-upgrade" @click="upgradeNow">{{ t('upgrade.upgradeNow') }}</button>
           <button class="up-skip" @click="skipVersion">{{ t('upgrade.skipVersion') }}</button>
@@ -24,7 +27,7 @@ import { useUpgrade } from '@/composables/useUpgrade'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 const { t } = useI18n()
-const { skipVersion: doSkip, startUpgrade } = useUpgrade()
+const { skipVersion: doSkip, startUpgrade, releaseNotesUrl } = useUpgrade()
 
 const visible = ref(false)
 const latestVersion = ref('')
@@ -121,6 +124,20 @@ watch(visible, (v) => {
   font-size: 14px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.up-release-link {
+  display: block;
+  margin: 0 16px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent-color);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.up-release-link:hover {
+  text-decoration: underline;
 }
 
 .up-footer {

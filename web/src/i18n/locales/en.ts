@@ -1792,6 +1792,7 @@ export default {
     skipVersion: 'Skip this version',
     remindLater: 'Remind me later',
     upgradeNow: 'Upgrade now',
+    releaseNotes: 'View v{version} release notes',
     promptMessage: 'Version {version} is available (current: {currentVersion})',
     versionMismatch: 'Upgrade error — current version does not match expected',
     alreadyLatest: 'Already on the latest version',

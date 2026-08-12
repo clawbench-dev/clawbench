@@ -1793,6 +1793,7 @@ export default {
     skipVersion: '跳过此版本',
     remindLater: '稍后提醒',
     upgradeNow: '立即升级',
+    releaseNotes: '查看 v{version} 更新日志',
     promptMessage: '新版本 {version} 可用，当前版本 {currentVersion}',
     versionMismatch: '升级异常 — 当前版本与预期不符',
     alreadyLatest: '当前已是最新版本',

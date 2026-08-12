@@ -411,6 +411,54 @@ describe('useUpgrade', () => {
     })
   })
 
+  // ── releaseNotesUrl ──
+
+  describe('releaseNotesUrl', () => {
+    it('builds a v-prefixed tag URL from the latest version', async () => {
+      mockApiGet.mockResolvedValue({
+        phase: 'completed',
+        current_version: '',
+        latest_version: '1.2.0',
+        progress: 100,
+        message: '',
+        backup_path: '',
+        error: '',
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.fetchStatus()
+
+      expect(upgrade.releaseNotesUrl.value).toBe(
+        'https://github.com/xulongzhe/clawbench/releases/tag/v1.2.0',
+      )
+    })
+
+    it('does not double the v prefix when latest already has one', async () => {
+      mockApiGet.mockResolvedValue({
+        phase: 'completed',
+        current_version: '',
+        latest_version: 'v1.2.0',
+        progress: 100,
+        message: '',
+        backup_path: '',
+        error: '',
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.fetchStatus()
+
+      expect(upgrade.releaseNotesUrl.value).toBe(
+        'https://github.com/xulongzhe/clawbench/releases/tag/v1.2.0',
+      )
+    })
+
+    it('returns empty when latest version is empty', () => {
+      const upgrade = useUpgrade()
+      upgrade.state.latest_version = ''
+      expect(upgrade.releaseNotesUrl.value).toBe('')
+    })
+  })
+
   // ── verifyUpgrade ──
 
   describe('verifyUpgrade', () => {
