@@ -1006,11 +1006,11 @@ func TestUploadFile_RelPath(t *testing.T) {
 
 		// filepath.IsAbs is platform-specific: an absolute path must be rooted
 		// for the current OS. On Unix "/etc/evil" is absolute; on Windows a path
-		// needs a drive letter (e.g. "C:\\evil"), since a root-relative "\etc"
-		// is not reported as absolute (volumeNameLen returns 0).
+		// needs a drive letter AND root separator (e.g. "C:\\evil"), since a
+		// root-relative "\\etc" or drive-relative "C:evil" is not absolute.
 		var absPath string
 		if runtime.GOOS == "windows" {
-			absPath = filepath.Join(`C:`, "evil")
+			absPath = `C:\evil`
 		} else {
 			absPath = filepath.Join(string(filepath.Separator), "etc", "evil")
 		}
