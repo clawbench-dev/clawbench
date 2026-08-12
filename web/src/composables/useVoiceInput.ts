@@ -13,6 +13,7 @@
 import { ref } from 'vue'
 import { useSettingsConfig } from './useSettingsConfig'
 import { useToast } from './useToast'
+import { useDialog } from './useDialog'
 import { appLog } from '@/utils/appLog'
 
 export type VoiceInputState = 'idle' | 'recording' | 'transcribing' | 'done'
@@ -48,6 +49,7 @@ function wsUrl(path: string): string {
 export function useVoiceInput() {
   const settings = useSettingsConfig()
   const toast = useToast()
+  const dialog = useDialog()
 
   // fail records the error and surfaces it to the user via a toast.
   function fail(msg: string): void {
@@ -79,8 +81,9 @@ export function useVoiceInput() {
     // localhost). If it's missing the page was served over plain HTTP on a
     // remote host, so the microphone is unreachable regardless of permission.
     if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-      fail('语音输入需要 HTTPS 或 localhost 环境（当前页面不是安全上下文，无法访问麦克风）')
+      error.value = '语音输入需要 HTTPS 或 localhost 环境（当前页面不是安全上下文，无法访问麦克风）'
       appLog.w('VoiceInput', 'voice input requires secure context (HTTPS or localhost)')
+      void dialog.alert(error.value, { title: '语音输入不可用', confirmText: '知道了' })
       return
     }
     try {
