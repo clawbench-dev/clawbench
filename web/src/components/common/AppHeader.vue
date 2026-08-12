@@ -160,6 +160,7 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import { useRecentFiles } from '@/composables/useRecentFiles'
+import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { toFixedCSS } from '@/composables/useSettingsConfig'
@@ -689,6 +690,12 @@ onUnmounted(() => {
     stopBackgroundPolling()
     stopBlinking()
 })
+
+// Keyboard navigation (↑/↓ select, Enter confirm, Esc close) for the three
+// teleported dropdowns — project switch, recent files, branch quick-index.
+useMenuKeyboard({ panelRef: dropdownPanelRef, isOpen: dropdownOpen })
+useMenuKeyboard({ panelRef: fileDropdownPanelRef, isOpen: fileDropdownOpen })
+useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen })
 </script>
 
 <style scoped>
@@ -993,6 +1000,12 @@ onUnmounted(() => {
 }
 
 .app-menu-item:hover {
+    background: var(--bg-tertiary);
+}
+
+/* Keyboard highlight (↑/↓ navigation) — mirrors the hover state so the
+   selected row stays visible even when the pointer isn't over it. */
+.app-menu-item.keyboard-hover {
     background: var(--bg-tertiary);
 }
 
