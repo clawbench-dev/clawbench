@@ -64,7 +64,9 @@
         <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
       </span>
       <div class="chat-meta-actions">
-        <SummaryToggle v-if="msg.summary && !msg.streaming" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="$emit('toggle-summary', msg.id)" />
+        <span v-if="msg.summary && !msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
+          <SummaryToggle mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
+        </span>
         <span v-if="msg._loadingOriginal" class="chat-loading-original">{{ t('chat.message.loadingOriginal') }}</span>
         <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
@@ -123,7 +125,7 @@
 </template>
 
 <script setup>
-import { ref, inject, computed } from 'vue'
+import { ref, inject, computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split } from 'lucide-vue-next'
 import { formatDuration } from '@/utils/format.ts'
@@ -154,11 +156,47 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'remove-pending', 'fork-from-message'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'remove-pending', 'fork-from-message'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
 const speakBtnRef = ref(null)
+const toggleWrapRef = ref(null)
+
+// ── Summary/original toggle scroll anchoring ──
+// The toggle button sits in the bottom meta bar, BELOW the message content.
+// Switching summary↔original changes the content height, which would push/pull
+// the button vertically and force the user to scroll to find it again. Instead
+// we record the button's viewport top + the scroll container's scrollTop before
+// toggling, then after the re-render adjust scrollTop so the button stays pinned
+// to the exact same screen position.
+function handleToggleSummary() {
+  const wrap = toggleWrapRef.value
+  const scroller = wrap?.closest('.chat-messages')
+  const anchor = wrap?.getBoundingClientRect().top
+  const baseScroll = scroller?.scrollTop ?? 0
+  if (!wrap || !scroller || anchor == null) {
+    emit('toggle-summary', props.msg?.id)
+    return
+  }
+  // Recompute scroll so the button stays at its original viewport top.
+  const adjust = () => {
+    const newTop = wrap.getBoundingClientRect().top
+    scroller.scrollTop = baseScroll + (newTop - anchor)
+  }
+  emit('toggle-summary', props.msg?.id)
+  nextTick(adjust)
+  // The original view may load lazily (content fetched after nextTick), resizing
+  // the message later. Watch the content wrapper briefly and keep re-anchoring
+  // until the height settles.
+  const contentEl = wrapperRef.value
+  if (contentEl && typeof ResizeObserver !== 'undefined') {
+    let settled = false
+    const ro = new ResizeObserver(() => { if (!settled) adjust() })
+    ro.observe(contentEl)
+    setTimeout(() => { settled = true; ro.disconnect() }, 600)
+  }
+}
 
 // Extract text content from message blocks for TTS.
 // Uses extractSpeakableText to include AskUserQuestion blocks.
@@ -445,6 +483,12 @@ function handleCopyMessage() {
     display: flex;
     align-items: center;
     gap: 2px;
+}
+
+/* Wrapper around the summary/original toggle button — used as the scroll anchor */
+.chat-summary-anchor {
+    display: inline-flex;
+    align-items: center;
 }
 
 /* Loading hint shown while lazily fetching the original message content */
