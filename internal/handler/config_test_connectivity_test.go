@@ -228,12 +228,39 @@ func TestTestRAG_EmptyURL(t *testing.T) {
 	assert.Contains(t, result.Message, "required")
 }
 
+func TestTestRAG_InvalidScheme(t *testing.T) {
+	result := testRAG(context.Background(), map[string]any{
+		"rag.base_url": "ftp://host:21",
+		"rag.model":    "bge-m3",
+	})
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "scheme")
+}
+
+func TestTestRAG_MissingSchemeNormalized(t *testing.T) {
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/models", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
+	})
+	defer srv.Close()
+
+	// Strip the scheme to exercise missing-scheme auto-completion.
+	host := strings.TrimPrefix(srv.URL, "http://")
+	result := testRAG(context.Background(), map[string]any{
+		"rag.base_url": host,
+		"rag.model":    "bge-m3",
+	})
+	assert.True(t, result.Success)
+	assert.Contains(t, result.Message, "succeeded")
+}
+
 func TestTestRAG_ReachableWithModel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "/v1/models")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"},{"id":"nomic-embed"}]}`)
-	}))
+	})
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -241,14 +268,14 @@ func TestTestRAG_ReachableWithModel(t *testing.T) {
 		"rag.model":    "bge-m3",
 	})
 	assert.True(t, result.Success)
-	assert.Contains(t, result.Message, "available")
+	assert.Contains(t, result.Message, "succeeded")
 }
 
 func TestTestRAG_ReachableModelNotFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `{"data":[{"id":"nomic-embed"}]}`)
-	}))
+	})
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -260,9 +287,9 @@ func TestTestRAG_ReachableModelNotFound(t *testing.T) {
 }
 
 func TestTestRAG_ModelsNotSupported(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-	}))
+	})
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -270,7 +297,7 @@ func TestTestRAG_ModelsNotSupported(t *testing.T) {
 		"rag.model":    "bge-m3",
 	})
 	assert.True(t, result.Success)
-	assert.Contains(t, result.Message, "not supported by server")
+	assert.Contains(t, result.Message, "not implement /v1/models")
 }
 
 func TestTestRAG_Unreachable(t *testing.T) {
@@ -279,6 +306,21 @@ func TestTestRAG_Unreachable(t *testing.T) {
 	})
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Message, "unreachable")
+}
+
+// ragTestServer wraps a handler that answers the /v1/models probe, and also
+// answers POST /v1/embeddings with a valid embedding vector.
+func ragTestServer(t *testing.T, modelsHandler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/embeddings" || strings.HasSuffix(r.URL.Path, "/v1/embeddings"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintln(w, `{"data":[{"embedding":[0.1,0.2,0.3],"index":0}]}`)
+		default:
+			modelsHandler(w, r)
+		}
+	}))
 }
 
 // ── DingTalk tests ───────────────────────────────────────────
@@ -744,10 +786,10 @@ func TestTestOpenAIAPI_NoAPIKey(t *testing.T) {
 // ── RAG additional tests ──────────────────────────────────────
 
 func TestTestRAG_DefaultModel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
-	}))
+	})
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -758,10 +800,10 @@ func TestTestRAG_DefaultModel(t *testing.T) {
 }
 
 func TestTestRAG_PrefixMatch(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3:latest"}]}`)
-	}))
+	})
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -772,23 +814,23 @@ func TestTestRAG_PrefixMatch(t *testing.T) {
 }
 
 func TestTestRAG_ParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `not valid json for models list`)
-	}))
+	})
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
 		"rag.base_url": srv.URL,
 	})
 	assert.True(t, result.Success)
-	assert.Contains(t, result.Message, "could not parse")
+	assert.Contains(t, result.Message, "not implement /v1/models")
 }
 
 func TestTestRAG_OtherHTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-	}))
+	})
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -799,11 +841,11 @@ func TestTestRAG_OtherHTTPError(t *testing.T) {
 }
 
 func TestTestRAG_WithAPIKey(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
-	}))
+	})
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -812,6 +854,41 @@ func TestTestRAG_WithAPIKey(t *testing.T) {
 		"rag.api_key":  "test-api-key",
 	})
 	assert.True(t, result.Success)
+}
+
+func TestTestRAG_EmbeddingFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
+	}))
+	defer srv.Close()
+
+	result := testRAG(context.Background(), map[string]any{
+		"rag.base_url": srv.URL,
+		"rag.model":    "bge-m3",
+	})
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "embedding failed")
+}
+
+func TestTestRAG_EmbeddingEmptyVector(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/v1/models") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintln(w, `{"data":[{"embedding":[],"index":0}]}`)
+	}))
+	defer srv.Close()
+
+	result := testRAG(context.Background(), map[string]any{
+		"rag.base_url": srv.URL,
+		"rag.model":    "bge-m3",
+	})
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Message, "empty embedding")
 }
 
 // ── DingTalk additional tests ─────────────────────────────────

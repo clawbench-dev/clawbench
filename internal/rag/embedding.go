@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -22,13 +23,63 @@ type EmbeddingClient struct {
 	dim        atomic.Int64 // auto-detected embedding dimension
 }
 
+// NormalizeEmbeddingBaseURL normalizes a user-provided OpenAI-compatible base URL
+// for the /v1/embeddings endpoint. It returns a canonical root (without a trailing
+// "/v1" or "/v1/embeddings" suffix) that callers append "/v1/embeddings" to.
+//
+// Tolerances handled:
+//   - empty / whitespace-only input → error
+//   - missing scheme (e.g. "localhost:11434") → "http://" is prepended
+//   - non-http(s) scheme (e.g. "ftp://", "file://") → error
+//   - trailing "/v1" or "/v1/embeddings" → stripped to avoid double "/v1" paths
+//   - a pre-existing "/v1/embeddings" full endpoint → reduced back to the root
+func NormalizeEmbeddingBaseURL(baseURL string) (string, error) {
+	u := strings.TrimSpace(baseURL)
+	if u == "" {
+		return "", fmt.Errorf("embedding base URL is required")
+	}
+
+	// Default to http when no scheme is present.
+	if !strings.Contains(u, "://") {
+		u = "http://" + u
+	}
+
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return "", fmt.Errorf("invalid embedding base URL %q: %w", baseURL, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("unsupported scheme %q in embedding base URL %q (must be http or https)", parsed.Scheme, baseURL)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("embedding base URL %q is missing a host", baseURL)
+	}
+
+	// Strip a trailing "/v1" or "/v1/embeddings" so callers can safely append "/v1/embeddings".
+	path := strings.TrimSuffix(parsed.Path, "/")
+	switch {
+	case path == "/v1/embeddings" || strings.HasSuffix(path, "/v1/embeddings"):
+		path = strings.TrimSuffix(path, "/v1/embeddings")
+	case path == "/v1" || strings.HasSuffix(path, "/v1"):
+		path = strings.TrimSuffix(path, "/v1")
+	}
+	parsed.Path = path
+
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
 // NewEmbeddingClient creates a new embedding client.
 // baseURL is the OpenAI-compatible API root (e.g. "http://localhost:11434").
 // model is the embedding model name.
 // apiKey is the bearer token (may be empty for local servers).
 func NewEmbeddingClient(baseURL, model, apiKey string) *EmbeddingClient {
+	normalized, err := NormalizeEmbeddingBaseURL(baseURL)
+	if err != nil {
+		slog.Warn("rag: invalid embedding base URL, using as-is", slog.String("base_url", baseURL), slog.String("err", err.Error()))
+		normalized = strings.TrimRight(baseURL, "/")
+	}
 	return &EmbeddingClient{
-		BaseURL: strings.TrimRight(baseURL, "/"),
+		BaseURL: normalized,
 		Model:   model,
 		APIKey:  apiKey,
 		HTTPClient: &http.Client{
