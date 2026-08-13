@@ -143,7 +143,7 @@ func scanCodebuddySessionsDir(dir string) []codebuddyDiskSession {
 	var sessions []codebuddyDiskSession
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip unreadable entries
+			return nil //nolint:nilerr // skip unreadable entries
 		}
 		if d.IsDir() {
 			if d.Name() == "subagents" {
@@ -176,7 +176,7 @@ func parseCodebuddyJSONL(path string) (codebuddyDiskSession, bool) {
 	if err != nil {
 		return codebuddyDiskSession{}, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var s codebuddyDiskSession
 	scanner := bufio.NewScanner(f)

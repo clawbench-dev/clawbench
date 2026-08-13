@@ -190,7 +190,7 @@ func ServeListTree(w http.ResponseWriter, r *http.Request) {
 	var files []FileTreeEntry
 
 	// If the queried path is itself a file, return just that file.
-	if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+	if info, statErr := os.Stat(absPath); statErr == nil && !info.IsDir() {
 		files = append(files, FileTreeEntry{Rel: filepath.Base(absPath), Size: info.Size()})
 		writeJSON(w, http.StatusOK, map[string]interface{}{"files": files})
 		return
