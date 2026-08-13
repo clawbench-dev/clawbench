@@ -18,6 +18,9 @@
           <RotateCw :size="16" />
         </button>
         <SearchInput v-model="searchQuery" :placeholder="t('projectDialog.search')" />
+        <button class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
+          <LocateFixed :size="16" />
+        </button>
       </div>
       <DirBreadcrumb :path="browsePath === '/' ? '' : browsePath" @navigate="onBreadcrumbNavigate" />
     </div>
@@ -47,6 +50,8 @@
       </div>
     </div>
 
+    <JumpDirDialog :open="jumpOpen" @close="jumpOpen = false" @confirm="handleJumpConfirm" />
+
     <template #footer>
       <button class="cancel-btn" @click="$emit('close')">{{ t('common.cancel') }}</button>
       <button class="confirm-btn" @click="confirm">
@@ -57,13 +62,14 @@
 </template>
 
 <script setup>
-import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, RotateCw } from 'lucide-vue-next'
+import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, RotateCw, LocateFixed } from 'lucide-vue-next'
 import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from './common/ModalDialog.vue'
 import SearchInput from './common/SearchInput.vue'
 import DirBreadcrumb from './file/DirBreadcrumb.vue'
 import FileIcon from './common/FileIcon.vue'
+import JumpDirDialog from './file/JumpDirDialog.vue'
 import { useDialog } from '@/composables/useDialog.ts'
 import { store } from '@/stores/app.ts'
 
@@ -76,6 +82,12 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 const toast = inject('toast', null)
 const hotSwitchProject = inject('hotSwitchProject', null)
+
+const jumpOpen = ref(false)
+async function handleJumpConfirm(path) {
+  jumpOpen.value = false
+  browseNavigate(path)
+}
 
 const loading = ref(false)
 const selectedPath = ref('')
