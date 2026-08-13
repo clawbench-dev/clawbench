@@ -995,6 +995,18 @@ function handleJumpUnread(e) {
   })
 }
 
+// Desktop: Ctrl+K/Cmd+K to open the global session list drawer
+function handleOpenSessionList(e) {
+  if (!props.keyboardActive) return
+  const tag = e.target?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return
+  if (e.target?.closest?.('.terminal-panel')) return
+  if (!(e.ctrlKey || e.metaKey)) return
+  if (e.key !== 'k' && e.key !== 'K') return
+  e.preventDefault()
+  identity.openSessionTab()
+}
+
 // Desktop: Ctrl+Delete to archive current session
 function handleDeleteKey(e) {
   if (!props.keyboardActive) return
@@ -1015,6 +1027,7 @@ onMounted(() => {
     window.addEventListener('clawbench-summary-update', handleSummaryUpdate)
     document.addEventListener('keydown', handleCtrlArrowSessionSwitch)
     document.addEventListener('keydown', handleJumpUnread)
+    document.addEventListener('keydown', handleOpenSessionList)
     document.addEventListener('keydown', handleDeleteKey)
 })
 
@@ -1031,6 +1044,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-summary-update', handleSummaryUpdate)
     document.removeEventListener('keydown', handleCtrlArrowSessionSwitch)
     document.removeEventListener('keydown', handleJumpUnread)
+    document.removeEventListener('keydown', handleOpenSessionList)
     document.removeEventListener('keydown', handleDeleteKey)
     notification.closeAll()
 })

@@ -36,6 +36,11 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
     actionKey: 'appHeader.shortcutTip.actionJumpUnread',
   },
   {
+    contextKey: 'appHeader.shortcutTip.contextOpenSessionList',
+    keys: ['Ctrl+K'],
+    actionKey: 'appHeader.shortcutTip.actionOpenSessionList',
+  },
+  {
     contextKey: 'appHeader.shortcutTip.contextRecommend',
     actionKey: 'appHeader.shortcutTip.actionRecommend',
   },

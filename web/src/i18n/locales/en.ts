@@ -126,6 +126,8 @@ export default {
       actionSwitchSession: 'Switch chat session',
       contextJumpUnread: 'Chat · anywhere focused',
       actionJumpUnread: 'Jump to the next unread session',
+      contextOpenSessionList: 'Chat · anywhere focused',
+      actionOpenSessionList: 'Open session list',
       contextRecommend: 'Chat · when the last message is an assistant reply',
       actionRecommend: 'A "recommended reply" appears above the input box; click "Fill" to accept the suggested next step',
       contextRecommendEnable: 'Recommended reply · how to enable',

@@ -27,4 +27,10 @@ describe('SHORTCUT_TIPS', () => {
     expect(jumpUnread).toBeDefined()
     expect(jumpUnread?.keys).toContain('Ctrl+U')
   })
+
+  it('includes the open-session-list shortcut with the Ctrl+K key', () => {
+    const openList = SHORTCUT_TIPS.find(tip => tip.contextKey.endsWith('.contextOpenSessionList'))
+    expect(openList).toBeDefined()
+    expect(openList?.keys).toContain('Ctrl+K')
+  })
 })

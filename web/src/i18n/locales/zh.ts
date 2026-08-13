@@ -126,6 +126,8 @@ export default {
       actionSwitchSession: '切换聊天会话',
       contextJumpUnread: '聊天页 · 聚焦任意处',
       actionJumpUnread: '跳转到下一个未读会话',
+      contextOpenSessionList: '聊天页 · 聚焦任意处',
+      actionOpenSessionList: '打开会话列表',
       contextRecommend: '聊天页 · 上一条为助手回复时',
       actionRecommend: '输入框上方出现「推荐回复」建议，点「填入」可直接采纳下一步操作',
       contextRecommendEnable: '推荐回复 · 开启方法',
