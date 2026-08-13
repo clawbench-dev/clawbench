@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref, nextTick, defineComponent } from 'vue'
+import { ref, nextTick, defineComponent, h } from 'vue'
 import type { AcpSessionInfo } from '@/composables/useAcpSession'
 
 // ── Mocks ──
@@ -69,7 +69,11 @@ vi.mock('vue-i18n', () => ({
 
 vi.mock('lucide-vue-next', () => ({
   Import: { name: 'ImportIcon', render: () => null },
-  Loader2: { name: 'Loader2Icon', render: () => null },
+  Loader2: {
+    name: 'Loader2Icon',
+    inheritAttrs: false,
+    render: () => h('span', { class: 'loader2-icon' }),
+  },
 }))
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
@@ -215,6 +219,39 @@ describe('AcpSessionDrawer', () => {
       const wrapper = mountDrawer()
       await nextTick()
       expect(wrapper.text()).toContain('Project Session')
+    })
+  })
+
+  describe('loading indicator', () => {
+    it('shows a spinner icon while initial loading with no sessions', async () => {
+      mockLoading.value = true
+      mockSessions.value = []
+
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      expect(wrapper.find('.acp-session-empty .loader2-icon').exists()).toBe(true)
+      expect(wrapper.text()).toContain('chat.acpSession.loading')
+    })
+
+    it('does not show the initial-loading spinner once sessions have loaded', async () => {
+      mockLoading.value = false
+      mockSessions.value = [testSession]
+
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      expect(wrapper.find('.acp-session-empty .loader2-icon').exists()).toBe(false)
+    })
+
+    it('shows a spinner while loading more sessions with existing list', async () => {
+      mockLoading.value = true
+      mockSessions.value = [testSession]
+
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      expect(wrapper.find('.acp-session-loading-more .loader2-icon').exists()).toBe(true)
     })
   })
 

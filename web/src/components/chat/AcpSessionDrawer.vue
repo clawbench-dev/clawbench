@@ -9,7 +9,8 @@
     </div>
     <div class="acp-session-list">
       <div v-if="acpSessionsLoading && acpSessions.length === 0" class="acp-session-empty">
-        {{ t('chat.acpSession.loading') }}
+        <Loader2Icon :size="18" class="spin acp-session-loading-icon" />
+        <span>{{ t('chat.acpSession.loading') }}</span>
       </div>
       <div v-else-if="acpSessionsNotSupported" class="acp-session-empty">
         {{ t('chat.acpSession.notSupported') }}
@@ -232,8 +233,10 @@ function formatTime(iso: string): string {
 .acp-session-empty {
   min-height: 40vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   color: var(--text-muted, #999);
   font-size: 13px;
 }
