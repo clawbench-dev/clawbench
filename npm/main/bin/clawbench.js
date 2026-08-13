@@ -16,15 +16,19 @@ const PLATFORM_MAP = {
   "win32-x64": "@xulongzhe/clawbench-win32-x64",
 };
 
-const key = `${process.platform}-${process.arch}`;
+// Termux 上报 process.platform === "android"，但它运行的是 Linux 用户态，
+// 其中 linux-arm64 的 Go 二进制可以直接执行，因此归一化到 linux。
+const platform = process.platform === "android" ? "linux" : process.platform;
+
+const key = `${platform}-${process.arch}`;
 const pkg = PLATFORM_MAP[key];
 
 if (!pkg) {
-  console.error(`clawbench: 不支持的平台 ${key}`);
+  console.error(`clawbench: 不支持的平台 ${process.platform}-${process.arch}`);
   process.exit(1);
 }
 
-const binName = process.platform === "win32" ? "clawbench.exe" : "clawbench";
+const binName = platform === "win32" ? "clawbench.exe" : "clawbench";
 
 let binPath;
 if (process.env.CLAWBENCH_BINARY_PATH) {

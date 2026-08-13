@@ -2,7 +2,7 @@
   "name": "@xulongzhe/clawbench-linux-arm64",
   "version": "0.1.0",
   "description": "ClawBench binary for Linux arm64",
-  "os": ["linux"],
+  "os": ["linux", "android"],
   "cpu": ["arm64"],
   "preferUnplugged": true,
   "files": ["bin/", "config/"],
