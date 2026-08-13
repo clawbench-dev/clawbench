@@ -4,6 +4,7 @@ import VueI18nPlugin from '@intlify/unplugin-vue-i18n/vite'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { cpSync, existsSync, mkdirSync, readdirSync } from 'fs'
+import { serviceWorkerPlugin } from './scripts/sw-plugin'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const publicDir = resolve(__dirname, 'public')
@@ -169,7 +170,8 @@ export default defineConfig({
     hljsThemeWrapper(),
     xtermRequestModeFix(),
     terminalModulePreload(),
-    materialIconsCopy()
+    materialIconsCopy(),
+    serviceWorkerPlugin()
   ],
   root: 'web',
   publicDir: srcAssets,
