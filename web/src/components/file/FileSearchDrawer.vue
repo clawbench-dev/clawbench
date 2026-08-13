@@ -74,7 +74,7 @@
                 :title="t('chat.attach.openDirectory')"
                 @click.stop="onOpenDir(r)"
               >
-                <FolderOpen :size="16" />
+                <LocateFixed :size="16" />
               </button>
             </div>
             <div v-if="search.state.truncated" class="fs-truncated">
@@ -90,7 +90,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, FolderTree, Globe, RotateCcw, FolderOpen } from 'lucide-vue-next'
+import { Search, FolderTree, Globe, RotateCcw, LocateFixed } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
