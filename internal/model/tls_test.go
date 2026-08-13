@@ -149,16 +149,17 @@ func TestApplyDefaults_MigratesLegacyTLSFields(t *testing.T) {
 	t.Cleanup(func() { DataDir = orig })
 	DataDir = t.TempDir()
 
+	dir := filepath.Join(string(filepath.Separator), "some", "dir")
 	cfg := Config{TLS: struct {
 		CertDir  string `yaml:"cert_dir"`
 		Enabled  bool   `yaml:"enabled"`
 		CertFile string `yaml:"cert_file"`
 		KeyFile  string `yaml:"key_file"`
-	}{CertFile: "/some/dir/fullchain.pem", KeyFile: "/some/dir/privkey.pem"}}
+	}{CertFile: filepath.Join(dir, "fullchain.pem"), KeyFile: filepath.Join(dir, "privkey.pem")}}
 	ApplyDefaults(&cfg, nil)
 
-	if cfg.TLS.CertDir != "/some/dir" {
-		t.Errorf("CertDir after migration = %q, want /some/dir", cfg.TLS.CertDir)
+	if cfg.TLS.CertDir != dir {
+		t.Errorf("CertDir after migration = %q, want %q", cfg.TLS.CertDir, dir)
 	}
 }
 
