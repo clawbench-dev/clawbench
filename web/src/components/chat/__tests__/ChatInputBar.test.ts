@@ -273,6 +273,7 @@ vi.mock('@/composables/useAgents', () => ({
     updateAgentField: vi.fn(),
     setDefaultAgent: vi.fn(),
     canRefreshModels: () => false,
+    hasPreferredMode: () => false,
     supportsACP: mockSupportsACP,
     getAgentTransport: () => 'cli',
     invalidateACPStateCache: vi.fn(),
@@ -986,6 +987,41 @@ describe('ChatInputBar', () => {
     await wrapper.vm.$nextTick()
     // After space, showSlashMenu should be false
     expect(true).toBe(true)
+  })
+
+  it('keyboard nav scrolls highlighted @ item into view even when menu is teleported', async () => {
+    // Production PopupMenu Teleports the slot to <body>, so menu items are NOT
+    // descendants of the component root — the scroll watcher must query from
+    // document instead of rootRef (regression: scrollbar didn't follow highlight).
+    const qs = vi.spyOn(document, 'querySelector')
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowDown' })
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(qs).toHaveBeenCalledWith('[data-at-idx="0"]')
+    qs.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('keyboard nav scrolls highlighted slash item into view even when menu is teleported', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = Array.from({ length: 30 }, (_, i) => ({ name: `cmd${i}`, description: 'desc', inputHint: '' }))
+    const qs = vi.spyOn(document, 'querySelector')
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowDown' })
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(qs).toHaveBeenCalledWith('[data-slash-idx="0"]')
+    qs.mockRestore()
+    wrapper.unmount()
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
   })
 
   it('quick menu opening triggers menu exclusion watcher', async () => {

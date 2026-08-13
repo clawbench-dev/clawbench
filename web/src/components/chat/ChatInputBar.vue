@@ -681,14 +681,16 @@ watch(atMenuItems, () => { atMenuIndex.value = -1 })
 watch(slashMenuIndex, (idx) => {
   if (idx < 0) return
   nextTick(() => {
-    const el = rootRef.value?.querySelector('[data-slash-idx="' + idx + '"]')
+    // Menus are teleported to <body>, so query from document, not rootRef.
+    const el = document.querySelector('[data-slash-idx="' + idx + '"]')
     el?.scrollIntoView({ block: 'nearest' })
   })
 })
 watch(atMenuIndex, (idx) => {
   if (idx < 0) return
   nextTick(() => {
-    const el = rootRef.value?.querySelector('[data-at-idx="' + idx + '"]')
+    // Menus are teleported to <body>, so query from document, not rootRef.
+    const el = document.querySelector('[data-at-idx="' + idx + '"]')
     el?.scrollIntoView({ block: 'nearest' })
   })
 })
