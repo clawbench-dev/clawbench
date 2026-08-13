@@ -83,6 +83,7 @@ const mockHandleFileDropToDir = vi.fn()
 const mockHandleFileDropToDirStructured = vi.fn()
 const mockHandleFolderSelect = vi.fn()
 const mockHandleFolderDropExpanded = vi.fn()
+const mockCancelDirUpload = vi.fn()
 const mockDirUploading = ref(false)
 const mockDirUploadProgress = ref(0)
 const mockDirUploadTotal = ref(0)
@@ -99,6 +100,7 @@ vi.mock('@/composables/useFileUpload', () => ({
     handleFileDropToDirStructured: mockHandleFileDropToDirStructured,
     handleFolderSelect: mockHandleFolderSelect,
     handleFolderDropExpanded: mockHandleFolderDropExpanded,
+    cancelDirUpload: mockCancelDirUpload,
   }),
 }))
 
@@ -2018,6 +2020,20 @@ describe('FileManagerContent — upload', () => {
 
     expect(wrapper.find('.dir-upload-progress').exists()).toBe(true)
     expect(wrapper.find('.dir-upload-progress-count').text()).toContain('2/4')
+  })
+
+  it('renders a cancel button and calls cancelDirUpload on click', async () => {
+    mockDirUploading.value = true
+    mockDirUploadProgress.value = 50
+    mockDirUploadTotal.value = 4
+    mockDirUploadDone.value = 1
+    const wrapper = mountContent()
+    await nextTick()
+
+    const cancelBtn = wrapper.find('.dir-upload-cancel')
+    expect(cancelBtn.exists()).toBe(true)
+    await cancelBtn.trigger('click')
+    expect(mockCancelDirUpload).toHaveBeenCalledTimes(1)
   })
 })
 // ── Long-press & container drag state ──

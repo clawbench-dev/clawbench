@@ -1123,6 +1123,8 @@ export default {
     maxFiles: '最多上传 {max} 个文件',
     tooManyFiles: '已选择 {total} 个文件，但仅剩 {remaining} 个名额',
     fileTooLarge: '{name} 超过 {max}MB 限制',
+    completed: '已上传 {count} 项',
+    cancelled: '已取消上传',
   },
   autoSpeech: {
     generateFailed: '语音生成失败 (HTTP {status})',

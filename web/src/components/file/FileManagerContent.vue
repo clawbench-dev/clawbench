@@ -155,7 +155,12 @@
 
     <!-- Upload progress bar (byte-based bar + count progress below) -->
     <div v-if="dirUploading" class="dir-upload-progress">
-      <div class="dir-upload-progress-bar" :style="{ width: dirUploadProgress + '%' }"></div>
+      <div class="dir-upload-progress-main">
+        <div class="dir-upload-progress-bar" :style="{ width: dirUploadProgress + '%' }"></div>
+        <button class="dir-upload-cancel" title="取消" @click="cancelDirUpload">
+          <X :size="12" />
+        </button>
+      </div>
       <div class="dir-upload-progress-count">{{ dirUploadDone }}/{{ dirUploadTotal }}</div>
     </div>
 
@@ -171,10 +176,6 @@
       @drop.prevent="onDrop"
       @dragend="onDragEnd"
     >
-      <div v-if="isDragOver" class="drop-overlay">
-        <Upload :size="32" :stroke-width="1.5" />
-        <span>{{ t('file.dropToUpload') }}</span>
-      </div>
       <Transition name="paste-fade">
         <div v-if="isPasteOver" class="paste-overlay">
           <ClipboardPaste :size="32" :stroke-width="1.5" />
@@ -233,10 +234,6 @@
       @drop.prevent="onDrop"
       @dragend="onDragEnd"
     >
-      <div v-if="isDragOver" class="drop-overlay">
-        <Upload :size="32" :stroke-width="1.5" />
-        <span>{{ t('file.dropToUpload') }}</span>
-      </div>
       <Transition name="paste-fade">
         <div v-if="isPasteOver" class="paste-overlay">
           <ClipboardPaste :size="32" :stroke-width="1.5" />
@@ -385,6 +382,14 @@
       @navigateDir="onSearchNavigateDir"
       @selectFile="onSearchSelectFile"
     />
+
+    <!-- Drop upload overlay — covers the whole file manager panel -->
+    <Transition name="paste-fade">
+      <div v-if="isDragOver" class="drop-overlay">
+        <Upload :size="32" :stroke-width="1.5" />
+        <span>{{ t('file.dropToUpload') }}</span>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -425,7 +430,7 @@ const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
 // File upload to current directory
-const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded } = useFileUpload()
+const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, cancelDirUpload, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded } = useFileUpload()
 const uploadInputRef = ref(null)
 const folderInputRef = ref(null)
 
@@ -1650,6 +1655,7 @@ function currentFileForClipboard() {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
 /* ── File manager specific ── */
@@ -2243,12 +2249,40 @@ function currentFileForClipboard() {
     flex-shrink: 0;
 }
 
+.dir-upload-progress-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
 .dir-upload-progress-bar {
+    flex: 1;
     height: 3px;
-    width: 0;
+    min-width: 0;
     background: var(--accent-color, #4a90d9);
     border-radius: 2px;
     transition: width 0.15s ease;
+}
+
+.dir-upload-cancel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--bg-tertiary, #f0f0f0);
+    color: var(--text-secondary, #666);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.dir-upload-cancel:hover {
+    background: var(--danger-color, #ef4444);
+    color: #fff;
 }
 
 .dir-upload-progress-count {

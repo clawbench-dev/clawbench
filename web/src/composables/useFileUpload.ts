@@ -30,6 +30,8 @@ const dirUploading = ref(false)
 const dirUploadProgress = ref(0)
 const dirUploadTotal = ref(0)
 const dirUploadDone = ref(0)
+const dirUploadCancelled = ref(false)
+let activeDirXhr: XMLHttpRequest | null = null
 
 export function useFileUpload() {
   const toast = useToast()
@@ -76,6 +78,7 @@ export function useFileUpload() {
 
       const xhr = new XMLHttpRequest()
       if (entry) entry.xhr = xhr
+      if (isDirUpload) activeDirXhr = xhr
       xhr.open('POST', '/api/upload/file')
       xhr.timeout = 300000
 
@@ -185,12 +188,15 @@ export function useFileUpload() {
     const isDirUpload = !!dir
     if (isDirUpload) {
       dirUploading.value = true
+      dirUploadCancelled.value = false
+      activeDirXhr = null
       dirUploadTotal.value = toUpload.length
       dirUploadDone.value = 0
       dirUploadProgress.value = 0
     }
 
     for (const file of toUpload) {
+      if (isDirUpload && dirUploadCancelled.value) break
       if (file.size > maxSizeBytes) {
         toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: '⚠️', type: 'error' })
         if (isDirUpload) dirUploadDone.value++
@@ -200,12 +206,20 @@ export function useFileUpload() {
       // (including the top-level folder) from webkitRelativePath.
       const relPath = preserveStructure ? folderRelPath(file) || undefined : undefined
       await uploadOneFile(file, dir, false, relPath)
+      if (isDirUpload && dirUploadCancelled.value) break
       if (isDirUpload) dirUploadDone.value++
     }
 
     if (isDirUpload) {
       dirUploading.value = false
       dirUploadProgress.value = 0
+      activeDirXhr = null
+      if (dirUploadCancelled.value) {
+        toast.show(gt('upload.cancelled'), { icon: '⏹️', type: 'info' })
+      } else if (dirUploadDone.value > 0) {
+        toast.show(gt('upload.completed', { count: dirUploadDone.value }), { icon: '✅', type: 'success' })
+      }
+      dirUploadCancelled.value = false
     }
   }
 
@@ -298,6 +312,8 @@ export function useFileUpload() {
   async function uploadExpandedFolder(result: ExpandResult, dir: string) {
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
     dirUploading.value = true
+    dirUploadCancelled.value = false
+    activeDirXhr = null
     const total = result.files.length + result.emptyDirs.length
     dirUploadTotal.value = total
     dirUploadDone.value = 0
@@ -305,21 +321,41 @@ export function useFileUpload() {
     let done = 0
 
     for (const { file, relPath } of result.files) {
+      if (dirUploadCancelled.value) break
       if (file.size > maxSizeBytes) {
         toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: '⚠️', type: 'error' })
       } else {
         await uploadOneFile(file, dir, false, relPath || undefined)
+        if (dirUploadCancelled.value) break
       }
       done++
       dirUploadDone.value = done
     }
 
     for (const emptyDir of result.emptyDirs) {
+      if (dirUploadCancelled.value) break
       const ok = await createDir(dir, emptyDir)
       if (ok) done++
       dirUploadDone.value = done
     }
 
+    dirUploading.value = false
+    dirUploadProgress.value = 0
+    activeDirXhr = null
+    if (dirUploadCancelled.value) {
+      toast.show(gt('upload.cancelled'), { icon: '⏹️', type: 'info' })
+    } else if (done > 0) {
+      toast.show(gt('upload.completed', { count: done }), { icon: '✅', type: 'success' })
+    }
+    dirUploadCancelled.value = false
+  }
+
+  /** Abort an in-progress directory upload. */
+  function cancelDirUpload() {
+    if (!dirUploading.value) return
+    dirUploadCancelled.value = true
+    activeDirXhr?.abort()
+    activeDirXhr = null
     dirUploading.value = false
     dirUploadProgress.value = 0
   }
@@ -374,6 +410,7 @@ export function useFileUpload() {
     dirUploadProgress,
     dirUploadTotal,
     dirUploadDone,
+    cancelDirUpload,
     uploadFilesToDir: uploadFiles,
     handleFileSelectToDir,
     handleFileDropToDir,

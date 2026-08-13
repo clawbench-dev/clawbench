@@ -1122,6 +1122,8 @@ export default {
     maxFiles: 'Maximum {max} files',
     tooManyFiles: '{total} files selected, but only {remaining} slots remaining',
     fileTooLarge: '{name} exceeds {max}MB limit',
+    completed: 'Uploaded {count} item(s)',
+    cancelled: 'Upload cancelled',
   },
   autoSpeech: {
     generateFailed: 'Speech generation failed (HTTP {status})',

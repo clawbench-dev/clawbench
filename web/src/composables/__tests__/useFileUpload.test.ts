@@ -126,6 +126,7 @@ describe('useFileUpload', () => {
       expect(typeof upload.handleFileDropToDir).toBe('function')
       expect(typeof upload.handleFolderSelect).toBe('function')
       expect(typeof upload.handleFileDropToDirStructured).toBe('function')
+      expect(typeof upload.cancelDirUpload).toBe('function')
       expect(typeof upload.removeFile).toBe('function')
       expect(typeof upload.addAttachedFile).toBe('function')
       expect(typeof upload.removeAttachedFile).toBe('function')
@@ -724,6 +725,35 @@ describe('useFileUpload', () => {
       expect(upload.dirUploading.value).toBe(false)
       expect(upload.dirUploadDone.value).toBe(0)
       expect(upload.dirUploadTotal.value).toBe(0)
+    })
+
+    it('cancels an in-progress folder upload and shows cancelled toast', async () => {
+      let xhrInstance: any
+      xhrSendHandler = (xhr) => { xhrInstance = xhr } // never respond → upload stays in-flight
+      const root = makeDirEntry('proj', '/proj', [makeFileEntry('/proj/a.ts', 'A')])
+      const upload = useFileUpload()
+      const p = upload.handleFolderDropExpanded(dropEventWith([root]) as any, '/dir')
+      await vi.waitFor(() => { expect(upload.dirUploading.value).toBe(true) })
+      upload.cancelDirUpload()
+      await p
+      expect(xhrInstance.abort).toHaveBeenCalled()
+      expect(upload.dirUploading.value).toBe(false)
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.stringContaining('upload.cancelled'),
+        expect.any(Object),
+      )
+    })
+
+    it('shows completed toast when folder upload finishes', async () => {
+      xhrSendHandler = (xhr) => respondSuccess(xhr, 'dir/proj/a.ts')
+      const root = makeDirEntry('proj', '/proj', [makeFileEntry('/proj/a.ts', 'A')])
+      const upload = useFileUpload()
+      await upload.handleFolderDropExpanded(dropEventWith([root]) as any, '/dir')
+      expect(upload.dirUploadDone.value).toBe(1)
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.stringContaining('upload.completed'),
+        expect.any(Object),
+      )
     })
   })
 })
