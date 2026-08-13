@@ -137,6 +137,9 @@
           </button>
           <!-- Quick commands / theme / settings buttons -->
           <div class="key-group">
+            <button ref="clipboardBtnRef" class="toolbar-btn btn-action" @click="openInput" :title="t('terminal.input')">
+              <PenLineIcon :size="14" />
+            </button>
             <button ref="cmdBtnRef" class="toolbar-btn btn-action" @click="openCommands" :title="t('terminal.quickCommands')">
               <ZapIcon :size="14" />
             </button>
@@ -145,7 +148,7 @@
             </button>
             <!-- Settings button (always present) -->
             <button class="toolbar-btn btn-action" @click="keyConfigDrawer.open()" :title="t('terminal.keyConfigTitle')">
-              <Settings :size="14" />
+              <KeyboardIcon :size="14" />
             </button>
           </div>
         </div>
@@ -165,6 +168,9 @@
         ⚙️ {{ t('terminal.editCommands') }}
       </button>
     </PopupMenu>
+
+    <!-- Terminal input drawer -->
+    <TerminalInputDrawer :open="inputDrawer.effectiveOpen.value" @close="inputDrawer.close()" @input="inputToTerminal" />
 
     <!-- Tab three-dot menu -->
     <TerminalTabMenu
@@ -242,6 +248,7 @@ import '@xterm/xterm/css/xterm.css'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
+import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import type { Terminal as TerminalType } from '@xterm/xterm'
@@ -279,7 +286,7 @@ import {
   lightTheme,
 } from '@/utils/terminalThemes'
 
-import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -328,6 +335,7 @@ const selectedText = ref('')
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
 const cmdBtnTopRef = ref<HTMLElement | null>(null)
+const clipboardBtnRef = ref<HTMLElement | null>(null)
 const showSymbolBar = ref(false)
 const rebuildingTabId = ref<string | null>(null)
 
@@ -378,6 +386,7 @@ const tabMenuCwd = ref('')
 // Symbol bar — config-driven
 const { selectedKeys, selectedSymbols, fetchConfig: fetchKeyConfig } = useKeyConfig()
 const keyConfigDrawer = useTabDrawer('terminal')
+const inputDrawer = useTabDrawer('terminal')
 
 /** Keys visible in the toolbar, filtered by gesture mode (Tab/PgUp/PgDn/arrows hidden when gestures on) */
 const GESTURE_HIDDEN_KEYS = new Set(['tab', 'pgup', 'pgdn', 'arrow_up', 'arrow_down', 'arrow_left', 'arrow_right'])
@@ -402,6 +411,16 @@ function openCommands() {
 
 function onKeyConfigSaved() {
   keyConfigDrawer.close()
+}
+
+async function openInput() {
+  inputDrawer.open()
+}
+
+function inputToTerminal(text: string) {
+  if (!text) return
+  activeTab.value?.session.sendInput(text + '\r')
+  toast.show(t('terminal.inputSent'), { icon: '📋', type: 'success', duration: 1200 })
 }
 
 function handleModeCycle() {

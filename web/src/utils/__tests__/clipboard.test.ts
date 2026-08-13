@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 // Mock DOM APIs for clipboard utility
 const mockWriteText = vi.fn()
@@ -39,7 +39,7 @@ vi.stubGlobal('document', {
   execCommand: mockExecCommand,
 })
 
-import { copyText } from '@/utils/clipboard.ts'
+import { copyText, readClipboardText } from '@/utils/clipboard.ts'
 
 describe('copyText', () => {
   it('calls navigator.clipboard.writeText with the text', async () => {
@@ -144,5 +144,82 @@ describe('copyText', () => {
     const longText = 'x'.repeat(10000)
     copyText(longText)
     expect(mockWriteText).toHaveBeenCalledWith(longText)
+  })
+})
+
+describe('readClipboardText', () => {
+  const mockReadText = vi.fn()
+  let originalNative: any
+
+  beforeEach(() => {
+    mockReadText.mockReset()
+    originalNative = (globalThis as any).ClawBenchNative
+  })
+
+  afterEach(() => {
+    ;(globalThis as any).ClawBenchNative = originalNative
+  })
+
+  it('resolves with the text from navigator.clipboard.readText', async () => {
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { readText: mockReadText },
+      writable: true,
+    })
+    mockReadText.mockResolvedValue('hello from clipboard')
+
+    await expect(readClipboardText()).resolves.toBe('hello from clipboard')
+    expect(mockReadText).toHaveBeenCalled()
+  })
+
+  it('coerces null/undefined readText result to empty string', async () => {
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { readText: mockReadText },
+      writable: true,
+    })
+    mockReadText.mockResolvedValue(undefined)
+
+    await expect(readClipboardText()).resolves.toBe('')
+  })
+
+  it('falls back to execCommand paste when clipboard API is unavailable', async () => {
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: undefined,
+      writable: true,
+    })
+    mockTextarea.value = 'fallback text'
+    mockExecCommand.mockReturnValue(true)
+
+    await expect(readClipboardText()).resolves.toBe('fallback text')
+    expect(mockExecCommand).toHaveBeenCalledWith('paste')
+  })
+
+  it('rejects when execCommand paste returns false', async () => {
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: undefined,
+      writable: true,
+    })
+    mockExecCommand.mockReturnValue(false)
+
+    await expect(readClipboardText()).rejects.toThrow('clipboard read unsupported')
+  })
+
+  it('prefers the native ClawBenchNative.readClipboardText bridge', async () => {
+    const nativeRead = vi.fn().mockReturnValue('native clipboard text')
+    ;(globalThis as any).ClawBenchNative = { readClipboardText: nativeRead }
+
+    await expect(readClipboardText()).resolves.toBe('native clipboard text')
+    expect(nativeRead).toHaveBeenCalled()
+  })
+
+  it('falls through when native bridge readClipboardText is missing', async () => {
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { readText: mockReadText },
+      writable: true,
+    })
+    ;(globalThis as any).ClawBenchNative = {}
+    mockReadText.mockResolvedValue('fallback')
+
+    await expect(readClipboardText()).resolves.toBe('fallback')
+    expect(mockReadText).toHaveBeenCalled()
   })
 })

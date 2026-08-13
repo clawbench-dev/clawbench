@@ -45,6 +45,8 @@ import android.widget.Toast;
 
 import android.content.pm.PackageManager;
 import android.Manifest;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 
 
 
@@ -1975,6 +1977,28 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public boolean isNativeApp() {
             return true;
+        }
+
+        /**
+         * Read the current primary clipboard text via the system ClipboardManager.
+         * Works reliably in WebViews where the async clipboard API is unavailable.
+         * Returns the text, or an empty string when the clipboard is empty/unreadable.
+         */
+        @JavascriptInterface
+        public String readClipboardText() {
+            try {
+                ClipboardManager cm = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm == null || !cm.hasPrimaryClip()) return "";
+                ClipData clip = cm.getPrimaryClip();
+                if (clip == null || clip.getItemCount() == 0) return "";
+                ClipData.Item item = clip.getItemAt(0);
+                if (item == null) return "";
+                CharSequence text = item.getText();
+                return text != null ? text.toString() : "";
+            } catch (Exception e) {
+                AppLog.w(TAG, "readClipboardText failed", e);
+                return "";
+            }
         }
 
         @JavascriptInterface
