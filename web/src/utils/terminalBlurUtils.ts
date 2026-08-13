@@ -21,3 +21,16 @@ export function shouldAutoRefocusTerminal(
   if (!nextActive) return true
   return nextActive.tagName === 'BODY'
 }
+
+/**
+ * Whether the terminal blur-refocus workaround should be installed at all.
+ *
+ * The workaround exists only for the Android WebView soft-keyboard quirk (see
+ * the comment above). On desktop (isPC) it is not only unnecessary but harmful:
+ * in the wide-screen split layout the terminal panel stays active while the
+ * chat pane is on the right, so a blur on the xterm textarea can re-claim focus
+ * from the chat input in the same tick, making the chat textarea unfocusable.
+ */
+export function shouldInstallTerminalBlurRefocus(isPC: boolean): boolean {
+  return !isPC
+}

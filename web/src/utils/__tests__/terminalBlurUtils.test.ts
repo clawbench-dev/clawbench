@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldAutoRefocusTerminal } from '@/utils/terminalBlurUtils'
+import { shouldAutoRefocusTerminal, shouldInstallTerminalBlurRefocus } from '@/utils/terminalBlurUtils'
 
 const body = () => ({ tagName: 'BODY' }) as unknown as Element
 const button = () => ({ tagName: 'BUTTON' }) as unknown as Element
@@ -24,5 +24,18 @@ describe('shouldAutoRefocusTerminal', () => {
 
   it('does not steal focus from a textarea (e.g. command editor inside a modal)', () => {
     expect(shouldAutoRefocusTerminal(true, textarea())).toBe(false)
+  })
+})
+
+describe('shouldInstallTerminalBlurRefocus', () => {
+  it('installs the blur-refocus workaround on touch platforms (non-PC)', () => {
+    expect(shouldInstallTerminalBlurRefocus(false)).toBe(true)
+  })
+
+  it('does NOT install the blur-refocus workaround on desktop/PC', () => {
+    // Desktop (isPC) must not reclaim focus from the chat input in the
+    // wide-screen split layout; the workaround is only for the Android WebView
+    // soft-keyboard quirk.
+    expect(shouldInstallTerminalBlurRefocus(true)).toBe(false)
   })
 })

@@ -272,7 +272,7 @@ import {
   showErrorOverlay as showErrorOverlayUtil,
 } from '@/utils/terminalFontUtils'
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
-import { shouldAutoRefocusTerminal } from '@/utils/terminalBlurUtils'
+import { shouldAutoRefocusTerminal, shouldInstallTerminalBlurRefocus } from '@/utils/terminalBlurUtils'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 import {
   TERMINAL_THEME_AUTO,
@@ -782,6 +782,7 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   // decision logic lives in shouldAutoRefocusTerminal() (utils/terminalBlurUtils.ts)
   // and is unit-tested; keep any new "should dismiss" exceptions gated there.
   const installBlurRefocus = () => {
+    if (!shouldInstallTerminalBlurRefocus(isPC.value)) return
     const textareaEl = tab.xterm?.textarea
     if (!textareaEl || (textareaEl as unknown as { __blurRefocus?: boolean }).__blurRefocus) return
     ;(textareaEl as unknown as { __blurRefocus?: boolean }).__blurRefocus = true
