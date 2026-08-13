@@ -342,9 +342,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE INDEX IF NOT EXISTS idx_thinking_message ON chat_thinking(message_id);
 		CREATE INDEX IF NOT EXISTS idx_thinking_session ON chat_thinking(session_id, created_at DESC);
 		-- Covering index for session list ORDER BY + cursor pagination:
-		-- WHERE session_type = 'chat' AND project_path = ? AND archived = 0 ORDER BY updated_at DESC, id DESC
+		-- WHERE session_type = 'chat' AND project_path = ? AND archived = 0 ORDER BY created_at DESC, id DESC
 		-- Without this, idx_sessions_type covers WHERE but requires a filesort for ORDER BY.
-		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, updated_at DESC, id DESC);
+		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, created_at DESC, id DESC);
 
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

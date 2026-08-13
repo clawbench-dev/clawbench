@@ -998,24 +998,28 @@ func TestAddChatMessage_WithFilePath(t *testing.T) {
 	assert.Equal(t, []model.FileEntry{{Path: "/src/main.go"}}, msgs[0].Files)
 }
 
-func TestGetSessions_OrderedByUpdatedDesc(t *testing.T) {
+func TestGetSessions_OrderedByCreatedDesc(t *testing.T) {
 	setupDB(t)
 
 	sid1 := helperCreateSession(t, "/project", "claude", "First")
 	sid2 := helperCreateSession(t, "/project", "claude", "Second")
 
-	// Set explicit timestamps to guarantee ordering (SQLite time precision is seconds,
-	// AddChatMessage may land in the same second as creation making order nondeterministic)
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
+	// Set explicit created_at timestamps to guarantee ordering (SQLite time precision is seconds)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?", sid2)
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now') WHERE id = ?", sid2)
+	assert.NoError(t, err)
+
+	// A later interaction must NOT reorder the list: update sid1's updated_at to be newest,
+	// yet the list order must remain by created_at.
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
 	sessions, err := service.GetSessions("/project", "claude")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 
-	// sid2 should be first since it was updated most recently
+	// sid2 should be first since it was created most recently, regardless of interaction
 	assert.Equal(t, sid2, sessions[0].ID)
 	assert.Equal(t, sid1, sessions[1].ID)
 }
@@ -1789,11 +1793,11 @@ func TestGetRecentSessions_NoSessions(t *testing.T) {
 func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	setupDB(t)
 
-	// Create 5 sessions with staggered updated_at times
+	// Create 5 sessions with staggered created_at times
 	for i := range 5 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
-		// Stagger updated_at so ordering is deterministic
-		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
+		// Stagger created_at so ordering is deterministic
+		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
 		assert.NoError(t, err)
 	}
 
@@ -1805,7 +1809,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 
 	// Use last session as cursor
 	lastSession := sessions[len(sessions)-1]
-	cursor := lastSession.UpdatedAt.Format("2006-01-02 15:04:05")
+	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
 	// Second page: cursor from last session of first page
@@ -1829,7 +1833,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 
 	for i := range 5 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
-		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
+		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
 		assert.NoError(t, err)
 	}
 
@@ -1840,7 +1844,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 
 	// Second page: cursor from last session
 	lastSession := sessions[len(sessions)-1]
-	cursor := lastSession.UpdatedAt.Format("2006-01-02 15:04:05")
+	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
 	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID)
@@ -1898,34 +1902,38 @@ func TestGetSessionsPaged_ExcludesScheduledSessions(t *testing.T) {
 	assert.Equal(t, "Chat", sessions[0].Title)
 }
 
-func TestGetSessionsPaged_OrderedByUpdatedDesc(t *testing.T) {
+func TestGetSessionsPaged_OrderedByCreatedDesc(t *testing.T) {
 	setupDB(t)
 
 	sid1 := helperCreateSession(t, "/project", "claude", "Old")
 	sid2 := helperCreateSession(t, "/project", "claude", "New")
 
-	// Set explicit timestamps to guarantee ordering (SQLite time precision is seconds)
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
+	// Set explicit created_at timestamps to guarantee ordering (SQLite time precision is seconds)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?", sid2)
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now') WHERE id = ?", sid2)
+	assert.NoError(t, err)
+
+	// A later interaction on the older session must NOT change ordering.
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
 	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
-	assert.Equal(t, sid2, sessions[0].ID) // most recently updated first
+	assert.Equal(t, sid2, sessions[0].ID) // most recently created first
 	assert.Equal(t, sid1, sessions[1].ID)
 }
 
 func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 	setupDB(t)
 
-	// Create 7 sessions with staggered times
+	// Create 7 sessions with staggered created_at times
 	allIDs := make([]string, 0, 7)
 	for i := range 7 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
 		allIDs = append(allIDs, sid)
-		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (6-i)*60), sid)
+		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (6-i)*60), sid)
 		assert.NoError(t, err)
 	}
 
@@ -1950,7 +1958,7 @@ func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 		}
 
 		lastSession := sessions[len(sessions)-1]
-		cursor = lastSession.UpdatedAt.Format("2006-01-02 15:04:05")
+		cursor = lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 		cursorID = lastSession.ID
 		page++
 
@@ -1975,19 +1983,19 @@ func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	setupDB(t)
 
-	// Create 3 sessions: 2 with same timestamp, 1 with a later timestamp
-	// to test the (updated_at = cursor AND id < cursorID) tiebreaker
+	// Create 3 sessions: 2 with same created_at, 1 with a later created_at
+	// to test the (created_at = cursor AND id < cursorID) tiebreaker
 	sid1 := helperCreateSession(t, "/project", "claude", "Tie1")
 	sid2 := helperCreateSession(t, "/project", "claude", "Tie2")
 	sid3 := helperCreateSession(t, "/project", "claude", "Newer")
 
-	// Set sid1 and sid2 to the same timestamp, sid3 slightly newer
+	// Set sid1 and sid2 to the same created_at, sid3 slightly newer
 	baseTime := "2026-01-15 12:00:00"
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", baseTime, sid1)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = ? WHERE id = ?", baseTime, sid1)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", baseTime, sid2)
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = ? WHERE id = ?", baseTime, sid2)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = '2026-01-15 12:01:00' WHERE id = ?", sid3)
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = '2026-01-15 12:01:00' WHERE id = ?", sid3)
 	assert.NoError(t, err)
 
 	// First page: limit=2 — should get sid3 (newest) and one of sid1/sid2
@@ -1998,7 +2006,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 
 	// Second page: cursor from last session of page 1
 	lastSession := sessions[len(sessions)-1]
-	cursor := lastSession.UpdatedAt.Format("2006-01-02 15:04:05")
+	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
 	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID)

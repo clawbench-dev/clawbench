@@ -496,7 +496,8 @@ func generateSessionID() string {
 	return generateUUID("", "chat_sessions", "id")
 }
 
-// GetSessions retrieves chat sessions for a given project path.
+// GetSessions retrieves chat sessions for a given project path,
+// ordered by created_at DESC (newest first; fixed order, unaffected by interaction).
 // If backend is non-empty, filters by backend; otherwise returns all backends.
 // Only returns sessions with session_type='chat' (excludes scheduled sessions).
 func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
@@ -519,7 +520,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
 	}
-	query += " ORDER BY s.updated_at DESC, s.id DESC"
+	query += " ORDER BY s.created_at DESC, s.id DESC"
 
 	rows, err := dbRead.Query(query, args...)
 	if err != nil {
@@ -545,11 +546,12 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 	return sessions, rows.Err()
 }
 
-// GetSessionsPaged retrieves chat sessions with cursor-based pagination.
+// GetSessionsPaged retrieves chat sessions with cursor-based pagination,
+// ordered by created_at DESC (newest first; fixed order, unaffected by interaction).
 // limit=0 means no limit (returns all sessions).
 // cursor and cursorID: when non-empty, only return sessions with
 //
-//	(updated_at < cursor) OR (updated_at = cursor AND id < cursorID)
+//	(created_at < cursor) OR (created_at = cursor AND id < cursorID)
 //
 // Returns sessions and hasMore flag.
 func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cursorID string) ([]model.ChatSession, bool, error) {
@@ -582,10 +584,10 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		args = append(args, backend)
 	}
 	if cursor != "" && cursorID != "" {
-		query += " AND (s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))"
+		query += " AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))"
 		args = append(args, cursor, cursor, cursorID)
 	}
-	query += " ORDER BY s.updated_at DESC, s.id DESC LIMIT ?"
+	query += " ORDER BY s.created_at DESC, s.id DESC LIMIT ?"
 	args = append(args, limit+1)
 
 	rows, err := dbRead.Query(query, args...)
