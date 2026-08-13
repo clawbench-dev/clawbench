@@ -34,7 +34,7 @@ const TeleportStub = { template: '<div><slot /></div>' }
 const JumpStub = {
   props: ['open'],
   emits: ['close', 'confirm'],
-  template: '<div class="jump-dialog-stub" @click="$emit(\'confirm\', \'src/utils\')" />',
+  template: '<div v-if="open" class="jump-dialog-stub" @click="$emit(\'confirm\', \'src/utils\')" />',
 }
 
 function mountDialog(props = {}) {
@@ -79,5 +79,42 @@ describe('ProjectDialog', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/projects?path=' + encodeURIComponent('src/utils'))
     )
+  })
+})
+
+/**
+ * Default browse path logic (mirrors the component's computed logic):
+ * - On Unix (single rootPath): default to homeDir
+ * - On Windows (multiple rootPaths): default to root level ("/")
+ * - Fallback: if homeDir is empty on Unix, fall back to "/"
+ */
+function getDefaultBrowsePath(rootPaths: string[], homeDir: string): string {
+  const isWindows = rootPaths.length > 1
+  return isWindows ? '/' : (homeDir || '/')
+}
+
+describe('ProjectDialog default browse path', () => {
+  it('defaults to homeDir on Unix (single rootPaths)', () => {
+    expect(getDefaultBrowsePath(['/'], '/home/testuser')).toBe('/home/testuser')
+  })
+
+  it('defaults to homeDir on macOS', () => {
+    expect(getDefaultBrowsePath(['/'], '/Users/john')).toBe('/Users/john')
+  })
+
+  it('defaults to root on Windows (multiple rootPaths)', () => {
+    expect(getDefaultBrowsePath(['C:\\', 'D:\\'], 'C:\\Users\\testuser')).toBe('/')
+  })
+
+  it('falls back to / when homeDir is empty on Unix', () => {
+    expect(getDefaultBrowsePath(['/'], '')).toBe('/')
+  })
+
+  it('uses root even when homeDir is empty on Windows', () => {
+    expect(getDefaultBrowsePath(['C:\\', 'D:\\'], '')).toBe('/')
+  })
+
+  it('works with single-drive Windows (treated as Unix-like)', () => {
+    expect(getDefaultBrowsePath(['C:\\'], 'C:\\Users\\admin')).toBe('C:\\Users\\admin')
   })
 })

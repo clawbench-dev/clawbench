@@ -127,6 +127,12 @@
                   <span>{{ showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles') }}</span>
                 </button>
               </template>
+              <template v-if="toolbarCollapsedIds.includes('jump')">
+                <button class="toolbar-dropdown-item" @click="jumpOpen = true; moreMenuOpen = false">
+                  <LocateFixed :size="14" />
+                  <span>{{ t('jump.button') }}</span>
+                </button>
+              </template>
             </div>
             </Teleport>
           </div>

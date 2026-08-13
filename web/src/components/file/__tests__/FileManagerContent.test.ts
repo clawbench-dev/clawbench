@@ -200,7 +200,7 @@ vi.mock('@/components/file/JumpDirDialog.vue', () => ({
   default: defineComponent({
     props: ['open'],
     emits: ['close', 'confirm'],
-    template: '<div class="jump-dialog-stub" />',
+    template: '<div v-if="open" class="jump-dialog-stub" />',
   }),
 }))
 
@@ -2330,5 +2330,27 @@ describe('FileManagerContent — jump to dir', () => {
     vm.$.setupState.handleJumpConfirm('src/utils')
     await nextTick()
     expect(mockNavigateToDir).toHaveBeenCalledWith('src/utils')
+  })
+
+  it('renders jump item in more dropdown when collapsed', async () => {
+    mockToolbarCollapsedIds.push('jump')
+    const wrapper = mountContent()
+    wrapper.vm.moreMenuOpen = true
+    await nextTick()
+    const items = wrapper.findAll('.toolbar-dropdown-item')
+    const jumpItem = items.find(i => i.text().includes('跳转'))
+    expect(jumpItem).toBeTruthy()
+  })
+
+  it('opens jump dialog from more dropdown item', async () => {
+    mockToolbarCollapsedIds.push('jump')
+    const wrapper = mountContent()
+    wrapper.vm.moreMenuOpen = true
+    await nextTick()
+    const items = wrapper.findAll('.toolbar-dropdown-item')
+    const jumpItem = items.find(i => i.text().includes('跳转'))
+    await jumpItem!.trigger('click')
+    await nextTick()
+    expect(wrapper.find('.jump-dialog-stub').exists()).toBe(true)
   })
 })
