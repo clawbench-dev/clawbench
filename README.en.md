@@ -199,7 +199,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Message Queue**: Messages queue when AI is busy, sent sequentially
 - **Message Clusters**: Auto-analyze chat history patterns, group semantically similar user messages into clusters, one-click add to Quick Send; Union-Find + Sørensen-Dice similarity, on-demand computation with progress tracking
 - **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; toggle between summary/original via bottom banner; TTS playback also uses the summary
-- **Conversation Recommendation**: Automatically generates a next-step suggestion after AI reply; recommendation banner above input box, one-click to accept; aware of quick commands and project context
+- **Recommended Reply**: Automatically generates a next-step suggestion after AI reply; recommendation banner above input box, one-click to accept; aware of quick commands and project context
 - **@ Commands**: Type `@chatsearch` to search conversation history, `@task` to manage scheduled tasks — autocomplete popup menu, purple command badge in user messages
 - **RAG Results Card**: RAG search results in AI responses rendered as purple-themed cards; click to open detail drawer, one-click resume conversation
 - **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion; thinking content lazy-loaded — after stream ends, only thumbnail is kept, full text loaded on demand when expanded
@@ -274,6 +274,8 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Quick Commands**: CRUD management of common commands with drag reorder, hidden flag, auto-execute (auto-run on every connect/reconnect)
 - **Android Volume Keys**: Volume up/down remapped to arrow keys when terminal is open in the app
 - **Android Soft Keyboard Stability**: Read-only mode prevents soft keyboard popup; tapping terminal avoids keyboard collapse-then-reopen flicker
+- **Terminal Theme Switching**: 157 xterm-theme themes available, `auto` mode follows app dark/light theme
+- **Terminal Input Drawer**: Mobile multi-line text input with clipboard paste support
 - See [Web Terminal User Guide](docs/TERMINAL.en.md)
 
 ### 🌐 Internationalization
@@ -307,7 +309,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - Git parameter injection protection (SHA/branch name/tag name validation, `--` separator)
 - Configurable file upload size and count (default 100MB / 20 files), all file types supported
 - XSS protection (DOMPurify sanitization)
-- TLS support (manual certificate configuration required)
+- TLS support (auto-discover certificate directory; drop in fullchain.pem + privkey.pem to enable HTTPS)
 
 ---
 

@@ -58,3 +58,16 @@ A: 备份 `~/.clawbench/ClawBench.db` 数据库文件即可。
 **Q: 如何管理智能体？**
 
 A: 所有智能体存储在数据库中（`agents` 表），通过欢迎面板安装或首次启动时自动发现。
+
+**Q: 如何启用 HTTPS？**
+
+A: 将证书文件放入 `<DataDir>/config/tls/` 目录即可。ClawBench 自动检测证书文件，支持三种命名方式（按优先级）：
+1. `fullchain.pem` + `privkey.pem`（Let's Encrypt 风格）
+2. `cert.pem` + `key.pem`（通用风格）
+3. `combined.pem`（证书和私钥合并文件）
+
+找到有效证书对即自动启用 HTTPS，否则回退 HTTP。也可通过 `tls.cert_dir` 配置项指定其他目录。
+
+**Q: 如何启用语音输入（STT）？**
+
+A: 需要部署 vLLM Whisper 引擎（或兼容 OpenAI `/v1/audio/transcriptions` 端点的 ASR 服务），在设置面板中配置 STT 端点地址和模型名称即可。语音输入需要 HTTPS 或 localhost 环境才能访问麦克风。

@@ -1,6 +1,6 @@
 # 摘要管线
 
-ClawBench 的摘要系统将 AI 助手的长回复压缩为简短摘要，服务于两种不同场景：TTS 语音播放（需要纯文本、无格式、口语化）和阅读摘要（保留 Markdown 格式和代码片段）。阅读摘要固定提取 AI 结论，语音摘要后端可配置（提取结论或 LLM 二次压缩），两条管线互不影响。理解摘要系统是理解聊天完成后的后续处理链和 TTS 语音合成的关键。摘要结果携带结构化卡片元数据（SummaryCards），包含工具卡片、定时任务 ID 和 ask-question 卡片，前端据此渲染摘要视图。此外，摘要管线还负责对话推荐（next-step recommendation）的生成，共享 AISummaryConfig 的 LLM 后端。
+ClawBench 的摘要系统将 AI 助手的长回复压缩为简短摘要，服务于两种不同场景：TTS 语音播放（需要纯文本、无格式、口语化）和阅读摘要（保留 Markdown 格式和代码片段）。阅读摘要固定提取 AI 结论，语音摘要后端可配置（提取结论或 LLM 二次压缩），两条管线互不影响。理解摘要系统是理解聊天完成后的后续处理链和 TTS 语音合成的关键。摘要结果携带结构化卡片元数据（SummaryCards），包含工具卡片、定时任务 ID 和 ask-question 卡片，前端据此渲染摘要视图。此外，摘要管线还负责推荐回复（next-step recommendation）的生成，共享 AISummaryConfig 的 LLM 后端。
 
 ## 流程图
 
@@ -43,12 +43,12 @@ flowchart LR
 - **Block 提取算法**：`ExtractLastAnswerFromBlocks` 跳过中间推理，提取最后一个 tool_use 之后的文本作为 AI 结论。无后续文本时回退到最长的文本块——AI Agent 的对话模式通常在工具调用后给出最终综合回答
 - **Markdown 清理**：TTS 模式的 `StripMarkdown` 多阶段清理：代码块移除、行内代码按长度保留或删除（短变量名保留，长代码片段移除）、粗体/标题/列表/表格/脚注剥离、AskUserQuestion 块转为自然语言朗读格式
 - **热重载**：语音摘要配置（`summarize.tts_backend`）通过 PATCH 端点即时生效，TTS 摘要器原子重建，进行中的调用继续使用旧实例
-- **对话推荐**：会话完成后可选生成下一步建议（`chat.recommend_enabled`），由 `RecommendNextStep` 调用 LLM 生成。Payload 分为 stable（项目上下文 + 快捷指令，可缓存）和 rolling（对话 + 结论，每轮变化）两部分，支持 prompt caching。结果通过 `chat_recommendation` WS 事件推送，持久化到 `chat_recommendations` 表。详见 [对话推荐](features/chat-recommendation.md)
+- **推荐回复**：会话完成后可选生成下一步建议（`chat.recommend_enabled`），由 `RecommendNextStep` 调用 LLM 生成。Payload 分为 stable（项目上下文 + 快捷指令，可缓存）和 rolling（对话 + 结论，每轮变化）两部分，支持 prompt caching。结果通过 `chat_recommendation` WS 事件推送，持久化到 `chat_recommendations` 表。详见 [推荐回复](features/chat-recommendation.md)
 
 ### 设计要点
 
 - **双管线分离**：TTS 摘要（纯文本、激进压缩）和阅读摘要（提取结论、保留 Markdown 和代码）互不干扰。阅读摘要固定提取结论、不做 AI 压缩，故不暴露后端配置；TTS 摘要后端可配置，支持 `simple` 提取结论或 `api` LLM 压缩。TTS 摘要器故障不影响阅读摘要，反之亦然
-- **AISummaryConfig 共享**：语音摘要（`api` 模式）和对话推荐共享 `ai_summary` 配置（模型、API 端点、格式），用户只需配置一次 LLM 后端，两种功能自动可用
+- **AISummaryConfig 共享**：语音摘要（`api` 模式）和推荐回复共享 `ai_summary` 配置（模型、API 端点、格式），用户只需配置一次 LLM 后端，两种功能自动可用
 - **summarizeTarget 统一调度**：聊天和定时任务共享 `summarizeTarget` 调度入口，均固定提取结论，不区分模式。之前定时任务绕过 `chatSummaryMode` 直接走 AI 路径，导致短任务输出被存为空摘要——统一后所有场景行为一致
 - **短文本处理**：阅读摘要对短文本直接保存提取的结论（前端展示原文），不触发 AI 调用
 - **AskUserQuestion 保留**：阅读摘要中 AskUserQuestion 与权限审批工具调用以卡片（SummaryCards）形式呈现；TTS 清理时专门解析结构化问题块，转为自然语言（"问题：...选项：A, B, C"），确保 TTS 能朗读权限审批的问题和选项
