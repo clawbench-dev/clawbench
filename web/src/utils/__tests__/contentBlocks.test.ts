@@ -24,8 +24,8 @@ describe('isSevereWarning', () => {
   it('returns true for timeout', () => {
     expect(isSevereWarning({ reason: 'timeout' })).toBe(true)
   })
-  it('returns true for restart', () => {
-    expect(isSevereWarning({ reason: 'restart' })).toBe(true)
+  it('returns false for restart (shown as recoverable warning, not error)', () => {
+    expect(isSevereWarning({ reason: 'restart' })).toBe(false)
   })
   it('returns true for panic', () => {
     expect(isSevereWarning({ reason: 'panic' })).toBe(true)

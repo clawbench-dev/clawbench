@@ -89,6 +89,7 @@ const i18n = createI18n({
         taskDeleted: 'Task deleted',
         thinkingLoadFailed: 'Failed to load thinking',
         retry: 'Retry',
+        continue: 'Continue',
       },
     },
     tool: { askUser: { name: 'Ask' } },
@@ -332,6 +333,27 @@ describe('ContentBlocks', () => {
         blocks: [{ type: 'warning', reason: 'parse_error', text: 'Parse error: bad JSON' }],
       })
       expect(wrapper.find('.chat-warning-card').exists()).toBe(true)
+    })
+
+    it('renders restart as amber warning (not error) with a continue button', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'restart', text: 'Server restarted' }],
+      })
+      expect(wrapper.find('.chat-warning-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-error-card').exists()).toBe(false)
+      const btn = wrapper.find('.warning-continue-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.text()).toBe('Continue')
+      await btn.trigger('click')
+      expect(wrapper.emitted('send-message')).toBeTruthy()
+      expect(wrapper.emitted('send-message')![0]).toEqual(['Continue'])
+    })
+
+    it('does not show continue button for non-restart warnings', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'parse_error', text: 'Parse error' }],
+      })
+      expect(wrapper.find('.warning-continue-btn').exists()).toBe(false)
     })
   })
 

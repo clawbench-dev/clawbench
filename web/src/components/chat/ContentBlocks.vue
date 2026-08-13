@@ -125,6 +125,9 @@
       <div v-else-if="block.type === 'warning'" class="chat-warning-card">
         <AlertCircle :size="14" class="warning-icon" />
         <span class="warning-text">{{ getWarningText(block) }}</span>
+        <button v-if="block.reason === 'restart'" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
+          {{ t('chat.contentBlocks.continue') }}
+        </button>
       </div>
       <!-- Scheduled task card(s) — simplified: click navigates to Tasks tab -->
       <template v-else-if="block.type === 'text' && hasScheduledTasks(bi)">
@@ -912,6 +915,24 @@ onUnmounted(() => {
 
 :root[data-theme="dark"] .chat-warning-card .warning-text {
   color: #fcd34d;
+}
+
+.chat-warning-card .warning-continue-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #f59e0b;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.chat-warning-card .warning-continue-btn:hover {
+  background: #d97706;
 }
 
 /* Thinking block — callout style distinct from tool calls */

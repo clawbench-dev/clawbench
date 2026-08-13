@@ -466,6 +466,7 @@ export default {
       hoursFromNow: '{count}小时后',
       close: '关闭',
       retry: '重试',
+      continue: '继续',
       detailsUnavailable: '详情暂不可用',
       detailsLoadFailed: '加载失败',
       warningReasons: {

@@ -466,6 +466,7 @@ export default {
       hoursFromNow: '{count} hr from now',
       close: 'Close',
       retry: 'Retry',
+      continue: 'Continue',
       detailsUnavailable: 'Details unavailable',
       detailsLoadFailed: 'Failed to load details',
       warningReasons: {
