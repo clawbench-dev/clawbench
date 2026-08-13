@@ -61,6 +61,7 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL,
 			project_path TEXT NOT NULL DEFAULT '',
+			message_id INTEGER NOT NULL DEFAULT 0,
 			recommendation TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

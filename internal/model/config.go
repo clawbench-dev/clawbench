@@ -54,8 +54,8 @@ type Config struct {
 		PageSize                 int  `yaml:"page_size"`                  // Number of messages per lazy-load batch (default: 20)
 		SessionPageSize          int  `yaml:"session_page_size"`          // Number of sessions per page in session list (default: 10)
 		SystemPromptInterval     int  `yaml:"system_prompt_interval"`     // Re-inject system prompt every N assistant turns (0=never, default: 10)
-		RecommendEnabled         bool `yaml:"recommend_enabled"`          // 对话推荐: generate a next-step recommendation after each assistant reply (default: false)
-		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 对话推荐参考的最近消息条数（用户+助手） (default: 10)
+		RecommendEnabled         bool `yaml:"recommend_enabled"`          // 推荐回复: generate a next-step recommendation after each assistant reply (default: false)
+		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 推荐回复参考的最近消息条数（用户+助手） (default: 10)
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 10)
@@ -223,7 +223,7 @@ var (
 	ChatPageSize             int  // Default: 20
 	ChatSessionPageSize      int  // Default: 10
 	ChatSystemPromptInterval int  // Re-inject system prompt every N assistant turns (0=never, default: 10)
-	ChatRecommendEnabled     bool // 对话推荐: generate next-step recommendation after each assistant reply (default: false)
+	ChatRecommendEnabled     bool // 推荐回复: generate next-step recommendation after each assistant reply (default: false)
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 10

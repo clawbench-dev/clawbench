@@ -2,13 +2,14 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/service"
 )
 
 // ServeChatRecommendation handles GET /api/chat/recommendation?session_id=...
-// It returns the most recent persisted conversation recommendation (对话推荐)
+// It returns the most recent persisted conversation recommendation (推荐回复)
 // for a session. This lets a client that was offline when the session completed
 // fetch and show the recommendation after opening the session.
 func ServeChatRecommendation(w http.ResponseWriter, r *http.Request) {
@@ -30,9 +31,18 @@ func ServeChatRecommendation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec := service.LatestChatRecommendation(r.Context(), sessionID)
+	// The client tells us which assistant message it wants a recommendation for.
+	// Only a recommendation generated for that exact message is returned, so a
+	// stale recommendation from an earlier reply is never surfaced.
+	var messageID int64
+	if v := r.URL.Query().Get("message_id"); v != "" {
+		messageID, _ = strconv.ParseInt(v, 10, 64)
+	}
+
+	rec := service.LatestChatRecommendation(r.Context(), sessionID, messageID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id":     sessionID,
+		"message_id":     messageID,
 		"recommendation": rec,
 	})
 }

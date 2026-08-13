@@ -50,9 +50,9 @@
 |------------|---------|-------------|----------|----------|
 | ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-interface.png) | ![ACP 权限审批](docs/screenshots/acp-permission.png) | ![RAG 检索](docs/screenshots/rag-search.png) | ![会话管理](docs/screenshots/session-manager.png) |
 
-| 对话推荐 |
+| 推荐回复 |
 |----------|
-| ![对话推荐](docs/screenshots/conversation-recommendation.png) |
+| ![推荐回复](docs/screenshots/conversation-recommendation.png) |
 
 | 定时任务 | 创建任务 | 任务卡片 |
 |----------|----------|----------|

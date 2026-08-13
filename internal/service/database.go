@@ -482,12 +482,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 
-		-- Conversation recommendations (对话推荐), persisted so recommendations
+		-- Conversation recommendations (推荐回复), persisted so recommendations
 		-- generated while the client was offline can be shown later.
 		CREATE TABLE IF NOT EXISTS chat_recommendations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL,
 			project_path TEXT NOT NULL DEFAULT '',
+			message_id INTEGER NOT NULL DEFAULT 0,
 			recommendation TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -837,6 +838,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasToolCallDuration == 0 {
 		if _, err := WriteExec("ALTER TABLE chat_tool_calls ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add duration_ms column to chat_tool_calls: %w", err)
+		}
+	}
+
+	// Migrate: add message_id column to chat_recommendations so a recommendation
+	// can be bound to the exact assistant message it was generated for. This lets
+	// the client reject stale recommendations (from an earlier reply) instead of
+	// briefly showing the previous reply's recommendation.
+	var hasRecMessageID int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_recommendations') WHERE name='message_id'").Scan(&hasRecMessageID)
+	if hasRecMessageID == 0 {
+		if _, err := WriteExec("ALTER TABLE chat_recommendations ADD COLUMN message_id INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add message_id column to chat_recommendations: %w", err)
 		}
 	}
 

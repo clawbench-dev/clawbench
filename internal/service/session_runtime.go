@@ -448,15 +448,15 @@ func triggerChatSummarization(sessionID string) {
 	projectPath := GetSessionProjectPath(sessionID)
 	summarizeTarget("chat_message", lastAssistant.ID, blocks, projectPath, sessionID)
 
-	// 对话推荐: if enabled, generate a next-step recommendation from the
+	// 推荐回复: if enabled, generate a next-step recommendation from the
 	// assistant's conclusion and emit it to the frontend (auto-fill/建议 chip).
-	triggerChatRecommendation(sessionID, projectPath, blocks)
+	triggerChatRecommendation(sessionID, projectPath, lastAssistant.ID, blocks)
 }
 
-// triggerChatRecommendation generates a next-step recommendation (对话推荐) after
+// triggerChatRecommendation generates a next-step recommendation (推荐回复) after
 // an assistant reply completes, using the shared ai_summary LLM config. Emits a
 // chat_recommendation WS event when a recommendation is produced.
-func triggerChatRecommendation(sessionID, projectPath string, blocks []model.ContentBlock) {
+func triggerChatRecommendation(sessionID, projectPath string, messageID int64, blocks []model.ContentBlock) {
 	if !model.ConfigInstance.Chat.RecommendEnabled {
 		return
 	}
@@ -504,6 +504,7 @@ func triggerChatRecommendation(sessionID, projectPath string, blocks []model.Con
 		Data: ws.ChatRecommendationData{
 			SessionID:      sessionID,
 			ProjectPath:    projectPath,
+			MessageID:      messageID,
 			Recommendation: recommendation,
 		},
 	})
@@ -511,28 +512,31 @@ func triggerChatRecommendation(sessionID, projectPath string, blocks []model.Con
 
 	// Persist so the recommendation is available even if the client was offline
 	// when the session completed (e.g. APP not open at the time).
-	SaveChatRecommendation(sessionID, projectPath, recommendation)
+	SaveChatRecommendation(sessionID, projectPath, messageID, recommendation)
 }
 
 // SaveChatRecommendation persists a conversation recommendation so it can be
 // fetched later (e.g. when a client that was offline opens the session).
-func SaveChatRecommendation(sessionID, projectPath, recommendation string) {
+func SaveChatRecommendation(sessionID, projectPath string, messageID int64, recommendation string) {
 	_, err := WriteExec(
-		"INSERT INTO chat_recommendations (session_id, project_path, recommendation) VALUES (?, ?, ?)",
-		sessionID, projectPath, recommendation,
+		"INSERT INTO chat_recommendations (session_id, project_path, message_id, recommendation) VALUES (?, ?, ?, ?)",
+		sessionID, projectPath, messageID, recommendation,
 	)
 	if err != nil {
 		slog.Debug("failed to persist chat recommendation", slog.String("session_id", sessionID), slog.String("err", err.Error()))
 	}
 }
 
-// LatestChatRecommendation returns the most recent recommendation for a session.
-// Returns empty string if none exists.
-func LatestChatRecommendation(ctx context.Context, sessionID string) string {
+// LatestChatRecommendation returns the most recent recommendation for a session
+// that was generated for the given assistant message. If no recommendation
+// belongs to that exact message (e.g. it was generated for an earlier reply, or
+// has not been produced yet), it returns "" so the client never surfaces a
+// stale recommendation from a previous reply. Returns empty string if none.
+func LatestChatRecommendation(ctx context.Context, sessionID string, messageID int64) string {
 	var rec string
 	err := dbRead.QueryRowContext(ctx,
-		"SELECT recommendation FROM chat_recommendations WHERE session_id = ? ORDER BY id DESC LIMIT 1",
-		sessionID,
+		"SELECT recommendation FROM chat_recommendations WHERE session_id = ? AND message_id = ? ORDER BY id DESC LIMIT 1",
+		sessionID, messageID,
 	).Scan(&rec)
 	if err != nil {
 		return ""

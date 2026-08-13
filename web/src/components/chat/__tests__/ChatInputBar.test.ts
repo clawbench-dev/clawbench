@@ -1301,15 +1301,16 @@ describe('ChatInputBar', () => {
     })
   })
 
-  // ── Conversation recommendation (对话推荐) ─────────────────
+  // ── Conversation recommendation (推荐回复) ─────────────────
 
-  function dispatchRecommendation(recommendation: string) {
-    window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 's1', recommendation } }))
+  function dispatchRecommendation(recommendation: string, messageId = 1001) {
+    window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 's1', message_id: messageId, recommendation } }))
   }
 
   // A conversation ending on an assistant reply — the precondition for showing
-  // the recommendation banner.
-  const ASSISTANT_LAST_MSG = [{ role: 'assistant', content: 'done' }]
+  // the recommendation banner. The message carries the id the recommendation is
+  // bound to.
+  const ASSISTANT_LAST_MSG = [{ role: 'assistant', id: 1001, content: 'done' }]
 
   it('shows the recommendation chip without modifying empty input', async () => {
     const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
@@ -1342,12 +1343,12 @@ describe('ChatInputBar', () => {
     await wrapper.vm.$nextTick()
     // A background session finishes a reply → its recommendation is dispatched
     // globally, but must not surface while the active session is s1.
-    window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 'other-session', recommendation: 'B的建议' } }))
+    window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 'other-session', message_id: 999, recommendation: 'B的建议' } }))
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.recommendation).toBe('')
     expect(wrapper.vm.showRecommendationChip).toBe(false)
     // A recommendation for the active session is shown.
-    window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 's1', recommendation: 'A的建议' } }))
+    window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: { session_id: 's1', message_id: 1001, recommendation: 'A的建议' } }))
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.recommendation).toBe('A的建议')
     expect(wrapper.vm.showRecommendationChip).toBe(true)
@@ -1393,7 +1394,7 @@ describe('ChatInputBar', () => {
   })
 
   it('does not surface a recommendation while the session is streaming', async () => {
-    const wrapper = mountBar({ loading: true, currentSessionId: 's1' })
+    const wrapper = mountBar({ loading: true, currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
     await wrapper.vm.$nextTick()
     dispatchRecommendation('stale suggestion')
     await wrapper.vm.$nextTick()

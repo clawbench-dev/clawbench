@@ -9,7 +9,7 @@ import (
 )
 
 // recommendNextStepPrompt is the system prompt for the next-step recommendation
-// (对话推荐) feature. It asks the model to produce a single, concise action the
+// (推荐回复) feature. It asks the model to produce a single, concise action the
 // user can take next, based on the recent conversation context and conclusion.
 const recommendNextStepPrompt = `You are a conversation continuation assistant. Based on the recent conversation and the AI assistant's latest conclusion, suggest exactly ONE concise next step for the user to take.
 

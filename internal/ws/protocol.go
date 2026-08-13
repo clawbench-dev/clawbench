@@ -72,5 +72,6 @@ type SummaryUpdateData struct {
 type ChatRecommendationData struct {
 	SessionID      string `json:"session_id"`
 	ProjectPath    string `json:"project_path,omitempty"`
+	MessageID      int64  `json:"message_id"`     // assistant message the recommendation was generated for
 	Recommendation string `json:"recommendation"` // concise next-step suggestion to auto-fill / show
 }

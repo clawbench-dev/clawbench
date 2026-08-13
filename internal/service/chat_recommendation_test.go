@@ -29,7 +29,7 @@ func TestTriggerChatRecommendation_RecommendError(t *testing.T) {
 	model.ConfigInstance.AISummary.Format = "openai"
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "conclusion"}}
-	triggerChatRecommendation("sess-rec-err", "/test", blocks)
+	triggerChatRecommendation("sess-rec-err", "/test", 21, blocks)
 
 	assert.Empty(t, sub.GetBufferedEvents(), "no event expected when recommendation call fails")
 }
@@ -53,7 +53,7 @@ func TestTriggerChatRecommendation_NilManager(t *testing.T) {
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "conclusion"}}
 	assert.NotPanics(t, func() {
-		triggerChatRecommendation("sess-rec-nilmgr", "/test", blocks)
+		triggerChatRecommendation("sess-rec-nilmgr", "/test", 22, blocks)
 	})
 }
 
@@ -67,7 +67,7 @@ func TestSaveChatRecommendation_DBError(t *testing.T) {
 
 	// Should not panic, just log and return.
 	assert.NotPanics(t, func() {
-		SaveChatRecommendation("sess-save-err", "/test", "rec")
+		SaveChatRecommendation("sess-save-err", "/test", 23, "rec")
 	})
 }
 

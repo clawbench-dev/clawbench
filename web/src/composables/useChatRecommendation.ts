@@ -2,7 +2,10 @@ import { computed, reactive, type ComputedRef } from 'vue'
 
 // A single session's recommendation state.
 export interface ChatRecommendationEntry {
+  /** Concise next-step suggestion text. */
   text: string
+  /** Assistant message id this recommendation was generated for. */
+  messageId: number | string
   dismissed: boolean
 }
 
@@ -14,8 +17,10 @@ export interface UseChatRecommendationOptions {
   loading: () => boolean
   /** Whether the active session's last message is an assistant reply. */
   isLastMessageAssistant: () => boolean
-  /** Fetches the persisted recommendation text for a session (trimmed, or ''). */
-  fetchRemote: (sessionId: string) => Promise<string>
+  /** Id of the active session's last assistant message (or undefined). */
+  lastAssistantMessageId: () => number | string | undefined
+  /** Fetches the persisted recommendation for a session+message (trimmed, or ''). */
+  fetchRemote: (sessionId: string, messageId: number | string) => Promise<string>
 }
 
 /**
@@ -26,6 +31,12 @@ export interface UseChatRecommendationOptions {
  * events and async fetches always target their own session's slot, so a
  * recommendation from one session can never leak into another session's view.
  *
+ * Each recommendation is additionally bound to the assistant message it was
+ * generated for. The displayed value is gated on that message id matching the
+ * session's current last assistant message, so a stale recommendation from an
+ * earlier reply is never shown (previously the UI briefly flashed the previous
+ * reply's recommendation before the current one was generated).
+ *
  * A per-session generation counter guards async fetch races: if a session is
  * invalidated (e.g. a new message starts streaming) while a fetch is in flight,
  * the stale result is discarded instead of overwriting newer state.
@@ -34,11 +45,20 @@ export function useChatRecommendation(opts: UseChatRecommendationOptions) {
   const cache = reactive(new Map<string, ChatRecommendationEntry>())
   const generation = reactive(new Map<string, number>())
 
-  /** Text of the currently active session's recommendation ('' when none). */
+  /** Whether a stored recommendation belongs to the session's current last assistant message. */
+  function matchesCurrent(entry: ChatRecommendationEntry | undefined): boolean {
+    if (!entry || !entry.text || entry.dismissed) return false
+    const lastMsgId = opts.lastAssistantMessageId()
+    if (lastMsgId === undefined) return false
+    return String(entry.messageId) === String(lastMsgId)
+  }
+
+  /** Text of the currently active session's recommendation ('' when none or stale). */
   const current: ComputedRef<string> = computed(() => {
     const id = opts.activeSessionId()
     if (!id) return ''
-    return cache.get(id)?.text ?? ''
+    const entry = cache.get(id)
+    return matchesCurrent(entry) ? entry!.text : ''
   })
 
   /** Whether the recommendation banner should be visible for the active session. */
@@ -47,25 +67,25 @@ export function useChatRecommendation(opts: UseChatRecommendationOptions) {
     if (!id) return false
     if (opts.loading()) return false
     if (!opts.isLastMessageAssistant()) return false
-    const e = cache.get(id)
-    return !!e && !!e.text && !e.dismissed
+    const entry = cache.get(id)
+    return matchesCurrent(entry)
   })
 
-  /** Record a recommendation for a session (from a live WS event). */
-  function upsert(sessionId: string, text: string) {
+  /** Record a recommendation for a session+message (from a live WS event). */
+  function upsert(sessionId: string, text: string, messageId: number | string) {
     const t = (text || '').trim()
     if (!sessionId || !t) return
-    cache.set(sessionId, { text: t, dismissed: false })
+    cache.set(sessionId, { text: t, messageId, dismissed: false })
   }
 
-  /** Fetch the persisted recommendation for a session into its slot, once. */
-  async function ensureFetched(sessionId: string) {
+  /** Fetch the persisted recommendation for a session+message into its slot, once. */
+  async function ensureFetched(sessionId: string, messageId: number | string) {
     if (!sessionId) return
     if (cache.has(sessionId)) return
     const gen = generation.get(sessionId) || 0
     let text: string
     try {
-      text = await opts.fetchRemote(sessionId)
+      text = await opts.fetchRemote(sessionId, messageId)
     } catch {
       return
     }
@@ -75,7 +95,7 @@ export function useChatRecommendation(opts: UseChatRecommendationOptions) {
     if (opts.activeSessionId() === sessionId && opts.loading()) return
     const t = (text || '').trim()
     if (!t) return
-    cache.set(sessionId, { text: t, dismissed: false })
+    cache.set(sessionId, { text: t, messageId, dismissed: false })
   }
 
   /** Invalidate a session's recommendation (e.g. a new message starts streaming). */
@@ -96,9 +116,9 @@ export function useChatRecommendation(opts: UseChatRecommendationOptions) {
   function accept(): string {
     const id = opts.activeSessionId()
     const e = id ? cache.get(id) : undefined
-    if (e && e.text && !e.dismissed) {
-      e.dismissed = true
-      return e.text
+    if (matchesCurrent(e)) {
+      e!.dismissed = true
+      return e!.text
     }
     return ''
   }

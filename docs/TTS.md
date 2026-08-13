@@ -214,7 +214,7 @@ tts:
 summarize:
   tts_backend: "api"                # 语音摘要类型（""/simple/api）
 
-# 共享的 AI 模型配置（语音摘要 + 对话推荐共用）
+# 共享的 AI 模型配置（语音摘要 + 推荐回复共用）
 ai_summary:
   model: "gpt-4o-mini"
   format: "openai"                  # openai / anthropic（留空自动识别）

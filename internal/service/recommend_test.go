@@ -38,7 +38,7 @@ func TestTriggerChatRecommendation_Disabled(t *testing.T) {
 	model.ConfigInstance.AISummary.API.BaseURL = "https://example.com"
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "conclusion here"}}
-	triggerChatRecommendation("sess-rec-disabled", "/test", blocks)
+	triggerChatRecommendation("sess-rec-disabled", "/test", 11, blocks)
 
 	if evts := sub.GetBufferedEvents(); len(evts) != 0 {
 		t.Fatalf("expected no events when recommend disabled, got %d", len(evts))
@@ -53,7 +53,7 @@ func TestTriggerChatRecommendation_NoAISummary(t *testing.T) {
 	model.ConfigInstance.Chat.RecommendEnabled = true // no ai_summary base_url
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "conclusion here"}}
-	triggerChatRecommendation("sess-rec-noai", "/test", blocks)
+	triggerChatRecommendation("sess-rec-noai", "/test", 12, blocks)
 
 	if evts := sub.GetBufferedEvents(); len(evts) != 0 {
 		t.Fatalf("expected no events without ai_summary, got %d", len(evts))
@@ -76,7 +76,7 @@ func TestTriggerChatRecommendation_EmitsEvent(t *testing.T) {
 	model.ConfigInstance.AISummary.Format = "openai"
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "The build passed."}}
-	triggerChatRecommendation("sess-rec-emit", "/test", blocks)
+	triggerChatRecommendation("sess-rec-emit", "/test", 13, blocks)
 
 	evts := sub.GetBufferedEvents()
 	if len(evts) != 1 {
@@ -88,6 +88,7 @@ func TestTriggerChatRecommendation_EmitsEvent(t *testing.T) {
 		t.Fatalf("unexpected data type: %T", evts[0].Data)
 	}
 	assert.Equal(t, "sess-rec-emit", data.SessionID)
+	assert.Equal(t, int64(13), data.MessageID)
 	assert.Equal(t, "Continue by running the tests.", data.Recommendation)
 }
 
@@ -100,7 +101,7 @@ func TestTriggerChatRecommendation_EmptyConclusion(t *testing.T) {
 	model.ConfigInstance.AISummary.API.BaseURL = "https://example.com"
 
 	// No text blocks → empty conclusion → no call, no event
-	triggerChatRecommendation("sess-rec-empty", "/test", nil)
+	triggerChatRecommendation("sess-rec-empty", "/test", 14, nil)
 
 	if evts := sub.GetBufferedEvents(); len(evts) != 0 {
 		t.Fatalf("expected no events for empty conclusion, got %d", len(evts))
@@ -131,10 +132,27 @@ func TestSaveAndLatestChatRecommendation(t *testing.T) {
 	defer teardown()
 	_ = db
 
-	// Persist then read back the latest recommendation.
-	SaveChatRecommendation("sess-rec-persist", "/test", "first rec")
-	SaveChatRecommendation("sess-rec-persist", "/test", "second rec")
+	// Persist then read back the recommendation for its exact message.
+	SaveChatRecommendation("sess-rec-persist", "/test", 201, "first rec")
+	SaveChatRecommendation("sess-rec-persist", "/test", 202, "second rec")
 
-	assert.Equal(t, "second rec", LatestChatRecommendation(context.Background(), "sess-rec-persist"))
-	assert.Equal(t, "", LatestChatRecommendation(context.Background(), "no-such-session"))
+	assert.Equal(t, "second rec", LatestChatRecommendation(context.Background(), "sess-rec-persist", 202))
+	assert.Equal(t, "first rec", LatestChatRecommendation(context.Background(), "sess-rec-persist", 201))
+	assert.Equal(t, "", LatestChatRecommendation(context.Background(), "no-such-session", 202))
+}
+
+func TestLatestChatRecommendation_RejectsStaleMessage(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+	_ = db
+
+	// A recommendation generated for an earlier reply (message 301) must not be
+	// returned when the client asks about the current reply (message 302).
+	SaveChatRecommendation("sess-rec-stale", "/test", 301, "old recommendation")
+	SaveChatRecommendation("sess-rec-stale", "/test", 302, "new recommendation")
+
+	// Asking for the older message returns its own value...
+	assert.Equal(t, "old recommendation", LatestChatRecommendation(context.Background(), "sess-rec-stale", 301))
+	// ...and a message with no recommendation yet returns empty (no stale leak).
+	assert.Equal(t, "", LatestChatRecommendation(context.Background(), "sess-rec-stale", 303))
 }
