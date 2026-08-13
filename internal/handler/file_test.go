@@ -1851,4 +1851,38 @@ func TestServeListTree(t *testing.T) {
 		require.Len(t, result.Files, 1)
 		assert.Equal(t, "root.txt", result.Files[0].Rel)
 	})
+
+	t.Run("no_project_cookie_returns_forbidden", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "root.txt", "data")
+
+		req := newRequest(t, http.MethodGet, "/api/file/list-tree", nil)
+
+		w := callHandler(ServeListTree, req)
+		assertStatus(t, w, http.StatusForbidden)
+	})
+
+	t.Run("path_traversal_returns_forbidden", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodGet, "/api/file/list-tree?path=../../etc/passwd", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeListTree, req)
+		assertStatus(t, w, http.StatusForbidden)
+	})
+
+	t.Run("nonexistent_path_returns_internal_error", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodGet, "/api/file/list-tree?path=does-not-exist", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeListTree, req)
+		assertStatus(t, w, http.StatusInternalServerError)
+	})
 }

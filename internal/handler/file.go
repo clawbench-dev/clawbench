@@ -198,14 +198,14 @@ func ServeListTree(w http.ResponseWriter, r *http.Request) {
 
 	err = filepath.Walk(absPath, func(fullPath string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
-			return nil //nolint:nilerr // skip inaccessible files
+			return walkErr
 		}
 		if info.IsDir() {
 			return nil
 		}
 		rel, relErr := filepath.Rel(absPath, fullPath)
 		if relErr != nil {
-			return nil //nolint:nilerr // skip files with invalid relative paths
+			return relErr
 		}
 		files = append(files, FileTreeEntry{
 			Rel:  filepath.ToSlash(rel),
