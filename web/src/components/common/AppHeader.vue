@@ -30,6 +30,10 @@
         <span v-else class="current-file-name no-file-name">{{ t('appHeader.noFileOpen') }}</span>
       </button>
     </div>
+
+    <!-- Shortcut tips marquee: fills the empty middle area (PC / web only) -->
+    <ShortcutTipTicker v-if="!isAppMode && localConfig.headerShortcutTips" class="header-tips" />
+
     <Teleport to="body">
       <Transition name="dropdown">
         <div v-if="dropdownOpen" class="app-menu" :style="dropdownStyle" ref="dropdownPanelRef">
@@ -159,11 +163,13 @@ import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
+import ShortcutTipTicker from '@/components/common/ShortcutTipTicker.vue'
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { toFixedCSS } from '@/composables/useSettingsConfig'
+import { localConfig } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
@@ -908,6 +914,15 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     align-items: center;
     justify-content: center;
     margin-left: auto;
+}
+
+/* Shortcut tips fill the empty middle of the header (PC/web only) */
+.header-tips {
+    flex: 1;
+    min-width: 0;
+    margin: 0 8px;
+    height: 100%;
+    overflow: hidden;
 }
 
 @media (hover: hover) {
