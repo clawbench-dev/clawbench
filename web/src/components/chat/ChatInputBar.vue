@@ -465,13 +465,20 @@ const inputText = ref('')
 //
 // Each recommendation is also bound to the assistant message it was generated
 // for, and only surfaced when that message is the session's current last
-// assistant message. This prevents briefly flashing a stale recommendation
-// (from an earlier reply) while the current reply's recommendation is still
-// being generated asynchronously.
+// completed assistant message. This prevents briefly flashing a stale
+// recommendation (from an earlier reply) while the current reply's
+// recommendation is still being generated asynchronously.
+//
+// Only a non-streaming assistant message with a real numeric DB id is eligible:
+// during streaming the placeholder message carries a temporary "drain-…" id (or
+// a still-streaming row), which would never match the persisted recommendation's
+// message_id and would silently hide every recommendation.
 const lastAssistantMessageId = () => {
   const msgs = props.messages || []
   for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].role === 'assistant') return msgs[i].id
+    if (msgs[i].role !== 'assistant' || msgs[i].streaming) continue
+    const id = Number(msgs[i].id)
+    if (Number.isInteger(id) && id > 0) return id
   }
   return undefined
 }
@@ -522,37 +529,19 @@ function clearRecommendation() {
 // A device that missed the live chat_recommendation broadcast (e.g. a mobile
 // WebView suspended while the backend generated the recommendation) still needs
 // to surface it. The recommendation is persisted server-side and generated
-// asynchronously *after* the reply's 'done' event, so once the active session
-// stops streaming we re-fetch it a few times with backoff. The fetch is bound
-// to the assistant message that just completed, so a stale recommendation from
-// an earlier reply is never surfaced (the backend only returns a recommendation
-// generated for that exact message). ensureFetched() is already idempotent — it
-// no-ops when the slot is cached (live broadcast), when the session is
-// streaming, or when the fetch returns empty — so these retries are harmless
-// when the broadcast already delivered the value.
-const reconcileTimeouts = new Set()
-
-function stopRecommendationReconcile() {
-  for (const id of reconcileTimeouts) clearTimeout(id)
-  reconcileTimeouts.clear()
-}
-
-function scheduleRecommendationReconcile() {
+// asynchronously *after* the reply's 'done' event. Once the reply is finalized
+// (its placeholder becomes a real non-streaming DB message), we fetch the
+// recommendation bound to that exact message. This fires both on session switch
+// (history loads) and right after a reply completes, and is a no-op when the
+// live broadcast already cached a value. ensureFetched() is idempotent — it
+// no-ops when the slot is cached, when the session is streaming, or when the
+// fetch returns empty.
+const lastAssistantMsgId = computed(() => lastAssistantMessageId())
+watch(lastAssistantMsgId, (mid) => {
   const sid = props.currentSessionId
-  const mid = lastAssistantMessageId()
   if (!sid || mid === undefined) return
-  stopRecommendationReconcile()
-  const delays = [2000, 5000, 12000, 30000, 60000]
-  for (const delay of delays) {
-    const id = window.setTimeout(() => {
-      reconcileTimeouts.delete(id)
-      // Only reconcile while still viewing the same, non-streaming session.
-      if (props.currentSessionId !== sid || props.loading) return
-      void rec.ensureFetched(sid, mid)
-    }, delay)
-    reconcileTimeouts.add(id)
-  }
-}
+  void rec.ensureFetched(sid, mid)
+})
 
 // ── Voice input (ASR) ───────────────────────────────
 const voiceInput = useVoiceInput()
@@ -830,12 +819,12 @@ watch(() => props.currentSessionId, (newId, oldId) => {
 // On session switch, restore the persisted recommendation for that session into
 // its own slot (immediate if already cached, otherwise fetched) — the displayed
 // value is derived from the active session's slot, so no cross-session leakage.
-watch(() => props.currentSessionId, (newId) => {
+watch(() => props.currentSessionId, () => {
   // A new conversation starts with a collapsed banner.
   recommendationExpanded.value = false
-  stopRecommendationReconcile()
-  const mid = newId ? lastAssistantMessageId() : undefined
-  if (newId && mid !== undefined) rec.ensureFetched(newId, mid)
+  // The recommendation for the new session is fetched once its last assistant
+  // message is loaded (see the lastAssistantMsgId watcher), so we don't need to
+  // fetch here with a possibly-unloaded message id.
 })
 
 const quoteItems = computed(() => props.quotes.length > 0
@@ -845,12 +834,9 @@ const quoteItems = computed(() => props.quotes.length > 0
 // When a new assistant message starts streaming, any previously surfaced
 // recommendation belongs to the last completed reply and is stale — invalidate
 // the active session's slot so the in-flight value can't be reused.
-watch(() => props.loading, (val, oldVal) => {
+watch(() => props.loading, (val) => {
   if (val && props.currentSessionId) {
     rec.invalidate(props.currentSessionId)
-    stopRecommendationReconcile()
-  } else if (!val && oldVal && props.currentSessionId) {
-    scheduleRecommendationReconcile()
   }
 })
 
@@ -1300,7 +1286,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   pasteUploadGeneration++
-  stopRecommendationReconcile()
   window.removeEventListener('paste', handleWindowPaste, true)
   window.removeEventListener('keydown', onVoiceShortcut)
   window.removeEventListener('clawbench-recommendation', onRecommendationEvent)
@@ -1333,8 +1318,6 @@ defineExpose({
   saveDraft,
   clearInputPreserveDraft,
   clearRecommendation,
-  scheduleRecommendationReconcile,
-  stopRecommendationReconcile,
   inputText,
   deleteDraft: (sessionId) => { draftCache.delete(sessionId) },
   hasDraft: (sessionId) => draftCache.has(sessionId),

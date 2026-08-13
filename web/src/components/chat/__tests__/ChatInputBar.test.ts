@@ -1455,25 +1455,17 @@ describe('ChatInputBar', () => {
 
   it('reconciles the persisted recommendation after a completed reply when the live broadcast was missed', async () => {
     // A mobile WebView that was suspended while the backend generated the
-    // recommendation misses the chat_recommendation broadcast. Because it stays
-    // on the same session (no session-switch re-fetch), it must re-fetch the
-    // persisted recommendation once the active session stops streaming.
-    vi.useFakeTimers()
+    // recommendation misses the chat_recommendation broadcast. Once the reply is
+    // finalized (last assistant message id becomes available), the input bar
+    // re-fetches the persisted recommendation bound to that exact message.
     const apiGetMock = apiGet as ReturnType<typeof vi.fn>
     apiGetMock.mockResolvedValue({ recommendation: '离线补拉的建议' })
-    const wrapper = mountBar({ loading: false, currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    const wrapper = mountBar({ loading: false, currentSessionId: 's1' })
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.showRecommendationChip).toBe(false)
 
-    // Simulate the stream-completed watcher: schedule the reconcile retries.
-    // (setProps doesn't trigger watchers in the test env, so we call the
-    // exposed reconcile entry point directly — the same path the loading
-    // watcher invokes in production.)
-    wrapper.vm.scheduleRecommendationReconcile()
-    await wrapper.vm.$nextTick()
-
-    // No broadcast was received; the first backoff retry fetches the store.
-    vi.advanceTimersByTime(2000)
+    // Finalize the assistant reply — this triggers the lastAssistantMsgId watcher.
+    await wrapper.setProps({ messages: ASSISTANT_LAST_MSG })
     await flushPromises()
     await wrapper.vm.$nextTick()
     expect(apiGetMock).toHaveBeenCalledWith(expect.stringContaining('/api/chat/recommendation'))
@@ -1481,28 +1473,24 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.showRecommendationChip).toBe(true)
 
     wrapper.unmount()
-    vi.useRealTimers()
   })
 
   it('does not re-fetch the recommendation when the live broadcast already delivered it', async () => {
-    vi.useFakeTimers()
     const apiGetMock = apiGet as ReturnType<typeof vi.fn>
     apiGetMock.mockClear()
-    const wrapper = mountBar({ loading: false, currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    const wrapper = mountBar({ loading: false, currentSessionId: 's1' })
     await wrapper.vm.$nextTick()
     dispatchRecommendation('广播已送达')
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.showRecommendationChip).toBe(true)
 
-    wrapper.vm.scheduleRecommendationReconcile()
-    vi.advanceTimersByTime(2000)
+    // Finalize the reply: the lastAssistantMsgId watcher calls ensureFetched,
+    // which is a no-op when the slot is already cached (live broadcast).
+    await wrapper.setProps({ messages: ASSISTANT_LAST_MSG })
     await flushPromises()
-    // ensureFetched is a no-op when the slot is already cached — no extra fetch.
     expect(apiGetMock).not.toHaveBeenCalledWith(expect.stringContaining('/api/chat/recommendation'))
     expect(wrapper.vm.recommendation).toBe('广播已送达')
     expect(wrapper.vm.showRecommendationChip).toBe(true)
 
     wrapper.unmount()
-    vi.useRealTimers()
   })
 })
