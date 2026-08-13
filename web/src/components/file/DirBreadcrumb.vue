@@ -11,19 +11,52 @@
         @click="i < parts.length - 1 && $emit('navigate', reconstructPath(parts.slice(0, i + 1)))"
       >{{ part }}</span>
     </template>
+    <span class="crumb-sep" />
+    <button class="crumb-copy-btn" :class="{ copied }" :title="t('jump.copyPath')" @click.stop="copyFullPath">
+      <Copy :size="13" />
+    </button>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { Home } from 'lucide-vue-next'
+import { computed, inject, ref } from 'vue'
+import { Home, Copy } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
 import { splitPath } from '@/utils/path.ts'
 
 const props = defineProps({
   path: { type: String, default: '' },
 })
-
 defineEmits(['navigate'])
+const { t } = useI18n()
+const toast = inject('toast', null)
+const copied = ref(false)
+
+function copyFullPath() {
+  const value = props.path
+  if (!value) return
+  const doCopy = () => {
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 800)
+    if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
+  }
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(value).then(doCopy).catch(() => fallbackCopy(value, doCopy))
+  } else {
+    fallbackCopy(value, doCopy)
+  }
+}
+
+function fallbackCopy(value, cb) {
+  const ta = document.createElement('textarea')
+  ta.value = value
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0'
+  document.body.appendChild(ta)
+  ta.select()
+  document.execCommand('copy')
+  document.body.removeChild(ta)
+  cb()
+}
 
 // Reconstruct a path from breadcrumb segments,
 // using the appropriate separator for the platform.
@@ -92,5 +125,26 @@ const parts = computed(() => {
 .crumb-sep {
   color: var(--text-muted, #999);
   font-size: 11px;
+}
+
+.crumb-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.crumb-copy-btn:hover {
+  background: var(--bg-secondary, #e0e0e0);
+  color: var(--accent-color, #4a90d9);
+}
+.crumb-copy-btn.copied {
+  color: #22c55e;
 }
 </style>

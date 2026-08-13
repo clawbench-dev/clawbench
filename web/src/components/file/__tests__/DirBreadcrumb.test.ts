@@ -1,14 +1,32 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
+import { createI18n } from 'vue-i18n'
 import DirBreadcrumb from '@/components/file/DirBreadcrumb.vue'
 
 const LucideStub = { template: '<span class="lucide-stub" />' }
+
+const i18n = createI18n({
+  legacy: false,
+  locale: 'en',
+  messages: {
+    en: {
+      jump: { copyPath: 'Copy path' },
+      common: { copied: 'Copied' },
+    },
+  },
+})
+
+const mockToast = { show: vi.fn() }
+const mockWriteText = vi.fn(() => Promise.resolve())
 
 function mountBreadcrumb(props: Record<string, any> = {}) {
   return mount(DirBreadcrumb, {
     props: { path: '', ...props },
     global: {
       stubs: { 'lucide-vue-next': LucideStub },
+      plugins: [i18n],
+      provide: { toast: mockToast },
     },
   })
 }
@@ -136,5 +154,45 @@ describe('DirBreadcrumb', () => {
       expect(crumbs.length).toBe(2) // root + "C:\"
       expect(crumbs[1].text()).toBe('C:\\')
     })
+  })
+})
+
+describe('DirBreadcrumb — copy path', () => {
+  it('copies full Unix path on copy button click', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: mockWriteText },
+      configurable: true,
+    })
+    mockWriteText.mockResolvedValue(undefined)
+    const wrapper = mountBreadcrumb({ path: '/home/user/docs' })
+    const copyBtn = wrapper.find('.crumb-copy-btn')
+    expect(copyBtn.exists()).toBe(true)
+    await copyBtn.trigger('click')
+    await vi.waitFor(() => expect(mockWriteText).toHaveBeenCalledWith('/home/user/docs'))
+  })
+
+  it('copies full Windows path using backslashes', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: mockWriteText },
+      configurable: true,
+    })
+    mockWriteText.mockResolvedValue(undefined)
+    const wrapper = mountBreadcrumb({ path: 'C:\\Users\\admin' })
+    await wrapper.find('.crumb-copy-btn').trigger('click')
+    await vi.waitFor(() => expect(mockWriteText).toHaveBeenCalledWith('C:\\Users\\admin'))
+  })
+
+  it('shows copied feedback and toast after copy', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: mockWriteText },
+      configurable: true,
+    })
+    mockWriteText.mockResolvedValue(undefined)
+    const wrapper = mountBreadcrumb({ path: '/home/user' })
+    await wrapper.find('.crumb-copy-btn').trigger('click')
+    await vi.waitFor(() => expect(mockWriteText).toHaveBeenCalled())
+    await nextTick()
+    expect(wrapper.find('.crumb-copy-btn').classes()).toContain('copied')
+    expect(mockToast.show).toHaveBeenCalled()
   })
 })
