@@ -105,7 +105,7 @@ func EventsHandler(w http.ResponseWriter, r *http.Request) {
 	defer pingTicker.Stop()
 
 	// Ping goroutine
-	go func() { //nolint:gosec // ping goroutine uses Background intentionally, not request-scoped
+	go func() {
 		for range pingTicker.C {
 			pingData, _ := json.Marshal(ServerMessage{Type: "ping"})
 			if err := writeMessage(&writeMu, conn, pingData); err != nil {

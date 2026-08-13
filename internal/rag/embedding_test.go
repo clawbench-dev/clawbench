@@ -58,3 +58,27 @@ func TestNormalizeEmbeddingBaseURL_AppendsToEmbeddings(t *testing.T) {
 		assert.Equal(t, "http://localhost:11434/v1/embeddings", norm+"/v1/embeddings")
 	}
 }
+
+func TestNormalizeEmbeddingBaseURL_UnparseableURL(t *testing.T) {
+	// url.Parse fails on malformed URLs, e.g. an unterminated IPv6 literal.
+	_, err := NormalizeEmbeddingBaseURL("http://[::1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid embedding base URL")
+}
+
+func TestNewEmbeddingClient_InvalidBaseURLFallback(t *testing.T) {
+	// When the base URL cannot be normalized, NewEmbeddingClient falls back
+	// to using the raw input (trimmed of a trailing slash) and logs a warning.
+	client := NewEmbeddingClient("http://[::1", "model-x", "key")
+	assert.Equal(t, "http://[::1", client.BaseURL)
+	assert.Equal(t, "model-x", client.Model)
+	assert.Equal(t, "key", client.APIKey)
+	assert.NotNil(t, client.HTTPClient)
+}
+
+func TestNewEmbeddingClient_ValidBaseURL(t *testing.T) {
+	client := NewEmbeddingClient("http://localhost:11434/v1/", "embed-model", "")
+	assert.Equal(t, "http://localhost:11434", client.BaseURL)
+	assert.Equal(t, "embed-model", client.Model)
+	assert.Equal(t, "", client.APIKey)
+}

@@ -40,7 +40,7 @@ type Config struct {
 	LocalhostAuthExempt bool   `yaml:"localhost_auth_exempt"` // true = localhost bypasses auth (default)
 	LogMaxDays          int    `yaml:"log_max_days"`
 	TLS                 struct {
-		CertDir  string `yaml:"cert_dir"` // Directory containing HTTPS cert/key files; presence of valid files enables HTTPS
+		CertDir string `yaml:"cert_dir"` // Directory containing HTTPS cert/key files; presence of valid files enables HTTPS
 		// Deprecated legacy fields — read for migration only, not used at runtime.
 		Enabled  bool   `yaml:"enabled"`
 		CertFile string `yaml:"cert_file"`
