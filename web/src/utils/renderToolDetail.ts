@@ -143,22 +143,27 @@ function renderBashTerminal(input: ToolInput): string {
   const timeout = num(input.timeout)
   const runInBackground = input.run_in_background || input.is_background
 
-  let html = '<div class="bash-terminal-view">'
+  let html = '<div class="bash-terminal-view tool-content-wrap word-wrap">'
 
   if (description) {
     html += `<div class="bash-terminal-desc">${escapeHtml(description)}</div>`
   }
 
+  // Reuse the tool content header (copy + wrap toggle) shared with Edit/Read/Write/JSON views
+  html += toolContentHeaderHtml('.bash-command')
+
   html += '<div class="bash-terminal-body">'
   html += '<span class="bash-prompt">$</span>'
 
-  // Highlight command as bash
+  // Highlight command as bash, wrapped so copy targets only the command (not the $ prompt)
   if (command) {
+    html += '<span class="bash-command">'
     try {
       html += highlightCode(command, 'bash')
     } catch {
       html += escapeHtml(command)
     }
+    html += '</span>'
   }
 
   html += '</div>'

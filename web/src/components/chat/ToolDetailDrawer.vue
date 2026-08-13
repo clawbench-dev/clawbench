@@ -436,6 +436,8 @@ function handleBodyClick(event) {
 .tool-detail-body .tool-content-copy-btn.is-copied {
   opacity: 0.8;
   color: #16a34a;
+  width: auto;
+  padding: 0 4px;
 }
 
 .tool-detail-body .tool-content-wrap-btn.is-wrapped {
@@ -451,6 +453,7 @@ function handleBodyClick(event) {
   font-size: 11px;
   font-weight: 600;
   color: #16a34a;
+  white-space: nowrap;
 }
 
 :root[data-theme="dark"] .tool-detail-body .tool-content-copied-text {
@@ -640,6 +643,14 @@ function handleBodyClick(event) {
 
 .tool-detail-body .bash-command {
   color: var(--text-primary);
+}
+
+/* Wrap toggle: no-wrap mode → horizontal scroll for the command line.
+   word-wrap mode uses bash-terminal-body's pre-wrap + break-word (default). */
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .bash-terminal-body {
+  white-space: pre;
+  overflow-x: auto;
+  min-width: max-content;
 }
 
 /* Grep search */

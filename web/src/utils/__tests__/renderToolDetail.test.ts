@@ -578,6 +578,23 @@ describe('Bash renderer (deep)', () => {
     expect(html).toContain('bash-terminal-view')
     expect(html).toContain('bash-prompt')
   })
+
+  it('reuses the tool content header with copy + wrap buttons', () => {
+    const html = formatToolInput({ command: 'ls -la' }, 'Bash')
+    expect(html).toContain('tool-content-header')
+    expect(html).toContain('tool-content-copy-btn')
+    expect(html).toContain('tool-content-wrap-btn')
+    // outer wrapper gets tool-content-wrap + word-wrap so the header buttons work
+    expect(html).toContain('bash-terminal-view tool-content-wrap word-wrap')
+  })
+
+  it('wraps the highlighted command in a bash-command span for copy', () => {
+    const html = formatToolInput({ command: 'echo "hello"' }, 'Bash')
+    // copy button targets .bash-command so the $ prompt is excluded
+    expect(html).toContain('data-content-selector=".bash-command"')
+    expect(html).toContain('<span class="bash-command">')
+    expect(html).toContain('</span>')
+  })
 })
 
 // ────────────────────────────────────────────────────────────
