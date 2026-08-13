@@ -4,6 +4,7 @@ import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { folderRelPath } from '@/utils/fileAttachmentUtils'
+import { expandDataTransfer, type ExpandResult } from '@/utils/dropFolder'
 
 // ── Module-level singleton state ──
 // pendingFiles MUST be shared across all callers (AttachDrawer, ChatPanelContent,
@@ -275,6 +276,62 @@ export function useFileUpload() {
     await uploadFiles(files, dir, isFolder)
   }
 
+  /** Create a directory under dir (used for empty folders found in a drop). */
+  async function createDir(dir: string, name: string): Promise<boolean> {
+    try {
+      const resp = await fetch('/api/dir/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: dir || '.', name }),
+      })
+      return resp.ok
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Upload an expanded folder drop (files each carrying their relPath) and
+   * recreate any empty directories. Progress bar stays byte-based per file
+   * (from uploadOneFile); dirUploadDone/Track the overall count.
+   */
+  async function uploadExpandedFolder(result: ExpandResult, dir: string) {
+    const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
+    dirUploading.value = true
+    const total = result.files.length + result.emptyDirs.length
+    dirUploadTotal.value = total
+    dirUploadDone.value = 0
+    dirUploadProgress.value = 0
+    let done = 0
+
+    for (const { file, relPath } of result.files) {
+      if (file.size > maxSizeBytes) {
+        toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: '⚠️', type: 'error' })
+      } else {
+        await uploadOneFile(file, dir, false, relPath || undefined)
+      }
+      done++
+      dirUploadDone.value = done
+    }
+
+    for (const emptyDir of result.emptyDirs) {
+      const ok = await createDir(dir, emptyDir)
+      if (ok) done++
+      dirUploadDone.value = done
+    }
+
+    dirUploading.value = false
+    dirUploadProgress.value = 0
+  }
+
+  /** Expand a folder drop (webkitGetAsEntry) then upload files + empty dirs. */
+  async function handleFolderDropExpanded(e: DragEvent, dir: string) {
+    if (!e.dataTransfer) return
+    const result = await expandDataTransfer(e.dataTransfer)
+    if (result.files.length === 0 && result.emptyDirs.length === 0) return
+    await uploadExpandedFolder(result, dir)
+  }
+
   function removeFile(index: number) {
     const f = pendingFiles.value[index]
     if (f) cancelPendingFile(f)
@@ -322,5 +379,6 @@ export function useFileUpload() {
     handleFileDropToDir,
     handleFolderSelect,
     handleFileDropToDirStructured,
+    handleFolderDropExpanded,
   }
 }

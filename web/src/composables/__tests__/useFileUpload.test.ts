@@ -638,4 +638,92 @@ describe('useFileUpload', () => {
       expect(upload.attachedFiles.value).toHaveLength(0)
     })
   })
+
+  describe('expanded folder drop (webkitGetAsEntry traversal)', () => {
+    // ── Fake FileSystemEntry helpers ──
+    function makeFileEntry(fullPath: string, content = 'x') {
+      const name = fullPath.split('/').pop() || 'file'
+      return {
+        isFile: true,
+        isDirectory: false,
+        name,
+        fullPath,
+        file: (cb: (f: File) => void) => cb(new File([content], name, { type: 'text/plain' })),
+      }
+    }
+    function makeDirEntry(name: string, fullPath: string, children: any[]) {
+      let done = false
+      return {
+        isFile: false,
+        isDirectory: true,
+        name,
+        fullPath,
+        createReader: () => ({
+          readEntries: (cb: (e: any[]) => void) => {
+            if (done) { cb([]); return }
+            done = true
+            cb(children)
+          },
+        }),
+      }
+    }
+    function dropEventWith(entries: any[]) {
+      return {
+        dataTransfer: {
+          items: entries.map((e) => ({ webkitGetAsEntry: () => e })),
+          files: [] as any[],
+        },
+      }
+    }
+
+    it('uploads each folder file with its relPath', async () => {
+      const captured: FormData[] = []
+      xhrSendHandler = (xhr, formData) => {
+        captured.push(formData)
+        respondSuccess(xhr, 'dir/proj/src/a.ts')
+      }
+      const root = makeDirEntry('proj', '/proj', [makeFileEntry('/proj/src/a.ts', 'A')])
+      const upload = useFileUpload()
+      await upload.handleFolderDropExpanded(dropEventWith([root]) as any, '/dir')
+
+      expect(captured).toHaveLength(1)
+      expect(captured[0].get('dir')).toBe('/dir')
+      expect(captured[0].get('relpath')).toBe('proj/src')
+      expect(upload.dirUploading.value).toBe(false)
+    })
+
+    it('creates empty directories via /api/dir/create', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true })
+      vi.stubGlobal('fetch', fetchMock)
+
+      xhrSendHandler = (xhr) => respondSuccess(xhr, 'dir/proj/main.go')
+      const root = makeDirEntry('proj', '/proj', [
+        makeDirEntry('empty', '/proj/empty', []),
+        makeFileEntry('/proj/main.go', 'M'),
+      ])
+      const upload = useFileUpload()
+      await upload.handleFolderDropExpanded(dropEventWith([root]) as any, '/dir')
+
+      const createCalls = fetchMock.mock.calls.filter((c: any[]) => String(c[0]).includes('/api/dir/create'))
+      expect(createCalls.length).toBe(1)
+      const body = JSON.parse(createCalls[0][1].body)
+      expect(body.path).toBe('/dir')
+      expect(body.name).toBe('proj/empty')
+      // 1 file + 1 empty dir
+      expect(upload.dirUploadDone.value).toBe(2)
+      expect(upload.dirUploadTotal.value).toBe(2)
+      expect(upload.dirUploading.value).toBe(false)
+      vi.unstubAllGlobals()
+    })
+
+    it('does nothing when the drop has no files or directories', async () => {
+      const upload = useFileUpload()
+      upload.dirUploadDone.value = 0
+      upload.dirUploadTotal.value = 0
+      await upload.handleFolderDropExpanded({ dataTransfer: { items: [], files: [] } } as any, '/dir')
+      expect(upload.dirUploading.value).toBe(false)
+      expect(upload.dirUploadDone.value).toBe(0)
+      expect(upload.dirUploadTotal.value).toBe(0)
+    })
+  })
 })

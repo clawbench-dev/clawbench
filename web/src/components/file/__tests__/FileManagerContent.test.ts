@@ -82,6 +82,7 @@ const mockHandleFileSelectToDir = vi.fn()
 const mockHandleFileDropToDir = vi.fn()
 const mockHandleFileDropToDirStructured = vi.fn()
 const mockHandleFolderSelect = vi.fn()
+const mockHandleFolderDropExpanded = vi.fn()
 const mockDirUploading = ref(false)
 const mockDirUploadProgress = ref(0)
 const mockDirUploadTotal = ref(0)
@@ -97,6 +98,7 @@ vi.mock('@/composables/useFileUpload', () => ({
     handleFileDropToDir: mockHandleFileDropToDir,
     handleFileDropToDirStructured: mockHandleFileDropToDirStructured,
     handleFolderSelect: mockHandleFolderSelect,
+    handleFolderDropExpanded: mockHandleFolderDropExpanded,
   }),
 }))
 
@@ -1189,7 +1191,7 @@ describe('FileManagerContent — batch share', () => {
 // ── Drag-and-drop upload ──
 
 describe('FileManagerContent — drag-and-drop upload', () => {
-  it('calls handleFileDropToDir when files are dropped on file-list', async () => {
+  it('calls handleFolderDropExpanded when files are dropped on file-list', async () => {
     const wrapper = mountContent()
     const fileList = wrapper.find('.file-list')
 
@@ -1202,7 +1204,7 @@ describe('FileManagerContent — drag-and-drop upload', () => {
     await fileList.trigger('drop', dropEvent)
     await nextTick()
 
-    expect(mockHandleFileDropToDirStructured).toHaveBeenCalled()
+    expect(mockHandleFolderDropExpanded).toHaveBeenCalled()
     expect(wrapper.emitted('refresh')).toBeTruthy()
   })
 
@@ -1268,7 +1270,10 @@ describe('FileManagerContent — drag-and-drop upload', () => {
     })
     await nextTick()
 
-    expect(mockHandleFileDropToDirStructured).toHaveBeenCalledWith([mockFile], 'src')
+    expect(mockHandleFolderDropExpanded).toHaveBeenCalledWith(
+      expect.objectContaining({ dataTransfer: { files: [mockFile] } }),
+      'src',
+    )
   })
 
   it('uses "." as upload target when currentDir is empty', async () => {
@@ -1282,10 +1287,13 @@ describe('FileManagerContent — drag-and-drop upload', () => {
     })
     await nextTick()
 
-    expect(mockHandleFileDropToDirStructured).toHaveBeenCalledWith([mockFile], '.')
+    expect(mockHandleFolderDropExpanded).toHaveBeenCalledWith(
+      expect.objectContaining({ dataTransfer: { files: [mockFile] } }),
+      '.',
+    )
   })
 
-  it('does not call handleFileDropToDir when drop has no files', async () => {
+  it('delegates empty drops to handleFolderDropExpanded (which no-ops)', async () => {
     const wrapper = mountContent()
     const fileList = wrapper.find('.file-list')
 
@@ -1293,6 +1301,9 @@ describe('FileManagerContent — drag-and-drop upload', () => {
       dataTransfer: { files: [] },
       preventDefault: vi.fn(),
     })
+    await nextTick()
+
+    expect(mockHandleFolderDropExpanded).toHaveBeenCalled()
     expect(mockHandleFileDropToDir).not.toHaveBeenCalled()
   })
 })
@@ -2006,7 +2017,7 @@ describe('FileManagerContent — upload', () => {
     await nextTick()
 
     expect(wrapper.find('.dir-upload-progress').exists()).toBe(true)
-    expect(wrapper.find('.dir-upload-progress-text').text()).toContain('2/4')
+    expect(wrapper.find('.dir-upload-progress-count').text()).toContain('2/4')
   })
 })
 // ── Long-press & container drag state ──

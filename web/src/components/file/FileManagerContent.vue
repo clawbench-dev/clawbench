@@ -153,10 +153,10 @@
     <!-- Hidden directory input for folder upload (PC only, preserves structure) -->
     <input v-if="!isAppMode" type="file" ref="folderInputRef" @change="onFolderUploadSelect" style="display:none" webkitdirectory multiple />
 
-    <!-- Upload progress bar -->
+    <!-- Upload progress bar (byte-based bar + count progress below) -->
     <div v-if="dirUploading" class="dir-upload-progress">
       <div class="dir-upload-progress-bar" :style="{ width: dirUploadProgress + '%' }"></div>
-      <span class="dir-upload-progress-text">{{ dirUploadDone }}/{{ dirUploadTotal }}</span>
+      <div class="dir-upload-progress-count">{{ dirUploadDone }}/{{ dirUploadTotal }}</div>
     </div>
 
     <!-- File list -->
@@ -425,7 +425,7 @@ const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
 // File upload to current directory
-const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFileDropToDirStructured } = useFileUpload()
+const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded } = useFileUpload()
 const uploadInputRef = ref(null)
 const folderInputRef = ref(null)
 
@@ -481,15 +481,14 @@ async function onDrop(e) {
     dragCounter.value = 0
     isDragOver.value = false
     dropTargetPath.value = null
-    const files = Array.from(e.dataTransfer?.files || [])
     // Internal file-manager move drag (source dragged from this same list)
     if (dragSourcePaths.value?.length) {
         e.preventDefault()
         await handleInternalMoveDrop(e)
         return
     }
-    if (files.length === 0) return
-    await handleFileDropToDirStructured(files, props.currentDir || '.')
+    if (!e.dataTransfer) return
+    await handleFolderDropExpanded(e, props.currentDir || '.')
     emit('refresh')
 }
 
@@ -2237,26 +2236,26 @@ function currentFileForClipboard() {
 /* Upload progress bar */
 .dir-upload-progress {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 12px;
-    height: 20px;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 12px;
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
     flex-shrink: 0;
 }
 
 .dir-upload-progress-bar {
-    flex: 1;
     height: 3px;
+    width: 0;
     background: var(--accent-color, #4a90d9);
     border-radius: 2px;
     transition: width 0.15s ease;
 }
 
-.dir-upload-progress-text {
+.dir-upload-progress-count {
     font-size: 11px;
     color: var(--text-secondary, #666);
     white-space: nowrap;
+    line-height: 1.2;
 }
 
 /* ── Drop overlay ── */
