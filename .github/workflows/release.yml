@@ -534,6 +534,41 @@ jobs:
           name: desktop-linux-package
           path: desktop/release/linux-unpacked/
 
+  build-desktop-linux-arm64:
+    name: Build Desktop Linux arm64
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Build desktop (Linux arm64)
+        run: |
+          cd desktop
+          npm ci
+          npm run build -- --arm64
+
+      - name: Zip desktop (Linux arm64)
+        run: |
+          cd desktop/release
+          zip -r clawbench-desktop-linux-arm64.zip linux-arm64-unpacked
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          files: desktop/release/clawbench-desktop-linux-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-arm64-package
+          path: desktop/release/linux-arm64-unpacked/
+
   build-desktop-windows:
     name: Build Desktop Windows
     runs-on: windows-latest
@@ -617,7 +652,7 @@ jobs:
 
   publish-npm-desktop:
     name: Publish desktop to npm
-    needs: [build-desktop-linux, build-desktop-windows, build-desktop-macos]
+    needs: [build-desktop-linux, build-desktop-linux-arm64, build-desktop-windows, build-desktop-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -643,6 +678,12 @@ jobs:
           name: desktop-linux-package
           path: pkg-desktop/linux-x64/app/
 
+      - name: Download desktop Linux arm64
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-linux-arm64-package
+          path: pkg-desktop/linux-arm64/app/
+
       - name: Download desktop Windows
         uses: actions/download-artifact@v4
         with:
@@ -661,7 +702,7 @@ jobs:
           # Split macOS artifact (mac-arm64 / mac-x64) into per-arch packages
           cp -r pkg-desktop/macos-all/mac-arm64 pkg-desktop/darwin-arm64/app
           cp -r pkg-desktop/macos-all/mac-x64 pkg-desktop/darwin-x64/app
-          for PLATFORM in linux-x64 win32-x64 darwin-arm64 darwin-x64; do
+          for PLATFORM in linux-x64 linux-arm64 win32-x64 darwin-arm64 darwin-x64; do
             PKG="npm/platforms-desktop/$PLATFORM"
             mkdir -p "$PKG"
             cp -r "pkg-desktop/$PLATFORM/app/." "$PKG/"
@@ -681,6 +722,11 @@ jobs:
 
       - name: Publish @xulongzhe/clawbench-desktop-linux-x64
         run: npm publish ./npm/platforms-desktop/linux-x64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @xulongzhe/clawbench-desktop-linux-arm64
+        run: npm publish ./npm/platforms-desktop/linux-arm64 --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
