@@ -41,8 +41,8 @@ describe('useAcpSession', () => {
         ok: true,
         json: () => Promise.resolve({
           sessions: [
-            { sessionId: 's1', title: 'Session 1', createdAt: '2025-01-01', updatedAt: '2025-01-02' },
-            { sessionId: 's2', title: 'Session 2', created_at: '2025-01-03', updated_at: '2025-01-04' },
+            { sessionId: 's1', title: 'Session 1', cwd: '/project', createdAt: '2025-01-01', updatedAt: '2025-01-02' },
+            { sessionId: 's2', title: 'Session 2', cwd: '/other', created_at: '2025-01-03', updated_at: '2025-01-04' },
           ],
           nextCursor: 'cursor-1',
         }),
@@ -52,10 +52,22 @@ describe('useAcpSession', () => {
       await loadAcpSessions()
 
       expect(acpSessions.value).toHaveLength(2)
-      expect(acpSessions.value[0]).toEqual({ sessionId: 's1', title: 'Session 1', createdAt: '2025-01-01', updatedAt: '2025-01-02' })
-      expect(acpSessions.value[1]).toEqual({ sessionId: 's2', title: 'Session 2', createdAt: '2025-01-03', updatedAt: '2025-01-04' })
+      expect(acpSessions.value[0]).toEqual({ sessionId: 's1', title: 'Session 1', cwd: '/project', createdAt: '2025-01-01', updatedAt: '2025-01-02' })
+      expect(acpSessions.value[1]).toEqual({ sessionId: 's2', title: 'Session 2', cwd: '/other', createdAt: '2025-01-03', updatedAt: '2025-01-04' })
       expect(nextCursor.value).toBe('cursor-1')
       expect(acpSessionsLoading.value).toBe(false)
+    })
+
+    it('maps empty cwd to empty string', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ sessionId: 's1', title: 'No cwd' }], nextCursor: null }),
+      })
+
+      const { acpSessions, loadAcpSessions } = useAcpSession({ currentAgentId })
+      await loadAcpSessions()
+
+      expect(acpSessions.value[0].cwd).toBe('')
     })
 
     it('sets notSupported on 501 response', async () => {
@@ -169,7 +181,7 @@ describe('useAcpSession', () => {
 
       const { acpLoadSession, acpSessions } = useAcpSession({ currentAgentId })
       // Pre-populate sessions list
-      acpSessions.value = [{ sessionId: 'acp-s1', title: 'Test', createdAt: '', updatedAt: '' }]
+      acpSessions.value = [{ sessionId: 'acp-s1', title: 'Test', cwd: '', createdAt: '', updatedAt: '' }]
 
       const result = await acpLoadSession('acp-s1')
 
@@ -195,7 +207,7 @@ describe('useAcpSession', () => {
         })
 
       const { acpLoadSession, acpSessions } = useAcpSession({ currentAgentId })
-      acpSessions.value = [{ sessionId: 'acp-s1', title: 'Test', createdAt: '', updatedAt: '' }]
+      acpSessions.value = [{ sessionId: 'acp-s1', title: 'Test', cwd: '', createdAt: '', updatedAt: '' }]
 
       const result = await acpLoadSession('acp-s1')
 

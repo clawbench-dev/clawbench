@@ -8,6 +8,7 @@ const TAG = 'useAcpSession'
 export interface AcpSessionInfo {
   sessionId: string
   title: string
+  cwd: string
   createdAt: string
   updatedAt: string
 }
@@ -61,6 +62,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
       const sessions: AcpSessionInfo[] = (data.sessions || []).map((s: any) => ({
         sessionId: s.sessionId || s.session_id || '',
         title: s.title || '',
+        cwd: s.cwd || '',
         createdAt: s.createdAt || s.created_at || '',
         updatedAt: s.updatedAt || s.updated_at || '',
       }))
