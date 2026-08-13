@@ -243,6 +243,28 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
   clearModeState: vi.fn(),
   updateCommandState: vi.fn(),
   clearCommandState: vi.fn(),
+  reconcileRunningSessions: vi.fn((sessions: Array<{ id?: string; running?: boolean }>, full = false) => {
+    if (!sessions) return false
+    let changed = false
+    if (full) {
+      if (mockState.runningSessions.size > 0) { mockState.runningSessions.clear(); changed = true }
+      for (const s of sessions) {
+        if (s?.id && s.running && !mockState.runningSessions.has(s.id)) { mockState.runningSessions.add(s.id); changed = true }
+      }
+    } else {
+      if (sessions.length === 0) return false
+      for (const s of sessions) {
+        if (!s || !s.id) continue
+        if (s.running) {
+          if (!mockState.runningSessions.has(s.id)) { mockState.runningSessions.add(s.id); changed = true }
+        } else {
+          if (mockState.runningSessions.delete(s.id)) changed = true
+        }
+      }
+    }
+    if (changed) mockState.runningSessionsVersion++
+    return changed
+  }),
   updateThinkingEffortState: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   clearThinkingEffortState: vi.fn(),

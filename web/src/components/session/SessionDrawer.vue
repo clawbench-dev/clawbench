@@ -80,7 +80,7 @@ import { useAgents } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useDialog } from '@/composables/useDialog.ts'
-import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
+import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
@@ -167,6 +167,11 @@ async function loadSessions() {
     const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}`)
     const data = await resp.json()
     sessions.value = data.sessions || []
+    // Reconcile the WS-maintained runningSessions against fresh API data so a
+    // stale "running" flag (from a missed WS completion event) is cleared on
+    // manual refresh. Without this, only a full page reload (which re-runs
+    // loadSessionsOnce) would fix the stuck "executing" indicator.
+    reconcileRunningSessions(sessions.value)
     hasMore.value = !!data.hasMore
     if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
   } catch (err) {

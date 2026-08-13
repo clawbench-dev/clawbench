@@ -75,7 +75,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef, reconcileRunningSessions } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -1731,6 +1731,74 @@ describe('useSessionIdentity', () => {
 
             // No session to write to — should not throw
             expect(identity.contextUsed.value).toBe(0)
+        })
+    })
+
+    describe('reconcileRunningSessions', () => {
+        beforeEach(() => {
+            useSessionIdentity().runningSessions.value = new Set()
+        })
+
+        it('clears stale non-running flags and adds running sessions (full mode)', () => {
+            const identity = useSessionIdentity()
+            identity.runningSessions.value = new Set(['stale-1', 'stale-2'])
+
+            const changed = reconcileRunningSessions(
+                [
+                    { id: 'new-1', running: true },
+                    { id: 'stale-1', running: false },
+                ],
+                true,
+            )
+
+            expect(changed).toBe(true)
+            expect(identity.runningSessions.value.has('new-1')).toBe(true)
+            expect(identity.runningSessions.value.has('stale-1')).toBe(false)
+            // Full mode drops entries not present in the list
+            expect(identity.runningSessions.value.has('stale-2')).toBe(false)
+        })
+
+        it('clears all running flags when full list is empty', () => {
+            const identity = useSessionIdentity()
+            identity.runningSessions.value = new Set(['s1'])
+
+            reconcileRunningSessions([], true)
+
+            expect(identity.runningSessions.value.size).toBe(0)
+        })
+
+        it('partial mode only touches sessions present in the list', () => {
+            const identity = useSessionIdentity()
+            // 's2' is a running session on another page not included in this page
+            identity.runningSessions.value = new Set(['s1', 's2'])
+
+            const changed = reconcileRunningSessions([{ id: 's1', running: false }])
+
+            expect(changed).toBe(true)
+            expect(identity.runningSessions.value.has('s1')).toBe(false)
+            // Running flag for a session outside the page is preserved
+            expect(identity.runningSessions.value.has('s2')).toBe(true)
+        })
+
+        it('does not clear flags when partial list is empty', () => {
+            const identity = useSessionIdentity()
+            identity.runningSessions.value = new Set(['s1'])
+
+            const changed = reconcileRunningSessions([])
+
+            expect(changed).toBe(false)
+            expect(identity.runningSessions.value.has('s1')).toBe(true)
+        })
+
+        it('returns false when nothing changes', () => {
+            const identity = useSessionIdentity()
+            identity.runningSessions.value = new Set(['s1'])
+            const before = identity.runningSessionsVersion.value
+
+            const changed = reconcileRunningSessions([{ id: 's1', running: true }])
+
+            expect(changed).toBe(false)
+            expect(identity.runningSessionsVersion.value).toBe(before)
         })
     })
 })

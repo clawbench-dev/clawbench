@@ -79,6 +79,55 @@ export const runningSessions = ref(new Set<string>())
 // that depend on the set's contents re-evaluate correctly.
 const runningSessionsVersion = ref(0)
 
+/**
+ * Reconcile the global runningSessions set against fresh API data.
+ * runningSessions is normally maintained by WS session_update events; if a
+ * completion event is missed (WS disconnect, race), a stale "running" flag can
+ * stick forever.
+ *
+ * - full=true (loadSessionsOnce): the list is the complete session set, so the
+ *   whole runningSessions set is cleared and repopulated from it. Any stale
+ *   flag not present in the list is dropped.
+ * - full=false (paginated drawer list): only sessions present in the provided
+ *   list are reconciled — running flags for sessions on other pages are
+ *   preserved. This clears stale "running" flags on manual refresh.
+ *
+ * Returns true if the set changed.
+ */
+export function reconcileRunningSessions(sessions: Array<{ id?: string; running?: boolean }> | undefined | null, full = false): boolean {
+  if (!sessions) return false
+  let changed = false
+  if (full) {
+    if (runningSessions.value.size > 0) {
+      runningSessions.value.clear()
+      changed = true
+    }
+    for (const s of sessions) {
+      if (s?.id && s.running && !runningSessions.value.has(s.id)) {
+        runningSessions.value.add(s.id)
+        changed = true
+      }
+    }
+  } else {
+    if (sessions.length === 0) return false
+    for (const s of sessions) {
+      if (!s || !s.id) continue
+      if (s.running) {
+        if (!runningSessions.value.has(s.id)) {
+          runningSessions.value.add(s.id)
+          changed = true
+        }
+      } else {
+        if (runningSessions.value.delete(s.id)) {
+          changed = true
+        }
+      }
+    }
+  }
+  if (changed) runningSessionsVersion.value++
+  return changed
+}
+
 // Whether the global session drawer is open. Lifted from ChatPanelContent
 // to useSessionIdentity so App.vue can render a single SessionDrawer
 // instance that's accessible from any tab (chat, viewer, QuoteQuestionBar).

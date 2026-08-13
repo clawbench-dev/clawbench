@@ -5,7 +5,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ChatSession'
-import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity } from '@/composables/useSessionIdentity.ts'
+import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -38,12 +38,8 @@ export async function loadSessionsOnce(): Promise<void> {
         if (typeof data.totalCount === 'number') {
           store.state.sessionCount = data.totalCount
         }
-        // Populate runningSessions set from API data
-        identity.runningSessions.value.clear()
-        for (const s of sessions) {
-          if (s.running) identity.runningSessions.value.add(s.id)
-        }
-        identity.runningSessionsVersion.value++
+        // Populate runningSessions set from API data (full authoritative list)
+        reconcileRunningSessions(sessions, true)
       }
     } catch { /* ignore */ }
     finally {

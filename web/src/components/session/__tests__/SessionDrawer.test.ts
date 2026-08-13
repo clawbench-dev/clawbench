@@ -29,7 +29,7 @@ vi.mock('@/stores/app', () => ({
   },
 }))
 
-const { mockLoadAgents, mockGetAgentBackend, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent, mockAgentsHolder, mockDialogHolder } = vi.hoisted(() => ({
+const { mockLoadAgents, mockGetAgentBackend, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent, mockAgentsHolder, mockDialogHolder, mockReconcileRunningSessions } = vi.hoisted(() => ({
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockGetAgentBackend: vi.fn(() => ''),
   mockGetAgentName: vi.fn(() => 'Agent'),
@@ -38,6 +38,7 @@ const { mockLoadAgents, mockGetAgentBackend, mockGetAgentName, mockIsDefaultAgen
   mockSetDefaultAgent: vi.fn().mockResolvedValue(undefined),
   mockAgentsHolder: { list: [] as any[] },
   mockDialogHolder: { confirm: null as null | ((msg: string, opts?: any) => Promise<boolean>), lastOptions: null as any },
+  mockReconcileRunningSessions: vi.fn(),
 }))
 
 vi.mock('@/composables/useAgents', () => ({
@@ -65,6 +66,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: () => ({
     runningSessionsVersion: { value: 0 },
   }),
+  reconcileRunningSessions: mockReconcileRunningSessions,
 }))
 
 vi.mock('@/utils/format', () => ({
@@ -240,6 +242,32 @@ describe('SessionDrawer', () => {
       // Check sessionsWithStatus computed marks session as running
       const first = wrapper.vm.sessionsWithStatus[0]
       expect(first.running).toBe(true)
+    })
+
+    it('reconciles runningSessions against fresh API data on refresh', async () => {
+      // API reports the session is NOT running anymore, but the WS-maintained
+      // runningSessionIds still contains it (stale flag from a missed WS event).
+      // The drawer's manual refresh must reconcile the global set so the stale
+      // "executing" indicator clears — otherwise only a page reload fixes it.
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's1', title: 'Session 1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli', running: false }],
+          hasMore: false,
+          totalCount: 1,
+        }),
+      })
+      const wrapper = mountDrawer({ runningSessionIds: new Set(['s1']) })
+      await flushPromises()
+      mockReconcileRunningSessions.mockClear()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      await nextTick()
+
+      expect(mockReconcileRunningSessions).toHaveBeenCalled()
+      const calledWith = mockReconcileRunningSessions.mock.calls[0][0]
+      expect(calledWith[0].id).toBe('s1')
+      expect(calledWith[0].running).toBe(false)
     })
 
 
