@@ -61,3 +61,19 @@ window.addEventListener('unhandledrejection', (e) => {
 })
 
 app.mount('#app')
+
+// Unregister any leftover Service Worker from previous builds.
+// A stale SW caches old assets and can intercept API requests, breaking
+// authentication (cookies) and causing 403 errors on all /api/* calls.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((regs) => {
+    for (const reg of regs) {
+      reg.unregister().then(() => appLog.i('SW', 'Unregistered stale Service Worker:', reg.scope))
+    }
+  }).catch(() => {})
+  if (window.caches && window.caches.keys) {
+    window.caches.keys().then((keys) => {
+      Promise.all(keys.map((k) => window.caches.delete(k)))
+    }).catch(() => {})
+  }
+}
