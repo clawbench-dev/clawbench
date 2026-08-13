@@ -291,19 +291,6 @@ function handleCopyMessage() {
 </script>
 
 <style scoped>
-/* Audio player in chat */
-.chat-audio-wrapper {
-  margin: 8px 0;
-}
-
-.chat-audio-player {
-  width: 100%;
-  max-width: 280px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  outline: none;
-}
-
 /* Video player in chat */
 .chat-video-wrapper {
   margin: 8px 0;
@@ -1077,5 +1064,32 @@ function handleCopyMessage() {
   max-width: 100%;
   max-height: 184px;
   height: auto;
+}
+
+/* ── Audio player in chat (non-scoped for v-html penetration) ── */
+.chat-message .chat-audio-wrapper {
+  margin: 4px 0;
+}
+
+.chat-message .chat-audio-player {
+  width: 100%;
+  max-width: 280px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  display: block;
+}
+
+.chat-message .chat-audio-player::-webkit-media-controls-panel {
+  padding: 0 4px;
+}
+
+.chat-message .chat-audio-player::-webkit-media-controls-play-button {
+  margin: 0 2px;
+}
+
+.chat-message .chat-audio-player::-webkit-media-controls-current-time-display,
+.chat-message .chat-audio-player::-webkit-media-controls-time-remaining-display {
+  font-size: 11px;
 }
 </style>
