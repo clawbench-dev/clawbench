@@ -985,7 +985,7 @@ function handleCtrlArrowSessionSwitch(e) {
 function handleDeleteKey(e) {
   if (!props.keyboardActive) return
   if (e.key !== 'Delete' || !(e.ctrlKey || e.metaKey)) return
-  inputBarRef.value?.handleDelete()
+  inputBarRef.value?.handleArchive()
 }
 
 // Start one-time session load when component mounts
