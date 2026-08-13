@@ -83,6 +83,7 @@ const mockHandleFileDropToDir = vi.fn()
 const mockHandleFileDropToDirStructured = vi.fn()
 const mockHandleFolderSelect = vi.fn()
 const mockHandleFolderDropExpanded = vi.fn()
+const mockDownloadDirAsTree = vi.fn()
 const mockCancelDirUpload = vi.fn()
 const mockDirUploading = ref(false)
 const mockDirUploadProgress = ref(0)
@@ -100,6 +101,7 @@ vi.mock('@/composables/useFileUpload', () => ({
     handleFileDropToDirStructured: mockHandleFileDropToDirStructured,
     handleFolderSelect: mockHandleFolderSelect,
     handleFolderDropExpanded: mockHandleFolderDropExpanded,
+    downloadDirAsTree: mockDownloadDirAsTree,
     cancelDirUpload: mockCancelDirUpload,
   }),
 }))
@@ -114,7 +116,7 @@ const mockToolbarCollapsedIds = vi.hoisted(() => ([]))
 
 vi.mock('@/composables/useToolbarOverflow', () => ({
   useToolbarOverflow: () => ({
-    inlineIds: computed(() => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'multiselect', 'hidden']),
+    inlineIds: computed(() => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'multiselect', 'hidden', 'jump']),
     collapsedIds: computed(() => mockToolbarCollapsedIds),
     contentWidth: ref(800),
     startObserving: vi.fn(),
@@ -130,6 +132,7 @@ vi.mock('@/composables/useSettingsConfig', () => ({
   toFixedCSS: (v: number) => Math.round(v * 100) / 100,
 }))
 
+const mockNavigateToDir = vi.hoisted(() => vi.fn())
 vi.mock('@/stores/app', () => ({
   store: {
     state: { projectRoot: '/project', currentDir: '', currentFile: null, dirEntries: [] },
@@ -137,6 +140,7 @@ vi.mock('@/stores/app', () => ({
     loadFiles: vi.fn(),
     selectFile: vi.fn(),
     setProject: vi.fn(),
+    navigateToDir: mockNavigateToDir,
   },
 }))
 
@@ -192,6 +196,14 @@ vi.mock('@/components/file/DirBreadcrumb.vue', () => ({
   default: { template: '<div class="dir-breadcrumb-stub" />' },
 }))
 
+vi.mock('@/components/file/JumpDirDialog.vue', () => ({
+  default: defineComponent({
+    props: ['open'],
+    emits: ['close', 'confirm'],
+    template: '<div class="jump-dialog-stub" />',
+  }),
+}))
+
 // ── i18n ──
 const i18n = createI18n({
   legacy: false,
@@ -227,6 +239,14 @@ const i18n = createI18n({
       common: { remove: '移除', copied: '已复制', delete: '删除', operationFailed: '操作失败', rename: '重命名', download: '下载', cancel: '取消' },
       nav: { refresh: '刷新', more: '更多' },
       search: { defaultPlaceholder: '搜索' },
+      jump: {
+        title: '跳转到目录',
+        placeholder: '输入目录路径',
+        confirm: '跳转',
+        cancel: '取消',
+        button: '跳转',
+        copyPath: '复制路径',
+      },
     },
   },
 })
@@ -287,6 +307,7 @@ beforeEach(() => {
   mockDialogPrompt.mockResolvedValue('newfile.txt')
   mockDialogAlert.mockReset()
   mockDownloadFileByPath.mockReset()
+  mockNavigateToDir.mockReset()
 })
 
 // ── Rendering ──
@@ -2289,5 +2310,25 @@ describe('FileManagerContent — empty state text', () => {
   it('shows noFiles message when no currentDir and no entries', () => {
     const wrapper = mountContent({ entries: [], currentDir: '' })
     expect(wrapper.find('.empty-state').exists()).toBe(true)
+  })
+})
+
+describe('FileManagerContent — jump to dir', () => {
+  it('opens jump dialog when jump button clicked', async () => {
+    const wrapper = mountContent()
+    const jumpBtn = wrapper.find('.toolbar-btn.jump-btn')
+    expect(jumpBtn.exists()).toBe(true)
+    await jumpBtn.trigger('click')
+    await nextTick()
+    expect(wrapper.find('.jump-dialog-stub').exists()).toBe(true)
+  })
+
+  it('navigates to dir on jump confirm', async () => {
+    mockNavigateToDir.mockResolvedValue(undefined)
+    const wrapper = mountContent()
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleJumpConfirm('src/utils')
+    await nextTick()
+    expect(mockNavigateToDir).toHaveBeenCalledWith('src/utils')
   })
 })

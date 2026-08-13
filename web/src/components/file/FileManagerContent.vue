@@ -67,6 +67,9 @@
             <EyeOff v-if="!showHidden" :size="16" />
             <Eye v-else :size="16" />
           </button>
+          <button v-if="toolbarInlineIds.includes('jump')" class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
+            <LocateFixed :size="16" />
+          </button>
           <template v-if="showMoreDropdown">
           <div ref="moreDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" @click="moreMenuOpen = !moreMenuOpen" :title="t('nav.more')">
@@ -350,6 +353,10 @@
             <Package :size="14" />
             {{ t('file.context.archiveDir') }}
           </div>
+          <div class="context-menu-item" v-if="ctxMenu.entry.type === 'dir'" @click.stop="doDownloadTree">
+            <FolderDown :size="14" />
+            {{ t('file.context.downloadTree') }}
+          </div>
           <div class="context-menu-item" @click.stop="doAttachToChat">
             <Paperclip :size="14" />
             {{ ctxMenu.entry && hasAttachedFile(ctxMenu.entry.path) ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat') }}
@@ -382,6 +389,7 @@
       @navigateDir="onSearchNavigateDir"
       @selectFile="onSearchSelectFile"
     />
+    <JumpDirDialog :open="jumpOpen" @close="jumpOpen = false" @confirm="handleJumpConfirm" />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
     <Transition name="paste-fade">
@@ -400,7 +408,7 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search, FolderDown, LocateFixed } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
@@ -422,6 +430,7 @@ import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import FileSearchDrawer from './FileSearchDrawer.vue'
+import JumpDirDialog from './JumpDirDialog.vue'
 
 const toast = inject('toast', null)
 const { isAppMode } = useAppMode()
@@ -430,7 +439,7 @@ const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
 // File upload to current directory
-const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, cancelDirUpload, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded } = useFileUpload()
+const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, cancelDirUpload, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded, downloadDirAsTree } = useFileUpload()
 const uploadInputRef = ref(null)
 const folderInputRef = ref(null)
 
@@ -600,6 +609,11 @@ function onPaste(e) {
   }
 }
 const dialog = useDialog()
+const jumpOpen = ref(false)
+async function handleJumpConfirm(path) {
+  jumpOpen.value = false
+  await store.navigateToDir(path)
+}
 const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
@@ -675,7 +689,7 @@ watch(moreMenuOpen, (open) => {
 const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
-  () => ['refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle', 'multiselect', 'hidden'],
+  () => ['refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle', 'multiselect', 'hidden', 'jump'],
   { inlineCount: 3, gap: 6 },
 )
 
@@ -1344,6 +1358,13 @@ function doArchiveDir() {
     closeCtxMenu()
     const zipName = entry.name + '.zip'
     doArchive([entry.path], zipName)
+}
+
+function doDownloadTree() {
+    if (!ctxMenu.entry || ctxMenu.entry.type !== 'dir') return
+    const path = ctxMenu.entry.path
+    closeCtxMenu()
+    downloadDirAsTree(path)
 }
 
 function doBatchArchive() {
