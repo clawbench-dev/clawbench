@@ -425,21 +425,30 @@ describe('FileManagerContent — multi-select toolbar button', () => {
     expect(wrapper.find('.ms-info-bar').exists()).toBe(false)
   })
 
-  it('shows checkboxes on file items in multi-select mode', async () => {
+  it('reflects selection via state and info-bar in multi-select mode', async () => {
     const entries = [
       { name: 'test.txt', type: 'file', size: 100, modified: '2025-01-01T00:00:00Z' },
       { name: 'src', type: 'dir', modified: '2025-01-01T00:00:00Z' },
     ]
     const wrapper = mountComponent(entries)
 
-    // No checkboxes before entering multi-select
-    expect(wrapper.findAll('.ms-check')).toHaveLength(0)
-
     // Enter multi-select
     await setMultiSelectActive(wrapper, true)
 
-    // Checkboxes should now appear
-    expect(wrapper.findAll('.ms-check')).toHaveLength(2)
+    // Legacy left check circles were removed in favor of single-select-style highlight
+    expect(wrapper.findAll('.ms-check')).toHaveLength(0)
+
+    // Toggle selection on the file item
+    const instance = (wrapper.vm as any).$
+    const rawState = instance.devtoolsRawSetupState
+    rawState.toggleSelect('test.txt')
+    ;(wrapper.vm as any).$forceUpdate()
+    await nextTick()
+    await nextTick()
+
+    // Selection is reflected in the internal state
+    expect(rawState.multiSelect.selected.has('test.txt')).toBe(true)
+    expect(rawState.multiSelect.selected.size).toBe(1)
   })
 
   it('clicking file item in multi-select mode toggles selection', async () => {
