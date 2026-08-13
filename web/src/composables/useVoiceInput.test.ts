@@ -82,8 +82,39 @@ describe('useVoiceInput', () => {
     await v.start()
     v.stop()
     await vi.waitFor(() => expect(track.stop).toHaveBeenCalled())
-    expect(v.state.value).toBe('done')
+    expect(v.state.value).toBe('idle')
     expect(v.isRecording.value).toBe(false)
+  })
+
+  it('returns to idle after non-streaming completion so recording can start again', async () => {
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    })
+    vi.stubGlobal('MediaRecorder', class {
+      state = 'recording'
+      ondataavailable: unknown = null
+      onstop: (() => void) | null = null
+      start() { this.state = 'recording' }
+      stop() { this.state = 'inactive'; this.onstop?.() }
+      static isTypeSupported = vi.fn(() => true)
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: '识别结果' }),
+    }))
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    v.stop()
+    await vi.waitFor(() => expect(track.stop).toHaveBeenCalled())
+    // After completion state must be back to idle so a new recording can start.
+    expect(v.state.value).toBe('idle')
+    // A second toggle must proceed (call getUserMedia again), not early-return.
+    await v.start()
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2)
   })
 
   it('streaming start passes chunk_ms as the MediaRecorder timeslice', async () => {

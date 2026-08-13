@@ -66,6 +66,19 @@
           <span>{{ t('chat.attach.uploading') }}</span>
         </div>
       </Transition>
+      <!-- Voice input banner (recording / transcribing) — compact strip at the top of the input box -->
+      <Transition name="paste-fade">
+        <div v-if="voiceState === 'recording' || voiceState === 'transcribing'" class="voice-banner" :class="{ recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }">
+          <template v-if="voiceState === 'recording'">
+            <span class="voice-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+            <span class="voice-banner-text">{{ t('chat.voice.recordingHint') }}</span>
+          </template>
+          <template v-else>
+            <Loader2 :size="14" class="spin-icon" />
+            <span class="voice-banner-text">{{ t('chat.voice.transcribing') }}</span>
+          </template>
+        </div>
+      </Transition>
       <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
       <div v-if="quoteItems.length > 0 || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
         <!-- Staged quote cards (same size as file cards, accent-colored) -->
@@ -98,13 +111,9 @@
           @focus="onTextareaFocus"
           @blur="onTextareaBlur"
           ></textarea>
-        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent, recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
-          <!-- Recording: red pulsing dot -->
-          <span v-if="voiceState === 'recording'" class="voice-recording-dot"></span>
-          <!-- Transcribing: loading spinner -->
-          <Loader2 v-else-if="voiceState === 'transcribing'" class="spin-icon" :size="16" />
+        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
           <!-- Empty input: green lightning (quick-menu shortcut) -->
-          <Zap v-else-if="!hasInputContent" :size="16" />
+          <Zap v-if="!hasInputContent" :size="16" />
           <!-- Queue mode: inbox with down arrow (enqueue) -->
           <Inbox v-else-if="loading" :size="16" />
           <!-- Normal mode: paper plane (send) -->
@@ -545,7 +554,7 @@ watch(lastAssistantMsgId, (mid) => {
 
 // ── Voice input (ASR) ───────────────────────────────
 const voiceInput = useVoiceInput()
-const { state: voiceState, inputText: voiceInputText, toggle: toggleVoice, shortcutKey: voiceShortcutKey } = voiceInput
+const { state: voiceState, inputText: voiceInputText, toggle: toggleVoice, start: startVoice, stop: stopVoice, shortcutKey: voiceShortcutKey } = voiceInput
 
 const VOICE_LONG_PRESS_MS = 500
 let voicePressTimer = null
@@ -585,16 +594,30 @@ watch(voiceInputText, (val) => {
   }
 })
 
-function onVoiceShortcut(e) {
+function onVoiceShortcutDown(e) {
   // NOTE: Only the hardcoded F9 shortcut is currently supported.
   // stt.shortcut_key may hold other values; matching those is out of scope
   // and would require a lookup table of key/alt/ctrl/meta/shift combos.
   const sc = voiceShortcutKey()
-  if (sc === 'F9') {
-    if (e.code === 'F9' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-      e.preventDefault()
-      void toggleVoice()
-    }
+  if (sc === 'F9' && e.code === 'F9' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.repeat) {
+    e.preventDefault()
+    startVoice()
+  }
+}
+
+function onVoiceShortcutUp(e) {
+  const sc = voiceShortcutKey()
+  if (sc === 'F9' && e.code === 'F9' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    e.preventDefault()
+    stopVoice()
+  }
+}
+
+// Safety net: if the window loses focus while F9 is held (keyup may never fire),
+// end the recording so it doesn't get stuck.
+function onVoiceBlurStop() {
+  if (voiceState.value === 'recording') {
+    stopVoice()
   }
 }
 
@@ -1280,14 +1303,18 @@ onMounted(() => {
   fetchItems()
   startPlaceholderRotation()
   window.addEventListener('paste', handleWindowPaste, true)
-  window.addEventListener('keydown', onVoiceShortcut)
+  window.addEventListener('keydown', onVoiceShortcutDown)
+  window.addEventListener('keyup', onVoiceShortcutUp)
+  window.addEventListener('blur', onVoiceBlurStop)
   window.addEventListener('clawbench-recommendation', onRecommendationEvent)
 })
 
 onBeforeUnmount(() => {
   pasteUploadGeneration++
   window.removeEventListener('paste', handleWindowPaste, true)
-  window.removeEventListener('keydown', onVoiceShortcut)
+  window.removeEventListener('keydown', onVoiceShortcutDown)
+  window.removeEventListener('keyup', onVoiceShortcutUp)
+  window.removeEventListener('blur', onVoiceBlurStop)
   window.removeEventListener('clawbench-recommendation', onRecommendationEvent)
   stopMachine.destroy()
   if (quickSendPressTimer) {
@@ -2071,22 +2098,57 @@ defineExpose({
   to   { transform: rotate(360deg); }
 }
 
-.voice-recording-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #ff3b30;
-  animation: voice-pulse 1s ease-in-out infinite;
+.voice-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
 }
-@keyframes voice-pulse {
-  0%, 100% { transform: scale(0.8); opacity: 1; }
-  50% { transform: scale(1.4); opacity: 0.6; }
+.voice-banner.recording {
+  background: color-mix(in srgb, #ff3b30 12%, transparent);
+  color: #ff6b5e;
+  border: 1px solid color-mix(in srgb, #ff3b30 35%, transparent);
 }
-.chat-send-btn.recording {
-  background: #ff3b30 !important;
+.voice-banner.transcribing {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
+  color: var(--accent-color, #0066cc);
+  border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent);
 }
-.chat-send-btn.transcribing .spin-icon {
-  animation: spin 1s linear infinite;
+.voice-banner-text {
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Audio-wave animation: animated vertical bars */
+.voice-wave {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+}
+.voice-wave i {
+  display: block;
+  width: 3px;
+  height: 8px;
+  border-radius: 2px;
+  background: currentColor;
+  animation: voice-wave 1s ease-in-out infinite;
+}
+.voice-wave i:nth-child(1) { animation-delay: 0s; }
+.voice-wave i:nth-child(2) { animation-delay: 0.1s; }
+.voice-wave i:nth-child(3) { animation-delay: 0.2s; }
+.voice-wave i:nth-child(4) { animation-delay: 0.3s; }
+.voice-wave i:nth-child(5) { animation-delay: 0.4s; }
+@keyframes voice-wave {
+  0%, 100% { height: 6px; }
+  50% { height: 16px; }
 }
 
 .chat-action-label {
