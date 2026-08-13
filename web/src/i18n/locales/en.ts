@@ -1556,6 +1556,8 @@ export default {
       localhostAuthExempt: 'Localhost Auth Exempt',
       localhostAuthExemptDesc: 'When enabled, localhost requests bypass password authentication. When disabled, all requests require authentication, including CLI tools (clawbench task/rag).',
       localhostAuthExemptConfirm: 'Disabling this will require password authentication for all localhost requests. CLI tools (clawbench task/rag) will need to authenticate. Continue?',
+      tlsCertDir: 'HTTPS Certificate Directory',
+      tlsCertDirDesc: 'Directory containing HTTPS certificate files. It must contain one of these file sets (HTTPS starts automatically when a valid cert exists, otherwise falls back to HTTP): ① fullchain.pem + privkey.pem (Let\'s Encrypt); ② cert.pem + key.pem; ③ combined.pem (single file with cert + key). A restart is required after changing.',
       ttsPiperHeader: 'Piper Config',
       ttsKokoroHeader: 'Kokoro Config',
       ttsMossNanoHeader: 'MOSS-Nano Config',

@@ -109,13 +109,21 @@ func TestServeConfig_Get(t *testing.T) {
 
 	// Verify sensitive fields are NOT present
 	assert.NotContains(t, resp, "password")
-	assert.NotContains(t, resp, "tls")
 	assert.NotContains(t, resp, "host")
 	assert.NotContains(t, resp, "port")
 	assert.NotContains(t, resp, "log_level")
 	assert.NotContains(t, resp, "log_dir")
 	assert.NotContains(t, resp, "watch_dir")
 	assert.NotContains(t, resp, "dev_port")
+
+	// TLS exposes only the cert directory path and active state — never the
+	// legacy private key path or PEM contents.
+	tls, _ := resp["tls"].(map[string]any)
+	assert.Contains(t, tls, "cert_dir")
+	assert.Contains(t, tls, "active")
+	assert.NotContains(t, tls, "key_file")
+	assert.NotContains(t, tls, "cert_file")
+	assert.NotContains(t, tls, "enabled")
 
 	// Verify port_forward doesn't expose host_key
 	pf, _ := resp["port_forward"].(map[string]any)
@@ -319,10 +327,11 @@ func TestServeConfig_Patch_ForbiddenField_Password(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestServeConfig_Patch_ForbiddenField_TLS(t *testing.T) {
+func TestServeConfig_Patch_ForbiddenField_TLSLegacyEnabled(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
+	// Legacy tls.enabled is deprecated and no longer patchable.
 	body := `{"tls":{"enabled":false}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -330,6 +339,20 @@ func TestServeConfig_Patch_ForbiddenField_TLS(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeConfig_Patch_TLSCertDir(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	body := `{"tls":{"cert_dir":"/custom/certs"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "/custom/certs", model.ConfigInstance.TLS.CertDir)
 }
 
 func TestServeConfig_Patch_InvalidEngine(t *testing.T) {

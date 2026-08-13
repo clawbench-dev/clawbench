@@ -201,6 +201,7 @@ type configResponse struct {
 	Feishu              configFeishu         `json:"feishu"`
 	PushMode            string               `json:"push_mode"`
 	FileSearch          configFileSearch     `json:"file_search"`
+	TLS                 configTLS            `json:"tls"`
 }
 
 type configChat struct {
@@ -334,6 +335,14 @@ type configFileSearch struct {
 	DisplayLimit int `json:"display_limit"`
 }
 
+// configTLS exposes the HTTPS cert directory to the settings panel.
+// It includes the resolved HTTPS active state for display, without exposing
+// private key paths or contents.
+type configTLS struct {
+	CertDir string `json:"cert_dir"` // Configured cert directory
+	Active  bool   `json:"active"`   // Whether HTTPS is currently active (valid cert found)
+}
+
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
 // Any path not in this list will be rejected with 400 Bad Request.
 var PatchableConfigPaths = map[string]bool{
@@ -411,6 +420,7 @@ var PatchableConfigPaths = map[string]bool{
 	"feishu.users":                      true,
 	"push_mode":                         true,
 	"file_search.display_limit":         true,
+	"tls.cert_dir":                      true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -551,6 +561,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		PushMode: cfg.PushMode,
 		FileSearch: configFileSearch{
 			DisplayLimit: cfg.FileSearch.DisplayLimit,
+		},
+		TLS: configTLS{
+			CertDir: cfg.TLS.CertDir,
+			Active:  cfg.ResolveTLSActive(),
 		},
 	}
 
@@ -969,6 +983,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 
 	if v, ok := patch["localhost_auth_exempt"].(bool); ok {
 		cfg.LocalhostAuthExempt = v
+	}
+
+	if tlsMap, ok := patch["tls"].(map[string]any); ok {
+		if v, ok := tlsMap["cert_dir"].(string); ok {
+			cfg.TLS.CertDir = v
+		}
 	}
 
 	if chat, ok := patch["chat"].(map[string]any); ok {

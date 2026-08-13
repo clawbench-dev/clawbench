@@ -46,10 +46,25 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.Port = 20000
 	}
 
+	// --- TLS ---
+	// Migrate legacy enabled/cert_file/key_file fields to the new cert_dir scheme.
+	// If cert_dir is unset but legacy cert_file points to an existing directory
+	// containing the cert, derive cert_dir from it (the cert directory already
+	// holds the matching key file per the standard layouts).
+	if cfg.TLS.CertDir == "" && cfg.TLS.CertFile != "" {
+		if dir := filepath.Dir(cfg.TLS.CertFile); dir != "." {
+			cfg.TLS.CertDir = dir
+		}
+	}
+	// Default cert directory when neither new nor legacy TLS is configured.
+	if cfg.TLS.CertDir == "" {
+		cfg.TLS.CertDir = DefaultTLSCertDir()
+	}
+
 	// --- DevPort ---
-	// -1 = explicitly disabled; 0 = auto (Port+2 when TLS enabled, disabled otherwise)
+	// -1 = explicitly disabled; 0 = auto (Port+2 when TLS active, disabled otherwise)
 	if cfg.DevPort == 0 {
-		if cfg.TLS.Enabled {
+		if cfg.ResolveTLSActive() {
 			cfg.DevPort = cfg.Port + 2
 		}
 	}

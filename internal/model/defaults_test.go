@@ -303,17 +303,19 @@ func TestApplyDefaultsPasswordExplicitRemovesFile(t *testing.T) {
 
 func TestApplyDefaults_DevPortWithTLS(t *testing.T) {
 	setupTestBinDir(t)
+	dir := writeTLSCertDir(t)
 
-	// When DevPort is 0 and TLS is enabled, DevPort should be Port+2
+	// When DevPort is 0 and TLS is active (valid cert found), DevPort should be Port+2
 	cfg := Config{TLS: struct {
+		CertDir  string `yaml:"cert_dir"`
 		Enabled  bool   `yaml:"enabled"`
 		CertFile string `yaml:"cert_file"`
 		KeyFile  string `yaml:"key_file"`
-	}{Enabled: true}}
+	}{CertDir: dir}}
 	ApplyDefaults(&cfg, nil)
 
 	if cfg.DevPort != cfg.Port+2 {
-		t.Errorf("DevPort = %d, want %d (Port+2 when TLS enabled)", cfg.DevPort, cfg.Port+2)
+		t.Errorf("DevPort = %d, want %d (Port+2 when TLS active)", cfg.DevPort, cfg.Port+2)
 	}
 }
 
@@ -332,7 +334,7 @@ func TestApplyDefaults_DevPortNegative1Disables(t *testing.T) {
 func TestApplyDefaults_DevPortZeroNoTLS(t *testing.T) {
 	setupTestBinDir(t)
 
-	// DevPort = 0 without TLS should stay 0 (disabled)
+	// DevPort = 0 without a valid cert dir should stay 0 (disabled)
 	cfg := Config{}
 	ApplyDefaults(&cfg, nil)
 

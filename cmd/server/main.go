@@ -1117,24 +1117,17 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	scheme := "http"
 	tlsCertFile := ""
 	tlsKeyFile := ""
-	if cfg.TLS.Enabled {
-		tlsCertFile = cfg.TLS.CertFile
-		if tlsCertFile == "" {
-			tlsCertFile = os.Getenv("CERT_FILE")
-		}
-		tlsKeyFile = cfg.TLS.KeyFile
-		if tlsKeyFile == "" {
-			tlsKeyFile = os.Getenv("KEY_FILE")
-		}
-		if tlsCertFile == "" || tlsKeyFile == "" {
-			slog.Warn("TLS enabled but cert_file and key_file are not configured, falling back to HTTP")
+	if certs, ok := model.ResolveTLSCerts(cfg.TLS.CertDir); ok {
+		tlsCertFile = certs.CertFile
+		tlsKeyFile = certs.KeyFile
+		scheme = "https"
+		slog.Info("starting with TLS", slog.String("dir", cfg.TLS.CertDir), slog.String("cert", tlsCertFile))
+	} else {
+		if cfg.TLS.CertDir != "" {
+			slog.Info("no valid TLS cert found in cert dir, starting with HTTP", slog.String("dir", cfg.TLS.CertDir))
 		} else {
-			scheme = "https"
-			slog.Info("starting with TLS", slog.String("cert", tlsCertFile))
+			slog.Info("starting with HTTP")
 		}
-	}
-	if scheme == "http" {
-		slog.Info("starting with HTTP")
 	}
 
 	// Pre-bind the main listener to detect port conflicts BEFORE printing the banner.

@@ -1,3 +1,8 @@
+ai_summary:
+    api:
+        base_url: https://updated.com
+        key: test-key
+    model: gpt-4
 chat:
     initial_messages: 0
     page_size: 0
@@ -71,6 +76,7 @@ terminal:
     max_line_bytes: 0
     max_sessions: 0
 tls:
+    cert_dir: ""
     cert_file: ""
     enabled: false
     key_file: ""

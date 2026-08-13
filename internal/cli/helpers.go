@@ -98,7 +98,7 @@ func apiURL() string {
 		port = 20000
 	}
 	scheme := "http"
-	if model.ConfigInstance.TLS.Enabled {
+	if model.ConfigInstance.ResolveTLSActive() {
 		scheme = "https"
 	}
 	return scheme + "://localhost:" + strconv.Itoa(port)

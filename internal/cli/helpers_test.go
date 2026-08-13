@@ -21,6 +21,21 @@ import (
 
 // ---------- apiURL ----------
 
+// writeTLSCertDir creates a temp dir with a valid cert+key pair for TLS tests.
+func writeTLSCertDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	cert := []byte("-----BEGIN CERTIFICATE-----\nZm9vYmFy\n-----END CERTIFICATE-----\n")
+	key := []byte("-----BEGIN PRIVATE KEY-----\nYmFyYmF6\n-----END PRIVATE KEY-----\n")
+	if err := os.WriteFile(filepath.Join(dir, "fullchain.pem"), cert, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "privkey.pem"), key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestAPIURL_DefaultPort(t *testing.T) {
 	origCfg := model.ConfigInstance
 	t.Cleanup(func() { model.ConfigInstance = origCfg })
@@ -43,10 +58,16 @@ func TestAPIURL_TLSScheme(t *testing.T) {
 	origCfg := model.ConfigInstance
 	t.Cleanup(func() { model.ConfigInstance = origCfg })
 
+	dir := writeTLSCertDir(t)
 	model.ConfigInstance = model.Config{
 		Port: 20000,
+		TLS: struct {
+			CertDir  string `yaml:"cert_dir"`
+			Enabled  bool   `yaml:"enabled"`
+			CertFile string `yaml:"cert_file"`
+			KeyFile  string `yaml:"key_file"`
+		}{CertDir: dir},
 	}
-	model.ConfigInstance.TLS.Enabled = true
 	url := apiURL()
 	assert.Equal(t, "https://localhost:20000", url)
 }

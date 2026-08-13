@@ -1557,6 +1557,8 @@ export default {
       localhostAuthExempt: '本机访问免密',
       localhostAuthExemptDesc: '开启后，本机（localhost）访问无需密码验证。关闭后所有请求均需认证，CLI 工具（clawbench task/rag）也将需要认证。',
       localhostAuthExemptConfirm: '关闭后所有 localhost 请求都需要密码认证，CLI 工具（clawbench task/rag）也将需要认证才能使用。确定关闭？',
+      tlsCertDir: 'HTTPS 证书目录',
+      tlsCertDirDesc: '存放 HTTPS 证书文件的目录。目录下需包含以下任一组文件（证书存在时自动以 HTTPS 启动，否则回退 HTTP）：① fullchain.pem + privkey.pem（Let\'s Encrypt）；② cert.pem + key.pem；③ combined.pem（证书+私钥合并单文件）。修改后需重启生效。',
       ttsPiperHeader: 'Piper 配置',
       ttsKokoroHeader: 'Kokoro 配置',
       ttsMossNanoHeader: 'MOSS-Nano 配置',

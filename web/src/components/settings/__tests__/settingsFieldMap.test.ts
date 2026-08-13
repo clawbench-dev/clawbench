@@ -44,6 +44,20 @@ describe('settingsFieldMap', () => {
     expect(map['rag.search_pool_size']).toBeTruthy()
   })
 
+  it('includes tls.cert_dir as a server text field with restart', () => {
+    const map = getServerFieldToLabelKey()
+    expect(map['tls.cert_dir']).toBeTruthy()
+
+    const securityEntries = categoryItems['security']
+    const entry = securityEntries.find(e => e.type === 'item' && e.spec.key === 'tls.cert_dir')
+    expect(entry).toBeDefined()
+    if (entry!.type === 'item') {
+      expect(entry!.spec.source).toBe('server')
+      expect(entry!.spec.type).toBe('text')
+      expect(entry!.spec.needsRestart).toBe(true)
+    }
+  })
+
   it('includes recent_projects.max_count', () => {
     const map = getServerFieldToLabelKey()
     expect(map['recent_projects.max_count']).toBeTruthy()
