@@ -195,4 +195,27 @@ describe('DirBreadcrumb — copy path', () => {
     expect(wrapper.find('.crumb-copy-btn').classes()).toContain('copied')
     expect(mockToast.show).toHaveBeenCalled()
   })
+
+  it('falls back to execCommand when clipboard API is unavailable', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+    const execCommand = vi.fn(() => true)
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true })
+    const wrapper = mountBreadcrumb({ path: '/home/user' })
+    await wrapper.find('.crumb-copy-btn').trigger('click')
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    await nextTick()
+    expect(wrapper.find('.crumb-copy-btn').classes()).toContain('copied')
+  })
+
+  it('falls back to execCommand when writeText rejects', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(() => Promise.reject(new Error('denied'))) },
+      configurable: true,
+    })
+    const execCommand = vi.fn(() => true)
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true })
+    const wrapper = mountBreadcrumb({ path: '/home/user' })
+    await wrapper.find('.crumb-copy-btn').trigger('click')
+    await vi.waitFor(() => expect(execCommand).toHaveBeenCalledWith('copy'))
+  })
 })

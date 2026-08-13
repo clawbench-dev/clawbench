@@ -12,12 +12,13 @@ const mockLoadAcpSessions = vi.fn()
 const mockSessions = ref<AcpSessionInfo[]>([])
 const mockLoading = ref(false)
 const mockNextCursor = ref<string | null>(null)
+const mockResuming = ref(false)
 
 vi.mock('@/composables/useAcpSession', () => ({
   useAcpSession: () => ({
     acpSessions: mockSessions,
     acpSessionsLoading: mockLoading,
-    acpResuming: ref(false),
+    acpResuming: mockResuming,
     acpSessionsNotSupported: ref(false),
     nextCursor: mockNextCursor,
     loadAcpSessions: mockLoadAcpSessions,
@@ -126,6 +127,7 @@ describe('AcpSessionDrawer', () => {
     mockSessions.value = []
     mockLoading.value = false
     mockNextCursor.value = null
+    mockResuming.value = false
     mockStoreState.projectRoot = '/project'
   })
 
@@ -175,6 +177,37 @@ describe('AcpSessionDrawer', () => {
 
       expect(wrapper.emitted('select')).toBeFalsy()
       expect(wrapper.emitted('close')).toBeFalsy()
+    })
+
+    it('returns early without loading when a session is already resuming', async () => {
+      mockResuming.value = true
+
+      const wrapper = mountDrawer()
+      await (wrapper.vm as { handleSelect: (s: AcpSessionInfo) => Promise<void> }).handleSelect(testSession)
+
+      expect(mockAcpLoadSession).not.toHaveBeenCalled()
+      expect(wrapper.emitted('select')).toBeFalsy()
+    })
+  })
+
+  describe('loadMore', () => {
+    it('returns early when there is no next cursor', async () => {
+      mockNextCursor.value = null
+
+      const wrapper = mountDrawer()
+      ;(wrapper.vm as any).loadMore()
+
+      expect(mockLoadAcpSessions).not.toHaveBeenCalledWith('agent-1', true)
+    })
+
+    it('returns early when already loading', async () => {
+      mockNextCursor.value = 'cursor-1'
+      mockLoading.value = true
+
+      const wrapper = mountDrawer()
+      ;(wrapper.vm as any).loadMore()
+
+      expect(mockLoadAcpSessions).not.toHaveBeenCalledWith('agent-1', true)
     })
   })
 
@@ -344,6 +377,52 @@ describe('AcpSessionDrawer', () => {
 
       wrapper.unmount()
       expect(mockDisconnect).toHaveBeenCalled()
+    })
+  })
+
+  describe('open watch', () => {
+    it('resets search and loads sessions when opened with an agent', async () => {
+      const wrapper = mount(AcpSessionDrawer, { props: { open: false, agentId: 'agent-1' } })
+      await nextTick()
+      mockLoadAcpSessions.mockClear()
+
+      await wrapper.setProps({ open: true })
+      await nextTick()
+
+      expect(mockLoadAcpSessions).toHaveBeenCalledWith('agent-1')
+    })
+  })
+
+  describe('formatTime', () => {
+    it('returns relative time for recent, minute, hour and day ranges', () => {
+      const wrapper = mountDrawer()
+      const vm = wrapper.vm as any
+      const now = Date.now()
+
+      expect(vm.formatTime(new Date(now - 30 * 1000).toISOString())).toBe('chat.acpSession.justNow')
+      expect(vm.formatTime(new Date(now - 10 * 60 * 1000).toISOString())).toBe('chat.acpSession.minutesAgo')
+      expect(vm.formatTime(new Date(now - 2 * 60 * 60 * 1000).toISOString())).toBe('chat.acpSession.hoursAgo')
+      expect(vm.formatTime(new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString())).toBe('chat.acpSession.daysAgo')
+    })
+
+    it('returns locale date for sessions older than 30 days', () => {
+      const wrapper = mountDrawer()
+      const vm = wrapper.vm as any
+      const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000)
+      expect(vm.formatTime(old.toISOString())).toBe(old.toLocaleDateString())
+    })
+
+    it('does not throw for invalid dates', () => {
+      const wrapper = mountDrawer()
+      const vm = wrapper.vm as any
+      expect(typeof vm.formatTime('not-a-date')).toBe('string')
+    })
+
+    it('returns the raw value when the Date constructor throws', () => {
+      const wrapper = mountDrawer()
+      const vm = wrapper.vm as any
+      const sym = Symbol('boom')
+      expect(vm.formatTime(sym)).toBe(sym)
     })
   })
 })
