@@ -717,7 +717,7 @@ export default {
       openAsProject: '打开为项目',
       openTerminal: '在此打开终端',
       archiveDir: '打包下载',
-      downloadTree: '下载为目录树',
+      downloadTree: '下载',
       shareExternal: '分享',
     },
     multiSelect: {

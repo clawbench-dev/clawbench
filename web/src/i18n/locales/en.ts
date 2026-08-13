@@ -716,7 +716,7 @@ export default {
       openAsProject: 'Open as project',
       openTerminal: 'Open terminal here',
       archiveDir: 'Pack & download',
-      downloadTree: 'Download as tree',
+      downloadTree: 'Download',
       shareExternal: 'Share',
     },
     multiSelect: {
