@@ -871,6 +871,10 @@ const handleForeground = () => {
 // and terminal status (not WS-push state).
 const handleReconnect = () => {
     if (!isAuthenticated.value) return
+    // Re-establish project cookie — server restart invalidates the session
+    // cookie, and without it all /api/dir, /api/file, /api/ai/chat calls
+    // return 403 (requireProject: "project cookie is empty").
+    store.loadProject().catch(() => {})
     loadSessionsOnce()
     loadTasks()
     store.loadGitBranch()
