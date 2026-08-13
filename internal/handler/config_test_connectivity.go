@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -447,13 +446,14 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable at %s (probe returned HTTP %d)", baseURL, resp.StatusCode)}
 }
 
-// buildSTTProbe builds a multipart transcription probe body (silence WAV +
-// model/language fields) and returns the body and its Content-Type header.
+// buildSTTProbe builds a multipart transcription probe body (embedded "你好"
+// mp3 + model/language fields) and returns the body and its Content-Type
+// header.
 func buildSTTProbe(sttModel, language string) (*bytes.Buffer, string, error) {
-	audio := makeMinimalWAV()
+	audio := sttProbeAudio
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "probe.wav")
+	part, err := writer.CreateFormFile("file", "probe.mp3")
 	if err != nil {
 		return nil, "", err
 	}
@@ -485,28 +485,8 @@ func isSTTModelNotFound(body []byte) bool {
 	return false
 }
 
-// makeMinimalWAV builds a tiny valid PCM WAV (16kHz mono 16-bit) with 0.5s of
-// silence, suitable as a connectivity probe payload.
-func makeMinimalWAV() []byte {
-	const sampleRate = 16000
-	dataBytes := sampleRate * 2 // 0.5s of 16-bit mono = 16000 bytes
-	buf := &bytes.Buffer{}
-	buf.WriteString("RIFF")
-	_ = binary.Write(buf, binary.LittleEndian, uint32(36+dataBytes))
-	buf.WriteString("WAVE")
-	buf.WriteString("fmt ")
-	_ = binary.Write(buf, binary.LittleEndian, uint32(16))
-	_ = binary.Write(buf, binary.LittleEndian, uint16(1)) // PCM
-	_ = binary.Write(buf, binary.LittleEndian, uint16(1)) // mono
-	_ = binary.Write(buf, binary.LittleEndian, uint32(sampleRate))
-	_ = binary.Write(buf, binary.LittleEndian, uint32(sampleRate*2)) // byte rate
-	_ = binary.Write(buf, binary.LittleEndian, uint16(2))            // block align
-	_ = binary.Write(buf, binary.LittleEndian, uint16(16))           // bits per sample
-	buf.WriteString("data")
-	_ = binary.Write(buf, binary.LittleEndian, uint32(dataBytes))
-	buf.Write(make([]byte, dataBytes))
-	return buf.Bytes()
-}
+// makeMinimalWAV was removed — the STT probe now uses the embedded "你好" mp3
+// (sttProbeAudio) so connectivity tests exercise real speech recognition.
 
 // dingtalkTokenURL is the DingTalk API URL for getting an access token.
 // Can be overridden in tests.

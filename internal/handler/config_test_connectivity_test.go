@@ -115,13 +115,15 @@ func TestSTTConnectivity_Endpoint404(t *testing.T) {
 	}
 }
 
-func TestMakeMinimalWAV(t *testing.T) {
-	wav := makeMinimalWAV()
-	if len(wav) < 44 {
-		t.Fatalf("wav too short: %d", len(wav))
+// TestSTTProbeEmbeddedAudio verifies the STT connectivity probe uses the
+// embedded "你好" mp3 asset (not the old silence WAV).
+func TestSTTProbeEmbeddedAudio(t *testing.T) {
+	if len(sttProbeAudio) == 0 {
+		t.Fatal("sttProbeAudio must embed the mp3 probe asset")
 	}
-	if string(wav[0:4]) != "RIFF" || string(wav[8:12]) != "WAVE" {
-		t.Fatalf("invalid RIFF/WAVE header")
+	// MP3 payloads produced by MiniMax start with an ID3 tag.
+	if len(sttProbeAudio) < 3 || string(sttProbeAudio[0:3]) != "ID3" {
+		t.Fatalf("embedded probe does not look like an mp3 (header: %q)", sttProbeAudio[:3])
 	}
 }
 

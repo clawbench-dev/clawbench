@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestServeConfigTest_STTCategory covers the "stt" branch of the
@@ -134,6 +136,29 @@ func TestBuildSTTProbe(t *testing.T) {
 	assert.Len(t, form.File["file"], 1, "probe should include one audio file part")
 	assert.Equal(t, []string{"Qwen3-ASR-1.7B"}, form.Value["model"])
 	assert.Equal(t, []string{"zh"}, form.Value["language"])
+}
+
+// TestBuildSTTProbe_FilePartMp3 verifies the probe's audio file part is the
+// embedded "你好" mp3 asset under the filename "probe.mp3".
+func TestBuildSTTProbe_FilePartMp3(t *testing.T) {
+	body, contentType, err := buildSTTProbe("Qwen3-ASR-1.7B", "zh")
+	assert.NoError(t, err)
+
+	mr := multipart.NewReader(body, strings.TrimPrefix(contentType, "multipart/form-data; boundary="))
+	form, err := mr.ReadForm(1 << 20)
+	assert.NoError(t, err)
+	defer func() { _ = form.RemoveAll() }()
+
+	fileHeaders := form.File["file"]
+	require.Len(t, fileHeaders, 1)
+	assert.Equal(t, "probe.mp3", fileHeaders[0].Filename)
+
+	f, err := fileHeaders[0].Open()
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+	got, err := io.ReadAll(f)
+	require.NoError(t, err)
+	assert.Equal(t, sttProbeAudio, got)
 }
 
 // TestBuildSTTProbe_NoLanguage verifies that omitting language skips the

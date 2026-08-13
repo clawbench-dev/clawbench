@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -15,6 +16,24 @@ import (
 
 	"github.com/coder/websocket"
 )
+
+//go:embed assets/audio_stt_probe.mp3
+var sttProbeFiles embed.FS
+
+// sttProbeAudio is the embedded "你好" voice clip used as a real-audio probe
+// for STT connectivity tests (replaces the old silence WAV, which could not
+// verify actual speech recognition).
+var sttProbeAudio = mustLoadSTTProbe()
+
+// mustLoadSTTProbe reads the embedded mp3 probe, panicking if it is missing so
+// misconfiguration is caught at startup.
+func mustLoadSTTProbe() []byte {
+	data, err := sttProbeFiles.ReadFile("assets/audio_stt_probe.mp3")
+	if err != nil {
+		panic("stt: embedded probe audio missing: " + err.Error())
+	}
+	return data
+}
 
 // sttProvider is the global STT provider instance.
 // Access is protected by sttProviderMu for hot-reload safety.
