@@ -12,6 +12,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/service"
@@ -691,38 +692,61 @@ func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
 	loadSession := spec != nil && spec.ACPLoadSession
 	listSessions := reg.GetListSessions(agentID)
 
-	// If neither capability is supported, return 501
-	if !loadSession && !listSessions {
+	// ListSessions can be served either by the ACP session/list RPC (when the
+	// agent advertises the capability) or by an on-disk scanner fallback
+	// (registered by backends that don't implement session/list, e.g. CodeBuddy).
+	// Determine which path to take.
+	diskListSessions := ai.HasListSessionsFromDisk(agent.Backend)
+
+	// If none of LoadSession / session/list RPC / disk scanner is available,
+	// return 501.
+	if !loadSession && !listSessions && !diskListSessions {
 		writeLocalizedErrorf(w, r, http.StatusNotImplemented, "NotImplemented")
 		return
 	}
 
-	// If ListSessions is not supported, return 501 — the drawer shows
-	// "not supported" message. The user can still use @resume with a
-	// known session ID if LoadSession is supported.
-	if !listSessions {
+	// If the agent supports LoadSession but has NO way to enumerate sessions
+	// (neither session/list RPC nor an on-disk scanner), there is nothing to
+	// list — return 501 so the drawer shows "not supported".
+	if !listSessions && !diskListSessions {
 		writeLocalizedErrorf(w, r, http.StatusNotImplemented, "NotImplemented")
-		return
-	}
-
-	// We know the agent supports ListSessions but couldn't get a connection.
-	if conn == nil {
-		slog.Warn("handler: failed to spawn ACP connection for ListSessions", "agent", agentID)
-		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "ServiceUnavailable")
 		return
 	}
 
 	cursor := r.URL.Query().Get("cursor")
-	var cursorPtr *string
-	if cursor != "" {
-		cursorPtr = &cursor
-	}
 
-	sessions, nextCursor, err := conn.ListSessions(r.Context(), cursorPtr)
-	if err != nil {
-		slog.Error("handler: ListSessions failed", "agent", agentID, "error", err)
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-		return
+	var sessions []acp.SessionInfo
+	var nextCursor *string
+	var err error
+
+	if listSessions {
+		// session/list RPC path — needs an alive connection.
+		if conn == nil {
+			slog.Warn("handler: failed to spawn ACP connection for ListSessions", "agent", agentID)
+			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "ServiceUnavailable")
+			return
+		}
+		var cursorPtr *string
+		if cursor != "" {
+			cursorPtr = &cursor
+		}
+		sessions, nextCursor, err = conn.ListSessions(r.Context(), cursorPtr)
+		if err != nil {
+			slog.Error("handler: ListSessions failed", "agent", agentID, "error", err)
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+	} else {
+		// On-disk scanner fallback (e.g. CodeBuddy). No connection required.
+		// Scope the scan to the current project root (from cookie) so the
+		// scanner only walks the project's own session directory.
+		cwd := middleware.GetProjectFromCookie(r)
+		sessions, err = ai.ListSessionsFromDisk(agent, cwd)
+		if err != nil {
+			slog.Error("handler: on-disk ListSessions failed", "agent", agentID, "error", err)
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
 	}
 
 	// Filter out ACP sessions that already exist in ClawBench's session manager.

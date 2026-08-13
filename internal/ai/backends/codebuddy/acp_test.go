@@ -28,6 +28,7 @@ func TestCodebuddyBackendPlugin_SpecFields(t *testing.T) {
 	assert.Equal(t, "Codebuddy", plugin.Spec.Name)
 	assert.NotEmpty(t, plugin.Spec.ThinkingEffortLevels)
 	assert.Equal(t, "codebuddy --acp", plugin.Spec.AcpCommand)
+	assert.True(t, plugin.Spec.ACPLoadSession, "codebuddy should support LoadSession (verified by integration test)")
 }
 
 func TestCodebuddyBackendPlugin_NoACPPlugin(t *testing.T) {

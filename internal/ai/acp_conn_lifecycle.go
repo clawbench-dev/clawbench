@@ -519,8 +519,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 
 	// Extract ListSessions capability from ACP Initialize.
 	// LoadSession is NOT written from the ACP response — BackendSpec.ACPLoadSession
-	// is the authoritative source, because some agents (e.g. CodeBuddy) report
-	// LoadSession=true in Initialize but don't actually support it.
+	// is the authoritative source (the Initialize report may be unreliable).
 	if c.agent != nil && c.agent.ID != "" {
 		reg := GetAgentCapabilityRegistry()
 		listSessions := initResp.AgentCapabilities.SessionCapabilities.List != nil

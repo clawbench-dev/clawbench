@@ -721,6 +721,51 @@ func TestServeACPSessions_FilterExistingSessions(t *testing.T) {
 	assert.Len(t, sessions, 1, "existing ACP session should be filtered out")
 }
 
+func TestServeACPSessions_DiskScanFallback(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Use a dedicated test backend so we don't pollute codebuddy's real
+	// scanner registration.
+	const testBackend = "disk-test-backend"
+	agentID := "acp-disk-scan"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Backend: testBackend, Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+
+	// Register LoadSession=true but ListSessions=false (the codebuddy situation).
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+
+	// Register a stub disk scanner for the test backend.
+	ai.ListSessionsFromDiskRegister(testBackend, func(a *model.Agent, cwd string) ([]acp.SessionInfo, error) {
+		title := "磁盘会话"
+		return []acp.SessionInfo{
+			{SessionId: "disk-session-1", Cwd: env.ProjectDir, Title: &title},
+		}, nil
+	})
+	defer ai.ListSessionsFromDiskRegister(testBackend, nil)
+	require.True(t, ai.HasListSessionsFromDisk(testBackend), "test backend should have disk scanner")
+
+	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPSessions(w, req)
+
+	// Even though ListSessions RPC is false, the disk fallback serves sessions.
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	sessions, ok := resp["sessions"].([]any)
+	require.True(t, ok, "sessions should be an array")
+	require.Len(t, sessions, 1, "disk scan should return the stubbed session")
+	first := sessions[0].(map[string]any)
+	assert.Equal(t, "disk-session-1", first["sessionId"])
+	assert.Equal(t, env.ProjectDir, first["cwd"])
+	assert.Equal(t, "磁盘会话", first["title"])
+}
+
 func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

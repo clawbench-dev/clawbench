@@ -17,8 +17,12 @@ func init() {
 			ID: "codebuddy", Backend: "codebuddy", DefaultCmd: "codebuddy", Name: "Codebuddy", Specialty: "全栈开发助手",
 			ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
 			AcpCommand:           "codebuddy --acp",
-			InstallCmd:           "npm install -g @tencent-ai/codebuddy-code",
-			SortOrder:            2,
+			// CodeBuddy genuinely supports session/load (verified by integration
+			// test: the RPC succeeds and restores conversation context). Set true
+			// so ServeACPLoadSession allows resuming CodeBuddy sessions.
+			ACPLoadSession: true,
+			InstallCmd:     "npm install -g @tencent-ai/codebuddy-code",
+			SortOrder:      2,
 		},
 	})
 }

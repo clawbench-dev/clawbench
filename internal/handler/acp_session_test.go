@@ -270,7 +270,7 @@ func TestServeAgentsGet_NoCapabilityOmitsFields(t *testing.T) {
 	defer teardown()
 
 	agentID := "acp-no-cap"
-	// Use codebuddy backend (has AcpCommand but ACPLoadSession=false)
+	// Use codebuddy backend (has AcpCommand and ACPLoadSession=true)
 	model.Agents = map[string]*model.Agent{
 		agentID: {ID: agentID, Backend: "codebuddy", Transport: "acp-stdio", AcpCommand: "codebuddy --acp"},
 	}
@@ -294,9 +294,10 @@ func TestServeAgentsGet_NoCapabilityOmitsFields(t *testing.T) {
 		// No acpStates at all — also fine
 		return
 	}
-	// If agent has state, loadSession should be false (BackendSpec says so)
+	// If agent has state, loadSession comes from BackendSpec (codebuddy=true),
+	// while listSessions comes from the registry (none registered → false).
 	if agentState, ok := states[agentID].(map[string]any); ok {
-		assert.Equal(t, false, agentState["loadSession"])
+		assert.Equal(t, true, agentState["loadSession"])
 		assert.Equal(t, false, agentState["listSessions"])
 	}
 }
