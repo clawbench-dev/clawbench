@@ -375,7 +375,6 @@ export default {
     },
     voice: {
       recording: '录音中',
-      recordingHint: '录音中 · 松开结束',
       transcribing: '识别中',
     },
     archive: {

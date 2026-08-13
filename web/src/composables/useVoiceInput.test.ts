@@ -117,6 +117,41 @@ describe('useVoiceInput', () => {
     expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2)
   })
 
+  it('does not echo the previous recording into a new non-streaming transcription', async () => {
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    })
+    const texts = ['first recording', 'second recording']
+    let call = 0
+    vi.stubGlobal('MediaRecorder', class {
+      state = 'recording'
+      ondataavailable: unknown = null
+      onstop: (() => void) | null = null
+      start() { this.state = 'recording' }
+      stop() { this.state = 'inactive'; this.onstop?.() }
+      static isTypeSupported = vi.fn(() => true)
+    })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() =>
+      Promise.resolve({ ok: true, json: async () => ({ text: texts[call++] }) })
+    ))
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+
+    // Recording 1 → "first recording"
+    await v.start()
+    v.stop()
+    await vi.waitFor(() => expect(v.inputText.value).toBe('first recording'))
+
+    // Recording 2 → must be a fresh transcription, NOT "first recording\nsecond recording"
+    await v.start()
+    v.stop()
+    await vi.waitFor(() => expect(v.inputText.value).toBe('second recording'))
+    expect(v.inputText.value).not.toContain('first recording')
+  })
+
   it('streaming start passes chunk_ms as the MediaRecorder timeslice', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { 'stt.streaming': true, 'stt.chunk_ms': 500 }

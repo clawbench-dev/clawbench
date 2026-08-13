@@ -94,6 +94,10 @@ export function useVoiceInput() {
       return
     }
 
+    // A new recording starts fresh — never echo transcriptions from earlier
+    // recordings (appendText would otherwise pile them up with '\n' separators).
+    inputText.value = ''
+
     if (streaming()) {
       startStreaming()
     } else {

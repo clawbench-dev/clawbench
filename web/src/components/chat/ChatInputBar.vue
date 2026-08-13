@@ -66,19 +66,6 @@
           <span>{{ t('chat.attach.uploading') }}</span>
         </div>
       </Transition>
-      <!-- Voice input banner (recording / transcribing) — compact strip at the top of the input box -->
-      <Transition name="paste-fade">
-        <div v-if="voiceState === 'recording' || voiceState === 'transcribing'" class="voice-banner" :class="{ recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }">
-          <template v-if="voiceState === 'recording'">
-            <span class="voice-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-            <span class="voice-banner-text">{{ t('chat.voice.recordingHint') }}</span>
-          </template>
-          <template v-else>
-            <Loader2 :size="14" class="spin-icon" />
-            <span class="voice-banner-text">{{ t('chat.voice.transcribing') }}</span>
-          </template>
-        </div>
-      </Transition>
       <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
       <div v-if="quoteItems.length > 0 || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
         <!-- Staged quote cards (same size as file cards, accent-colored) -->
@@ -93,7 +80,11 @@
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
         <div class="attach-menu-wrapper" ref="attachMenuRef">
-          <button class="chat-attach-btn" @click.stop="toggleAttachMenu" :disabled="inputDisabled" :title="t('chat.actions.attachment')">
+          <button v-if="voiceState === 'recording' || voiceState === 'transcribing'" class="chat-attach-btn voice-rec-btn" :class="{ recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }" disabled :title="voiceState === 'recording' ? t('chat.voice.recording') : t('chat.voice.transcribing')">
+            <span v-if="voiceState === 'recording'" class="voice-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+            <Loader2 v-else :size="14" class="spin-icon" />
+          </button>
+          <button v-else class="chat-attach-btn" @click.stop="toggleAttachMenu" :disabled="inputDisabled" :title="t('chat.actions.attachment')">
             <Paperclip :size="16" />
           </button>
         </div>
@@ -2098,32 +2089,22 @@ defineExpose({
   to   { transform: rotate(360deg); }
 }
 
-.voice-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  padding: 0 12px;
-  border-radius: 8px;
-  margin-bottom: 6px;
-  font-size: 12px;
-  font-weight: 600;
+/* Voice recording indicator — red circle with animation, shown in the attach slot */
+.chat-attach-btn.voice-rec-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ff3b30;
+  color: #fff;
+  padding: 0;
+  flex-shrink: 0;
 }
-.voice-banner.recording {
-  background: color-mix(in srgb, #ff3b30 12%, transparent);
-  color: #ff6b5e;
-  border: 1px solid color-mix(in srgb, #ff3b30 35%, transparent);
+.chat-attach-btn.voice-rec-btn:disabled {
+  opacity: 1;
+  cursor: default;
 }
-.voice-banner.transcribing {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
-  color: var(--accent-color, #0066cc);
-  border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent);
-}
-.voice-banner-text {
-  line-height: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.chat-attach-btn.voice-rec-btn.transcribing {
+  background: var(--accent-color, #0066cc);
 }
 
 /* Audio-wave animation: animated vertical bars */
@@ -2131,13 +2112,13 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: 16px;
+  height: 14px;
 }
 .voice-wave i {
   display: block;
-  width: 3px;
-  height: 8px;
-  border-radius: 2px;
+  width: 2px;
+  height: 6px;
+  border-radius: 1px;
   background: currentColor;
   animation: voice-wave 1s ease-in-out infinite;
 }
@@ -2147,8 +2128,8 @@ defineExpose({
 .voice-wave i:nth-child(4) { animation-delay: 0.3s; }
 .voice-wave i:nth-child(5) { animation-delay: 0.4s; }
 @keyframes voice-wave {
-  0%, 100% { height: 6px; }
-  50% { height: 16px; }
+  0%, 100% { height: 4px; }
+  50% { height: 13px; }
 }
 
 .chat-action-label {

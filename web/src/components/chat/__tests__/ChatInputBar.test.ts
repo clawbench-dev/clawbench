@@ -1323,31 +1323,36 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
-    it('renders recording banner with audio wave when recording', async () => {
+    it('renders red circular recording indicator with audio wave in the attach slot', async () => {
       mockVoiceState.value = 'recording'
       const wrapper = mountBar()
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.voice-banner').exists()).toBe(true)
-      expect(wrapper.find('.voice-banner.recording').exists()).toBe(true)
+      const recBtn = wrapper.find('.chat-attach-btn.voice-rec-btn.recording')
+      expect(recBtn.exists()).toBe(true)
       expect(wrapper.find('.voice-wave').exists()).toBe(true)
-      // send button must no longer show the recording dot
-      expect(wrapper.find('.voice-recording-dot').exists()).toBe(false)
+      // no text
+      expect(wrapper.find('.voice-banner').exists()).toBe(false)
+      wrapper.unmount()
     })
 
-    it('renders transcribing banner with spinner', async () => {
+    it('renders transcribing indicator with spinner in the attach slot', async () => {
       mockVoiceState.value = 'transcribing'
       const wrapper = mountBar()
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.voice-banner').exists()).toBe(true)
-      expect(wrapper.find('.voice-banner.transcribing').exists()).toBe(true)
-      expect(wrapper.find('.voice-banner .spin-icon').exists()).toBe(true)
+      const transBtn = wrapper.find('.chat-attach-btn.voice-rec-btn.transcribing')
+      expect(transBtn.exists()).toBe(true)
+      expect(transBtn.find('.spin-icon').exists()).toBe(true)
+      expect(wrapper.find('.voice-banner').exists()).toBe(false)
+      wrapper.unmount()
     })
 
-    it('hides banner when idle', async () => {
+    it('shows the plain paperclip attach button when idle', async () => {
       mockVoiceState.value = 'idle'
       const wrapper = mountBar()
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.voice-banner').exists()).toBe(false)
+      expect(wrapper.find('.voice-rec-btn').exists()).toBe(false)
+      expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
+      wrapper.unmount()
     })
 
 

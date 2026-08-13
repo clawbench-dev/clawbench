@@ -375,7 +375,6 @@ export default {
     },
     voice: {
       recording: 'Recording',
-      recordingHint: 'Recording · release to end',
       transcribing: 'Transcribing',
     },
     archive: {
