@@ -49,6 +49,18 @@ const maxBufferedEvents = 50
 // is cleaned up.
 const staleTimeout = 120 * time.Second
 
+// writeMessage serializes a WebSocket write under writeMu with a timeout.
+// It is the single write path used by both the event broadcast and the ping
+// loop, so a write error is detected consistently in one place.
+func writeMessage(writeMu *sync.Mutex, conn *websocket.Conn, data []byte) error {
+	writeMu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), wsWriteTimeout)
+	err := conn.Write(ctx, websocket.MessageText, data)
+	cancel()
+	writeMu.Unlock()
+	return err
+}
+
 // Manager manages all client subscriptions.
 type Manager struct {
 	mu            sync.Mutex
@@ -202,14 +214,17 @@ func (m *Manager) broadcastToSubscription(key string, msg ServerMessage) {
 			sub.mu.Unlock()
 			return
 		}
-		writeMu.Lock()
-		ctx, cancel := context.WithTimeout(context.Background(), wsWriteTimeout)
-		writeErr := conn.Write(ctx, websocket.MessageText, data)
-		cancel()
-		writeMu.Unlock()
-		// Buffer event for reconnect replay
+		writeErr := writeMessage(writeMu, conn, data)
+		if writeErr != nil {
+			// The socket is dead (peer gone, buffer full, or timed out). Close it
+			// so the client's onclose fires and it reconnects immediately, instead
+			// of leaving a half-dead connection that the client only detects much
+			// later via its heartbeat (or the ping goroutine silently dying).
+			// CloseNow avoids a blocking close handshake while sub.mu is held.
+			_ = conn.CloseNow()
+		}
+		// Buffer event for reconnect replay (even on write failure, so it isn't lost)
 		sub.bufferEvent(msg)
-		_ = writeErr
 		sub.mu.Unlock()
 		return
 	}

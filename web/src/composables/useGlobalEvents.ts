@@ -50,8 +50,12 @@ const processedEventIds = new Set<string>()
 const MAX_PROCESSED_IDS = 100
 let ws: WebSocket | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
-const MISSED_PONG_THRESHOLD = 2
-let missedPongs = 0
+// The server pings every 30s. The heartbeat watches the wall-clock time since
+// the last received ping, instead of a fragile missed-count that can trip on a
+// single delayed ping under load/network jitter.
+const HEARTBEAT_CHECK_INTERVAL_MS = 15000   // how often we re-check staleness
+const HEARTBEAT_STALE_MS = 90000            // no ping for 90s (3 missed pings) => dead
+let lastPingAt = 0
 
 // Persistent client ID — identifies this browser/device across sessions.
 // Stored in localStorage so the server can track multiple tabs/devices independently.
@@ -184,7 +188,7 @@ function connect() {
         // would duplicate those requests.
         const isReconnect = hasConnectedOnce.value
         hasConnectedOnce.value = true
-        missedPongs = 0
+        lastPingAt = Date.now()
         reconnect.reset()
 
         // Fetch missed events that occurred while offline
@@ -207,7 +211,7 @@ function connect() {
 
             if (msg.type === 'ping') {
                 send({ type: 'pong' })
-                missedPongs = 0
+                lastPingAt = Date.now()
                 return
             }
 
@@ -296,19 +300,21 @@ function send(msg: ClientMessage) {
 
 function startHeartbeat() {
     stopHeartbeat()
-    missedPongs = 0
+    lastPingAt = Date.now()
     heartbeatTimer = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            missedPongs++
-            if (missedPongs > MISSED_PONG_THRESHOLD) {
-                // Connection seems dead, reconnect
+            // If the server hasn't pinged within the stale window, the
+            // connection is effectively dead (half-open socket / server closed
+            // without a close frame). Force a reconnect so the UI reflects the
+            // real state and the client re-subscribes promptly.
+            if (Date.now() - lastPingAt > HEARTBEAT_STALE_MS) {
                 disconnect()
                 if (reconnect.shouldReconnect()) {
                     reconnect.scheduleReconnect()
                 }
             }
         }
-    }, 35000) // Check every 35s (server pings every 30s)
+    }, HEARTBEAT_CHECK_INTERVAL_MS)
 }
 
 function stopHeartbeat() {
@@ -489,7 +495,7 @@ export function useGlobalEvents() {
         // from firing after SPA hot project switch.
         handlers.length = 0
         processedEventIds.clear()
-        missedPongs = 0
+        lastPingAt = 0
         hasConnectedOnce.value = false
         initialized = false
     }

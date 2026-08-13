@@ -107,13 +107,15 @@ func EventsHandler(w http.ResponseWriter, r *http.Request) {
 	// Ping goroutine
 	go func() { //nolint:gosec // ping goroutine uses Background intentionally, not request-scoped
 		for range pingTicker.C {
-			writeMu.Lock()
 			pingData, _ := json.Marshal(ServerMessage{Type: "ping"})
-			ctx2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			err := conn.Write(ctx2, websocket.MessageText, pingData)
-			cancel()
-			writeMu.Unlock()
-			if err != nil {
+			if err := writeMessage(&writeMu, conn, pingData); err != nil {
+				// The connection is dead. Closing it makes the client's onclose
+				// fire so it reconnects immediately. Previously this goroutine
+				// returned silently, leaving a connection that no longer sends
+				// pings — the client only noticed via its slow heartbeat,
+				// causing the intermittent disconnect/reconnect cycle.
+				slog.Warn("ws: ping write failed, closing connection", "error", err, "client_id", clientID)
+				_ = conn.CloseNow()
 				return
 			}
 		}

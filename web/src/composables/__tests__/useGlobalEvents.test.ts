@@ -161,6 +161,48 @@ describe('useGlobalEvents', () => {
         })
     })
 
+    describe('heartbeat', () => {
+        const CHECK = 15000
+        const STALE = 90000
+
+        it('reconnects when no ping received within the stale window', () => {
+            vi.useFakeTimers()
+            const ws = connectAndGetWs()
+            // Advance past the stale window with no ping delivered.
+            vi.advanceTimersByTime(STALE + CHECK)
+            // Should have force-disconnected and scheduled a reconnect.
+            expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+            vi.useRealTimers()
+        })
+
+        it('does not disconnect while pings arrive regularly', () => {
+            vi.useFakeTimers()
+            const ws = connectAndGetWs()
+            // Deliver pings at an interval below the stale window.
+            for (let i = 0; i < 20; i++) {
+                vi.advanceTimersByTime(CHECK)
+                ws.receive({ type: 'ping' })
+            }
+            expect(ws.readyState).toBe(MockWebSocket.OPEN)
+            vi.useRealTimers()
+        })
+
+        it('resets staleness on each ping (a single delayed ping does not trip it)', () => {
+            vi.useFakeTimers()
+            const ws = connectAndGetWs()
+            // Advance near the stale threshold then deliver a ping — the timer restarts.
+            vi.advanceTimersByTime(STALE - 1000)
+            ws.receive({ type: 'ping' })
+            // Advancing past the original threshold must NOT disconnect now.
+            vi.advanceTimersByTime(2000)
+            expect(ws.readyState).toBe(MockWebSocket.OPEN)
+            // But without further pings it eventually reconnects.
+            vi.advanceTimersByTime(STALE + CHECK)
+            expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+            vi.useRealTimers()
+        })
+    })
+
     describe('ack', () => {
         it('should send ack for events with ID', () => {
             const ws = connectAndGetWs()

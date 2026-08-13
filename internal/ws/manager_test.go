@@ -768,6 +768,102 @@ func TestManager_BroadcastEvent_SubscriptionRemovedBetweenSnapshotAndDelivery(t 
 	m.broadcastToSubscription("ephemeral", ServerMessage{Type: "event", ID: "evt_x"})
 }
 
+// TestWriteMessage_ReturnsErrorOnClosedConnection verifies that writeMessage
+// reports a write failure when the underlying connection is closed. This is the
+// error that must trigger connection cleanup so the client reconnects promptly.
+func TestWriteMessage_ReturnsErrorOnClosedConnection(t *testing.T) {
+	m := NewManagerForTest()
+
+	// Server subscribes a real connection and exposes it to the test.
+	var wmu sync.Mutex
+	var serverConn *websocket.Conn
+	subscribed := make(chan struct{}, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		m.Subscribe(conn, &wmu, "closed-write", "")
+		serverConn = conn
+		subscribed <- struct{}{}
+		// Keep the handler alive briefly; the test drives the connection.
+		time.Sleep(2 * time.Second)
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = client.CloseNow() }()
+
+	<-subscribed
+
+	// Sanity: a write on an open connection succeeds.
+	if err := writeMessage(&wmu, serverConn, []byte("ping")); err != nil {
+		t.Fatalf("expected write to succeed on open connection, got %v", err)
+	}
+
+	// Close the server-side connection; subsequent writes must fail.
+	_ = serverConn.CloseNow()
+	if err := writeMessage(&wmu, serverConn, []byte("ping")); err == nil {
+		t.Error("expected writeMessage to return an error on a closed connection")
+	}
+}
+
+// TestManager_BroadcastEvent_WriteFailureClosesConnection verifies that a
+// broadcast write failure on a subscribed connection does not panic and leaves
+// the subscription preserved for replay (the connection itself is cleaned up by
+// the read loop / CloseNow). This guards the previously ignored write error path.
+func TestManager_BroadcastEvent_WriteFailureClosesConnection(t *testing.T) {
+	m := NewManagerForTest()
+	var wmu sync.Mutex
+	var serverConn *websocket.Conn
+	subscribed := make(chan struct{}, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		m.Subscribe(conn, &wmu, "failed-write", "")
+		serverConn = conn
+		subscribed <- struct{}{}
+		time.Sleep(2 * time.Second)
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = client.CloseNow() }()
+
+	<-subscribed
+
+	// Close the server-side conn so the next broadcast write fails.
+	_ = serverConn.CloseNow()
+
+	// Broadcast must not panic even though the write fails.
+	msg := ServerMessage{Type: "event", ID: "evt_dead", Event: "session_update", Data: &SessionUpdateData{SessionID: "s1", Status: "completed"}}
+	m.BroadcastEvent(msg)
+
+	// The subscription must still exist (preserved for replay on reconnect).
+	m.mu.Lock()
+	sub := m.subscriptions["failed-write"]
+	m.mu.Unlock()
+	if sub == nil {
+		t.Fatal("expected subscription to still exist after a failed broadcast write")
+	}
+}
+
 func TestManager_BroadcastEvent_MarshalError(t *testing.T) {
 	m := NewManagerForTest()
 
