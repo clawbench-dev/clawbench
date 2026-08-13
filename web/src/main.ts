@@ -8,7 +8,6 @@ import App from './App.vue'
 import i18n from './i18n'
 import { LongPressDirective } from './directives/longPress.ts'
 import { configureMarkedRenderer } from './utils/markedConfig.ts'
-import { manageServiceWorker } from './utils/serviceWorkerCleanup.ts'
 import { appLog } from './utils/appLog.ts'
 
 configureMarkedRenderer()
@@ -62,6 +61,3 @@ window.addEventListener('unhandledrejection', (e) => {
 })
 
 app.mount('#app')
-
-// Register (or clean up a stale) optional Service Worker — see manageServiceWorker.
-void manageServiceWorker()
