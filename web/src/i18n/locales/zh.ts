@@ -186,6 +186,7 @@ export default {
       resuming: '正在恢复会话...',
       searchPlaceholder: '搜索会话...',
       noResults: '无匹配会话',
+      hiddenInOtherProjects: '有 {count} 个其它项目的会话未显示',
     },
     actions: {
       session: '会话',
@@ -419,7 +420,9 @@ export default {
       userMsgIndex: '用户消息索引',
       userMsgIndexTitle: '用户消息',
       conversationIndexTitle: '对话索引',
-      noUserMessages: '暂无消息',
+      conversationIndexDesc: '点击消息可跳转到对应位置',
+      noUserMessages: '暂无用户消息',
+      noUserMessagesHint: '发送消息后，这里会列出对话中全部用户消息',
       userMsgIndexAttachment: '附件',
     },
     pending: {
@@ -1406,7 +1409,7 @@ export default {
       aiSummaryFormatOpenAI: 'OpenAI',
       aiSummaryFormatAnthropic: 'Anthropic',
       aiSummaryBaseUrl: '端点地址',
-      aiSummaryBaseUrlDesc: 'AI 摘要服务的端点 URL（OpenAI / Anthropic 兼容）',
+      aiSummaryBaseUrlDesc: 'AI 摘要服务的端点 URL（OpenAI / Anthropic 兼容）。示例：https://api.openai.com/v1 或 https://api.anthropic.com',
       aiSummaryApiKey: 'API 密钥',
       aiSummaryApiKeyDesc: 'AI 摘要服务的认证密钥',
       recommendSectionHeader: '推荐回复',

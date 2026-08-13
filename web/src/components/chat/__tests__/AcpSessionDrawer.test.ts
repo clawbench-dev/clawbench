@@ -48,6 +48,11 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   currentAgentId: ref('agent-1'),
 }))
 
+const mockStoreState = vi.hoisted(() => ({ projectRoot: '/project' }))
+vi.mock('@/stores/app.ts', () => ({
+  store: { state: mockStoreState },
+}))
+
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     getAgentBackend: () => 'claude',
@@ -109,7 +114,7 @@ function mountDrawer() {
   })
 }
 
-const testSession: AcpSessionInfo = { sessionId: 'acp-s1', title: 'Test', createdAt: '', updatedAt: '' }
+const testSession: AcpSessionInfo = { sessionId: 'acp-s1', title: 'Test', cwd: '/project', createdAt: '', updatedAt: '' }
 
 describe('AcpSessionDrawer', () => {
   beforeEach(() => {
@@ -117,6 +122,7 @@ describe('AcpSessionDrawer', () => {
     mockSessions.value = []
     mockLoading.value = false
     mockNextCursor.value = null
+    mockStoreState.projectRoot = '/project'
   })
 
   describe('handleSelect', () => {
@@ -165,6 +171,50 @@ describe('AcpSessionDrawer', () => {
 
       expect(wrapper.emitted('select')).toBeFalsy()
       expect(wrapper.emitted('close')).toBeFalsy()
+    })
+  })
+
+  describe('current-project filtering', () => {
+    const inProject = (id: string, title: string, cwd: string): AcpSessionInfo =>
+      ({ sessionId: id, title, cwd, createdAt: '', updatedAt: '' })
+
+    it('only renders sessions whose cwd exactly matches the current project root', async () => {
+      mockSessions.value = [
+        inProject('s1', 'Project Session', '/project'),
+        inProject('s2', 'Other Project', '/other'),
+        inProject('s3', 'Subdir Session', '/project/web/src'),
+        inProject('s4', 'No Cwd', ''),
+      ]
+
+      const wrapper = mountDrawer()
+      await nextTick()
+      const text = wrapper.text()
+      expect(text).toContain('Project Session')
+      expect(text).not.toContain('Other Project')
+      expect(text).not.toContain('Subdir Session')
+      expect(text).not.toContain('No Cwd')
+    })
+
+    it('shows a hint counting hidden other-project sessions', async () => {
+      mockSessions.value = [
+        inProject('s1', 'Project Session', '/project'),
+        inProject('s2', 'Other Project', '/other'),
+        inProject('s3', 'Subdir Session', '/project/web/src'),
+      ]
+
+      const wrapper = mountDrawer()
+      await nextTick()
+      expect(wrapper.text()).toContain('chat.acpSession.hiddenInOtherProjects')
+      expect((wrapper.vm as { hiddenOtherProjectCount: number }).hiddenOtherProjectCount).toBe(2)
+    })
+
+    it('matches the current project ignoring a trailing slash on cwd', async () => {
+      mockStoreState.projectRoot = '/project/'
+      mockSessions.value = [inProject('s1', 'Project Session', '/project')]
+
+      const wrapper = mountDrawer()
+      await nextTick()
+      expect(wrapper.text()).toContain('Project Session')
     })
   })
 

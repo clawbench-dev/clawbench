@@ -186,6 +186,7 @@ export default {
       resuming: 'Resuming session...',
       searchPlaceholder: 'Search sessions...',
       noResults: 'No matching sessions',
+      hiddenInOtherProjects: '{count} session(s) from other projects hidden',
     },
     actions: {
       session: 'Chat',
@@ -419,7 +420,9 @@ export default {
       userMsgIndex: 'User message index',
       userMsgIndexTitle: 'User messages',
       conversationIndexTitle: 'Conversation index',
-      noUserMessages: 'No messages yet',
+      conversationIndexDesc: 'Click a message to jump to it',
+      noUserMessages: 'No user messages yet',
+      noUserMessagesHint: 'Messages you send will be listed here',
       userMsgIndexAttachment: 'Attachment',
     },
     pending: {
@@ -1405,7 +1408,7 @@ export default {
       aiSummaryFormatOpenAI: 'OpenAI',
       aiSummaryFormatAnthropic: 'Anthropic',
       aiSummaryBaseUrl: 'Endpoint URL',
-      aiSummaryBaseUrlDesc: 'AI summary endpoint URL (OpenAI / Anthropic compatible)',
+      aiSummaryBaseUrlDesc: 'AI summary endpoint URL (OpenAI / Anthropic compatible). Examples: https://api.openai.com/v1 or https://api.anthropic.com',
       aiSummaryApiKey: 'API Key',
       aiSummaryApiKeyDesc: 'Authentication key for the AI summary service',
       recommendSectionHeader: 'Recommended Reply',

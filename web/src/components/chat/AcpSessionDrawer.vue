@@ -47,6 +47,9 @@
           <Loader2Icon :size="14" class="spin" />
           <span>{{ t('chat.acpSession.loading') }}</span>
         </div>
+        <div v-if="acpSessions.length > 0 && hiddenOtherProjectCount > 0" class="acp-session-hidden-hint">
+          {{ t('chat.acpSession.hiddenInOtherProjects', { count: hiddenOtherProjectCount }) }}
+        </div>
         <div
           ref="sentinelRef"
           class="acp-session-sentinel"
@@ -76,6 +79,7 @@ import SearchInput from '@/components/common/SearchInput.vue'
 import { useAcpSession, type AcpSessionInfo } from '@/composables/useAcpSession'
 import { useAgents } from '@/composables/useAgents'
 import { getBackendDisplayName } from '@/utils/backendNames'
+import { store } from '@/stores/app.ts'
 
 const props = defineProps<{
   open: boolean
@@ -96,10 +100,25 @@ const backendId = computed(() => getAgentBackend(props.agentId))
 const backendDisplayName = computed(() => getBackendDisplayName(backendId.value))
 const drawerTitle = computed(() => t('chat.acpSession.resumeTitle', { agent: backendDisplayName.value }))
 
+function trimTrailingSlash(p: string): string {
+  return p.replace(/\/+$/, '')
+}
+
+const sessionsInCurrentProject = computed(() => {
+  const root = trimTrailingSlash(store.state.projectRoot || '')
+  if (!root) return []
+  return acpSessions.value.filter((s) => trimTrailingSlash(s.cwd || '') === root)
+})
+
+const hiddenOtherProjectCount = computed(
+  () => acpSessions.value.length - sessionsInCurrentProject.value.length
+)
+
 const filteredSessions = computed(() => {
+  const base = sessionsInCurrentProject.value
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return acpSessions.value
-  return acpSessions.value.filter((s) => s.title.toLowerCase().includes(q))
+  if (!q) return base
+  return base.filter((s) => s.title.toLowerCase().includes(q))
 })
 
 const {
@@ -312,6 +331,13 @@ function formatTime(iso: string): string {
   padding: 8px 0;
   font-size: 12px;
   color: var(--text-muted, #999);
+}
+
+.acp-session-hidden-hint {
+  padding: 8px 14px;
+  font-size: 11px;
+  color: var(--text-muted, #999);
+  text-align: center;
 }
 
 /* Loading overlay */
