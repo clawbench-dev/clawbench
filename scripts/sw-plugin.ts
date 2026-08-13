@@ -1,4 +1,7 @@
 import { createHash } from 'crypto'
+import { readFileSync, existsSync } from 'fs'
+import { resolve } from 'path'
+import type { Plugin } from 'vite'
 
 // Static files guaranteed present (index.html lives in the bundle; icons come
 // from the vite publicDir `assets/`; manifest.json lives in `web/`).
@@ -39,4 +42,33 @@ export function renderSw(template: string, version: string, precache: string[]):
   return template
     .replace('__VERSION__', version)
     .replace('__PRECACHE__', JSON.stringify(precache))
+}
+
+export function serviceWorkerPlugin(): Plugin {
+  return {
+    name: 'clawbench-service-worker',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      const outFiles = Object.keys(bundle)
+      const exists = (p: string): boolean =>
+        bundle[p] !== undefined ||
+        existsSync(resolve('assets', p)) ||
+        existsSync(resolve('web', p))
+
+      const version = computeVersion(outFiles)
+      const precache = buildPrecacheList(outFiles, exists)
+      const template = readFileSync(resolve('web/sw-template.js'), 'utf8')
+      const sw = renderSw(template, version, precache)
+
+      this.emitFile({ type: 'asset', fileName: 'sw.js', source: sw })
+
+      // Ensure /manifest.json is served (PWA install metadata). It is referenced
+      // by index.html but missing from the build output (a 404 today).
+      if (bundle['manifest.json'] === undefined) {
+        const manifest = readFileSync(resolve('web/manifest.json'), 'utf8')
+        this.emitFile({ type: 'asset', fileName: 'manifest.json', source: manifest })
+      }
+    },
+  }
 }
