@@ -124,6 +124,8 @@ export default {
       actionSearch: 'Global search',
       contextSwitchSession: 'Chat · anywhere focused',
       actionSwitchSession: 'Switch chat session',
+      contextJumpUnread: 'Chat · anywhere focused',
+      actionJumpUnread: 'Jump to the next unread session',
       contextRecommend: 'Chat · when the last message is an assistant reply',
       actionRecommend: 'A "recommended reply" appears above the input box; click "Fill" to accept the suggested next step',
       contextRecommendEnable: 'Recommended reply · how to enable',
@@ -146,6 +148,9 @@ export default {
   },
   chat: {
     title: 'AI Chat',
+    shortcutJumpUnread: {
+      none: 'No unread sessions',
+    },
     sendError: 'Error: {error}',
     input: {
       placeholder: 'Type a message...',

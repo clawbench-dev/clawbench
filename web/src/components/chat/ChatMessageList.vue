@@ -422,9 +422,28 @@ function onDocumentClick(e) {
   }
 }
 
+// Desktop: Ctrl+Up/Down to jump between messages (user or assistant), matching
+// the conversation index navigation (wraps around; same scroll+highlight path).
+function handleCtrlArrowMsgJump(e) {
+  if (!props.active) return
+  const tag = e.target?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return
+  if (e.target?.closest?.('.terminal-panel')) return
+  if (!(e.ctrlKey || e.metaKey)) return
+  if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    jumpToAdjacentMessage('prev', nearestMessageId.value)
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    jumpToAdjacentMessage('next', nearestMessageId.value)
+  }
+}
+
 onMounted(() => document.addEventListener('click', onDocumentClick, true))
+onMounted(() => document.addEventListener('keydown', handleCtrlArrowMsgJump))
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick, true)
+  document.removeEventListener('keydown', handleCtrlArrowMsgJump)
   clearTimeout(scrollTickTimer)
 })
 
@@ -552,6 +571,7 @@ const {
   toggleUserMsgIndex,
   closeUserMsgIndex,
   jumpToUserMessage,
+  jumpToAdjacentMessage,
   scrollToMessage: scrollToMessageUserMsg,
 } = useUserMsgIndex({
   getMessages: () => props.messages,
@@ -588,6 +608,30 @@ const nearestUserMsgId = computed(() => {
   }
   if (nearestUserIdx === null) return null
   return props.messages[nearestUserIdx].id
+})
+
+// Nearest message of any role to viewport center — anchor for Ctrl+↑/↓ jump
+const nearestMessageId = computed(() => {
+  void scrollTick.value // dependency trigger
+  const el = messagesRef.value
+  if (!el) return null
+  const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+  const containerRect = el.getBoundingClientRect()
+  const center = containerRect.top + containerRect.height / 2
+  let nearestIdx = null
+  let minDist = Infinity
+  for (let i = 0; i < items.length; i++) {
+    const msg = props.messages[i]
+    if (!msg) continue
+    const rect = items[i].getBoundingClientRect()
+    const dist = Math.abs(rect.top + rect.height / 2 - center)
+    if (dist < minDist) {
+      minDist = dist
+      nearestIdx = i
+    }
+  }
+  if (nearestIdx === null) return null
+  return props.messages[nearestIdx].id
 })
 
 // Watch session switch to reset scroll state and user msg index

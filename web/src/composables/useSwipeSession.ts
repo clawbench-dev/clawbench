@@ -11,7 +11,8 @@ export function useSwipeSession(options: UseSwipeSessionOptions) {
   const { currentSessionId, switchSession } = options
 
   // Cached session list
-  let sessionCache: { id: string; title: string }[] = []
+  interface SessionMeta { id: string; title: string; unreadCount?: number; pendingApproval?: boolean }
+  let sessionCache: SessionMeta[] = []
   let sessionCacheTime = 0
   const CACHE_TTL = 3000 // 3 seconds
 
@@ -24,7 +25,7 @@ export function useSwipeSession(options: UseSwipeSessionOptions) {
   const sessionIndex = ref(-1)
   const sessionTotal = ref(0)
 
-  function updatePosition(sessions: { id: string; title: string }[]) {
+  function updatePosition(sessions: SessionMeta[]) {
     sessionTotal.value = sessions.length
     const idx = sessions.findIndex(s => s.id === currentSessionId.value)
     sessionIndex.value = idx
@@ -43,6 +44,8 @@ export function useSwipeSession(options: UseSwipeSessionOptions) {
       sessionCache = (data.sessions || []).map((s: any) => ({
         id: s.id,
         title: s.title || gt('session.unnamed'),
+        unreadCount: s.unreadCount || 0,
+        pendingApproval: !!s.pendingApproval,
       }))
       sessionCacheTime = now
       updatePosition(sessionCache)
@@ -86,6 +89,29 @@ export function useSwipeSession(options: UseSwipeSessionOptions) {
     showIndicator(sessions[prevIdx].title, 'right')
     await switchSession(sessions[prevIdx].id)
     sessionIndex.value = prevIdx
+  }
+
+  /**
+   * Jump to the next unread session after the current one (wrapping around the
+   * DESC-ordered list). Returns the target session's title, or null when there
+   * are no unread sessions left. Does NOT show the swipe indicator.
+   */
+  async function jumpToNextUnread(): Promise<string | null> {
+    const sessions = await fetchSessions()
+    if (sessions.length === 0) return null
+    const isUnread = (s: SessionMeta) => (s.unreadCount || 0) > 0 || s.pendingApproval
+    const startIdx = sessions.findIndex(s => s.id === currentSessionId.value)
+    const start = startIdx >= 0 ? startIdx : 0
+    for (let offset = 1; offset <= sessions.length; offset++) {
+      const idx = (start + offset) % sessions.length
+      if (startIdx >= 0 && idx === start) continue // never jump to the currently active session
+      if (isUnread(sessions[idx])) {
+        await switchSession(sessions[idx].id)
+        sessionIndex.value = idx
+        return sessions[idx].title
+      }
+    }
+    return null
   }
 
   // Touch state
@@ -150,6 +176,7 @@ export function useSwipeSession(options: UseSwipeSessionOptions) {
   return {
     swipeToNext,
     swipeToPrev,
+    jumpToNextUnread,
     onTouchStart,
     onTouchEnd,
     indicatorText,

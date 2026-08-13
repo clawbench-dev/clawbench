@@ -981,6 +981,20 @@ function handleCtrlArrowSessionSwitch(e) {
   }
 }
 
+// Desktop: Ctrl+U/Cmd+U to jump to the next unread session
+function handleJumpUnread(e) {
+  if (!props.keyboardActive) return
+  const tag = e.target?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return
+  if (e.target?.closest?.('.terminal-panel')) return
+  if (!(e.ctrlKey || e.metaKey)) return
+  if (e.key !== 'u' && e.key !== 'U') return
+  e.preventDefault()
+  swipeSession.jumpToNextUnread().then(target => {
+    if (!target) toast.show(t('chat.shortcutJumpUnread.none'), { icon: '📭', type: 'info', duration: 2500 })
+  })
+}
+
 // Desktop: Ctrl+Delete to archive current session
 function handleDeleteKey(e) {
   if (!props.keyboardActive) return
@@ -1000,6 +1014,7 @@ onMounted(() => {
     window.addEventListener('clawbench-reconnect', session.handleWsReconnect)
     window.addEventListener('clawbench-summary-update', handleSummaryUpdate)
     document.addEventListener('keydown', handleCtrlArrowSessionSwitch)
+    document.addEventListener('keydown', handleJumpUnread)
     document.addEventListener('keydown', handleDeleteKey)
 })
 
@@ -1015,6 +1030,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-reconnect', session.handleWsReconnect)
     window.removeEventListener('clawbench-summary-update', handleSummaryUpdate)
     document.removeEventListener('keydown', handleCtrlArrowSessionSwitch)
+    document.removeEventListener('keydown', handleJumpUnread)
     document.removeEventListener('keydown', handleDeleteKey)
     notification.closeAll()
 })

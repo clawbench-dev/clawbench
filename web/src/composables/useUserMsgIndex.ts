@@ -35,24 +35,31 @@ export function useUserMsgIndex(options: {
     return formatUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
   }
 
+  /** Fetch (or reuse a cached) list of user messages for the current session. */
+  async function ensureIndexLoaded(): Promise<void> {
+    if (userMsgIndexList.value.length > 0) return
+    if (!options.getCurrentSessionId()) return
+    loadingIndex.value = true
+    try {
+      const resp = await fetch(`/api/ai/chat/user-messages?session_id=${encodeURIComponent(options.getCurrentSessionId())}`)
+      if (resp.ok) {
+        const data = await resp.json()
+        userMsgIndexList.value = data.messages || []
+      }
+    } catch {
+      userMsgIndexList.value = options.getMessages().filter(m => m.role === 'user')
+    } finally {
+      loadingIndex.value = false
+    }
+  }
+
   async function toggleUserMsgIndex() {
     if (drawer.isOpen.value) {
       drawer.close()
       return
     }
     drawer.open()
-    if (!options.getCurrentSessionId()) return
-    loadingIndex.value = true
-    try {
-      const resp = await fetch(`/api/ai/chat/user-messages?session_id=${encodeURIComponent(options.getCurrentSessionId())}`)
-      if (!resp.ok) return
-      const data = await resp.json()
-      userMsgIndexList.value = data.messages || []
-    } catch {
-      userMsgIndexList.value = options.getMessages().filter(m => m.role === 'user')
-    } finally {
-      loadingIndex.value = false
-    }
+    await ensureIndexLoaded()
   }
 
   function closeUserMsgIndex() {
@@ -147,6 +154,24 @@ export function useUserMsgIndex(options: {
     }
   }
 
+  /**
+   * Jump to the previous/next message (any role — user or assistant) in the
+   * loaded conversation, wrapping around the list. Uses the same
+   * `jumpToUserMessage` path so the target is scrolled & highlighted identically
+   * to a conversation-index selection. Returns false when there are no messages.
+   */
+  async function jumpToAdjacentMessage(direction: 'prev' | 'next', currentActiveId: number | string | null): Promise<boolean> {
+    const messages = options.getMessages()
+    if (messages.length === 0) return false
+    let idx = messages.findIndex(m => m.id === currentActiveId)
+    if (idx < 0) idx = 0
+    const next = direction === 'next'
+      ? (idx + 1) % messages.length
+      : (idx - 1 + messages.length) % messages.length
+    await jumpToUserMessage(messages[next] as { id: number | string })
+    return true
+  }
+
   return {
     hasUserMessages,
     userMsgIndexList,
@@ -158,6 +183,7 @@ export function useUserMsgIndex(options: {
     toggleUserMsgIndex,
     closeUserMsgIndex,
     jumpToUserMessage,
+    jumpToAdjacentMessage,
     highlightMessage,
     scrollToMessage,
   }

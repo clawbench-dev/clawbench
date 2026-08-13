@@ -471,3 +471,95 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
     expect(vm.loadingTarget).toBe(false)
   })
 })
+
+// ── jumpToAdjacentMessage ──
+
+describe('useUserMsgIndex — jumpToAdjacentMessage', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.advanceTimersByTime(10000)
+    vi.useRealTimers()
+  })
+
+  /** Build a messagesRef whose querySelectorAll returns one scrollable item per index. */
+  function makeListRef(count: number) {
+    const items = Array.from({ length: count }, () => {
+      const el = document.createElement('div')
+      el.scrollIntoView = vi.fn()
+      return el
+    })
+    const el = document.createElement('div')
+    el.querySelectorAll = vi.fn().mockReturnValue(items)
+    return { el, items }
+  }
+
+  it('jumps to the next message, including assistant messages', async () => {
+    const { vm, messagesRef } = createComposable()
+    const { el, items } = makeListRef(3)
+    messagesRef.value = el
+
+    // messages: [id1 user, id2 assistant, id3 user]; next from id1 → id2 (assistant)
+    const ok = await vm.jumpToAdjacentMessage('next', 1)
+    expect(ok).toBe(true)
+    await nextTick()
+    expect(items[1].scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('jumps to the previous message, including assistant messages', async () => {
+    const { vm, messagesRef } = createComposable()
+    const { el, items } = makeListRef(3)
+    messagesRef.value = el
+
+    // prev from id3 → id2 (assistant)
+    const ok = await vm.jumpToAdjacentMessage('prev', 3)
+    expect(ok).toBe(true)
+    await nextTick()
+    expect(items[1].scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('wraps from the first message to the last', async () => {
+    const { vm, messagesRef } = createComposable()
+    const { el, items } = makeListRef(3)
+    messagesRef.value = el
+
+    // prev from id1 → wraps to id3
+    const ok = await vm.jumpToAdjacentMessage('prev', 1)
+    expect(ok).toBe(true)
+    await nextTick()
+    expect(items[2].scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('wraps from the last message to the first', async () => {
+    const { vm, messagesRef } = createComposable()
+    const { el, items } = makeListRef(3)
+    messagesRef.value = el
+
+    // next from id3 → wraps to id1
+    const ok = await vm.jumpToAdjacentMessage('next', 3)
+    expect(ok).toBe(true)
+    await nextTick()
+    expect(items[0].scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('falls back to the first index when current id is not present', async () => {
+    const { vm, messagesRef } = createComposable()
+    const { el, items } = makeListRef(3)
+    messagesRef.value = el
+
+    // id 99 not found → starts at index 0; next → index 1 (id2 assistant)
+    const ok = await vm.jumpToAdjacentMessage('next', 99)
+    expect(ok).toBe(true)
+    await nextTick()
+    expect(items[1].scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('returns false when there are no messages', async () => {
+    const { vm, messages } = createComposable()
+    messages.value = []
+    const ok = await vm.jumpToAdjacentMessage('next', 1)
+    expect(ok).toBe(false)
+  })
+})

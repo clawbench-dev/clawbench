@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { reactive, ref } from 'vue'
+import { useSwipeSession } from '@/composables/useSwipeSession'
 
 // ── swipeSession disabled guard ──
 // Tests that the composable's touch handlers respect the swipeSession local setting.
@@ -262,7 +263,7 @@ describe('getPrevSessionIndex', () => {
     })
 })
 
-// ── Circular navigation consistency ──
+// ── circular navigation consistency ──
 
 describe('circular navigation consistency', () => {
     it('next then prev returns to original for multi-session list', () => {
@@ -281,5 +282,107 @@ describe('circular navigation consistency', () => {
             const backIdx = getNextSessionIndex(prevIdx, total)
             expect(backIdx).toBe(i)
         }
+    })
+})
+
+// ── jumpToNextUnread ──
+
+describe('jumpToNextUnread', () => {
+    let fetchSpy: ReturnType<typeof vi.spyOn>
+    let switchSession: ReturnType<typeof vi.fn>
+
+    beforeEach(() => {
+        switchSession = vi.fn().mockResolvedValue(undefined)
+        localStorage.clear()
+    })
+
+    afterEach(() => {
+        fetchSpy?.mockRestore()
+    })
+
+    function makeSessions(ids: string[], unreadMap: Record<string, number | 'pending'> = {}) {
+        return ids.map(id => ({
+            id,
+            title: `Session ${id}`,
+            unreadCount: typeof unreadMap[id] === 'number' ? unreadMap[id] : 0,
+            pendingApproval: unreadMap[id] === 'pending',
+        }))
+    }
+
+    it('jumps to the next unread session after the current one', async () => {
+        fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ sessions: makeSessions(['s1', 's2', 's3'], { s3: 2 }) }),
+        } as Response)
+        const { jumpToNextUnread } = useSwipeSession({ currentSessionId: ref('s1'), switchSession })
+        const target = await jumpToNextUnread()
+        expect(target).toBe('Session s3')
+        expect(switchSession).toHaveBeenCalledWith('s3')
+    })
+
+    it('wraps around to an earlier unread session when none after current', async () => {
+        fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ sessions: makeSessions(['s1', 's2', 's3'], { s1: 1 }) }),
+        } as Response)
+        const { jumpToNextUnread } = useSwipeSession({ currentSessionId: ref('s3'), switchSession })
+        const target = await jumpToNextUnread()
+        expect(target).toBe('Session s1')
+        expect(switchSession).toHaveBeenCalledWith('s1')
+    })
+
+    it('treats pendingApproval as unread', async () => {
+        fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ sessions: makeSessions(['s1', 's2'], { s2: 'pending' }) }),
+        } as Response)
+        const { jumpToNextUnread } = useSwipeSession({ currentSessionId: ref('s1'), switchSession })
+        const target = await jumpToNextUnread()
+        expect(target).toBe('Session s2')
+        expect(switchSession).toHaveBeenCalledWith('s2')
+    })
+
+    it('skips already-read sessions and does not switch to current again', async () => {
+        fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ sessions: makeSessions(['s1', 's2', 's3'], { s2: 5 }) }),
+        } as Response)
+        const { jumpToNextUnread } = useSwipeSession({ currentSessionId: ref('s1'), switchSession })
+        const target = await jumpToNextUnread()
+        expect(target).toBe('Session s2')
+        expect(switchSession).toHaveBeenCalledTimes(1)
+    })
+
+    it('returns null and does not switch when there are no unread sessions', async () => {
+        fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ sessions: makeSessions(['s1', 's2']) }),
+        } as Response)
+        const { jumpToNextUnread } = useSwipeSession({ currentSessionId: ref('s1'), switchSession })
+        const target = await jumpToNextUnread()
+        expect(target).toBeNull()
+        expect(switchSession).not.toHaveBeenCalled()
+    })
+
+    it('ignores the current session when it is the only unread one', async () => {
+        fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ sessions: makeSessions(['s1', 's2'], { s1: 3 }) }),
+        } as Response)
+        const { jumpToNextUnread } = useSwipeSession({ currentSessionId: ref('s1'), switchSession })
+        const target = await jumpToNextUnread()
+        expect(target).toBeNull()
+        expect(switchSession).not.toHaveBeenCalled()
+    })
+
+    it('returns null when there are no sessions', async () => {
+        fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ sessions: [] }),
+        } as Response)
+        const { jumpToNextUnread } = useSwipeSession({ currentSessionId: ref('s1'), switchSession })
+        const target = await jumpToNextUnread()
+        expect(target).toBeNull()
+        expect(switchSession).not.toHaveBeenCalled()
     })
 })
