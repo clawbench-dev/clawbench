@@ -739,7 +739,7 @@ export default {
       dirLoadFailed: 'Directory not found or inaccessible',
       dirRemoved: 'The current directory may have been removed',
       fileNotFound: 'File not found',
-      fileRemoved: 'The file may have been removed',
+      fileRemoved: 'File does not exist; it may have been removed',
       externalFile: 'This file is outside the project directory',
       externalDirNotSupported: 'Opening external directories is not supported',
       archiving: 'Packing {n} items...',

@@ -740,7 +740,7 @@ export default {
       dirLoadFailed: '目录不存在或无法访问',
       dirRemoved: '当前目录已被移除',
       fileNotFound: '文件不存在',
-      fileRemoved: '文件可能已被移除',
+      fileRemoved: '文件不存在，可能已被移除',
       externalFile: '此文件位于项目目录之外',
       externalDirNotSupported: '暂不支持打开项目外目录',
       archiving: '正在打包 {n} 个文件...',
