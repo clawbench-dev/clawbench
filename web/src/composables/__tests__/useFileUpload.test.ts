@@ -756,4 +756,99 @@ describe('useFileUpload', () => {
       )
     })
   })
+
+  describe('downloadDirAsTree (File System Access API)', () => {
+    const originalPicker = (globalThis as any).showDirectoryPicker
+
+    function fakeBody(bytes: number[]) {
+      let idx = 0
+      return {
+        getReader: () => ({
+          read: async () => {
+            if (idx >= bytes.length) return { done: true, value: undefined }
+            const value = new Uint8Array(bytes.slice(idx, idx + 2))
+            idx += 2
+            return { done: false, value }
+          },
+        }),
+      }
+    }
+
+    function fakeRootHandle() {
+      const dirs = new Map<string, any>()
+      const files = new Map<string, any>()
+      const handle: any = {
+        dirs,
+        files,
+        getDirectoryHandle: async (name: string, opts?: any) => {
+          if (!dirs.has(name)) {
+            if (!opts?.create) throw new Error('not found')
+            dirs.set(name, fakeRootHandle())
+          }
+          return dirs.get(name)
+        },
+        getFileHandle: async (name: string, opts?: any) => {
+          if (!files.has(name)) {
+            if (!opts?.create) throw new Error('not found')
+            files.set(name, { writes: [], createWritable: async () => ({ write: async () => {}, close: async () => {} }) })
+          }
+          return files.get(name)
+        },
+      }
+      return handle
+    }
+
+    afterEach(() => {
+      if (originalPicker) (globalThis as any).showDirectoryPicker = originalPicker
+      vi.unstubAllGlobals()
+    })
+
+    it('downloads each file under its relative subdirectory', async () => {
+      const root = fakeRootHandle()
+      ;(globalThis as any).showDirectoryPicker = vi.fn().mockResolvedValue(root)
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/api/file/list-tree')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ files: [{ rel: 'a.txt', size: 4 }, { rel: 'sub/b.txt', size: 4 }] }),
+          })
+        }
+        if (url.includes('/api/local-file/')) {
+          return Promise.resolve({ ok: true, body: fakeBody([1, 2, 3, 4]) })
+        }
+        return Promise.resolve({ ok: false })
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const upload = useFileUpload()
+      await upload.downloadDirAsTree('src')
+
+      expect(root.files.has('a.txt')).toBe(true)
+      expect(root.dirs.has('sub')).toBe(true)
+      expect(root.dirs.get('sub').files.has('b.txt')).toBe(true)
+      expect(upload.dirUploading.value).toBe(false)
+      expect(upload.dirUploadTotal.value).toBe(2)
+      expect(upload.dirUploadDone.value).toBe(2)
+    })
+
+    it('shows an error and does nothing when showDirectoryPicker is unavailable', async () => {
+      ;(globalThis as any).showDirectoryPicker = undefined
+      const upload = useFileUpload()
+      await upload.downloadDirAsTree('src')
+      expect(upload.dirUploading.value).toBe(false)
+      expect(mockToastShow).toHaveBeenCalledWith(
+        expect.stringContaining('upload.dirDownloadUnsupported'),
+        expect.any(Object),
+      )
+    })
+
+    it('does nothing when user cancels the directory picker', async () => {
+      ;(globalThis as any).showDirectoryPicker = vi.fn().mockRejectedValue(new DOMException('abort', 'AbortError'))
+      const upload = useFileUpload()
+      await upload.downloadDirAsTree('src')
+      expect(upload.dirUploading.value).toBe(false)
+      expect(upload.dirUploadDone.value).toBe(0)
+    })
+  })
 })

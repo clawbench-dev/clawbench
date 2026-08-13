@@ -5,6 +5,8 @@ import { store } from '@/stores/app.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { folderRelPath } from '@/utils/fileAttachmentUtils'
 import { expandDataTransfer, type ExpandResult } from '@/utils/dropFolder'
+import { writeFileToTree } from '@/utils/dirHandle'
+import { buildLocalFileUrl } from '@/utils/download'
 
 // ── Module-level singleton state ──
 // pendingFiles MUST be shared across all callers (AttachDrawer, ChatPanelContent,
@@ -32,6 +34,7 @@ const dirUploadTotal = ref(0)
 const dirUploadDone = ref(0)
 const dirUploadCancelled = ref(false)
 let activeDirXhr: XMLHttpRequest | null = null
+let activeDownloadAbort: AbortController | null = null
 
 export function useFileUpload() {
   const toast = useToast()
@@ -350,14 +353,103 @@ export function useFileUpload() {
     dirUploadCancelled.value = false
   }
 
-  /** Abort an in-progress directory upload. */
+  /** Abort an in-progress directory upload or tree download. */
   function cancelDirUpload() {
     if (!dirUploading.value) return
     dirUploadCancelled.value = true
     activeDirXhr?.abort()
     activeDirXhr = null
+    activeDownloadAbort?.abort()
+    activeDownloadAbort = null
     dirUploading.value = false
     dirUploadProgress.value = 0
+  }
+
+  /**
+   * Download a directory (or file) as a reconstructed tree on the local disk
+   * using the File System Access API. Picks a target directory via
+   * showDirectoryPicker(), then fetches each file and writes it back under the
+   * same relative path. Reuses the dir-upload progress bar and cancel.
+   */
+  async function downloadDirAsTree(path: string) {
+    const picker = (window as unknown as { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker
+    if (typeof picker !== 'function') {
+      toast.show(gt('upload.dirDownloadUnsupported'), { icon: '⚠️', type: 'error' })
+      return
+    }
+
+    dirUploading.value = true
+    dirUploadCancelled.value = false
+    activeDownloadAbort = null
+    dirUploadTotal.value = 0
+    dirUploadDone.value = 0
+    dirUploadProgress.value = 0
+
+    let files: { rel: string; size: number }[] | undefined
+    try {
+      const resp = await fetch('/api/file/list-tree?path=' + encodeURIComponent(path))
+      if (!resp.ok) throw new Error('list-tree failed')
+      files = (await resp.json()).files
+    } catch {
+      dirUploading.value = false
+      dirUploadProgress.value = 0
+      toast.show(gt('upload.dirDownloadFailed'), { icon: '⚠️', type: 'error' })
+      return
+    }
+    const tree = files ?? []
+    dirUploadTotal.value = tree.length
+
+    let rootHandle: FileSystemDirectoryHandle
+    try {
+      rootHandle = await picker()
+    } catch {
+      // User cancelled the directory picker — abort quietly.
+      dirUploading.value = false
+      dirUploadProgress.value = 0
+      return
+    }
+
+    const abort = new AbortController()
+    activeDownloadAbort = abort
+    const base = path.replace(/\/+$/, '')
+    let done = 0
+
+    for (const f of tree) {
+      if (dirUploadCancelled.value || abort.signal.aborted) break
+      const fullRel = base ? `${base}/${f.rel}` : f.rel
+      try {
+        const resp = await fetch(buildLocalFileUrl(fullRel, { download: true }), { signal: abort.signal })
+        if (!resp.ok) continue
+
+        const reader = resp.body!.getReader()
+        const chunks: BlobPart[] = []
+        const total = f.size || 1
+        let received = 0
+        for (;;) {
+          const { done: rd, value } = await reader.read()
+          if (rd) break
+          chunks.push(value as unknown as BlobPart)
+          received += value.length
+          dirUploadProgress.value = Math.min(100, Math.round((received / total) * 100))
+        }
+        const blob = new Blob(chunks)
+        await writeFileToTree(rootHandle, f.rel, blob)
+        done++
+        dirUploadDone.value = done
+      } catch {
+        if (abort.signal.aborted) break
+      }
+    }
+
+    activeDownloadAbort = null
+    dirUploading.value = false
+    dirUploadProgress.value = 0
+    if (dirUploadCancelled.value) {
+      toast.show(gt('upload.cancelled'), { icon: '⏹️', type: 'info' })
+    } else if (done > 0) {
+      toast.show(gt('upload.downloaded', { count: done }), { icon: '✅', type: 'success' })
+    }
+    dirUploadCancelled.value = false
   }
 
   /** Expand a folder drop (webkitGetAsEntry) then upload files + empty dirs. */
@@ -417,5 +509,6 @@ export function useFileUpload() {
     handleFolderSelect,
     handleFileDropToDirStructured,
     handleFolderDropExpanded,
+    downloadDirAsTree,
   }
 }

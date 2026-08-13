@@ -1754,3 +1754,101 @@ func TestHandleStatError(t *testing.T) {
 		assert.Contains(t, body, "nonexistent")
 	})
 }
+
+func TestServeListTree(t *testing.T) {
+	t.Run("recursively_lists_nested_files_with_rel_paths", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		dir := filepath.Join(env.ProjectDir, "src")
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "utils"), 0o755))
+		createTestFile(t, dir, "main.go", "package main")
+		createTestFile(t, filepath.Join(dir, "utils"), "helper.ts", "export{}")
+
+		req := newRequest(t, http.MethodGet, "/api/file/list-tree?path=src", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeListTree, req)
+		assertOK(t, w)
+
+		var result struct {
+			Files []struct {
+				Rel  string `json:"rel"`
+				Size int64  `json:"size"`
+			} `json:"files"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		require.Len(t, result.Files, 2)
+
+		rels := []string{result.Files[0].Rel, result.Files[1].Rel}
+		sort.Strings(rels)
+		assert.Equal(t, []string{"main.go", "utils/helper.ts"}, rels)
+		assert.Greater(t, result.Files[0].Size, int64(0))
+	})
+
+	t.Run("empty_directory_returns_no_files", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		empty := filepath.Join(env.ProjectDir, "empty")
+		require.NoError(t, os.MkdirAll(empty, 0o755))
+
+		req := newRequest(t, http.MethodGet, "/api/file/list-tree?path=empty", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeListTree, req)
+		assertOK(t, w)
+
+		var result struct {
+			Files []struct {
+				Rel string `json:"rel"`
+			} `json:"files"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Empty(t, result.Files)
+	})
+
+	t.Run("single_file_path_returns_itself_at_root", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "a.txt", "data")
+
+		req := newRequest(t, http.MethodGet, "/api/file/list-tree?path=a.txt", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeListTree, req)
+		assertOK(t, w)
+
+		var result struct {
+			Files []struct {
+				Rel string `json:"rel"`
+			} `json:"files"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		require.Len(t, result.Files, 1)
+		assert.Equal(t, "a.txt", result.Files[0].Rel)
+	})
+
+	t.Run("missing_path_lists_project_root", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "root.txt", "data")
+
+		req := newRequest(t, http.MethodGet, "/api/file/list-tree", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeListTree, req)
+		assertOK(t, w)
+
+		var result struct {
+			Files []struct {
+				Rel string `json:"rel"`
+			} `json:"files"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		require.Len(t, result.Files, 1)
+		assert.Equal(t, "root.txt", result.Files[0].Rel)
+	})
+}

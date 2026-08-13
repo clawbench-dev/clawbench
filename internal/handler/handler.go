@@ -257,6 +257,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/share-in/recent", middleware.Auth(ShareInRecent))
 	register("/api/dir", middleware.Auth(ListDir))
 	register("/api/files", middleware.Auth(ListFiles))
+	register("/api/file/list-tree", middleware.Auth(ServeListTree))
 	register("/api/file/thumb", middleware.Auth(FileThumb))
 	register("/api/file/", middleware.Auth(GetFile))
 	register("/api/git/branch", middleware.Auth(ServeGitBranch))

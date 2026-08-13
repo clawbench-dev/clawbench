@@ -157,6 +157,74 @@ func ListFiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, files)
 }
 
+// FileTreeEntry is a single file in a directory-tree listing, with a path
+// relative to the queried directory (for tree reconstruction on download).
+type FileTreeEntry struct {
+	Rel  string `json:"rel"`
+	Size int64  `json:"size"`
+}
+
+// ServeListTree handles GET /api/file/list-tree?path=<rel>
+// Recursively lists every file under the queried directory (relative to the
+// current project). Each file's `rel` is its path relative to the queried
+// directory so the client can reconstruct the exact tree on download.
+func ServeListTree(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	relPath := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
+	basePath, err := filepath.Abs(projectPath)
+	if err != nil {
+		slog.Error("failed to resolve project path", slog.String("path", projectPath), slog.String("err", err.Error()))
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+
+	absPath, ok := validateAndResolvePath(w, r, basePath, relPath)
+	if !ok {
+		return
+	}
+
+	var files []FileTreeEntry
+
+	// If the queried path is itself a file, return just that file.
+	if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+		files = append(files, FileTreeEntry{Rel: filepath.Base(absPath), Size: info.Size()})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"files": files})
+		return
+	}
+
+	err = filepath.Walk(absPath, func(fullPath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil //nolint:nilerr // skip inaccessible files
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(absPath, fullPath)
+		if relErr != nil {
+			return nil //nolint:nilerr // skip files with invalid relative paths
+		}
+		files = append(files, FileTreeEntry{
+			Rel:  filepath.ToSlash(rel),
+			Size: info.Size(),
+		})
+		return nil
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Cannot access directory"})
+		return
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Rel < files[j].Rel
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"files": files})
+}
+
 // resolveFilePath determines the absolute path and whether it's external to the
 // project. Supports absolute paths via ?path= query param and project-relative
 // paths via URL path.
