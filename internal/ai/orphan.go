@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"log/slog"
 	"os"
 	"runtime"
@@ -145,6 +146,22 @@ func isOrphanProcess(entryName string) (isOrphan, parentAlive bool) {
 		return false, true
 	}
 
+	// Safety check: never kill another ClawBench server instance. A server
+	// process spawned by build.sh --restart from inside a ClawBench PTY may
+	// inherit CLAWBENCH_CHILD=1 in its environ. When the detached restart
+	// parent exits, the new server is re-parented to PID 1 — making it look
+	// like an orphan AI subprocess. However, unlike AI agents, a server
+	// process runs the clawbench binary itself (not codebuddy/claude/opencode)
+	// and does not pass --acp. Detect this by checking the cmdline: if the
+	// binary is "clawbench" and there is no --acp flag, it's a server, not
+	// an AI child.
+	cmdlinePath := "/proc/" + entryName + "/cmdline"
+	cmdData, cmdErr := os.ReadFile(cmdlinePath)
+	if cmdErr == nil && isClawBenchServerProcess(cmdData) {
+		slog.Debug("orphan_cleanup: skipping ClawBench server instance", "pid", pid)
+		return false, false
+	}
+
 	return true, false
 }
 
@@ -192,6 +209,30 @@ func killOrphan(pid int) int {
 	// Reap the process to avoid zombies
 	_, _ = proc.Wait()
 	return 1
+}
+
+// isClawBenchServerProcess checks if a process's cmdline indicates it is a
+// ClawBench server instance (not an AI agent subprocess). A server process
+// runs the "clawbench" binary without "--acp". AI agents like codebuddy or
+// claude are launched with "--acp" and use different binary names.
+//
+// This prevents one ClawBench instance from killing another instance that
+// inherited the CLAWBENCH_CHILD=1 env marker from its spawner.
+func isClawBenchServerProcess(cmdData []byte) bool {
+	// In /proc/<pid>/cmdline, fields are separated by null bytes.
+	// Only check the first field (the binary path) to avoid false positives
+	// from args that happen to contain "clawbench" (e.g., working directory
+	// paths in test binaries).
+	fields := bytes.SplitN(cmdData, []byte{0}, 2)
+	if len(fields) == 0 {
+		return false
+	}
+	binary := string(fields[0])
+	// If the process has "--acp" in its args, it's an AI agent, not a server.
+	if bytes.Contains(cmdData, []byte("--acp")) {
+		return false
+	}
+	return strings.Contains(binary, "clawbench")
 }
 
 // hasClawBenchChildMarker checks if the /proc/<pid>/environ data

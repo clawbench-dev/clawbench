@@ -296,3 +296,50 @@ func TestBytesContainsSep(t *testing.T) {
 		})
 	}
 }
+
+func TestIsClawBenchServerProcess(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{
+			name: "clawbench server without --acp",
+			// /proc/<pid>/cmdline: binary="clawbench", args="--port 20000"
+			data: append([]byte("clawbench\x00"), []byte("--port\x0020000\x00")...),
+			want: true,
+		},
+		{
+			name: "clawbench with --acp is an agent, not server",
+			data: append([]byte("clawbench\x00"), []byte("--acp\x00")...),
+			want: false,
+		},
+		{
+			name: "full path clawbench server",
+			data: append([]byte("/opt/clawbench-green/clawbench\x00"), []byte("--port\x0020300\x00")...),
+			want: true,
+		},
+		{
+			name: "codebuddy with --acp is not a server",
+			data: append([]byte("codebuddy\x00"), []byte("--acp\x00")...),
+			want: false,
+		},
+		{
+			name: "unrelated process",
+			data: []byte("sleep\x00300\x00"),
+			want: false,
+		},
+		{
+			name: "empty data",
+			data: []byte{},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isClawBenchServerProcess(tt.data)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
