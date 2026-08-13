@@ -99,6 +99,33 @@ func TestScanCodebuddySessions_MissingDir(t *testing.T) {
 	assert.Empty(t, sessions)
 }
 
+// TestScanCodebuddySessions_SkipsSubAgents verifies that agent-* sessions under
+// a <session-uuid>/subagents/ directory are NOT treated as top-level sessions.
+func TestScanCodebuddySessions_SkipsSubAgents(t *testing.T) {
+	dir := t.TempDir()
+	// A real top-level session jsonl.
+	writeCodebuddySessionJSONL(t, dir, "/home/user/proj", "顶层会话", 1)
+	// A sub-agent session under <uuid>/subagents/ — must be ignored.
+	subDir := filepath.Join(dir, "00000000-0000-4000-8000-000000000001", "subagents")
+	require.NoError(t, os.MkdirAll(subDir, 0o755))
+	subContent := `{"id":"s1","timestamp":1780000300000,"type":"message","role":"user","content":[{"type":"input_text","text":"sub"}],"sessionId":"parent-1","cwd":"/home/user/proj"}` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(subDir, "agent-abc123.jsonl"), []byte(subContent), 0o644))
+	// Also a non-subagents nested dir should still be scanned (defensive).
+	nested := filepath.Join(dir, "tool-results")
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	writeCodebuddySessionJSONL(t, nested, "/home/user/proj", "嵌套会话", 2)
+
+	sessions := scanCodebuddySessionsDir(dir)
+	// Only the top-level and nested sessions (NOT the sub-agent) should appear.
+	ids := map[string]bool{}
+	for _, s := range sessions {
+		ids[s.SessionID] = true
+	}
+	assert.Len(t, sessions, 2, "sub-agent session must be excluded")
+	assert.False(t, ids["agent-abc123"], "agent-* sub-agent session should be skipped")
+	assert.True(t, ids["00000000-0000-4000-8000-000000000001"], "top-level session should be present")
+}
+
 func TestScanCodebuddySessions_UpdatesAtIsMaxTimestamp(t *testing.T) {
 	dir := t.TempDir()
 	// File where the last line has the newest timestamp but is a message.

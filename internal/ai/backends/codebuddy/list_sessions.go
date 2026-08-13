@@ -134,8 +134,11 @@ func convertDiskSessions(disks []codebuddyDiskSession) []acp.SessionInfo {
 //
 //	~/.codebuddy/projects/<project-slug>/<session-uuid>.jsonl
 //
-// so we walk recursively. Non-JSONL files, corrupt files, and files missing a
-// cwd are skipped. Returns sessions sorted by most-recent-updated first.
+// so we walk recursively. Sub-directories named "subagents" are skipped — they
+// hold sub-agent (delegated task) sessions named agent-<hash>.jsonl, which are
+// NOT top-level sessions and cannot be resumed via LoadSession. Non-JSONL
+// files, corrupt files, and files missing a cwd are also skipped. Returns
+// sessions sorted by most-recent-updated first.
 func scanCodebuddySessionsDir(dir string) []codebuddyDiskSession {
 	var sessions []codebuddyDiskSession
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
@@ -143,6 +146,9 @@ func scanCodebuddySessionsDir(dir string) []codebuddyDiskSession {
 			return nil // skip unreadable entries
 		}
 		if d.IsDir() {
+			if d.Name() == "subagents" {
+				return filepath.SkipDir // sub-agent sessions are not resumable top-level sessions
+			}
 			return nil
 		}
 		if !strings.HasSuffix(d.Name(), ".jsonl") {
