@@ -143,10 +143,13 @@
   <BottomSheet
     v-if="type === 'select'"
     :open="selectPicker.effectiveOpen.value"
-    :title="label"
     auto
     @close="selectPicker.close()"
   >
+    <template #header>
+      <ChevronsUpDown :size="16" class="bs-header-icon" />
+      <span class="bs-header-title">{{ label }}</span>
+    </template>
     <div
       v-for="opt in options"
       :key="opt.value as PropertyKey"
@@ -164,7 +167,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Eye, EyeOff, RefreshCw, RotateCcw } from 'lucide-vue-next'
+import { Eye, EyeOff, RefreshCw, RotateCcw, ChevronsUpDown } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'

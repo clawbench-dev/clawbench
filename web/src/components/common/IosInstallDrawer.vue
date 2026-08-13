@@ -1,5 +1,9 @@
 <template>
-  <BottomSheet :open="open" :title="t('pwa.iosInstallTitle')" auto @close="close">
+  <BottomSheet :open="open" auto @close="close">
+    <template #header>
+      <Smartphone :size="16" class="bs-header-icon" />
+      <span class="bs-header-title">{{ t('pwa.iosInstallTitle') }}</span>
+    </template>
     <div class="ios-install-steps">
       <div class="ios-step">
         <span class="ios-step-num">1</span>
@@ -24,7 +28,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { Share2 } from 'lucide-vue-next'
+import { Share2, Smartphone } from 'lucide-vue-next'
 import BottomSheet from './BottomSheet.vue'
 
 defineProps<{ open: boolean }>()

@@ -213,21 +213,21 @@ describe('useUserMsgIndex — closeUserMsgIndex', () => {
   })
 })
 
-describe('useUserMsgIndex — formatTruncateUserMsg', () => {
+describe('useUserMsgIndex — formatUserMsgLabel', () => {
   it('formats text message', () => {
     const { vm } = createComposable()
-    expect(vm.formatTruncateUserMsg({ content: 'Hello world' })).toBe('Hello world')
+    expect(vm.formatUserMsgLabel({ content: 'Hello world' })).toBe('Hello world')
   })
 
-  it('truncates long message', () => {
+  it('keeps the full long message', () => {
     const { vm } = createComposable()
     const longText = 'a'.repeat(50)
-    expect(vm.formatTruncateUserMsg({ content: longText })).toBe('a'.repeat(40) + '…')
+    expect(vm.formatUserMsgLabel({ content: longText })).toBe(longText)
   })
 
   it('formats attachment-only message', () => {
     const { vm } = createComposable()
-    expect(vm.formatTruncateUserMsg({ content: '', files: ['file.ts'] })).toBe('[附件]')
+    expect(vm.formatUserMsgLabel({ content: '', files: ['file.ts'] })).toBe('[附件]')
   })
 })
 

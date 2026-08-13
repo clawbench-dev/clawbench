@@ -1,5 +1,9 @@
 <template>
-  <ModalDialog :open="show" :zIndex="2500" :title="t('chat.metadata.title')" @close="$emit('close')">
+  <ModalDialog :open="show" :zIndex="2500" @close="$emit('close')">
+    <template #header>
+      <Info :size="16" class="modal-header-icon" />
+      <span class="modal-title">{{ t('chat.metadata.title') }}</span>
+    </template>
     <div class="metadata-content">
       <div v-if="messageId" class="metadata-item metadata-copyable" @click="copyValue(String(messageId), $event)">
         <span class="metadata-label">{{ t('chat.metadata.messageId') }}</span>
@@ -88,7 +92,7 @@
 </template>
 
 <script setup>
-import { Copy } from 'lucide-vue-next'
+import { Copy, Info } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useToast } from '@/composables/useToast.ts'

@@ -131,10 +131,13 @@
     <BottomSheet
       v-if="config.entrySelector"
       :open="entryPicker.effectiveOpen.value"
-      :title="t(config.entrySelector.labelKey)"
       auto
       @close="entryPicker.close()"
     >
+      <template #header>
+        <ListChecks :size="16" class="bs-header-icon" />
+        <span class="bs-header-title">{{ t(config.entrySelector.labelKey) }}</span>
+      </template>
       <div
         v-for="opt in entryOptions"
         :key="opt.value as PropertyKey"
@@ -152,7 +155,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronRight } from 'lucide-vue-next'
+import { ChevronRight, ListChecks } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'

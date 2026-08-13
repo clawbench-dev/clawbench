@@ -2,7 +2,7 @@
   <BottomSheet :open="show" auto @close="$emit('close')">
     <template #header>
       <div class="tool-detail-header" :data-category="category">
-        <component :is="headerIcon" :size="14" class="tool-detail-header-icon" />
+        <component :is="headerIcon" :size="16" class="tool-detail-header-icon" />
         <span class="tool-detail-header-name">{{ displayName }}</span>
         <span v-if="toolSummary" class="tool-detail-header-summary">{{ toolSummary }}</span>
         <span v-if="toolDone && toolDuration > 0" class="tool-detail-duration">{{ formatDuration(toolDuration) }}</span>
@@ -152,8 +152,15 @@ function handleBodyClick(event) {
 :root[data-theme="dark"] .tool-detail-header[data-category="ask"]    { --tool-accent: #fb923c; }
 
 .tool-detail-header-icon {
-  color: color-mix(in srgb, var(--tool-accent) 80%, transparent);
   flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--tool-accent) 80%, transparent);
+  background: color-mix(in srgb, var(--tool-accent) 14%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .tool-detail-header-name {

@@ -1,9 +1,12 @@
 <template>
   <ModalDialog
     :open="!!data"
-    :title="data ? `${t('chat.table.row')} ${data.currentIndex + 1} / ${data.rows.length}` : ''"
     @close="$emit('close')"
   >
+    <template #header>
+      <Rows3 :size="16" class="modal-header-icon" />
+      <span class="modal-title">{{ data ? `${t('chat.table.row')} ${data.currentIndex + 1} / ${data.rows.length}` : '' }}</span>
+    </template>
     <div v-if="data" class="table-row-form" aria-live="polite">
       <div v-for="(header, hi) in data.headers" :key="hi" class="table-row-field">
         <div class="table-row-label">{{ header }}</div>
@@ -20,6 +23,7 @@
 <script setup>
 import { inject } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Rows3 } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { gt } from '@/composables/useLocale'

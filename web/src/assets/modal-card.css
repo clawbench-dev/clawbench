@@ -68,9 +68,14 @@
 
 .modal-header-icon {
   flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
   color: var(--accent-color, #0066cc);
-  display: flex;
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
 }
 
 .modal-title,

@@ -1,7 +1,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import { truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import { formatUserMsg } from '@/utils/userMsgIndexUtils.ts'
 
 /**
  * Composable for user message index overlay logic.
@@ -27,8 +27,8 @@ export function useUserMsgIndex(options: {
   const loadingTarget = ref(false)
   const loadingIndex = ref(false)
 
-  function formatTruncateUserMsg(msg: { content?: string; files?: string[] }) {
-    return truncateUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
+  function formatUserMsgLabel(msg: { content?: string; files?: string[] }) {
+    return formatUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
   }
 
   async function toggleUserMsgIndex() {
@@ -146,7 +146,7 @@ export function useUserMsgIndex(options: {
     drawer,
     loadingTarget,
     loadingIndex,
-    formatTruncateUserMsg,
+    formatUserMsgLabel,
     toggleUserMsgIndex,
     closeUserMsgIndex,
     jumpToUserMessage,

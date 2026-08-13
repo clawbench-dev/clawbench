@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractPlainText, truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import { extractPlainText, formatUserMsg } from '@/utils/userMsgIndexUtils.ts'
 
 describe('extractPlainText', () => {
   it('returns empty string for empty content', () => {
@@ -50,35 +50,35 @@ describe('extractPlainText', () => {
   })
 })
 
-describe('truncateUserMsg', () => {
+describe('formatUserMsg', () => {
   const attachmentLabel = 'Attachment'
 
-  it('truncates long text', () => {
-    expect(truncateUserMsg({ content: 'a'.repeat(50) }, attachmentLabel)).toBe('a'.repeat(40) + '…')
+  it('returns the full text for long content', () => {
+    expect(formatUserMsg({ content: 'a'.repeat(200) }, attachmentLabel)).toBe('a'.repeat(200))
   })
 
   it('keeps short text as-is', () => {
-    expect(truncateUserMsg({ content: 'Short message' }, attachmentLabel)).toBe('Short message')
+    expect(formatUserMsg({ content: 'Short message' }, attachmentLabel)).toBe('Short message')
   })
 
   it('handles block-format JSON content', () => {
     const content = JSON.stringify({ blocks: [{ type: 'text', text: 'Hello from blocks' }] })
-    expect(truncateUserMsg({ content }, attachmentLabel)).toBe('Hello from blocks')
+    expect(formatUserMsg({ content }, attachmentLabel)).toBe('Hello from blocks')
   })
 
   it('shows attachment label for empty content with files', () => {
-    expect(truncateUserMsg({ content: '', files: ['file.go'] }, attachmentLabel)).toBe('[Attachment]')
+    expect(formatUserMsg({ content: '', files: ['file.go'] }, attachmentLabel)).toBe('[Attachment]')
   })
 
   it('shows attachment label for no content with files', () => {
-    expect(truncateUserMsg({ files: ['file.go'] }, attachmentLabel)).toBe('[Attachment]')
+    expect(formatUserMsg({ files: ['file.go'] }, attachmentLabel)).toBe('[Attachment]')
   })
 
   it('prefers text over attachment label', () => {
-    expect(truncateUserMsg({ content: 'Has text', files: ['file.go'] }, attachmentLabel)).toBe('Has text')
+    expect(formatUserMsg({ content: 'Has text', files: ['file.go'] }, attachmentLabel)).toBe('Has text')
   })
 
   it('shows empty string for empty content without files', () => {
-    expect(truncateUserMsg({ content: '' }, attachmentLabel)).toBe('')
+    expect(formatUserMsg({ content: '' }, attachmentLabel)).toBe('')
   })
 })

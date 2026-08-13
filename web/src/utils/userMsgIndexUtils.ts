@@ -18,16 +18,14 @@ export function extractPlainText(content: string): string {
   return content
 }
 
-const USER_MSG_TRUNCATE_LEN = 40
-
 /**
- * Truncates a user message for display in the index list.
- * Returns [Attachment] label for attachment-only messages.
+ * Formats a user message for display in the index list.
+ * Returns the full plain text, or [Attachment] label for attachment-only messages.
  */
-export function truncateUserMsg(msg: { content?: string; files?: string[] }, attachmentLabel: string): string {
+export function formatUserMsg(msg: { content?: string; files?: string[] }, attachmentLabel: string): string {
   const text = extractPlainText(msg.content || '')
   if (!text && msg.files && msg.files.length > 0) {
     return `[${attachmentLabel}]`
   }
-  return text.length > USER_MSG_TRUNCATE_LEN ? text.slice(0, USER_MSG_TRUNCATE_LEN) + '…' : text
+  return text
 }

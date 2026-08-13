@@ -178,7 +178,11 @@
       </BottomSheet>
 
       <!-- Add/Edit Modal (shared) -->
-      <ModalDialog :open="showForm" :title="isEditMode ? t('proxy.editPort') : t('proxy.addPort')" @close="showForm = false">
+      <ModalDialog :open="showForm" @close="showForm = false">
+        <template #header>
+          <Server :size="16" class="modal-header-icon" />
+          <span class="modal-title">{{ isEditMode ? t('proxy.editPort') : t('proxy.addPort') }}</span>
+        </template>
         <div class="port-add-content">
           <div v-if="formError" class="port-add-error">{{ formError }}</div>
           <div class="port-add-row">
@@ -234,7 +238,7 @@
 </template>
 
 <script setup>
-import { XCircle, RotateCcw, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, RefreshCw, Network as NetworkIcon } from 'lucide-vue-next'
+import { XCircle, RotateCcw, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, RefreshCw, Network as NetworkIcon, Server } from 'lucide-vue-next'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'

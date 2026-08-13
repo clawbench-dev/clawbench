@@ -6,6 +6,7 @@
     @close="emit('close')"
   >
     <template #header>
+      <FileDiff :size="16" class="bs-header-icon" />
       <span class="diff-drawer-title">{{ title }}</span>
       <div class="diff-drawer-actions">
         <button
@@ -52,7 +53,7 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { Undo2 } from 'lucide-vue-next'
+import { Undo2, FileDiff } from 'lucide-vue-next'
 import { diffOldContent, diffOldFilePath, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
 import type { CharDiff, DiffLine } from '@/composables/useMarkdownDiff.ts'
 import { store } from '@/stores/app.ts'

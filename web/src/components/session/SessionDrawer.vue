@@ -1,7 +1,7 @@
 <template>
   <BottomSheet ref="bottomSheetRef" :open="open" auto :title="t('session.title')" @close="$emit('close')">
     <template #header>
-      <Bot :size="16" class="bs-header-icon" />
+      <List :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('session.title') }}</span>
       <div v-if="sessionMaxCount > 0" class="session-counter">
         <div class="session-counter-bar">
@@ -71,7 +71,7 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
-import { Plus, Search, Archive } from 'lucide-vue-next'
+import { Plus, Search, Archive, List } from 'lucide-vue-next'
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'

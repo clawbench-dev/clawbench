@@ -2,7 +2,10 @@
   <Teleport to="body">
     <div ref="overlayRef" tabindex="-1" class="install-overlay" @click.self="$emit('close')" @keydown.escape="handleEscape">
       <div class="install-box">
-        <div class="install-title">{{ t('welcomeInfo.install') }} {{ backendName }}</div>
+        <div class="install-title">
+          <span class="install-title-icon"><PackagePlus :size="16" /></span>
+          <span>{{ t('welcomeInfo.install') }} {{ backendName }}</span>
+        </div>
         <div class="install-hint">{{ t('welcomeInfo.manualInstallHint') }}</div>
         <div class="install-cmd-row">
           <code class="install-cmd">{{ installCmd }}</code>
@@ -27,6 +30,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { PackagePlus } from 'lucide-vue-next'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 const props = defineProps<{
@@ -97,10 +101,25 @@ function copyCmd() {
 }
 
 .install-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
   font-size: 14px;
   color: var(--text-primary, #1a1a1a);
   margin-bottom: 10px;
+}
+
+.install-title-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .install-hint {

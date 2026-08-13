@@ -301,9 +301,14 @@ defineExpose({
 
 .bs-header-icon {
   flex-shrink: 0;
-  color: var(--text-primary, #1a1a1a);
-  display: flex;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
 }
 
 .bs-header-title {

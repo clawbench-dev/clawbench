@@ -3,7 +3,13 @@
     <Transition name="dlg">
       <div v-if="dlg.state.value.visible" ref="overlayRef" class="dlg-overlay" :style="{ zIndex: 3000 }" tabindex="-1" @click.self="handleOverlayClick" @keydown.escape="handleCancel" @keydown.enter="handleKeyEnter">
         <div class="dlg-box">
-          <div v-if="dlg.state.value.title" class="dlg-title">{{ dlg.state.value.title }}</div>
+          <div v-if="dlg.state.value.title" class="dlg-title">
+            <span class="dlg-title-icon">
+              <Info v-if="dlg.state.value.type === 'alert'" :size="16" />
+              <MessageSquareText v-else :size="16" />
+            </span>
+            <span>{{ dlg.state.value.title }}</span>
+          </div>
           <div class="dlg-msg">{{ dlg.state.value.message }}</div>
           <input
             v-if="dlg.state.value.type === 'prompt'"
@@ -40,6 +46,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Info, MessageSquareText } from 'lucide-vue-next'
 import { useDialog } from '@/composables/useDialog'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
@@ -138,10 +145,25 @@ onBeforeUnmount(() => {
 }
 
 .dlg-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
   font-size: 14px;
   color: var(--text-primary, #1a1a1a);
   margin-bottom: 8px;
+}
+
+.dlg-title-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .dlg-msg {

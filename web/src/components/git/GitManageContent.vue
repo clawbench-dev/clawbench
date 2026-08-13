@@ -64,7 +64,10 @@
     <Teleport to="body">
       <div v-if="showDirtyModal" class="modal-overlay" @click.self="showDirtyModal = false">
         <div class="modal-dialog">
-          <div class="modal-title">{{ t('git.manage.switchBranch') }}</div>
+          <div class="modal-title">
+            <span class="modal-title-icon"><GitBranchIcon :size="16" /></span>
+            <span>{{ t('git.manage.switchBranch') }}</span>
+          </div>
           <p class="modal-msg">{{ t('git.manage.dirty', { count: dirtyCount }) }}</p>
           <div class="modal-actions">
             <button class="modal-btn modal-stash-btn" @click="doDirtyCheckout('stash')">{{ t('git.manage.stashSwitch') }}</button>
@@ -530,10 +533,25 @@ defineExpose({
 }
 
 .modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   margin-bottom: 8px;
+}
+
+.modal-title-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .modal-msg {

@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n'
 vi.mock('lucide-vue-next', () => ({
   MessagesSquare: { name: 'MessagesSquareIcon', render: () => null },
   Split: { name: 'SplitIcon', render: () => null },
+  MousePointerClick: { name: 'MousePointerClickIcon', render: () => null },
 }))
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
@@ -38,14 +39,15 @@ function mountSheet(props = {}, opts: { attach?: boolean } = {}) {
 
 describe('UserMsgIndexDrawer', () => {
   describe('truncateText', () => {
-    it('renders truncated message text via truncateUserMsg', () => {
+    it('renders the full message text', () => {
+      const longContent = 'A'.repeat(120)
       const messages = [
-        { id: 1, content: 'Hello world', role: 'user' },
+        { id: 1, content: longContent, role: 'user' },
       ]
       const wrapper = mountSheet({ messages })
       const text = wrapper.find('.msg-text')
       expect(text.exists()).toBe(true)
-      expect(text.text()).toContain('Hello world')
+      expect(text.text()).toContain(longContent)
     })
 
     it('renders multiple messages with indices', () => {
