@@ -562,6 +562,7 @@ const {
   getMessagesRef: () => messagesRef.value,
   hideScrollFab,
   setProgrammaticScrolling: (val) => { programmaticScrolling = val },
+  setAtBottom: (val) => { isAtBottom.value = val },
 })
 
 // Nearest user message to viewport center — used for activeId highlight in index

@@ -16,6 +16,10 @@ export function useUserMsgIndex(options: {
   getMessagesRef: () => HTMLElement | null
   hideScrollFab: () => void
   setProgrammaticScrolling: (val: boolean) => void
+  /** Mark whether the viewport is pinned to the bottom of the message list.
+   *  Jumping to an older message must set this false so streaming auto-follow
+   *  doesn't snap the view back down. */
+  setAtBottom: (val: boolean) => void
 }) {
   const { t } = useI18n()
 
@@ -63,6 +67,9 @@ export function useUserMsgIndex(options: {
   function _scrollAndHighlight(item: Element) {
     closeUserMsgIndex()
     options.hideScrollFab()
+    // The user is navigating away from the bottom — stop streaming auto-follow
+    // so the view stays at the jumped-to message instead of being pulled back.
+    options.setAtBottom(false)
     options.setProgrammaticScrolling(true)
     item.scrollIntoView({ behavior: 'smooth', block: 'center' })
     highlightMessage(item)
@@ -132,6 +139,7 @@ export function useUserMsgIndex(options: {
     if (msgIndex < 0) return
     const items = el.querySelectorAll('.chat-messages-list > .chat-message')
     if (items[msgIndex]) {
+      options.setAtBottom(false)
       options.setProgrammaticScrolling(true)
       items[msgIndex].scrollIntoView({ behavior: 'smooth', block: 'center' })
       highlightMessage(items[msgIndex])

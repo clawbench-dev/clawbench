@@ -33,6 +33,7 @@ function createComposable(overrides = {}) {
   const messagesRef = { value: null as HTMLElement | null }
   const hideScrollFab = vi.fn()
   const setProgrammaticScrolling = vi.fn()
+  const setAtBottom = vi.fn()
   const emitLoadMore = vi.fn()
 
   // Mount a minimal Vue component to provide i18n context
@@ -47,6 +48,7 @@ function createComposable(overrides = {}) {
         getMessagesRef: () => messagesRef.value,
         hideScrollFab,
         setProgrammaticScrolling,
+        setAtBottom,
         ...overrides,
       })
       return result
@@ -65,6 +67,7 @@ function createComposable(overrides = {}) {
     messagesRef,
     hideScrollFab,
     setProgrammaticScrolling,
+    setAtBottom,
     emitLoadMore,
     wrapper,
   }
@@ -276,7 +279,7 @@ describe('useUserMsgIndex — scrollToMessage', () => {
   })
 
   it('scrolls to message when found in DOM', () => {
-    const { vm, messagesRef, setProgrammaticScrolling } = createComposable()
+    const { vm, messagesRef, setProgrammaticScrolling, setAtBottom } = createComposable()
     const el = document.createElement('div')
     const msg = document.createElement('div')
     msg.className = 'chat-message'
@@ -288,6 +291,8 @@ describe('useUserMsgIndex — scrollToMessage', () => {
 
     vm.scrollToMessage(1)
     expect(setProgrammaticScrolling).toHaveBeenCalledWith(true)
+    // Navigating away from the bottom must stop streaming auto-follow
+    expect(setAtBottom).toHaveBeenCalledWith(false)
     expect(msg.scrollIntoView).toHaveBeenCalled()
   })
 })
@@ -309,7 +314,7 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
   })
 
   it('scrolls to loaded message', async () => {
-    const { vm, messagesRef, hideScrollFab, setProgrammaticScrolling } = createComposable()
+    const { vm, messagesRef, hideScrollFab, setProgrammaticScrolling, setAtBottom } = createComposable()
     const el = document.createElement('div')
     const msg = document.createElement('div')
     el.querySelectorAll = vi.fn().mockReturnValue([msg])
@@ -323,6 +328,8 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
     expect(vm.showUserMsgIndex).toBe(false) // closeUserMsgIndex called
     expect(hideScrollFab).toHaveBeenCalled()
     expect(setProgrammaticScrolling).toHaveBeenCalledWith(true)
+    // Jumping away from the bottom disables streaming auto-follow
+    expect(setAtBottom).toHaveBeenCalledWith(false)
   })
 
   it('returns early when message not loaded and hasMore is false', async () => {
