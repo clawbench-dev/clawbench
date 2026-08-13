@@ -9,6 +9,23 @@ vi.stubGlobal('ResizeObserver', class {
   disconnect = mockDisconnect
 })
 
+// Mock requestAnimationFrame/cancelAnimationFrame with manual control so tests
+// can flush deferred re-measures deterministically.
+let pendingRafs: Array<() => void> = []
+vi.stubGlobal('requestAnimationFrame', vi.fn((cb: () => void) => {
+  pendingRafs.push(cb)
+  return pendingRafs.length
+}))
+vi.stubGlobal('cancelAnimationFrame', vi.fn(() => {
+  pendingRafs = []
+}))
+
+function flushRafs() {
+  const queue = pendingRafs
+  pendingRafs = []
+  queue.forEach((cb) => cb())
+}
+
 describe('useDockOverflow', () => {
   function createSetup(overflowTabs: string[], options: DockOverflowOptions = {}) {
     const dockEl = document.createElement('div')
@@ -203,6 +220,64 @@ describe('useDockOverflow', () => {
       expect(s.singleDirectTab.value).toBeNull() // 3 > 1 → not single
       expect(s.showOverflowButton.value).toBe(true)
       expect(s.totalDockButtons.value).toBe(3 + 1 + 1) // primary + inline + overflow btn
+    })
+  })
+
+  describe('deferred re-measure (first-open layout settling)', () => {
+    function createSizeControlledEl(initialSize: number) {
+      const el = document.createElement('div')
+      let size = initialSize
+      Object.defineProperty(el, 'clientWidth', { get: () => size, configurable: true })
+      Object.defineProperty(el, 'clientHeight', { get: () => size, configurable: true })
+      return { el, setSize: (n: number) => { size = n } }
+    }
+
+    it('re-measures on the next frame when the initial size is stale-small', () => {
+      // Simulate first open: dock reports a transient too-small width (e.g. layout
+      // not settled yet), which would wrongly collapse all items into overflow.
+      const { el, setSize } = createSizeControlledEl(100)
+      const result = useDockOverflow(() => el, () => TABS)
+      result.startObserving()
+      // Stale small size → everything collapsed
+      expect(result.inlineOverflowTabs.value).toEqual([])
+      expect(result.showOverflowButton.value).toBe(true)
+
+      // Layout settles to a width that fits all tabs
+      setSize(600)
+      flushRafs()
+
+      // Deferred re-measure recovers the true size without needing ResizeObserver
+      expect(result.inlineOverflowTabs.value).toEqual(TABS)
+      expect(result.showOverflowButton.value).toBe(false)
+    })
+
+    it('does not clobber a good size with a zero during deferred re-measure', () => {
+      const { el, setSize } = createSizeControlledEl(402)
+      const result = useDockOverflow(() => el, () => TABS)
+      result.startObserving()
+      expect(result.inlineOverflowTabs.value).toEqual(TABS)
+
+      // Element hidden at the deferred frame (display:none → 0): size preserved
+      setSize(0)
+      flushRafs()
+      expect(result.inlineOverflowTabs.value).toEqual(TABS)
+
+      // And the second frame with real size still corrects
+      setSize(402)
+      flushRafs()
+      expect(result.inlineOverflowTabs.value).toEqual(TABS)
+    })
+
+    it('startObserving cancels pending deferred re-measure', () => {
+      const { el, setSize } = createSizeControlledEl(100)
+      const result = useDockOverflow(() => el, () => TABS)
+      result.startObserving()
+      // Re-observe (idempotent) clears the previous deferred frames
+      result.startObserving()
+      setSize(600)
+      flushRafs()
+      // Only the latest observe's re-measure ran with the settled size
+      expect(result.inlineOverflowTabs.value).toEqual(TABS)
     })
   })
 })

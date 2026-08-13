@@ -46,6 +46,7 @@ export function useDockOverflow(
   const dockContentSize = ref(0)
 
   let resizeObserver: ResizeObserver | null = null
+  let settleRaf = 0
 
   const isVertical = direction === 'vertical'
 
@@ -99,10 +100,26 @@ export function useDockOverflow(
     const el = getDockEl()
     if (!el) return
 
+    // Measure the settled size once layout has completed. A single nextTick can
+    // run before the browser has reflowed (fonts, CSS variables, CSS zoom on
+    // <html> all apply around the same frame), and ResizeObserver may not re-fire
+    // for the final size under CSS zoom. Two rAF frames guarantee the first
+    // layout is done so overflow is computed from the true available size rather
+    // than a transient too-small value (which would wrongly collapse items into
+    // the overflow button on first open).
+    const applyMeasure = () => {
+      const measured = measureSize(el)
+      if (measured > 0) dockContentSize.value = measured
+    }
     // Initial measurement — skip if hidden (display:none → clientHeight/Width=0)
     // to preserve the last known good size
-    const measured = measureSize(el)
-    if (measured > 0) dockContentSize.value = measured
+    applyMeasure()
+    settleRaf = requestAnimationFrame(() => {
+      applyMeasure()
+      settleRaf = requestAnimationFrame(() => {
+        applyMeasure()
+      })
+    })
 
     resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -119,6 +136,8 @@ export function useDockOverflow(
 
   /** Stop observing. Call in onBeforeUnmount. */
   function stopObserving() {
+    cancelAnimationFrame(settleRaf)
+    settleRaf = 0
     resizeObserver?.disconnect()
     resizeObserver = null
   }
