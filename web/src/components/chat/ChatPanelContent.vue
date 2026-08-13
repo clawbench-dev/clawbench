@@ -318,7 +318,7 @@ const session = useChatSession({
   onExtractScheduledTasks: (msgs) => render.extractScheduledTasks(msgs),
   onRenderUpdate: (forceFull) => render.updateRenderedContents(forceFull),
   onScrollBottom: (force) => scrollBottom(force),
-  onConnectStream: (sessionId) => stream.connectStream(sessionId),
+  onConnectStream: (sessionId, options) => stream.connectStream(sessionId, options),
   onDisconnectStream: () => stream.disconnectStream(),
   onOpen: () => emit('open'),
   onStreamDone: playNotificationSound,
@@ -783,7 +783,7 @@ async function sendMessageNow(text, filePaths, files) {
             if (localIdx !== -1) {
                 messages.value[localIdx].pending = true
             }
-            stream.connectStream(identity.currentSessionId.value)
+            stream.connectStream(identity.currentSessionId.value, { reuseExistingStreaming: true })
             // Proactively sync ACP state for the running session
             if (effectiveAgentId && agentsComposable.supportsACP(effectiveAgentId)) {
                 populateACPStateFromCache(effectiveAgentId)

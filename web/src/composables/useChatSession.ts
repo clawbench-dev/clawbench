@@ -67,7 +67,7 @@ export interface UseChatSessionOptions {
   onExtractScheduledTasks: (msgs: Array<Record<string, unknown>>) => void
   onRenderUpdate: (forceFull: boolean) => void
   onScrollBottom: (force?: boolean) => void
-  onConnectStream: (sessionId: string, options?: { subscribeOnly?: boolean }) => void
+  onConnectStream: (sessionId: string, options?: { subscribeOnly?: boolean; reuseExistingStreaming?: boolean }) => void
   onDisconnectStream: () => void
   onOpen: () => void
   onStreamDone?: () => void
@@ -204,7 +204,11 @@ export function useChatSession(options: UseChatSessionOptions) {
     if (isRunning) {
       loading.value = true
       onScrollBottom(forceScrollBottom)
-      onConnectStream(currentSessionId.value)
+      // This loadHistory is reconnecting to the SAME live stream (e.g. after a
+      // WS reconnect, tab-visibility change, or stream timeout) — NOT starting a
+      // new turn. Reuse the existing streaming message so connectStream doesn't
+      // finalize it and open a duplicate empty "outputting" segment.
+      onConnectStream(currentSessionId.value, { reuseExistingStreaming: true })
     } else if (isReplayPending) {
       loading.value = true
       if (immediate) keepInputDisabled = true

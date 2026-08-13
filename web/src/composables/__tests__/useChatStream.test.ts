@@ -234,7 +234,7 @@ describe('useChatStream', () => {
       expect(options.messages.value[2].pending).toBe(true)
     })
 
-    it('should reuse existing streaming message if one exists', () => {
+    it('should reuse existing streaming message only when reuseExistingStreaming is set', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -244,15 +244,122 @@ describe('useChatStream', () => {
         (m: any) => m.role === 'assistant' && m.streaming
       )
 
-      // Second connect reuses it (after disconnect + reconnect)
+      // Second connect (e.g. enqueue while running) explicitly opts into reuse
       mockSendWsMessage.mockClear()
-      connectStream('test-session-1')
+      connectStream('test-session-1', { reuseExistingStreaming: true })
 
-      // Should still have exactly one streaming assistant
+      // Should still have exactly one streaming assistant (the same one)
       const streamingMsgs = options.messages.value.filter(
         (m: any) => m.role === 'assistant' && m.streaming
       )
       expect(streamingMsgs.length).toBe(1)
+      expect(streamingMsgs[0]).toBe(firstAssistant)
+    })
+
+    it('starts a fresh streaming message for a new turn instead of reusing a stale one (no reply accumulation)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      // Turn 1: stream a reply
+      connectStream('test-session-1')
+      simulateWsEvent('content', { content: 'first reply' })
+      const firstStreaming = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+
+      // Simulate a missed 'done': the turn-1 message is still flagged streaming.
+      expect(firstStreaming.streaming).toBe(true)
+
+      // Turn 2: fresh connect (session not running) must NOT reuse the stale
+      // streaming message — otherwise turn-2 content would accumulate into it.
+      connectStream('test-session-1')
+      simulateWsEvent('content', { content: 'second reply' })
+
+      const assistants = options.messages.value.filter((m: any) => m.role === 'assistant')
+      expect(assistants.length).toBe(2)
+
+      const texts = assistants.map((a: any) =>
+        (a.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+      )
+      expect(texts).toContain('first reply')
+      expect(texts).toContain('second reply')
+      // The two replies must live in separate messages, never concatenated.
+      expect(texts.some((t: string) => t.includes('first reply') && t.includes('second reply'))).toBe(false)
+    })
+
+    it('reconnecting a LIVE stream with reuse keeps one streaming message (no split reply)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      // A reply is already streaming with partial content (live turn).
+      connectStream('test-session-1')
+      simulateWsEvent('content', { content: 'partial ' })
+      const live = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+
+      // loadHistory reconnects to the SAME live stream after a WS reconnect /
+      // tab-visibility change — passes reuseExistingStreaming:true (see
+      // syncSessionState). Must NOT finalize the live message or open a second
+      // empty "outputting" segment.
+      mockSendWsMessage.mockClear()
+      connectStream('test-session-1', { reuseExistingStreaming: true })
+      simulateWsEvent('content', { content: 'rest' })
+
+      const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
+      expect(streaming.length).toBe(1)
+      expect(streaming[0]).toBe(live)
+      const text = (live.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+      expect(text).toBe('partial rest')
+    })
+
+    it('reconnect after loadHistory replaces messages with a fromDB streaming message keeps ONE streaming message (no split reply)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      // Live turn: [user, assistant streaming with partial content]
+      options.messages.value.push(
+        { role: 'user', id: 1, content: 'question', blocks: [{ type: 'text', text: 'question' }] },
+        { role: 'assistant', id: 100, content: '', blocks: [{ type: 'text', text: 'partial ' }], streaming: true, fromDB: true },
+      )
+
+      // loadHistory → syncSessionState (isRunning) reconnects to the SAME live
+      // stream with reuseExistingStreaming:true. Must NOT finalize the fromDB
+      // streaming message and open a second empty "outputting" segment above it.
+      mockSendWsMessage.mockClear()
+      connectStream('test-session-1', { reuseExistingStreaming: true })
+      simulateWsEvent('content', { content: 'rest' })
+
+      const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
+      expect(streaming.length).toBe(1)
+      const text = (streaming[0].blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+      expect(text).toBe('partial rest')
+      // No finalized duplicate left behind.
+      const assistants = options.messages.value.filter((m: any) => m.role === 'assistant')
+      expect(assistants.length).toBe(1)
+    })
+
+    it('new-turn connect still finalizes a stale streaming message instead of reusing it', () => {
+      // The inverse case: a fresh connect for a NEW turn (session not running)
+      // must NOT reuse a stale streaming message — otherwise the new reply's
+      // content accumulates into the old one.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.messages.value.push(
+        { role: 'user', id: 1, content: 'question', blocks: [{ type: 'text', text: 'question' }] },
+        { role: 'assistant', id: 100, content: '', blocks: [{ type: 'text', text: 'stale reply' }], streaming: true },
+      )
+
+      connectStream('test-session-1')
+      simulateWsEvent('content', { content: 'fresh reply' })
+
+      const assistants = options.messages.value.filter((m: any) => m.role === 'assistant')
+      expect(assistants.length).toBe(2)
+      const texts = assistants.map((a: any) =>
+        (a.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+      )
+      expect(texts).toContain('stale reply')
+      expect(texts).toContain('fresh reply')
+      expect(texts.some((t: string) => t.includes('stale reply') && t.includes('fresh reply'))).toBe(false)
     })
   })
 
@@ -1081,7 +1188,9 @@ describe('useChatStream', () => {
       })
 
       const { connectStream } = useChatStream(options)
-      connectStream('test-session-1')
+      // This is a live-stream scenario: the pre-pushed streaming assistant is the
+      // current active reply, so reuse it.
+      connectStream('test-session-1', { reuseExistingStreaming: true })
       options.onRenderNeeded.mockClear()
 
       simulateWsEvent('user_message', { messageId: 42, content: 'hello from phone' })
@@ -1251,7 +1360,7 @@ describe('useChatStream', () => {
       })
 
       const { connectStream } = useChatStream(options)
-      connectStream('test-session-1')
+      connectStream('test-session-1', { reuseExistingStreaming: true })
 
       simulateWsEvent('user_message', { messageId: 0, content: 'queued msg', queueId: 'pending-abc123' })
 

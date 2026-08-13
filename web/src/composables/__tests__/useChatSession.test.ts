@@ -2212,8 +2212,11 @@ describe('loadHistory', () => {
     await session.loadHistory(true, false, false)
 
     expect(loading.value).toBe(true)
-    // onConnectStream is called with currentSessionId.value which has been set to data.sessionId
-    expect(onConnectStream).toHaveBeenCalledWith('s1')
+    // onConnectStream is called with currentSessionId.value (set to data.sessionId),
+    // reconnecting to the SAME live stream — must reuse the existing streaming
+    // message so connectStream doesn't finalize it and open a duplicate empty
+    // "outputting" segment (regression for the split-reply bug).
+    expect(onConnectStream).toHaveBeenCalledWith('s1', { reuseExistingStreaming: true })
   })
 
   it('when data.running=false: sets loading=false', async () => {

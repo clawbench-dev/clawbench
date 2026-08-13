@@ -151,16 +151,27 @@ export function useChatStream(options: UseChatStreamOptions) {
    * cleanup (tool_use timeouts, loading state).
    */
 
-  function connectStream(sessionId: string, options?: { subscribeOnly?: boolean }) {
+  function connectStream(sessionId: string, options?: { subscribeOnly?: boolean; reuseExistingStreaming?: boolean }) {
     disconnectStream()
     isStreaming = true
 
     // Only create a streaming assistant message for actual AI generation,
     // not for replay waiting (subscribeOnly) where we just need WS events.
     if (!options?.subscribeOnly) {
-      // Ensure a streaming assistant message exists — create one if needed
       const existingStreaming = findStreamingMsg(messages.value)
-      if (!existingStreaming) {
+
+      // A stale streaming message left over from a previous turn (e.g. its
+      // 'done' event was missed) must be finalized before we start a new one.
+      // Otherwise connectStream would reuse it and keep appending content,
+      // echoing all earlier replies into the current reply. Reuse is only
+      // legitimate when explicitly opted in (enqueue/reconnect to a live stream).
+      if (existingStreaming && !options?.reuseExistingStreaming) {
+        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+      }
+
+      // Ensure a streaming assistant message exists — create one if needed
+      const streaming = findStreamingMsg(messages.value)
+      if (!streaming) {
         const newStreaming: ChatMessage = {
           role: 'assistant' as const,
           id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -181,8 +192,8 @@ export function useChatStream(options: UseChatStreamOptions) {
         }
         thinkingBlockCounter = 0
         onRenderNeeded()
-      } else if ((existingStreaming as ChatMessage).fromDB) {
-        delete (existingStreaming as ChatMessage).fromDB
+      } else if ((streaming as ChatMessage).fromDB) {
+        delete (streaming as ChatMessage).fromDB
       }
       onScrollBottom()
     }
