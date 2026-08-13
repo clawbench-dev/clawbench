@@ -271,7 +271,8 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-const QuickSendDrawer = defineAsyncComponent(() => import('@/components/chat/QuickSendDrawer.vue'))
+import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
+const QuickSendDrawer = defineAsyncComponent({ loader: () => import('@/components/chat/QuickSendDrawer.vue'), loadingComponent: AsyncComponentLoader })
 import SessionDrawer from '@/components/chat/SessionDrawer.vue'
 import { createStopButtonMachine } from '@/utils/stopButtonMachine.ts'
 import { useDialog } from '@/composables/useDialog.ts'

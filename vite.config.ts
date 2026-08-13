@@ -110,6 +110,51 @@ function xtermRequestModeFix(): Plugin {
   }
 }
 
+// Vite plugin: preload the terminal chunk via <link rel="modulepreload"> in the
+// built index.html. TerminalPanelContent is a heavy lazy chunk (xterm.js + fit
+// addon + ~400KB minified), so the first time a user opens the terminal tab they
+// hit a blank panel while the chunk downloads + parses. modulepreload lets the
+// browser fetch it in the background right after initial load, so opening the
+// terminal is instant. We walk the terminal chunk's transitive imports so any
+// split-out dependencies (e.g. an xterm vendor chunk) are preloaded too.
+function terminalModulePreload(): Plugin {
+  return {
+    name: 'terminal-module-preload',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      const html = bundle['index.html']
+      if (!html || html.type !== 'asset' || typeof html.source !== 'string') return
+
+      const chunks = Object.values(bundle).filter((c): c is { type: 'chunk'; fileName: string; imports: string[] } => {
+        return c.type === 'chunk' && 'imports' in c
+      })
+
+      const terminal = chunks.find((c) => c.fileName.startsWith('TerminalPanelContent-'))
+      if (!terminal) return
+
+      const seen = new Set<string>()
+      const toPreload: string[] = []
+      const visit = (chunk: { fileName: string; imports: string[] }) => {
+        if (seen.has(chunk.fileName)) return
+        seen.add(chunk.fileName)
+        toPreload.push(chunk.fileName)
+        for (const imp of chunk.imports) {
+          const c = bundle[imp]
+          if (c && c.type === 'chunk' && 'imports' in c) visit(c as { fileName: string; imports: string[] })
+        }
+      }
+      visit(terminal)
+
+      const links = toPreload
+        .map((f) => `    <link rel="modulepreload" crossorigin href="/${f}">`)
+        .join('\n')
+
+      html.source = html.source.replace('</head>', `${links}\n  </head>`)
+    },
+  }
+}
+
 const backendPort = process.env.VITE_BACKEND_PORT || 20000
 const backendProto = process.env.VITE_BACKEND_PROTO || 'https'
 const frontendPort = parseInt(process.env.VITE_FRONTEND_PORT || '20001', 10)
@@ -123,6 +168,7 @@ export default defineConfig({
     }),
     hljsThemeWrapper(),
     xtermRequestModeFix(),
+    terminalModulePreload(),
     materialIconsCopy()
   ],
   root: 'web',
