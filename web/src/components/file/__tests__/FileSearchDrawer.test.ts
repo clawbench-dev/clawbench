@@ -431,4 +431,21 @@ describe('FileSearchDrawer', () => {
     expect(wrapper.emitted('selectFile')).toBeFalsy()
     expect(wrapper.emitted('navigateDir')).toBeFalsy()
   })
+
+  it('starts search when currentDir changes while a query exists', async () => {
+    mockState.query = 'main'
+    const wrapper = mountDrawer({ open: true, currentDir: 'src' })
+    mockCancelSearch.mockClear()
+    mockStartSearch.mockClear()
+    await wrapper.setProps({ currentDir: 'src/utils' })
+    expect(mockCancelSearch).toHaveBeenCalled()
+    expect(mockStartSearch).toHaveBeenCalled()
+  })
+
+  it('cancels search when drawer is closed', async () => {
+    const wrapper = mountDrawer({ open: true })
+    mockCancelSearch.mockClear()
+    await wrapper.setProps({ open: false })
+    expect(mockCancelSearch).toHaveBeenCalled()
+  })
 })
