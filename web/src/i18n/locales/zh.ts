@@ -711,6 +711,7 @@ export default {
       openAsProject: '打开为项目',
       openTerminal: '在此打开终端',
       archiveDir: '打包下载',
+      downloadTree: '下载为目录树',
       shareExternal: '分享',
     },
     multiSelect: {
@@ -957,6 +958,14 @@ export default {
     deleteFailed: '删除失败',
     setProjectFailedDetail: '设置项目失败: {error}',
   },
+  jump: {
+    title: '跳转到目录',
+    placeholder: '输入目录路径，如 src/utils',
+    confirm: '跳转',
+    cancel: '取消',
+    button: '跳转',
+    copyPath: '复制路径',
+  },
   search: {
     title: '文件内容搜索',
     placeholder: '输入关键字搜索…',
@@ -1125,6 +1134,9 @@ export default {
     fileTooLarge: '{name} 超过 {max}MB 限制',
     completed: '已上传 {count} 项',
     cancelled: '已取消上传',
+    downloaded: '已下载 {count} 项',
+    dirDownloadUnsupported: '当前浏览器不支持按文件树下载，请使用 Chrome/Edge 并开启 HTTPS 访问',
+    dirDownloadFailed: '获取文件列表失败',
   },
   autoSpeech: {
     generateFailed: '语音生成失败 (HTTP {status})',

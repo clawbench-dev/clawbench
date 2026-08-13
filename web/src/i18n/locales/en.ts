@@ -710,6 +710,7 @@ export default {
       openAsProject: 'Open as project',
       openTerminal: 'Open terminal here',
       archiveDir: 'Pack & download',
+      downloadTree: 'Download as tree',
       shareExternal: 'Share',
     },
     multiSelect: {
@@ -956,6 +957,14 @@ export default {
     deleteFailed: 'Delete failed',
     setProjectFailedDetail: 'Set project failed: {error}',
   },
+  jump: {
+    title: 'Jump to Directory',
+    placeholder: 'Enter a directory path, e.g. src/utils',
+    confirm: 'Jump',
+    cancel: 'Cancel',
+    button: 'Jump',
+    copyPath: 'Copy path',
+  },
   search: {
     title: 'Search in file',
     placeholder: 'Enter keyword to search…',
@@ -1124,6 +1133,9 @@ export default {
     fileTooLarge: '{name} exceeds {max}MB limit',
     completed: 'Uploaded {count} item(s)',
     cancelled: 'Upload cancelled',
+    downloaded: 'Downloaded {count} item(s)',
+    dirDownloadUnsupported: 'Tree download is not supported in this browser. Use Chrome/Edge with HTTPS.',
+    dirDownloadFailed: 'Failed to fetch file list',
   },
   autoSpeech: {
     generateFailed: 'Speech generation failed (HTTP {status})',
