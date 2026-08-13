@@ -64,6 +64,7 @@ sequenceDiagram
 - **键盘避让**：检测 Android 软键盘高度，自动调整终端视口，防止虚拟键盘遮挡终端内容。焦点切换时通过 `shouldAutoRefocusTerminal` 判断是否重新聚焦 xterm，避免 Android WebView 键盘闪烁
 - **键位与符号配置**：自定义虚拟键盘的按键和符号布局，配置持久化到数据库。用户可以添加常用的特殊符号，调整修饰键的排列
 - **快捷指令**：预设常用命令一键发送（如 `git status`、`docker ps`），通过 `useCrudList` 管理 CRUD。与聊天快捷发送共享基础设施
+- **终端主题切换**：内置 157 个 xterm-theme 主题（如 Dracula、Solarized、Catppuccin 等），支持 `auto` 模式跟随 App 深色/浅色主题自动切换。主题选择持久化到 localStorage，懒加载 xterm-theme 模块避免首屏体积膨胀
 
 ### 设计要点
 
