@@ -180,7 +180,6 @@ func TestTestSummarizeVoice_AnthropicSuccess(t *testing.T) {
 
 	// Use /v1/messages suffix so auto-detection identifies this as Anthropic format
 	result := testSummarizeVoice(context.Background(), map[string]any{
-		"summarize.tts_backend":   "api",
 		"ai_summary.api.base_url": srv.URL + "/v1/messages",
 		"ai_summary.api.key":      "test-key",
 		"ai_summary.model":        "claude-3-haiku",
@@ -189,9 +188,21 @@ func TestTestSummarizeVoice_AnthropicSuccess(t *testing.T) {
 	assert.Contains(t, result.Message, "anthropic")
 }
 
-func TestTestSummarizeVoice_NotAPI(t *testing.T) {
+func TestTestSummarizeVoice_NotTTSBackend(t *testing.T) {
+	// The test is decoupled from the voice-summary TTS backend: even with
+	// summarize.tts_backend set to a non-API value, the shared AI summary API
+	// must still be probed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintln(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+
 	result := testSummarizeVoice(context.Background(), map[string]any{
-		"summarize.tts_backend": "simple",
+		"summarize.tts_backend":   "simple",
+		"ai_summary.api.base_url": srv.URL,
+		"ai_summary.api.key":      "test-key",
+		"ai_summary.model":        "gpt-4o-mini",
 	})
 	assert.True(t, result.Success)
 }
@@ -621,8 +632,7 @@ func TestTestPortForward_ServerListening(t *testing.T) {
 
 func TestTestSummarizeVoice_EmptyURL(t *testing.T) {
 	result := testSummarizeVoice(context.Background(), map[string]any{
-		"summarize.tts_backend":      strAPI,
-		"summarize.tts_api.base_url": "",
+		"ai_summary.api.base_url": "",
 	})
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Message, "required")
@@ -636,7 +646,6 @@ func TestTestSummarizeVoice_DefaultModel(t *testing.T) {
 	defer srv.Close()
 
 	result := testSummarizeVoice(context.Background(), map[string]any{
-		"summarize.tts_backend":   strAPI,
 		"ai_summary.api.base_url": srv.URL,
 		"ai_summary.api.key":      "test-key",
 		// No model provided — should default to "gpt-4o-mini"

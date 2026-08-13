@@ -31,7 +31,6 @@ type ConnectivityTestResult struct {
 
 // JSON key constants for goconst compliance.
 const (
-	strAPI      = "api"
 	strMessages = "messages"
 	strPiper    = "piper"
 	strKokoro   = "kokoro"
@@ -201,18 +200,17 @@ func testFRP(ctx context.Context, values map[string]any) ConnectivityTestResult 
 
 // ── Summarize Voice ──────────────────────────────────────────
 
+// testSummarizeVoice verifies the shared AI summary API connectivity. It is
+// decoupled from the voice-summary (TTS) backend: the shared ai_summary config
+// feeds both voice summarization and conversation recommendation, so the test
+// always probes the ai_summary.api endpoint regardless of summarize.tts_backend.
 func testSummarizeVoice(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	ttsBackend := resolveStringValue(values, "summarize.tts_backend", model.ConfigInstance.Summarize.TTSBackend)
-	if ttsBackend != strAPI {
-		return ConnectivityTestResult{Success: true, Message: "Voice summary backend is not protocol mode, no test needed"}
-	}
-
 	baseURL := resolveStringValue(values, "ai_summary.api.base_url", model.ConfigInstance.AISummary.API.BaseURL)
 	apiKey := resolveStringValue(values, "ai_summary.api.key", model.ConfigInstance.AISummary.API.Key)
 	modelName := resolveStringValue(values, "ai_summary.model", model.ConfigInstance.AISummary.Model)
 
 	if baseURL == "" {
-		return ConnectivityTestResult{Success: false, Message: "TTS API base URL is required"}
+		return ConnectivityTestResult{Success: false, Message: "AI summary API base URL is required"}
 	}
 	if modelName == "" {
 		modelName = "gpt-4o-mini"
