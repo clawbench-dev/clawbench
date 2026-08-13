@@ -83,6 +83,11 @@ func TestClaudeACP_LoadSession_ReplayParsing(t *testing.T) {
 	}
 	require.NotNil(t, conn, "should have a connection after LoadSession")
 
+	// Step 4b: Wait for late-arriving replay notifications (mirrors the 500ms
+	// wait ServeACPLoadSession does before reading the buffer). Without this,
+	// content notifications may not have arrived yet, leaving the buffer short.
+	time.Sleep(500 * time.Millisecond)
+
 	// Step 5: Collect replayed messages from the buffer
 	client := conn.GetClient()
 	require.NotNil(t, client, "should have ACP client after LoadSession")
