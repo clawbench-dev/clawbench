@@ -199,8 +199,7 @@
           @dragstart="onItemDragStart(entry, $event)"
           :class="{
             'dir-item': entry.type === 'dir',
-            active: !multiSelect.active && selectedPath === itemPath(entry.name),
-            'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
+            active: (!multiSelect.active && selectedPath === itemPath(entry.name)) || (multiSelect.active && multiSelect.selected.has(itemPath(entry.name))),
             'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
             'cut-item': isCutItem(itemPath(entry.name)),
             'drag-target': dropTargetPath === itemPath(entry.name) && entry.type === 'dir'
@@ -208,9 +207,6 @@
           :data-action="entry.type === 'dir' ? 'dir' : 'file'"
           :data-path="itemPath(entry.name)"
         >
-          <div v-if="multiSelect.active" class="ms-check" :class="{ checked: multiSelect.selected.has(itemPath(entry.name)) }">
-            <Check v-if="multiSelect.selected.has(itemPath(entry.name))" :size="12" />
-          </div>
           <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
             <img v-if="entry.type !== 'dir' && isThumbLoaded(entry)" class="file-thumb" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
             <FileIcon v-else :path="entry.name" :is-dir="entry.type === 'dir'" :size="28" class="file-icon" />
@@ -264,8 +260,7 @@
         @dragstart="onItemDragStart(entry, $event)"
         :class="{
           'grid-dir': entry.type === 'dir',
-          'grid-active': !multiSelect.active && selectedPath === itemPath(entry.name),
-          'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
+          'grid-active': (!multiSelect.active && selectedPath === itemPath(entry.name)) || (multiSelect.active && multiSelect.selected.has(itemPath(entry.name))),
           'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
           'cut-item': isCutItem(itemPath(entry.name)),
           'drag-target': dropTargetPath === itemPath(entry.name) && entry.type === 'dir'
@@ -273,9 +268,6 @@
         :data-action="entry.type === 'dir' ? 'dir' : 'file'"
         :data-path="itemPath(entry.name)"
       >
-        <div v-if="multiSelect.active" class="grid-ms-check" :class="{ checked: multiSelect.selected.has(itemPath(entry.name)) }">
-          <Check v-if="multiSelect.selected.has(itemPath(entry.name))" :size="12" />
-        </div>
         <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
           <img v-if="isThumbLoaded(entry)" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
           <FileIcon v-else :path="entry.name" :is-dir="entry.type === 'dir'" :size="32" class="grid-icon" />
@@ -403,7 +395,7 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
@@ -1781,29 +1773,6 @@ function currentFileForClipboard() {
     white-space: nowrap;
 }
 
-/* ── Multi-select checkbox ── */
-.ms-check {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    border: 2px solid var(--border-color, #d0d0d0);
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-}
-
-.ms-check.checked {
-    background: var(--accent-color, #4a90d9);
-    border-color: var(--accent-color, #4a90d9);
-    color: #fff;
-}
-
-.file-item.ms-selected {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
-}
-
 .file-item.ctx-highlight {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
@@ -1999,7 +1968,6 @@ function currentFileForClipboard() {
 }
 
 .file-item.active .file-icon-wrap,
-.file-item.ms-selected .file-icon-wrap,
 .file-item.ctx-highlight .file-icon-wrap {
     box-sizing: border-box;
     border-radius: 6px;
@@ -2015,13 +1983,11 @@ function currentFileForClipboard() {
     background: color-mix(in srgb, white 50%, var(--accent-color, #4a90d9));
 }
 
-.file-item.ms-selected .file-icon-wrap,
 .file-item.ctx-highlight .file-icon-wrap {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 
 .file-item.active .file-icon-wrap .file-icon,
-.file-item.ms-selected .file-icon-wrap .file-icon,
 .file-item.ctx-highlight .file-icon-wrap .file-icon {
     width: 28px;
     height: 28px;
@@ -2156,10 +2122,6 @@ function currentFileForClipboard() {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 
-.grid-item.ms-selected {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
-}
-
 .grid-item.ctx-highlight {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
@@ -2167,11 +2129,6 @@ function currentFileForClipboard() {
 .grid-item.grid-active .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--bg-tertiary, #f5f5f5));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 40%, transparent);
-}
-
-.grid-item.ms-selected .grid-thumb {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, var(--bg-tertiary, #f5f5f5));
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 30%, transparent);
 }
 
 .grid-item.ctx-highlight .grid-thumb {
@@ -2255,28 +2212,6 @@ function currentFileForClipboard() {
 }
 
 /* Grid multi-select check */
-.grid-ms-check {
-    position: absolute;
-    top: 4px;
-    left: 4px;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    border: 2px solid var(--border-color, #d0d0d0);
-    background: var(--bg-primary, #fff);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2;
-    transition: all 0.15s;
-}
-
-.grid-ms-check.checked {
-    background: var(--accent-color, #4a90d9);
-    border-color: var(--accent-color, #4a90d9);
-    color: #fff;
-}
-
 [data-theme="dark"] .grid-thumb {
     background: var(--bg-secondary, #2a2a2a);
 }
@@ -2291,16 +2226,10 @@ function currentFileForClipboard() {
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 50%, transparent);
 }
 
-[data-theme="dark"] .grid-item.ms-selected .grid-thumb {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 14%, var(--bg-secondary, #2a2a2a));
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 35%, transparent);
-}
-
 [data-theme="dark"] .file-item.active .file-icon-wrap {
     background: color-mix(in srgb, white 30%, var(--accent-color, #4a90d9));
 }
 
-[data-theme="dark"] .file-item.ms-selected .file-icon-wrap,
 [data-theme="dark"] .file-item.ctx-highlight .file-icon-wrap {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
 }
