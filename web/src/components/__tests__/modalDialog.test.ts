@@ -53,11 +53,29 @@ describe('ModalDialog', () => {
     expect($('.modal-title')?.textContent).toBe('Test Dialog')
   })
 
-  it('shows close button', async () => {
+  it('does not render a close button', async () => {
     mountDialog({ title: 'Test' })
     await nextTick()
 
-    expect($('.modal-close-btn')).toBeTruthy()
+    expect($('.modal-close-btn')).toBeFalsy()
+  })
+
+  it('emits close when the header is clicked (after animation)', async () => {
+    vi.useFakeTimers()
+    mountDialog({ title: 'Test' })
+    await nextTick()
+
+    const header = $('.modal-header')!
+    header.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+
+    expect(wrapper!.vm.leaving).toBe(true)
+
+    vi.advanceTimersByTime(250)
+    await nextTick()
+
+    expect(wrapper!.emitted('close')).toBeTruthy()
+    expect(wrapper!.vm.leaving).toBe(false)
   })
 
   it('emits close when overlay is clicked (after animation)', async () => {
@@ -92,14 +110,14 @@ describe('ModalDialog', () => {
     expect(wrapper!.emitted('close')).toBeFalsy()
   })
 
-  it('emits close when close button is clicked (after animation)', async () => {
+  it('emits close when the header is clicked (after animation)', async () => {
     vi.useFakeTimers()
     mountDialog({ title: 'Test' })
     await nextTick()
 
-    // Click close button directly
-    const btn = $('.modal-close-btn')!
-    btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    // Click the header directly
+    const header = $('.modal-header')!
+    header.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
 
     // handleClose sets leaving=true

@@ -5,12 +5,12 @@
       v-show="open || leaving"
       ref="overlayRef"
       class="bs-overlay"
-      :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-transparent-overlay': transparentOverlay, 'bs-overlay-fullscreen': fullscreen, 'bs-overlay-wide-auto': isWideScreen && auto }"
+      :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-transparent-overlay': transparentOverlay, 'bs-overlay-fullscreen': fullscreen, 'bs-overlay-wide-auto': isWideScreen }"
       tabindex="-1"
       @click.self="handleClose"
       @keydown.escape="handleEscapeKey"
     >
-      <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-constrained': isWideScreen, 'bs-wide-auto': isWideScreen && auto }">
+      <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-wide-auto': isWideScreen }">
         <!-- Header -->
         <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly }" @click="handleClose">
           <div class="bs-handle" />
@@ -363,72 +363,22 @@ defineExpose({
 
 /* ── Wide-screen auto mode: centered floating card ── */
 
-/* Overlay: center the panel instead of bottom-aligning */
-.bs-overlay.bs-overlay-wide-auto {
-  align-items: center;
-  justify-content: center;
-  padding: 44px 20px 48px;
-}
-
-/* Panel: relative positioning, fixed width, full border-radius, card shadow */
+/* Reposition the panel as a centered card (shared layer provides the look) */
 .bs-panel.bs-wide-auto {
   position: relative;
   top: auto;
   bottom: auto;
   left: auto;
   right: auto;
-  width: 560px;
-  max-width: 100%;
-  height: auto;
-  max-height: 100%;
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-  animation: bs-scaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 /* Hide drag handle in centered card mode */
-.bs-panel.bs-wide-auto .bs-handle {
+.bs-overlay.bs-overlay-wide-auto .bs-handle {
   display: none;
 }
 
 /* Body: scrollable in centered card mode */
 .bs-panel.bs-wide-auto .bs-body {
   overflow-y: auto;
-}
-
-/* Close animation: scale-out instead of slide-down */
-.bs-panel.bs-wide-auto.bs-leaving {
-  animation: bs-scaleOut 0.25s ease forwards;
-}
-
-@keyframes bs-scaleIn {
-  from {
-    opacity: 0;
-    transform: translateY(24px) scale(0.94);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes bs-scaleOut {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(24px) scale(0.94);
-  }
-}
-
-/* Wide-screen: constrain bottom-sheet width and center it. Driven by the
-   reactive isWideScreen state (physical-width aware) so high-DPR tablets in
-   landscape are constrained even when CSS width < 1024px. Keep narrow screens
-   full-width. */
-.bs-panel.bs-constrained {
-  max-width: 560px;
-  margin: 0 auto;
 }
 </style>
