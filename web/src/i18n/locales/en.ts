@@ -366,6 +366,11 @@ export default {
       speak: 'Read',
       speaking: 'Speaking',
     },
+    voice: {
+      recording: 'Recording',
+      recordingHint: 'Recording · release to end',
+      transcribing: 'Transcribing',
+    },
     archive: {
       confirm: 'Archive current session? You can restore archived sessions via session search.',
       destroyConfirm: 'Permanently delete current session? This cannot be undone. All messages, tool calls, and related data will be removed.',
@@ -732,7 +737,9 @@ export default {
       switchProjectFailed: 'Switch project failed: {error}',
       switchProjectFailedShort: 'Switch project failed',
       dirLoadFailed: 'Directory not found or inaccessible',
+      dirRemoved: 'The current directory may have been removed',
       fileNotFound: 'File not found',
+      fileRemoved: 'The file may have been removed',
       externalFile: 'This file is outside the project directory',
       externalDirNotSupported: 'Opening external directories is not supported',
       archiving: 'Packing {n} items...',

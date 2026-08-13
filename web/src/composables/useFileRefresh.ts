@@ -367,6 +367,8 @@ async function doRefreshCurrentFile(options: {
     currentFile?.isImage,
     currentFile?.isAudio,
     false,
+    false,
+    clearOnError, // silent: deleted file should close without an error toast
   )
 
   if (gen !== refreshGeneration) return

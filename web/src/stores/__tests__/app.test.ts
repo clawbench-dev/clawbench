@@ -15,8 +15,9 @@ vi.mock('@/utils/appLog', () => ({
 }))
 
 // Mock useToast
+const mockToastShow = vi.fn()
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ show: vi.fn() }),
+  useToast: () => ({ show: mockToastShow }),
 }))
 
 // Mock useDialog
@@ -168,6 +169,22 @@ describe('loadFiles DirectoryNotFound → parent navigation', () => {
     // apiGet should have been called at least 11 times (initial + 10 recursive)
     expect(vi.mocked(apiGet).mock.calls.length).toBeGreaterThanOrEqual(10)
   })
+
+  it('resets to project root with an info toast when the root is deleted', async () => {
+    const err = Object.assign(new Error('Directory not found'), { msgKey: 'DirectoryNotFound' })
+    vi.mocked(apiGet).mockRejectedValue(err)
+    mockToastShow.mockClear()
+
+    store.state.currentDir = ''
+    store.state.dirEntries = [{ name: 'old.txt', type: 'file', modified: '', size: 0, supported: true }]
+
+    await store.loadFiles('')
+
+    expect(store.state.currentDir).toBe('')
+    expect(store.state.dirEntries).toEqual([])
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+    expect(mockToastShow.mock.calls[0][1]).toMatchObject({ type: 'info' })
+  })
 })
 
 describe('saveOpenFile / loadOpenFile / clearStaleOpenFile', () => {
@@ -271,5 +288,48 @@ describe('markSaved', () => {
     store.state.currentFile = null
     store.markSaved('/tmp/main.go', 'new')
     expect(store.state.currentFile).toBeNull()
+  })
+})
+
+describe('selectFile not-found handling', () => {
+  const originalFetch = global.fetch
+
+  beforeEach(() => {
+    store.state.currentFile = null
+    store.state.projectRoot = '/tmp/project'
+    mockToastShow.mockClear()
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+  })
+
+  function mockFetchResponse(payload: { error?: string; msgKey?: string }, ok: boolean) {
+    global.fetch = vi.fn().mockResolvedValue({ ok, json: async () => payload })
+  }
+
+  it('shows an info toast (not an error) when the file is not found', async () => {
+    mockFetchResponse({ error: 'File not found', msgKey: 'FileNotFoundShort' }, false)
+    const ok = await store.selectFile('/tmp/project/gone.go')
+    expect(ok).toBe(false)
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+    const [msg, opts] = mockToastShow.mock.calls[0]
+    expect(opts).toMatchObject({ type: 'info' })
+    // Informational "file removed" message, not the raw backend error
+    expect(msg).not.toBe('File not found')
+  })
+
+  it('shows no toast at all when the silent flag is set', async () => {
+    mockFetchResponse({ error: 'File not found', msgKey: 'FileNotFoundShort' }, false)
+    const ok = await store.selectFile('/tmp/project/gone.go', false, false, true, false, true)
+    expect(ok).toBe(false)
+    expect(mockToastShow).not.toHaveBeenCalled()
+  })
+
+  it('keeps an error toast for non-not-found failures', async () => {
+    mockFetchResponse({ error: 'Server exploded', msgKey: 'InternalError' }, false)
+    const ok = await store.selectFile('/tmp/project/main.go')
+    expect(ok).toBe(false)
+    expect(mockToastShow).toHaveBeenCalledWith('Server exploded', expect.objectContaining({ type: 'error' }))
   })
 })

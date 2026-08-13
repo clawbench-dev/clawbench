@@ -366,6 +366,11 @@ export default {
       speak: '朗读',
       speaking: '朗读中',
     },
+    voice: {
+      recording: '录音中',
+      recordingHint: '录音中 · 松开结束',
+      transcribing: '识别中',
+    },
     archive: {
       confirm: '确认归档当前会话？归档后可通过会话搜索恢复。',
       destroyConfirm: '永久删除当前会话？此操作不可恢复，所有消息、工具调用和相关数据将被删除。',
@@ -733,7 +738,9 @@ export default {
       switchProjectFailed: '切换项目失败: {error}',
       switchProjectFailedShort: '切换项目失败',
       dirLoadFailed: '目录不存在或无法访问',
+      dirRemoved: '当前目录已被移除',
       fileNotFound: '文件不存在',
+      fileRemoved: '文件可能已被移除',
       externalFile: '此文件位于项目目录之外',
       externalDirNotSupported: '暂不支持打开项目外目录',
       archiving: '正在打包 {n} 个文件...',

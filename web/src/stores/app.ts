@@ -363,6 +363,14 @@ async function loadFiles(dir = '', silent = false, _depth = 0): Promise<void> {
             await loadFiles(parent, silent, _depth + 1)
             return
         }
+        if (msgKey === 'DirectoryNotFound') {
+            // Current directory (or every ancestor) was deleted — reset to the
+            // project root with an empty listing instead of an alarming error.
+            state.currentDir = ''
+            state.dirEntries = []
+            if (!silent) useToast().show(gt('file.toast.dirRemoved'), { icon: 'ℹ️', type: 'info', duration: 2000 })
+            return
+        }
         // Roll back to previous state on failure
         state.currentDir = prevDir
         state.dirEntries = prevEntries
@@ -376,7 +384,7 @@ async function loadFiles(dir = '', silent = false, _depth = 0): Promise<void> {
     }
 }
 
-async function selectFile(path: string, isImageFile = false, isAudioFile = false, addToHistory = true, forceText = false): Promise<boolean> {
+async function selectFile(path: string, isImageFile = false, isAudioFile = false, addToHistory = true, forceText = false, silent = false): Promise<boolean> {
     const seq = ++selectFileSeq // this call supersedes any earlier in-flight call
 
     // Detect media files by extension (avoids dynamic import)
@@ -445,7 +453,11 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
                 state.currentFile = { name: fileName, path, content: null, tooLarge: true, size: sizeInfo?.size }
                 saveOpenFile(); return true
             }
-            throw new Error(err.error || 'Failed')
+            // Attach msgKey so callers can distinguish "file not found" from
+            // other failures (used to show an info toast instead of an error).
+            const e = new Error(err.error || 'Failed') as Error & { msgKey?: string }
+            if (err.msgKey) e.msgKey = err.msgKey
+            throw e
         }
         const data = await resp.json() as CurrentFile
         // When forceText=true, clear isBinary/tooLarge so binary fallback disappears
@@ -469,8 +481,17 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         }
         saveOpenFile(); return true
     } catch (err: unknown) {
+        // silent: background/file-watcher deletion — just report failure so the
+        // caller can close the file without an alarming error popup.
+        if (silent) return false
         // Don't replace currentFile — keep the previously opened file visible.
-        useToast().show((err as Error).message, { type: 'error', icon: '⚠️' })
+        const msgKey = (err as Error & { msgKey?: string })?.msgKey
+        if (msgKey === 'FileNotFoundShort' || msgKey === 'FileNotFound') {
+            // File was deleted/moved externally — inform instead of alarming.
+            useToast().show(gt('file.toast.fileRemoved'), { icon: 'ℹ️', type: 'info', duration: 2000 })
+        } else {
+            useToast().show((err as Error).message, { type: 'error', icon: '⚠️' })
+        }
         return false
     } finally {
         if (seq === selectFileSeq) {

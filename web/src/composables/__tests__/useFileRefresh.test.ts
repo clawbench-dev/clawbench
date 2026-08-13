@@ -470,6 +470,44 @@ describe('useFileRefresh clearOnError', () => {
 
     globalThis.fetch = originalFetch
   })
+
+  it('passes silent=true to selectFile when clearOnError is set (no toast on deletion)', async () => {
+    store.state.currentFile = { name: 'gone.go', path: 'src/gone.go', content: 'x\n' }
+    store.state.currentDir = 'src'
+    vi.mocked(store.selectFile).mockResolvedValue(false)
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'File not found', msgKey: 'FileNotFoundShort' }),
+    })
+
+    await refreshCurrentFile({ clearOnError: true })
+
+    const args = store.selectFile.mock.calls[0]
+    expect(args[5]).toBe(true)
+
+    globalThis.fetch = originalFetch
+  })
+
+  it('passes silent=false to selectFile without clearOnError', async () => {
+    store.state.currentFile = { name: 'gone.go', path: 'src/gone.go', content: 'x\n' }
+    store.state.currentDir = 'src'
+    vi.mocked(store.selectFile).mockResolvedValue(false)
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'Network error' }),
+    })
+
+    await refreshCurrentFile({ clearOnError: false })
+
+    const args = store.selectFile.mock.calls[0]
+    expect(args[5]).toBe(false)
+
+    globalThis.fetch = originalFetch
+  })
 })
 
 describe('useFileRefresh external-change confirmation while editing', () => {
