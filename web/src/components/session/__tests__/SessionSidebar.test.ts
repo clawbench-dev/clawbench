@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SessionSidebar from '@/components/session/SessionSidebar.vue'
+import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }) }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
@@ -58,19 +59,33 @@ describe('SessionSidebar', () => {
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 
-  it('emits resize on pointer drag with clamped width', () => {
+  it('emits resize with width clamped to MIN when dragging too far left', () => {
     const wrapper = mountSidebar()
+    const root = wrapper.find('.session-sidebar')
+    root.element.getBoundingClientRect = () =>
+      ({ right: 300, left: 20, width: 280, height: 600, top: 0, bottom: 600, x: 20, y: 0, toJSON: () => ({}) }) as DOMRect
     const div = wrapper.find('.sidebar-divider').element as HTMLElement
     div.setPointerCapture = vi.fn()
     div.releasePointerCapture = vi.fn()
-    Object.defineProperty(wrapper.find('.session-sidebar').element, 'getBoundingClientRect', {
-      configurable: true,
-      value: () => ({ left: 0, width: 280, right: 280, top: 0, bottom: 0, height: 600, x: 0, y: 0, toJSON() {} }),
-    })
-    // Simulate divider pointerdown then window pointermove
-    div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientX: 600 }))
-    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientX: 300 }))
+    // right(300) - clientX(100) = 200 → clamped to MIN(220)
+    div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientX: 500 }))
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientX: 100 }))
     window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
-    expect(wrapper.emitted('resize')).toBeTruthy()
+    expect(wrapper.emitted('resize')?.[0]?.[0]).toBe(SIDEBAR_MIN_WIDTH)
+  })
+
+  it('emits resize with width clamped to MAX when dragging too far right', () => {
+    const wrapper = mountSidebar()
+    const root = wrapper.find('.session-sidebar')
+    root.element.getBoundingClientRect = () =>
+      ({ right: 300, left: 20, width: 280, height: 600, top: 0, bottom: 600, x: 20, y: 0, toJSON: () => ({}) }) as DOMRect
+    const div = wrapper.find('.sidebar-divider').element as HTMLElement
+    div.setPointerCapture = vi.fn()
+    div.releasePointerCapture = vi.fn()
+    // right(300) - clientX(-300) = 600 → clamped to MAX(480)
+    div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientX: 200 }))
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientX: -300 }))
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+    expect(wrapper.emitted('resize')?.[0]?.[0]).toBe(SIDEBAR_MAX_WIDTH)
   })
 })
