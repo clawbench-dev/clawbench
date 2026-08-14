@@ -6,8 +6,9 @@
         <span class="chat-group-label" :title="t('chat.actions.session')">
           {{ t('chat.actions.session') }}
         </span>
-        <button v-if="!sessionPanelOpen" class="chat-action-btn" data-action="session"
-          :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
+        <button class="chat-action-btn" data-action="session"
+          :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning, 'is-disabled': sessionPanelOpen }"
+          :disabled="sessionPanelOpen"
           @click="$emit('open-session-tab', 'sessions')"
           :title="t('chat.actions.session')">
           <List :size="14" />
@@ -1560,6 +1561,13 @@ defineExpose({
 .chat-action-btn.active:active {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
   transform: scale(0.92);
+}
+
+.chat-action-btn:disabled,
+.chat-action-btn.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  color: var(--text-muted, #999);
 }
 
 .chat-action-btn-archive:not(.disabled) {

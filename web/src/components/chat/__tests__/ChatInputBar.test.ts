@@ -660,14 +660,18 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('open-session-tab')).toBeTruthy()
   })
 
-  it('hides the session button when sessionPanelOpen is true', () => {
+  it('disables the session button when sessionPanelOpen is true', () => {
     const wrapper = mountBar({ sessionPanelOpen: true })
-    expect(wrapper.find('[data-action="session"]').exists()).toBe(false)
+    const btn = wrapper.find('[data-action="session"]')
+    expect(btn.exists()).toBe(true)
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('shows the session button when sessionPanelOpen is false', () => {
+  it('shows the session button enabled when sessionPanelOpen is false', () => {
     const wrapper = mountBar({ sessionPanelOpen: false })
-    expect(wrapper.find('[data-action="session"]').exists()).toBe(true)
+    const btn = wrapper.find('[data-action="session"]')
+    expect(btn.exists()).toBe(true)
+    expect((btn.element as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('auto-speech button emits toggle-auto-speech', async () => {
