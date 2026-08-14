@@ -16,6 +16,7 @@
   "optionalDependencies": {
     "@xulongzhe/clawbench-linux-x64": "0.1.0",
     "@xulongzhe/clawbench-linux-arm64": "0.1.0",
+    "@xulongzhe/clawbench-android-arm64": "0.1.0",
     "@xulongzhe/clawbench-darwin-x64": "0.1.0",
     "@xulongzhe/clawbench-darwin-arm64": "0.1.0",
     "@xulongzhe/clawbench-win32-x64": "0.1.0"

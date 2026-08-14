@@ -159,6 +159,13 @@ elif command -v go >/dev/null 2>&1; then
         fi
         GOOS=$TARGET_OS GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go cross-compile failed" >&2; exit 1; }
         echo "  Cross-compiled: $BINARY_NAME ($TARGET_OS/$TARGET_ARCH)"
+    elif [ -n "$BUILD_ANDROID" ]; then
+        # Android/Termux Go binary: must be PIE (interpreter /system/bin/linker64).
+        # GOOS=android emits PIE automatically. wlynxg/anet (via frp -> pion) uses
+        # go:linkname to net.zoneCache, which Go >= 1.23 rejects at link time, so
+        # disable linkname checks for this target only.
+        GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-checklinkname=0 $LDFLAGS" -o "$NAME" ./cmd/server || { echo "ERROR: Go Android build failed" >&2; exit 1; }
+        echo "  Go Android binary: ./$NAME (GOOS=android/arm64, PIE)"
     else
         go build -ldflags "$LDFLAGS" -o "$NAME" ./cmd/server || { echo "ERROR: Go build failed" >&2; exit 1; }
         echo "  Go binary: ./$NAME"

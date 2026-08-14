@@ -211,6 +211,69 @@ jobs:
           path: pkg-linux-arm64/clawbench/
           include-hidden-files: true
 
+  build-android-go:
+    name: Build Android arm64 Go binary
+    needs: [build-frontend, build-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: public
+          path: public/
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: android-apk/
+
+      - name: Copy frontend for Go embed
+        run: |
+          rm -rf internal/frontend/dist
+          cp -r public internal/frontend/dist
+          mkdir -p internal/frontend/dist/assets
+          cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build Android arm64 binary (PIE for Termux)
+        env:
+          CGO_ENABLED: 0
+        run: |
+          VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          # GOOS=android emits a PIE binary (interpreter /system/bin/linker64).
+          # wlynxg/anet (via frp -> pion) uses go:linkname to net.zoneCache, which
+          # Go >= 1.23 rejects at link time, so disable linkname checks for this target.
+          GOOS=android GOARCH=arm64 go build -ldflags="-checklinkname=0 -s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-android-arm64 ./cmd/server
+
+      - name: Verify Android arm64 binary
+        run: |
+          file clawbench-android-arm64
+
+      - name: Package Android arm64
+        run: |
+          mkdir -p pkg-android-arm64/clawbench
+          cp clawbench-android-arm64 pkg-android-arm64/clawbench/clawbench
+          chmod +x pkg-android-arm64/clawbench/clawbench
+          cd pkg-android-arm64 && zip -r clawbench-android-arm64.zip clawbench/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          files: pkg-android-arm64/clawbench-android-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64-package
+          path: pkg-android-arm64/clawbench/
+          include-hidden-files: true
+
   build-windows:
     name: Build Windows amd64
     needs: [build-frontend, build-android]
@@ -758,7 +821,7 @@ jobs:
 
   publish-npm:
     name: Publish to npm
-    needs: [build-frontend, build-linux, build-linux-arm64, build-windows, build-macos-arm64, build-macos-amd64]
+    needs: [build-frontend, build-linux, build-linux-arm64, build-android-go, build-windows, build-macos-arm64, build-macos-amd64]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -797,6 +860,12 @@ jobs:
           name: linux-arm64-package
           path: pkg-linux-arm64/clawbench/
 
+      - name: Download Android arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: android-arm64-package
+          path: pkg-android-arm64/clawbench/
+
       - name: Download Windows binary
         uses: actions/download-artifact@v4
         with:
@@ -831,6 +900,13 @@ jobs:
           PLATFORM_DIR="npm/platforms/linux-arm64"
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-linux-arm64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
+          chmod +x "$PLATFORM_DIR/bin/clawbench"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
+
+          # --- @xulongzhe/clawbench-android-arm64 ---
+          PLATFORM_DIR="npm/platforms/android-arm64"
+          mkdir -p "$PLATFORM_DIR/bin"
+          cp pkg-android-arm64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
           chmod +x "$PLATFORM_DIR/bin/clawbench"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
@@ -883,6 +959,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Publish @xulongzhe/clawbench-android-arm64
+        run: npm publish ./npm/platforms/android-arm64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish @xulongzhe/clawbench-darwin-x64
         run: npm publish ./npm/platforms/darwin-x64 --access public
         env:
@@ -905,7 +986,7 @@ jobs:
 
   release-notes:
     name: Generate Release Notes
-    needs: [build-linux, build-linux-arm64, build-windows, build-macos-arm64, build-macos-amd64, build-android, docker, publish-npm]
+    needs: [build-linux, build-linux-arm64, build-android-go, build-windows, build-macos-arm64, build-macos-amd64, build-android, docker, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
