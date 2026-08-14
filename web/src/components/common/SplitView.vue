@@ -8,20 +8,14 @@
     <div class="split-view__left" :class="{ 'split-view__left--collapsed': enabled && collapsed }" :style="leftStyle">
       <slot name="left" />
     </div>
-    <div
+    <SplitDivider
       v-if="enabled && !collapsed"
-      ref="dividerRef"
-      class="split-view__divider"
-      role="separator"
-      aria-orientation="vertical"
-      :aria-valuenow="Math.round(internalRatio * 100)"
-      :aria-valuemin="Math.round(minLeftRatio * 100)"
-      :aria-valuemax="Math.round(maxLeftRatio * 100)"
       :title="title"
-      @pointerdown="onDividerPointerDown"
-    >
-      <div class="split-view__gutter-line" />
-    </div>
+      :aria-value-now="ariaValueNow"
+      :aria-value-min="ariaValueMin"
+      :aria-value-max="ariaValueMax"
+      @dragmove="onMove"
+    />
     <div class="split-view__right">
       <slot name="right" />
     </div>
@@ -31,6 +25,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { clampRatio, normalizeRatio, MIN_PANEL_WIDTH } from '@/utils/splitRatio'
+import SplitDivider from './SplitDivider.vue'
 
 const props = withDefaults(defineProps<{
   enabled: boolean
@@ -52,10 +47,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ (e: 'update:ratio', ratio: number): void }>()
 
 const rootRef = ref<HTMLDivElement | null>(null)
-const dividerRef = ref<HTMLDivElement | null>(null)
 const internalRatio = ref(normalizeRatio(props.ratio))
 const containerWidth = ref(0)
-let dragActive = false
 let observer: ResizeObserver | null = null
 
 watch(() => props.ratio, (r) => {
@@ -70,36 +63,21 @@ const leftStyle = computed(() => {
 const minLeftRatio = computed(() => (containerWidth.value > 0 ? props.minLeft / containerWidth.value : 0))
 const maxLeftRatio = computed(() => (containerWidth.value > 0 ? 1 - props.minRight / containerWidth.value : 1))
 
+const ariaValueNow = computed(() => Math.round(internalRatio.value * 100))
+const ariaValueMin = computed(() => Math.round(minLeftRatio.value * 100))
+const ariaValueMax = computed(() => Math.round(maxLeftRatio.value * 100))
+
 function measureContainer() {
   if (rootRef.value) containerWidth.value = rootRef.value.getBoundingClientRect().width
 }
 
-function onMove(e: PointerEvent) {
+function onMove(clientX: number) {
   const rect = rootRef.value?.getBoundingClientRect()
   if (!rect || rect.width <= 0) return
-  const raw = (e.clientX - rect.left) / rect.width
+  const raw = (clientX - rect.left) / rect.width
   const ratio = clampRatio(raw, rect.width, props.minLeft, props.minRight)
   internalRatio.value = ratio
   emit('update:ratio', ratio)
-}
-
-function onDividerPointerDown(e: PointerEvent) {
-  if (e.button !== 0) return
-  dragActive = true
-  dividerRef.value?.setPointerCapture?.(e.pointerId)
-  document.body.classList.add('split-view-dragging')
-  onMove(e)
-}
-
-function onPointerMove(e: PointerEvent) {
-  if (dragActive) onMove(e)
-}
-
-function onPointerUp(e: PointerEvent) {
-  if (!dragActive) return
-  dragActive = false
-  dividerRef.value?.releasePointerCapture?.(e.pointerId)
-  document.body.classList.remove('split-view-dragging')
 }
 
 onMounted(() => {
@@ -108,17 +86,10 @@ onMounted(() => {
     observer = new ResizeObserver(measureContainer)
     if (rootRef.value) observer.observe(rootRef.value)
   }
-  window.addEventListener('pointermove', onPointerMove)
-  window.addEventListener('pointerup', onPointerUp)
-  window.addEventListener('pointercancel', onPointerUp)
 })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
-  window.removeEventListener('pointermove', onPointerMove)
-  window.removeEventListener('pointerup', onPointerUp)
-  window.removeEventListener('pointercancel', onPointerUp)
-  document.body.classList.remove('split-view-dragging')
 })
 </script>
 
@@ -166,52 +137,5 @@ onBeforeUnmount(() => {
 .split-view--active .split-view__right {
   flex: 1 1 auto;
   min-width: 320px;
-}
-/* Divider: a single 1px line by default — no visible gap. On hover/drag it
-   expands (via negative margins so layout does NOT shift) into a grab-able
-   gap with an accent highlight. */
-.split-view__divider {
-  position: relative;
-  flex: 0 0 auto;
-  width: var(--split-gutter, 1px);
-  margin: 0;
-  cursor: col-resize;
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  z-index: 2;
-  transition: width 0.15s ease, margin 0.15s ease, background 0.15s ease;
-}
-/* invisible wider hit area so hover/touch can catch the 1px line */
-.split-view__divider::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -6px;
-  right: -6px;
-}
-.split-view__divider:hover,
-.split-view__divider:active {
-  width: 12px;
-  margin: 0 -5.5px;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
-}
-.split-view__gutter-line {
-  position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  transform: translateX(-50%);
-  background: var(--border-color, rgba(0, 0, 0, 0.12));
-  transition: background 0.15s ease;
-}
-.split-view__divider:hover .split-view__gutter-line,
-.split-view__divider:active .split-view__gutter-line {
-  background: var(--accent-color, #0066cc);
-}
-:global(body.split-view-dragging) {
-  user-select: none;
-  cursor: col-resize;
 }
 </style>

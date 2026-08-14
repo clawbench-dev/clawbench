@@ -263,6 +263,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .session-item-title {
@@ -348,6 +350,9 @@ onUnmounted(() => {
 .session-item-time {
   font-size: 11px;
   color: var(--text-muted, #999);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-item-agent {
@@ -361,6 +366,9 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-item-model {
@@ -368,7 +376,7 @@ onUnmounted(() => {
   padding: 1px 4px;
   border-radius: 3px;
   font-weight: 500;
-  flex-shrink: 0;
+  flex-shrink: 1;
   background: rgba(100, 100, 100, 0.08);
   color: var(--text-muted, #999);
   min-width: 0;

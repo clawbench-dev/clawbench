@@ -47,6 +47,16 @@ const sessionBarColor = computed(() => {
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   box-shadow: none;
   cursor: default;
+  white-space: nowrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.session-list-header .bs-header-title {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .session-counter {
   margin-left: auto;

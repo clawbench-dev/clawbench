@@ -82,7 +82,7 @@ describe('SessionSidebar', () => {
     const root = wrapper.find('.session-sidebar')
     root.element.getBoundingClientRect = () =>
       ({ right: 300, left: 20, width: 280, height: 600, top: 0, bottom: 600, x: 20, y: 0, toJSON: () => ({}) }) as DOMRect
-    const div = wrapper.find('.sidebar-divider').element as HTMLElement
+    const div = wrapper.find('.split-view__divider').element as HTMLElement
     div.setPointerCapture = vi.fn()
     div.releasePointerCapture = vi.fn()
     // right(300) - clientX(100) = 200 → clamped to MIN(220)
@@ -97,7 +97,7 @@ describe('SessionSidebar', () => {
     const root = wrapper.find('.session-sidebar')
     root.element.getBoundingClientRect = () =>
       ({ right: 300, left: 20, width: 280, height: 600, top: 0, bottom: 600, x: 20, y: 0, toJSON: () => ({}) }) as DOMRect
-    const div = wrapper.find('.sidebar-divider').element as HTMLElement
+    const div = wrapper.find('.split-view__divider').element as HTMLElement
     div.setPointerCapture = vi.fn()
     div.releasePointerCapture = vi.fn()
     // right(300) - clientX(-300) = 600 → clamped to MAX(480)

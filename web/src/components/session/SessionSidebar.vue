@@ -1,12 +1,6 @@
 <template>
   <div ref="rootRef" class="session-sidebar" :style="{ width: `${width}px` }">
-    <div
-      ref="dividerRef"
-      class="sidebar-divider"
-      role="separator"
-      aria-orientation="vertical"
-      @pointerdown="onDividerPointerDown"
-    />
+    <SplitDivider @dragmove="onDragMove" />
     <div class="sidebar-inner">
       <SessionListHeader
         :session-count="sessionCount"
@@ -37,9 +31,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Pin, PanelLeftClose } from 'lucide-vue-next'
+import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import { useAgents } from '@/composables/useAgents'
@@ -58,10 +53,8 @@ const emit = defineEmits(['select', 'archive', 'destroy', 'unpin', 'close', 'res
 const { t } = useI18n()
 const { agents, loadAgents } = useAgents()
 
-const dividerRef = ref(null)
 const listRef = ref(null)
 const rootRef = ref(null)
-let dragging = false
 
 const sessionCount = computed(() => store.state.sessionCount)
 const sessionMaxCount = computed(() => store.state.sessionMaxCount)
@@ -70,29 +63,14 @@ function clampWidth(w) {
   return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, w))
 }
 
-function onDividerPointerDown(e) {
-  if (e.button !== 0) return
-  dragging = true
-  dividerRef.value?.setPointerCapture?.(e.pointerId)
-  document.body.classList.add('session-sidebar-dragging')
-}
-
-function onPointerMove(e) {
-  if (!dragging) return
+function onDragMove(clientX) {
   const rect = rootRef.value?.getBoundingClientRect()
   if (!rect) return
   // Sidebar grows to the right; divider sits at its left edge.
   // Width = distance from sidebar's right edge to the pointer.
   const rightEdge = rect.right
-  const newWidth = rightEdge - e.clientX
+  const newWidth = rightEdge - clientX
   emit('resize', clampWidth(newWidth))
-}
-
-function onPointerUp(e) {
-  if (!dragging) return
-  dragging = false
-  dividerRef.value?.releasePointerCapture?.(e.pointerId)
-  document.body.classList.remove('session-sidebar-dragging')
 }
 
 async function handleCreateClick() {
@@ -112,18 +90,6 @@ function handleArchive(sessionId, backend) {
   emit('archive', sessionId, backend)
 }
 
-onMounted(() => {
-  window.addEventListener('pointermove', onPointerMove)
-  window.addEventListener('pointerup', onPointerUp)
-  window.addEventListener('pointercancel', onPointerUp)
-})
-onBeforeUnmount(() => {
-  window.removeEventListener('pointermove', onPointerMove)
-  window.removeEventListener('pointerup', onPointerUp)
-  window.removeEventListener('pointercancel', onPointerUp)
-  document.body.classList.remove('session-sidebar-dragging')
-})
-
 defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLocally: (s) => listRef.value?.addSessionLocally(s) })
 </script>
 
@@ -142,33 +108,5 @@ defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLoca
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-.sidebar-divider {
-  position: relative;
-  flex: 0 0 auto;
-  width: 1px;
-  cursor: col-resize;
-  touch-action: none;
-  z-index: 2;
-  background: var(--border-color, #e5e5e5);
-  transition: background 0.15s, width 0.15s;
-}
-.sidebar-divider::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -6px;
-  right: -6px;
-}
-.sidebar-divider:hover,
-.sidebar-divider:active {
-  width: 12px;
-  margin-left: -6px;
-  background: var(--accent-color, #0066cc);
-}
-:global(body.session-sidebar-dragging) {
-  user-select: none;
-  cursor: col-resize;
 }
 </style>
