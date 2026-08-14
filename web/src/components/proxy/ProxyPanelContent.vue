@@ -48,7 +48,7 @@
       </template>
 
       <!-- Web mode: app recommendation banner -->
-      <div v-if="!isAppMode" class="tunnel-banner tip">
+      <div v-if="!isAppMode" class="tunnel-banner tip tunnel-banner--square">
         <Smartphone :size="16" />
         <div class="tunnel-banner-content">
           <span class="tunnel-banner-detail">{{ t('proxy.appRecommendation') }}</span>
@@ -566,6 +566,10 @@ async function handleRetryTunnel() {
   background: rgba(59, 130, 246, 0.06);
   border-left-color: #3b82f6;
   color: var(--text-secondary, #666);
+}
+
+.tunnel-banner.tip.tunnel-banner--square {
+  border-radius: 0;
 }
 
 .tunnel-banner.tip .tunnel-banner-detail {
