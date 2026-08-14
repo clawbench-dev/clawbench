@@ -218,29 +218,49 @@
 
             <template #right>
               <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" :class="{ 'chat-drop-active': chatDropActive }" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
-                <!-- Chat Tab -->
-                <TabPanel tabId="chat" :activeTab="chatActive">
-                  <template #header>
-                    <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
-                    <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description">
-                      <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
-                    </div>
-                  </template>
-                  <ChatPanelContent
-                    :active="isWideScreen || activeTab === 'chat'"
-                    :keyboard-active="chatShortcutActive"
-                    :current-file="currentFile"
-                    :current-dir="currentDir"
-                    @open="switchTab('chat')"
-                    @open-file="handleSelectFile"
-                    @task-card-click="onTaskCardClick"
-                    @open-session-search="sessionSearchDrawer.open()"
-                  />
-                </TabPanel>
-                <div v-if="chatDropActive" class="chat-drop-hint">
-                  <Paperclip :size="16" />
-                  {{ t('file.dropToAttach') }}
+                <div class="col-right-chat">
+                  <!-- Chat Tab -->
+                  <TabPanel tabId="chat" :activeTab="chatActive">
+                    <template #header>
+                      <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
+                      <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description">
+                        <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
+                      </div>
+                    </template>
+                    <ChatPanelContent
+                      :active="isWideScreen || activeTab === 'chat'"
+                      :keyboard-active="chatShortcutActive"
+                      :current-file="currentFile"
+                      :current-dir="currentDir"
+                      :session-sidebar-open="sessionSidebar.open.value"
+                      @open="switchTab('chat')"
+                      @open-file="handleSelectFile"
+                      @task-card-click="onTaskCardClick"
+                      @open-session-search="sessionSearchDrawer.open()"
+                    />
+                  </TabPanel>
+                  <div v-if="chatDropActive" class="chat-drop-hint">
+                    <Paperclip :size="16" />
+                    {{ t('file.dropToAttach') }}
+                  </div>
                 </div>
+                <SessionSidebar
+                  ref="sessionSidebarRef"
+                  v-show="sessionSidebar.open.value && isWideScreen"
+                  :width="sessionSidebar.width.value"
+                  :current-session-id="sessionIdentity.currentSessionId.value"
+                  :running-session-ids="sessionIdentity.runningSessions.value"
+                  :is-active="isWideScreen"
+                  @resize="sessionSidebar.setWidth"
+                  @unpin="sessionSidebar.unpinToDrawer"
+                  @close="sessionSidebar.closeSidebar"
+                  @select="handleSessionSelect"
+                  @create="handleSessionCreate"
+                  @archive="handleSessionArchive"
+                  @destroy="handleSessionDestroy"
+                  @open-session-search="sessionSearchDrawer.open()"
+                  @create-agent-select="sessionIdentity.openAgentSelector"
+                />
               </div>
             </template>
           </SplitView>
@@ -284,6 +304,7 @@
         @archive="handleSessionArchive"
         @destroy="handleSessionDestroy"
         @open-session-search="sessionSearchDrawer.open()"
+        @pin="handleDrawerPin"
       />
 
       <!-- Session search drawer -->
@@ -431,6 +452,7 @@ import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
+import SessionSidebar from './components/session/SessionSidebar.vue'
 import SessionSearchDrawer from './components/session/SessionSearchDrawer.vue'
 import AcpSessionDrawer from './components/chat/AcpSessionDrawer.vue'
 import QuoteQuestionBar from './components/common/QuoteQuestionBar.vue'
@@ -443,6 +465,7 @@ import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTas
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { useSessionIdentity, registerSessionDrawerRef, resetIdentity } from './composables/useSessionIdentity.ts'
+import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
 import { resetAllCrudLists } from '@/composables/useCrudList'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
@@ -755,6 +778,9 @@ provide('toast', toast)
 const sessionIdentity = useSessionIdentity()
 const { getAgentBackend, getAgentName } = useAgents()
 
+const sessionSidebar = useSessionSidebar()
+sessionSidebar.registerOpenDrawer(() => sessionIdentity.sessionDrawer.open())
+
 // Register chat-scoped drawers with tab-drawer binding
 // Session drawer is now owned by useSessionIdentity (encapsulated TabDrawer)
 
@@ -930,10 +956,18 @@ const anyKeyboardActive = computed(() => terminalKeyboardActive.value || chatKey
 
 const quoteQuestion = useQuoteQuestion()
 const sessionDrawerRef = ref(null)
+const sessionSidebarRef = ref(null)
 
 // Register SessionDrawer ref so identity.openAgentSelector() works
 watch(sessionDrawerRef, (ref) => {
   if (ref) registerSessionDrawerRef(ref)
+}, { immediate: true })
+
+// Bridge: add new sessions to the sidebar once its ref is available
+watch(sessionSidebarRef, (ref) => {
+  if (ref) {
+    sessionSidebar.registerAddSessionLocally((s) => ref.addSessionLocally(s))
+  }
 }, { immediate: true })
 
 // Register identity actions (switchSession, createSession, etc.)
@@ -963,7 +997,21 @@ async function handleSessionCreate(agentId) {
       })
     }
   }
+  sessionSidebar.addSessionLocally({
+    id: sessionIdentity.currentSessionId.value,
+    title: sessionIdentity.currentSessionTitle.value || '',
+    backend: sessionIdentity.currentBackend.value || '',
+    agentId: sessionIdentity.currentAgentId.value || '',
+    model: sessionIdentity.currentModelName.value || '',
+    updatedAt: new Date().toISOString(),
+    unreadCount: 0,
+  })
   sessionIdentity.sessionDrawer.close()
+}
+
+function handleDrawerPin() {
+  sessionIdentity.sessionDrawer.close()
+  sessionSidebar.pinToSidebar()
 }
 
 function handleSessionArchive(sessionId, backend) {
@@ -2466,6 +2514,16 @@ onUnmounted(() => {
 .col-left,
 .col-right {
     position: relative;
+    height: 100%;
+}
+.col-right {
+    display: flex;
+    flex-direction: row;
+}
+.col-right-chat {
+    position: relative;
+    flex: 1;
+    min-width: 0;
     height: 100%;
 }
 
