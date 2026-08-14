@@ -10,8 +10,8 @@
           @create="handleCreateClick"
         >
           <template #actions>
-            <button class="header-action-btn sidebar-unpin-btn" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
-              <Pin :size="16" />
+            <button class="header-action-btn sidebar-close-btn" @click.stop="$emit('close')" :title="t('session.closeSidebar')">
+              <PanelLeftClose :size="16" />
             </button>
           </template>
         </SessionListHeader>
@@ -32,7 +32,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Pin } from 'lucide-vue-next'
+import { PanelLeftClose } from 'lucide-vue-next'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'

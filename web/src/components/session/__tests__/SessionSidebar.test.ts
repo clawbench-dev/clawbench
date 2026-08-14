@@ -47,9 +47,9 @@ describe('SessionSidebar', () => {
     expect(wrapper.find('.header-stub').exists()).toBe(true)
   })
 
-  it('emits close when pin button clicked (unpin collapses sidebar)', async () => {
+  it('emits close when collapse button clicked', async () => {
     const wrapper = mountSidebar()
-    await wrapper.find('.sidebar-unpin-btn').trigger('click')
+    await wrapper.find('.sidebar-close-btn').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 
