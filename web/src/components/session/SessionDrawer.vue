@@ -39,7 +39,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed, onUnmounted } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Pin } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -105,8 +105,8 @@ function handleSelect(sessionId, backend) {
   bottomSheetRef.value?.close()
 }
 
-function handleArchive(sessionId) {
-  emit('archive', sessionId)
+function handleArchive(sessionId, backend) {
+  emit('archive', sessionId, backend)
 }
 
 function addSessionLocally(session) {
@@ -121,6 +121,4 @@ watch(() => props.open, async (val) => {
 watch(() => store.state.sessionCount, async () => {
   if (props.open) listRef.value?.loadSessions()
 })
-
-onUnmounted(() => {})
 </script>

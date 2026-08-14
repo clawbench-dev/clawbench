@@ -178,12 +178,12 @@ describe('SessionDrawer', () => {
       expect(BottomSheetStub.methods.close).toHaveBeenCalled()
     })
 
-    it('forwards archive', async () => {
+    it('forwards archive with backend', async () => {
       const wrapper = mountDrawer()
       await nextTick()
-      wrapper.findComponent(SessionListStub).vm.$emit('archive', 's1')
+      wrapper.findComponent(SessionListStub).vm.$emit('archive', 's1', 'cli')
       expect(wrapper.emitted('archive')).toBeTruthy()
-      expect(wrapper.emitted('archive')![0]).toEqual(['s1'])
+      expect(wrapper.emitted('archive')![0]).toEqual(['s1', 'cli'])
     })
 
     it('forwards destroy', async () => {
