@@ -194,7 +194,7 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 解析 ACP 会话 ID：优先活动连接 acpSID，其次 external_session_id
+	// 解析 ACP 会话 ID：优先 external_session_id，其次活动连接 acpSID
 	acpSID := extID
 	if acpSID == "" {
 		if conn := ai.GetACPConnManager().GetConn(req.SessionID); conn != nil {
@@ -248,13 +248,18 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var mid string
 		if err := rows.Scan(&mid); err == nil {
 			existing[mid] = struct{}{}
 		}
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		slog.Error("handler: failed iterating existing external_message_id", "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
 
 	// 仅追加缺失（extMsgID 为空的消息不参与增量同步，避免重复）
 	var toPersist []replayMessage
