@@ -51,6 +51,7 @@ import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
+import { appLog } from '@/utils/appLog'
 
 const props = defineProps({
   currentSessionId: String,
@@ -92,7 +93,8 @@ async function loadSessions() {
     reconcileRunningSessions(sessions.value)
     hasMore.value = !!data.hasMore
     if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
-  } catch {
+  } catch (err) {
+    appLog.e('SessionList', 'Failed to load sessions:', err)
     sessions.value = []
   } finally {
     loading.value = false
@@ -112,8 +114,8 @@ async function loadMoreSessions() {
     const more = data.sessions || []
     if (more.length > 0) sessions.value = [...sessions.value, ...more]
     hasMore.value = !!data.hasMore
-  } catch {
-    // ignore
+  } catch (err) {
+    appLog.e('SessionList', 'Failed to load more sessions:', err)
   } finally {
     loadingMore.value = false
   }
@@ -164,7 +166,7 @@ const listNav = useListNav({
 useListKeys({ isOpen: () => props.isActive, nav: listNav })
 
 function scrollActiveIntoView(index) {
-  const items = document.querySelectorAll('.session-list .session-item')
+  const items = listRef.value?.querySelectorAll('.session-item') || []
   const el = items[index]
   if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
 }
