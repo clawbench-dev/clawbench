@@ -1,6 +1,7 @@
 import { inject } from 'vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { gt } from '@/composables/useLocale'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { isExternalLink, isAnchorLink, slugifyForHeading, stripLeadingNumbering } from '@/utils/doubleClickUtils.ts'
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, table, .mermaid'
@@ -44,6 +45,7 @@ export interface DoubleClickCopyOptions {
  */
 export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
     const toast = inject<ToastShow | null>('toast', null)
+    const { isPC } = usePlatformDetect()
     let lastTarget: EventTarget | null = null
     let lastTime = 0
     const DBLCLICK_THRESHOLD = 300 // ms，与浏览器默认双击间隔一致
@@ -212,10 +214,18 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
     /**
      * 处理原生 click 事件，手动判断双击
      * 只有在短时间内点击同一个元素时才触发双击复制
+     *
+     * PC 模式下禁用"双击复制段落"（markdown 预览的段落/代码行复制），
+     * 但仍保留文件路径/锚点链接的处理。
      */
     function handleDblClick(event: MouseEvent, onOpenFile?: LinkHandler): void {
         // 首先检查是否点击了链接
         if (handleAnchorClick(event, onOpenFile)) {
+            return
+        }
+
+        // PC 模式禁用双击复制段落
+        if (isPC.value) {
             return
         }
 
