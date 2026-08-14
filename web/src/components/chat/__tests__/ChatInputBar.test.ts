@@ -1070,6 +1070,22 @@ describe('ChatInputBar', () => {
       expect(wrapper.emitted('sync-acp-session')).toBeFalsy()
       wrapper.unmount()
     })
+
+    it('shows a loading indicator on the sync button while syncing', async () => {
+      const wrapper = mountBar({
+        currentTransport: 'acp-stdio',
+        currentAgentId: 'agent1',
+        currentSessionId: 'sid-1',
+        currentSessionRunning: false,
+        acpSyncing: true,
+        messages: [{ id: 1, role: 'user', content: 'hi' }],
+      })
+      const btn = wrapper.find('.chat-action-btn.acp-sync-btn')
+      expect(btn.exists()).toBe(true)
+      // During sync the button shows a spinner instead of the sync icon.
+      expect(btn.find('.li-spinner').exists()).toBe(true)
+      wrapper.unmount()
+    })
   })
 
   describe('mode chip click and long-press', () => {

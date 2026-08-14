@@ -37,7 +37,8 @@
           :title="acpSyncTitle"
           :aria-label="t('chat.actions.acpSync')"
         >
-          <ArrowRightLeft :size="14" :stroke-width="1.5" />
+          <LoadingIndicator v-if="props.acpSyncing" size="sm" inline />
+          <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
         </button>
         <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
           @click="handleArchive"
@@ -270,6 +271,7 @@ import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, XCircle, Inbox,
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
