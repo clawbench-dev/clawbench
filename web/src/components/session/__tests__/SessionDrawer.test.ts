@@ -29,94 +29,68 @@ vi.mock('@/stores/app', () => ({
   },
 }))
 
-const { mockLoadAgents, mockGetAgentBackend, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent, mockAgentsHolder, mockDialogHolder, mockReconcileRunningSessions } = vi.hoisted(() => ({
+const {
+  mockLoadAgents,
+  mockAgentsHolder,
+  wideScreen,
+  BottomSheetStub,
+  AgentSelectorDrawerStub,
+  SessionListStub,
+  SessionListHeaderStub,
+} = vi.hoisted(() => ({
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
-  mockGetAgentBackend: vi.fn(() => ''),
-  mockGetAgentName: vi.fn(() => 'Agent'),
-  mockIsDefaultAgent: vi.fn(() => false),
-  mockGetAgentDefaultModelName: vi.fn(() => ''),
-  mockSetDefaultAgent: vi.fn().mockResolvedValue(undefined),
   mockAgentsHolder: { list: [] as any[] },
-  mockDialogHolder: { confirm: null as null | ((msg: string, opts?: any) => Promise<boolean>), lastOptions: null as any },
-  mockReconcileRunningSessions: vi.fn(),
+  wideScreen: { isWideScreen: null as any, leftTab: null as any },
+  BottomSheetStub: {
+    name: 'BottomSheet',
+    template: '<div class="bottom-sheet-stub"><slot name="header" /><slot /></div>',
+    methods: { close: vi.fn() },
+  },
+  AgentSelectorDrawerStub: {
+    name: 'AgentSelectorDrawer',
+    template: '<div class="agent-selector-drawer-stub" />',
+    methods: { preload: vi.fn() },
+  },
+  SessionListStub: {
+    name: 'SessionList',
+    template: '<div class="session-list-stub" />',
+    methods: { loadSessions: vi.fn(), addSessionLocally: vi.fn() },
+  },
+  SessionListHeaderStub: {
+    name: 'SessionListHeader',
+    template: '<div class="header-stub"><slot name="actions" /></div>',
+  },
 }))
 
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: { value: mockAgentsHolder.list },
     loadAgents: mockLoadAgents,
-    getAgentBackend: mockGetAgentBackend,
-    getAgentName: mockGetAgentName,
-    isDefaultAgent: mockIsDefaultAgent,
-    getAgentDefaultModelName: mockGetAgentDefaultModelName,
-    setDefaultAgent: mockSetDefaultAgent,
   }),
 }))
 
-vi.mock('@/composables/useDialog', () => ({
-  useDialog: () => ({
-    confirm: (msg: string, opts?: any) => {
-      mockDialogHolder.lastOptions = opts
-      return mockDialogHolder.confirm!(msg, opts)
-    },
-  }),
-}))
-
-vi.mock('@/composables/useSessionIdentity', () => ({
-  useSessionIdentity: () => ({
-    runningSessionsVersion: { value: 0 },
-  }),
-  reconcileRunningSessions: mockReconcileRunningSessions,
-}))
+vi.mock('@/composables/useWideScreenLayout', async () => {
+  const { ref } = await import('vue')
+  wideScreen.isWideScreen = ref(true)
+  wideScreen.leftTab = ref('browse')
+  return {
+    useWideScreenLayout: () => ({ isWideScreen: wideScreen.isWideScreen }),
+    getWideScreenState: () => ({ isWideScreen: wideScreen.isWideScreen, leftTab: wideScreen.leftTab }),
+  }
+})
 
 vi.mock('@/utils/format', () => ({
   formatRelativeTime: (d: string) => d || 'now',
 }))
 
 // Stub child components
-vi.mock('@/components/common/BottomSheet.vue', () => ({
-  default: {
-    name: 'BottomSheet',
-    template: '<div class="bottom-sheet-stub"><slot name="header" /><slot /></div>',
-    methods: { close: vi.fn() },
-  },
-}))
+vi.mock('@/components/common/BottomSheet.vue', () => ({ default: BottomSheetStub }))
 
-vi.mock('@/components/common/ModalDialog.vue', () => ({
-  default: {
-    name: 'ModalDialog',
-    template: '<div class="modal-stub"><slot name="header" /><slot /></div>',
-  },
-}))
+vi.mock('@/components/common/AgentSelectorDrawer.vue', () => ({ default: AgentSelectorDrawerStub }))
 
-vi.mock('@/components/common/AgentIcon.vue', () => ({
-  default: {
-    name: 'AgentIcon',
-    template: '<span class="agent-icon-stub" />',
-  },
-}))
+vi.mock('@/components/session/SessionList.vue', () => ({ default: SessionListStub }))
 
-vi.mock('@/components/common/AgentSelectorDrawer.vue', () => ({
-  default: {
-    name: 'AgentSelectorDrawer',
-    template: '<div class="agent-selector-drawer-stub" />',
-    methods: { preload: vi.fn() },
-  },
-}))
-
-// ── Mock IntersectionObserver ──
-class MockIntersectionObserver {
-  callback: (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void
-  constructor(cb: (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void) { this.callback = cb }
-  observe() {}
-  disconnect() {}
-  unobserve() {}
-}
-vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
-
-// ── Mock fetch ──
-const mockFetch = vi.fn()
-vi.stubGlobal('fetch', mockFetch)
+vi.mock('@/components/session/SessionListHeader.vue', () => ({ default: SessionListHeaderStub }))
 
 function mountDrawer(props = {}) {
   return mount(SessionDrawer, {
@@ -132,516 +106,134 @@ function mountDrawer(props = {}) {
 describe('SessionDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockFetch.mockReset()
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ sessions: [], hasMore: false, totalCount: 0 }),
-    })
     mockAgentsHolder.list = [
-      { id: 'agent-1', name: 'Agent One', backend: 'cli', specialty: 'Coding' },
-      { id: 'agent-2', name: 'Agent Two', backend: 'acp', specialty: 'Design' },
+      { id: 'agent-1', name: 'Agent One', backend: 'cli' },
+      { id: 'agent-2', name: 'Agent Two', backend: 'acp' },
     ]
-    mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
-    mockDialogHolder.lastOptions = null
+    wideScreen.isWideScreen.value = true
   })
 
-  describe('session counter', () => {
-    it('renders session counter when maxCount > 0', async () => {
-      const { store } = await import('@/stores/app')
-      store.state.sessionCount = 5
-      store.state.sessionMaxCount = 10
-
+  describe('rendering shell', () => {
+    it('renders SessionList and SessionListHeader stubs', () => {
       const wrapper = mountDrawer()
-      await flushPromises()
-
-      expect(wrapper.find('.session-counter').exists()).toBe(true)
+      expect(wrapper.find('.session-list-stub').exists()).toBe(true)
+      expect(wrapper.find('.header-stub').exists()).toBe(true)
     })
   })
 
-  describe('empty state', () => {
-    it('shows empty message when no sessions', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ sessions: [], hasMore: false, totalCount: 0 }),
-      })
-
+  describe('pin button', () => {
+    it('renders a pin button on wide screen and emits pin on click', async () => {
       const wrapper = mountDrawer()
-      await flushPromises()
-
-      expect(wrapper.find('.session-empty').exists()).toBe(true)
-    })
-  })
-
-  describe('session list', () => {
-    it('renders sessions from API', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [
-            { id: 's1', title: 'Session 1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli', model: 'gpt-4' },
-            { id: 's2', title: 'Session 2', updatedAt: '2025-01-02', agentId: 'agent-2', backend: 'acp' },
-          ],
-          hasMore: false,
-          totalCount: 2,
-        }),
-      })
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-      // Explicitly load sessions since the watch may not fire on initial mount
-      await wrapper.vm.loadSessions()
-      await flushPromises()
       await nextTick()
-
-      // Verify sessions are loaded internally (DOM may not render due to stub/scoped styles)
-      expect(wrapper.vm.sessions.length).toBe(2)
+      const pin = wrapper.find('.header-action-btn[data-action="pin"]')
+      expect(pin.exists()).toBe(true)
+      await pin.trigger('click')
+      expect(wrapper.emitted('pin')).toBeTruthy()
     })
 
-    it('highlights current session', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [
-            { id: 's1', title: 'Session 1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' },
-          ],
-          hasMore: false,
-          totalCount: 1,
-        }),
-      })
-
-      const wrapper = mountDrawer({ currentSessionId: 's1' })
-      await flushPromises()
-      await wrapper.vm.loadSessions()
-      await flushPromises()
+    it('does not render the pin button on narrow screen', async () => {
+      wideScreen.isWideScreen.value = false
+      const wrapper = mountDrawer()
       await nextTick()
-
-      // Check sessionsWithStatus computed for active class
-      const first = wrapper.vm.sessionsWithStatus[0]
-      expect(first.id).toBe('s1')
-      expect(first.running).toBe(false)
+      expect(wrapper.find('.header-action-btn[data-action="pin"]').exists()).toBe(false)
     })
+  })
 
-    it('marks running sessions', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [
-            { id: 's1', title: 'Session 1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' },
-          ],
-          hasMore: false,
-          totalCount: 1,
-        }),
-      })
-
-      const wrapper = mountDrawer({ runningSessionIds: new Set(['s1']) })
-      await flushPromises()
-      await wrapper.vm.loadSessions()
-      await flushPromises()
+  describe('header action forwarding', () => {
+    it('forwards open-search to open-session-search', async () => {
+      const wrapper = mountDrawer()
       await nextTick()
-
-      // Check sessionsWithStatus computed marks session as running
-      const first = wrapper.vm.sessionsWithStatus[0]
-      expect(first.running).toBe(true)
-    })
-
-    it('reconciles runningSessions against fresh API data on refresh', async () => {
-      // API reports the session is NOT running anymore, but the WS-maintained
-      // runningSessionIds still contains it (stale flag from a missed WS event).
-      // The drawer's manual refresh must reconcile the global set so the stale
-      // "executing" indicator clears — otherwise only a page reload fixes it.
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', title: 'Session 1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli', running: false }],
-          hasMore: false,
-          totalCount: 1,
-        }),
-      })
-      const wrapper = mountDrawer({ runningSessionIds: new Set(['s1']) })
-      await flushPromises()
-      mockReconcileRunningSessions.mockClear()
-      await wrapper.vm.loadSessions()
-      await flushPromises()
-      await nextTick()
-
-      expect(mockReconcileRunningSessions).toHaveBeenCalled()
-      const calledWith = mockReconcileRunningSessions.mock.calls[0][0]
-      expect(calledWith[0].id).toBe('s1')
-      expect(calledWith[0].running).toBe(false)
-    })
-
-
-  })
-
-  describe('selectSession', () => {
-    it('emits select event and closes drawer', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
-          hasMore: false,
-          totalCount: 1,
-        }),
-      })
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      await wrapper.vm.selectSession('s1', 'cli')
-
-      expect(wrapper.emitted('select')).toBeTruthy()
-      expect(wrapper.emitted('select')![0]).toEqual(['s1', 'cli'])
-    })
-  })
-
-  describe('archiveSession', () => {
-    it('emits archive after confirmation', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
-          hasMore: false,
-          totalCount: 1,
-        }),
-      })
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      await wrapper.vm.archiveSession('s1')
-
-      expect(wrapper.emitted('archive')).toBeTruthy()
-    })
-  })
-
-  describe('addSessionLocally', () => {
-    it('prepends new session to list', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
-          hasMore: false,
-          totalCount: 1,
-        }),
-      })
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-      await wrapper.vm.loadSessions()
-      await flushPromises()
-
-      wrapper.vm.addSessionLocally({ id: 's2', title: 'S2', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' })
-      await nextTick()
-
-      expect(wrapper.vm.sessions.length).toBe(2)
-      expect(wrapper.vm.sessions[0].id).toBe('s2')
-    })
-
-    it('does not add duplicate session', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
-          hasMore: false,
-          totalCount: 1,
-        }),
-      })
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-      await wrapper.vm.loadSessions()
-      await flushPromises()
-
-      wrapper.vm.addSessionLocally({ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' })
-      await nextTick()
-
-      expect(wrapper.vm.sessions.length).toBe(1)
-    })
-
-    it('ignores null session', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ sessions: [], hasMore: false, totalCount: 0 }),
-      })
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      wrapper.vm.addSessionLocally(null)
-      // Should not throw
-    })
-  })
-
-  describe('openAgentSelector', () => {
-    it('opens agent selector when multiple agents exist', async () => {
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      await wrapper.vm.openAgentSelector()
-      await nextTick()
-
-      expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(true)
-    })
-  })
-
-  describe('createSession', () => {
-    it('emits create event and closes drawer', async () => {
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      wrapper.vm.createSession('agent-1')
-
-      expect(wrapper.emitted('create')).toBeTruthy()
-      expect(wrapper.emitted('create')![0]).toEqual(['agent-1'])
-    })
-  })
-
-  describe('loadSessions error handling', () => {
-    it('handles fetch error gracefully', async () => {
-      mockFetch.mockRejectedValue(new Error('network error'))
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      // Should not throw, sessions should be empty
-      const items = wrapper.findAll('.session-item')
-      expect(items.length).toBe(0)
-    })
-  })
-
-  describe('session bar color', () => {
-    it('shows warning color when usage >= 80%', async () => {
-      const { store } = await import('@/stores/app')
-      store.state.sessionCount = 9
-      store.state.sessionMaxCount = 10
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      expect(wrapper.find('.session-counter').exists()).toBe(true)
-    })
-  })
-
-  describe('sessionBarColor computed', () => {
-    it('returns red when session count equals max count', async () => {
-      const { store } = await import('@/stores/app')
-      store.state.sessionCount = 10
-      store.state.sessionMaxCount = 10
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      expect(wrapper.vm.sessionBarColor).toBe('#ef4444')
-    })
-
-    it('returns warning color when usage >= 80%', async () => {
-      const { store } = await import('@/stores/app')
-      store.state.sessionCount = 9
-      store.state.sessionMaxCount = 10
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      expect(wrapper.vm.sessionBarColor).toBe('#f59e0b')
-    })
-
-    it('returns accent color when usage < 80%', async () => {
-      const { store } = await import('@/stores/app')
-      store.state.sessionCount = 5
-      store.state.sessionMaxCount = 10
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      expect(wrapper.vm.sessionBarColor).toBe('var(--accent-color, #0066cc)')
-    })
-
-    it('returns accent color when maxCount is 0', async () => {
-      const { store } = await import('@/stores/app')
-      store.state.sessionCount = 0
-      store.state.sessionMaxCount = 0
-
-      const wrapper = mountDrawer()
-      await flushPromises()
-
-      expect(wrapper.vm.sessionBarColor).toBe('var(--accent-color, #0066cc)')
-    })
-  })
-
-  describe('header actions', () => {
-    it('emits open-session-search when the search button is clicked', async () => {
-      const wrapper = mountDrawer()
-      await flushPromises()
-      const btn = wrapper.findAll('.header-action-btn')[0]
-      await btn.trigger('click')
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('open-search')
       expect(wrapper.emitted('open-session-search')).toBeTruthy()
     })
 
-    it('opens agent selector when the create button is clicked with multiple agents', async () => {
+    it('opens the agent selector for create when multiple agents exist', async () => {
       const wrapper = mountDrawer()
-      await flushPromises()
-      const btn = wrapper.findAll('.header-action-btn')[1]
-      await btn.trigger('click')
+      await nextTick()
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create')
       await nextTick()
       expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(true)
     })
-  })
 
-  describe('single-agent creation', () => {
-    it('emits create directly when only one agent exists', async () => {
+    it('emits create directly for a single agent', async () => {
       mockAgentsHolder.list = [{ id: 'agent-1', name: 'Agent One', backend: 'cli' }]
       const wrapper = mountDrawer()
-      await flushPromises()
-
-      await wrapper.vm.handleCreateClick()
       await nextTick()
-
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create')
+      await nextTick()
       expect(wrapper.emitted('create')).toBeTruthy()
       expect(wrapper.emitted('create')![0]).toEqual(['agent-1'])
-      // Should NOT open the selector for a single agent
       expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(false)
     })
+  })
 
-    it('openAgentSelector emits create directly for a single agent', async () => {
-      mockAgentsHolder.list = [{ id: 'agent-1', name: 'Agent One', backend: 'cli' }]
+  describe('session list event forwarding', () => {
+    it('forwards select and closes the bottom sheet', async () => {
       const wrapper = mountDrawer()
-      await flushPromises()
-
-      await wrapper.vm.openAgentSelector()
       await nextTick()
-
-      expect(wrapper.emitted('create')).toBeTruthy()
-      expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(false)
-    })
-  })
-
-  describe('loadMoreSessions', () => {
-    it('appends more sessions when hasMore is true', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
-          hasMore: true,
-          totalCount: 1,
-        }),
-      })
-      const wrapper = mountDrawer()
-      await flushPromises()
-      await wrapper.vm.loadSessions()
-      await flushPromises()
-
-      // Next page returns a second session
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's2', title: 'S2', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }],
-          hasMore: false,
-          totalCount: 2,
-        }),
-      })
-      wrapper.vm.hasMore = true
-      await wrapper.vm.loadMoreSessions()
-      await flushPromises()
-
-      expect(wrapper.vm.sessions.length).toBe(2)
-      expect(wrapper.vm.sessions[1].id).toBe('s2')
-      expect(wrapper.vm.hasMore).toBe(false)
+      wrapper.findComponent(SessionListStub).vm.$emit('select', 's1', 'cli')
+      await nextTick()
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0]).toEqual(['s1', 'cli'])
+      expect(BottomSheetStub.methods.close).toHaveBeenCalled()
     })
 
-    it('does nothing when hasMore is false', async () => {
+    it('forwards archive', async () => {
       const wrapper = mountDrawer()
-      await flushPromises()
-      wrapper.vm.hasMore = false
-      await wrapper.vm.loadMoreSessions()
-      expect(wrapper.vm.sessions.length).toBe(0)
+      await nextTick()
+      wrapper.findComponent(SessionListStub).vm.$emit('archive', 's1')
+      expect(wrapper.emitted('archive')).toBeTruthy()
+      expect(wrapper.emitted('archive')![0]).toEqual(['s1'])
     })
 
-    it('does nothing when already loading more', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
-          hasMore: true,
-          totalCount: 1,
-        }),
-      })
+    it('forwards destroy', async () => {
       const wrapper = mountDrawer()
-      await flushPromises()
-      await wrapper.vm.loadSessions()
-      wrapper.vm.hasMore = true
-      wrapper.vm.loadingMore = true
-      await wrapper.vm.loadMoreSessions()
-      expect(wrapper.vm.sessions.length).toBe(1)
-    })
-
-    it('handles loadMore fetch errors gracefully', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
-          hasMore: true,
-          totalCount: 1,
-        }),
-      })
-      const wrapper = mountDrawer()
-      await flushPromises()
-      await wrapper.vm.loadSessions()
-
-      wrapper.vm.hasMore = true
-      wrapper.vm.loadingMore = false
-      mockFetch.mockRejectedValueOnce(new Error('network'))
-      await wrapper.vm.loadMoreSessions()
-      await flushPromises()
-      expect(wrapper.vm.loadingMore).toBe(false)
-    })
-  })
-
-  describe('loadSessions error handling', () => {
-    it('clears sessions when the fetch rejects', async () => {
-      const wrapper = mountDrawer()
-      await flushPromises()
-      wrapper.vm.sessions = [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }]
-      mockFetch.mockRejectedValueOnce(new Error('boom'))
-      await wrapper.vm.loadSessions()
-      await flushPromises()
-      expect(wrapper.vm.sessions.length).toBe(0)
-      expect(wrapper.vm.loading).toBe(false)
-    })
-  })
-
-  describe('archiveSession with destroy', () => {
-    it('emits destroy via the dialog extra action', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }],
-          hasMore: false,
-          totalCount: 1,
-        }),
-      })
-      const wrapper = mountDrawer()
-      await flushPromises()
-      await wrapper.vm.loadSessions()
-      await flushPromises()
-
-      await wrapper.vm.archiveSession('s1')
-      // Capture the onExtraAction passed to the dialog
-      const onExtra = mockDialogHolder.lastOptions?.onExtraAction
-      expect(typeof onExtra).toBe('function')
-      onExtra()
+      await nextTick()
+      wrapper.findComponent(SessionListStub).vm.$emit('destroy', 's1')
       expect(wrapper.emitted('destroy')).toBeTruthy()
       expect(wrapper.emitted('destroy')![0]).toEqual(['s1'])
     })
   })
 
+  describe('agent selector / create', () => {
+    it('opens the selector when multiple agents exist', async () => {
+      const wrapper = mountDrawer()
+      await flushPromises()
+      await wrapper.vm.openAgentSelector()
+      await nextTick()
+      expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(true)
+    })
+
+    it('emits create directly for a single agent', async () => {
+      mockAgentsHolder.list = [{ id: 'agent-1', name: 'Agent One', backend: 'cli' }]
+      const wrapper = mountDrawer()
+      await flushPromises()
+      await wrapper.vm.openAgentSelector()
+      await nextTick()
+      expect(wrapper.emitted('create')).toBeTruthy()
+      expect(wrapper.emitted('create')![0]).toEqual(['agent-1'])
+      expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(false)
+    })
+  })
+
   describe('open watcher', () => {
-    it('reloads sessions when opened', async () => {
+    it('reloads sessions and agents when the drawer opens', async () => {
       const wrapper = mountDrawer({ open: false })
       await flushPromises()
-      // Simulate opening after mount
       await wrapper.setProps({ open: true })
       await flushPromises()
-      expect(mockFetch).toHaveBeenCalled()
+      expect(mockLoadAgents).toHaveBeenCalled()
+      expect(SessionListStub.methods.loadSessions).toHaveBeenCalled()
+    })
+  })
+
+  describe('addSessionLocally', () => {
+    it('forwards to the SessionList stub', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      const session = { id: 's2', title: 'S2', updatedAt: '2025-01-02', agentId: 'agent-1', backend: 'cli' }
+      wrapper.vm.addSessionLocally(session)
+      expect(SessionListStub.methods.addSessionLocally).toHaveBeenCalledWith(session)
     })
   })
 
