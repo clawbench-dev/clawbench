@@ -192,6 +192,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 				return fmt.Errorf("failed to add indexed column: %w", err)
 			}
 		}
+
+		// chat_history.external_message_id — external ACP messageId for incremental ACP sync dedup
+		var hasExternalMsgID int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='external_message_id'").Scan(&hasExternalMsgID)
+		if hasExternalMsgID == 0 {
+			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN external_message_id TEXT DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add external_message_id column: %w", err)
+			}
+		}
 	}
 
 	// Pre-migration: rename chat_sessions.deleted to archived.
@@ -220,6 +229,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
+			external_message_id TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (

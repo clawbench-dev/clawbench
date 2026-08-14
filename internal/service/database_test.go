@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupTestDBForTTS creates an in-memory SQLite database with the tts_summaries table
@@ -254,6 +255,42 @@ func TestSchema_TTSSummariesNewSchema(t *testing.T) {
 	assert.Contains(t, columns, "message_id", "tts_summaries should have message_id column")
 	assert.Contains(t, columns, "tts_summary", "tts_summaries should have tts_summary column")
 	assert.NotContains(t, columns, "cache_key", "tts_summaries should NOT have cache_key column (old schema)")
+}
+
+func TestMigrateAddsExternalMessageID(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Simulate an older schema: pre-create the DB file with chat_history
+	// lacking external_message_id so InitDB's pre-migration ALTER is exercised.
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = oldDB.Exec(`CREATE TABLE chat_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		project_path TEXT NOT NULL, role TEXT NOT NULL,
+		content TEXT NOT NULL, session_id TEXT,
+		backend TEXT NOT NULL DEFAULT 'claude',
+		streaming INTEGER NOT NULL DEFAULT 0,
+		indexed INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+	require.NoError(t, oldDB.Close())
+
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_history")
+	assert.Contains(t, columns, "external_message_id", "chat_history should have external_message_id column")
 }
 
 // getIndexes returns a set of index names from sqlite_master.

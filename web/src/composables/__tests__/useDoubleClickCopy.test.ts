@@ -20,6 +20,15 @@ vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
 }))
 
+// Mock usePlatformDetect — default to mobile (isPC = false) so copy works.
+// Use the test hooks to flip isPC for PC-mode tests.
+const mockIsPC = { value: false }
+vi.mock('@/composables/usePlatformDetect', () => ({
+  usePlatformDetect: () => ({ isPC: mockIsPC }),
+  _setIsPCForTest: (val: boolean) => { mockIsPC.value = val },
+  _resetPlatformForTest: () => { mockIsPC.value = false },
+}))
+
 // Ensure CSS.escape is available in jsdom
 if (typeof (globalThis as any).CSS === 'undefined') {
   ;(globalThis as any).CSS = {}
@@ -194,6 +203,7 @@ describe('useDoubleClickCopy', () => {
   describe('handleDblClick — double-click copy', () => {
     afterEach(() => {
       vi.useRealTimers()
+      mockIsPC.value = false
     })
 
     it('copies text on double-click of same element within threshold', () => {
@@ -261,6 +271,73 @@ describe('useDoubleClickCopy', () => {
 
       document.body.removeChild(p1)
       document.body.removeChild(p2)
+    })
+
+    it('does not copy on double-click in PC mode', () => {
+      vi.useRealTimers()
+      mockIsPC.value = true
+      const { handleDblClick } = useDoubleClickCopy()
+
+      const p = document.createElement('p')
+      p.textContent = 'pc text'
+      document.body.appendChild(p)
+
+      const event1 = new MouseEvent('click', { bubbles: true })
+      Object.defineProperty(event1, 'target', { value: p, writable: false })
+      const event2 = new MouseEvent('click', { bubbles: true })
+      Object.defineProperty(event2, 'target', { value: p, writable: false })
+
+      vi.mocked(copyText).mockClear()
+      handleDblClick(event1)
+      handleDblClick(event2)
+
+      expect(copyText).not.toHaveBeenCalled()
+
+      document.body.removeChild(p)
+    })
+
+    it('does not call onCopy on double-click in PC mode', () => {
+      vi.useRealTimers()
+      mockIsPC.value = true
+      const onCopy = vi.fn()
+      const { handleDblClick } = useDoubleClickCopy({ onCopy })
+
+      const p = document.createElement('p')
+      p.textContent = 'pc oncopy'
+      document.body.appendChild(p)
+
+      const event1 = new MouseEvent('click', { bubbles: true })
+      Object.defineProperty(event1, 'target', { value: p, writable: false })
+      const event2 = new MouseEvent('click', { bubbles: true })
+      Object.defineProperty(event2, 'target', { value: p, writable: false })
+
+      handleDblClick(event1)
+      handleDblClick(event2)
+
+      expect(onCopy).not.toHaveBeenCalled()
+
+      document.body.removeChild(p)
+    })
+
+    it('still opens file links on double-click in PC mode', () => {
+      vi.useRealTimers()
+      mockIsPC.value = true
+      const { handleDblClick } = useDoubleClickCopy()
+      const onOpenFile = vi.fn()
+
+      const anchor = document.createElement('a')
+      anchor.setAttribute('href', 'src/main.go')
+      anchor.textContent = 'main'
+      document.body.appendChild(anchor)
+
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'target', { value: anchor, writable: false })
+
+      handleDblClick(event, onOpenFile)
+
+      expect(onOpenFile).toHaveBeenCalledWith('src/main.go')
+
+      document.body.removeChild(anchor)
     })
   })
 

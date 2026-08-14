@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
 import QuoteQuestionBar from '@/components/common/QuoteQuestionBar.vue'
+
+const mocks = vi.hoisted(() => ({ isPC: { value: false } }))
+vi.mock('@/composables/usePlatformDetect', () => ({
+  usePlatformDetect: () => ({ isPC: mocks.isPC }),
+}))
 
 const i18n = createI18n({
   legacy: false,
@@ -14,6 +19,7 @@ const i18n = createI18n({
         chat: 'Chat',
         clear: 'Clear',
         placeholder: 'Ask...',
+        expandQuote: 'Expand quote',
         addToChat: 'Add to chat',
         send: 'Send',
         newSession: 'New Session',
@@ -115,8 +121,9 @@ describe('canSendInput (pure function)', () => {
 })
 
 describe('QuoteQuestionBar component', () => {
+  const mounted: ReturnType<typeof mount>[] = []
   function mountBar(props = {}) {
-    return mount(QuoteQuestionBar, {
+    const wrapper = mount(QuoteQuestionBar, {
       props: {
         visible: true,
         quoteData: { text: 'Hello world' },
@@ -133,7 +140,15 @@ describe('QuoteQuestionBar component', () => {
         },
       },
     })
+    mounted.push(wrapper)
+    return wrapper
   }
+
+  afterEach(() => {
+    // Unmount everything so document-level listeners (pointerdown/keydown)
+    // registered by earlier components can't leak into later tests.
+    while (mounted.length) mounted.pop()?.unmount()
+  })
 
   it('renders collapsed bar when visible with quoteData', () => {
     const wrapper = mountBar()
@@ -151,11 +166,25 @@ describe('QuoteQuestionBar component', () => {
     expect(wrapper.find('.quote-question-bar').exists()).toBe(false)
   })
 
-  it('displays truncated quote text in collapsed mode', () => {
+  it('displays single-line truncated quote text by default', () => {
     const longText = 'a'.repeat(200)
     const wrapper = mountBar({ quoteData: { text: longText } })
-    const textEl = wrapper.find('.qq-quoted-text--single')
-    expect(textEl.text()).toBe('a'.repeat(150) + '…')
+    const textEl = wrapper.find('.qq-quoted-text')
+    expect(textEl.text()).toBe('a'.repeat(80) + '…')
+  })
+
+  it('quote text is single-line while collapsed and full once expanded', async () => {
+    const longText = 'a'.repeat(200)
+    const wrapper = mountBar({ quoteData: { text: longText } })
+    const vm = wrapper.vm as any
+    // Collapsed → single-line truncated preview.
+    expect(vm.expanded).toBe(false)
+    expect(vm.displayQuoteText).toBe('a'.repeat(80) + '…')
+
+    // Expanding the input box also expands the quote to the full text.
+    await vm.expand()
+    expect(vm.expanded).toBe(true)
+    expect(vm.displayQuoteText).toBe(longText)
   })
 
   it('emits pin and sets expanded when collapsed bar is clicked', async () => {
@@ -270,5 +299,105 @@ describe('QuoteQuestionBar component', () => {
     vm.inputText = ''
     await nextTick()
     expect(vm.canSend).toBe(false)
+  })
+
+  it('emits close when Escape is pressed', async () => {
+    const wrapper = mountBar()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('does not emit close on Escape when bar is hidden', async () => {
+    const wrapper = mountBar({ visible: false })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(wrapper.emitted('close')).toBeFalsy()
+  })
+
+  it('does not emit close on other keys', async () => {
+    const wrapper = mountBar()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(wrapper.emitted('close')).toBeFalsy()
+  })
+
+  it('renders a plus (add) button in collapsed mode', () => {
+    const wrapper = mountBar()
+    expect(wrapper.find('.quote-bar-add').exists()).toBe(true)
+    expect(wrapper.find('.quote-bar-btn').exists()).toBe(false)
+  })
+
+  it('emits add when the collapsed plus button is clicked', async () => {
+    const wrapper = mountBar()
+    await wrapper.find('.quote-bar-add').trigger('click')
+    expect(wrapper.emitted('add')![0]).toEqual([''])
+  })
+
+  it('does not render a message icon inside the quoted snippet', () => {
+    const wrapper = mountBar()
+    const snippet = wrapper.find('.qq-quoted-snippet--inline')
+    expect(snippet.find('.lucide-message-square').exists()).toBe(false)
+    const expanded = mountBar()
+    const vm = expanded.vm as any
+    vm.expand()
+    const expandedSnippet = expanded.find('.qq-quoted-snippet')
+    expect(expandedSnippet.find('.lucide-message-square').exists()).toBe(false)
+  })
+
+  it('desktop: always expands and pins when the bar becomes visible', async () => {
+    mocks.isPC.value = true
+    try {
+      const wrapper = mountBar()
+      const vm = wrapper.vm as any
+      expect(vm.expanded).toBe(false)
+
+      await vm.onVisibleChange(true)
+      await nextTick()
+
+      expect(wrapper.emitted('pin')).toBeTruthy()
+      expect(vm.expanded).toBe(true)
+    } finally {
+      mocks.isPC.value = false
+    }
+  })
+
+  it('desktop: quote is shown in full once the bar auto-expands', async () => {
+    mocks.isPC.value = true
+    try {
+      const longText = 'a'.repeat(200)
+      const wrapper = mountBar({ quoteData: { text: longText } })
+      const vm = wrapper.vm as any
+
+      await vm.onVisibleChange(true)
+      await nextTick()
+
+      expect(vm.expanded).toBe(true)
+      expect(vm.displayQuoteText).toBe(longText)
+    } finally {
+      mocks.isPC.value = false
+    }
+  })
+
+  it('mobile: stays collapsed when the bar becomes visible', async () => {
+    mocks.isPC.value = false
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+
+    await vm.onVisibleChange(true)
+    await nextTick()
+
+    expect(vm.expanded).toBe(false)
+    expect(wrapper.emitted('pin')).toBeFalsy()
+  })
+
+  it('expands on desktop only when the bar becomes visible, not on mobile', async () => {
+    mocks.isPC.value = true
+    try {
+      const wrapper = mountBar()
+      const vm = wrapper.vm as any
+      await vm.onVisibleChange(true)
+      await nextTick()
+      expect(vm.expanded).toBe(true)
+    } finally {
+      mocks.isPC.value = false
+    }
   })
 })

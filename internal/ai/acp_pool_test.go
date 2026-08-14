@@ -637,6 +637,21 @@ func TestACPConn_GetAndClearLoadSessionResp_ClearsAfterRead(t *testing.T) {
 	assert.Nil(t, resp2)
 }
 
+// --- ACPConn.SyncLoadSession ---
+
+func TestSyncLoadSession_SkipsWhenAlreadyActive(t *testing.T) {
+	agent := &model.Agent{ID: "a", Backend: "claude"}
+	conn := newACPConn(agent, "sid")
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest("sid", "acp-x")
+
+	// 模拟 GetOrCreateConnForLoad 已触发过 LoadSession（flag=true）→ 应跳过 RPC
+	conn.SetLoadSessionActiveForTest(true)
+	err := conn.SyncLoadSession(context.Background(), "/proj", "acp-x")
+	assert.NoError(t, err)
+	assert.True(t, conn.loadSessionActive.Load())
+}
+
 // --- ACPConnManager.GetOrCreateConnNoSession ---
 
 func TestACPConnManager_GetOrCreateConnNoSession_FailedSpawn(t *testing.T) {

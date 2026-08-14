@@ -603,7 +603,7 @@ func TestServeSessions_Post_AutoTitle(t *testing.T) {
 	assert.NotEmpty(t, result["title"])
 }
 
-func TestServeSessions_Post_AutoTitle_NoDuplicateAfterArchive(t *testing.T) {
+func TestServeSessions_Post_AutoTitle_BasedOnMaxUnnamed(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -619,23 +619,34 @@ func TestServeSessions_Post_AutoTitle_NoDuplicateAfterArchive(t *testing.T) {
 		return result["title"].(string)
 	}
 
+	// Two unnamed sessions → numbered 1 and 2.
 	first := newSessionTitle()
-	assert.NotEmpty(t, first)
+	assert.Equal(t, "New Session 1", first)
+	second := newSessionTitle()
+	assert.Equal(t, "New Session 2", second)
 
-	// Archive the first session — it drops out of the active session count.
+	// Archive the highest-numbered unnamed session ("New Session 2"). With
+	// max-based numbering the next title is again "New Session 2", never
+	// exceeding the largest number still present among active unnamed sessions.
 	sessions, err := service.GetSessions(env.ProjectDir, "")
 	require.NoError(t, err)
-	require.Len(t, sessions, 1)
-	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessions[0].ID, nil)
+	require.Len(t, sessions, 2)
+	archivedID := ""
+	for _, s := range sessions {
+		if s.Title == "New Session 2" {
+			archivedID = s.ID
+		}
+	}
+	require.NotEmpty(t, archivedID)
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+archivedID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ArchiveSession, req)
 	assertOK(t, w)
 
-	second := newSessionTitle()
-	assert.NotEmpty(t, second)
-	// Regression: the old count-based numbering would have produced the same
-	// title again ("新会话 1"), creating a duplicate.
-	assert.NotEqual(t, first, second, "auto-titles must never collide after archiving a session")
+	// "New Session 1" still exists → max is 1, so the new one is 2 (no duplicate
+	// among active unnamed sessions).
+	third := newSessionTitle()
+	assert.Equal(t, "New Session 2", third)
 }
 
 func TestServeSessions_Post_LimitExceeded(t *testing.T) {

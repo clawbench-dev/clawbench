@@ -450,17 +450,18 @@ func TestServeSessions_Post_DefaultBackendWhenEmpty(t *testing.T) {
 
 // TestServeSessions_Post_AutoTitleUnifiedAcrossAgents reproduces the bug where
 // the default session name number was scoped per agent/backend. Switching agents
-// would reset the counter to "New Session 1" even when sessions for other
+// would reset the counter to "New Session 1" even when unnamed sessions for other
 // agents already existed in the project. The expected behavior is a single,
-// project-wide counter so numbering reads naturally across mixed-agent history.
+// project-wide numbering of unnamed sessions so it reads naturally across
+// mixed-agent history.
 func TestServeSessions_Post_AutoTitleUnifiedAcrossAgents(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Existing sessions for two different agents.
-	_, err := service.CreateSession(env.ProjectDir, "codebuddy", "Existing 1", "codebuddy", "", "user", "chat")
+	// Unnamed sessions for two different agents (numbered 1 and 2).
+	_, err := service.CreateSession(env.ProjectDir, "codebuddy", "New Session 1", "codebuddy", "", "user", "chat")
 	require.NoError(t, err)
-	_, err = service.CreateSession(env.ProjectDir, "claude", "Existing 2", "claude", "", "user", "chat")
+	_, err = service.CreateSession(env.ProjectDir, "claude", "New Session 2", "claude", "", "user", "chat")
 	require.NoError(t, err)
 
 	// Create a third session with no title and a new agent — should be "New Session 3",

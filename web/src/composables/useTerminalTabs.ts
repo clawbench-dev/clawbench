@@ -44,6 +44,8 @@ export function useTerminalTabs(
     onCloseSessionViaHttp?: (sessionId: string) => void
     onExit?: (tabId: string) => void
     onError?: (tabId: string, message: string, code: string) => void
+    /** Quick command marked auto_execute, fired on every PTY connect/reconnect. */
+    autoExecCommand?: Readonly<Ref<{ command: string } | null>>
     onAutoExec?: (tabId: string, command: string) => void
     toast?: (msg: string, opts?: Record<string, unknown>) => void
     /** Transform keyboard input through modifier key processing (Ctrl/Alt/Shift combos) */
@@ -144,6 +146,13 @@ export function useTerminalTabs(
         if (status.cwd) {
           tab.cwd = status.cwd
           tab.title = cwdToTitle(status.cwd)
+        }
+        // Auto-execute the configured quick command on every connect/reconnect.
+        // The backend sends one 'status' message per Connect(), so firing here
+        // re-runs the command both on the initial connect and on reconnects.
+        const cmd = opts.autoExecCommand?.value
+        if (cmd) {
+          opts.onAutoExec?.(id, cmd.command)
         }
       },
       onExit: () => {

@@ -561,6 +561,15 @@ function handleCopySelection() {
   })
 }
 
+// Quick commands
+const {
+  visibleCommands,
+  autoExecCommand,
+  fetchCommands,
+  showEditDialog,
+} = useQuickCommands()
+const quickCmdDrawer = useTabDrawer('terminal', showEditDialog)
+
 const tabManager = useTerminalTabs(getWsUrl, {
   fontSize,
   getXtermTheme,
@@ -581,18 +590,14 @@ const tabManager = useTerminalTabs(getWsUrl, {
   onError: () => {
     // Error displayed via overlay
   },
+  autoExecCommand,
+  onAutoExec: (tabId, command) => {
+    tabManager.getTab(tabId)?.session.sendInput(command + '\r')
+  },
   processInput: terminalKeys.processInput,
 })
 
 const { tabs, activeTabId, activeTab } = tabManager
-
-// Quick commands
-const {
-  visibleCommands,
-  fetchCommands,
-  showEditDialog,
-} = useQuickCommands()
-const quickCmdDrawer = useTabDrawer('terminal', showEditDialog)
 
 // Terminal viewport — uses the active tab's xterm and container
 const viewport = useTerminalViewport(
@@ -1027,8 +1032,9 @@ onMounted(async () => {
   isMounted.value = true
 
   applyTheme(themeSelection.value).catch(() => {})
-  // Fetch quick commands in the background — don't block terminal setup
-  fetchCommands().catch(() => { /* ignore */ })
+  // Fetch quick commands before the initial connect so auto-execute commands
+  // are available when the first 'status' message arrives.
+  await fetchCommands().catch(() => { /* ignore */ })
 
   // Fetch key config in the background
   fetchKeyConfig().catch(() => { /* ignore */ })

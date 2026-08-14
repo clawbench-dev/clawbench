@@ -127,6 +127,42 @@ export function useAcpSession(options: UseAcpSessionOptions) {
     }
   }
 
+  /**
+   * Incrementally sync the current session: reuse the ACP LoadSession replay to
+   * merge external new messages into the local session. Returns { added }, or null
+   * (with a toast) if there is no ACP session.
+   */
+  async function acpSyncSession(sessionId: string): Promise<{ added: number } | null> {
+    const aid = currentAgentId.value
+    if (!aid || !sessionId) return null
+    try {
+      const resp = await fetch('/api/ai/session/acp-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: aid, sessionId }),
+      })
+      if (!resp.ok) {
+        let msgKey = ''
+        try {
+          const errData = await resp.json()
+          msgKey = errData?.msgKey || ''
+        } catch { /* ignore parse error */ }
+        if (msgKey === 'NoAcpSession') {
+          toast.show(gt('chat.acpSession.noAcpSession'), { type: 'info', icon: '🔄' })
+        } else {
+          toast.show(gt('chat.acpSession.syncFailed'), { type: 'error', icon: '⚠️' })
+        }
+        return null
+      }
+      const data = await resp.json()
+      return { added: typeof data.added === 'number' ? data.added : 0 }
+    } catch (err: unknown) {
+      appLog.e(TAG, 'acpSyncSession failed:', err)
+      toast.show(gt('chat.acpSession.syncFailed'), { type: 'error', icon: '⚠️' })
+      return null
+    }
+  }
+
   function clearAcpSessions(): void {
     acpSessions.value = []
     nextCursor.value = null
@@ -142,6 +178,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
     nextCursor,
     loadAcpSessions,
     acpLoadSession,
+    acpSyncSession,
     clearAcpSessions,
   }
 }
