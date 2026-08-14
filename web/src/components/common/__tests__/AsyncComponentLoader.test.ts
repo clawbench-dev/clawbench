@@ -6,19 +6,19 @@ describe('AsyncComponentLoader', () => {
   it('renders a spinner with role=status', () => {
     const wrapper = mount(AsyncComponentLoader)
     const status = wrapper.get('[role="status"]')
-    expect(status.find('.async-loader-spinner').exists()).toBe(true)
+    expect(status.find('.li-spinner').exists()).toBe(true)
   })
 
   it('renders label text when provided', () => {
     const wrapper = mount(AsyncComponentLoader, {
       props: { label: '加载终端中...' },
     })
-    expect(wrapper.find('.async-loader-label').text()).toBe('加载终端中...')
+    expect(wrapper.find('.li-label').text()).toBe('加载终端中...')
   })
 
   it('omits label element when no label provided', () => {
     const wrapper = mount(AsyncComponentLoader)
-    expect(wrapper.find('.async-loader-label').exists()).toBe(false)
+    expect(wrapper.find('.li-label').exists()).toBe(false)
   })
 
   it('applies minimal class when minimal prop is set', () => {

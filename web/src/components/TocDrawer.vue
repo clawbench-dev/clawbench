@@ -11,7 +11,8 @@
     <div class="toc-body">
       <SearchInput v-model="searchQuery" :placeholder="t('toc.searchPlaceholder')" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" @dblclick="clearSearch" />
       <div class="toc-list">
-        <div v-if="filteredToc.length === 0" class="toc-empty">{{ searchQuery ? t('toc.noMatch') : t('toc.noHeadings') }}</div>
+        <LoadingIndicator v-if="loading" :label="t('toc.loading')" size="sm" />
+        <div v-else-if="filteredToc.length === 0" class="toc-empty">{{ searchQuery ? t('toc.noMatch') : t('toc.noHeadings') }}</div>
         <a
           v-for="(item, idx) in filteredToc"
           :key="item.id"
@@ -43,6 +44,7 @@ import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { extractToc, slugify } from '@/utils/toc.ts'
@@ -87,6 +89,7 @@ const isCode = ref(false)
 const isPdfOutline = ref(false)
 const searchQuery = ref('')
 const filteredToc = ref([])
+const loading = ref(false)
 
 watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
     // PDF outline
@@ -97,6 +100,7 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
         activeId.value = toc.value[0]?.id || ''
         searchQuery.value = ''
         filteredToc.value = toc.value
+        loading.value = false
         return
     }
     isPdfOutline.value = false
@@ -106,6 +110,7 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
         toc.value = []
         filteredToc.value = []
         isCode.value = false
+        loading.value = false
         return
     }
     const lang = getFileType(file.name)?.lang || 'plaintext'
@@ -113,6 +118,7 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
 
     // For code files and markdown, try backend tree-sitter API first, then fallback to regex
     if (file?.path) {
+        loading.value = true
         fetchCodeSymbols(file.path).then(result => {
             if (result && result.symbols.length > 0) {
                 // Convert backend symbols to TocItem format
@@ -143,14 +149,17 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
             activeId.value = toc.value[0]?.id || ''
             searchQuery.value = ''
             filteredToc.value = toc.value
+            loading.value = false
         }).catch(() => {
             // Fallback to regex-based extraction on error
             toc.value = extractToc(file.content, lang)
             activeId.value = toc.value[0]?.id || ''
             searchQuery.value = ''
             filteredToc.value = toc.value
+            loading.value = false
         })
     } else {
+        loading.value = false
         toc.value = extractToc(file.content, lang)
         activeId.value = toc.value[0]?.id || ''
         searchQuery.value = ''

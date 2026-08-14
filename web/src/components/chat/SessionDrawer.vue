@@ -31,7 +31,8 @@
           v-model="searchQuery"
         />
         <button v-if="canRefresh" class="refresh-btn" :class="{ loading: refreshing }" @click="handleRefresh" :disabled="refreshing" :title="t('chat.sessionSetting.refresh')">
-          <RefreshCw :size="14" :class="{ spin: refreshing }" />
+          <LoadingIndicator v-if="refreshing" size="sm" inline />
+          <RefreshCw v-else :size="14" />
         </button>
       </div>
       <!-- Model list -->
@@ -197,6 +198,7 @@ import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw, Star, Cpu, Brain, Compass, Cable } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
@@ -674,19 +676,6 @@ defineExpose({
 .refresh-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.refresh-btn.loading {
-  color: var(--accent-color, #0066cc);
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 .model-list {

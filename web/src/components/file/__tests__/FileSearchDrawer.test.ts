@@ -174,7 +174,8 @@ describe('FileSearchDrawer', () => {
     mockState.query = 'test'
     mockState.searching = true
     const wrapper = mountDrawer()
-    expect(wrapper.find('.fs-empty').text()).toContain('Searching')
+    expect(wrapper.find('.loading-indicator').exists()).toBe(true)
+    expect(wrapper.find('.li-label').text()).toContain('Searching')
   })
 
   it('renders search results with file info', () => {

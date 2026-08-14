@@ -85,7 +85,8 @@
           :disabled="!canSubmit || submitting"
           @click="submit"
         >
-          {{ submitting ? t('settings.changingPassword') : t('settings.changePasswordBtn') }}
+          <LoadingIndicator v-if="submitting" size="sm" inline />
+          <span v-else>{{ t('settings.changePasswordBtn') }}</span>
         </button>
       </div>
     </div>
@@ -97,6 +98,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { apiPost } from '@/utils/api'
 import { Eye, EyeOff } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 const emit = defineEmits<{

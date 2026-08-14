@@ -1062,6 +1062,7 @@ export default {
     searchPlaceholder: 'Search headings...',
     noMatch: 'No matches',
     noHeadings: 'No headings',
+    loading: 'Loading headings...',
   },
   quoteBar: {
     clear: 'Clear',

@@ -29,10 +29,7 @@
       </div>
 
       <!-- Loading state -->
-      <div v-else-if="loading" class="mc-loading">
-        <span class="mc-load-spinner"></span>
-        <span>{{ t('chat.messageClusters.loading') }}</span>
-      </div>
+      <LoadingIndicator v-else-if="loading" size="sm" :label="t('chat.messageClusters.loading')" />
 
       <!-- No cache (idle) -->
       <div v-else-if="!loaded || clusters.length === 0 && progress.status === 'idle'" class="mc-empty">
@@ -89,6 +86,7 @@ import { Sparkles as SparklesIcon, Plus as PlusIcon, List as ListIcon, Play as P
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import QuickSendEditModal from '@/components/chat/QuickSendEditModal.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useMessageClusters, type MessageCluster } from '@/composables/useMessageClusters'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -263,29 +261,6 @@ defineExpose({ open })
   padding: 16px 0;
   color: #e53e3e;
   font-size: 13px;
-}
-
-.mc-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 32px 0;
-  color: var(--text-muted, #999);
-  font-size: 13px;
-}
-
-.mc-load-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border-color, #e5e5e5);
-  border-top-color: var(--text-secondary, #666);
-  border-radius: 50%;
-  animation: mc-spin 0.6s linear infinite;
-}
-
-@keyframes mc-spin {
-  to { transform: rotate(360deg); }
 }
 
 .mc-empty {

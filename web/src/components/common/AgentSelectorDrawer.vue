@@ -5,7 +5,8 @@
       <span class="bs-header-title">{{ title }}</span>
     </template>
     <div class="agent-list">
-      <div v-if="agents.length === 0" class="agent-list-empty">{{ t('session.noAgentsTitle') }}</div>
+      <LoadingIndicator v-if="agentsLoading" size="sm" />
+      <div v-else-if="agents.length === 0" class="agent-list-empty">{{ t('session.noAgentsTitle') }}</div>
       <div
         v-for="(agent, idx) in agents"
         :key="agent.id"
@@ -36,11 +37,12 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 import { Bot, Star } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useAgents } from '@/composables/useAgents'
@@ -70,6 +72,7 @@ const { agents, loadAgents, isDefaultAgent, getAgentDefaultModelName, setDefault
 
 // Guard against accidental clicks right after opening the agent selector
 let openTime = 0
+const agentsLoading = ref(false)
 
 function handleClose() {
   emit('update:open', false)
@@ -112,10 +115,15 @@ function scrollActiveIntoView(index: number) {
 watch(agents, () => listNav.reset())
 
 // Auto-reset touch guard and preload agents when drawer opens
-watch(() => props.open, (val) => {
+watch(() => props.open, async (val) => {
   if (val) {
     openTime = Date.now()
-    loadAgents()
+    agentsLoading.value = true
+    try {
+      await loadAgents()
+    } finally {
+      agentsLoading.value = false
+    }
   }
 }, { immediate: true })
 </script>

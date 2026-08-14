@@ -40,9 +40,7 @@
       </div>
 
       <div class="fs-content">
-        <div v-if="search.state.searching && search.state.results.length === 0" class="fs-empty">
-          {{ t('file.search.searching') }}
-        </div>
+        <LoadingIndicator v-if="search.state.searching && search.state.results.length === 0" size="sm" :label="t('file.search.searching')" />
         <div v-else-if="!search.state.query.trim()" class="fs-empty">
           {{ t('file.search.placeholder') }}
         </div>
@@ -92,6 +90,7 @@ import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Search, FolderTree, Globe, RotateCcw, LocateFixed } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import FileIcon from '@/components/common/FileIcon.vue'

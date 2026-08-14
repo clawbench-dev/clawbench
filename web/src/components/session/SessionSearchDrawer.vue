@@ -31,7 +31,7 @@
       </div>
 
       <div class="session-search-content">
-        <div v-if="searchState.loading" class="session-search-empty">{{ t('sessionSearch.searching') }}</div>
+        <LoadingIndicator v-if="searchState.loading" size="sm" :label="t('sessionSearch.searching')" />
         <div v-else-if="searchState.error" class="session-search-error">{{ searchState.error }}</div>
         <div v-else-if="searchState.results.length === 0" class="session-search-empty">{{ t('sessionSearch.noResults') }}</div>
         <div v-else class="session-search-results">
@@ -104,6 +104,7 @@ import { ref, computed, watch, nextTick, onBeforeUpdate, onBeforeUnmount, onUnmo
 import { useI18n } from 'vue-i18n'
 import { Search, ChevronLeft, User, Bot, RotateCcw, Import, MessageSquare, Trash2 } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import { useSessionSearch, type SessionSearchResult } from '@/composables/useSessionSearch'
 import { useListNav } from '@/composables/useListNav'

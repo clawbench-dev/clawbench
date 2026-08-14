@@ -5,14 +5,8 @@
       <span class="bs-header-title">{{ t('chat.messageList.conversationIndexTitle') }}</span>
       <span class="panel-count">{{ messages.length }}</span>
     </template>
-    <div v-if="loading" class="panel-loading">
-      <span class="chat-load-spinner"></span>
-      <span>{{ t('chat.messageList.loadingMore') }}</span>
-    </div>
-    <div v-else-if="jumping" class="panel-loading">
-      <span class="chat-load-spinner"></span>
-      <span>{{ t('chat.messageList.loadingMore') }}</span>
-    </div>
+    <LoadingIndicator v-if="loading" size="sm" :label="t('chat.messageList.loadingMore')" />
+    <LoadingIndicator v-else-if="jumping" size="sm" :label="t('chat.messageList.loadingMore')" />
     <div v-else-if="messages.length === 0" class="panel-empty">
       <span class="panel-empty-icon-wrap">
         <MessagesSquare :size="26" class="panel-empty-icon" />
@@ -58,6 +52,7 @@ import { useI18n } from 'vue-i18n'
 import { MessagesSquare, Split, MousePointerClick } from 'lucide-vue-next'
 import { formatUserMsg } from '@/utils/userMsgIndexUtils.ts'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { formatRelativeTime } from '@/utils/format.ts'
@@ -125,18 +120,6 @@ watch([() => props.open, () => props.loading, () => props.jumping], async ([isOp
   border-radius: 10px;
   padding: 1px 8px;
   line-height: 1.5;
-}
-
-/* ── Loading / jumping ── */
-.panel-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 22px 18px;
-  font-size: 12px;
-  color: var(--text-muted);
-  min-height: 30vh;
 }
 
 /* ── List ── */

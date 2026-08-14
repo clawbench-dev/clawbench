@@ -18,7 +18,7 @@
     </template>
 
     <div class="session-list" ref="listRef">
-      <div v-if="loading" class="session-loading">{{ t('common.loading') }}</div>
+      <LoadingIndicator v-if="loading" size="sm" :label="t('common.loading')" />
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
         <div
@@ -50,7 +50,7 @@
           </button>
         </div>
         <div ref="sentinelRef" class="session-list-sentinel"></div>
-        <div v-if="loadingMore" class="session-loading-more">{{ t('common.loading') }}</div>
+        <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
         <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
       </template>
     </div>
@@ -74,6 +74,7 @@ import { appLog } from '@/utils/appLog'
 import { Plus, Search, Archive, List } from 'lucide-vue-next'
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
@@ -302,15 +303,6 @@ onUnmounted(() => {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
-}
-
-.session-loading {
-  min-height: 40vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted, #999);
-  font-size: 13px;
 }
 
 .session-empty {
@@ -560,13 +552,6 @@ onUnmounted(() => {
 
 .session-list-sentinel {
   height: 1px;
-}
-
-.session-loading-more {
-  padding: 12px;
-  text-align: center;
-  color: var(--text-muted, #999);
-  font-size: 12px;
 }
 
 .session-list-end {

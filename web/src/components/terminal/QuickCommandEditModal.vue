@@ -36,7 +36,7 @@
 
     <template #footer>
       <button class="modal-btn" @click="$emit('close')">{{ t('common.cancel') }}</button>
-      <button class="modal-btn primary" :disabled="saving" @click="saveCommand">{{ saving ? '...' : t('common.save') }}</button>
+      <button class="modal-btn primary" :disabled="saving" @click="saveCommand"><LoadingIndicator v-if="saving" size="sm" inline /><span v-else>{{ t('common.save') }}</span></button>
     </template>
   </ModalDialog>
 </template>
@@ -45,6 +45,7 @@
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { PencilIcon, PlusIcon } from 'lucide-vue-next'
 import { useQuickCommands, type QuickCommand } from '@/composables/useQuickCommands'
 import { useToast } from '@/composables/useToast'

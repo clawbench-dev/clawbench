@@ -1063,6 +1063,7 @@ export default {
     searchPlaceholder: '搜索目录...',
     noMatch: '无匹配结果',
     noHeadings: '无标题',
+    loading: '正在加载目录...',
   },
   quoteBar: {
     clear: '清空',

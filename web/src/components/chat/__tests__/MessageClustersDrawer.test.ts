@@ -168,7 +168,7 @@ describe('MessageClustersDrawer', () => {
   it('renders loading state', () => {
     mockLoading.value = true
     const wrapper = mountDrawer()
-    expect(wrapper.find('.mc-loading').exists()).toBe(true)
+    expect(wrapper.find('.loading-indicator .li-spinner').exists()).toBe(true)
   })
 
   it('renders cached results with clusters and header reanalyze button', () => {

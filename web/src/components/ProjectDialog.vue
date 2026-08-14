@@ -27,7 +27,7 @@
 
     <!-- Content -->
     <div class="dialog-content">
-      <div v-if="loading" class="dialog-loading">{{ t('common.loading') }}</div>
+      <LoadingIndicator v-if="loading" size="sm" :label="t('common.loading')" />
       <div v-else-if="displayItems.length === 0" class="dialog-empty">{{ searchQuery ? t('projectDialog.noMatchDirs') : t('projectDialog.emptyDir') }}</div>
       <div
         v-else
@@ -66,6 +66,7 @@ import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, RotateCw, LocateFixed 
 import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from './common/ModalDialog.vue'
+import LoadingIndicator from './common/LoadingIndicator.vue'
 import SearchInput from './common/SearchInput.vue'
 import DirBreadcrumb from './file/DirBreadcrumb.vue'
 import FileIcon from './common/FileIcon.vue'
@@ -376,7 +377,7 @@ async function confirm() {
   color: #fff;
 }
 
-.dialog-empty, .dialog-loading {
+.dialog-empty {
   text-align: center;
   padding: 40px 20px;
   color: var(--text-muted, #999);

@@ -6,7 +6,7 @@
         <span class="tool-detail-header-name">{{ displayName }}</span>
         <span v-if="toolSummary" class="tool-detail-header-summary">{{ toolSummary }}</span>
         <span v-if="toolDone && toolDuration > 0" class="tool-detail-duration">{{ formatDuration(toolDuration) }}</span>
-        <span v-if="!toolDone" class="tool-detail-spinner"></span>
+        <LoadingIndicator v-if="!toolDone" size="sm" inline />
         <XCircle v-else-if="toolStatus === 'error'" :size="14" color="#ef4444" class="tool-detail-status" />
         <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-detail-status" />
       </div>
@@ -42,6 +42,7 @@
 import { computed } from 'vue'
 import { CheckCircle2, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { getToolIcon } from '@/utils/icons'
 import { formatDuration } from '@/utils/format.ts'
@@ -195,21 +196,6 @@ function handleBodyClick(event) {
   color: color-mix(in srgb, var(--tool-accent) 90%, transparent);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.tool-detail-spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--tool-accent);
-  border-radius: 50%;
-  animation: tool-spin 0.6s linear infinite;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-@keyframes tool-spin {
-  to { transform: rotate(360deg); }
 }
 
 /* Body */

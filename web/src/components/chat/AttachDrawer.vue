@@ -87,7 +87,8 @@
 
       <!-- Recently shared -->
       <template v-if="activeTab === 'shares'">
-        <div v-if="!recentShares?.length" class="ad-empty">{{ t('chat.attach.emptyShares') }}</div>
+        <LoadingIndicator v-if="loading" size="sm" />
+        <div v-else-if="!recentShares?.length" class="ad-empty">{{ t('chat.attach.emptyShares') }}</div>
         <button
           v-for="item in recentShares" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
@@ -126,7 +127,8 @@
           </div>
         </button>
         <!-- Completed uploads from server -->
-        <div v-if="!recentUploads?.length && pendingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
+        <LoadingIndicator v-if="loading && !recentUploads?.length && pendingFiles.length === 0" size="sm" />
+        <div v-else-if="!recentUploads?.length && pendingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
         <button
           v-for="item in recentUploads" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
@@ -165,6 +167,7 @@ import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useI18n } from 'vue-i18n'
 import { useDialog } from '@/composables/useDialog'
 import { useShareIn } from '@/composables/useShareIn'
@@ -212,6 +215,7 @@ const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop } = useFil
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const filePickerOpen = ref(false)
+const loading = ref(false)
 
 const tabs = [
   { key: 'current', label: '' },
@@ -331,10 +335,14 @@ const currentDirDisplayName = computed(() => {
 })
 
 // Fetch data when drawer opens
-watch(() => props.open, (v) => {
+watch(() => props.open, async (v) => {
   if (v) {
-    fetchRecentShares()
-    fetchRecentUploads()
+    loading.value = true
+    try {
+      await Promise.all([fetchRecentShares(), fetchRecentUploads()])
+    } finally {
+      loading.value = false
+    }
   } else {
     filePickerOpen.value = false
     // Clear thumb errors when drawer closes

@@ -14,8 +14,7 @@
 
         <!-- Checking -->
         <div v-if="checking && !isInProgress" class="ug-progress-area">
-          <div class="ug-spinner" />
-          <p class="ug-message">{{ t('upgrade.checking') }}</p>
+          <LoadingIndicator size="md" :label="t('upgrade.checking')" />
         </div>
 
         <!-- Version info (before upgrade, after check) -->
@@ -43,11 +42,13 @@
 
         <!-- Progress area -->
         <div v-if="isInProgress || isRestarting" class="ug-progress-area">
-          <div v-if="state.phase === 'downloading'" class="ug-progress-bar">
-            <div class="ug-progress-fill" :style="{ width: state.progress + '%' }" />
-          </div>
-          <div v-else class="ug-spinner" />
-          <p class="ug-message">{{ phaseMessage }}</p>
+          <template v-if="state.phase === 'downloading'">
+            <div class="ug-progress-bar">
+              <div class="ug-progress-fill" :style="{ width: state.progress + '%' }" />
+            </div>
+            <p class="ug-message">{{ phaseMessage }}</p>
+          </template>
+          <LoadingIndicator v-else size="md" :label="phaseMessage" />
         </div>
 
         <!-- Completed -->
@@ -81,6 +82,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useUpgrade } from '@/composables/useUpgrade'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
@@ -240,17 +242,6 @@ watch(visible, (v) => {
   border-radius: 3px;
   transition: width 0.3s ease;
 }
-
-.ug-spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: ug-spin 0.8s linear infinite;
-}
-
-@keyframes ug-spin { to { transform: rotate(360deg); } }
 
 .ug-message {
   margin: 0;

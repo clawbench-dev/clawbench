@@ -98,12 +98,12 @@ describe('UserMsgIndexDrawer', () => {
 
     it('shows loading state', () => {
       const wrapper = mountSheet({ loading: true })
-      expect(wrapper.find('.panel-loading').exists()).toBe(true)
+      expect(wrapper.find('.li-spinner').exists()).toBe(true)
     })
 
     it('shows jumping state', () => {
       const wrapper = mountSheet({ jumping: true })
-      expect(wrapper.find('.panel-loading').exists()).toBe(true)
+      expect(wrapper.find('.li-spinner').exists()).toBe(true)
     })
 
     it('scrolls active message into view after loading finishes', async () => {
@@ -143,7 +143,7 @@ describe('UserMsgIndexDrawer', () => {
 
     it('shows loading state in preference to the empty state', () => {
       const wrapper = mountSheet({ open: true, messages: [], loading: true })
-      expect(wrapper.find('.panel-loading').exists()).toBe(true)
+      expect(wrapper.find('.li-spinner').exists()).toBe(true)
       expect(wrapper.find('.panel-empty').exists()).toBe(false)
     })
 

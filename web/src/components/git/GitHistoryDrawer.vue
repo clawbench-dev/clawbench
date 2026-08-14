@@ -10,7 +10,7 @@
 
     <!-- Loading (initial) -->
     <div v-if="loading" class="git-history-loading">
-      <div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto;" />
+      <LoadingIndicator size="sm" />
     </div>
 
     <!-- Error -->
@@ -53,7 +53,7 @@
       <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" />
       <div class="drilldown-body">
         <div v-if="filesLoading" class="git-history-loading">
-          <div class="spinner" style="width:24px;height:24px;border-width:2px;" />
+          <LoadingIndicator size="sm" />
         </div>
         <div v-else-if="totalFileCount === 0" class="git-history-empty">{{ t('git.history.noFileChanges') }}</div>
         <!-- Merge commit: grouped by parent branch -->
@@ -149,6 +149,7 @@ import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import GitCommitList from './GitCommitList.vue'
 import GitCommitMeta from './GitCommitMeta.vue'
 import GitDiffView from './GitDiffView.vue'

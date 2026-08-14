@@ -10,7 +10,8 @@
             </svg>
           </button>
         </div>
-        <p class="vm-body">{{ t('versionMismatch.message', { appVersion, serverVersion }) }}</p>
+        <p v-if="loading" class="vm-body"><LoadingIndicator size="sm" /></p>
+        <p v-else class="vm-body">{{ t('versionMismatch.message', { appVersion, serverVersion }) }}</p>
         <div class="vm-footer">
           <button class="vm-download" @click="downloadApk" :aria-label="t('versionMismatch.download')">{{ t('versionMismatch.download') }}</button>
           <button class="vm-skip" @click="skip">{{ t('versionMismatch.skip') }}</button>
@@ -26,6 +27,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppMode } from '@/composables/useAppMode'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { normalizeVersion, isVersionedBuild, compareVersions, extractBaseVersion } from '@/utils/version'
@@ -43,6 +45,7 @@ const { serverConfig } = useSettingsConfig()
 
 const visible = ref(false)
 const hasAttemptedShow = ref(false)
+const loading = ref(false)
 
 const appVersion = ref('')
 
@@ -63,7 +66,8 @@ const normalizedServerVersion = computed(() => normalizeVersion(serverVersion.va
 
 function show() {
   hasAttemptedShow.value = true
-  void loadAppVersion().then(tryShow)
+  loading.value = true
+  void loadAppVersion().then(tryShow).finally(() => { loading.value = false })
 }
 
 /** Attempt to show the dialog; silently skips if conditions aren't met yet. */

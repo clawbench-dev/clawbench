@@ -19,7 +19,7 @@
       </div>
       <div v-if="diffItems.length" class="fd-diffs">
         <div v-for="item in diffItems" :key="item.key" class="fd-diff-item">
-          <div v-if="item.loading" class="fd-loading"><span class="fd-loading-spinner"></span><span>{{ t('chat.fileChanges.loadingDiff') }}</span></div>
+          <LoadingIndicator v-if="item.loading" size="sm" inline :label="t('chat.fileChanges.loadingDiff')" />
           <div v-else-if="item.error" class="fd-error">
             <span>{{ t('chat.fileChanges.diffLoadFailed') }}</span>
             <button class="fd-retry-btn" @click="fetchDiff(item)">{{ t('common.retry') }}</button>
@@ -46,6 +46,7 @@ import { useI18n } from 'vue-i18n'
 import { ArrowLeft, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { handleToolAction, handleToolContentHeaderClick } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
@@ -286,29 +287,6 @@ function handleBodyClick(event) {
   text-align: center;
   font-size: 12px;
   color: var(--text-muted, #999);
-}
-
-.fd-loading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px;
-  font-size: 12px;
-  color: var(--text-muted, #999);
-}
-
-.fd-loading-spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color, #0066cc);
-  border-radius: 50%;
-  animation: fd-spin 0.6s linear infinite;
-  flex-shrink: 0;
-}
-
-@keyframes fd-spin {
-  to { transform: rotate(360deg); }
 }
 
 .fd-error {

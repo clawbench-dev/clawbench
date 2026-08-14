@@ -38,7 +38,8 @@
           {{ t('common.cancel') }}
         </button>
         <button class="kcd-btn kcd-btn-save" :disabled="saving" @click="handleSave">
-          {{ saving ? t('common.loading') : t('common.save') }}
+          <LoadingIndicator v-if="saving" size="sm" inline />
+          <span v-else>{{ t('common.save') }}</span>
         </button>
       </div>
     </template>
@@ -50,6 +51,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Settings } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import KeyConfigTab from './KeyConfigTab.vue'
 import { useKeyConfig } from '@/composables/useKeyConfig'
 

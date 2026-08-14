@@ -9,8 +9,7 @@
     </div>
     <div class="acp-session-list">
       <div v-if="acpSessionsLoading && acpSessions.length === 0" class="acp-session-empty">
-        <Loader2Icon :size="18" class="spin acp-session-loading-icon" />
-        <span>{{ t('chat.acpSession.loading') }}</span>
+        <LoadingIndicator size="sm" :label="t('chat.acpSession.loading')" />
       </div>
       <div v-else-if="acpSessionsNotSupported" class="acp-session-empty">
         {{ t('chat.acpSession.notSupported') }}
@@ -40,13 +39,12 @@
             :title="t('chat.acpSession.title')"
             @click.stop="handleSelect(session)"
           >
-            <Loader2Icon v-if="resumingId === session.sessionId" :size="14" class="spin" />
+            <LoadingIndicator v-if="resumingId === session.sessionId" size="sm" inline />
             <ImportIcon v-else :size="14" />
           </button>
         </div>
         <div v-if="acpSessionsLoading && acpSessions.length > 0" class="acp-session-loading-more">
-          <Loader2Icon :size="14" class="spin" />
-          <span>{{ t('chat.acpSession.loading') }}</span>
+          <LoadingIndicator size="sm" inline :label="t('chat.acpSession.loading')" />
         </div>
         <div v-if="acpSessions.length > 0 && hiddenOtherProjectCount > 0" class="acp-session-hidden-hint">
           {{ t('chat.acpSession.hiddenInOtherProjects', { count: hiddenOtherProjectCount }) }}
@@ -62,8 +60,7 @@
     <Transition name="overlay-fade">
       <div v-if="acpResuming" class="acp-resume-overlay">
         <div class="acp-resume-overlay-content">
-          <Loader2Icon :size="24" class="spin" />
-          <span>{{ t('chat.acpSession.resuming') }}</span>
+          <LoadingIndicator size="sm" inline :label="t('chat.acpSession.resuming')" />
         </div>
       </div>
     </Transition>
@@ -73,9 +70,10 @@
 <script setup lang="ts">
 import { ref, watch, computed, toRef, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Import as ImportIcon, Loader2 as Loader2Icon } from 'lucide-vue-next'
+import { Import as ImportIcon } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import { useAcpSession, type AcpSessionInfo } from '@/composables/useAcpSession'
 import { useAgents } from '@/composables/useAgents'
@@ -377,14 +375,5 @@ function formatTime(iso: string): string {
 .overlay-fade-enter-from,
 .overlay-fade-leave-to {
   opacity: 0;
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 </style>

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref, nextTick, defineComponent, h } from 'vue'
+import { ref, nextTick, defineComponent } from 'vue'
 import type { AcpSessionInfo } from '@/composables/useAcpSession'
 
 // ── Mocks ──
@@ -70,11 +70,6 @@ vi.mock('vue-i18n', () => ({
 
 vi.mock('lucide-vue-next', () => ({
   Import: { name: 'ImportIcon', render: () => null },
-  Loader2: {
-    name: 'Loader2Icon',
-    inheritAttrs: false,
-    render: () => h('span', { class: 'loader2-icon' }),
-  },
 }))
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
@@ -263,7 +258,7 @@ describe('AcpSessionDrawer', () => {
       const wrapper = mountDrawer()
       await nextTick()
 
-      expect(wrapper.find('.acp-session-empty .loader2-icon').exists()).toBe(true)
+      expect(wrapper.find('.acp-session-empty .li-spinner').exists()).toBe(true)
       expect(wrapper.text()).toContain('chat.acpSession.loading')
     })
 
@@ -274,7 +269,7 @@ describe('AcpSessionDrawer', () => {
       const wrapper = mountDrawer()
       await nextTick()
 
-      expect(wrapper.find('.acp-session-empty .loader2-icon').exists()).toBe(false)
+      expect(wrapper.find('.acp-session-empty .li-spinner').exists()).toBe(false)
     })
 
     it('shows a spinner while loading more sessions with existing list', async () => {
@@ -284,7 +279,7 @@ describe('AcpSessionDrawer', () => {
       const wrapper = mountDrawer()
       await nextTick()
 
-      expect(wrapper.find('.acp-session-loading-more .loader2-icon').exists()).toBe(true)
+      expect(wrapper.find('.acp-session-loading-more .li-spinner').exists()).toBe(true)
     })
   })
 

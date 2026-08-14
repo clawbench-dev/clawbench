@@ -16,7 +16,8 @@
           @click.stop="handleUndo"
         >
           <Undo2 :size="14" />
-          {{ busy ? '…' : t('git.diffView.undo') }}
+          <LoadingIndicator v-if="busy" size="sm" inline />
+          <span v-else>{{ t('git.diffView.undo') }}</span>
         </button>
       </div>
     </template>
@@ -53,6 +54,7 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { Undo2, FileDiff } from 'lucide-vue-next'
 import { diffOldContent, diffOldFilePath, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
 import type { CharDiff, DiffLine } from '@/composables/useMarkdownDiff.ts'
