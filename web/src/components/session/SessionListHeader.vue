@@ -52,14 +52,13 @@ const sessionBarColor = computed(() => {
   overflow: hidden;
 }
 .session-list-header .bs-header-title {
-  flex-shrink: 1;
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .session-counter {
-  margin-left: auto;
   flex-shrink: 0;
 }
 .session-counter-bar {
