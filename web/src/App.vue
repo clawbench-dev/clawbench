@@ -473,6 +473,7 @@ import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts
 import { getFileType } from './utils/fileType.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
+import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
 import {
@@ -1594,20 +1595,33 @@ function handleWideDockTabClick(tab) {
   switchLeftTab(tab)
 }
 
-// ── Drag file/dir from the left panel → attach to chat (wide-screen only) ──
+// ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
 const { addAttachedFile } = useChatContext()
+const { uploadAndAttach } = useFileUpload()
 const chatDropActive = ref(false)
 let chatDropCounter = 0
 
+/** Whether a drag event carries OS files (dragged from the file manager / desktop). */
+function isOSFileDrop(e) {
+  const types = e.dataTransfer?.types
+  return !!types && Array.from(types).includes('Files')
+}
+
 function onChatColDragEnter(e) {
-  if (!isWideScreen.value || !hasAttachDragData(e.dataTransfer)) return
+  const internal = hasAttachDragData(e.dataTransfer)
+  const osFiles = isOSFileDrop(e)
+  if (internal && !isWideScreen.value) return
+  if (!internal && !osFiles) return
   chatDropCounter++
   chatDropActive.value = true
 }
 
 function onChatColDragOver(e) {
-  // Allow the drop only for internal attach drags (don't hijack OS file drops)
-  if (isWideScreen.value && hasAttachDragData(e.dataTransfer)) e.preventDefault()
+  // Allow the drop for internal attach drags (wide-screen) and OS file drops.
+  const internal = hasAttachDragData(e.dataTransfer)
+  const osFiles = isOSFileDrop(e)
+  if (internal && !isWideScreen.value) return
+  if (internal || osFiles) e.preventDefault()
 }
 
 function onChatColDragLeave() {
@@ -1621,12 +1635,23 @@ function onChatColDragLeave() {
 function onChatColDrop(e) {
   chatDropCounter = 0
   chatDropActive.value = false
-  if (!isWideScreen.value) return
-  const data = readAttachDragData(e.dataTransfer)
-  if (!data) return
-  e.preventDefault()
-  addAttachedFile(data.path, data.isDir)
-  toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+  // Internal attach drag (from the file manager) → attach the referenced path.
+  const internal = hasAttachDragData(e.dataTransfer)
+  if (internal) {
+    if (!isWideScreen.value) return
+    const data = readAttachDragData(e.dataTransfer)
+    if (!data) return
+    e.preventDefault()
+    addAttachedFile(data.path, data.isDir)
+    toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    return
+  }
+  // OS file drop → upload & auto-attach each file.
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (files.length > 0) {
+    e.preventDefault()
+    uploadAndAttach(files)
+  }
 }
 
 const wideScreenTabMeta = {

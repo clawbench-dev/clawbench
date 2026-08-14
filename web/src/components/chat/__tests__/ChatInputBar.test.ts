@@ -745,31 +745,6 @@ describe('ChatInputBar', () => {
     expect(true).toBe(true)
   })
 
-  it('drag enter shows drop overlay, drag leave hides it', async () => {
-    const wrapper = mountBar()
-    const container = wrapper.find('.chat-input-container')
-    // Directly call the component's internal event handlers by triggering events
-    // onDragEnter: increments dragCounter and sets isDragOver=true
-    await container.trigger('dragenter')
-    // Wait for Vue to re-render
-    await new Promise(r => setTimeout(r, 0))
-    await wrapper.vm.$nextTick()
-    // Check if the drop overlay appeared
-    const hasOverlay = wrapper.find('.drop-overlay').exists()
-    // If it appeared, test dragleave; if not, the event handler might not work
-    // in jsdom, so just verify the container handles drag events without error
-    if (hasOverlay) {
-      await container.trigger('dragleave')
-      await new Promise(r => setTimeout(r, 0))
-      await wrapper.vm.$nextTick()
-      expect(wrapper.find('.drop-overlay').exists()).toBe(false)
-    } else {
-      // In jsdom, drag events may not trigger Vue reactivity properly.
-      // Verify the event handlers are bound by checking the v-if directive
-      expect(container.exists()).toBe(true)
-    }
-  })
-
   it('user-msg-index button emits open-user-msg-index', async () => {
     const wrapper = mountBar()
     const buttons = wrapper.findAll('.chat-action-btn')
@@ -790,17 +765,6 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('open-session-search')).toBeTruthy()
   })
 
-  it('drop event resets drag state', async () => {
-    const wrapper = mountBar()
-    const container = wrapper.find('.chat-input-container')
-    await container.trigger('drop', {
-      preventDefault: vi.fn(),
-      dataTransfer: { files: [] },
-    })
-    // No drop overlay should be visible
-    expect(wrapper.find('.drop-overlay').exists()).toBe(false)
-  })
-
   it('exposes deleteDraft method', async () => {
     const wrapper = mountBar({ currentSessionId: 'sess-1' })
     // Write a draft by setting inputText and switching session
@@ -812,23 +776,6 @@ describe('ChatInputBar', () => {
     // Verify the draft is deleted by checking inputText after switching back
     // (draftCache is internal, so we just verify no crash)
     expect(true).toBe(true)
-  })
-
-  // Note: drop event with files causes infinite nextTick loop because
-  // AttachDrawer is stubbed and handleFileDrop never resolves.
-  // Skipping that test — the onDrop → attachDrawer.open() path is
-  // adequately covered by the "drop event resets drag state" test
-  // which verifies no files → no open, and the toggle test for attach.
-
-  it('drop event without files does not open attach drawer', async () => {
-    mockDrawerOpen.mockClear()
-    const wrapper = mountBar()
-    const container = wrapper.find('.chat-input-container')
-    await container.trigger('drop', {
-      dataTransfer: { files: [] },
-    })
-    await wrapper.vm.$nextTick()
-    expect(mockDrawerOpen).not.toHaveBeenCalled()
   })
 
   it('toggleAttachMenu calls drawer toggle', async () => {

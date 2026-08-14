@@ -60,16 +60,7 @@
       </div>
     </Transition>
     <!-- Input container -->
-    <div class="chat-input-container"
-      @dragenter="onDragEnter"
-      @dragover="onDragOver"
-      @dragleave="onDragLeave"
-      @drop="onDrop">
-      <!-- Drop overlay (opens the attach drawer on drop) -->
-      <div v-if="isDragOver" class="drop-overlay">
-        <Upload :size="24" :stroke-width="1.5" />
-        <span>{{ t('chat.attach.dropToUpload') }}</span>
-      </div>
+    <div class="chat-input-container">
       <!-- Paste overlay (dynamic feedback while uploading pasted files from clipboard) -->
       <Transition name="paste-fade">
         <div v-if="isPasteOver" class="paste-overlay">
@@ -274,7 +265,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft } from 'lucide-vue-next'
+import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -639,8 +630,6 @@ function onVoiceBlurStop() {
 
 const rootRef = ref(null)
 const textareaRef = ref(null)
-const isDragOver = ref(false)
-const dragCounter = ref(0)
 const isPasteOver = ref(false)
 let pasteOverlayTimer = 0
 const attachDrawer = useTabDrawer('chat')
@@ -957,35 +946,6 @@ function onTextareaBlur() {
 // Watch inputText changes (both user input and programmatic changes like draft restore)
 // to ensure textarea height stays in sync with content
 watch(inputText, () => nextTick(() => autoResizeTextarea()))
-
-function onDragEnter(e) {
-  e.preventDefault()
-  dragCounter.value++
-  isDragOver.value = true
-}
-
-function onDragOver(e) {
-  e.preventDefault()
-}
-
-function onDragLeave(e) {
-  e.preventDefault()
-  dragCounter.value--
-  if (dragCounter.value <= 0) {
-    dragCounter.value = 0
-    isDragOver.value = false
-  }
-}
-
-function onDrop(e) {
-  e.preventDefault()
-  dragCounter.value = 0
-  isDragOver.value = false
-  const files = Array.from(e.dataTransfer?.files || [])
-  if (files.length > 0) {
-    uploadAndAttach(files)
-  }
-}
 
 function onPaste(e) {
   const now = Date.now()
@@ -1710,28 +1670,6 @@ defineExpose({
 .chat-input-container:focus-within {
   background: var(--bg-primary, #fff);
   box-shadow: 0 0 0 1px var(--accent-color, #0066cc);
-}
-
-.chat-input-container.drag-over {
-  background: var(--bg-primary, #fff);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
-}
-
-/* Drop overlay */
-.drop-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, var(--bg-primary, #fff));
-  color: var(--accent-color, #0066cc);
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 20px;
-  pointer-events: none;
 }
 
 .paste-overlay {
