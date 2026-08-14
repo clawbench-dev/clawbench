@@ -124,7 +124,7 @@ export function useVoiceInput() {
         if (!resp.ok) throw new Error((data as Record<string, unknown>).error as string ?? 'transcribe failed')
         appendText((data as Record<string, unknown>).text as string ?? '')
       } catch (e) {
-        fail('语音识别失败')
+        fail('语音识别失败，请检查识别模型配置')
         appLog.e('VoiceInput', 'non-streaming transcribe failed', e)
       } finally {
         state.value = 'done'
