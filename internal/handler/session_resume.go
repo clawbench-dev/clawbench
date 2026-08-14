@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -295,118 +294,13 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 		// (to sessionRoutes → WS) instead of being orphaned in the buffer.
 		conn.ClearLoadSessionActive()
 
-		// Read buffered notifications
-		type persistedMessage struct {
-			role    string
-			content string // JSON: {"blocks":[...]}
-			// toolCalls holds the tool_use blocks (with full input/output) for
-			// this message. They are serialized slim (no input/output) into
-			// `content`, so they must be persisted to chat_tool_calls separately —
-			// otherwise the frontend cannot render tool call details for restored
-			// ACP sessions (the /api/ai/chat/tool-call lookup returns nothing).
-			toolCalls []model.ContentBlock
-		}
-		var messages []persistedMessage
-
+		// Read buffered notifications and group into messages (capturing
+		// external messageId), then persist. acp-load persists the full replay.
+		var messages []replayMessage
 		if client != nil {
-			buf := client.GetAndClearLoadSessionBuf()
-
-			// Accumulate blocks across notifications, splitting on role boundaries.
-			var blocks []model.ContentBlock
-			var currentRole string // strUser or strAssistant
-
-			flushBlocks := func() {
-				if len(blocks) == 0 || currentRole == "" {
-					return
-				}
-				blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
-				// Capture tool_use blocks (with full input/output) before slim
-				// serialization strips them, so they can be persisted to
-				// chat_tool_calls alongside the message.
-				var toolCalls []model.ContentBlock
-				for _, b := range blocks {
-					if b.Type == strToolUse && b.ID != "" {
-						toolCalls = append(toolCalls, b)
-					}
-				}
-				contentMap := map[string]any{strBlocks: blocks}
-				if currentRole == strAssistant {
-					contentMap["metadata"] = map[string]any{
-						"transport": transportACP,
-					}
-				}
-				contentJSON, _ := json.Marshal(contentMap)
-				messages = append(messages, persistedMessage{
-					role:      currentRole,
-					content:   string(contentJSON),
-					toolCalls: toolCalls,
-				})
-				blocks = nil
-			}
-
-			for _, n := range buf {
-				// Determine the role of this notification
-				notifRole := strAssistant
-				if n.Update.UserMessageChunk != nil {
-					notifRole = strUser
-				}
-
-				// Flush accumulated blocks when role changes
-				if notifRole != currentRole && currentRole != "" {
-					flushBlocks()
-				}
-				currentRole = notifRole
-
-				// UserMessageChunk is not handled by mapACPSessionUpdate —
-				// extract text directly from the ACP notification.
-				if n.Update.UserMessageChunk != nil {
-					if text := n.Update.UserMessageChunk.Content.Text; text != nil && text.Text != "" {
-						ai.AccumulateBlock(&blocks, ai.StreamEvent{Type: strContent, Content: text.Text})
-					}
-					continue
-				}
-
-				// Parse the SessionUpdate through the same pipeline used for
-				// live streaming (mapACPSessionUpdate → StreamEvent → AccumulateBlock)
-				ch := make(chan ai.StreamEvent, 64)
-				ai.MapACPSessionUpdateForTest(n.Update, ch)
-				close(ch)
-				for event := range ch {
-					// Skip non-content events (mode_update, config_update, etc.)
-					switch event.Type {
-					case strContent, "thinking", "thinking_done", strToolUse, "tool_result", "warning", strError:
-						ai.AccumulateBlock(&blocks, event)
-					}
-				}
-			}
-			// Flush remaining blocks
-			flushBlocks()
+			messages = groupLoadSessionReplay(client)
 		}
-
-		// Batch insert replay messages to chat_history
-		for _, msg := range messages {
-			res, err := service.WriteExec(
-				"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, indexed) VALUES (?, ?, ?, ?, ?, 0, 0)",
-				projectPath, agent.Backend, sessionID, msg.role, msg.content,
-			)
-			if err != nil {
-				slog.Error("handler: failed to save LoadSession replay message", "error", err)
-				continue
-			}
-			// Persist tool calls to chat_tool_calls so the frontend can render
-			// tool call details for restored ACP sessions. The slim content
-			// stored above carries no input/output, so this is the only place
-			// they are preserved.
-			msgID, _ := res.LastInsertId()
-			for i := range msg.toolCalls {
-				tc := &msg.toolCalls[i]
-				inputJSON, _ := json.Marshal(tc.Input)
-				if err := service.UpsertToolCall(msgID, sessionID, tc.ID, tc.Name, inputJSON, tc.Output, tc.Status, tc.Summary, tc.Done, tc.DurationMs); err != nil {
-					slog.Warn("handler: failed to persist LoadSession replay tool call",
-						"session_id", sessionID, "tool_id", tc.ID, "error", err)
-				}
-			}
-		}
+		persistReplayMessages(sessionID, projectPath, agent.Backend, messages)
 
 		// Set session title from first user message
 		for _, msg := range messages {
