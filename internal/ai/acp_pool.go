@@ -735,6 +735,49 @@ func (c *ACPConn) ClearLoadSessionActive() {
 	c.loadSessionActive.Store(false)
 }
 
+// SyncLoadSession 强制对连接触发一次 LoadSession 回放，即使连接已存活。
+// ensureAliveWithSession 对"已存活+有 acpSID"的连接会提前返回，因此同步场景
+// 必须显式回放以获取外部最新历史。回放通知被收集到 load 缓冲供调用方持久化。
+// 若 loadSessionActive 已为 true（GetOrCreateConnForLoad 刚在全新连接上触发过
+// LoadSession），则跳过，避免重复回放。
+func (c *ACPConn) SyncLoadSession(ctx context.Context, cwd, acpSID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.loadSessionActive.Load() {
+		return nil
+	}
+	c.loadSessionActive.Store(true)
+	loadCtx, loadCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer loadCancel()
+	loadResp, err := c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
+		SessionId:  acp.SessionId(acpSID),
+		Cwd:        cwd,
+		McpServers: []acp.McpServer{},
+	})
+	if err != nil {
+		c.alive = false
+		c.loadSessionActive.Store(false)
+		return fmt.Errorf("acp: session/load: %w", err)
+	}
+	c.acpSID = acpSID
+	c.lastLoadSessionResp = &loadResp
+	c.lastUsed = time.Now()
+	slog.Info("acp conn: SyncLoadSession replay completed", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
+	return nil
+}
+
+// GetAcpSessionID 返回连接当前绑定的 ACP 会话 ID。
+func (c *ACPConn) GetAcpSessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.acpSID
+}
+
+// SetLoadSessionActiveForTest 设置 loadSessionActive，用于测试跳过真实 RPC。
+func (c *ACPConn) SetLoadSessionActiveForTest(v bool) {
+	c.loadSessionActive.Store(v)
+}
+
 // GetCurrentModeID returns the session's current mode ID.
 func (c *ACPConn) GetCurrentModeID() string {
 	c.mu.Lock()
