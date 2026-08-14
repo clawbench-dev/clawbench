@@ -1,5 +1,5 @@
 <template>
-  <div ref="rootRef" class="session-sidebar" :class="{ overlay: !isWideScreen }" :style="{ width: `${width}px` }">
+  <div ref="rootRef" class="session-sidebar" :style="{ width: `${width}px` }">
     <SplitDivider @dragmove="onDragMove" />
     <div class="sidebar-inner">
       <div class="bs-header session-sidebar-header">
@@ -39,7 +39,6 @@ import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import { useAgents } from '@/composables/useAgents'
-import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'
 
@@ -54,7 +53,6 @@ const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'op
 
 const { t } = useI18n()
 const { agents, loadAgents } = useAgents()
-const { isWideScreen } = useWideScreenLayout()
 
 const listRef = ref(null)
 const rootRef = ref(null)
@@ -109,16 +107,6 @@ defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLoca
   display: flex;
   background: var(--bg-secondary, #fff);
   border-left: 1px solid var(--border-color, #e5e5e5);
-}
-/* On non-wide screens the pinned sidebar floats as an overlay over the chat
-   (instead of taking layout space and crushing the chat column). */
-.session-sidebar.overlay {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  z-index: 30;
-  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.15);
 }
 .sidebar-inner {
   flex: 1;

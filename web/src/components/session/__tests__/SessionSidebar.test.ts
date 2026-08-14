@@ -3,14 +3,6 @@ import { mount } from '@vue/test-utils'
 import SessionSidebar from '@/components/session/SessionSidebar.vue'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 
-const wideScreen = vi.hoisted(() => ({ isWideScreen: { value: true } }))
-vi.mock('@/composables/useWideScreenLayout', async () => {
-  const { ref } = await import('vue')
-  wideScreen.isWideScreen = ref(true)
-  return {
-    useWideScreenLayout: () => ({ isWideScreen: wideScreen.isWideScreen }),
-  }
-})
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }) }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 
@@ -77,26 +69,6 @@ describe('SessionSidebar', () => {
     loadSessionsMock.mockClear()
     await wrapper.find('.refresh-stub').trigger('click')
     expect(loadSessionsMock).toHaveBeenCalled()
-  })
-
-  it('keeps the collapse button on narrow screen (needed to dismiss the overlay)', async () => {
-    wideScreen.isWideScreen.value = false
-    const wrapper = mountSidebar()
-    expect(wrapper.find('.sidebar-close-btn').exists()).toBe(true)
-    wideScreen.isWideScreen.value = true
-  })
-
-  it('applies overlay positioning on narrow screen', () => {
-    wideScreen.isWideScreen.value = false
-    const wrapper = mountSidebar()
-    expect(wrapper.find('.session-sidebar').classes()).toContain('overlay')
-    wideScreen.isWideScreen.value = true
-  })
-
-  it('does not apply overlay positioning on wide screen', () => {
-    wideScreen.isWideScreen.value = true
-    const wrapper = mountSidebar()
-    expect(wrapper.find('.session-sidebar').classes()).not.toContain('overlay')
   })
 
   it('forwards archive with sessionId and backend', async () => {
