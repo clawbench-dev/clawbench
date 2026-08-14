@@ -217,6 +217,8 @@ export default {
       sessionSearch: 'Search sessions',
       attachment: 'Attach',
       attachToChat: 'Add to chat',
+      acpSync: 'Sync ACP session',
+      acpSyncRunning: 'Session running, cannot sync',
     },
     sessionInfo: {
       default: 'Default',

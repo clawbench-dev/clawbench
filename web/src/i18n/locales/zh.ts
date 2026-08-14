@@ -217,6 +217,8 @@ export default {
       sessionSearch: '搜索会话',
       attachment: '附件',
       attachToChat: '添加到聊天',
+      acpSync: 'ACP 同步',
+      acpSyncRunning: '会话运行中，暂不可同步',
     },
     sessionInfo: {
       default: '默认',

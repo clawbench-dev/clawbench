@@ -1039,6 +1039,49 @@ describe('ChatInputBar', () => {
     expect(true).toBe(true)
   })
 
+  describe('ACP sync button', () => {
+    it('shows sync button in ACP transport and emits sync-acp-session', async () => {
+      const wrapper = mountBar({
+        currentTransport: 'acp-stdio',
+        currentAgentId: 'agent1',
+        currentSessionId: 'sid-1',
+        chatRunning: false,
+        acpSyncing: false,
+      })
+      const btn = wrapper.find('.chat-action-btn.acp-sync-btn')
+      expect(btn.exists()).toBe(true)
+      await btn.trigger('click')
+      expect(wrapper.emitted('sync-acp-session')).toBeTruthy()
+      wrapper.unmount()
+    })
+
+    it('hides sync button when not ACP transport', () => {
+      const wrapper = mountBar({
+        currentTransport: 'cli',
+        currentAgentId: 'agent1',
+        currentSessionId: 'sid-1',
+        chatRunning: false,
+        acpSyncing: false,
+      })
+      expect(wrapper.find('.chat-action-btn.acp-sync-btn').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('disables sync button while session is running or syncing', async () => {
+      const wrapper = mountBar({
+        currentTransport: 'acp-stdio',
+        currentAgentId: 'agent1',
+        currentSessionId: 'sid-1',
+        chatRunning: true,
+        acpSyncing: false,
+      })
+      const btn = wrapper.find('.chat-action-btn.acp-sync-btn')
+      expect(btn.classes()).toContain('disabled')
+      expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+      wrapper.unmount()
+    })
+  })
+
   describe('mode chip click and long-press', () => {
     let wrapper: ReturnType<typeof mountBar>
 

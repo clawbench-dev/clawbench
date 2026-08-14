@@ -33,6 +33,17 @@
           <Archive :size="14" />
         </button>
       </div>
+      <button
+        v-if="isACPTransport"
+        class="chat-action-btn acp-sync-btn"
+        :class="{ disabled: chatRunning || acpSyncing }"
+        :disabled="chatRunning || acpSyncing"
+        @click="$emit('sync-acp-session')"
+        :title="chatRunning ? t('chat.actions.acpSyncRunning') : t('chat.actions.acpSync')"
+        :aria-label="t('chat.actions.acpSync')"
+      >
+        <ArrowRightLeft :size="14" :stroke-width="1.5" />
+      </button>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
         @click="$emit('toggle-auto-speech')"
         :title="t('chat.actions.autoSpeech')">
@@ -263,7 +274,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, Minimize2, Sparkles } from 'lucide-vue-next'
+import { Code2, List, Plus, Search, Archive, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -425,6 +436,7 @@ const props = defineProps({
   currentSessionId: String,
   chatUnreadCount: Number,
   chatRunning: Boolean,
+  acpSyncing: Boolean,
   currentModelId: String,
   currentModelName: String,
   currentModeName: String,
@@ -454,6 +466,7 @@ const emit = defineEmits([
   'switch-thinking-effort',
   'switch-mode',
   'switch-transport',
+  'sync-acp-session',
 ])
 
 const inputText = ref('')
