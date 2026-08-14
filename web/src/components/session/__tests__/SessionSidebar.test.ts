@@ -79,11 +79,24 @@ describe('SessionSidebar', () => {
     expect(loadSessionsMock).toHaveBeenCalled()
   })
 
-  it('hides the collapse button on narrow screen', async () => {
+  it('keeps the collapse button on narrow screen (needed to dismiss the overlay)', async () => {
     wideScreen.isWideScreen.value = false
     const wrapper = mountSidebar()
-    expect(wrapper.find('.sidebar-close-btn').exists()).toBe(false)
+    expect(wrapper.find('.sidebar-close-btn').exists()).toBe(true)
     wideScreen.isWideScreen.value = true
+  })
+
+  it('applies overlay positioning on narrow screen', () => {
+    wideScreen.isWideScreen.value = false
+    const wrapper = mountSidebar()
+    expect(wrapper.find('.session-sidebar').classes()).toContain('overlay')
+    wideScreen.isWideScreen.value = true
+  })
+
+  it('does not apply overlay positioning on wide screen', () => {
+    wideScreen.isWideScreen.value = true
+    const wrapper = mountSidebar()
+    expect(wrapper.find('.session-sidebar').classes()).not.toContain('overlay')
   })
 
   it('forwards archive with sessionId and backend', async () => {

@@ -8,7 +8,7 @@
         @create="handleCreateClick"
       >
         <template #actions>
-          <button v-if="isWideScreen" class="header-action-btn" data-action="pin" @click.stop="$emit('pin')" :title="t('session.pinToSidebar')">
+          <button class="header-action-btn" data-action="pin" @click.stop="$emit('pin')" :title="t('session.pinToSidebar')">
             <Pin :size="16" />
           </button>
         </template>
@@ -48,7 +48,6 @@ import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { store } from '@/stores/app.ts'
 
 const { t } = useI18n()
@@ -60,8 +59,6 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'select', 'create', 'archive', 'destroy', 'open-session-search', 'pin'])
-
-const { isWideScreen } = useWideScreenLayout()
 
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)

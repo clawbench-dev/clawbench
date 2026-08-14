@@ -122,7 +122,7 @@ describe('SessionDrawer', () => {
   })
 
   describe('pin button', () => {
-    it('renders a pin button on wide screen and emits pin on click', async () => {
+    it('renders a pin button and emits pin on click', async () => {
       const wrapper = mountDrawer()
       await nextTick()
       const pin = wrapper.find('.header-action-btn[data-action="pin"]')
@@ -131,11 +131,11 @@ describe('SessionDrawer', () => {
       expect(wrapper.emitted('pin')).toBeTruthy()
     })
 
-    it('does not render the pin button on narrow screen', async () => {
+    it('renders the pin button on narrow screen too (pinning is supported on non-wide)', async () => {
       wideScreen.isWideScreen.value = false
       const wrapper = mountDrawer()
       await nextTick()
-      expect(wrapper.find('.header-action-btn[data-action="pin"]').exists()).toBe(false)
+      expect(wrapper.find('.header-action-btn[data-action="pin"]').exists()).toBe(true)
     })
   })
 
