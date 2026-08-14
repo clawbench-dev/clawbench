@@ -45,21 +45,21 @@ describe('rewriteImageUrls', () => {
   it('rewrites relative path to /api/local-file/ when projectRoot is set', () => {
     const html = '<img src="images/foo.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=images/foo.png&w=800"')
+    expect(result).toContain('src="/api/file/thumb?path=images/foo.png&w=1200"')
     expect(result).toContain('data-full-src="/api/local-file/images/foo.png"')
   })
 
   it('rewrites relative path without directory to /api/local-file/', () => {
     const html = '<img src="photo.jpg">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=photo.jpg&w=800"')
+    expect(result).toContain('src="/api/file/thumb?path=photo.jpg&w=1200"')
     expect(result).toContain('data-full-src="/api/local-file/photo.jpg"')
   })
 
   it('rewrites nested relative path', () => {
     const html = '<img src="assets/img/logo.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=assets/img/logo.png&w=800"')
+    expect(result).toContain('src="/api/file/thumb?path=assets/img/logo.png&w=1200"')
     expect(result).toContain('data-full-src="/api/local-file/assets/img/logo.png"')
   })
 
@@ -100,7 +100,7 @@ describe('rewriteImageUrls', () => {
     // No path normalization, so string startsWith(projectRoot + '/') is true → rewritten
     const html = '<img src="../other/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=../other/img.png&w=800"')
+    expect(result).toContain('src="/api/file/thumb?path=../other/img.png&w=1200"')
     expect(result).toContain('data-full-src="/api/local-file/../other/img.png"')
   })
 
@@ -170,8 +170,8 @@ describe('rewriteImageUrls', () => {
   it('processes all images in a string with multiple <img> tags', () => {
     const html = '<img src="a.png"><p>text</p><img src="b.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=a.png&w=800"')
-    expect(result).toContain('src="/api/file/thumb?path=b.png&w=800"')
+    expect(result).toContain('src="/api/file/thumb?path=a.png&w=1200"')
+    expect(result).toContain('src="/api/file/thumb?path=b.png&w=1200"')
     expect(result).toContain('data-full-src="/api/local-file/a.png"')
     expect(result).toContain('data-full-src="/api/local-file/b.png"')
   })
@@ -213,7 +213,7 @@ describe('rewriteImageUrls', () => {
   it('encodes CJK/special characters in thumbnail path and keeps encoded full src', () => {
     const html = '<img src="图片 文件.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=%E5%9B%BE%E7%89%87%20%E6%96%87%E4%BB%B6.png&w=800"')
+    expect(result).toContain('src="/api/file/thumb?path=%E5%9B%BE%E7%89%87%20%E6%96%87%E4%BB%B6.png&w=1200"')
     expect(result).toContain('data-full-src="/api/local-file/%E5%9B%BE%E7%89%87%20%E6%96%87%E4%BB%B6.png"')
   })
 
@@ -262,7 +262,7 @@ describe('rewriteImageUrls', () => {
   it('uses the supplied mobile thumbnail width when provided', () => {
     const html = '<img src="images/foo.png">'
     const result = rewriteImageUrls(html, projectRoot, getThumbWidth(false))
-    expect(result).toContain('src="/api/file/thumb?path=images/foo.png&w=480"')
+    expect(result).toContain('src="/api/file/thumb?path=images/foo.png&w=640"')
     expect(result).toContain('data-full-src="/api/local-file/images/foo.png"')
   })
 })
@@ -272,12 +272,12 @@ describe('rewriteImageUrls', () => {
 describe('getThumbWidth', () => {
   it('uses desktop width on PC', () => {
     expect(getThumbWidth(true)).toBe(THUMB_DEFAULT_WIDTH)
-    expect(getThumbWidth(true)).toBe(800)
+    expect(getThumbWidth(true)).toBe(1200)
   })
 
   it('uses smaller mobile width on phones', () => {
     expect(getThumbWidth(false)).toBe(THUMB_MOBILE_WIDTH)
-    expect(getThumbWidth(false)).toBe(480)
+    expect(getThumbWidth(false)).toBe(640)
   })
 
   it('mobile width is smaller than desktop width', () => {

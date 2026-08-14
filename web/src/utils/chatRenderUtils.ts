@@ -18,10 +18,10 @@ const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv
  */
 export const THUMB_EXTENSIONS = ['.png', '.jpg', '.jpeg']
 
-/** Desktop (PC) inline thumbnail width passed to /api/file/thumb (clamped 50–800 by backend). */
-export const THUMB_DEFAULT_WIDTH = 800
+/** Desktop (PC) inline thumbnail width passed to /api/file/thumb (clamped 50–1600 by backend). */
+export const THUMB_DEFAULT_WIDTH = 1200
 /** Mobile inline thumbnail width — smaller viewport needs a smaller, cheaper thumbnail. */
-export const THUMB_MOBILE_WIDTH = 480
+export const THUMB_MOBILE_WIDTH = 640
 
 /**
  * Resolve the inline thumbnail width for the current device. Phones/tablets

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/image/draw"
+
 	"clawbench/internal/model"
 
 	// Register image decoders for image.Decode (init() side-effects)
@@ -22,9 +24,9 @@ import (
 const (
 	thumbDefaultWidth = 200
 	thumbMinWidth     = 50
-	thumbMaxWidth     = 800
+	thumbMaxWidth     = 1600             // hi-DPI displays upscale an 800px thumb → blurry; allow larger
 	thumbMaxFileSize  = 50 * 1024 * 1024 // 50 MB
-	thumbJPEGQuality  = 75
+	thumbJPEGQuality  = 85
 )
 
 // thumbDecodeExts lists extensions that Go's image.Decode can handle
@@ -131,7 +133,7 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 		scaledH = 1
 	}
 
-	// Scale image using nearest-neighbor
+	// Scale image using Catmull-Rom resampling
 	dst := scaleImage(img, scaledW, scaledH)
 
 	// Encode as JPEG to buffer first to avoid partial response on encode error
@@ -151,19 +153,13 @@ func FileThumb(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mul
 	_, _ = buf.WriteTo(w)
 }
 
-// scaleImage resizes an image to the target dimensions using nearest-neighbor
-// interpolation. This uses only the standard library — no third-party deps.
-func scaleImage(src image.Image, dstW, dstH int) *image.RGBA {
+// scaleImage resizes an image to the target dimensions using high-quality
+// Catmull-Rom interpolation via golang.org/x/image/draw. This produces a much
+// sharper downscale than nearest-neighbor, which aliases fine detail into a
+// blurry mess when reducing large images to thumbnail size.
+func scaleImage(src image.Image, dstW, dstH int) image.Image {
 	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
-	srcW, srcH := src.Bounds().Dx(), src.Bounds().Dy()
-	for y := range dstH {
-		for x := range dstW {
-			// Map destination pixel to source pixel (nearest neighbor)
-			sx := (x * srcW) / dstW
-			sy := (y * srcH) / dstH
-			dst.Set(x, y, src.At(sx, sy))
-		}
-	}
+	draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
 	return dst
 }
 

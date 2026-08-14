@@ -635,7 +635,10 @@ function collectMdImages(container, clickedImg) {
     const list = []
     let startIdx = 0
     imgs.forEach((img) => {
-        const src = img.src
+        // Prefer the original (data-full-src); fall back to the inline src for
+        // images that have no thumbnail variant (external/absolute URLs, or
+        // non-raster formats like SVG/GIF).
+        const src = fullImgSrc(img)
         if (!src) return
         const alt = img.alt || ''
         const name = alt || extractImageName(src)

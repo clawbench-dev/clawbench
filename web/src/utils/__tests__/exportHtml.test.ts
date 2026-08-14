@@ -280,7 +280,7 @@ describe('exportRenderedHtml', () => {
     })
 
     const el = createElement(
-      '<img src="/api/file/thumb?path=images/photo.png&w=800" data-full-src="/api/local-file/images/photo.png">'
+      '<img src="/api/file/thumb?path=images/photo.png&w=1200" data-full-src="/api/local-file/images/photo.png">'
     )
     const result = await exportRenderedHtml({
       markdownBodyEl: el,

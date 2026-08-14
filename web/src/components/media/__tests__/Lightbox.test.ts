@@ -934,6 +934,39 @@ describe('Lightbox', () => {
 
       document.body.removeChild(container)
     })
+
+    it('prefers the data-full-src original over the thumbnail src', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<img src="/api/file/thumb?path=photo.png&w=1200" data-full-src="/api/local-file/photo.png" alt="A">' +
+        '<img src="/api/file/thumb?path=photo.jpg&w=1200" data-full-src="/api/local-file/photo.jpg" alt="B">'
+      document.body.appendChild(container)
+
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[1])
+      expect(result.list[0].src).toBe('/api/local-file/photo.png')
+      expect(result.list[1].src).toBe('/api/local-file/photo.jpg')
+      expect(result.list[0].src).not.toContain('/api/file/thumb')
+      expect(result.list[1].src).not.toContain('/api/file/thumb')
+
+      document.body.removeChild(container)
+    })
+
+    it('falls back to img.src when there is no data-full-src', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML = '<img src="https://ext.com/a.png" alt="A">'
+      document.body.appendChild(container)
+
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[0])
+      expect(result.list[0].src).toBe('https://ext.com/a.png')
+
+      document.body.removeChild(container)
+    })
   })
 
   // ── data-full-src (thumbnail inline, full-size in lightbox) ──
