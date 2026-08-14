@@ -17,6 +17,15 @@ vi.mock('@/composables/useTerminalKeyboard', () => {
   }
 })
 
+// Mock platform detection: default to non-PC (mobile) to keep existing
+// keyboard-detection tests valid; flip to true to test the PC path.
+const mockIsPC = ref(false)
+vi.mock('@/composables/usePlatformDetect', () => {
+  return {
+    usePlatformDetect: () => ({ isPC: mockIsPC }),
+  }
+})
+
 // Mock ResizeObserver (not available in jsdom by default)
 class MockResizeObserver {
   private callback: ResizeObserverCallback
@@ -50,6 +59,7 @@ describe('useTerminalViewport', () => {
 
     // Reset mock state
     mockIsAdjustResize.value = false
+    mockIsPC.value = false
 
     // Save originals
     originalInnerHeight = window.innerHeight
@@ -418,6 +428,41 @@ describe('useTerminalViewport', () => {
     viewport.stopWatching()
     // Reset on stop
     expect(mockIsAdjustResize.value).toBe(false)
+  })
+
+  it('keeps keyboard height at 0 on PC even when innerHeight shrinks (window resize)', () => {
+    mockIsPC.value = true
+    const terminal = ref(null)
+    const containerRef = ref<HTMLElement | null>(container)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    // On PC, shrinking the window lowers innerHeight exactly like an Android
+    // adjustResize keyboard would — but it is a user window resize, not a soft
+    // keyboard. It must not set keyboardHeight > 0 (which would hide the bottom
+    // dock via anyKeyboardActive) nor flag adjustResize.
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 500,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 500, // shrunk from 800 → would otherwise read as a keyboard
+      writable: true,
+      configurable: true,
+    })
+
+    viewport.startWatching()
+
+    expect(viewport.viewportHeight.value).toBe(500)
+    expect(viewport.keyboardHeight.value).toBe(0)
+    expect(mockIsAdjustResize.value).toBe(false)
+
+    viewport.stopWatching()
   })
 
   it('does not detect adjustResize when innerHeight stays same (PWA/iOS)', () => {

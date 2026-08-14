@@ -1,6 +1,7 @@
 import { ref, type Ref } from 'vue'
 import type { Terminal } from '@xterm/xterm'
 import { useTerminalKeyboard } from './useTerminalKeyboard'
+import { usePlatformDetect } from './usePlatformDetect'
 
 export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef: Ref<HTMLElement | null>) {
   const viewportHeight = ref(0)
@@ -12,6 +13,10 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
   // Use the full-screen height captured at app startup (before any keyboard)
   // as the baseline for detecting keyboard appearance on Android adjustResize.
   const { fullScreenHeight, setKeyboardHeight: setSharedKeyboardHeight, setAdjustResize } = useTerminalKeyboard()
+  // A PC/laptop has no soft keyboard, so innerHeight changes are always user
+  // window resizes — never a keyboard. Bypass detection on PC to avoid treating
+  // a window resize as a keyboard open (which would hide the bottom dock).
+  const { isPC } = usePlatformDetect()
 
   function updateViewport() {
     if (!containerRef.value) return
@@ -20,22 +25,30 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
     const vv = window.visualViewport
 
     if (vv) {
-      // Method 1 (works in non-adjustResize browsers / desktop):
-      // keyboardHeight = innerHeight - visualViewport.height - offsetTop
-      const vvKeyboard = window.innerHeight - vv.height - vv.offsetTop
-
-      // Method 2 (works in Android adjustResize where innerHeight shrinks):
-      // keyboardHeight = fullScreenHeight - currentInnerHeight
-      const resizeKeyboard = fullScreenHeight - currentInnerHeight
-
-      // Detect adjustResize: if innerHeight actually shrunk, the browser
-      // is in adjustResize mode (Android native WebView). In this mode
-      // position:fixed containers auto-adjust, so no CSS compensation needed.
-      setAdjustResize(resizeKeyboard > 0)
-
-      // Use whichever gives a larger value — covers both scenarios
-      keyboardHeight.value = Math.max(vvKeyboard, resizeKeyboard, 0)
       viewportHeight.value = vv.height
+      if (isPC.value) {
+        // Desktop/laptop: no soft keyboard. A window resize (shrinking innerHeight)
+        // must not be misread as a keyboard opening — doing so would set
+        // keyboardHeight > 0 and hide the bottom dock via App.vue's
+        // anyKeyboardActive even though no dock should disappear.
+        keyboardHeight.value = 0
+      } else {
+        // Method 1 (works in non-adjustResize browsers / mobile):
+        // keyboardHeight = innerHeight - visualViewport.height - offsetTop
+        const vvKeyboard = window.innerHeight - vv.height - vv.offsetTop
+
+        // Method 2 (works in Android adjustResize where innerHeight shrinks):
+        // keyboardHeight = fullScreenHeight - currentInnerHeight
+        const resizeKeyboard = fullScreenHeight - currentInnerHeight
+
+        // Detect adjustResize: if innerHeight actually shrunk, the browser
+        // is in adjustResize mode (Android native WebView). In this mode
+        // position:fixed containers auto-adjust, so no CSS compensation needed.
+        setAdjustResize(resizeKeyboard > 0)
+
+        // Use whichever gives a larger value — covers both scenarios
+        keyboardHeight.value = Math.max(vvKeyboard, resizeKeyboard, 0)
+      }
     } else {
       viewportHeight.value = containerRef.value.clientHeight
       keyboardHeight.value = 0

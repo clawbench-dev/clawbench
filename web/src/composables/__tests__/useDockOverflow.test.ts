@@ -279,5 +279,28 @@ describe('useDockOverflow', () => {
       // Only the latest observe's re-measure ran with the settled size
       expect(result.inlineOverflowTabs.value).toEqual(TABS)
     })
+
+    it('re-observing after a hidden→visible transition recovers inline tabs', () => {
+      // Simulate the wide dock: mounted hidden (display:none → size 0), so it is
+      // never measured and dockContentSize stays 0 → everything collapses into
+      // the overflow popup even though space is sufficient. App.vue re-invokes
+      // startObserving when the dock becomes visible; that re-measure must recover
+      // the inline tabs without needing the (unreliable) ResizeObserver callback.
+      const { el, setSize } = createSizeControlledEl(0)
+      const result = useDockOverflow(() => el, () => TABS, { direction: 'vertical', primaryCount: 3 })
+      result.startObserving()
+      // Hidden: no inline tabs, everything in the popup
+      expect(result.inlineOverflowTabs.value).toEqual([])
+      expect(result.popupOverflowTabs.value).toEqual(TABS)
+      expect(result.showOverflowButton.value).toBe(true)
+
+      // Dock becomes visible with plenty of height and is re-observed
+      setSize(600)
+      result.startObserving()
+      flushRafs()
+      expect(result.inlineOverflowTabs.value).toEqual(TABS)
+      expect(result.popupOverflowTabs.value).toEqual([])
+      expect(result.showOverflowButton.value).toBe(false)
+    })
   })
 })
