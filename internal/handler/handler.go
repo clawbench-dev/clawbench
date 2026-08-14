@@ -244,6 +244,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session/destroy", middleware.Auth(DestroySession))
 	register("/api/ai/session/resume", middleware.Auth(ServeSessionResume))
 	register("/api/ai/session/acp-load", middleware.Auth(ServeACPLoadSession))
+	register("/api/ai/session/acp-sync", middleware.Auth(ServeACPSyncSession))
 	register("/api/ai/session/fork", middleware.Auth(ServeForkSession))
 	register("/api/ai/commands", middleware.Auth(ServeAICommands))
 	register("/api/ai/chat/count", middleware.Auth(ServeChatCount))

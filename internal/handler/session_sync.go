@@ -1,10 +1,15 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"net/http"
+	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -122,4 +127,154 @@ func persistReplayMessages(sessionID, projectPath, backend string, messages []re
 		inserted++
 	}
 	return inserted
+}
+
+// ServeACPSyncSession handles POST /api/ai/session/acp-sync — 复用当前会话的
+// ACP 连接强制 LoadSession 回放，按 external messageId 增量合并外部新增消息到
+// 当前会话，已存在消息保持不变。返回新增条数。
+//
+//nolint:gocognit // orchestration 顺序性高，拆分反而难读
+func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	projectPath := middleware.GetProjectFromCookie(r)
+	if projectPath == "" {
+		writeLocalizedError(w, r, model.Forbidden(nil, "NoProjectSelected"))
+		return
+	}
+
+	var req struct {
+		AgentID   string `json:"agentId"`
+		SessionID string `json:"sessionId"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.AgentID == "" || req.SessionID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+
+	configMutex.RLock()
+	agent, ok := model.Agents[req.AgentID]
+	configMutex.RUnlock()
+	if !ok {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
+		return
+	}
+	if !agent.SupportsACP() {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+	spec := model.FindSpecByBackend(agent.Backend)
+	if spec == nil || !spec.ACPLoadSession {
+		writeLocalizedErrorf(w, r, http.StatusNotImplemented, "NotImplemented")
+		return
+	}
+
+	// 校验会话归属当前项目，并读取 external_session_id
+	var sessProject, extID string
+	err := service.ReadDB().QueryRowContext(
+		r.Context(),
+		"SELECT project_path, external_session_id FROM chat_sessions WHERE id = ?",
+		req.SessionID,
+	).Scan(&sessProject, &extID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+		return
+	}
+	if err != nil {
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if sessProject != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	// 解析 ACP 会话 ID：优先活动连接 acpSID，其次 external_session_id
+	acpSID := extID
+	if acpSID == "" {
+		if conn := ai.GetACPConnManager().GetConn(req.SessionID); conn != nil {
+			acpSID = conn.AcpSID()
+		}
+	}
+	if acpSID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NoAcpSession")
+		return
+	}
+
+	// 复用连接（全新连接会在此触发 LoadSession；已存活连接提前返回）
+	conn, err := getOrCreateConnForLoad(r.Context(), agent, req.SessionID, acpSID, projectPath)
+	if err != nil {
+		if ai.IsACPResourceNotFound(err) {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "ACPSessionNotFound")
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+
+	// 强制回放（已存活连接在此触发 LoadSession）
+	if err := conn.SyncLoadSession(r.Context(), projectPath, acpSID); err != nil {
+		if ai.IsACPResourceNotFound(err) {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "ACPSessionNotFound")
+			return
+		}
+		slog.Error("handler: SyncLoadSession failed", "session_id", req.SessionID, "acp_sid", acpSID, "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+
+	// 等待迟到通知进入缓冲，再读取
+	time.Sleep(500 * time.Millisecond)
+	conn.ClearLoadSessionActive()
+
+	var messages []replayMessage
+	if client := conn.GetClient(); client != nil {
+		messages = groupLoadSessionReplay(client)
+	}
+
+	// 计算本地已有 external_message_id 集合
+	existing := map[string]struct{}{}
+	rows, err := service.ReadDB().Query(
+		"SELECT external_message_id FROM chat_history WHERE session_id = ? AND external_message_id != ''",
+		req.SessionID,
+	)
+	if err != nil {
+		slog.Error("handler: failed to query existing external_message_id", "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	for rows.Next() {
+		var mid string
+		if err := rows.Scan(&mid); err == nil {
+			existing[mid] = struct{}{}
+		}
+	}
+	rows.Close()
+
+	// 仅追加缺失（extMsgID 为空的消息不参与增量同步，避免重复）
+	var toPersist []replayMessage
+	for _, m := range messages {
+		if m.extMsgID == "" {
+			continue
+		}
+		if _, dup := existing[m.extMsgID]; dup {
+			continue
+		}
+		toPersist = append(toPersist, m)
+	}
+	added := persistReplayMessages(req.SessionID, projectPath, agent.Backend, toPersist)
+
+	slog.Info("handler: acp-sync completed",
+		"session_id", req.SessionID, "agent", req.AgentID, "acp_sid", acpSID,
+		"replayed", len(messages), "added", added)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":    true,
+		"added": added,
+	})
 }
