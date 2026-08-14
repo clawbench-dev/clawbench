@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 
@@ -32,7 +33,11 @@ func TestReplaceBinaryInPlace_RenameSuccess(t *testing.T) {
 
 	info, err := os.Stat(target)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+	// Executable permission is a Unix concept; on Windows os.Chmod does not
+	// surface a 0755 mode, so only assert it where it is meaningful.
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+	}
 }
 
 func TestReplaceBinaryInPlace_CopyFallback(t *testing.T) {
@@ -56,7 +61,11 @@ func TestReplaceBinaryInPlace_CopyFallback(t *testing.T) {
 
 	info, err := os.Stat(target)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+	// Executable permission is a Unix concept; on Windows os.Chmod does not
+	// surface a 0755 mode, so only assert it where it is meaningful.
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+	}
 }
 
 func TestReplaceBinaryInPlace_CopyFallbackFails(t *testing.T) {
