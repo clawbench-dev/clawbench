@@ -91,7 +91,7 @@ function beginVerticalSwitch() {
   if (effectiveTips.value.length === 0) return
   vertPhase.value = 'out'
   vertTimer = setTimeout(() => {
-    currentIndex.value = (currentIndex.value + 1) % props.tips.length
+    currentIndex.value = (currentIndex.value + 1) % effectiveTips.value.length
     isHScroll.value = false
     overflowPx.value = 0
     // trigger the slide-in from below (start phase then flush to animate)
