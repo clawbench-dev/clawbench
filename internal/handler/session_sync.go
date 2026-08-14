@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"clawbench/internal/ai"
@@ -228,50 +229,51 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 等待迟到通知进入缓冲，再读取
-	time.Sleep(500 * time.Millisecond)
+	// 等待回放缓冲停止增长（回放完成），而不是固定 500ms —— 固定延时对长对话/慢
+	// agent 不可靠，可能读到不完整的历史而漏掉新增消息。
+	client := conn.GetClient()
+	waitForReplaySettled(client)
+
 	conn.ClearLoadSessionActive()
 
 	var messages []replayMessage
-	if client := conn.GetClient(); client != nil {
+	if client != nil {
 		messages = groupLoadSessionReplay(client)
 	}
 
-	// 计算本地已有 external_message_id 集合
-	existing := map[string]struct{}{}
+	// 加载本地已有消息（有序）与 external_message_id，用于增量去重。
 	rows, err := service.ReadDB().Query(
-		"SELECT external_message_id FROM chat_history WHERE session_id = ? AND external_message_id != ''",
+		"SELECT external_message_id, role, content FROM chat_history WHERE session_id = ? ORDER BY id ASC",
 		req.SessionID,
 	)
 	if err != nil {
-		slog.Error("handler: failed to query existing external_message_id", "error", err)
+		slog.Error("handler: failed to query existing chat_history", "error", err)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
-	defer rows.Close()
+	existingExtIDs := map[string]struct{}{}
+	var localMessages []replayMessage
 	for rows.Next() {
-		var mid string
-		if err := rows.Scan(&mid); err == nil {
-			existing[mid] = struct{}{}
+		var extID, role, content string
+		if err := rows.Scan(&extID, &role, &content); err != nil {
+			slog.Warn("handler: failed scanning chat_history row", "error", err)
+			continue
 		}
+		if extID != "" {
+			existingExtIDs[extID] = struct{}{}
+		}
+		localMessages = append(localMessages, replayMessage{role: role, content: content, extMsgID: extID})
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
-		slog.Error("handler: failed iterating existing external_message_id", "error", err)
+		slog.Error("handler: failed iterating existing chat_history", "error", err)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 
-	// 仅追加缺失（extMsgID 为空的消息不参与增量同步，避免重复）
-	var toPersist []replayMessage
-	for _, m := range messages {
-		if m.extMsgID == "" {
-			continue
-		}
-		if _, dup := existing[m.extMsgID]; dup {
-			continue
-		}
-		toPersist = append(toPersist, m)
-	}
+	// 仅追加外部历史中本地尚未拥有的消息。按"本地历史是外部历史前缀"的续接方式匹配：
+	// 即使消息没有稳定 external_message_id（如实时聊天的消息），也能正确去重。
+	toPersist := computeSyncAdds(messages, localMessages, existingExtIDs)
 	added := persistReplayMessages(req.SessionID, projectPath, agent.Backend, toPersist)
 
 	slog.Info("handler: acp-sync completed",
@@ -282,4 +284,69 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		"ok":    true,
 		"added": added,
 	})
+}
+
+// waitForReplaySettled 阻塞直到 LoadSession 回放缓冲在安静窗口内不再增长，或达到
+// 最大等待时间。比固定延时更可靠：长对话/慢 agent 需要更久才能把全部回放通知写入
+// 缓冲，固定延时可能读到不完整历史而漏掉新增消息。
+func waitForReplaySettled(client *ai.ClawBenchACPClient) {
+	if client == nil {
+		return
+	}
+	const quietWindow = 800 * time.Millisecond
+	const maxWait = 15 * time.Second
+	deadline := time.Now().Add(maxWait)
+	quietStart := time.Now()
+	lastLen := client.GetLoadSessionBufLen()
+	for time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+		cur := client.GetLoadSessionBufLen()
+		if cur != lastLen {
+			lastLen = cur
+			quietStart = time.Now()
+			continue
+		}
+		if time.Since(quietStart) >= quietWindow {
+			return
+		}
+	}
+}
+
+// computeSyncAdds 计算应插入的增量消息。按"本地历史是外部历史的前缀"进行续接匹配：
+// 从本地第一条消息起，逐条与回放对齐（role + 纯文本近似），本地匹配耗尽后，把回放
+// 剩余的消息作为新增返回。即使本地消息没有稳定的 external_message_id（如实时聊天
+// 生成的消息），也能避免被重复拉取。
+func computeSyncAdds(replay []replayMessage, local []replayMessage, existingExtIDs map[string]struct{}) []replayMessage {
+	k := 0
+	for k < len(local) && k < len(replay) {
+		if !sameMessage(local[k], replay[k]) {
+			break
+		}
+		k++
+	}
+	var adds []replayMessage
+	for _, m := range replay[k:] {
+		// messageId 去重作为额外保险（前缀匹配错位时避免重复）
+		if m.extMsgID != "" {
+			if _, dup := existingExtIDs[m.extMsgID]; dup {
+				continue
+			}
+		}
+		adds = append(adds, m)
+	}
+	return adds
+}
+
+// sameMessage 判断两条消息是否代表同一条逻辑消息：角色相同，且纯文本相等或互为子串
+// （外部回放可能在消息文本中夹带系统指令等额外上下文）。
+func sameMessage(a, b replayMessage) bool {
+	if a.role != b.role {
+		return false
+	}
+	pa := strings.TrimSpace(service.ExtractPlainText(a.content))
+	pb := strings.TrimSpace(service.ExtractPlainText(b.content))
+	if pa == "" || pb == "" {
+		return pa == pb
+	}
+	return pa == pb || strings.Contains(pa, pb) || strings.Contains(pb, pa)
 }

@@ -134,6 +134,73 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
+// TestServeACPSyncSession_NoDuplicateOfLiveMessages reproduces the reported bug:
+// a session whose earlier messages were created via LIVE chat (no external
+// message_id) and whose external history then grew. Sync must NOT duplicate the
+// live messages (even though their external_message_id is empty), and must add
+// only the genuinely new external messages.
+func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agentID := setupACPReplayAgent(t)
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", agentID, "", "default", "chat")
+	require.NoError(t, err)
+	service.UpdateExternalSessionID(sid, "acp-1")
+
+	// Live-created messages: EMPTY external_message_id.
+	_, err = service.WriteExec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', '你叫什么名字', '')",
+		env.ProjectDir, sid,
+	)
+	require.NoError(t, err)
+	_, err = service.WriteExec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', '我叫 CodeBuddy Code，你的 AI 编程助手。', '')",
+		env.ProjectDir, sid,
+	)
+	require.NoError(t, err)
+
+	// External replay: the two live messages (user one now carries an injected
+	// system-instructions prefix) + two genuinely new messages.
+	restore := newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
+		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+			MessageId: strPtr("x1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "[System Instructions: ...] 你叫什么名字"}}}}},
+		{SessionId: "acp-1", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+			MessageId: strPtr("y1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "我叫 CodeBuddy Code，你的 AI 编程助手。"}}}}},
+		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+			MessageId: strPtr("z1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "你几岁了"}}}}},
+		{SessionId: "acp-1", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+			MessageId: strPtr("w1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "我没有年龄的概念——我是一个 AI 助手。"}}}}},
+	})
+	defer restore()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/acp-sync", map[string]string{
+		"agentId":   agentID,
+		"sessionId": sid,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPSyncSession(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp struct{ Added int `json:"added"` }
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	// Only the 2 new messages should be added (no duplication of live messages).
+	assert.Equal(t, 2, resp.Added)
+
+	// Total = 2 live + 2 new = 4 (no duplicates).
+	var cnt int
+	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt)
+	assert.Equal(t, 4, cnt)
+
+	// The new messages are present.
+	var hasNew int
+	_ = service.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND content LIKE '%你几岁了%'", sid,
+	).Scan(&hasNew)
+	assert.Equal(t, 1, hasNew)
+}
+
 // newSyncReplayConn 同 newACPReplayConn，但预置 loadSessionActive=true 以跳过
 // SyncLoadSession 的真实 RPC，直接使用预填充的回放缓冲。
 func newSyncReplayConn(t *testing.T, agent *model.Agent, buf []acp.SessionNotification) (restore func()) {

@@ -126,6 +126,15 @@ func (c *ClawBenchACPClient) GetAndClearLoadSessionBuf() []acp.SessionNotificati
 	return buf
 }
 
+// GetLoadSessionBufLen returns the number of notifications currently collected
+// in the LoadSession replay buffer, without clearing it. Used by the sync
+// handler to detect when the replay has stopped growing (replay completed).
+func (c *ClawBenchACPClient) GetLoadSessionBufLen() int {
+	c.loadSessionBufMu.Lock()
+	defer c.loadSessionBufMu.Unlock()
+	return len(c.loadSessionBuf)
+}
+
 // SetLoadSessionBufForTest injects replay notifications for testing.
 // Production code must not use this.
 func (c *ClawBenchACPClient) SetLoadSessionBufForTest(buf []acp.SessionNotification) {
