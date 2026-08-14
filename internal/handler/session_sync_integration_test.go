@@ -19,13 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The acp-mock agent replays a FIXED two-message history on every LoadSession:
-//   user:      "Hello, this is a replayed user message from the loaded session."
-//   assistant: "Hello! This is a replayed assistant response from the loaded session."
-const (
-	mockReplayUserText      = "Hello, this is a replayed user message from the loaded session."
-	mockReplayAssistantText = "Hello! This is a replayed assistant response from the loaded session."
-)
+type mockMsg struct {
+	Role string `json:"role"` // "user" or "assistant"
+	Text string `json:"text"`
+}
 
 // locateACPMock returns the path to a built acp-mock binary, building it into a
 // temp dir if the pre-built one is absent. Skips the test if it cannot be built.
@@ -49,26 +46,42 @@ func locateACPMock(t *testing.T) string {
 
 // newMockSyncAgent registers a claude-backend agent (ACPLoadSession=true) whose
 // ACP command is the acp-mock binary, so ServeACPSyncSession spawns a REAL
-// ACP process whose LoadSession replays the fixed two-message history.
-func newMockSyncAgent(t *testing.T) string {
+// ACP process. It also points the mock's data dir at a temp dir so each test can
+// pre-populate the external session's history.
+func newMockSyncAgent(t *testing.T) (agentID, dataDir string) {
 	t.Helper()
 	mockPath := locateACPMock(t)
-	agentID := "acp-mock-sync-agent"
+	dataDir = t.TempDir()
+	os.Setenv("ACP_MOCK_DATA_DIR", dataDir)
+	t.Cleanup(func() { os.Unsetenv("ACP_MOCK_DATA_DIR") })
+
+	agentID = "acp-mock-sync-agent"
 	model.Agents = map[string]*model.Agent{
 		agentID: {ID: agentID, Name: "ACP Mock", Backend: "claude", Transport: "acp-stdio", AcpCommand: mockPath},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
-	return agentID
+	return agentID, dataDir
 }
 
+// writeMockHistory pre-populates the external ACP session's persisted history
+// (as if the conversation happened on the agent side, possibly through a
+// separate CLI client), so LoadSession will replay it.
+func writeMockHistory(t *testing.T, dataDir, acpSessionID string, msgs []mockMsg) {
+	t.Helper()
+	raw, err := json.Marshal(msgs)
+	require.NoError(t, err)
+	path := filepath.Join(dataDir, acpSessionID+".json")
+	require.NoError(t, os.WriteFile(path, raw, 0o644))
+}
+
+// syncViaRealAgent runs ServeACPSyncSession with the REAL getOrCreateConnForLoad
+// (spawning acp-mock) and returns the number of added messages.
 func syncViaRealAgent(t *testing.T, agentID, sid string) int {
 	t.Helper()
 	req := newRequest(t, http.MethodPost, "/api/ai/session/acp-sync", map[string]string{
 		"agentId":   agentID,
 		"sessionId": sid,
 	})
-	// ServeACPSyncSession derives the project from the cookie; set it to a path
-	// that equals the session's project_path.
 	req = withProjectCookie(req, sessionProjectPath(t, sid))
 	w := httptest.NewRecorder()
 	ServeACPSyncSession(w, req)
@@ -86,69 +99,70 @@ func sessionProjectPath(t *testing.T, sid string) string {
 	return p
 }
 
-// TestACPSync_RealAgent_EndToEnd exercises the FULL sync path against a real
-// acp-mock process: real spawn, real LoadSession replay, real buffer capture
-// with condition-based waiting, and the incremental dedup. It verifies the two
-// bugs fixed:
-//  1. Syncing into an empty session adds the replayed history (new messages ARE
-//     captured — the fixed 500ms wait no longer truncates the replay).
-//  2. Syncing when the local session already contains the replayed messages
-//     does NOT duplicate them (live messages without external_message_id are
-//     deduped by content continuation).
-func TestACPSync_RealAgent_EndToEnd(t *testing.T) {
+func countContent(t *testing.T, sid, substr string) int {
+	t.Helper()
+	var n int
+	err := service.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND content LIKE ?", sid, "%"+substr+"%",
+	).Scan(&n)
+	require.NoError(t, err)
+	return n
+}
+
+// TestACPSync_RealAgent_TwoTurnExternalHistory reproduces the real-world usage:
+//  1. A ClawBench session chats one turn ("你叫什么名字" → reply).
+//  2. The SAME ACP session is then resumed externally (e.g. a CLI client) and
+//     chats a second turn ("你几岁了" → reply), so the external session now has
+//     2 turns / 4 messages while the local ClawBench session only has turn 1.
+//  3. ACP sync is triggered.
+//  4. The final session must have 2 rounds = 4 messages: turn 1 unchanged (not
+//     duplicated) plus turn 2 synced in from the external chat records.
+func TestACPSync_RealAgent_TwoTurnExternalHistory(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	agentID := newMockSyncAgent(t)
+	agentID, dataDir := newMockSyncAgent(t)
+	extSID := "mock-sess-two-turn"
 
-	// Scenario A: empty local session -> sync pulls the full 2-message replay.
-	{
-		sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", agentID, "", "default", "chat")
-		require.NoError(t, err)
-		service.UpdateExternalSessionID(sid, "mock-sess-a")
+	// External ACP session state: 2 turns = 4 messages.
+	writeMockHistory(t, dataDir, extSID, []mockMsg{
+		{Role: "user", Text: "你叫什么名字"},
+		{Role: "assistant", Text: "我叫 CodeBuddy Code，你的 AI 编程助手。"},
+		{Role: "user", Text: "你几岁了"},
+		{Role: "assistant", Text: "我没有年龄的概念——我是一个 AI 助手。"},
+	})
 
-		added := syncViaRealAgent(t, agentID, sid)
-		assert.Equal(t, 2, added, "empty session should pull both replayed messages")
+	// Current ClawBench session only contains turn 1 (live chat, empty
+	// external_message_id).
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", agentID, "", "default", "chat")
+	require.NoError(t, err)
+	service.UpdateExternalSessionID(sid, extSID)
+	_, err = service.WriteExec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', '你叫什么名字', '')",
+		env.ProjectDir, sid,
+	)
+	require.NoError(t, err)
+	_, err = service.WriteExec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', '我叫 CodeBuddy Code，你的 AI 编程助手。', '')",
+		env.ProjectDir, sid,
+	)
+	require.NoError(t, err)
 
-		var userCnt, asstCnt int
-		_ = service.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'user' AND content LIKE ?",
-			sid, "%"+mockReplayUserText+"%",
-		).Scan(&userCnt)
-		_ = service.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND content LIKE ?",
-			sid, "%"+mockReplayAssistantText+"%",
-		).Scan(&asstCnt)
-		assert.Equal(t, 1, userCnt, "replayed user message should be present exactly once")
-		assert.Equal(t, 1, asstCnt, "replayed assistant message should be present exactly once")
+	// Sync: only turn 2 (the 2 external messages the local session lacks) should
+	// be added; turn 1 must NOT be duplicated.
+	added := syncViaRealAgent(t, agentID, sid)
+	assert.Equal(t, 2, added, "should add only the 2 external turn-2 messages")
 
-		ai.GetACPConnManager().CloseConn(sid)
-	}
+	// Final session = 2 turns = 4 messages.
+	var total int
+	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&total)
+	assert.Equal(t, 4, total, "final session should have 2 rounds (4 messages)")
 
-	// Scenario B: local already contains the exact replayed messages (created as
-	// if by live chat, external_message_id empty) -> sync must NOT duplicate them.
-	{
-		sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", agentID, "", "default", "chat")
-		require.NoError(t, err)
-		service.UpdateExternalSessionID(sid, "mock-sess-b")
-		_, err = service.WriteExec(
-			"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', ?, '')",
-			env.ProjectDir, sid, mockReplayUserText,
-		)
-		require.NoError(t, err)
-		_, err = service.WriteExec(
-			"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', ?, '')",
-			env.ProjectDir, sid, mockReplayAssistantText,
-		)
-		require.NoError(t, err)
+	// Turn 1 appears exactly once (not duplicated); turn 2 present exactly once.
+	assert.Equal(t, 1, countContent(t, sid, "你叫什么名字"), "turn-1 user message must not be duplicated")
+	assert.Equal(t, 1, countContent(t, sid, "我叫 CodeBuddy Code"), "turn-1 assistant message must not be duplicated")
+	assert.Equal(t, 1, countContent(t, sid, "你几岁了"), "turn-2 user message must be synced")
+	assert.Equal(t, 1, countContent(t, sid, "我没有年龄"), "turn-2 assistant message must be synced")
 
-		added := syncViaRealAgent(t, agentID, sid)
-		assert.Equal(t, 0, added, "already-present replayed messages must not be duplicated")
-
-		var cnt int
-		_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt)
-		assert.Equal(t, 2, cnt, "session should still have exactly the 2 original messages")
-
-		ai.GetACPConnManager().CloseConn(sid)
-	}
+	ai.GetACPConnManager().CloseConn(sid)
 }

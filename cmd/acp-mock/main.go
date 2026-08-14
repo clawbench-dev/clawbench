@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,12 +25,19 @@ type mockACPAgent struct {
 	conn     *acp.AgentSideConnection
 	sessions map[string]*mockSession
 	mu       sync.Mutex
+	dataDir  string // directory for per-session message persistence
+}
+
+type mockMessage struct {
+	Role string `json:"role"` // "user" or "assistant"
+	Text string `json:"text"`
 }
 
 type mockSession struct {
 	cancel         context.CancelFunc
 	mode           string
 	thinkingEffort string
+	messages       []mockMessage // in-memory history (loaded from disk on resume/load)
 }
 
 // Mock slash commands (similar to what CodeBuddy provides)
@@ -90,7 +100,6 @@ func (a *mockACPAgent) NewSession(ctx context.Context, params acp.NewSessionRequ
 	a.mu.Lock()
 	a.sessions[sid] = &mockSession{mode: modeBypass, thinkingEffort: effortMedium}
 	a.mu.Unlock()
-
 	modeCategory := acp.SessionConfigOptionCategoryMode
 	thoughtLevelCategory := acp.SessionConfigOptionCategoryThoughtLevel
 
@@ -174,35 +183,21 @@ func (a *mockACPAgent) LoadSession(ctx context.Context, params acp.LoadSessionRe
 
 	// Ensure the session exists
 	a.mu.Lock()
-	if _, ok := a.sessions[sid]; !ok {
-		a.sessions[sid] = &mockSession{mode: modeCode, thinkingEffort: effortMedium}
+	s, ok := a.sessions[sid]
+	if !ok {
+		s = &mockSession{mode: modeCode, thinkingEffort: effortMedium}
+		a.sessions[sid] = s
 	}
+	s.messages = a.loadMessages(sid)
 	a.mu.Unlock()
 
-	// Replay mock messages via SessionUpdate notifications
-	// 1. Send a user message chunk
-	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
-		SessionId: acp.SessionId(sid),
-		Update:    acp.UpdateUserMessageText("Hello, this is a replayed user message from the loaded session."),
-	}); err != nil {
-		return acp.LoadSessionResponse{}, err
-	}
-	if err := pause(ctx, 50*time.Millisecond); err != nil {
+	// Replay the session's actual chat history (recorded by Prompt / external
+	// chat) via SessionUpdate notifications.
+	if err := a.replayHistory(ctx, sid); err != nil {
 		return acp.LoadSessionResponse{}, err
 	}
 
-	// 2. Send an agent message chunk
-	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
-		SessionId: acp.SessionId(sid),
-		Update:    acp.UpdateAgentMessageText("Hello! This is a replayed assistant response from the loaded session."),
-	}); err != nil {
-		return acp.LoadSessionResponse{}, err
-	}
-	if err := pause(ctx, 50*time.Millisecond); err != nil {
-		return acp.LoadSessionResponse{}, err
-	}
-
-	// 3. Send available commands
+	// Send available commands
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
 		Update: acp.SessionUpdate{
@@ -272,6 +267,7 @@ func (a *mockACPAgent) ResumeSession(ctx context.Context, params acp.ResumeSessi
 		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium}
 		a.sessions[sid] = s
 	}
+	s.messages = a.loadMessages(sid)
 	a.mu.Unlock()
 
 	modeCategory := acp.SessionConfigOptionCategoryMode
@@ -442,6 +438,8 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 
 	// 2. Send thinking block (simulating the agent thinking)
 	userText := extractUserText(params.Prompt)
+	// Record the user's message into the session's persisted history.
+	a.appendMessage(sid, "user", userText)
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
 		Update:    acp.UpdateAgentThoughtText(fmt.Sprintf("Processing user request: %s", truncate(userText, 80))),
@@ -541,6 +539,8 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 			return err
 		}
 	}
+	// Record the assistant's reply into the session's persisted history.
+	a.appendMessage(sid, "assistant", response)
 
 	return nil
 }
@@ -551,6 +551,97 @@ func randomID() string {
 		return fmt.Sprintf("sess_%d", time.Now().UnixNano())
 	}
 	return "sess_" + hex.EncodeToString(b[:])
+}
+
+// sessionFile returns the persistence path for a session's message history.
+func (a *mockACPAgent) sessionFile(sid string) string {
+	return filepath.Join(a.dataDir, sid+".json")
+}
+
+// loadMessages reads a session's persisted message history from disk.
+func (a *mockACPAgent) loadMessages(sid string) []mockMessage {
+	raw, err := os.ReadFile(a.sessionFile(sid))
+	if err != nil {
+		return nil
+	}
+	var msgs []mockMessage
+	if json.Unmarshal(raw, &msgs) != nil {
+		return nil
+	}
+	return msgs
+}
+
+// saveMessages writes a session's message history to disk.
+func (a *mockACPAgent) saveMessages(sid string, msgs []mockMessage) {
+	raw, err := json.Marshal(msgs)
+	if err != nil {
+		slog.Warn("acp-mock: failed to marshal messages", "error", err)
+		return
+	}
+	if err := os.WriteFile(a.sessionFile(sid), raw, 0o644); err != nil {
+		slog.Warn("acp-mock: failed to persist messages", "session", sid, "error", err)
+	}
+}
+
+// appendMessage records a message to a session's history (in-memory + disk).
+func (a *mockACPAgent) appendMessage(sid, role, text string) {
+	a.mu.Lock()
+	s, ok := a.sessions[sid]
+	if !ok || s == nil {
+		s = &mockSession{mode: modeBypass, thinkingEffort: effortMedium}
+		a.sessions[sid] = s
+	}
+	s.messages = append(s.messages, mockMessage{Role: role, Text: text})
+	a.mu.Unlock()
+	a.saveMessages(sid, a.snapshotMessages(sid))
+}
+
+// snapshotMessages returns a copy of a session's in-memory messages.
+func (a *mockACPAgent) snapshotMessages(sid string) []mockMessage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s, ok := a.sessions[sid]
+	if !ok || s == nil {
+		return nil
+	}
+	out := make([]mockMessage, len(s.messages))
+	copy(out, s.messages)
+	return out
+}
+
+// stableMessageID returns a deterministic message id for a persisted message so
+// that repeated LoadSession replays yield the same id (mirrors real agents).
+func stableMessageID(role, text string) string {
+	h := sha256.Sum256([]byte(role + "\x00" + text))
+	return "mock-msg-" + hex.EncodeToString(h[:8])
+}
+
+// replayHistory sends a session's persisted messages as SessionUpdate
+// notifications (used by LoadSession).
+func (a *mockACPAgent) replayHistory(ctx context.Context, sid string) error {
+	msgs := a.snapshotMessages(sid)
+	for _, m := range msgs {
+		mid := stableMessageID(m.Role, m.Text)
+		var upd acp.SessionUpdate
+		if m.Role == "user" {
+			upd = acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+				MessageId: &mid,
+				Content:   acp.ContentBlock{Text: &acp.ContentBlockText{Text: m.Text}},
+			}}
+		} else {
+			upd = acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				MessageId: &mid,
+				Content:   acp.ContentBlock{Text: &acp.ContentBlockText{Text: m.Text}},
+			}}
+		}
+		if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{SessionId: acp.SessionId(sid), Update: upd}); err != nil {
+			return err
+		}
+		if err := pause(ctx, 30*time.Millisecond); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func pause(ctx context.Context, d time.Duration) error {
@@ -586,7 +677,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
 
-	ag := &mockACPAgent{sessions: make(map[string]*mockSession)}
+	dataDir := os.Getenv("ACP_MOCK_DATA_DIR")
+	if dataDir == "" {
+		dataDir = filepath.Join(os.TempDir(), "acp-mock")
+	}
+	_ = os.MkdirAll(dataDir, 0o755)
+
+	ag := &mockACPAgent{sessions: make(map[string]*mockSession), dataDir: dataDir}
 	asc := acp.NewAgentSideConnection(ag, os.Stdout, os.Stdin)
 	asc.SetLogger(slog.Default())
 	ag.conn = asc // Wire up the connection for SessionUpdate calls
