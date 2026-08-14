@@ -232,7 +232,7 @@
                       :keyboard-active="chatShortcutActive"
                       :current-file="currentFile"
                       :current-dir="currentDir"
-                      :session-sidebar-open="sessionSidebar.open.value"
+                      :session-sidebar-open="sessionSidebar.open.value && isWideScreen"
                       @open="switchTab('chat')"
                       @open-file="handleSelectFile"
                       @task-card-click="onTaskCardClick"
@@ -246,11 +246,11 @@
                 </div>
                 <SessionSidebar
                   ref="sessionSidebarRef"
-                  v-show="sessionSidebar.open.value"
+                  v-show="sessionSidebar.open.value && isWideScreen"
                   :width="sessionSidebar.width.value"
                   :current-session-id="sessionIdentity.currentSessionId.value"
                   :running-session-ids="sessionIdentity.runningSessions.value"
-                  :is-active="sessionSidebar.open.value"
+                  :is-active="sessionSidebar.open.value && isWideScreen"
                   @resize="sessionSidebar.setWidth"
                   @close="sessionSidebar.closeSidebar"
                   @select="handleSessionSelect"
