@@ -65,7 +65,7 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 4px 2px 8px;
+  padding: 12px 16px 16px;
 }
 .st-group-title {
   display: flex;
