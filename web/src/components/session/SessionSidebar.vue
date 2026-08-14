@@ -1,11 +1,6 @@
 <template>
-  <div
-    ref="rootRef"
-    class="session-sidebar"
-    :class="{ 'bottom-docked': !isWideScreen }"
-    :style="isWideScreen ? { width: `${width}px` } : { height: `${height}px` }"
-  >
-    <SplitDivider :orientation="isWideScreen ? 'vertical' : 'horizontal'" @dragmove="onDragMove" />
+  <div ref="rootRef" class="session-sidebar" :class="{ overlay: !isWideScreen }" :style="{ width: `${width}px` }">
+    <SplitDivider @dragmove="onDragMove" />
     <div class="sidebar-inner">
       <div class="bs-header session-sidebar-header">
         <SessionListHeader
@@ -45,12 +40,11 @@ import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
-import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_HEIGHT, SIDEBAR_MAX_HEIGHT } from '@/composables/useSessionSidebar'
+import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'
 
 defineProps({
   width: { type: Number, default: 280 },
-  height: { type: Number, default: 320 },
   currentSessionId: String,
   runningSessionIds: { type: Set, default: () => new Set() },
   isActive: { type: Boolean, default: true },
@@ -72,22 +66,14 @@ function clampWidth(w) {
   return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, w))
 }
 
-function clampHeight(h) {
-  return Math.max(SIDEBAR_MIN_HEIGHT, Math.min(SIDEBAR_MAX_HEIGHT, h))
-}
-
-function onDragMove(value) {
+function onDragMove(clientX) {
   const rect = rootRef.value?.getBoundingClientRect()
   if (!rect) return
-  if (isWideScreen.value) {
-    // Right-side panel: divider at left edge. Width = right edge - pointer.
-    const newWidth = rect.right - value
-    emit('resize', clampWidth(newWidth))
-  } else {
-    // Bottom-docked panel: divider at top edge. Height = bottom edge - pointer.
-    const newHeight = rect.bottom - value
-    emit('resize', clampHeight(newHeight))
-  }
+  // Sidebar grows to the right; divider sits at its left edge.
+  // Width = distance from sidebar's right edge to the pointer.
+  const rightEdge = rect.right
+  const newWidth = rightEdge - clientX
+  emit('resize', clampWidth(newWidth))
 }
 
 async function handleCreateClick() {
@@ -119,23 +105,20 @@ defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLoca
 .session-sidebar {
   position: relative;
   flex-shrink: 0;
+  height: 100%;
   display: flex;
   background: var(--bg-secondary, #fff);
-}
-/* Wide: right-side column taking full height, left border separator. */
-.session-sidebar:not(.bottom-docked) {
-  height: 100%;
   border-left: 1px solid var(--border-color, #e5e5e5);
 }
-/* Narrow: bottom-docked bar over the chat, right-left full width, top border. */
-.session-sidebar.bottom-docked {
+/* On non-wide screens the pinned sidebar floats as an overlay over the chat
+   (instead of taking layout space and crushing the chat column). */
+.session-sidebar.overlay {
   position: absolute;
-  left: 0;
   right: 0;
+  top: 0;
   bottom: 0;
   z-index: 30;
-  border-top: 1px solid var(--border-color, #e5e5e5);
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.15);
 }
 .sidebar-inner {
   flex: 1;

@@ -248,11 +248,10 @@
                   ref="sessionSidebarRef"
                   v-show="sessionSidebar.open.value"
                   :width="sessionSidebar.width.value"
-                  :height="sessionSidebar.height.value"
                   :current-session-id="sessionIdentity.currentSessionId.value"
                   :running-session-ids="sessionIdentity.runningSessions.value"
                   :is-active="sessionSidebar.open.value"
-                  @resize="handleSidebarResize"
+                  @resize="sessionSidebar.setWidth"
                   @close="sessionSidebar.closeSidebar"
                   @select="handleSessionSelect"
                   @create="handleSessionCreate"
@@ -1007,15 +1006,6 @@ async function handleSessionCreate(agentId) {
 function handleDrawerPin() {
   sessionIdentity.sessionDrawer.close()
   sessionSidebar.pinToSidebar()
-}
-
-/** Sidebar resize: wide → width; narrow → height. */
-function handleSidebarResize(value) {
-  if (isWideScreen.value) {
-    sessionSidebar.setWidth(value)
-  } else {
-    sessionSidebar.setHeight(value)
-  }
 }
 
 function handleSessionArchive(sessionId, backend) {
