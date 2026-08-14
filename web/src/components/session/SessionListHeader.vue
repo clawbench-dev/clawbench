@@ -96,6 +96,13 @@ const sessionBarColor = computed(() => {
   align-items: center;
   flex-shrink: 0;
 }
+</style>
+
+<style>
+/* Shared session-list header action buttons — unscoped so the same styling
+   applies to buttons injected into the #actions slot by parents (e.g. the
+   sidebar's unpin/close buttons and the drawer's pin button), which are
+   rendered by the parent component, not by this one. */
 .header-action-btn {
   margin-left: 6px;
   width: 24px;
