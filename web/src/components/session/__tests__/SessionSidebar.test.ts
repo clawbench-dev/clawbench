@@ -3,6 +3,14 @@ import { mount } from '@vue/test-utils'
 import SessionSidebar from '@/components/session/SessionSidebar.vue'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 
+const wideScreen = vi.hoisted(() => ({ isWideScreen: { value: true } }))
+vi.mock('@/composables/useWideScreenLayout', async () => {
+  const { ref } = await import('vue')
+  wideScreen.isWideScreen = ref(true)
+  return {
+    useWideScreenLayout: () => ({ isWideScreen: wideScreen.isWideScreen }),
+  }
+})
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }) }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 
@@ -51,6 +59,13 @@ describe('SessionSidebar', () => {
     const wrapper = mountSidebar()
     await wrapper.find('.sidebar-close-btn').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('hides the collapse button on narrow screen', async () => {
+    wideScreen.isWideScreen.value = false
+    const wrapper = mountSidebar()
+    expect(wrapper.find('.sidebar-close-btn').exists()).toBe(false)
+    wideScreen.isWideScreen.value = true
   })
 
   it('forwards archive with sessionId and backend', async () => {

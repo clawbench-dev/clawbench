@@ -10,7 +10,7 @@
           @create="handleCreateClick"
         >
           <template #actions>
-            <button class="header-action-btn sidebar-close-btn" @click.stop="$emit('close')" :title="t('session.closeSidebar')">
+            <button v-if="isWideScreen" class="header-action-btn sidebar-close-btn" @click.stop="$emit('close')" :title="t('session.closeSidebar')">
               <PanelLeftClose :size="16" />
             </button>
           </template>
@@ -37,6 +37,7 @@ import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import { useAgents } from '@/composables/useAgents'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'
 
@@ -51,6 +52,7 @@ const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'op
 
 const { t } = useI18n()
 const { agents, loadAgents } = useAgents()
+const { isWideScreen } = useWideScreenLayout()
 
 const listRef = ref(null)
 const rootRef = ref(null)
