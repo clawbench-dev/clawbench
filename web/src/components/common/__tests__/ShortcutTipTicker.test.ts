@@ -101,10 +101,18 @@ describe('ShortcutTipTicker', () => {
     expect(wrapper.text()).toContain('c.ctx')
   })
 
-  it('resets to the first tip when the context list changes', async () => {
-    const wrapper = await mountTicker({ tips: [TIPS[0]] })
+  it('resets to the first tip when the tips list changes', async () => {
+    const wrapper = await mountTicker()
     expect(wrapper.text()).toContain('c.send')
-    await wrapper.setProps({ tips: [] })
-    expect(wrapper.find('.stt').exists()).toBe(false)
+
+    // advance to the second tip (index 1)
+    vi.advanceTimersByTime(props.showMs + 140)
+    await nextTick()
+    expect(wrapper.text()).toContain('c.search')
+
+    // swap to a single-tip list -> watcher resets index to 0
+    await wrapper.setProps({ tips: [TIPS[2]] })
+    await nextTick()
+    expect(wrapper.text()).toContain('c.recommend')
   })
 })
