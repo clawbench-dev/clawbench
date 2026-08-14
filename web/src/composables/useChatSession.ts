@@ -40,6 +40,11 @@ export async function loadSessionsOnce(): Promise<void> {
         }
         // Populate runningSessions set from API data (full authoritative list)
         reconcileRunningSessions(sessions, true)
+        // Signal any mounted session list (drawer/sidebar) to refresh in real time.
+        // loadSessionsOnce is the single funnel for read/complete/archive/delete
+        // state refreshes, so bumping the version here keeps the list in sync
+        // even for changes that don't emit a WS event (e.g. mark-as-read).
+        store.state.sessionListVersion++
       }
     } catch { /* ignore */ }
     finally {

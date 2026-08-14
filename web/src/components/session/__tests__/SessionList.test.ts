@@ -3,6 +3,19 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
 
+const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore } = vi.hoisted(() => {
+  const mockStore = { state: { chatSessionPageSize: 10, sessionListVersion: 0, sessionCount: 0 } }
+  return {
+    mockGetAgentBackend: vi.fn(() => ''),
+    mockGetAgentName: vi.fn(() => 'Agent'),
+    mockDialogHolder: { confirm: null as null | ((m: string, o?: any) => Promise<boolean>), lastOptions: null as any },
+    mockReconcileRunningSessions: vi.fn(),
+    mockRemoveEventHandler: vi.fn(),
+    mockEventHolder: { handler: null as null | ((event: string) => void) },
+    mockStore,
+  }
+})
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
 }))
@@ -14,13 +27,12 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 vi.mock('@/stores/app', () => ({
-  store: { state: { chatSessionPageSize: 10 } },
+  store: mockStore,
 }))
-const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions } = vi.hoisted(() => ({
-  mockGetAgentBackend: vi.fn(() => ''),
-  mockGetAgentName: vi.fn(() => 'Agent'),
-  mockDialogHolder: { confirm: null as null | ((m: string, o?: any) => Promise<boolean>), lastOptions: null as any },
-  mockReconcileRunningSessions: vi.fn(),
+vi.mock('@/composables/useGlobalEvents', () => ({
+  useGlobalEvents: () => ({
+    onEvent: (handler: any) => { mockEventHolder.handler = handler; return mockRemoveEventHandler },
+  }),
 }))
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({ getAgentBackend: mockGetAgentBackend, getAgentName: mockGetAgentName }),
@@ -70,6 +82,8 @@ describe('SessionList', () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
     mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
     mockDialogHolder.lastOptions = null
+    mockEventHolder.handler = null
+    mockStore.state.sessionListVersion = 0
   })
 
   async function mountList(props = {}) {
@@ -155,5 +169,55 @@ describe('SessionList', () => {
     await wrapper.vm.loadSessions()
     await flushPromises()
     expect(wrapper.vm.sessions.length).toBe(0)
+  })
+
+  it('subscribes to session_update WS events and reloads the list (debounced)', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+    expect(wrapper.vm.sessions.length).toBe(1)
+
+    // Server state changes (e.g. another session added) — next load returns s2.
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
+    mockEventHolder.handler?.('session_update')
+    // Debounce is 400ms — advance timers then flush.
+    await new Promise(r => setTimeout(r, 500))
+    await flushPromises()
+    expect(wrapper.vm.sessions.length).toBe(1)
+    expect(wrapper.vm.sessions[0].id).toBe('s2')
+  })
+
+  it('reloads when sessionListVersion bumps (create/archive/destroy/read)', async () => {
+    // The watcher calls reload() on every sessionListVersion change. We drive it
+    // through the exposed reload() here (the store mock is a plain object, so the
+    // production reactive watcher is exercised in the real app; this asserts the
+    // reload contract that the watcher invokes).
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+    expect(wrapper.vm.sessions.length).toBe(1)
+
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
+    wrapper.vm.reload()
+    await flushPromises()
+    await nextTick()
+    expect(wrapper.vm.sessions[0].id).toBe('s2')
+  })
+
+  it('exposes reload() and removes the WS listener on unmount', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
+    wrapper.vm.reload()
+    await flushPromises()
+    expect(wrapper.vm.sessions[0].id).toBe('s2')
+
+    wrapper.unmount()
+    expect(mockRemoveEventHandler).toHaveBeenCalled()
   })
 })

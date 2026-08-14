@@ -49,6 +49,7 @@ import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
+import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -74,6 +75,8 @@ const listRef = ref(null)
 const sentinelRef = ref(null)
 let observer = null
 const pageSize = computed(() => store.state.chatSessionPageSize || 10)
+let reloadDebounce = null
+let removeEventHandler = null
 
 const sessionsWithStatus = computed(() => {
   void runningSessionsVersion.value
@@ -155,6 +158,21 @@ function addSessionLocally(session) {
   sessions.value = [session, ...sessions.value]
 }
 
+/** Debounced full reload so bursty WS events (running→completed etc.) coalesce. */
+function scheduleReload() {
+  if (reloadDebounce) clearTimeout(reloadDebounce)
+  reloadDebounce = setTimeout(() => {
+    reloadDebounce = null
+    loadSessions()
+  }, 400)
+}
+
+function reload() {
+  if (reloadDebounce) clearTimeout(reloadDebounce)
+  reloadDebounce = null
+  loadSessions()
+}
+
 const listNav = useListNav({
   getCount: () => sessionsWithStatus.value.length,
   onConfirm: (idx) => {
@@ -173,12 +191,30 @@ function scrollActiveIntoView(index) {
 
 watch(sessionsWithStatus, () => listNav.reset())
 
-defineExpose({ loadSessions, addSessionLocally })
+// Real-time sync: reload when the global session list version bumps. This fires
+// after create/archive/destroy/read/completion — including cases that don't emit
+// a WS session_update event (e.g. mark-as-read, archive). Combined with the WS
+// subscription below, the drawer/sidebar list stays fresh without manual refresh.
+watch(() => store.state.sessionListVersion, () => {
+  reload()
+})
+
+defineExpose({ loadSessions, addSessionLocally, reload })
 
 onMounted(() => {
   loadSessions()
+  // Real-time: keep the list in sync with session lifecycle events (running,
+  // completed, cancelled, permission, title updates). Debounced so a stream
+  // of events (e.g. running→completed) triggers one refresh.
+  const { onEvent } = useGlobalEvents()
+  removeEventHandler = onEvent((event) => {
+    if (event === 'session_update') scheduleReload()
+  })
 })
 onUnmounted(() => {
+  removeEventHandler?.()
+  removeEventHandler = null
+  if (reloadDebounce) { clearTimeout(reloadDebounce); reloadDebounce = null }
   if (observer) { observer.disconnect(); observer = null }
 })
 </script>

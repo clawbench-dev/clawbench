@@ -123,6 +123,11 @@ interface AppState {
     sessionMaxCount: number
     sessionCount: number
 
+    // Monotonic version bumped whenever the session list changes (create,
+    // archive, destroy, read, running-state). Watched by the session list
+    // components to refresh in real time even when no WS event fires.
+    sessionListVersion: number
+
     // Recent projects config
     recentProjectsMaxCount: number
 
@@ -184,6 +189,7 @@ const state = reactive<AppState>({
     chatSessionPageSize: 10,
     sessionMaxCount: 10,
     sessionCount: 0,
+    sessionListVersion: 0,
     recentProjectsMaxCount: 10,
     chatUnreadCount: 0,
     taskUnreadCount: 0,
