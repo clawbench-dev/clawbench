@@ -6,7 +6,8 @@
         <span class="chat-group-label" :title="t('chat.actions.session')">
           {{ t('chat.actions.session') }}
         </span>
-        <button class="chat-action-btn" :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
+        <button v-if="!sessionPanelOpen" class="chat-action-btn" data-action="session"
+          :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
           @click="$emit('open-session-tab', 'sessions')"
           :title="t('chat.actions.session')">
           <List :size="14" />
@@ -446,6 +447,7 @@ const props = defineProps({
   currentAgentId: String,
   currentSessionRunning: Boolean,
   active: Boolean,
+  sessionPanelOpen: Boolean,
 })
 
 const emit = defineEmits([
