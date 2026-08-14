@@ -50,6 +50,9 @@ const sessionBarColor = computed(() => {
   white-space: nowrap;
   flex-wrap: nowrap;
   overflow: hidden;
+  width: 100%;
+  flex-shrink: 0;
+  min-width: 0;
 }
 .session-list-header .bs-header-title {
   flex: 1;

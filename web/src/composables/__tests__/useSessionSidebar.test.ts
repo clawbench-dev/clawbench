@@ -59,14 +59,14 @@ describe('useSessionSidebar', () => {
     expect(s.open.value).toBe(true)
   })
 
-  it('unpinToDrawer closes sidebar and calls registered openDrawer', () => {
+  it('unpinToDrawer just collapses the sidebar (does NOT open the drawer)', () => {
     const s = useSessionSidebar()
     const openDrawer = vi.fn()
     s.registerOpenDrawer(openDrawer)
     s.pinToSidebar()
     s.unpinToDrawer()
     expect(s.open.value).toBe(false)
-    expect(openDrawer).toHaveBeenCalled()
+    expect(openDrawer).not.toHaveBeenCalled()
   })
 
   it('openSessionTabBridge toggles sidebar when open, else opens drawer', () => {

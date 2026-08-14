@@ -252,7 +252,6 @@
                   :running-session-ids="sessionIdentity.runningSessions.value"
                   :is-active="sessionSidebar.open.value && isWideScreen"
                   @resize="sessionSidebar.setWidth"
-                  @unpin="sessionSidebar.unpinToDrawer"
                   @close="sessionSidebar.closeSidebar"
                   @select="handleSessionSelect"
                   @create="handleSessionCreate"
@@ -1576,6 +1575,14 @@ watch(isWideScreen, (val) => {
     // Wide-screen: the bottom dock is hidden, so bottom-sheet drawers must sit
     // flush with the screen bottom — don't let a stale --dock-height leave a gap.
     document.documentElement.style.setProperty('--dock-height', '0px')
+    // The wide dock just became visible (v-show flips display:none → flex).
+    // Re-measure it: ResizeObserver may miss the transition (see the keyboard
+    // safety-net comment), and if the dock was previously hidden its measured
+    // size stays 0 — which would wrongly collapse every tab into the overflow
+    // popup even though there is plenty of space.
+    nextTick(() => {
+      startWideDockResize()
+    })
   } else {
     onTabSwitch(activeTab.value)
     // Bottom dock visible again — re-measure (ResizeObserver may miss the

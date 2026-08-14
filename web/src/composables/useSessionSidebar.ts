@@ -76,9 +76,9 @@ export function useSessionSidebar() {
   function pinToSidebar() {
     openSidebar()
   }
+  /** Unpin / deselect: just collapse the sidebar (does NOT re-open the drawer). */
   function unpinToDrawer() {
     closeSidebar()
-    openDrawerFn?.()
   }
   function registerOpenDrawer(fn: () => void) {
     openDrawerFn = fn

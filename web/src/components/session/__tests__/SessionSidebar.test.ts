@@ -47,15 +47,9 @@ describe('SessionSidebar', () => {
     expect(wrapper.find('.header-stub').exists()).toBe(true)
   })
 
-  it('emits unpin when pin button clicked', async () => {
+  it('emits close when pin button clicked (unpin collapses sidebar)', async () => {
     const wrapper = mountSidebar()
     await wrapper.find('.sidebar-unpin-btn').trigger('click')
-    expect(wrapper.emitted('unpin')).toBeTruthy()
-  })
-
-  it('emits close when close button clicked', async () => {
-    const wrapper = mountSidebar()
-    await wrapper.find('.sidebar-close-btn').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 

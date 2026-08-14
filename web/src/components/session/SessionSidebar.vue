@@ -9,11 +9,8 @@
         @create="handleCreateClick"
       >
         <template #actions>
-          <button class="header-action-btn sidebar-unpin-btn" @click.stop="$emit('unpin')" :title="t('session.unpinToSidebar')">
+          <button class="header-action-btn sidebar-unpin-btn" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
             <Pin :size="16" />
-          </button>
-          <button class="header-action-btn sidebar-close-btn" @click.stop="$emit('close')" :title="t('session.closeSidebar')">
-            <PanelLeftClose :size="16" />
           </button>
         </template>
       </SessionListHeader>
@@ -33,7 +30,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Pin, PanelLeftClose } from 'lucide-vue-next'
+import { Pin } from 'lucide-vue-next'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
@@ -48,7 +45,7 @@ defineProps({
   isActive: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['select', 'archive', 'destroy', 'unpin', 'close', 'resize', 'open-session-search', 'create', 'create-agent-select'])
+const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'open-session-search', 'create', 'create-agent-select'])
 
 const { t } = useI18n()
 const { agents, loadAgents } = useAgents()
