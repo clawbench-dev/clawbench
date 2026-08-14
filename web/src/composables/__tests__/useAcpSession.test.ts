@@ -270,6 +270,33 @@ describe('useAcpSession', () => {
       expect(result).toBeNull()
       expect(mockToastShow).toHaveBeenCalledWith('chat.acpSession.noAcpSession', expect.objectContaining({ type: 'info' }))
     })
+
+    it('coerces non-numeric added to 0', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: true, added: 'abc' }),
+      })
+
+      const { acpSyncSession } = useAcpSession({ currentAgentId })
+      const result = await acpSyncSession('sid-1')
+
+      expect(result).toEqual({ added: 0 })
+    })
+
+    it('shows syncFailed toast for generic errors', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ msgKey: 'InternalError' }),
+      })
+
+      const { acpSyncSession } = useAcpSession({ currentAgentId })
+      const result = await acpSyncSession('sid-1')
+
+      expect(result).toBeNull()
+      expect(mockToastShow).toHaveBeenCalledWith('chat.acpSession.syncFailed', expect.objectContaining({ type: 'error' }))
+    })
   })
 
   describe('clearAcpSessions', () => {

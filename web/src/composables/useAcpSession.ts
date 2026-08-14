@@ -128,8 +128,9 @@ export function useAcpSession(options: UseAcpSessionOptions) {
   }
 
   /**
-   * 增量同步当前会话：复用 ACP LoadSession 回放，把外部新增消息合并进本地会话。
-   * 返回 { added }；无 ACP 会话返回 null 并提示。
+   * Incrementally sync the current session: reuse the ACP LoadSession replay to
+   * merge external new messages into the local session. Returns { added }, or null
+   * (with a toast) if there is no ACP session.
    */
   async function acpSyncSession(sessionId: string): Promise<{ added: number } | null> {
     const aid = currentAgentId.value
