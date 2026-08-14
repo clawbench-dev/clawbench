@@ -993,7 +993,6 @@ export default {
     noHeadings: '无标题',
   },
   quoteBar: {
-    chat: '对话',
     clear: '清空',
     placeholder: '输入你的问题...',
     addToChat: '加入对话',

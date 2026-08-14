@@ -2,23 +2,22 @@
   <Transition name="quote-bar">
     <div v-if="visible && quoteData" ref="barRef" class="quote-question-bar">
 
-      <!-- Collapsed: quoted snippet (single-line) + 对话 button -->
+      <!-- Collapsed row (mobile): quoted snippet (single-line) + add action.
+           Clicking the quote area expands the input box and the quote together. -->
       <div v-if="!expanded" class="quote-bar-row" @click="expand()">
         <div class="qq-quoted-snippet qq-quoted-snippet--inline">
-          <MessageSquare :size="12" class="qq-quoted-icon" />
-          <span class="qq-quoted-text qq-quoted-text--single">{{ fullQuoteText }}</span>
+          <span class="qq-quoted-text">{{ displayQuoteText }}</span>
         </div>
-        <button class="quote-bar-btn" @click.stop="expand">
-          {{ t('quoteBar.chat') }}
+        <button class="quote-bar-add" @click.stop="handleAdd" :title="t('quoteBar.addToChat')" :aria-label="t('quoteBar.addToChat')">
+          <Plus :size="14" />
         </button>
       </div>
 
-      <!-- Expanded: quoted snippet + input -->
+      <!-- Expanded: quoted snippet (full) + input -->
       <div v-else class="quote-bar-expanded">
-        <!-- Quoted snippet -->
+        <!-- Quoted snippet — fully shown when expanded -->
         <div class="qq-quoted-snippet">
-          <MessageSquare :size="12" class="qq-quoted-icon" />
-          <span class="qq-quoted-text">{{ fullQuoteText }}</span>
+          <span class="qq-quoted-text qq-quoted-text--expanded">{{ displayQuoteText }}</span>
         </div>
 
         <!-- Input -->
@@ -51,12 +50,14 @@
 </template>
 
 <script setup>
-import { MessageSquare, XCircle, Plus, Send } from 'lucide-vue-next'
+import { XCircle, Plus, Send } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
 
 const { t } = useI18n()
+const { isPC } = usePlatformDetect()
 
 const props = defineProps({
   visible: Boolean,
@@ -69,20 +70,27 @@ const inputText = ref('')
 const inputRef = ref(null)
 const barRef = ref(null)
 
-const fullQuoteText = computed(() => {
+// Quote text: single-line preview while collapsed, full text once expanded.
+const displayQuoteText = computed(() => {
   if (!props.quoteData) return ''
-  return truncateQuoteText(props.quoteData.text || '')
+  const text = props.quoteData.text || ''
+  return expanded.value ? text : truncateQuoteText(text, 80)
 })
 
 const canSend = computed(() => canSendInput(inputText.value))
 
-// Reset when bar hides
-watch(() => props.visible, (val) => {
+// Desktop: the bar is always expanded (input visible) after selecting text.
+// Mobile: keep it collapsed and let the user click to expand. Reset on hide.
+function onVisibleChange(val) {
   if (!val) {
     expanded.value = false
     inputText.value = ''
+  } else if (isPC.value) {
+    expand()
   }
-})
+}
+
+watch(() => props.visible, onVisibleChange)
 
 // Click outside to close
 function onPointerDown(e) {
@@ -95,19 +103,37 @@ function onPointerDown(e) {
   emit('close')
 }
 
+// Escape closes the bar.
+function onKeyDown(e) {
+  if (!props.visible) return
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    emit('close')
+  }
+}
+
+// Focus the input. Uses the ref when available, otherwise falls back to a DOM
+// lookup (the ref is unreliable on elements inside <Transition>).
+function focusInput() {
+  const el = inputRef.value || document.querySelector('.qq-textarea')
+  el?.focus()
+}
+
 onMounted(() => {
   document.addEventListener('pointerdown', onPointerDown, true)
+  document.addEventListener('keydown', onKeyDown, true)
 })
 
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onPointerDown, true)
+  document.removeEventListener('keydown', onKeyDown, true)
 })
 
 async function expand() {
   emit('pin')
   expanded.value = true
   await nextTick()
-  inputRef.value?.focus()
+  focusInput()
 }
 
 function autoResizeTextarea() {
@@ -123,8 +149,7 @@ function autoResizeTextarea() {
   el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px'
 }
 
-// Watch inputText changes (both user input and programmatic changes)
-// to ensure textarea height stays in sync with content
+// Watch inputText changes to ensure textarea height stays in sync with content.
 watch(inputText, () => nextTick(() => autoResizeTextarea()))
 
 function handleSend() {
@@ -140,7 +165,7 @@ function handleAdd() {
   inputText.value = ''
 }
 
-defineExpose({ expanded, expand, inputText })
+defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, inputText })
 </script>
 
 <style scoped>
@@ -174,21 +199,24 @@ defineExpose({ expanded, expand, inputText })
   background: var(--bg-tertiary);
 }
 
-.quote-bar-btn {
-  flex-shrink: 0;
-  padding: 6px 14px;
+.quote-bar-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: none;
-  border-radius: 0;
-  background: var(--accent-color);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, background 0.15s;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--accent-color);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
 }
 
-.quote-bar-btn:active {
-  opacity: 0.8;
+.quote-bar-add:hover {
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 /* ===== Expanded panel ===== */
@@ -213,7 +241,7 @@ defineExpose({ expanded, expand, inputText })
   min-width: 0;
 }
 
-/* Collapsed inline variant — single row, no flex-start, all corners rounded */
+/* Collapsed inline variant — single row, no flex-start */
 .qq-quoted-snippet--inline {
   align-items: center;
   padding: 5px 8px;
@@ -221,33 +249,22 @@ defineExpose({ expanded, expand, inputText })
   border-radius: 0;
 }
 
-.qq-quoted-icon {
-  flex-shrink: 0;
-  color: var(--accent-color);
-  opacity: 0.6;
-  margin-top: 1px;
-}
-
-.qq-quoted-snippet--inline .qq-quoted-icon {
-  margin-top: 0;
-}
-
+/* Quote text: single line by default; expand on click to show full content */
 .qq-quoted-text {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
-  word-break: break-all;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Collapsed single-line variant */
-.qq-quoted-text--single {
-  -webkit-line-clamp: 1;
-  white-space: nowrap;
-  word-break: normal;
+.qq-quoted-text--expanded {
+  white-space: normal;
+  overflow-y: auto;
+  text-overflow: clip;
+  word-break: break-all;
+  max-height: 120px;
 }
 
 /* Input container — capsule style */

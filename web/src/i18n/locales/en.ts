@@ -992,7 +992,6 @@ export default {
     noHeadings: 'No headings',
   },
   quoteBar: {
-    chat: 'Chat',
     clear: 'Clear',
     placeholder: 'Type your question...',
     addToChat: 'Add to chat',
