@@ -32,7 +32,7 @@
   border: 1px solid var(--border-color, #e0e0e0);
   border-radius: 12px;
   width: 100%;
-  max-width: var(--modal-max-width, 480px);
+  max-width: var(--modal-max-width, 624px);
   max-height: 100%;
   height: auto;
   display: flex;

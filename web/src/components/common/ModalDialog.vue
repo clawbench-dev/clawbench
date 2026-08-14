@@ -43,7 +43,7 @@ const props = defineProps({
 
 const emit = defineEmits(['close'])
 
-const maxWidthStyle = computed(() => props.maxWidth ? { maxWidth: `${props.maxWidth}px` } : {})
+const maxWidthStyle = computed(() => props.maxWidth ? { maxWidth: `${Math.round(props.maxWidth * 1.3)}px` } : {})
 
 const leaving = ref(false)
 const everOpened = ref(false)
