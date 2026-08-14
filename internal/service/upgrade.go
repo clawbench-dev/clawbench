@@ -221,18 +221,10 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 		return
 	}
 
-	// 3. Supervisor check — Docker refuses self-replace
+	// 3. Supervisor handling.
 	isSupervised := upgradeIsSupervised != nil && upgradeIsSupervised()
-	slog.Info("upgrade: supervisor check", "isSupervised", isSupervised, "isDocker", isDocker())
-	if isSupervised && isDocker() {
-		SetUpgradeError("Running in Docker — please pull new image: docker pull ghcr.io/xulongzhe/clawbench:latest")
-		_ = os.RemoveAll(tmpDir)
-		broadcastUpgradeUpdate()
-		return
-	}
-
-	// 4. Backup and launch upgrade-replace subprocess
-	setStateAndBroadcast(UpgradePhaseBackingUp, 80, "Backing up current binary...")
+	isDockerEnv := isDocker()
+	slog.Info("upgrade: supervisor check", "isSupervised", isSupervised, "isDocker", isDockerEnv)
 
 	currentBin, err := os.Executable()
 	if err != nil {
@@ -242,6 +234,17 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 		return
 	}
 	slog.Info("upgrade: current binary", "path", currentBin)
+
+	// Docker refuses self-replace — replacement is done by pulling a new image.
+	if isSupervised && isDockerEnv {
+		SetUpgradeError("Running in Docker — please pull new image: docker pull ghcr.io/xulongzhe/clawbench:latest")
+		_ = os.RemoveAll(tmpDir)
+		broadcastUpgradeUpdate()
+		return
+	}
+
+	// 4. Backup current binary (used for rollback and as the replacement launcher).
+	setStateAndBroadcast(UpgradePhaseBackingUp, 80, "Backing up current binary...")
 
 	backupPath := currentBin + ".bak"
 	if err := copyFile(currentBin, backupPath); err != nil {
@@ -254,6 +257,24 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 	SetUpgradeBackupPath(backupPath)
 	slog.Info("upgrade: backup created", "path", backupPath)
 
+	// Supervised (non-Docker, e.g. systemd): replace the binary in place, then
+	// shut down and let the supervisor restart the service. The upgrade-replace
+	// self-restart subprocess is incompatible with supervised deployment — the
+	// supervisor kills the unit's cgroup (and any orphan it spawned) once the
+	// main process exits, so a self-spawned replacement would never survive.
+	if isSupervised {
+		slog.Info("upgrade: supervised non-Docker deploy — replacing in place, letting supervisor restart")
+		if err := performSupervisedUpgrade(newBinPath, currentBin); err != nil {
+			SetUpgradeError(err.Error())
+			_ = os.RemoveAll(tmpDir)
+			broadcastUpgradeUpdate()
+			return
+		}
+		_ = os.RemoveAll(tmpDir)
+		return
+	}
+
+	// 5. Unsupervised: launch upgrade-replace subprocess.
 	setStateAndBroadcast(UpgradePhaseReplacing, 90, "Replacing binary...")
 
 	// Launch .bak with upgrade-replace subcommand
@@ -480,6 +501,43 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.Chmod(dst, info.Mode())
+}
+
+// upgradeRename overrides os.Rename so tests can force a cross-device error and
+// exercise the copy fallback. Real deployments use os.Rename.
+var upgradeRename = os.Rename
+
+// replaceBinaryInPlace replaces the target binary with the new binary,
+// preferring an atomic rename and falling back to a copy when the new binary
+// lives on a different filesystem (e.g. /tmp vs the install dir). The target is
+// made executable. On Unix this is safe even while the current process is
+// running — the running process keeps its old inode, and future starts use the
+// new file.
+func replaceBinaryInPlace(newPath, target string) error {
+	if err := upgradeRename(newPath, target); err == nil {
+		return os.Chmod(target, 0o755) //nolint:gosec // G302: binary must be executable
+	}
+	if err := copyFile(newPath, target); err != nil {
+		return err
+	}
+	return os.Chmod(target, 0o755) //nolint:gosec // G302: binary must be executable
+}
+
+// performSupervisedUpgrade replaces the running binary in place and triggers a
+// graceful shutdown so an external supervisor (e.g. systemd) restarts the
+// service with the new binary. It returns an error if the replacement fails;
+// shutdown is only triggered after a successful replacement.
+func performSupervisedUpgrade(newBinPath, currentBin string) error {
+	setStateAndBroadcast(UpgradePhaseReplacing, 90, "Replacing binary...")
+	if err := replaceBinaryInPlace(newBinPath, currentBin); err != nil {
+		return fmt.Errorf("failed to replace binary: %w", err)
+	}
+	setStateAndBroadcast(UpgradePhaseRestarting, 95, "Restarting...")
+	slog.Info("upgrade: triggering supervised shutdown for restart")
+	if upgradeShutdownFunc != nil {
+		upgradeShutdownFunc()
+	}
+	return nil
 }
 
 // isDocker checks if running inside a Docker container.
