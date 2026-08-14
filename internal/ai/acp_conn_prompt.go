@@ -27,6 +27,15 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		slog.Info("acp perf: Prompt.total", "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(promptTotalStart))
 	}()
 
+	// If a LoadSession replay (sync or acp-load) is in progress, wait for it to
+	// finish before sending this prompt. Otherwise loadSessionActive would hijack
+	// this prompt's SessionUpdate notifications into the replay buffer instead of
+	// routing them to the live stream (streamCh), so the user's reply would never
+	// surface. Wait, then proceed — do not corrupt the ongoing replay.
+	if err := c.waitForLoadSessionDone(); err != nil {
+		return err
+	}
+
 	// Clear stale plan state from the previous turn
 	c.mu.Lock()
 	c.cachedPlanState = nil
@@ -214,5 +223,23 @@ func (c *ACPConn) setConfigOptionWithCrashCheck(ctx context.Context, acpSID stri
 		c.UpdateCachedCurrent("mode", cfg.value)
 	}
 
+	return nil
+}
+
+// loadWaitTimeout bounds how long Prompt will wait for a LoadSession replay to
+// finish before failing. Package-level so tests can shrink it.
+var loadWaitTimeout = 10 * time.Second
+
+// waitForLoadSessionDone blocks until loadSessionActive is cleared (a LoadSession
+// replay finished), up to loadWaitTimeout. It prevents a user prompt's
+// notifications from being hijacked into the replay buffer during sync/acp-load.
+func (c *ACPConn) waitForLoadSessionDone() error {
+	deadline := time.Now().Add(loadWaitTimeout)
+	for c.loadSessionActive.Load() {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("acp: session is still loading (LoadSession replay in progress), try again shortly")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	return nil
 }

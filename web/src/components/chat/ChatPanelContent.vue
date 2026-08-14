@@ -254,6 +254,10 @@ async function handleSyncAcpSession() {
   const sid = identity.currentSessionId.value
   if (!sid) return
   acpSyncing.value = true
+  // 同步期间禁用输入：避免用户在 LoadSession 回放窗口内发消息，导致回复通知被
+  // 改路由进回放缓冲（而非实时流）。
+  const prevInputDisabled = inputDisabled.value
+  inputDisabled.value = true
   try {
     const res = await acpSession.acpSyncSession(sid)
     if (res) {
@@ -264,6 +268,7 @@ async function handleSyncAcpSession() {
       })
     }
   } finally {
+    inputDisabled.value = prevInputDisabled
     acpSyncing.value = false
   }
 }

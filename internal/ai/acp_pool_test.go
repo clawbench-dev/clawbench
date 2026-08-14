@@ -973,3 +973,29 @@ func TestGetOrCreateConn_DoesNotPrePopulateAcpSID_WhenEmpty(t *testing.T) {
 	// Cleanup
 	mgr.CloseConn(clawbenchSID)
 }
+
+func TestWaitForLoadSessionDone(t *testing.T) {
+	agent := &model.Agent{ID: "a", Backend: "claude"}
+	conn := newACPConn(agent, "sid")
+
+	// loadSessionActive false → returns immediately, no error.
+	conn.SetLoadSessionActiveForTest(false)
+	assert.NoError(t, conn.waitForLoadSessionDone())
+
+	// loadSessionActive true → clears shortly after → returns nil (Prompt proceeds).
+	conn.SetLoadSessionActiveForTest(true)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		conn.SetLoadSessionActiveForTest(false)
+	}()
+	assert.NoError(t, conn.waitForLoadSessionDone())
+
+	// loadSessionActive true and never clears → times out with a clear error.
+	orig := loadWaitTimeout
+	loadWaitTimeout = 200 * time.Millisecond
+	defer func() { loadWaitTimeout = orig }()
+	conn.SetLoadSessionActiveForTest(true)
+	err := conn.waitForLoadSessionDone()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "still loading")
+}
