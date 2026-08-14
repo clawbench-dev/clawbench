@@ -1667,6 +1667,33 @@ func HardDeleteSession(sessionID string) error {
 	return tx.Commit()
 }
 
+// summarizeContentForView strips the heavy blocks from assistant message content
+// but preserves the metadata (and cancelled flag) so the frontend message-detail
+// panel can still show model/token/cost/duration/session info for summarized
+// messages in summary view. Returns "" when content isn't parseable JSON
+// (matching the previous empty-content behavior).
+func summarizeContentForView(content string) string {
+	var parsed struct {
+		Metadata  json.RawMessage `json:"metadata"`
+		Cancelled bool            `json:"cancelled"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return ""
+	}
+	out := map[string]any{"blocks": []any{}}
+	if len(parsed.Metadata) > 0 && string(parsed.Metadata) != "null" {
+		out["metadata"] = parsed.Metadata
+	}
+	if parsed.Cancelled {
+		out["cancelled"] = true
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 // enrichMessagesWithSummaries populates the Summary and SummaryCards fields for
 // assistant messages by batch-querying the summaries table. Only messages with
 // role "assistant" are queried. When summaryView is true, the heavy content of
@@ -1730,7 +1757,7 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage, summaryView bool)
 				messages[i].SummaryCards = cards
 			}
 			if summaryView && messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
-				messages[i].Content = ""
+				messages[i].Content = summarizeContentForView(messages[i].Content)
 			}
 		}
 	}

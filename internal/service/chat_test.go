@@ -3751,7 +3751,7 @@ func TestGetChatHistoryPagedViewSummaryOmitsContent(t *testing.T) {
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "assistant", msgs[0].Role)
-	assert.Equal(t, "", msgs[0].Content, "summary view must omit content for summarized, non-streaming messages")
+	assert.Equal(t, `{"blocks":[]}`, msgs[0].Content, "summary view must strip blocks but keep a valid empty-blocks JSON")
 	require.NotNil(t, msgs[0].Summary)
 	assert.Equal(t, "reading summary", *msgs[0].Summary)
 	require.NotNil(t, msgs[0].SummaryCards)
@@ -3762,6 +3762,38 @@ func TestGetChatHistoryPagedViewSummaryOmitsContent(t *testing.T) {
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.NotEqual(t, "", msgs[0].Content, "full view must keep content")
+}
+
+func TestGetChatHistoryPagedViewSummaryPreservesMetadata(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Summary View Metadata")
+
+	asstID, err := service.AddChatMessage("/project", "claude", sid, "assistant",
+		`{"blocks":[{"type":"text","text":"answer"}],"metadata":{"transport":"cli","model":"glm-5.1","inputTokens":54494,"outputTokens":16,"durationMs":2965,"wallMs":7890,"sessionId":"ext-123"},"cancelled":true}`, nil, false, "")
+	assert.NoError(t, err)
+	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", nil))
+
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0, true)
+	assert.NoError(t, err)
+	require.Len(t, msgs, 1)
+
+	var parsed struct {
+		Blocks    []any          `json:"blocks"`
+		Metadata  map[string]any `json:"metadata"`
+		Cancelled bool           `json:"cancelled"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(msgs[0].Content), &parsed))
+	assert.Empty(t, parsed.Blocks, "blocks must be stripped in summary view")
+	assert.True(t, parsed.Cancelled, "cancelled flag must be preserved")
+
+	require.NotNil(t, parsed.Metadata, "metadata must be preserved in summary view")
+	assert.Equal(t, "cli", parsed.Metadata["transport"])
+	assert.Equal(t, "glm-5.1", parsed.Metadata["model"])
+	assert.Equal(t, float64(54494), parsed.Metadata["inputTokens"])
+	assert.Equal(t, float64(16), parsed.Metadata["outputTokens"])
+	assert.Equal(t, float64(7890), parsed.Metadata["wallMs"])
+	assert.Equal(t, "ext-123", parsed.Metadata["sessionId"])
 }
 
 func TestGetChatHistoryPagedViewSummaryKeepsStreamingContent(t *testing.T) {
