@@ -127,6 +127,41 @@ export function useAcpSession(options: UseAcpSessionOptions) {
     }
   }
 
+  /**
+   * 增量同步当前会话：复用 ACP LoadSession 回放，把外部新增消息合并进本地会话。
+   * 返回 { added }；无 ACP 会话返回 null 并提示。
+   */
+  async function acpSyncSession(sessionId: string): Promise<{ added: number } | null> {
+    const aid = currentAgentId.value
+    if (!aid || !sessionId) return null
+    try {
+      const resp = await fetch('/api/ai/session/acp-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: aid, sessionId }),
+      })
+      if (!resp.ok) {
+        let msgKey = ''
+        try {
+          const errData = await resp.json()
+          msgKey = errData?.msgKey || ''
+        } catch { /* ignore parse error */ }
+        if (msgKey === 'NoAcpSession') {
+          toast.show(gt('chat.acpSession.noAcpSession'), { type: 'info', icon: '🔄' })
+        } else {
+          toast.show(gt('chat.acpSession.syncFailed'), { type: 'error', icon: '⚠️' })
+        }
+        return null
+      }
+      const data = await resp.json()
+      return { added: typeof data.added === 'number' ? data.added : 0 }
+    } catch (err: unknown) {
+      appLog.e(TAG, 'acpSyncSession failed:', err)
+      toast.show(gt('chat.acpSession.syncFailed'), { type: 'error', icon: '⚠️' })
+      return null
+    }
+  }
+
   function clearAcpSessions(): void {
     acpSessions.value = []
     nextCursor.value = null
@@ -142,6 +177,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
     nextCursor,
     loadAcpSessions,
     acpLoadSession,
+    acpSyncSession,
     clearAcpSessions,
   }
 }

@@ -186,6 +186,8 @@ export default {
       loadMore: 'Load more',
       loadFailed: 'Failed to load ACP session',
       sessionNotFound: 'This session no longer exists on the agent side',
+      noAcpSession: 'This session is not linked to an ACP session',
+      syncFailed: 'ACP sync failed',
       justNow: 'Just now',
       minutesAgo: '{n}m ago',
       hoursAgo: '{n}h ago',
