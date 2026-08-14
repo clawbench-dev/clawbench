@@ -200,6 +200,7 @@ export default {
       colKey: '按键',
       colContext: '位置 / 前提',
       colAction: '说明',
+      openTip: '查看全部快捷键',
     },
   },
   systemResources: {

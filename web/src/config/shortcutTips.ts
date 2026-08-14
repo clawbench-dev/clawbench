@@ -91,3 +91,20 @@ export function getShortcutTipsForContext(ctx: ShortcutContext): ShortcutTipDef[
 export function getAllShortcutTips(): ShortcutTipDef[] {
   return SHORTCUT_CONTEXT_ORDER.flatMap(ctx => SHORTCUT_TIPS.filter(tip => tip.context === ctx))
 }
+
+/**
+ * Resolve the active ShortcutContext from app layout state.
+ * Wide-screen: chat is always resident; the active context is 'chat' when the
+ * right (chat) pane is focused, else the left-pane tab. Narrow: the active tab.
+ */
+export function resolveShortcutContext(opts: {
+  isWideScreen: boolean
+  activePane: 'left' | 'right'
+  leftTab: string
+  activeTab: string
+}): ShortcutContext {
+  if (opts.isWideScreen) {
+    return opts.activePane === 'right' ? 'chat' : (opts.leftTab as ShortcutContext)
+  }
+  return opts.activeTab as ShortcutContext
+}

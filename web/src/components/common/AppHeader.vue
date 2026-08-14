@@ -36,7 +36,7 @@
       v-if="!isAppMode && localConfig.headerShortcutTips"
       :context="shortcutContext"
       class="header-tips"
-      title="查看全部快捷键"
+      :title="t('appHeader.shortcutTipsDialog.openTip')"
       @click="shortcutTipsOpen = true"
     />
     <ShortcutTipsDialog :open="shortcutTipsOpen" @close="shortcutTipsOpen = false" />
@@ -183,6 +183,7 @@ import { getNative } from '@/utils/clawbenchNative'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
 import type { ShortcutContext } from '@/config/shortcutTips'
+import { resolveShortcutContext } from '@/config/shortcutTips'
 import type { Ref } from 'vue'
 
 const { t } = useI18n()
@@ -193,8 +194,12 @@ const switchTab = inject<(tab: string) => void>('switchTab')
 const { isWideScreen, leftTab, activePane } = useWideScreenLayout()
 const activeTab = inject<Ref<string>>('activeTab', ref('chat'))
 const shortcutContext = computed<ShortcutContext>(() =>
-  isWideScreen.value ? (activePane.value === 'right' ? 'chat' : leftTab.value as ShortcutContext)
-                     : (activeTab.value as ShortcutContext),
+  resolveShortcutContext({
+    isWideScreen: isWideScreen.value,
+    activePane: activePane.value,
+    leftTab: leftTab.value,
+    activeTab: activeTab.value,
+  }),
 )
 const shortcutTipsOpen = ref(false)
 

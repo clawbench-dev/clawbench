@@ -200,6 +200,7 @@ export default {
       colKey: 'Key',
       colContext: 'Where / When',
       colAction: 'Action',
+      openTip: 'View all shortcuts',
     },
   },
   systemResources: {

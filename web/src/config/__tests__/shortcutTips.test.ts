@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SHORTCUT_TIPS, SHORTCUT_CONTEXT_ORDER, getShortcutTipsForContext, getAllShortcutTips } from '@/config/shortcutTips'
+import { SHORTCUT_TIPS, SHORTCUT_CONTEXT_ORDER, getShortcutTipsForContext, getAllShortcutTips, resolveShortcutContext } from '@/config/shortcutTips'
 import zh from '@/i18n/locales/zh'
 import en from '@/i18n/locales/en'
 
@@ -72,5 +72,17 @@ describe('SHORTCUT_TIPS', () => {
       expect(idx).toBeGreaterThanOrEqual(prevIdx)
       prevIdx = idx
     }
+  })
+
+  it('resolveShortcutContext: narrow uses activeTab', () => {
+    expect(resolveShortcutContext({ isWideScreen: false, activePane: 'left', leftTab: 'browse', activeTab: 'terminal' })).toBe('terminal')
+  })
+
+  it('resolveShortcutContext: wide + right pane is chat', () => {
+    expect(resolveShortcutContext({ isWideScreen: true, activePane: 'right', leftTab: 'browse', activeTab: 'chat' })).toBe('chat')
+  })
+
+  it('resolveShortcutContext: wide + left pane uses leftTab', () => {
+    expect(resolveShortcutContext({ isWideScreen: true, activePane: 'left', leftTab: 'history', activeTab: 'chat' })).toBe('history')
   })
 })
