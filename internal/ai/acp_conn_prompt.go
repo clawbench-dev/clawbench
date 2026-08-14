@@ -157,21 +157,33 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, streamCh chan<- Stre
 	// Emit metadata event for persistence (SessionExecutor captures these)
 	forwardACPEvent(streamCh, StreamEvent{Type: "metadata", Meta: meta})
 
-	// Also update UsageState so the context chip shows input/output tokens
+	// Also update UsageState so the context chip shows input/output tokens.
+	// cachedUsageState may be nil on the first prompt that returns a Usage
+	// before any UsageUpdate notification (UNSTABLE feature) — fall back to
+	// zero values to avoid a nil pointer dereference.
 	c.mu.Lock()
 	cached := c.cachedUsageState
 	c.mu.Unlock()
+	var used, size int
+	var cost float64
+	var currency string
+	if cached != nil {
+		used = cached.Used
+		size = cached.Size
+		cost = cached.Cost
+		currency = cached.Currency
+	}
 	usageState := &UsageState{
-		Used:              cached.Used,
-		Size:              cached.Size,
+		Used:              used,
+		Size:              size,
 		InputTokens:       usage.InputTokens,
 		OutputTokens:      usage.OutputTokens,
 		TotalTokens:       usage.TotalTokens,
 		CachedReadTokens:  ptrIntVal(usage.CachedReadTokens),
 		CachedWriteTokens: ptrIntVal(usage.CachedWriteTokens),
 		ThoughtTokens:     ptrIntVal(usage.ThoughtTokens),
-		Cost:              cached.Cost,
-		Currency:          cached.Currency,
+		Cost:              cost,
+		Currency:          currency,
 	}
 	forwardACPEvent(streamCh, StreamEvent{Type: "usage_update", Usage: usageState})
 	c.SetCachedUsageState(usageState)

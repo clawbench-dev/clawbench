@@ -834,3 +834,87 @@ func TestBuildPromptBlocks_SlashCommandWithForkContext(t *testing.T) {
 	assert.Contains(t, blocks[0].Text.Text, "history here")
 	assert.Contains(t, blocks[0].Text.Text, "/compact")
 }
+
+// TestEmitPromptResponseUsage_NilCachedState verifies that emitting a
+// PromptResponse.Usage before any UsageUpdate notification (so cachedUsageState
+// is still nil) does not panic — the regression for issue #363.
+func TestEmitPromptResponseUsage_NilCachedState(t *testing.T) {
+	agent := &model.Agent{ID: "test-usage-nil", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-usage-nil")
+	require.Nil(t, conn.GetCachedUsageState())
+
+	streamCh := make(chan StreamEvent, 8)
+	cachedRead := 5
+	cachedWrite := 6
+	thought := 7
+	usage := &acp.Usage{
+		InputTokens:       10,
+		OutputTokens:      20,
+		TotalTokens:       30,
+		CachedReadTokens:  &cachedRead,
+		CachedWriteTokens: &cachedWrite,
+		ThoughtTokens:     &thought,
+	}
+
+	conn.emitPromptResponseUsage(usage, streamCh)
+	close(streamCh)
+
+	var meta, usageUpdate *StreamEvent
+	for ev := range streamCh {
+		if ev.Type == "metadata" {
+			meta = &ev
+		}
+		if ev.Type == "usage_update" {
+			usageUpdate = &ev
+		}
+	}
+	require.NotNil(t, meta, "metadata event should be emitted")
+	require.Equal(t, 10, meta.Meta.InputTokens)
+	require.Equal(t, 20, meta.Meta.OutputTokens)
+
+	require.NotNil(t, usageUpdate, "usage_update event should be emitted")
+	u := usageUpdate.Usage
+	require.NotNil(t, u)
+	// cachedUsageState was nil → fall back to zero values, no panic
+	assert.Equal(t, 0, u.Used)
+	assert.Equal(t, 0, u.Size)
+	assert.Equal(t, 0.0, u.Cost)
+	assert.Equal(t, "", u.Currency)
+	assert.Equal(t, 10, u.InputTokens)
+	assert.Equal(t, 20, u.OutputTokens)
+	assert.Equal(t, 30, u.TotalTokens)
+	assert.Equal(t, 5, u.CachedReadTokens)
+	assert.Equal(t, 6, u.CachedWriteTokens)
+	assert.Equal(t, 7, u.ThoughtTokens)
+
+	// The state should now be cached for subsequent calls.
+	assert.Equal(t, 10, conn.GetCachedUsageState().InputTokens)
+}
+
+// TestEmitPromptResponseUsage_WithCachedState verifies that when a
+// cachedUsageState is already present (from a prior UsageUpdate), the
+// Used/Size/Cost/Currency are preserved from it.
+func TestEmitPromptResponseUsage_WithCachedState(t *testing.T) {
+	agent := &model.Agent{ID: "test-usage-cached", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-usage-cached")
+	conn.SetCachedUsageState(&UsageState{Used: 100, Size: 1000, Cost: 1.5, Currency: "USD"})
+
+	streamCh := make(chan StreamEvent, 8)
+	usage := &acp.Usage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30}
+	conn.emitPromptResponseUsage(usage, streamCh)
+	close(streamCh)
+
+	var usageUpdate *StreamEvent
+	for ev := range streamCh {
+		if ev.Type == "usage_update" {
+			usageUpdate = &ev
+		}
+	}
+	require.NotNil(t, usageUpdate)
+	u := usageUpdate.Usage
+	require.NotNil(t, u)
+	assert.Equal(t, 100, u.Used)
+	assert.Equal(t, 1000, u.Size)
+	assert.Equal(t, 1.5, u.Cost)
+	assert.Equal(t, "USD", u.Currency)
+}
