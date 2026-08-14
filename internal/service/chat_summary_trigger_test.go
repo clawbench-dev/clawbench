@@ -217,6 +217,62 @@ func TestSummarizeTarget_EmptyTextSkips(t *testing.T) {
 	assert.False(t, found, "no text block should produce no summary")
 }
 
+func TestTriggerChatSummarization_MultipleAssistantMessages(t *testing.T) {
+	db, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	// Reproduces the drain-loop scenario: a long assistant reply (m1) completes,
+	// then a queued message is drained and produces a second assistant reply (m2).
+	// Only m2 was summarized because the old trigger summarized the LAST assistant.
+	// m1 must also receive a summary.
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-multi', '/test', 'claude', 'Test')")
+	assert.NoError(t, err)
+
+	text1 := strings.Repeat("第一条回复内容。", 30)
+	text2 := strings.Repeat("第二条回复内容。", 30)
+	content1, _ := json.Marshal(map[string]any{"blocks": []any{map[string]any{"type": "text", "text": text1}}})
+	content2, _ := json.Marshal(map[string]any{"blocks": []any{map[string]any{"type": "text", "text": text2}}})
+
+	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'user', 'q1', 'sess-multi', 'claude')")
+	assert.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-multi', 'claude')", string(content1))
+	assert.NoError(t, err)
+	// queued user message drained immediately after m1
+	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'user', 'q2', 'sess-multi', 'claude')")
+	assert.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-multi', 'claude')", string(content2))
+	assert.NoError(t, err)
+
+	// Simulate that only m2 was summarized before (old behavior)
+	rows, err := db.Query("SELECT id FROM chat_history WHERE session_id = 'sess-multi' AND role = 'assistant' ORDER BY id ASC")
+	assert.NoError(t, err)
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		assert.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	assert.NoError(t, rows.Err())
+	assert.Len(t, ids, 2)
+
+	// Pre-summarize only m2 (the last), mimicking the drain case where m1 was skipped
+	err = SaveSummary("chat_message", ids[1], text2)
+	assert.NoError(t, err)
+
+	triggerChatSummarization("sess-multi")
+
+	// m1 must now be summarized even though it is NOT the last assistant message
+	s1, found1 := GetSummary("chat_message", ids[0])
+	assert.True(t, found1, "intermediate assistant message must be summarized")
+	assert.Equal(t, text1, s1)
+
+	// m2 summary preserved
+	s2, found2 := GetSummary("chat_message", ids[1])
+	assert.True(t, found2)
+	assert.Equal(t, text2, s2)
+}
+
 func TestSummarizeTarget_ExtractsConclusion(t *testing.T) {
 	_, teardown := setupTestDBForTriggerSummary(t)
 	defer teardown()

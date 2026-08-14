@@ -429,28 +429,59 @@ func ForceCancelSession(sessionID string) {
 	}()
 }
 
-// triggerChatSummarization triggers summarization for the last assistant
-// message(s) in a session when it completes normally.
+// triggerChatSummarization triggers summarization for every assistant message
+// in a session that does not yet have a summary.
 // Skipped for cancelled/disconnected sessions (those use skipEvent=true in SetSessionRunning).
 // Reading summaries always extract the conclusion (no AI), matching scheduled tasks.
+//
+// Summarizing all (not just the last) assistant messages is important because
+// queued/drained messages share the same session goroutine: when a long reply
+// completes and a queued message is drained immediately, only the final reply
+// used to get a summary and every intermediate reply was skipped. Summarizing
+// each missing message closes that gap.
 func triggerChatSummarization(sessionID string) {
-	lastAssistant, blocks := getLastAssistantBlocks(sessionID)
-	if lastAssistant == nil || len(blocks) == 0 {
-		return
-	}
-
-	// Check if already summarized
-	_, found := GetSummary("chat_message", lastAssistant.ID)
-	if found {
-		return
-	}
-
 	projectPath := GetSessionProjectPath(sessionID)
-	summarizeTarget("chat_message", lastAssistant.ID, blocks, projectPath, sessionID)
+	messages, err := GetMessagesBySessionID(sessionID)
+	if err != nil || len(messages) == 0 {
+		return
+	}
 
-	// 推荐回复: if enabled, generate a next-step recommendation from the
-	// assistant's conclusion and emit it to the frontend (auto-fill/建议 chip).
-	triggerChatRecommendation(sessionID, projectPath, lastAssistant.ID, blocks)
+	lastAssistant := (*model.ChatMessage)(nil)
+	for i := range messages {
+		if messages[i].Role != "assistant" {
+			continue
+		}
+		lastAssistant = &messages[i]
+		blocks, err := parseMessageBlocks(messages[i].Content)
+		if err != nil || len(blocks) == 0 {
+			continue
+		}
+		if _, found := GetSummary("chat_message", messages[i].ID); found {
+			continue
+		}
+		summarizeTarget("chat_message", messages[i].ID, blocks, projectPath, sessionID)
+	}
+
+	// 推荐回复: only for the last assistant message. If enabled, generate a
+	// next-step recommendation from its conclusion and emit it to the frontend
+	// (auto-fill/建议 chip).
+	if lastAssistant == nil {
+		return
+	}
+	if blocks, err := parseMessageBlocks(lastAssistant.Content); err == nil && len(blocks) > 0 {
+		triggerChatRecommendation(sessionID, projectPath, lastAssistant.ID, blocks)
+	}
+}
+
+// parseMessageBlocks unmarshals message content into its ContentBlock array.
+func parseMessageBlocks(content string) ([]model.ContentBlock, error) {
+	var parsed struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return nil, err
+	}
+	return parsed.Blocks, nil
 }
 
 // triggerChatRecommendation generates a next-step recommendation (推荐回复) after
@@ -711,33 +742,6 @@ func readContextFile(projectPath, name string) string {
 		return ""
 	}
 	return text
-}
-
-// getLastAssistantBlocks returns the last assistant message and its parsed content blocks.
-func getLastAssistantBlocks(sessionID string) (*model.ChatMessage, []model.ContentBlock) {
-	messages, err := GetMessagesBySessionID(sessionID)
-	if err != nil || len(messages) == 0 {
-		return nil, nil
-	}
-
-	var lastAssistant *model.ChatMessage
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "assistant" {
-			lastAssistant = &messages[i]
-			break
-		}
-	}
-	if lastAssistant == nil {
-		return nil, nil
-	}
-
-	var content struct {
-		Blocks []model.ContentBlock `json:"blocks"`
-	}
-	if err := json.Unmarshal([]byte(lastAssistant.Content), &content); err != nil {
-		return lastAssistant, nil
-	}
-	return lastAssistant, content.Blocks
 }
 
 // summarizeChatSimple extracts the last answer text and saves it as a summary.

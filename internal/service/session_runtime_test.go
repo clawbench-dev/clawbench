@@ -2109,54 +2109,24 @@ func TestTriggerChatSummarization_AlwaysExtracts(t *testing.T) {
 	assert.Equal(t, "Answer", summary)
 }
 
-// --- getLastAssistantBlocks tests ---
+// --- parseMessageBlocks tests ---
 
-func TestGetLastAssistantBlocks_NoMessages(t *testing.T) {
-	_, teardown := setupTestDBForChatSummary(t)
-	defer teardown()
-
-	msg, blocks := getLastAssistantBlocks("session-no-messages")
-	assert.Nil(t, msg)
+func TestParseMessageBlocks_InvalidJSON(t *testing.T) {
+	blocks, err := parseMessageBlocks("not json")
+	assert.Error(t, err)
 	assert.Nil(t, blocks)
 }
 
-func TestGetLastAssistantBlocks_NoAssistantMessages(t *testing.T) {
-	db, teardown := setupTestDBForChatSummary(t)
-	defer teardown()
-
-	sessionID := "test-no-assistant-blocks"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (700, '/test', 'user', 'hello', ?, 0)", sessionID)
-
-	msg, blocks := getLastAssistantBlocks(sessionID)
-	assert.Nil(t, msg)
-	assert.Nil(t, blocks)
+func TestParseMessageBlocks_EmptyBlocks(t *testing.T) {
+	blocks, err := parseMessageBlocks(`{"blocks":[]}`)
+	assert.NoError(t, err)
+	assert.Len(t, blocks, 0)
 }
 
-func TestGetLastAssistantBlocks_InvalidJSON(t *testing.T) {
-	db, teardown := setupTestDBForChatSummary(t)
-	defer teardown()
-
-	sessionID := "test-invalid-json-blocks"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (701, '/test', 'assistant', 'not json', ?, 0)", sessionID)
-
-	msg, blocks := getLastAssistantBlocks(sessionID)
-	assert.NotNil(t, msg, "should return the message even with invalid JSON")
-	assert.Nil(t, blocks, "blocks should be nil when JSON is invalid")
-}
-
-func TestGetLastAssistantBlocks_ValidBlocks(t *testing.T) {
-	db, teardown := setupTestDBForChatSummary(t)
-	defer teardown()
-
-	sessionID := "test-valid-blocks"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+func TestParseMessageBlocks_ValidBlocks(t *testing.T) {
 	content := `{"blocks":[{"type":"text","text":"Hello"}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (702, '/test', 'assistant', ?, ?, 0)", content, sessionID)
-
-	msg, blocks := getLastAssistantBlocks(sessionID)
-	assert.NotNil(t, msg)
+	blocks, err := parseMessageBlocks(content)
+	assert.NoError(t, err)
 	assert.Len(t, blocks, 1)
 	assert.Equal(t, "text", blocks[0].Type)
 	assert.Equal(t, "Hello", blocks[0].Text)
