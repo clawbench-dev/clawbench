@@ -5,9 +5,20 @@ export const SIDEBAR_DEFAULT_WIDTH = 280
 export const SIDEBAR_MIN_WIDTH = 220
 export const SIDEBAR_MAX_WIDTH = 480
 
+export interface SidebarSession {
+  id: string
+  title?: string
+  backend?: string
+  agentId?: string
+  model?: string
+  updatedAt?: string
+  unreadCount?: number
+}
+
 const open = ref(true)
 const width = ref(SIDEBAR_DEFAULT_WIDTH)
 let openDrawerFn: (() => void) | null = null
+let addLocallyFn: ((session: SidebarSession) => void) | null = null
 let initialized = false
 
 function clampWidth(w: number): number {
@@ -72,6 +83,12 @@ export function useSessionSidebar() {
   function registerOpenDrawer(fn: () => void) {
     openDrawerFn = fn
   }
+  function registerAddSessionLocally(fn: (session: SidebarSession) => void) {
+    addLocallyFn = fn
+  }
+  function addSessionLocally(session: SidebarSession) {
+    addLocallyFn?.(session)
+  }
   /** Bridge for openSessionTab: sidebar open → collapse it; else open the drawer. */
   function openSessionTabBridge() {
     if (open.value) {
@@ -91,6 +108,8 @@ export function useSessionSidebar() {
     pinToSidebar,
     unpinToDrawer,
     registerOpenDrawer,
+    registerAddSessionLocally,
+    addSessionLocally,
     openSessionTabBridge,
   }
 }
@@ -101,4 +120,5 @@ export function _resetForTest() {
   open.value = true
   width.value = SIDEBAR_DEFAULT_WIDTH
   openDrawerFn = null
+  addLocallyFn = null
 }

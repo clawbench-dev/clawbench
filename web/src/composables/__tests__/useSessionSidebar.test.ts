@@ -82,4 +82,12 @@ describe('useSessionSidebar', () => {
     s.openSessionTabBridge()
     expect(openDrawer).toHaveBeenCalled()
   })
+
+  it('delegates addSessionLocally to registered callback', () => {
+    const s = useSessionSidebar()
+    const fn = vi.fn()
+    s.registerAddSessionLocally(fn)
+    s.addSessionLocally({ id: 'x' })
+    expect(fn).toHaveBeenCalledWith({ id: 'x' })
+  })
 })
