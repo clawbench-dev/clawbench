@@ -81,6 +81,7 @@
       :currentSessionId="identity.currentSessionId.value"
       :chatUnreadCount="store.state.chatUnreadCount"
       :chatRunning="identity.runningSessions.value.size > 0"
+      :currentSessionRunning="identity.runningSessions.value.has(identity.currentSessionId.value)"
       :currentModelId="identity.currentModelId.value"
       :currentModelName="identity.currentModelName.value"
       :currentModeName="identity.currentModeName.value"

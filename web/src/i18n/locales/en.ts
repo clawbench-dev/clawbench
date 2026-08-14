@@ -289,6 +289,8 @@ export default {
       attachToChat: 'Add to chat',
       acpSync: 'Sync ACP session',
       acpSyncRunning: 'Session running, cannot sync',
+      acpSyncEmpty: 'Empty session, nothing to sync',
+      acpSyncSyncing: 'Syncing...',
     },
     sessionInfo: {
       default: 'Default',

@@ -1045,8 +1045,9 @@ describe('ChatInputBar', () => {
         currentTransport: 'acp-stdio',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
-        chatRunning: false,
+        currentSessionRunning: false,
         acpSyncing: false,
+        messages: [{ id: 1, role: 'user', content: 'hi' }],
       })
       const btn = wrapper.find('.chat-action-btn.acp-sync-btn')
       expect(btn.exists()).toBe(true)
@@ -1060,24 +1061,56 @@ describe('ChatInputBar', () => {
         currentTransport: 'cli',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
-        chatRunning: false,
+        currentSessionRunning: false,
         acpSyncing: false,
       })
       expect(wrapper.find('.chat-action-btn.acp-sync-btn').exists()).toBe(false)
       wrapper.unmount()
     })
 
-    it('disables sync button while session is running or syncing', async () => {
+    it('disables sync button for an empty session (no ACP session)', () => {
       const wrapper = mountBar({
         currentTransport: 'acp-stdio',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
-        chatRunning: true,
+        currentSessionRunning: false,
         acpSyncing: false,
+        messages: [],
+      })
+      const btn = wrapper.find('.chat-action-btn.acp-sync-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.classes()).toContain('disabled')
+      expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('disables sync button while the current session is running', () => {
+      const wrapper = mountBar({
+        currentTransport: 'acp-stdio',
+        currentAgentId: 'agent1',
+        currentSessionId: 'sid-1',
+        currentSessionRunning: true,
+        acpSyncing: false,
+        messages: [{ id: 1, role: 'user', content: 'hi' }],
       })
       const btn = wrapper.find('.chat-action-btn.acp-sync-btn')
       expect(btn.classes()).toContain('disabled')
       expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('does not emit sync-acp-session when disabled (empty session)', async () => {
+      const wrapper = mountBar({
+        currentTransport: 'acp-stdio',
+        currentAgentId: 'agent1',
+        currentSessionId: 'sid-1',
+        currentSessionRunning: false,
+        acpSyncing: false,
+        messages: [],
+      })
+      const btn = wrapper.find('.chat-action-btn.acp-sync-btn')
+      await btn.trigger('click')
+      expect(wrapper.emitted('sync-acp-session')).toBeFalsy()
       wrapper.unmount()
     })
   })

@@ -30,10 +30,10 @@
         <button
           v-if="isACPTransport"
           class="chat-action-btn acp-sync-btn"
-          :class="{ disabled: chatRunning || acpSyncing }"
-          :disabled="chatRunning || acpSyncing"
-          @click="$emit('sync-acp-session')"
-          :title="chatRunning ? t('chat.actions.acpSyncRunning') : t('chat.actions.acpSync')"
+          :class="{ disabled: acpSyncDisabled }"
+          :disabled="acpSyncDisabled"
+          @click="!acpSyncDisabled && $emit('sync-acp-session')"
+          :title="acpSyncTitle"
           :aria-label="t('chat.actions.acpSync')"
         >
           <ArrowRightLeft :size="14" :stroke-width="1.5" />
@@ -317,6 +317,17 @@ const isACPTransport = computed(() => {
   return props.currentTransport === 'acp-stdio'
 })
 
+// ACP 同步按钮的禁用状态与提示：空会话（无 ACP 会话）或当前会话运行中时不可同步。
+const currentSessionRunning = computed(() => !!props.currentSessionRunning)
+const sessionEmpty = computed(() => !props.messages || props.messages.length === 0)
+const acpSyncDisabled = computed(() => props.acpSyncing || currentSessionRunning.value || sessionEmpty.value)
+const acpSyncTitle = computed(() => {
+  if (props.acpSyncing) return t('chat.actions.acpSyncSyncing')
+  if (currentSessionRunning.value) return t('chat.actions.acpSyncRunning')
+  if (sessionEmpty.value) return t('chat.actions.acpSyncEmpty')
+  return t('chat.actions.acpSync')
+})
+
 const showModeInfo = computed(() => isACP.value && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
 
 function onModeClick() {
@@ -442,6 +453,7 @@ const props = defineProps({
   currentModeName: String,
   currentTransport: String,
   currentAgentId: String,
+  currentSessionRunning: Boolean,
   active: Boolean,
 })
 
@@ -1604,6 +1616,11 @@ defineExpose({
 }
 
 .chat-action-btn-archive.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.acp-sync-btn.disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }

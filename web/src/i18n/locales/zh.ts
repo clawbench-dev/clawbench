@@ -289,6 +289,8 @@ export default {
       attachToChat: '添加到聊天',
       acpSync: 'ACP 同步',
       acpSyncRunning: '会话运行中，暂不可同步',
+      acpSyncEmpty: '空会话无法同步',
+      acpSyncSyncing: '正在同步...',
     },
     sessionInfo: {
       default: '默认',
