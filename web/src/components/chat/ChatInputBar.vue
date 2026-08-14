@@ -27,23 +27,23 @@
           :title="t('chat.actions.userMsgIndex')">
           <MessagesSquare :size="14" />
         </button>
+        <button
+          v-if="isACPTransport"
+          class="chat-action-btn acp-sync-btn"
+          :class="{ disabled: chatRunning || acpSyncing }"
+          :disabled="chatRunning || acpSyncing"
+          @click="$emit('sync-acp-session')"
+          :title="chatRunning ? t('chat.actions.acpSyncRunning') : t('chat.actions.acpSync')"
+          :aria-label="t('chat.actions.acpSync')"
+        >
+          <ArrowRightLeft :size="14" :stroke-width="1.5" />
+        </button>
         <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
           @click="handleArchive"
           :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
           <Archive :size="14" />
         </button>
       </div>
-      <button
-        v-if="isACPTransport"
-        class="chat-action-btn acp-sync-btn"
-        :class="{ disabled: chatRunning || acpSyncing }"
-        :disabled="chatRunning || acpSyncing"
-        @click="$emit('sync-acp-session')"
-        :title="chatRunning ? t('chat.actions.acpSyncRunning') : t('chat.actions.acpSync')"
-        :aria-label="t('chat.actions.acpSync')"
-      >
-        <ArrowRightLeft :size="14" :stroke-width="1.5" />
-      </button>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
         @click="$emit('toggle-auto-speech')"
         :title="t('chat.actions.autoSpeech')">
