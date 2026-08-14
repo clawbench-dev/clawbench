@@ -842,11 +842,13 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 	mockConn.SetAliveForTest()
 	mockConn.SetSessionMappingForTest("mock-session-replay", "acp-sid-replay-001")
 	client := ai.NewClawBenchACPClient()
+	replayMsgID := "uuid-end-to-end"
 	client.SetLoadSessionBufForTest([]acp.SessionNotification{
 		{
 			Update: acp.SessionUpdate{
 				UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-					Content: acp.TextBlock("Hello from replay"),
+					MessageId: &replayMsgID,
+					Content:   acp.TextBlock("Hello from replay"),
 				},
 			},
 		},
@@ -905,8 +907,16 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 	).Scan(&title)
 	assert.NoError(t, err)
 	assert.Equal(t, "Hello from replay", title)
-}
 
+	// Verify external_message_id was persisted from the replay notification's MessageId
+	var stored string
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT external_message_id FROM chat_history WHERE session_id = ? LIMIT 1",
+		sid,
+	).Scan(&stored)
+	require.NoError(t, err)
+	assert.Equal(t, "uuid-end-to-end", stored)
+}
 func TestServeACPLoadSession_ReplayPersistsToolCalls(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
