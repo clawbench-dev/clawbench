@@ -106,6 +106,8 @@ function createTabManager(overrides?: {
   onExit?: (tabId: string) => void
   onError?: (tabId: string, message: string, code: string) => void
   onTermCreated?: (term: unknown) => void
+  autoExecCommand?: ReturnType<typeof ref<{ command: string } | null>>
+  onAutoExec?: (tabId: string, command: string) => void
 }) {
   return useTerminalTabs(
     (cwd?: string) => `ws://localhost:8080/api/terminal/ws${cwd ? `?cwd=${cwd}` : ''}`,
@@ -117,6 +119,8 @@ function createTabManager(overrides?: {
       onExit: overrides?.onExit,
       onError: overrides?.onError,
       onTermCreated: overrides?.onTermCreated,
+      autoExecCommand: overrides?.autoExecCommand,
+      onAutoExec: overrides?.onAutoExec,
       toast: vi.fn(),
     },
   )
@@ -733,6 +737,46 @@ describe('useTerminalTabs', () => {
 
       expect(tab.cwd).toBe('/home/newproject')
       expect(tab.title).toBe('newproject')
+    })
+
+    it('fires onAutoExec with the command when a status arrives and an auto-exec command is set', () => {
+      const onAutoExec = vi.fn()
+      const autoExecCommand = ref<{ command: string } | null>({ command: 'source venv/bin/activate' })
+      const mgr = createTabManager({ autoExecCommand, onAutoExec })
+      const tab = mgr.createTab()
+      const rawSession = getRawSession(tabIndex(mgr, tab))
+
+      const setCallbacksCall = rawSession.setCallbacks.mock.calls[0][0]
+      setCallbacksCall.onStatus({ running: true, cwd: '/home/project' })
+
+      expect(onAutoExec).toHaveBeenCalledWith(tab.id, 'source venv/bin/activate')
+    })
+
+    it('does NOT fire onAutoExec when no auto-exec command is configured', () => {
+      const onAutoExec = vi.fn()
+      const autoExecCommand = ref<{ command: string } | null>(null)
+      const mgr = createTabManager({ autoExecCommand, onAutoExec })
+      const tab = mgr.createTab()
+      const rawSession = getRawSession(tabIndex(mgr, tab))
+
+      const setCallbacksCall = rawSession.setCallbacks.mock.calls[0][0]
+      setCallbacksCall.onStatus({ running: true, cwd: '/home/project' })
+
+      expect(onAutoExec).not.toHaveBeenCalled()
+    })
+
+    it('re-fires onAutoExec on each status (every connect/reconnect)', () => {
+      const onAutoExec = vi.fn()
+      const autoExecCommand = ref<{ command: string } | null>({ command: 'echo hi' })
+      const mgr = createTabManager({ autoExecCommand, onAutoExec })
+      const tab = mgr.createTab()
+      const rawSession = getRawSession(tabIndex(mgr, tab))
+
+      const setCallbacksCall = rawSession.setCallbacks.mock.calls[0][0]
+      setCallbacksCall.onStatus({ running: true, cwd: '/home/a' })
+      setCallbacksCall.onStatus({ running: true, cwd: '/home/b' })
+
+      expect(onAutoExec).toHaveBeenCalledTimes(2)
     })
   })
 
