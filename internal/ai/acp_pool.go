@@ -766,13 +766,6 @@ func (c *ACPConn) SyncLoadSession(ctx context.Context, cwd, acpSID string) error
 	return nil
 }
 
-// GetAcpSessionID 返回连接当前绑定的 ACP 会话 ID。
-func (c *ACPConn) GetAcpSessionID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.acpSID
-}
-
 // SetLoadSessionActiveForTest 设置 loadSessionActive，用于测试跳过真实 RPC。
 func (c *ACPConn) SetLoadSessionActiveForTest(v bool) {
 	c.loadSessionActive.Store(v)
