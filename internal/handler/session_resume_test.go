@@ -917,6 +917,7 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "uuid-end-to-end", stored)
 }
+
 func TestServeACPLoadSession_ReplayPersistsToolCalls(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

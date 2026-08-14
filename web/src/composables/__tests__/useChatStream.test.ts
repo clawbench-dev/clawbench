@@ -40,10 +40,13 @@ vi.mock('@/composables/useGlobalEvents', () => ({
 
 // ── Mocks ──
 
-vi.mock('@/utils/chatStreamUtils', () => ({
-  FILE_MODIFYING_TOOLS: new Set(),
-  findLastBlockOfType: (blocks: any[], type: string) =>
-    [...blocks].reverse().find(b => b.type === type),
+vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    FILE_MODIFYING_TOOLS: new Set(),
+    findLastBlockOfType: (blocks: any[], type: string) =>
+      [...blocks].reverse().find(b => b.type === type),
   forceCleanupStreamingState: vi.fn((messages: any[]) => {
     const msg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
     if (msg) delete msg.streaming
@@ -84,8 +87,8 @@ vi.mock('@/utils/chatStreamUtils', () => ({
     }
     return removed
   }),
-}))
-
+}
+})
 vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
 }))
@@ -216,7 +219,7 @@ describe('useChatStream', () => {
       expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'session-2' })
     })
 
-    it('should insert streaming assistant AFTER last non-pending user message', () => {
+    it('should insert streaming assistant AFTER the newest user message (including pending)', () => {
       const options = createOptions()
       options.messages.value.push(
         { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
@@ -226,12 +229,15 @@ describe('useChatStream', () => {
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
+      // DB-backed messages sort first (numeric id); transient messages follow in
+      // seq order. The streaming placeholder is anchored right after its question
+      // (the newest user message), so it can never sort above an earlier reply.
       expect(options.messages.value[0].role).toBe('user')
       expect(options.messages.value[0].content).toBe('A')
-      expect(options.messages.value[1].role).toBe('assistant')
-      expect(options.messages.value[1].streaming).toBe(true)
-      expect(options.messages.value[2].role).toBe('user')
-      expect(options.messages.value[2].pending).toBe(true)
+      expect(options.messages.value[1].role).toBe('user')
+      expect(options.messages.value[1].pending).toBe(true)
+      expect(options.messages.value[2].role).toBe('assistant')
+      expect(options.messages.value[2].streaming).toBe(true)
     })
 
     it('should reuse existing streaming message only when reuseExistingStreaming is set', () => {
@@ -1364,7 +1370,8 @@ describe('useChatStream', () => {
 
       simulateWsEvent('user_message', { messageId: 0, content: 'queued msg', queueId: 'pending-abc123' })
 
-      expect(options.messages.value[0]._remoteQueueId).toBe('pending-abc123')
+      const userMsg = options.messages.value.find((m: any) => m.role === 'user')
+      expect(userMsg._remoteQueueId).toBe('pending-abc123')
     })
   })
 

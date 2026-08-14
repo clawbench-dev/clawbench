@@ -23,11 +23,14 @@ func TestGroupLoadSessionReplay_CapturesMessageID(t *testing.T) {
 	a1 := "uuid-assistant-1"
 	client.SetLoadSessionBufForTest([]acp.SessionNotification{
 		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: &u1, Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hi"}}}}},
+			MessageId: &u1, Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hi"}},
+		}}},
 		{SessionId: "s", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			MessageId: &a1, Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}}}}},
+			MessageId: &a1, Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}},
+		}}},
 		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: &u2, Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "again"}}}}},
+			MessageId: &u2, Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "again"}},
+		}}},
 	})
 
 	msgs := groupLoadSessionReplay(client)
@@ -108,9 +111,11 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 
 	restore := newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
 		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: strPtr("m1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "existing"}}}}},
+			MessageId: strPtr("m1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "existing"}},
+		}}},
 		{SessionId: "acp-1", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			MessageId: strPtr("m2"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "newly added"}}}}},
+			MessageId: strPtr("m2"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "newly added"}},
+		}}},
 	})
 	defer restore()
 
@@ -123,7 +128,9 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 	ServeACPSyncSession(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp struct{ Added int `json:"added"` }
+	var resp struct {
+		Added int `json:"added"`
+	}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.Equal(t, 1, resp.Added)
 
@@ -164,13 +171,17 @@ func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
 	// system-instructions prefix) + two genuinely new messages.
 	restore := newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
 		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: strPtr("x1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "[System Instructions: ...] 你叫什么名字"}}}}},
+			MessageId: strPtr("x1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "[System Instructions: ...] 你叫什么名字"}},
+		}}},
 		{SessionId: "acp-1", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			MessageId: strPtr("y1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "我叫 CodeBuddy Code，你的 AI 编程助手。"}}}}},
+			MessageId: strPtr("y1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "我叫 CodeBuddy Code，你的 AI 编程助手。"}},
+		}}},
 		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: strPtr("z1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "你几岁了"}}}}},
+			MessageId: strPtr("z1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "你几岁了"}},
+		}}},
 		{SessionId: "acp-1", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			MessageId: strPtr("w1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "我没有年龄的概念——我是一个 AI 助手。"}}}}},
+			MessageId: strPtr("w1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "我没有年龄的概念——我是一个 AI 助手。"}},
+		}}},
 	})
 	defer restore()
 
@@ -183,7 +194,9 @@ func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
 	ServeACPSyncSession(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp struct{ Added int `json:"added"` }
+	var resp struct {
+		Added int `json:"added"`
+	}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	// Only the 2 new messages should be added (no duplication of live messages).
 	assert.Equal(t, 2, resp.Added)

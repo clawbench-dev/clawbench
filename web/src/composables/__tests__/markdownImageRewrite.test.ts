@@ -25,7 +25,7 @@ describe('renderMarkdown relative image handling', () => {
 
   it('keeps src and applies thumbnail + lightbox to a relative image', () => {
     const r = renderMarkdown('![a](img/logo.png)', {})
-    expect(r.html).toContain('src="/api/file/thumb?path=img/logo.png&amp;w=800"')
+    expect(r.html).toContain('src="/api/file/thumb?path=img/logo.png&amp;w=1200"')
     expect(r.html).toContain('data-full-src="/api/local-file/img/logo.png"')
     expect(r.html).toContain('class="chat-img lightbox-img"')
     expect(r.html).toContain('lightbox-expand-icon')
@@ -33,21 +33,21 @@ describe('renderMarkdown relative image handling', () => {
 
   it('enhances relative images inside a markdown table cell (table-row modal source)', () => {
     const r = renderMarkdown('| 列 |\n|---|\n| ![a](img/logo.png) |', {})
-    expect(r.html).toContain('src="/api/file/thumb?path=img/logo.png&amp;w=800"')
+    expect(r.html).toContain('src="/api/file/thumb?path=img/logo.png&amp;w=1200"')
     expect(r.html).toContain('data-full-src="/api/local-file/img/logo.png"')
     expect(r.html).toContain('class="chat-img lightbox-img"')
   })
 
   it('keeps src for a bare relative filename', () => {
     const r = renderMarkdown('![a](logo.png)', {})
-    expect(r.html).toContain('src="/api/file/thumb?path=logo.png&amp;w=800"')
+    expect(r.html).toContain('src="/api/file/thumb?path=logo.png&amp;w=1200"')
     expect(r.html).toContain('data-full-src="/api/local-file/logo.png"')
   })
 
   it('uses mobile thumbnail width when device is not PC', () => {
     _setIsPCForTest(false)
     const r = renderMarkdown('![a](img/logo.png)', {})
-    expect(r.html).toContain('src="/api/file/thumb?path=img/logo.png&amp;w=480"')
+    expect(r.html).toContain('src="/api/file/thumb?path=img/logo.png&amp;w=640"')
     expect(r.html).toContain('data-full-src="/api/local-file/img/logo.png"')
   })
 

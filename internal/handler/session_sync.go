@@ -25,6 +25,8 @@ type replayMessage struct {
 
 // groupLoadSessionReplay 读取并清空 LoadSession 回放缓冲，按 role 边界分组
 // 为消息，捕获每组首个外部 messageId。
+//
+//nolint:gocognit,gocyclo // 状态机按角色边界分组，顺序分支多但线性，拆分反而难读
 func groupLoadSessionReplay(client *ai.ClawBenchACPClient) []replayMessage {
 	var messages []replayMessage
 	buf := client.GetAndClearLoadSessionBuf()
@@ -134,7 +136,7 @@ func persistReplayMessages(sessionID, projectPath, backend string, messages []re
 // ACP 连接强制 LoadSession 回放，按 external messageId 增量合并外部新增消息到
 // 当前会话，已存在消息保持不变。返回新增条数。
 //
-//nolint:gocognit // orchestration 顺序性高，拆分反而难读
+//nolint:gocyclo // orchestration 顺序性高，拆分反而难读
 func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -219,12 +221,12 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 强制回放（已存活连接在此触发 LoadSession）
-	if err := conn.SyncLoadSession(r.Context(), projectPath, acpSID); err != nil {
-		if ai.IsACPResourceNotFound(err) {
+	if syncErr := conn.SyncLoadSession(r.Context(), projectPath, acpSID); syncErr != nil {
+		if ai.IsACPResourceNotFound(syncErr) {
 			writeLocalizedErrorf(w, r, http.StatusNotFound, "ACPSessionNotFound")
 			return
 		}
-		slog.Error("handler: SyncLoadSession failed", "session_id", req.SessionID, "acp_sid", acpSID, "error", err)
+		slog.Error("handler: SyncLoadSession failed", "session_id", req.SessionID, "acp_sid", acpSID, "error", syncErr)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
@@ -251,6 +253,7 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
+	defer func() { _ = rows.Close() }()
 	existingExtIDs := map[string]struct{}{}
 	var localMessages []replayMessage
 	for rows.Next() {
@@ -264,7 +267,6 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		}
 		localMessages = append(localMessages, replayMessage{role: role, content: content, extMsgID: extID})
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
 		slog.Error("handler: failed iterating existing chat_history", "error", err)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
