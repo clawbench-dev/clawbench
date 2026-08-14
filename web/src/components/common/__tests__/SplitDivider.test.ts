@@ -72,4 +72,19 @@ describe('SplitDivider', () => {
     wrapper = null
     expect(document.body.classList.contains('split-view-dragging')).toBe(false)
   })
+
+  it('horizontal orientation: emits clientY and uses horizontal styling', () => {
+    mountDivider({ orientation: 'horizontal' })
+    const div = wrapper!.find('.split-view__divider').element as HTMLElement
+    expect(div.classList.contains('split-view__divider--horizontal')).toBe(true)
+    expect(div.getAttribute('aria-orientation')).toBe('horizontal')
+    div.setPointerCapture = vi.fn()
+    div.releasePointerCapture = vi.fn()
+
+    div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientY: 300 }))
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientY: 150, clientX: 999 }))
+    const emitted = wrapper!.emitted('dragmove') as Array<Array<number>>
+    expect(emitted[emitted.length - 1][0]).toBe(150)
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+  })
 })

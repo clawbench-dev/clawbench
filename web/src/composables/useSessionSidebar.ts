@@ -4,6 +4,9 @@ export const SESSION_SIDEBAR_KEY = 'clawbench-session-sidebar'
 export const SIDEBAR_DEFAULT_WIDTH = 280
 export const SIDEBAR_MIN_WIDTH = 220
 export const SIDEBAR_MAX_WIDTH = 480
+export const SIDEBAR_DEFAULT_HEIGHT = 320
+export const SIDEBAR_MIN_HEIGHT = 160
+export const SIDEBAR_MAX_HEIGHT = 600
 
 export interface SidebarSession {
   id: string
@@ -17,6 +20,7 @@ export interface SidebarSession {
 
 const open = ref(true)
 const width = ref(SIDEBAR_DEFAULT_WIDTH)
+const height = ref(SIDEBAR_DEFAULT_HEIGHT)
 let openDrawerFn: (() => void) | null = null
 let addLocallyFn: ((session: SidebarSession) => void) | null = null
 let initialized = false
@@ -24,6 +28,11 @@ let initialized = false
 function clampWidth(w: number): number {
   if (!Number.isFinite(w)) return SIDEBAR_DEFAULT_WIDTH
   return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(w)))
+}
+
+function clampHeight(h: number): number {
+  if (!Number.isFinite(h)) return SIDEBAR_DEFAULT_HEIGHT
+  return Math.max(SIDEBAR_MIN_HEIGHT, Math.min(SIDEBAR_MAX_HEIGHT, Math.round(h)))
 }
 
 function load() {
@@ -34,6 +43,7 @@ function load() {
     if (parsed && typeof parsed === 'object') {
       open.value = parsed.open === true
       width.value = clampWidth(Number(parsed.width) || SIDEBAR_DEFAULT_WIDTH)
+      height.value = clampHeight(Number(parsed.height) || SIDEBAR_DEFAULT_HEIGHT)
     }
   } catch {
     // corrupted storage → keep defaults
@@ -42,7 +52,7 @@ function load() {
 
 function persist() {
   try {
-    localStorage.setItem(SESSION_SIDEBAR_KEY, JSON.stringify({ open: open.value, width: width.value }))
+    localStorage.setItem(SESSION_SIDEBAR_KEY, JSON.stringify({ open: open.value, width: width.value, height: height.value }))
   } catch {
     // ignore
   }
@@ -73,6 +83,10 @@ export function useSessionSidebar() {
     width.value = clampWidth(w)
     persist()
   }
+  function setHeight(h: number) {
+    height.value = clampHeight(h)
+    persist()
+  }
   function pinToSidebar() {
     openSidebar()
   }
@@ -101,10 +115,12 @@ export function useSessionSidebar() {
   return {
     open,
     width,
+    height,
     openSidebar,
     closeSidebar,
     toggleSidebar,
     setWidth,
+    setHeight,
     pinToSidebar,
     unpinToDrawer,
     registerOpenDrawer,
@@ -119,6 +135,7 @@ export function _resetForTest() {
   initialized = false
   open.value = true
   width.value = SIDEBAR_DEFAULT_WIDTH
+  height.value = SIDEBAR_DEFAULT_HEIGHT
   openDrawerFn = null
   addLocallyFn = null
 }
