@@ -303,6 +303,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		ModelID        string `json:"modelId"`
 		Transport      string `json:"transport"`
 		AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
+		Title          string `json:"title"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -353,6 +354,10 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
 			conn.SetAutoApprove(*req.AutoApprove)
 		}
+	}
+	if req.Title != "" {
+		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+		service.UpdateSessionTitle(sessionID, req.Title)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }

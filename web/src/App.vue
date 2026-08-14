@@ -223,7 +223,7 @@
                   <TabPanel tabId="chat" :activeTab="chatActive">
                     <template #header>
                       <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
-                      <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description">
+                      <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                         <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                       </div>
                     </template>
@@ -1027,6 +1027,29 @@ function handleOpenFromSearch(session) {
   if (!session?.session_id) return
   sessionSearchDrawer.close()
   handleSessionSelect(session.session_id, session.backend)
+}
+
+async function handleRenameSession() {
+  const sid = sessionIdentity.currentSessionId.value
+  if (!sid) return
+  const current = sessionIdentity.currentSessionTitle.value || ''
+  const newTitle = await searchConfirmDialog.prompt(
+    gt('chat.sessionRename.prompt'),
+    {
+      title: gt('chat.sessionRename.title'),
+      value: current,
+      placeholder: gt('chat.sessionRename.placeholder'),
+      confirmText: gt('common.confirm'),
+      cancelText: gt('common.cancel'),
+    }
+  )
+  if (newTitle === null || newTitle.trim() === '' || newTitle === current) return
+  const ok = await sessionIdentity.renameSession(newTitle.trim())
+  if (ok) {
+    toast.show(gt('chat.sessionRename.success'), { icon: '✅', type: 'success', duration: 2000 })
+  } else {
+    toast.show(gt('chat.sessionRename.failed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  }
 }
 
 async function handleResumeFromSearch(session) {
@@ -2327,6 +2350,13 @@ onUnmounted(() => {
 
 <style scoped>
 /* SPA hot project switch: fade transition to mask intermediate state */
+.bs-header-title-editable {
+    cursor: pointer;
+}
+.bs-header-title-editable:hover {
+    color: var(--accent-color, #4a90d9);
+    text-decoration: underline;
+}
 .app-container {
     transition: opacity 0.15s ease;
 }

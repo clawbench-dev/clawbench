@@ -75,7 +75,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, renameSession } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -1327,6 +1327,61 @@ describe('useSessionIdentity', () => {
             toggleAutoApprove(true)
 
             expect(identity.autoApprove.value).toBe(true)
+            expect(mockFetch).not.toHaveBeenCalled()
+
+            vi.unstubAllGlobals()
+        })
+    })
+
+    // ── renameSession ──
+
+    describe('renameSession', () => {
+        it('persists title to server and updates currentSessionTitle', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-1'
+            identity.currentSessionTitle.value = 'Old Title'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const result = await renameSession('New Title')
+
+            expect(result).toBe(true)
+            expect(mockFetch).toHaveBeenCalledWith('/api/ai/session/update', expect.objectContaining({
+                method: 'PATCH',
+                body: expect.stringContaining('"title":"New Title"'),
+            }))
+            expect(identity.currentSessionTitle.value).toBe('New Title')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('returns false and keeps title on server failure', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-1'
+            identity.currentSessionTitle.value = 'Old Title'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const result = await renameSession('New Title')
+
+            expect(result).toBe(false)
+            expect(identity.currentSessionTitle.value).toBe('Old Title')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('returns false when no session ID', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = ''
+
+            const mockFetch = vi.fn()
+            vi.stubGlobal('fetch', mockFetch)
+
+            const result = await renameSession('New Title')
+
+            expect(result).toBe(false)
             expect(mockFetch).not.toHaveBeenCalled()
 
             vi.unstubAllGlobals()

@@ -362,6 +362,28 @@ export function toggleAutoApprove(enabled: boolean) {
   }
 }
 
+/** Rename the current session title and persist to server. */
+export async function renameSession(title: string): Promise<boolean> {
+  const sid = currentSessionId.value
+  if (!sid) return false
+  try {
+    const resp = await fetch('/api/ai/session/update', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: sid, title }),
+    })
+    if (!resp.ok) {
+      appLog.e(TAG, 'Failed to rename session:', resp.status)
+      return false
+    }
+    currentSessionTitle.value = title
+    return true
+  } catch (err) {
+    appLog.e(TAG, 'Failed to rename session:', err)
+    return false
+  }
+}
+
 // ───────────────────────────────────────────────────────────
 // Action callbacks — registered by ChatPanel on mount.
 // Inversion of control: singleton owns the identity refs, but
@@ -774,6 +796,7 @@ export function useSessionIdentity() {
     loadThinkingPref,
     loadModePref,
     toggleAutoApprove,
+    renameSession,
     // SelectState instances (for unified access)
     modeState,
     thinkingEffortState,

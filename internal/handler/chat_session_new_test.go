@@ -449,6 +449,24 @@ func TestServeAISessionUpdate_AutoApprove(t *testing.T) {
 	assert.False(t, got)
 }
 
+func TestServeAISessionUpdate_Title(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "patch-title", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sessionID, map[string]any{
+		"title": "My Custom Session Name",
+	})
+	w := callHandler(ServeAISessionUpdate, req)
+	assertOK(t, w)
+
+	got, err := service.GetSessionTitle(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "My Custom Session Name", got)
+}
+
 func TestServeAISessionUpdate_AutoApproveWithACPConn(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

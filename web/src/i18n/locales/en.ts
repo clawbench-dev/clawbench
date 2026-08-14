@@ -601,6 +601,14 @@ export default {
       copy: 'Copy',
       copied: 'Copied',
     },
+    sessionRename: {
+      title: 'Rename Session',
+      prompt: 'Enter a new session name:',
+      placeholder: 'Session name',
+      success: 'Session renamed',
+      failed: 'Failed to rename session',
+      tooltip: 'Click to rename session',
+    },
     localhost: {
       openFailed: 'Failed to open localhost URL',
       sshDisabled: 'SSH tunnel is disabled, cannot open localhost URL',

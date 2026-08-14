@@ -601,6 +601,14 @@ export default {
       copy: '复制',
       copied: '已复制',
     },
+    sessionRename: {
+      title: '重命名会话',
+      prompt: '请输入新的会话名称：',
+      placeholder: '会话名称',
+      success: '会话已重命名',
+      failed: '重命名失败',
+      tooltip: '点击重命名会话',
+    },
     localhost: {
       openFailed: '打开本地地址失败',
       sshDisabled: 'SSH 隧道已禁用，无法打开本地地址',
