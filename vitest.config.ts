@@ -36,6 +36,18 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'web/src'),
+      // The frontend lives in web/ with its own node_modules, but the root
+      // also installs Vue. Without forcing a single copy, @vue/test-utils
+      // (resolved from root) and SFC components (resolved from web/node_modules)
+      // load two separate Vue reactivity instances — setup refs change but the
+      // test-utils renderer never re-renders. Pin all Vue modules to the root
+      // copy so reactivity connects (see pre-existing ShortcutTipTicker failure).
+      vue: resolve(__dirname, 'node_modules/vue'),
+      '@vue/reactivity': resolve(__dirname, 'node_modules/@vue/reactivity'),
+      '@vue/runtime-core': resolve(__dirname, 'node_modules/@vue/runtime-core'),
+      '@vue/runtime-dom': resolve(__dirname, 'node_modules/@vue/runtime-dom'),
+      '@vue/shared': resolve(__dirname, 'node_modules/@vue/shared'),
+      '@vue/server-renderer': resolve(__dirname, 'node_modules/@vue/server-renderer'),
     },
   },
   publicDir: resolve(__dirname, 'assets'),

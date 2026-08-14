@@ -15,17 +15,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { SHORTCUT_TIPS, type ShortcutTipDef } from '@/config/shortcutTips'
+import { getShortcutTipsForContext, type ShortcutContext, type ShortcutTipDef } from '@/config/shortcutTips'
 
 const props = withDefaults(defineProps<{
   tips?: ShortcutTipDef[]
+  context?: ShortcutContext
   showMs?: number
   horizDelayMs?: number
   horizMsPerPx?: number
   horizPauseMs?: number
   vertMs?: number
 }>(), {
-  tips: () => SHORTCUT_TIPS,
+  tips: undefined,
+  context: 'chat',
   showMs: 10000,
   horizDelayMs: 800,
   horizMsPerPx: 8,
@@ -43,7 +45,8 @@ const overflowPx = ref(0)
 const horizDurationMs = ref(0)
 const vertPhase = ref<'out' | 'in' | ''>('')
 
-const tip = computed(() => props.tips[currentIndex.value] ?? null)
+const effectiveTips = computed(() => props.tips ?? getShortcutTipsForContext(props.context))
+const tip = computed(() => effectiveTips.value[currentIndex.value] ?? null)
 
 const hscrollStyle = computed(() => {
   if (!isHScroll.value) return {}
@@ -85,10 +88,10 @@ async function schedule() {
 
 /** Slide the current tip out upward, swap to the next, slide it in. */
 function beginVerticalSwitch() {
-  if (props.tips.length === 0) return
+  if (effectiveTips.value.length === 0) return
   vertPhase.value = 'out'
   vertTimer = setTimeout(() => {
-    currentIndex.value = (currentIndex.value + 1) % props.tips.length
+    currentIndex.value = (currentIndex.value + 1) % effectiveTips.value.length
     isHScroll.value = false
     overflowPx.value = 0
     // trigger the slide-in from below (start phase then flush to animate)
@@ -116,7 +119,7 @@ onBeforeUnmount(() => {
 })
 
 // Re-schedule when the tip list changes (e.g. test injection / dynamic content)
-watch(() => props.tips, () => {
+watch(effectiveTips, () => {
   currentIndex.value = 0
   vertPhase.value = ''
   clearTimers()
@@ -132,6 +135,7 @@ watch(() => props.tips, () => {
   height: 100%;
   display: flex;
   align-items: center;
+  cursor: pointer;
 }
 
 .stt-viewport {

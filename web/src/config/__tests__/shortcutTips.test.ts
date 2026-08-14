@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SHORTCUT_TIPS } from '@/config/shortcutTips'
+import { SHORTCUT_TIPS, SHORTCUT_CONTEXT_ORDER, getShortcutTipsForContext, getAllShortcutTips, resolveShortcutContext } from '@/config/shortcutTips'
 import zh from '@/i18n/locales/zh'
 import en from '@/i18n/locales/en'
 
@@ -32,5 +32,57 @@ describe('SHORTCUT_TIPS', () => {
     const openList = SHORTCUT_TIPS.find(tip => tip.contextKey.endsWith('.contextOpenSessionList'))
     expect(openList).toBeDefined()
     expect(openList?.keys).toContain('Ctrl+K')
+  })
+
+  it('getShortcutTipsForContext always includes common and chat tips', () => {
+    for (const ctx of SHORTCUT_CONTEXT_ORDER) {
+      const result = getShortcutTipsForContext(ctx)
+      expect(result.some(t => t.context === 'common')).toBe(true)
+      expect(result.some(t => t.context === 'chat')).toBe(true)
+    }
+  })
+
+  it('getShortcutTipsForContext includes the context tips and nothing else', () => {
+    const result = getShortcutTipsForContext('browse')
+    const contexts = new Set(result.map(t => t.context))
+    expect(contexts.has('browse')).toBe(true)
+    for (const ctx of contexts) {
+      expect(['common', 'chat', 'browse']).toContain(ctx)
+    }
+  })
+
+  it('getShortcutTipsForContext chat does not duplicate chat tips', () => {
+    const result = getShortcutTipsForContext('chat')
+    const contexts = new Set(result.map(t => t.context))
+    expect(contexts.has('chat')).toBe(true)
+    for (const ctx of contexts) {
+      expect(['common', 'chat']).toContain(ctx)
+    }
+  })
+
+  it('getAllShortcutTips is ordered by SHORTCUT_CONTEXT_ORDER and has no duplicates', () => {
+    const all = getAllShortcutTips()
+    const seen = new Set<string>()
+    const orderIndex = new Map(SHORTCUT_CONTEXT_ORDER.map((c, i) => [c, i]))
+    let prevIdx = -1
+    for (const tip of all) {
+      expect(seen.has(tip.contextKey)).toBe(false)
+      seen.add(tip.contextKey)
+      const idx = orderIndex.get(tip.context) ?? -1
+      expect(idx).toBeGreaterThanOrEqual(prevIdx)
+      prevIdx = idx
+    }
+  })
+
+  it('resolveShortcutContext: narrow uses activeTab', () => {
+    expect(resolveShortcutContext({ isWideScreen: false, activePane: 'left', leftTab: 'browse', activeTab: 'terminal' })).toBe('terminal')
+  })
+
+  it('resolveShortcutContext: wide + right pane is chat', () => {
+    expect(resolveShortcutContext({ isWideScreen: true, activePane: 'right', leftTab: 'browse', activeTab: 'chat' })).toBe('chat')
+  })
+
+  it('resolveShortcutContext: wide + left pane uses leftTab', () => {
+    expect(resolveShortcutContext({ isWideScreen: true, activePane: 'left', leftTab: 'history', activeTab: 'chat' })).toBe('history')
   })
 })

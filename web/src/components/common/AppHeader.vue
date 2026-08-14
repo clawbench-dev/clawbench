@@ -32,7 +32,14 @@
     </div>
 
     <!-- Shortcut tips marquee: fills the empty middle area (PC / web only) -->
-    <ShortcutTipTicker v-if="!isAppMode && localConfig.headerShortcutTips" class="header-tips" />
+    <ShortcutTipTicker
+      v-if="!isAppMode && localConfig.headerShortcutTips"
+      :context="shortcutContext"
+      class="header-tips"
+      :title="t('appHeader.shortcutTipsDialog.openTip')"
+      @click="shortcutTipsOpen = true"
+    />
+    <ShortcutTipsDialog :open="shortcutTipsOpen" @close="shortcutTipsOpen = false" />
 
     <Teleport to="body">
       <Transition name="dropdown">
@@ -173,12 +180,28 @@ import { localConfig } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
+import type { ShortcutContext } from '@/config/shortcutTips'
+import { resolveShortcutContext } from '@/config/shortcutTips'
+import type { Ref } from 'vue'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
 const { isAppMode } = useAppMode()
 const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
 const switchTab = inject<(tab: string) => void>('switchTab')
+const { isWideScreen, leftTab, activePane } = useWideScreenLayout()
+const activeTab = inject<Ref<string>>('activeTab', ref('chat'))
+const shortcutContext = computed<ShortcutContext>(() =>
+  resolveShortcutContext({
+    isWideScreen: isWideScreen.value,
+    activePane: activePane.value,
+    leftTab: leftTab.value,
+    activeTab: activeTab.value,
+  }),
+)
+const shortcutTipsOpen = ref(false)
 
 const props = defineProps({
     projectRoot: String,
