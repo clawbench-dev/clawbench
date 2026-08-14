@@ -631,6 +631,9 @@ export default {
     unnamed: 'Unnamed session',
     queueFailed: 'Failed to enqueue',
     removeFailed: 'Failed to remove',
+    pinToSidebar: 'Pin to sidebar',
+    unpinToSidebar: 'Unpin',
+    closeSidebar: 'Close sidebar',
   },
   sessionSearch: {
     title: 'Session Search',

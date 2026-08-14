@@ -631,6 +631,9 @@ export default {
     unnamed: '未命名会话',
     queueFailed: '加入队列失败',
     removeFailed: '移除失败',
+    pinToSidebar: '固定到侧栏',
+    unpinToSidebar: '取消固定',
+    closeSidebar: '关闭侧栏',
   },
   sessionSearch: {
     title: '会话搜索',
