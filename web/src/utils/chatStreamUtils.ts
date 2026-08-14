@@ -42,6 +42,21 @@ export interface ChatMessage {
   backend?: string
   createdAt?: string
   files?: FileEntry[]
+  /**
+   * Client-side monotonic sequence for messages not yet backed by a DB row
+   * (pending user messages, streaming placeholders, cross-device remotes).
+   * Used by sortMessages() to keep them ordered among themselves and after
+   * every DB-backed message. Never used for DB-backed messages (their numeric
+   * `id` is the authoritative ordering key).
+   */
+  seq?: number
+  /**
+   * For a streaming assistant placeholder: the sort value it should appear
+   * right AFTER (the parent user message's sort value + 0.5). This keeps a
+   * reply anchored directly below its own question, even when later messages
+   * are still pending. Absent for DB-backed and pending-user messages.
+   */
+  afterSort?: number
   [key: string]: unknown
 }
 
@@ -286,6 +301,72 @@ export function generateDrainId(): string {
   return `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+let seqCounter = 0
+
+/**
+ * Allocate the next client-side monotonic sequence number.
+ * Transient messages (pending/streaming/string-id) use this to keep a stable
+ * relative order that always sorts AFTER every DB-backed message.
+ */
+export function nextClientSeq(): number {
+  seqCounter += 1
+  return seqCounter
+}
+
+/**
+ * A message is "transient" when its ordering is not yet governed by the DB:
+ * it is still pending, still streaming, or has a string id (no DB row).
+ * Such messages are ordered by their client sort value and always sort after
+ * every DB-backed message (which carry a numeric auto-increment id).
+ */
+export function isTransientMessage(m: ChatMessage): boolean {
+  return m.pending === true || m.streaming === true || typeof m.id !== 'number'
+}
+
+/**
+ * Base offset for transient messages, high enough that every transient message
+ * sorts after any plausible DB auto-increment id.
+ */
+const TRANSIENT_BASE = Number.MAX_SAFE_INTEGER / 4
+
+/**
+ * Numeric sort value for a single message. DB-backed messages sort by their
+ * `id`; streaming assistants anchored to a parent use `afterSort`; other
+ * transient messages use TRANSIENT_BASE + `seq`.
+ */
+export function messageSortValue(m: ChatMessage): number {
+  if (!isTransientMessage(m)) return m.id as number
+  if (typeof m.afterSort === 'number') return m.afterSort
+  return TRANSIENT_BASE + (m.seq ?? 0)
+}
+
+/**
+ * Sort value that places a message immediately AFTER the given parent message
+ * (parent's value + 0.5). Returns undefined when there is no parent.
+ */
+export function computeAfterSort(parent?: ChatMessage): number | undefined {
+  if (!parent) return undefined
+  return messageSortValue(parent) + 0.5
+}
+
+/**
+ * Always-stable message ordering — sorts `messages` in place.
+ *
+ * The DB (auto-increment `id` ASC) is the single source of truth for order.
+ * Transient messages sort after all DB-backed messages; a streaming assistant
+ * sorts immediately after its own question (parent + 0.5), so a reply can
+ * never be displaced above an earlier reply. Array.prototype.sort is stable
+ * (ES2019+), so equal-key messages keep their existing relative order.
+ *
+ * Callers must ONLY ever PUSH new messages (never splice by heuristic index),
+ * then call this to restore order. Because physical position never encodes
+ * ordering, a newer reply can never end up displayed above an older one no
+ * matter how many mutations race during a stream transition.
+ */
+export function sortMessages(messages: ChatMessage[]): void {
+  messages.sort((a, b) => messageSortValue(a) - messageSortValue(b))
+}
+
 /**
  * Atomically process a queue_drain event on the messages array.
  *
@@ -371,12 +452,17 @@ export function drainQueueMessage(
         blocks: userContent ? [{ type: 'text', text: userContent }] : [],
         files: userFiles.map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
         createdAt: new Date().toISOString(),
+        seq: nextClientSeq(),
       })
     }
   }
 
-  // 3. Insert new streaming assistant placeholder right after the drain
-  //    user message.
+  // 3. Push a new streaming assistant placeholder, anchored right after the
+  //    drained user message. Order is restored by sortMessages() — never
+  //    encode ordering in physical array position. This is race-proof: a newer
+  //    reply can never be spliced above an older one because we never
+  //    splice-insert by heuristic index.
+  const parent = pendingIdx !== -1 ? messages[pendingIdx] : messages[messages.length - 1]
   const newStreamingMsg = {
     role: 'assistant' as const,
     id: generateDrainId(),
@@ -385,16 +471,11 @@ export function drainQueueMessage(
     streaming: true,
     createdAt: new Date().toISOString(),
     backend: currentBackend,
+    seq: nextClientSeq(),
+    afterSort: computeAfterSort(parent),
   }
-  // Find the user message that was just drained (pending flag cleared or fallback pushed)
-  const drainUserIdx = pendingIdx !== -1
-    ? pendingIdx
-    : messages.findLastIndex((m) => m.role === 'user' && m.content === userContent)
-  if (drainUserIdx !== -1) {
-    messages.splice(drainUserIdx + 1, 0, newStreamingMsg)
-  } else {
-    messages.push(newStreamingMsg)
-  }
+  messages.push(newStreamingMsg)
+  sortMessages(messages)
 
   return newStreamingMsg
 }

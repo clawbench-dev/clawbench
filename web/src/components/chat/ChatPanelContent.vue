@@ -186,6 +186,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, shouldShowSummary } from '@/utils/chatSessionUtils.ts'
+import { nextClientSeq, sortMessages } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { buildMultiQuoteMessage, relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
@@ -770,8 +771,10 @@ async function sendMessageNow(text, filePaths, files) {
         blocks: text ? [{ type: 'text', text: text || '' }] : [],
         filePath: filePaths.length > 0 ? filePaths[0] : '',
         files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        seq: nextClientSeq()
     })
+    sortMessages(messages.value)
 
     render.updateRenderedContents()
     loading.value = true

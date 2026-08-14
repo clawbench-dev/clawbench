@@ -10,6 +10,10 @@ import {
   shouldRetryToolFetch,
   resolveEffectiveMsgId,
   extractFileChanges,
+  sortMessages,
+  messageSortValue,
+  computeAfterSort,
+  isTransientMessage,
 } from '@/utils/chatStreamUtils.ts'
 
 describe('FILE_MODIFYING_TOOLS', () => {
@@ -830,8 +834,8 @@ describe('drainQueueMessage', () => {
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
-      { role: 'user', id: 'queue-C', content: 'C', blocks: [{ type: 'text', text: 'C' }], pending: true },
+      { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true, seq: 1 },
+      { role: 'user', id: 'queue-C', content: 'C', blocks: [{ type: 'text', text: 'C' }], pending: true, seq: 2 },
     ]
     drainQueueMessage(messages, '', 'B', [], 'claude', callbacks)
     // Streaming assistant for B should be right after user_B, before user_C
@@ -857,6 +861,104 @@ describe('drainQueueMessage', () => {
     expect(bIdx).not.toBe(-1)
     expect(messages[bIdx + 1].role).toBe('assistant')
     expect(messages[bIdx + 1].streaming).toBe(true)
+  })
+})
+
+describe('sortMessages', () => {
+  it('sorts DB-backed messages by numeric id ascending', () => {
+    const messages = [
+      { role: 'assistant', id: 3, content: 'r3' },
+      { role: 'user', id: 1, content: 'u1' },
+      { role: 'assistant', id: 2, content: 'r2' },
+    ] as any[]
+    sortMessages(messages)
+    expect(messages.map(m => m.id)).toEqual([1, 2, 3])
+  })
+
+  it('places all transient messages after every DB-backed message', () => {
+    const messages = [
+      { role: 'user', id: 'pending-x', content: 'u2', pending: true, seq: 1 },
+      { role: 'assistant', id: 2, content: 'r1' },
+      { role: 'user', id: 1, content: 'u1' },
+    ] as any[]
+    sortMessages(messages)
+    expect(messages.map(m => m.id)).toEqual([1, 2, 'pending-x'])
+  })
+
+  it('keeps a streaming reply anchored below its own question, above later pending messages', () => {
+    const parent = { role: 'user', id: 'queue-B', content: 'B', pending: true, seq: 1 }
+    const messages = [
+      { role: 'user', id: 1, content: 'A' },
+      { role: 'assistant', id: 2, content: 'A reply' },
+      parent,
+      { role: 'user', id: 'queue-C', content: 'C', pending: true, seq: 2 },
+      { role: 'assistant', id: 'drain-1', content: '', streaming: true, seq: 3, afterSort: computeAfterSort(parent) },
+    ] as any[]
+    sortMessages(messages)
+    const roles = messages.map(m => `${m.role}:${m.content}`)
+    expect(roles).toEqual(['user:A', 'assistant:A reply', 'user:B', 'assistant:', 'user:C'])
+  })
+
+  it('never shows a new reply above an older reply even when physical order is scrambled', () => {
+    // Simulate the reported bug interleaving: array physically scrambled, both
+    // replies present. Sorting must restore DB order (older reply below older
+    // user, newer reply below newer user).
+    const parentB = { role: 'user', id: 4, content: 'B' }
+    const messages = [
+      { role: 'assistant', id: 5, content: 'B reply', streaming: true, seq: 4, afterSort: computeAfterSort(parentB) },
+      { role: 'assistant', id: 2, content: 'A reply' },
+      { role: 'user', id: 1, content: 'A' },
+      { role: 'user', id: 4, content: 'B' },
+    ] as any[]
+    sortMessages(messages)
+    const contents = messages.map(m => m.content)
+    expect(contents).toEqual(['A', 'A reply', 'B', 'B reply'])
+    // The new reply (B reply) must be BELOW the older reply (A reply).
+    const idxA = contents.indexOf('A reply')
+    const idxB = contents.indexOf('B reply')
+    expect(idxB).toBeGreaterThan(idxA)
+  })
+
+  it('anchors a streaming reply to a DB-backed parent via afterSort (id + 0.5)', () => {
+    const parent = { role: 'user', id: 3, content: 'B' }
+    const messages = [
+      { role: 'assistant', id: 4, content: 'B reply', streaming: true, seq: 9, afterSort: computeAfterSort(parent) },
+      { role: 'assistant', id: 2, content: 'A reply' },
+      { role: 'user', id: 1, content: 'A' },
+      parent,
+    ] as any[]
+    sortMessages(messages)
+    expect(messages.map(m => m.content)).toEqual(['A', 'A reply', 'B', 'B reply'])
+  })
+
+  it('treats a streaming placeholder with a numeric id as transient (stays anchored) until finalized', () => {
+    const parent = { role: 'user', id: 3, content: 'B' }
+    const streaming = { role: 'assistant', id: 7, content: '', streaming: true, seq: 1, afterSort: computeAfterSort(parent) }
+    expect(isTransientMessage(streaming)).toBe(true)
+    // Even though it has a numeric id (7), while streaming it must sort after
+    // its parent (3), not by id.
+    expect(messageSortValue(streaming)).toBe(messageSortValue(parent) + 0.5)
+    // Once finalized (streaming removed), it becomes DB-backed and sorts by id.
+    delete streaming.streaming
+    expect(isTransientMessage(streaming)).toBe(false)
+    expect(messageSortValue(streaming)).toBe(7)
+  })
+
+  it('is idempotent — sorting an already-ordered array does not flip-flop', () => {
+    const parent = { role: 'user', id: 'q1', content: 'Q', pending: true, seq: 1 }
+    const messages = [
+      { role: 'user', id: 1, content: 'u1' },
+      { role: 'assistant', id: 2, content: 'r1' },
+      parent,
+      { role: 'assistant', id: 'drain', content: '', streaming: true, seq: 2, afterSort: computeAfterSort(parent) },
+    ] as any[]
+    const first = messages.map(m => `${m.role}:${m.content}`)
+    sortMessages(messages)
+    const second = messages.map(m => `${m.role}:${m.content}`)
+    sortMessages(messages)
+    const third = messages.map(m => `${m.role}:${m.content}`)
+    expect(second).toEqual(first)
+    expect(third).toEqual(second)
   })
 })
 

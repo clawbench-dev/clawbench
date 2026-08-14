@@ -5,7 +5,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, cancelPendingMessages, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, cancelPendingMessages, sortMessages, nextClientSeq, computeAfterSort, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 
@@ -172,6 +172,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       // Ensure a streaming assistant message exists — create one if needed
       const streaming = findStreamingMsg(messages.value)
       if (!streaming) {
+        // Anchor the new placeholder right after its question (the newest user
+        // message) so it can never sort above an earlier reply.
+        const parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user')
         const newStreaming: ChatMessage = {
           role: 'assistant' as const,
           id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -179,17 +182,15 @@ export function useChatStream(options: UseChatStreamOptions) {
           blocks: [] as ContentBlock[],
           streaming: true,
           createdAt: new Date().toISOString(),
-          backend: currentBackend.value
+          backend: currentBackend.value,
+          seq: nextClientSeq(),
+          afterSort: computeAfterSort(parentUserIdx !== -1 ? messages.value[parentUserIdx] : undefined),
         }
-        // Insert after the last non-pending user message, not at the end.
-        const lastUserIdx = messages.value.findLastIndex(
-          (m) => m.role === 'user' && !m.pending
-        )
-        if (lastUserIdx !== -1) {
-          messages.value.splice(lastUserIdx + 1, 0, newStreaming)
-        } else {
-          messages.value.push(newStreaming)
-        }
+        // Always push; order is restored by sortMessages() — physical array
+        // position never encodes ordering, so a newer reply can never be
+        // spliced above an older one.
+        messages.value.push(newStreaming)
+        sortMessages(messages.value)
         thinkingBlockCounter = 0
         onRenderNeeded()
       } else if ((streaming as ChatMessage).fromDB) {
@@ -631,15 +632,12 @@ export function useChatStream(options: UseChatStreamOptions) {
           _remote: true,
           backend: currentBackend.value,
           ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
+          seq: nextClientSeq(),
         }
 
-        // Insert before streaming assistant message (or at end)
-        const streamingIdx = messages.value.findIndex(m => m.role === 'assistant' && m.streaming)
-        if (streamingIdx !== -1) {
-          messages.value.splice(streamingIdx, 0, newMsg)
-        } else {
-          messages.value.push(newMsg)
-        }
+        // Always push; sortMessages() restores authoritative order.
+        messages.value.push(newMsg)
+        sortMessages(messages.value)
 
         debouncedRender()
         if (isOpen.value) {
