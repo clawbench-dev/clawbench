@@ -468,7 +468,8 @@ import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
 import { useUpgrade } from './composables/useUpgrade'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, requestExitConfirm } from './composables/useBackHandler'
-import { store, loadBrowseDir, loadOpenFile, clearStaleOpenFile } from './stores/app.ts'
+import { store } from './stores/app.ts'
+import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
 import { formatBadgeCount } from './utils/format.ts'
@@ -792,28 +793,7 @@ function closeOverlayAndSync() {
  * is cleared so it isn't retried and re-reported on every launch/switch.
  */
 async function restoreProjectWorkspace() {
-  const savedDir = loadBrowseDir()
-  if (savedDir) {
-    try { await store.loadFiles(savedDir, true) } catch {
-      // Directory no longer exists — fall back to project root
-      try { await store.loadFiles('') } catch {}
-    }
-  } else {
-    try { await store.loadFiles('') } catch {
-      toast.show(t('toast.fileListLoadFailed'), { icon: '⚠️', type: 'error', duration: 6000 })
-    }
-  }
-  // Restore last opened file (per-project)
-  const savedFile = loadOpenFile()
-  if (savedFile) {
-    const ok = await store.selectFile(savedFile)
-    if (ok) {
-      fileNav.openFile(savedFile)
-    } else {
-      // File no longer exists — clear the stale record to avoid repeated failures.
-      clearStaleOpenFile()
-    }
-  }
+  return restoreProjectWorkspaceImpl({ switchTab })
 }
 
 const { isAppMode } = useAppMode()
