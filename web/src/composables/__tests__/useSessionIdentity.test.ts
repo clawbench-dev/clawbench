@@ -75,7 +75,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef, reconcileRunningSessions } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -166,6 +166,28 @@ describe('useSessionIdentity', () => {
             identity.openSessionTab()
             await nextTick()
 
+            expect(identity.sessionDrawer.isOpen.value).toBe(true)
+        })
+
+        it('uses the registered override when set', async () => {
+            const identity = useSessionIdentity()
+            identity.sessionDrawer.close()
+            const override = vi.fn()
+            registerOpenSessionTabOverride(override)
+
+            identity.openSessionTab()
+            expect(override).toHaveBeenCalled()
+            // Drawer is not opened directly when an override is registered.
+            expect(identity.sessionDrawer.isOpen.value).toBe(false)
+        })
+
+        it('falls back to opening the drawer after the override is cleared', async () => {
+            const identity = useSessionIdentity()
+            registerOpenSessionTabOverride(vi.fn())
+            registerOpenSessionTabOverride(null)
+
+            identity.openSessionTab()
+            await nextTick()
             expect(identity.sessionDrawer.isOpen.value).toBe(true)
         })
     })

@@ -232,7 +232,7 @@
                       :keyboard-active="chatShortcutActive"
                       :current-file="currentFile"
                       :current-dir="currentDir"
-                      :session-sidebar-open="sessionSidebar.open.value"
+                      :session-sidebar-open="sessionSidebar.open.value && isWideScreen"
                       @open="switchTab('chat')"
                       @open-file="handleSelectFile"
                       @task-card-click="onTaskCardClick"
@@ -464,7 +464,7 @@ import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
-import { useSessionIdentity, registerSessionDrawerRef, resetIdentity } from './composables/useSessionIdentity.ts'
+import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
 import { resetAllCrudLists } from '@/composables/useCrudList'
@@ -780,6 +780,9 @@ const { getAgentBackend, getAgentName } = useAgents()
 
 const sessionSidebar = useSessionSidebar()
 sessionSidebar.registerOpenDrawer(() => sessionIdentity.sessionDrawer.open())
+// Route the session-list entry (Ctrl+K / session button) through the sidebar
+// bridge: when the sidebar is open, collapse it instead of opening the drawer.
+registerOpenSessionTabOverride(() => sessionSidebar.openSessionTabBridge())
 
 // Register chat-scoped drawers with tab-drawer binding
 // Session drawer is now owned by useSessionIdentity (encapsulated TabDrawer)

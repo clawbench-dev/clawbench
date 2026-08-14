@@ -28,7 +28,7 @@
         :current-session-id="currentSessionId"
         :running-session-ids="runningSessionIds"
         :is-active="isActive"
-        @select="$emit('select', $event[0], $event[1])"
+        @select="handleSelect"
         @archive="handleArchive"
         @destroy="$emit('destroy', $event)"
       />
@@ -104,8 +104,12 @@ async function handleCreateClick() {
   }
 }
 
-function handleArchive(sessionId) {
-  emit('archive', sessionId)
+function handleSelect(sessionId, backend) {
+  emit('select', sessionId, backend)
+}
+
+function handleArchive(sessionId, backend) {
+  emit('archive', sessionId, backend)
 }
 
 onMounted(() => {

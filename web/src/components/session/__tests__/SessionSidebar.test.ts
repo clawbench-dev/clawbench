@@ -7,7 +7,7 @@ vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (k: string) => k, locale: { va
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 
 vi.mock('@/components/session/SessionList.vue', () => ({
-  default: { name: 'SessionList', template: '<div class="session-list-stub" />' },
+  default: { name: 'SessionList', template: '<div class="session-list-stub" />', emits: ['select', 'archive', 'destroy'] },
 }))
 vi.mock('@/components/session/SessionListHeader.vue', () => ({
   default: { name: 'SessionListHeader', template: '<div class="header-stub"><slot name="actions" /></div>' },
@@ -57,6 +57,24 @@ describe('SessionSidebar', () => {
     const wrapper = mountSidebar()
     await wrapper.find('.sidebar-close-btn').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('forwards archive with sessionId and backend', async () => {
+    const wrapper = mountSidebar()
+    const list = wrapper.findComponent({ name: 'SessionList' })
+    ;(list.vm as any).$emit('archive', 's1', 'cli')
+    await list.vm.$nextTick()
+    expect(wrapper.emitted('archive')).toBeTruthy()
+    expect(wrapper.emitted('archive')![0]).toEqual(['s1', 'cli'])
+  })
+
+  it('forwards select with sessionId and backend', async () => {
+    const wrapper = mountSidebar()
+    const list = wrapper.findComponent({ name: 'SessionList' })
+    ;(list.vm as any).$emit('select', 's1', 'cli')
+    await list.vm.$nextTick()
+    expect(wrapper.emitted('select')).toBeTruthy()
+    expect(wrapper.emitted('select')![0]).toEqual(['s1', 'cli'])
   })
 
   it('emits resize with width clamped to MIN when dragging too far left', () => {
