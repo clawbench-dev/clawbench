@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -837,72 +838,49 @@ func GetSessionCount(projectPath string) (int, error) {
 	return count, err
 }
 
-// NextSessionNumber atomically allocates the next auto-title number for a
-// project's chat sessions and returns it (1, 2, 3, ...).
+// NextSessionNumber returns the auto-title number for a new unnamed session.
 //
-// The returned number is the larger of (a) the persisted per-project monotonic
-// counter and (b) the current active session count, plus one. Two properties
-// follow:
+// The number is max(existing numbered unnamed-session titles) + 1, so the
+// unnamed sessions in a project are numbered 1, 2, 3, ... based on the largest
+// number currently in use. Explicitly-named sessions never affect it, and a
+// number that still exists is never reused; once no numbered unnamed session
+// remains the count resets to 1.
 //
-//   - Monotonic: the counter only ever increases and is independent of the
-//     active count, so archiving/deleting a session never makes a later
-//     auto-titled session reuse an earlier number (no duplicate "新会话 N").
-//   - Unified across agents: the counter is per-project, not per-backend, so
-//     switching agents does not reset the numbering.
-//
-// Taking the max with the active count also keeps explicitly-named sessions
-// (created via CreateSession with a real title) counted, matching the legacy
-// "New Session N" numbering where N reflected how many sessions existed.
-func NextSessionNumber(projectPath string) (int, error) {
-	tx, err := WriteBegin()
+// baseTitle is the localized base auto-title (e.g. "新会话"). A session whose
+// title matches "baseTitle N" is treated as unnamed with number N.
+func NextSessionNumber(projectPath, baseTitle string) (int, error) {
+	prefix := baseTitle + " "
+	rows, err := dbRead.Query(
+		`SELECT title FROM chat_sessions
+		 WHERE project_path = ? AND archived = 0 AND session_type = 'chat'`,
+		projectPath,
+	)
 	if err != nil {
 		return 0, err
 	}
-	defer writeMu.Unlock()
-	defer tx.Rollback()
+	defer rows.Close()
 
-	// Ensure a row exists so the UPDATE below is reliable. Not a data race:
-	// writeMu is held for the whole transaction.
-	if _, err := tx.Exec(
-		"INSERT INTO project_meta (project_path, next_session_number) VALUES (?, 0) ON CONFLICT(project_path) DO NOTHING",
-		projectPath,
-	); err != nil {
+	maxN := 0
+	for rows.Next() {
+		var title string
+		if err := rows.Scan(&title); err != nil {
+			return 0, err
+		}
+		if !strings.HasPrefix(title, prefix) {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(title, prefix))
+		if err != nil {
+			continue
+		}
+		if n > maxN {
+			maxN = n
+		}
+	}
+	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-
-	var counter int
-	if err := tx.QueryRow(
-		"SELECT next_session_number FROM project_meta WHERE project_path = ?",
-		projectPath,
-	).Scan(&counter); err != nil {
-		return 0, err
-	}
-
-	var activeCount int
-	if err := tx.QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'",
-		projectPath,
-	).Scan(&activeCount); err != nil {
-		return 0, err
-	}
-
-	next := counter
-	if activeCount > next {
-		next = activeCount
-	}
-	next++
-
-	if _, err := tx.Exec(
-		"UPDATE project_meta SET next_session_number = ?, updated_at = CURRENT_TIMESTAMP WHERE project_path = ?",
-		next, projectPath,
-	); err != nil {
-		return 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return next, nil
+	return maxN + 1, nil
 }
 
 // RecentSession is a lightweight listing row used by session search's "browse

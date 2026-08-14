@@ -670,47 +670,72 @@ func TestArchiveSession_DeletedSessionNotInGetSessions(t *testing.T) {
 
 // ---------- NextSessionNumber ----------
 
-func TestNextSessionNumber_MonotonicAcrossBackends(t *testing.T) {
+func TestNextSessionNumber_BasedOnMaxUnnamed(t *testing.T) {
 	setupDB(t)
 
-	n1, err := service.NextSessionNumber("/proj")
+	// No numbered unnamed sessions → first is 1.
+	n1, err := service.NextSessionNumber("/proj", "New Session")
 	assert.NoError(t, err)
 	assert.Equal(t, 1, n1)
 
-	// Different backend must NOT reset the counter — numbering is per-project.
-	n2, err := service.NextSessionNumber("/proj")
+	// Create that unnamed session ("New Session 1") → next is 2.
+	helperCreateSession(t, "/proj", "claude", "New Session 1")
+	n2, err := service.NextSessionNumber("/proj", "New Session")
 	assert.NoError(t, err)
 	assert.Equal(t, 2, n2)
 
-	// A different project has its own independent counter.
-	m1, err := service.NextSessionNumber("/other")
+	// A different project is independent.
+	m1, err := service.NextSessionNumber("/other", "New Session")
 	assert.NoError(t, err)
 	assert.Equal(t, 1, m1)
 
-	n3, err := service.NextSessionNumber("/proj")
+	// Numbering is unified across backends — adding a claude session bumps it.
+	helperCreateSession(t, "/proj", "claude", "New Session 2")
+	n3, err := service.NextSessionNumber("/proj", "New Session")
 	assert.NoError(t, err)
 	assert.Equal(t, 3, n3)
 }
 
-func TestNextSessionNumber_DoesNotReuseNumberAfterArchive(t *testing.T) {
+func TestNextSessionNumber_TakesMaxNotCount(t *testing.T) {
 	setupDB(t)
 
-	// Root cause regression: numbering used len(current sessions)+1, which
-	// dropped after archiving and caused duplicate "新会话 N" titles.
-	n1, err := service.NextSessionNumber("/proj")
+	// Gap in numbers: 1 and 3 exist → next must be 4 (max), not 3 (count).
+	helperCreateSession(t, "/proj", "claude", "New Session 1")
+	helperCreateSession(t, "/proj", "claude", "New Session 3")
+	n, err := service.NextSessionNumber("/proj", "New Session")
+	assert.NoError(t, err)
+	assert.Equal(t, 4, n)
+}
+
+func TestNextSessionNumber_IgnoresNamedSessions(t *testing.T) {
+	setupDB(t)
+
+	// Explicitly-named sessions don't count toward the numbering.
+	helperCreateSession(t, "/proj", "claude", "My Project")
+	helperCreateSession(t, "/proj", "claude", "Another")
+
+	n1, err := service.NextSessionNumber("/proj", "New Session")
 	assert.NoError(t, err)
 	assert.Equal(t, 1, n1)
+}
 
+func TestNextSessionNumber_ResetsAfterAllUnnamedArchived(t *testing.T) {
+	setupDB(t)
+
+	// A single unnamed session is number 1.
+	n1, err := service.NextSessionNumber("/proj", "New Session")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, n1)
 	sid := helperCreateSession(t, "/proj", "claude", "New Session 1")
 
+	// Archive the only numbered unnamed session — the max drops to 0.
 	err = service.ArchiveSession("/proj", "claude", sid)
 	assert.NoError(t, err)
 
-	// Even though there are now zero active sessions, the next number must be
-	// 2, not 1, so auto-titles never collide.
-	n2, err := service.NextSessionNumber("/proj")
+	// No numbered unnamed session remains, so numbering resets to 1.
+	n2, err := service.NextSessionNumber("/proj", "New Session")
 	assert.NoError(t, err)
-	assert.Equal(t, 2, n2)
+	assert.Equal(t, 1, n2)
 }
 
 // ---------- GetSessions ----------
