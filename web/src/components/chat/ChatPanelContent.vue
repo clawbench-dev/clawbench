@@ -86,6 +86,7 @@
       :currentModeName="identity.currentModeName.value"
       :currentTransport="identity.currentTransport.value"
       :currentAgentId="identity.currentAgentId.value"
+      :acpSyncing="acpSyncing"
       :active="props.active"
       @send="sendMessage"
       @cancel="stream.cancelStream"
@@ -107,6 +108,7 @@
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
       @switch-transport="handleSwitchTransport"
+      @sync-acp-session="handleSyncAcpSession"
     />
 
   </div>
@@ -175,6 +177,7 @@ import { useChatStream } from '@/composables/useChatStream.ts'
 import { useChatSession, loadSessionsOnce } from '@/composables/useChatSession.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useSessionManager } from '@/composables/useSessionManager.ts'
+import { useAcpSession } from '@/composables/useAcpSession'
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
@@ -243,6 +246,27 @@ const metadataDrawer = useTabDrawer('chat')
 const forkAgentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 const forkPending = ref(null) // { sessionId, beforeMessageId }
 const toast = useToast()
+const acpSyncing = ref(false)
+const acpSession = useAcpSession({ currentAgentId: identity.currentAgentId })
+
+async function handleSyncAcpSession() {
+  const sid = identity.currentSessionId.value
+  if (!sid) return
+  acpSyncing.value = true
+  try {
+    const res = await acpSession.acpSyncSession(sid)
+    if (res) {
+      await session.loadHistory(false, true, true)
+      toast.show(t('chat.acpSession.synced', { count: res.added }), {
+        type: res.added > 0 ? 'success' : 'info',
+        icon: '🔄',
+      })
+    }
+  } finally {
+    acpSyncing.value = false
+  }
+}
+
 const dialog = useDialog()
 const notification = useNotification()
 const autoSpeech = useAutoSpeech()

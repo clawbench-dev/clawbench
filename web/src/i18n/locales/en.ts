@@ -188,6 +188,7 @@ export default {
       sessionNotFound: 'This session no longer exists on the agent side',
       noAcpSession: 'This session is not linked to an ACP session',
       syncFailed: 'ACP sync failed',
+      synced: 'Synced {count} new message(s)',
       justNow: 'Just now',
       minutesAgo: '{n}m ago',
       hoursAgo: '{n}h ago',

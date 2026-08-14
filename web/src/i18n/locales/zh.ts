@@ -188,6 +188,7 @@ export default {
       sessionNotFound: '该会话在智能体端已不存在',
       noAcpSession: '当前会话尚未关联 ACP 会话',
       syncFailed: 'ACP 同步失败',
+      synced: '已同步 {count} 条新消息',
       justNow: '刚刚',
       minutesAgo: '{n}分钟前',
       hoursAgo: '{n}小时前',
