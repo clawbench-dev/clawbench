@@ -50,4 +50,17 @@ describe('SessionListHeader', () => {
     })
     expect(wrapper.find('.pin-stub').exists()).toBe(true)
   })
+
+  it('when pinned, hides search/create and shows a refresh button instead', () => {
+    const wrapper = mountHeader({ pinned: true })
+    expect(wrapper.find('.header-action-btn[data-action="search"]').exists()).toBe(false)
+    expect(wrapper.find('.header-action-btn[data-action="create"]').exists()).toBe(false)
+    expect(wrapper.find('.header-action-btn[data-action="refresh"]').exists()).toBe(true)
+  })
+
+  it('emits refresh when the pinned refresh button is clicked', async () => {
+    const wrapper = mountHeader({ pinned: true })
+    await wrapper.find('.header-action-btn[data-action="refresh"]').trigger('click')
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+  })
 })

@@ -468,6 +468,7 @@ export default {
     },
     session: {
       aiDialog: 'AI Chat',
+      refresh: 'Refresh session list',
       requestFailed: 'Request failed ({status})',
       loadHistoryFailed: 'Failed to load chat history',
       loadHistoryFailedDetail: 'Failed to load chat history: {error}',

@@ -10,12 +10,19 @@
     </div>
     <div class="session-header-actions">
       <slot name="actions" />
-      <button class="header-action-btn" data-action="search" @click.stop="$emit('open-search')" :title="t('sessionSearch.title')">
-        <Search :size="16" />
-      </button>
-      <button class="header-action-btn" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
-        <Plus :size="16" />
-      </button>
+      <template v-if="pinned">
+        <button class="header-action-btn" data-action="refresh" @click.stop="$emit('refresh')" :title="t('session.refresh')">
+          <RefreshCw :size="16" />
+        </button>
+      </template>
+      <template v-else>
+        <button class="header-action-btn" data-action="search" @click.stop="$emit('open-search')" :title="t('sessionSearch.title')">
+          <Search :size="16" />
+        </button>
+        <button class="header-action-btn" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
+          <Plus :size="16" />
+        </button>
+      </template>
     </div>
   </div>
 </template>
@@ -23,14 +30,17 @@
 <script setup>
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, Plus } from 'lucide-vue-next'
+import { List, Search, Plus, RefreshCw } from 'lucide-vue-next'
 
 const props = defineProps({
   sessionCount: { type: Number, default: 0 },
   sessionMaxCount: { type: Number, default: 0 },
+  // When pinned (fixed sidebar), replace create/search with a manual refresh
+  // button — the pinned sidebar is meant for quick access, not management.
+  pinned: { type: Boolean, default: false },
 })
 
-defineEmits(['open-search', 'create'])
+defineEmits(['open-search', 'create', 'refresh'])
 
 const { t } = useI18n()
 

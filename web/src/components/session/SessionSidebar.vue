@@ -6,6 +6,8 @@
         <SessionListHeader
           :session-count="sessionCount"
           :session-max-count="sessionMaxCount"
+          :pinned="true"
+          @refresh="handleRefresh"
           @open-search="$emit('open-session-search')"
           @create="handleCreateClick"
         >
@@ -81,6 +83,11 @@ async function handleCreateClick() {
   } else {
     emit('create-agent-select')
   }
+}
+
+// Manual refresh in the pinned sidebar: reload the session list from the API.
+function handleRefresh() {
+  listRef.value?.loadSessions()
 }
 
 function handleSelect(sessionId, backend) {

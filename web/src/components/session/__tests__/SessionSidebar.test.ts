@@ -14,11 +14,22 @@ vi.mock('@/composables/useWideScreenLayout', async () => {
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }) }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 
+const loadSessionsMock = vi.hoisted(() => vi.fn())
+
 vi.mock('@/components/session/SessionList.vue', () => ({
-  default: { name: 'SessionList', template: '<div class="session-list-stub" />', emits: ['select', 'archive', 'destroy'] },
+  default: {
+    name: 'SessionList',
+    template: '<div class="session-list-stub" />',
+    emits: ['select', 'archive', 'destroy'],
+    methods: { loadSessions: loadSessionsMock },
+  },
 }))
 vi.mock('@/components/session/SessionListHeader.vue', () => ({
-  default: { name: 'SessionListHeader', template: '<div class="header-stub"><slot name="actions" /></div>' },
+  default: {
+    name: 'SessionListHeader',
+    template: '<div class="header-stub"><slot name="actions" /><button class="refresh-stub" @click="$emit(\'refresh\')" /></div>',
+    emits: ['refresh'],
+  },
 }))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', template: '<div />' },
@@ -59,6 +70,13 @@ describe('SessionSidebar', () => {
     const wrapper = mountSidebar()
     await wrapper.find('.sidebar-close-btn').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('refresh button reloads the session list', async () => {
+    const wrapper = mountSidebar()
+    loadSessionsMock.mockClear()
+    await wrapper.find('.refresh-stub').trigger('click')
+    expect(loadSessionsMock).toHaveBeenCalled()
   })
 
   it('hides the collapse button on narrow screen', async () => {

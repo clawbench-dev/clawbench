@@ -468,6 +468,7 @@ export default {
     },
     session: {
       aiDialog: 'AI 对话',
+      refresh: '刷新会话列表',
       requestFailed: '请求失败 ({status})',
       loadHistoryFailed: '加载聊天记录失败',
       loadHistoryFailedDetail: '加载聊天记录失败: {error}',
