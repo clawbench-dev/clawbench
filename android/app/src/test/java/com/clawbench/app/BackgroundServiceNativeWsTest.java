@@ -48,7 +48,7 @@ public class BackgroundServiceNativeWsTest {
 
         String notificationText(int portCount, String statusOverride) {
             if (statusOverride != null) return statusOverride;
-            if (portCount > 0) return portCount + " 个端口转发活跃";
+            if (portCount > 0) return portCount + " 个端口映射活跃";
             if (nativeWsNeeded || nativeWsActive) return "后台事件监听中";
             return "后台服务即将停止";
         }
@@ -298,8 +298,8 @@ public class BackgroundServiceNativeWsTest {
     @Test
     public void notification_hasPorts_showsPortCount() {
         ServiceState state = new ServiceState();
-        assertEquals("1 个端口转发活跃", state.notificationText(1, null));
-        assertEquals("2 个端口转发活跃", state.notificationText(2, null));
+        assertEquals("1 个端口映射活跃", state.notificationText(1, null));
+        assertEquals("2 个端口映射活跃", state.notificationText(2, null));
     }
 
     @Test

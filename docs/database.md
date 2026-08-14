@@ -202,7 +202,7 @@ UNIQUE：`(message_id)`
 | accessed_at | DATETIME | | CURRENT_TIMESTAMP | 最后访问时间 |
 | is_default | INTEGER | NOT NULL | `0` | 是否为默认项目 |
 
-### forwarded_ports（端口转发）
+### forwarded_ports（端口映射）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|

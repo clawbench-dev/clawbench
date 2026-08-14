@@ -173,7 +173,7 @@ const i18n = createI18n({
           frpServerAddr: '服务器地址',
           frpServerPort: '服务器端口',
           frpToken: '令牌',
-          portForwardEnabled: '启用端口转发',
+          portForwardEnabled: '启用端口映射',
           portForwardPort: '端口',
           pushMode: '推送模式',
           pushModeNative: '原生',

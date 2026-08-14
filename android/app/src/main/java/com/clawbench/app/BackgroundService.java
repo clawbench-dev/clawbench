@@ -1582,7 +1582,7 @@ public class BackgroundService extends Service {
                         "后台连接服务",
                         android.app.NotificationManager.IMPORTANCE_LOW
                 );
-                channel.setDescription("SSH 端口转发与后台事件监听");
+                channel.setDescription("SSH 端口映射与后台事件监听");
                 nm.createNotificationChannel(channel);
 
                 // AI events channel (high priority, sound + vibration)
@@ -1619,7 +1619,7 @@ public class BackgroundService extends Service {
             // Build combined status text showing port forwards and terminal sessions
             StringBuilder sb = new StringBuilder();
             if (portCount > 0) {
-                sb.append(portCount).append(" 个端口转发");
+                sb.append(portCount).append(" 个端口映射");
             }
             int terms = terminalSessionCount;
             if (terms > 0) {

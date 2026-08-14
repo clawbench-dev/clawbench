@@ -128,7 +128,7 @@ const i18n = createI18n({
       common: { ok: '确定' },
       settings: {
         needsRestart: '需重启',
-        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口转发', push: '推送', terminal: '终端', rag: 'RAG', projectFiles: '项目与文件', about: '关于', android: 'Android', security: '安全' },
+        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口映射', push: '推送', terminal: '终端', rag: 'RAG', projectFiles: '项目与文件', about: '关于', android: 'Android', security: '安全' },
         items: {
           defaultAgent: '默认智能体',
           autoSpeech: '自动语音',
@@ -157,10 +157,10 @@ const i18n = createI18n({
           ragSearchPoolSize: '搜索池大小',
           ragBaseUrl: '嵌入接口地址',
           ragModel: '嵌入模型',
-          portForwardEnabled: '启用端口转发',
-          portForwardPort: '端口转发端口',
+          portForwardEnabled: '启用端口映射',
+          portForwardPort: '端口映射端口',
           portForwardPortAuto: '自动',
-          portForwardHeader: '端口转发',
+          portForwardHeader: '端口映射',
           ttsCacheHeader: '缓存',
           terminalEnabled: '启用终端',
           terminalIdleTimeout: '空闲超时',

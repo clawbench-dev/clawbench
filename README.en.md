@@ -73,7 +73,7 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 | Port Forwarding | Interactive Terminal | Key/Symbol Configuration |
 |----------------|---------------------|-------------------------|
-| ![Port Forwarding](docs/screenshots/port-forwarding.png) | ![Interactive Terminal](docs/screenshots/terminal.png) | ![Key/Symbol Configuration](docs/screenshots/terminal-key-config.png) |
+| ![Port Mapping](docs/screenshots/port-forwarding.png) | ![Interactive Terminal](docs/screenshots/terminal.png) | ![Key/Symbol Configuration](docs/screenshots/terminal-key-config.png) |
 
 ### System Resource Monitor
 
@@ -210,7 +210,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status
 - **Extended Thinking**: Complex tasks auto-trigger extended thinking, reasoning visible in real time
 - **File Path Navigation**: Clickable file paths in AI responses, with line range navigation
-- **Localhost URL Navigation**: localhost URLs in AI responses (e.g., http://localhost:3000) are auto-detected with an open button; in App mode, port forwarding is auto-registered and the URL opens via WebView with zero manual config
+- **Localhost URL Navigation**: localhost URLs in AI responses (e.g., http://localhost:3000) are auto-detected with an open button; in App mode, port mapping is auto-registered and the URL opens via WebView with zero manual config
 - **Quick Send**: Preset common commands (continue, build, commit, etc.) with drag reorder, one-click send, input placeholder hint showing current quick send; long-press fills input box (with progressive fill bar) for editing before sending; message clusters analysis discovers recurring patterns and adds them
 - **Quote & Ask**: Select code or text, ask AI directly, auto-attaches context
 - **Current Directory Attachment**: Chat input supports attaching current directory context, AI auto-gets directory structure
@@ -253,13 +253,13 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Swipe to Delete**: Branches, worktrees, and tags support swipe-to-delete with safety guards (current branch, default branch, and current worktree cannot be deleted)
 - **Tag Management**: Browse project tags, click a tag to checkout, auto-prompt for dirty working tree
 
-### 🔀 SSH Tunnel Port Forwarding
+### 🔀 SSH Tunnel Port Mapping
 - **Remote Development**: Access server local ports directly from Android App
 - **Protocol Transparent**: HTTP, HTTPS, WebSocket, SSE, gRPC — no URL rewriting needed
-- **Custom Target Host**: Forward to any reachable host (LAN/remote, not limited to 127.0.0.1)
-- **Auto Port Assignment**: Automatically allocates local ports when forwarding the same target port to different hosts
-- **Port Editing**: Modify existing port forwarding configurations
-- **Auto-Open Localhost URLs**: localhost URLs appearing in chat (e.g., web services started by AI) can be opened with one tap — port forwarding is auto-registered and the URL opens via WebView in App mode
+- **Custom Target Host**: Map to any reachable host (LAN/remote, not limited to 127.0.0.1)
+- **Auto Port Assignment**: Automatically allocates local ports when mapping the same target port to different hosts
+- **Port Editing**: Modify existing port mapping configurations
+- **Auto-Open Localhost URLs**: localhost URLs appearing in chat (e.g., web services started by AI) can be opened with one tap — port mapping is auto-registered and the URL opens via WebView in App mode
 - **Tunnel Health Check & Reconnect**: Auto-checks tunnel health before opening localhost URLs; reconnects if unhealthy; one-tap reconnect for disconnected tunnels
 
 ### 💻 Web Terminal
@@ -280,7 +280,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - Chinese / English bilingual UI, auto-detect system language
 
 ### 📱 Android App
-- Native bridge integration: auto-login, file download (including POST archive downloads), port forwarding management
+- Native bridge integration: auto-login, file download (including POST archive downloads), port mapping management
 - Static HTML login page: shown on first launch or connection failure, matches web UI visual style
 - SSH password management, server dialog
 - WebView connection protection: WebView hidden during connection attempts to prevent browser error page flash

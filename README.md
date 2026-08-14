@@ -78,9 +78,9 @@
 
 ### SSH 隧道与 Web 终端
 
-| 端口转发 | 交互式终端 | 按键/符号配置 |
+| 端口映射 | 交互式终端 | 按键/符号配置 |
 |---------|-----------|--------------|
-| ![端口转发](docs/screenshots/port-forwarding.png) | ![交互式终端](docs/screenshots/terminal.png) | ![按键配置](docs/screenshots/terminal-key-config.png) |
+| ![端口映射](docs/screenshots/port-forwarding.png) | ![交互式终端](docs/screenshots/terminal.png) | ![按键配置](docs/screenshots/terminal-key-config.png) |
 
 ### 系统资源监控
 
@@ -213,7 +213,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **工具调用可视化**：名称、参数、执行结果实时展示，成功/失败状态一目了然
 - **深度思考**：复杂任务自动触发 extended thinking，推理过程实时可见
 - **文件路径跳转**：AI 回复中的文件路径可点击跳转，支持行范围导航
-- **Localhost URL 跳转**：AI 回复中的 localhost URL（如 http://localhost:3000）自动识别并添加打开按钮，App 模式下自动注册端口转发并通过 WebView 打开，无需手动配置
+- **Localhost URL 跳转**：AI 回复中的 localhost URL（如 http://localhost:3000）自动识别并添加打开按钮，App 模式下自动注册端口映射并通过 WebView 打开，无需手动配置
 - **快捷发送**：预设常用指令（继续、编译、提交等），支持拖拽排序，一键发送，输入框占位提示当前快捷指令；长按可填充到输入框（带渐进填充条），便于编辑后再发送；消息聚类分析一键发现常用模式并添加
 - **引用提问**：选中代码或文本，直接向 AI 提问，自动附带上下文
 - **当前目录附加**：聊天输入支持附加当前目录上下文，AI 自动获取目录结构
@@ -256,13 +256,13 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **滑动删除**：分支、工作树、标签支持左滑删除，安全保护（当前分支/默认分支/当前工作树不可删除）
 - **标签管理**：浏览项目标签，点击标签可 Checkout，脏工作树自动弹窗处理
 
-### 🔀 SSH 隧道端口转发
+### 🔀 SSH 隧道端口映射
 - **远程开发**：在 Android App 上直接访问服务器本地端口
 - **全协议透明**：HTTP、HTTPS、WebSocket、SSE、gRPC，无需 URL 重写
-- **指定目标地址**：支持转发到任意可达主机（局域网/远程主机，不仅限 127.0.0.1）
-- **自动端口分配**：同一目标端口转发到不同主机时自动分配本地端口
-- **端口编辑**：支持修改已注册的端口转发配置
-- **Localhost URL 自动打开**：聊天中出现的 localhost URL（如 AI 启动的 Web 服务），App 模式下一键自动注册端口转发并通过 WebView 打开
+- **指定目标地址**：支持映射到任意可达主机（局域网/远程主机，不仅限 127.0.0.1）
+- **自动端口分配**：同一目标端口映射到不同主机时自动分配本地端口
+- **端口编辑**：支持修改已注册的端口映射配置
+- **Localhost URL 自动打开**：聊天中出现的 localhost URL（如 AI 启动的 Web 服务），App 模式下一键自动注册端口映射并通过 WebView 打开
 - **隧道健康检测与重连**：打开 localhost URL 前自动检测隧道健康状态，异常时自动重连；断开的隧道支持一键重连
 
 ### 💻 Web 终端
@@ -283,7 +283,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - 中文 / 英文双语界面，自动检测系统语言
 
 ### 📱 Android App
-- 原生桥接集成：自动登录、文件下载（支持 POST 下载压缩包）、端口转发管理
+- 原生桥接集成：自动登录、文件下载（支持 POST 下载压缩包）、端口映射管理
 - 静态 HTML 登录页：首次启动或连接失败时显示，与 Web 端视觉风格统一
 - SSH 密码管理、服务器对话框
 - WebView 连接保护：连接期间隐藏 WebView，防止浏览器错误页闪现
