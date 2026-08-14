@@ -1,5 +1,5 @@
 <template>
-  <div class="bs-header session-list-header">
+  <div class="session-list-header-content">
     <List :size="16" class="bs-header-icon" />
     <span class="bs-header-title">{{ t('session.title') }}</span>
     <div v-if="sessionMaxCount > 0" class="session-counter">
@@ -43,18 +43,21 @@ const sessionBarColor = computed(() => {
 </script>
 
 <style scoped>
-.session-list-header {
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
-  box-shadow: none;
-  cursor: default;
+/* Header content — a flex row that lays out icon/title/counter/actions. Used
+   directly inside BottomSheet's own .bs-header (drawer) or a wrapper header
+   provided by the sidebar, so it must be a self-contained flex container. */
+.session-list-header-content {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
   white-space: nowrap;
   flex-wrap: nowrap;
   overflow: hidden;
-  width: 100%;
-  flex-shrink: 0;
-  min-width: 0;
 }
-.session-list-header .bs-header-title {
+.session-list-header-content .bs-header-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;

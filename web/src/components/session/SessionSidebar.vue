@@ -2,18 +2,20 @@
   <div ref="rootRef" class="session-sidebar" :style="{ width: `${width}px` }">
     <SplitDivider @dragmove="onDragMove" />
     <div class="sidebar-inner">
-      <SessionListHeader
-        :session-count="sessionCount"
-        :session-max-count="sessionMaxCount"
-        @open-search="$emit('open-session-search')"
-        @create="handleCreateClick"
-      >
-        <template #actions>
-          <button class="header-action-btn sidebar-unpin-btn" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
-            <Pin :size="16" />
-          </button>
-        </template>
-      </SessionListHeader>
+      <div class="bs-header session-sidebar-header">
+        <SessionListHeader
+          :session-count="sessionCount"
+          :session-max-count="sessionMaxCount"
+          @open-search="$emit('open-session-search')"
+          @create="handleCreateClick"
+        >
+          <template #actions>
+            <button class="header-action-btn sidebar-unpin-btn" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
+              <Pin :size="16" />
+            </button>
+          </template>
+        </SessionListHeader>
+      </div>
       <SessionList
         ref="listRef"
         :current-session-id="currentSessionId"
@@ -105,5 +107,9 @@ defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLoca
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+.session-sidebar-header {
+  flex-shrink: 0;
+  cursor: default;
 }
 </style>
