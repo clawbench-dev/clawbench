@@ -257,7 +257,7 @@ export default {
       sessionNotFound: '该会话在智能体端已不存在',
       noAcpSession: '当前会话尚未关联 ACP 会话',
       syncFailed: 'ACP 同步失败',
-      syncConfirm: '同步将重写当前会话的历史记录，可能与现有消息存在差异。确定继续同步吗？',
+      syncConfirm: '同步外部变更，将重写当前会话的历史，外部消息展示格式可能会与当前有差异，确定继续同步吗？',
       syncConfirmTitle: '确认同步',
       synced: '已同步 {count} 条新消息',
       justNow: '刚刚',

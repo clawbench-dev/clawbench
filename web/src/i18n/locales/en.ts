@@ -257,7 +257,7 @@ export default {
       sessionNotFound: 'This session no longer exists on the agent side',
       noAcpSession: 'This session is not linked to an ACP session',
       syncFailed: 'ACP sync failed',
-      syncConfirm: 'Syncing will rewrite this session\'s history and may differ from the existing messages. Continue?',
+      syncConfirm: 'Syncing external changes will rewrite this session\'s history; the external message display format may differ from the current one. Continue?',
       syncConfirmTitle: 'Confirm sync',
       synced: 'Synced {count} new message(s)',
       justNow: 'Just now',
