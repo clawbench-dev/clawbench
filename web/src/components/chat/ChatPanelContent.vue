@@ -254,6 +254,14 @@ const acpSession = useAcpSession({ currentAgentId: identity.currentAgentId })
 async function handleSyncAcpSession() {
   const sid = identity.currentSessionId.value
   if (!sid) return
+
+  // 同步会重写历史记录，可能与现有消息有出入，需用户确认后才执行。
+  const confirmed = await dialog.confirm(t('chat.acpSession.syncConfirm'), {
+    title: t('chat.acpSession.syncConfirmTitle'),
+    dangerous: true,
+  })
+  if (!confirmed) return
+
   acpSyncing.value = true
   // 同步期间禁用输入：避免用户在 LoadSession 回放窗口内发消息，导致回复通知被
   // 改路由进回放缓冲（而非实时流）。
