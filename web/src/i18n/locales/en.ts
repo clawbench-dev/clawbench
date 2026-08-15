@@ -792,6 +792,8 @@ export default {
     dropToAttach: 'Drop to attach to chat',
     pasteToUpload: 'Pasting files...',
     truncateHint: 'Showing first {max} of {total} items, use search to narrow down',
+    symlink: 'Symbolic link',
+    symlinkBroken: 'Broken symbolic link',
     emptyDir: 'This directory is empty.',
     noFiles: 'No supported files found.',
     viewList: 'List view',

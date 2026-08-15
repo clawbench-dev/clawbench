@@ -336,6 +336,30 @@ describe('FileManagerContent — rendering', () => {
     expect(wrapper.find('.empty-state').exists()).toBe(true)
   })
 
+  it('renders symlink badge for symlinked entries', () => {
+    const entries = [
+      { name: 'linked-dir', type: 'dir', symlink: true, modified: '2025-01-01T00:00:00Z', size: 0 },
+      { name: 'linked.txt', type: 'file', symlink: true, modified: '2025-01-01T00:00:00Z', size: 10 },
+    ]
+    const wrapper = mountContent({ entries })
+    const badges = wrapper.findAll('.symlink-badge')
+    expect(badges.length).toBe(2)
+  })
+
+  it('renders broken style for dangling symlink', () => {
+    const entries = [
+      { name: 'dangling', type: 'file', symlink: true, broken: true, modified: '', size: 0 },
+    ]
+    const wrapper = mountContent({ entries })
+    const badge = wrapper.find('.symlink-badge.broken')
+    expect(badge.exists()).toBe(true)
+  })
+
+  it('does not render symlink badge for regular entries', () => {
+    const wrapper = mountContent()
+    expect(wrapper.find('.symlink-badge').exists()).toBe(false)
+  })
+
   it('renders loading mask when dirLoading is true', () => {
     const wrapper = mountContent({ dirLoading: true })
     expect(wrapper.find('.loading-indicator.overlay').exists()).toBe(true)
@@ -366,6 +390,18 @@ describe('FileManagerContent — handleItemClick', () => {
     await fileItems[0].trigger('click')
 
     expect(wrapper.emitted('selectFile')).toBeTruthy()
+  })
+
+  it('mobile: emits navigateDir when clicking a symlinked directory', async () => {
+    const entries = [
+      { name: 'linked', type: 'dir', symlink: true, modified: '2025-01-01T00:00:00Z', size: 0 },
+    ]
+    const wrapper = mountContent({ entries })
+    const dirItem = wrapper.find('.dir-item')
+    await dirItem.trigger('click')
+
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+    expect(wrapper.emitted('navigateDir')![0][0]).toContain('linked')
   })
 
   it('PC: single click only selects, does not navigate or open', async () => {

@@ -1082,6 +1082,138 @@ func TestBuildDirEntries_ImageFiles(t *testing.T) {
 	}
 }
 
+// --- buildDirEntries with symlinks ---
+
+// listDirItems calls ListDir for the given project and returns the parsed items
+// keyed by name.
+func listDirItems(t *testing.T, projectDir string) map[string]map[string]interface{} {
+	t.Helper()
+	req := newRequest(t, http.MethodGet, "/api/dir", nil)
+	withProjectCookie(req, projectDir)
+	w := callHandler(ListDir, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	items, ok := result["items"].([]interface{})
+	require.True(t, ok)
+
+	byName := make(map[string]map[string]interface{}, len(items))
+	for _, item := range items {
+		entry, _ := item.(map[string]interface{})
+		name, _ := entry["name"].(string)
+		byName[name] = entry
+	}
+	return byName
+}
+
+func TestBuildDirEntries_SymlinkToDir(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_ = os.MkdirAll(filepath.Join(env.ProjectDir, "realtarget"), 0o755)
+	require.NoError(t, os.Symlink("realtarget", filepath.Join(env.ProjectDir, "linked")))
+
+	byName := listDirItems(t, env.ProjectDir)
+
+	linked, ok := byName["linked"]
+	require.True(t, ok, "symlink entry should be listed")
+	assert.Equal(t, "dir", linked["type"], "symlink-to-directory should be typed as dir")
+	assert.Equal(t, true, linked["symlink"], "symlink entry should be marked as symlink")
+	assert.NotEqual(t, true, linked["broken"], "valid symlink should not be broken")
+}
+
+func TestBuildDirEntries_SymlinkToDir_Navigable(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_ = os.MkdirAll(filepath.Join(env.ProjectDir, "realtarget"), 0o755)
+	require.NoError(t, os.Symlink("realtarget", filepath.Join(env.ProjectDir, "linked")))
+	createTestFile(t, filepath.Join(env.ProjectDir, "realtarget"), "inner.txt", "hi")
+
+	// Navigate into the symlinked directory.
+	req := newRequest(t, http.MethodGet, "/api/dir?path=linked", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ListDir, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	items, ok := result["items"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, items, 1, "linked dir should contain its target's file")
+	entry, _ := items[0].(map[string]interface{})
+	assert.Equal(t, "inner.txt", entry["name"])
+}
+
+func TestBuildDirEntries_SymlinkToFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "real.txt", "content")
+	require.NoError(t, os.Symlink("real.txt", filepath.Join(env.ProjectDir, "link.txt")))
+
+	byName := listDirItems(t, env.ProjectDir)
+
+	link, ok := byName["link.txt"]
+	require.True(t, ok, "symlink entry should be listed")
+	assert.Equal(t, "file", link["type"], "symlink-to-file should stay typed as file")
+	assert.Equal(t, true, link["symlink"], "symlink entry should be marked as symlink")
+	assert.NotEqual(t, true, link["broken"], "valid file symlink should not be broken")
+}
+
+func TestBuildDirEntries_DanglingSymlink(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	require.NoError(t, os.Symlink("missing-target", filepath.Join(env.ProjectDir, "dangling")))
+
+	byName := listDirItems(t, env.ProjectDir)
+
+	dangling, ok := byName["dangling"]
+	require.True(t, ok, "dangling symlink should stay listed")
+	assert.Equal(t, "file", dangling["type"], "dangling symlink should be non-navigable")
+	assert.Equal(t, true, dangling["symlink"])
+	assert.Equal(t, true, dangling["broken"], "dangling symlink should be marked broken")
+}
+
+func TestBuildDirEntries_SymlinkEscapingRoot_NotNavigable(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Target lives outside the project (but still within the watch dir/root).
+	_ = os.MkdirAll(filepath.Join(env.WatchDir, "outside"), 0o755)
+	createTestFile(t, env.WatchDir, "secret.txt", "secret")
+	require.NoError(t, os.Symlink(filepath.Join(env.WatchDir, "outside"), filepath.Join(env.ProjectDir, "escape")))
+
+	byName := listDirItems(t, env.ProjectDir)
+
+	escape, ok := byName["escape"]
+	require.True(t, ok)
+	assert.Equal(t, "file", escape["type"], "symlink escaping project root should be non-navigable")
+	assert.Equal(t, true, escape["symlink"])
+}
+
+func TestBuildDirEntries_RegularEntriesUnaffected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "a.txt", "a")
+	_ = os.MkdirAll(filepath.Join(env.ProjectDir, "adir"), 0o755)
+
+	byName := listDirItems(t, env.ProjectDir)
+
+	dir, ok := byName["adir"]
+	require.True(t, ok)
+	assert.Equal(t, "dir", dir["type"])
+	assert.NotEqual(t, true, dir["symlink"], "regular dir should not be marked as symlink")
+
+	file, ok := byName["a.txt"]
+	require.True(t, ok)
+	assert.Equal(t, "file", file["type"])
+	assert.NotEqual(t, true, file["symlink"], "regular file should not be marked as symlink")
+}
+
 // --- GetFile with external path ---
 
 func TestGetFile_ExternalAbsolutePath(t *testing.T) {

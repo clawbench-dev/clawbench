@@ -793,6 +793,8 @@ export default {
     dropToAttach: '松开添加到会话',
     pasteToUpload: '粘贴上传文件...',
     truncateHint: '仅展示前 {max} 项（共 {total} 项），请使用搜索精确定位',
+    symlink: '符号链接',
+    symlinkBroken: '损坏的符号链接',
     emptyDir: '此目录为空',
     noFiles: '未找到支持的文件',
     viewList: '列表视图',

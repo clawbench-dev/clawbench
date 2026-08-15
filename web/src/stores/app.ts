@@ -84,6 +84,10 @@ interface DirEntry {
     type: 'dir' | 'file'
     size?: number
     modTime?: string
+    modified?: string
+    supported?: boolean
+    symlink?: boolean
+    broken?: boolean
 }
 
 interface CurrentFile {
