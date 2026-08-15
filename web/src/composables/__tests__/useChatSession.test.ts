@@ -331,9 +331,13 @@ vi.mock('@/utils/chatSessionUtils', () => ({
   parseMessages: mockUtilsFns.parseMessages,
 }))
 
-vi.mock('@/utils/chatStreamUtils', () => ({
-  forceCleanupStreamingState: mockForceCleanupStreamingState,
-}))
+vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/chatStreamUtils')>()
+  return {
+    ...actual,
+    forceCleanupStreamingState: mockForceCleanupStreamingState,
+  }
+})
 
 // ── Import after mocks ──
 
@@ -1551,6 +1555,44 @@ describe('switchSession', () => {
     expect(pendingMsgs[0].id).toBe('pending-abc123')
     expect(pendingMsgs[1].content).toBe('queued message 2')
     expect(pendingMsgs[1].id).toBe('pending-def456')
+  })
+
+  it('preserves an in-flight queued message when loadHistory omits it (merge, not evict)', async () => {
+    // The reload's backend response has NO `queue` field, so appendQueueItems
+    // won't restore the pending message. syncSessionState must merge the
+    // still-pending message back, otherwise the exact queueId match at drain
+    // would fail and the queued reply could sort above its own question.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: 'A' }, { id: 2, role: 'assistant', content: 'A reply' }],
+        total: 2,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    // Guard against state leaking from a prior test that populated the same
+    // shared messages ref.
+    lastSessionOptions!.messages.value = []
+    // Simulate an optimistic queued message pushed by sendMessageNow.
+    lastSessionOptions!.messages.value.push({
+      role: 'user',
+      id: 'pending-xyz789',
+      content: 'queued during reload',
+      blocks: [{ type: 'text', text: 'queued during reload' }],
+      pending: true,
+      seq: 1,
+    })
+
+    await session.loadHistory(true, false, false)
+
+    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
+    const xyz = pending.filter((m: any) => m.id === 'pending-xyz789')
+    // The in-flight message survives the reload exactly once (dedup works).
+    expect(xyz.length).toBe(1)
+    expect(xyz[0].content).toBe('queued during reload')
   })
 
   it('restores usage state from API response after switch', async () => {

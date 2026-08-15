@@ -413,34 +413,22 @@ export function drainQueueMessage(
     callbacks.onExtractScheduledTasks?.(messages)
   }
 
-  // 2. Find the pending user message — prefer queueId matching (precise),
-  //    fall back to _remoteQueueId matching (cross-device), then content matching.
+  // 2. Find the queued user message by its STABLE key — the queueId that the
+  //    frontend generated and sent to the backend, and which the backend echoes
+  //    back in queue_drain. No content guessing: identity is the key. The
+  //    message is guaranteed present (kept alive across loadHistory), so the
+  //    exact match always resolves here.
   let pendingIdx = -1
   if (queueId) {
     pendingIdx = messages.findIndex((m) => m.role === 'user' && m.pending && m.id === queueId)
   }
   if (pendingIdx === -1 && queueId) {
-    // Match _remote messages by their stored _remoteQueueId (precise cross-device matching)
+    // Cross-device: the remote user message stores the same queueId in _remoteQueueId.
     pendingIdx = messages.findIndex((m) => m.role === 'user' && m._remote && m['_remoteQueueId'] === queueId)
   }
-  if (pendingIdx === -1 && userContent) {
-    pendingIdx = messages.findIndex((m) => m.role === 'user' && (m.pending || m._remote) && m.content === userContent)
-  }
-  // If still not found, match an optimistic user message pushed by
-  // sendMessageNow (id prefix `pending-`) that lost its pending flag (e.g. a
-  // fresh-path race where the session actually enqueued the message) and
-  // update it in place instead of pushing a duplicate. A duplicate would leave
-  // the original queued bubble at the bottom while the new reply streams up
-  // top, making the output appear ABOVE the question. `_drain`/`_remote`
-  // messages (different prefixes / numeric ids) are deliberately NOT matched —
-  // same content with different drain ids is a legitimate distinct turn.
-  if (pendingIdx === -1 && userContent) {
-    pendingIdx = messages.findIndex(
-      (m) => m.role === 'user' && typeof m.id === 'string' && m.id.startsWith('pending-') && m.content === userContent
-    )
-  }
+
   if (pendingIdx !== -1) {
-    // Found the pending or remote message — clear flag, update id to stable DB id
+    // Found by stable key — clear transient flags, adopt the DB id.
     delete messages[pendingIdx].pending
     delete messages[pendingIdx]._remote
     delete messages[pendingIdx]['_remoteQueueId']
@@ -450,23 +438,37 @@ export function drainQueueMessage(
       messages[pendingIdx].id = drainId
     }
   } else if (userContent) {
-    // Fallback: pending message not found (queue event was missed).
-    // Push it directly. Deduplicate by ID to avoid race with loadHistory.
-    const effectiveDrainId = dbMessageId || drainId || generateDrainId()
-    const alreadyExists = messages.some(
-      (m) => m.id === effectiveDrainId
+    // Defensive: the queued message wasn't found by its key (its optimistic
+    // push was dropped before this drain, e.g. the queue wasn't re-synced).
+    // Update an in-flight queued message (pending/_remote) that already shows
+    // the same content — it belongs to this drain. Already-pushed (_drain) and
+    // DB-backed messages are never matched, so genuinely repeated identical
+    // questions remain distinct turns.
+    const existing = messages.findIndex(
+      (m) => m.role === 'user' && (m.pending || m._remote) && m.content === userContent
     )
-    if (!alreadyExists) {
-      messages.push({
-        role: 'user',
-        id: effectiveDrainId,
-        _drain: true,
-        content: userContent,
-        blocks: userContent ? [{ type: 'text', text: userContent }] : [],
-        files: userFiles.map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-        createdAt: new Date().toISOString(),
-        seq: nextClientSeq(),
-      })
+    if (existing !== -1) {
+      pendingIdx = existing
+      delete messages[existing].pending
+      delete messages[existing]._remote
+      delete messages[existing]['_remoteQueueId']
+      if (dbMessageId) messages[existing].id = dbMessageId
+      else if (drainId) messages[existing].id = drainId
+    } else {
+      const effectiveDrainId = dbMessageId || drainId || generateDrainId()
+      if (!messages.some((m) => m.id === effectiveDrainId)) {
+        messages.push({
+          role: 'user',
+          id: effectiveDrainId,
+          _drain: true,
+          content: userContent,
+          blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+          files: userFiles.map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+          createdAt: new Date().toISOString(),
+          seq: nextClientSeq(),
+        })
+        pendingIdx = messages.length - 1
+      }
     }
   }
 

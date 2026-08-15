@@ -10,7 +10,7 @@ import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
-import { forceCleanupStreamingState, type ChatMessage } from '@/utils/chatStreamUtils.ts'
+import { forceCleanupStreamingState, sortMessages, nextClientSeq, type ChatMessage } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 
@@ -114,6 +114,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         files: itemFiles,
         createdAt: item.createdAt || new Date().toISOString(),
         pending: true,
+        seq: nextClientSeq(),
       })
     }
   }
@@ -151,8 +152,31 @@ export function useChatSession(options: UseChatSessionOptions) {
       expandedTools.value = {}
     }
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
+    const prevMessages = messages.value
     messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, isRunning)
     appendQueueItems(sessionData.queue as Array<Record<string, unknown>> | undefined)
+    // Preserve in-flight queued user messages across the reload. parseMessages
+    // only rebuilds DB-backed messages; appendQueueItems covers the backend
+    // queue, but a stale/empty queue field would otherwise drop an optimistic
+    // message and break the exact queueId matching at drain time. Only
+    // still-pending messages with a string (queue) id are merged back, and the
+    // final array is deduplicated by id (syncSessionState may run in both the
+    // recovery and main paths, so this must be idempotent).
+    for (const prev of prevMessages) {
+      if (prev.role !== 'user' || !prev.pending) continue
+      if (typeof prev.id !== 'string') continue
+      if (messages.value.some((m) => m.role === 'user' && m.id === prev.id)) continue
+      messages.value.push(prev)
+    }
+    const seenPending = new Set<string | number>()
+    messages.value = messages.value.filter((m) => {
+      if (m.role === 'user' && m.pending && typeof m.id === 'string') {
+        if (seenPending.has(m.id)) return false
+        seenPending.add(m.id)
+      }
+      return true
+    })
+    sortMessages(messages.value as ChatMessage[])
     totalMessages.value = (sessionData.total as number) || messages.value.length
 
     // ── Identity sync ──
