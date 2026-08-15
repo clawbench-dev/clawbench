@@ -56,3 +56,16 @@ A: Back up the `~/.clawbench/ClawBench.db` database file.
 **Q: How are agents managed?**
 
 A: All agents are stored in the database (`agents` table), installed via the welcome panel or auto-discovered on first launch.
+
+**Q: How do I enable HTTPS?**
+
+A: Place certificate files in the `<DataDir>/config/tls/` directory. ClawBench auto-detects certificate files, supporting three naming conventions (in priority order):
+1. `fullchain.pem` + `privkey.pem` (Let's Encrypt style)
+2. `cert.pem` + `key.pem` (generic style)
+3. `combined.pem` (combined cert and private key file)
+
+HTTPS is automatically enabled when a valid certificate pair is found; otherwise falls back to HTTP. You can also specify a custom directory via the `tls.cert_dir` config option.
+
+**Q: How do I enable voice input (STT)?**
+
+A: Deploy a vLLM Whisper engine (or any ASR service compatible with the OpenAI `/v1/audio/transcriptions` endpoint), then configure the STT endpoint URL and model name in the settings panel. Voice input requires HTTPS or localhost to access the microphone.

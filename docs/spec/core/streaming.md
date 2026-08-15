@@ -74,6 +74,7 @@ sequenceDiagram
 | `GET /api/file/watch` | SSE | 文件系统 fsnotify 变更流 | `internal/handler/file_watch.go` |
 | `GET /api/dir/search` | SSE | 目录 fuzzy 搜索进度 | `internal/handler/dir_search.go` |
 | `GET /api/tts/audio/ws` | WebSocket | TTS 流式音频分片 | `internal/handler/tts_audio_ws.go` |
+| `GET /api/stt/transcribe/ws` | WebSocket | STT 流式语音识别 | `internal/handler/stt.go` |
 
 ### 设计要点
 
@@ -81,3 +82,4 @@ sequenceDiagram
 - **断线缓冲只是减震**：缓冲窗口（10s / 50 条）有限，**不是持久化方案**。重连超时（>120s）后客户端通过 REST API 重新加载会话完整状态
 - **客户端 ack 用 `permission_respond`**：WS 客户端消息支持 `permission_respond`（替代旧 HTTP `/api/ai/permission`），ACP 权限待审场景下前端用此消息回传决策
 - **HTTP cancel 兜底**：WS 不可达时（弱网），HTTP cancel 端点仍可工作——`SessionExecutor` 同时监听 WS cancel 消息和 HTTP cancel 调用
+- **WS 写入失败立即断连**：`writeMessage` 统一所有 WS 写入路径（广播 + ping），写入失败（对端消失、缓冲满、超时）立即 `CloseNow`，触发客户端 `onclose` 立即重连。之前 ping 写入失败时 goroutine 静默退出，导致半死连接只能靠客户端心跳缓慢检测

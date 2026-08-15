@@ -37,6 +37,7 @@ sequenceDiagram
     Agent进程-->>ACPConnManager: Initialize 握手
     ACPConnManager-->>ACPBackend: 返回 ACPConn
     ACPBackend->>Agent进程: NewSession / ResumeSession
+    Note over ACPBackend,Agent进程: LoadSession 优先路径：支持 LoadSession 但不支持 ResumeSession 时，优先使用 LoadSession 恢复
     ACPBackend->>Agent进程: Prompt(prompt)
     loop 流式事件
         Agent进程-->>ACPBackend: AgentMessageChunk / ToolCall / Plan 等
@@ -105,17 +106,23 @@ sequenceDiagram
 - **Antigravity ACP 桥接**：Antigravity 后端通过 `agy-acp` ACP 桥接适配器接入，仅支持 `acp-stdio` 传输模式，没有 CLI 命令。这是外部 Agent 的集成模式——桥接适配器将非 ACP 原生的 Agent 包装为 ACP 协议兼容的子进程
 - **Grok Build 双传输模式**：Grok Build 后端同时支持 ACP（`grok agent stdio`）和 CLI（`grok -p ... --output-format streaming-json`）两种传输。ACP 为首选传输，CLI 作为流式 JSON 回退。`GrokStreamParser` 解析 CLI 的 JSON Lines 输出（text/thought/end/error 事件类型），从 end 事件捕获 session ID 和 token 用量
 - **OPENCODE_PERMISSION 注入**：OpenCode 的 ACP 连接自动注入 `OPENCODE_PERMISSION` 环境变量，将默认需人工审批的三个权限（文件读取、文件写入、命令执行）转为自动通过——防止 OpenCode 子 Agent 在无人值守的定时任务场景中因权限审批而挂起
+- **ACP ListSessions 磁盘扫描回退**：对于不支持 ACP `session/list` RPC 的后端（如 CodeBuddy），系统回退到磁盘扫描枚举会话。每个后端在 `init()` 时注册自己的磁盘扫描函数（`ListSessionsFromDiskFn`），`ACPConnManager` 的 `ListSessions` 方法优先尝试 RPC，失败时回退到磁盘扫描
+- **ACP EnsureAlive**：仅确保 ACP 连接存活，不创建或恢复会话。用于 `ListSessions` 等不需要会话上下文的场景
+- **LoadSession 优先恢复路径**：当后端支持 `LoadSession` 但不支持 `ResumeSession` 时，`ensureAliveWithSession` 优先使用 `LoadSession` 恢复会话，避免 `Method not found` 错误。`supportsLoadSession` 从 `BackendSpec.ACPLoadSession` 和 `AgentCapabilityRegistry` 双重判断
+- **CodeBuddy MCP 配置注入**：CodeBuddy ACP 连接 spawn 时读取 `~/.codebuddy/.mcp.json` 并通过 `--mcp-config` 参数注入，使 MCP 工具（websearch、tavily 等）在 ACP 模式下可用
+- **reapplyConfigAfterResume**：ResumeSession 后重新应用 mode/model/thinkingEffort 配置，确保恢复后的会话与用户期望的设置一致
 - **共享规则模板（commonRulesTemplate）**：所有 Agent 的系统提示词前注入 `commonRulesTemplate`，包含用户交互格式规范（XML `ask-question` 标签）和媒体生成规则。模板用 `«»` 占位反引号，运行时替换。另有 `mediaRulesTemplate` 仅在用户消息携带文件附件时注入
 
 ### 设计要点
 
 - **双传输分流在 factory 层**：`NewBackendForAgentWithTransport` 根据 Agent 的 `Transport` 字段（"cli" / "acp-stdio"）决定创建 ACPBackend 还是 CLIBackend。ACP 不可用时降级到 CLI 并记录警告——用户选择 ACP 是有意的，降级是容错而非静默回退
-- **ACP 连接管理实现注意**：`ACPConnManager` 是单例，管理每个 ClawBench 会话独占一个 ACP 连接。`ACPConn` 内部可能复用 goroutine，但对外是一对一映射
-- **ACP 一对一而非连接池**：`ACPConnManager` 是单例，管理每个 ClawBench 会话独占一个 ACP 连接。AI Agent 的会话状态是私有的，无法在连接间共享
+- **ACP 一对一连接而非连接池**：`ACPConnManager` 是单例，管理每个 ClawBench 会话独占一个 ACP 连接。AI Agent 的会话状态是私有的，无法在连接间共享。`ACPConn` 内部可能复用 goroutine，但对外是一对一映射
 - **CLIBackend 是通用骨架**：所有 shell-out 后端共享 `CLIBackend` 的进程管理、stdout 管道、上下文取消逻辑，差异仅在于 CLI 参数构建和输出解析策略——新增后端只需提供这两个策略
 - **后端规格集中声明**：所有后端的规格（CLI 命令、模型发现策略、ACP 命令）在 `BackendRegistry` 中集中声明，factory 通过后端类型字符串匹配创建实例。新增后端需要同时添加规格条目和 factory 分支
 - **ACP 状态缓存与重发**：每个连接缓存当前的 mode、thinking effort、config、commands、plan 状态和 `replayPending` 标志。新连接或重连时自动重发，保证前端在任何时刻都能恢复完整的 UI 状态。`replayPending` 标识 LoadSession 异步回放是否仍在进行
 - **ACP 全局函数变量打破循环依赖**：`internal/ai` 包通过全局函数变量（`getExternalSessionID`、`getSessionAutoApprove`、`onPermissionStateChange`）与 `internal/service` 和 `internal/ws` 包通信——Go 不允许循环依赖，函数变量是在编译期解耦、运行期桥接的折中方案
 - **ACP 工具调用防抖**：`ToolCallUpdate` 事件以 50ms 窗口批量发送，将推送给前端的 WS 事件率降低约 95% 而不丢失信息——AI 工具调用的流式更新频率极高，逐条推送会淹没前端。终端事件（完成/失败）立即发送，不等待防抖窗口
-- **ExitPlanMode 正常结束流**：CLI 后端检测到 ExitPlanMode 事件时结束当前流（不再有 AutoResumeBackend 重连机制）。ExitPlanMode 是 Agent 有意结束计划模式的信号，不应尝试续接——之前的 AutoResumeBackend 会将 ExitPlanMode 误判为异常中断并重试，导致重复执行
+- **ExitPlanMode 正常结束流**：CLI 后端检测到 ExitPlanMode 事件时结束当前流。ExitPlanMode 是 Agent 有意结束计划模式的信号，不应尝试续接或重试
 - **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent。自动发现只更新基础设施字段（`acp_command`、`transport`），用户自定义的 `name`、`command` 不被覆盖。ACP 相关字段（`transport`、`acp_command`、可用模式、思考深度、命令等）持久化在 `agents` 表中，重启后无需重新发现
+- **ListSessions 使用磁盘回退而非降级**：磁盘扫描不是降级，而是补充——ACP 协议的 `session/list` 是可选能力，后端可以不实现，磁盘扫描保证功能完整性
+- **CodeBuddy MCP 配置注入是 workaround**：CodeBuddy ACP 不原生支持 MCP 配置传递，通过 `--mcp-config` 命令行参数注入是临时方案
