@@ -43,4 +43,23 @@ describe('GitTagList inline delete', () => {
     expect(wrapper.emitted('switch-tag')).toBeTruthy()
     expect(wrapper.emitted('switch-tag')![0][0]).toEqual(tag)
   })
+
+  it('sorts tags by date, most recent first', () => {
+    const wrapper = mountList([
+      { name: 'v1.0', date: '2025-01-15 10:00:00 +0800' },
+      { name: 'v3.0', date: '2025-03-01 10:00:00 +0800' },
+      { name: 'v2.0', date: '2025-02-01 10:00:00 +0800' },
+    ])
+    const names = wrapper.findAll('.tag-name').map((n) => n.text())
+    expect(names).toEqual(['v3.0', 'v2.0', 'v1.0'])
+  })
+
+  it('places tags without a date after dated tags', () => {
+    const wrapper = mountList([
+      { name: 'v1.0', date: '2025-01-15 10:00:00 +0800' },
+      { name: 'v0.9' },
+    ])
+    const names = wrapper.findAll('.tag-name').map((n) => n.text())
+    expect(names).toEqual(['v1.0', 'v0.9'])
+  })
 })

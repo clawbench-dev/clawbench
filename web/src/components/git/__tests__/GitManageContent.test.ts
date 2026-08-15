@@ -78,10 +78,17 @@ describe('GitManageContent', () => {
   })
 
   describe('tab switching', () => {
-    it('renders worktree tab by default', async () => {
+    it('renders branches tab by default', async () => {
       const wrapper = mountContent()
       await flushPromises()
-      expect(wrapper.vm.activeTab).toBe('worktrees')
+      expect(wrapper.vm.activeTab).toBe('branches')
+    })
+
+    it('orders tabs as branches, tags, worktrees', async () => {
+      const wrapper = mountContent()
+      await flushPromises()
+      const keys = wrapper.vm.tabs.map((tab: { key: string }) => tab.key)
+      expect(keys).toEqual(['branches', 'tags', 'worktrees'])
     })
 
     it('switches to branches tab', async () => {

@@ -17,20 +17,6 @@
 
     <!-- Tab content -->
     <div class="manage-tab-body">
-      <!-- Worktree tab -->
-      <div v-if="activeTab === 'worktrees'" class="tab-pane">
-        <GitWorktreeList
-          :worktrees="worktrees"
-          :loading="worktreesLoading"
-          :error="worktreesError"
-          :initial-collapsed="false"
-          hide-header
-          @switch-worktree="onSwitchWorktree"
-          @delete-worktree="onDeleteWorktree"
-          @retry="loadWorktrees"
-        />
-      </div>
-
       <!-- Branches tab -->
       <div v-if="activeTab === 'branches'" class="tab-pane">
         <GitBranchList
@@ -56,6 +42,20 @@
           @retry="loadTags"
           @switch-tag="onSwitchTag"
           @delete-tag="onDeleteTag"
+        />
+      </div>
+
+      <!-- Worktree tab -->
+      <div v-if="activeTab === 'worktrees'" class="tab-pane">
+        <GitWorktreeList
+          :worktrees="worktrees"
+          :loading="worktreesLoading"
+          :error="worktreesError"
+          :initial-collapsed="false"
+          hide-header
+          @switch-worktree="onSwitchWorktree"
+          @delete-worktree="onDeleteWorktree"
+          @retry="loadWorktrees"
         />
       </div>
     </div>
@@ -153,7 +153,7 @@ onBeforeUnmount(() => {
 })
 
 const TAB_STORAGE_KEY = 'git-manage-active-tab'
-const activeTab = ref<'worktrees' | 'branches' | 'tags'>('worktrees')
+const activeTab = ref<'worktrees' | 'branches' | 'tags'>('branches')
 
 // Restore persisted tab
 onMounted(() => {
@@ -170,12 +170,6 @@ watch(activeTab, (val) => {
 
 const tabs = computed(() => [
   {
-    key: 'worktrees' as const,
-    label: t('git.manage.tabWorktrees'),
-    icon: FolderTree,
-    count: worktrees.value.length,
-  },
-  {
     key: 'branches' as const,
     label: t('git.manage.tabBranches'),
     icon: GitBranchIcon,
@@ -186,6 +180,12 @@ const tabs = computed(() => [
     label: t('git.manage.tabTags'),
     icon: Tag,
     count: tags.value.length,
+  },
+  {
+    key: 'worktrees' as const,
+    label: t('git.manage.tabWorktrees'),
+    icon: FolderTree,
+    count: worktrees.value.length,
   },
 ])
 
