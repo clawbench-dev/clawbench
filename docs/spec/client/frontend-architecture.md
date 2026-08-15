@@ -71,7 +71,7 @@ flowchart LR
 - **终端选择模式**：`useTerminalGestures` 实现三模式手势系统（浏览/手势/选择），选择模式下触摸坐标映射到 xterm 单元格进行文本选取，浮动复制栏提供一键复制。`terminalBlurUtils` 处理 Android WebView 键盘焦点稳定性
 - **终端主题切换**：`terminalThemes` 提供 157 个 xterm-theme 主题选择（懒加载），`auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage
 - **语音输入**：`useVoiceInput` 实现麦克风录音→ASR 识别→文字填入输入框的状态机（idle → recording → transcribing → done），支持流式（WebSocket 增量识别）和非流式（POST 完整识别）双模式
-- **快捷键提示系统**：`shortcutTips.ts` 提供数据驱动的快捷键提示配置，按上下文分组（common/chat/browse/view/terminal/history/settings/proxy）。`ShortcutTipTicker` 在 PC AppHeader 中间区域轮播提示，点击可查看完整快捷键列表。新增的快捷键包括：Chat 的 Ctrl+Up/Down 跳转消息、Ctrl+U 跳转未读、Ctrl+K 打开会话列表、Ctrl+Delete 归档会话；Browse 的 Ctrl+C/X/V 剪贴板操作、Delete/Shift+Delete 删除、Ctrl+N/Ctrl+Shift+N 新建文件/文件夹、F2 重命名、Alt+Up/Backspace 上级目录、Ctrl+R/F5 刷新、Ctrl+Shift+H 显示隐藏文件、Ctrl+Shift+M/Ctrl+A 多选、Ctrl+1/Ctrl+2 列表/网格切换
+- **快捷键提示系统**：`shortcutTips.ts` 提供数据驱动的快捷键提示配置，按上下文分组（common/chat/browse/view/terminal/history/settings/proxy/tasks）。`ShortcutTipTicker` 在 PC AppHeader 中间区域轮播提示，点击可查看完整快捷键列表。新增的快捷键包括：Chat 的 Ctrl+Up/Down 跳转消息、Ctrl+U 跳转未读、Ctrl+K 打开会话列表、Ctrl+Delete 归档会话；Browse 的 Ctrl+C/X/V 剪贴板操作、Delete/Shift+Delete 删除、Ctrl+N/Ctrl+Shift+N 新建文件/文件夹、F2 重命名、Alt+Up/Backspace 上级目录、Ctrl+R/F5 刷新、Ctrl+Shift+H 显示隐藏文件、Ctrl+Shift+M/Ctrl+A 多选、Ctrl+1/Ctrl+2 列表/网格切换
 - **LocalLinkGuard 全局链接拦截**：`initLocalLinkGuard` 在 document 冒泡阶段拦截本地/相对/file:// 链接，作为站点级处理器（如 useDoubleClickCopy）的最后兜底。已 defaultPrevented 的事件、修饰键点击、下载链接、`/api/` 端点和外部链接均不拦截——防止 DOMPurify 放行的 `file://` 链接被浏览器错误导航
 - **文本选择感知**：`useTextSelectionActive` 检测用户正在选择文本（非空 Selection），浮动 UI（如返回/前进导航、聊天滚动按钮）在选择期间自动隐藏，避免干扰拖拽选择和长按选择
 - **消息排队与 needs_start 重提交**：`chatQueueSend` 封装共享的"排队→needs_start 重提交"编排逻辑——AI 忙碌时消息入队，后端因会话已停止而出队时，消息自动重提交为新聊天而非静默丢失。正常输入路径和 AskUserQuestion 卡片路径共用此逻辑
