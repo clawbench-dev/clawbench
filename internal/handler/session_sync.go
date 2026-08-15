@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -111,10 +110,6 @@ func groupLoadSessionReplay(client *ai.ClawBenchACPClient) []replayMessage {
 	return messages
 }
 
-// systemInstructionsRe matches the leading "[System Instructions: ...]" block up
-// to the first ']' followed by whitespace, so the real user text after it is kept.
-var systemInstructionsRe = regexp.MustCompile(`^\[System Instructions[\s\S]*?\]\s`)
-
 // filterSystemPromptText strips injected system-prompt/reminder content from a
 // replayed text block. System prompts can be re-injected at ANY point in the
 // history (not just the first message), so this runs on every text block.
@@ -131,15 +126,39 @@ func filterSystemPromptText(text string) string {
 	// Legacy format: system instructions prepended to a user message as
 	// "[System Instructions: ...]<whitespace><real user text>". Strip the block.
 	if strings.HasPrefix(t, "[System Instructions") {
-		if loc := systemInstructionsRe.FindStringIndex(t); loc != nil {
-			rest := strings.TrimSpace(t[loc[1]:])
-			if rest != "" {
-				return rest
-			}
+		if rest, ok := stripSystemInstructions(t); ok {
+			return rest
 		}
 		return ""
 	}
 	return text
+}
+
+// stripSystemInstructions removes a leading "[System Instructions: ...]" block,
+// finding the bracket that balances the opener (handling nested '['/']') and
+// consuming the following whitespace, so the real user text after the block is
+// kept. Returns (rest, true) when the block was found; (rest, false) when the
+// block is unterminated and the whole message should be treated as system prompt.
+func stripSystemInstructions(t string) (string, bool) {
+	const prefix = "[System Instructions"
+	// t is known to start with the prefix and be trimmed.
+	depth := 1
+	i := len(prefix)
+	for i < len(t) {
+		switch t[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				rest := strings.TrimSpace(t[i+1:])
+				return rest, true
+			}
+		}
+		i++
+	}
+	// Unterminated block: treat the whole message as system prompt.
+	return "", false
 }
 
 // persistReplayMessages 批量插入回放消息及其 tool calls，并记录外部 messageId。

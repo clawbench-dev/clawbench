@@ -206,5 +206,12 @@ func TestFilterSystemPromptText(t *testing.T) {
 	// Normal text → unchanged.
 	assert.Equal(t, "你几岁了", filterSystemPromptText("你几岁了"))
 	assert.Equal(t, "", filterSystemPromptText("   "))
+
+	// Nested brackets inside the system-instructions block are balanced, so the
+	// real user text AFTER the block is kept (not cut at the first ']').
+	assert.Equal(t, "你叫什么名字", filterSystemPromptText("[System Instructions: 规则 [禁止][必须] ...]\n\n你叫什么名字"))
+	assert.Equal(t, "你几岁了", filterSystemPromptText("[System Instructions: a[b]c] 你几岁了"))
+	// Unterminated block → whole message treated as system prompt.
+	assert.Equal(t, "", filterSystemPromptText("[System Instructions: 未闭合"))
 }
 

@@ -3862,3 +3862,70 @@ func TestReplaceSessionHistory_ReplacesMessages(t *testing.T) {
 	require.NoError(t, db.QueryRow("SELECT content FROM chat_history WHERE session_id = ?", sid).Scan(&content))
 	assert.Contains(t, content, `"text":"new"`)
 }
+
+func TestReplaceSessionHistory_PersistsToolCalls(t *testing.T) {
+	db := setupDB(t)
+	projectPath := "/proj"
+	sid := helperCreateSession(t, projectPath, "claude", "Test")
+
+	msgs := []service.ReplayMessage{{
+		Role:     "assistant",
+		Content:  `{"blocks":[{"type":"tool_use","id":"tc1","name":"Bash","input":{"cmd":"ls"}}]}`,
+		ExtMsgID: "n1",
+		ToolCalls: []model.ContentBlock{{
+			Type:   "tool_use",
+			ID:     "tc1",
+			Name:   "Bash",
+			Input:  map[string]any{"cmd": "ls"},
+			Output: "out",
+			Status: "completed",
+			Done:   true,
+		}},
+	}}
+
+	// Regression: must not deadlock (nested writeMu acquisition) and tool calls
+	// must be persisted inside the same transaction as the message.
+	n, err := service.ReplaceSessionHistory(sid, projectPath, "claude", msgs)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	var msgID int64
+	require.NoError(t, db.QueryRow("SELECT id FROM chat_history WHERE session_id = ?", sid).Scan(&msgID))
+	var tcCount int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_tool_calls WHERE message_id = ? AND session_id = ?", msgID, sid).Scan(&tcCount))
+	assert.Equal(t, 1, tcCount)
+
+	var output, status string
+	var doneInt int
+	require.NoError(t, db.QueryRow("SELECT output, status, done FROM chat_tool_calls WHERE message_id = ? AND tool_id = ?", msgID, "tc1").Scan(&output, &status, &doneInt))
+	assert.Equal(t, "out", output)
+	assert.Equal(t, "completed", status)
+	assert.Equal(t, 1, doneInt)
+}
+
+func TestReplaceSessionHistory_RollbackRestoresHistory(t *testing.T) {
+	db := setupDB(t)
+	projectPath := "/proj"
+	sid := helperCreateSession(t, projectPath, "claude", "Test")
+
+	_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', 'old', 'm1')", projectPath, sid)
+	require.NoError(t, err)
+
+	// Force the transaction to fail AFTER the DELETE has removed the old rows: an
+	// invalid role violates the CHECK(role IN ('user','assistant')) constraint.
+	// The transaction must roll back, restoring the original history intact.
+	msgs := []service.ReplayMessage{{
+		Role:    "system", // violates CHECK constraint
+		Content: `{"blocks":[{"type":"text","text":"new"}]}`,
+	}}
+	n, err := service.ReplaceSessionHistory(sid, projectPath, "claude", msgs)
+	require.Error(t, err)
+	assert.Equal(t, 0, n)
+
+	var cnt int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt))
+	assert.Equal(t, 1, cnt)
+	var content string
+	require.NoError(t, db.QueryRow("SELECT content FROM chat_history WHERE session_id = ?", sid).Scan(&content))
+	assert.Equal(t, "old", content)
+}

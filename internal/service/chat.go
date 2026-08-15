@@ -1710,7 +1710,20 @@ func ReplaceSessionHistory(sessionID, projectPath, backend string, messages []Re
 		for i := range m.ToolCalls {
 			tc := &m.ToolCalls[i]
 			inputJSON, _ := json.Marshal(tc.Input)
-			if err := UpsertToolCall(msgID, sessionID, tc.ID, tc.Name, inputJSON, tc.Output, tc.Status, tc.Summary, tc.Done, tc.DurationMs); err != nil {
+			// Inline the tool-call upsert on tx (not UpsertToolCall, which acquires
+			// writeMu and writes via the global db handle — both would deadlock and
+			// break the transaction's atomicity).
+			if _, err := tx.Exec(`
+				INSERT INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output, status, done, summary, duration_ms)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(tool_id, message_id) DO UPDATE SET
+					input = excluded.input,
+					output = CASE WHEN excluded.output != '' THEN excluded.output ELSE chat_tool_calls.output END,
+					status = excluded.status,
+					done = excluded.done,
+					summary = excluded.summary,
+					duration_ms = CASE WHEN excluded.duration_ms > 0 THEN excluded.duration_ms ELSE chat_tool_calls.duration_ms END
+			`, msgID, sessionID, tc.ID, tc.Name, string(inputJSON), tc.Output, tc.Status, tc.Done, tc.Summary, tc.DurationMs); err != nil {
 				slog.Warn("service: failed to persist replay tool call", "session_id", sessionID, "tool_id", tc.ID, "error", err)
 			}
 		}
