@@ -11,14 +11,15 @@
             <span>{{ dlg.state.value.title }}</span>
           </div>
           <div class="dlg-msg">{{ dlg.state.value.message }}</div>
-          <input
+          <textarea
             v-if="dlg.state.value.type === 'prompt'"
             ref="inputRef"
             v-model="inputVal"
-            class="dlg-input"
+            class="dlg-input dlg-textarea"
             :placeholder="dlg.state.value.placeholder"
-            @keydown.enter="handleConfirm"
-          />
+            rows="3"
+            @keydown.enter.prevent="handleConfirm"
+          ></textarea>
           <div class="dlg-actions">
             <button
               v-if="dlg.state.value.extraText && dlg.state.value.type !== 'alert'"
@@ -53,7 +54,7 @@ import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHand
 const { t } = useI18n()
 const dlg = useDialog()
 const inputVal = ref('')
-const inputRef = ref<HTMLInputElement | null>(null)
+const inputRef = ref<HTMLTextAreaElement | null>(null)
 const overlayRef = ref<HTMLElement | null>(null)
 const extraPrimed = ref(false)
 let unregisterBack: (() => void) | null = null
@@ -180,15 +181,25 @@ onBeforeUnmount(() => {
 
 .dlg-input {
   width: 100%;
-  padding: 7px 10px;
+  padding: 8px 10px;
   border: 1px solid var(--border-color, #ddd);
   border-radius: 8px;
   font-size: 13px;
+  font-family: inherit;
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   outline: none;
   margin-bottom: 14px;
   transition: border-color 0.15s;
+}
+
+.dlg-textarea {
+  resize: none;
+  min-height: 84px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .dlg-input:focus {
