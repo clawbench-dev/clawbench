@@ -243,6 +243,13 @@ export function forceCleanupStreamingState(
   if (streamingMsg) {
     const hasContent = streamingMsg.content || (streamingMsg.blocks && streamingMsg.blocks.length > 0)
     delete streamingMsg.streaming
+    // NOTE: do NOT strip afterSort here. This reply is anchored to its question
+    // via afterSort (messageSortValue prefers it). The question may still be a
+    // transient string-id message, in which case dropping afterSort would make
+    // the finalized reply sort by its (possibly numeric) id — above its own
+    // still-transient question. loadHistory() replaces the whole array on
+    // 'done'/reload and rebuilds without afterSort, restoring DB order.
+    // Stripping it here would re-introduce the queued-message reply swap.
     // Mark all unfinished tool_use blocks as done so spinner stops.
     // Exception: PermissionApproval blocks require user interaction —
     // marking them done without a real result makes the card appear
@@ -403,11 +410,14 @@ export function drainQueueMessage(
     onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
   },
   drainId?: string,
+  // Deliberate no-op kept only for caller signature compatibility: the backend
+  // sends the drained message's numeric DB id here, but it must NOT be applied
+  // to the message during streaming (it would move it out of the transient
+  // seq-order domain and displace its still-transient siblings — see step 2).
+  // loadHistory() reconciles the authoritative numeric id/order when the stream
+  // ends. Never use this to set the message id.
   _dbMessageId?: number
 ): ChatMessage {
-  // dbMessageId (the backend-persisted numeric id) is intentionally NOT applied
-  // to the drained message during streaming — see note in step 2. loadHistory()
-  // reconciles the authoritative numeric id/order when the stream ends.
   // 1. Finalize any streaming assistant message — never delete to avoid key shifts
   const streamingMsg = messages.find((m) => m.role === 'assistant' && m.streaming)
   if (streamingMsg) {
@@ -454,10 +464,14 @@ export function drainQueueMessage(
     delete messages[pendingIdx].pending
     delete messages[pendingIdx]._remote
     delete messages[pendingIdx]['_remoteQueueId']
-    // Keep the existing string id (the queueId) so ordering stays transient and
-    // v-for keys stay stable. Only synthesize a drain id defensively if the
-    // found message somehow lacks a string id.
-    if (typeof messages[pendingIdx].id !== 'string') {
+    // Preserve the existing id for ordering + v-for key stability:
+    //  - a string id (local pending queueId, or a queued cross-device remote) is
+    //    kept in the transient (seq) domain;
+    //  - a numeric id (a cross-device _remote that arrived already persisted in
+    //    the DB) is authoritative and must be kept — replacing it would churn the
+    //    v-for key (db-<n> → db-drain-…) and drop per-bubble render state.
+    // Only synthesize a drain id defensively if the message has no id at all.
+    if (messages[pendingIdx].id == null) {
       messages[pendingIdx].id = drainId || generateDrainId()
     }
     // Defense-in-depth: a pending message pushed without a seq would sort at
@@ -481,9 +495,10 @@ export function drainQueueMessage(
       delete messages[existing].pending
       delete messages[existing]._remote
       delete messages[existing]['_remoteQueueId']
-      // Keep the string id / transient ordering (see note above); do not adopt
-      // the numeric DB id mid-stream.
-      if (typeof messages[existing].id !== 'string') {
+      // Preserve a valid existing id (string → transient domain; numeric → a
+      // persisted cross-device remote, keep authoritative). Only synthesize a
+      // drain id if the message has no id.
+      if (messages[existing].id == null) {
         messages[existing].id = drainId || generateDrainId()
       }
     } else {
