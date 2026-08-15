@@ -165,6 +165,59 @@ func TestDirSearch_FuzzyMatching(t *testing.T) {
 	}
 }
 
+func TestDirSearch_ExactMatching(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "main.go", "package main")
+	createTestFile(t, env.ProjectDir, "main_helper.go", "package helper")
+	createTestFile(t, env.ProjectDir, "mymain.go", "package main")
+
+	// exact=true should only match files whose name equals the query,
+	// excluding fuzzy submatches like main_helper.go and mymain.go
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=main.go&recursive=false&exact=true", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+	results := events["result"]
+
+	if len(results) != 1 {
+		t.Fatalf("expected exactly 1 exact match, got %d", len(results))
+	}
+
+	var r DirSearchResult
+	if err := json.Unmarshal(results[0], &r); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+	if r.Name != "main.go" {
+		t.Errorf("expected name main.go, got %s", r.Name)
+	}
+	// Exact match highlights the entire filename
+	if len(r.MatchedIndices) != len(r.Name) {
+		t.Errorf("expected %d matched indices for %s, got %d", len(r.Name), r.Name, len(r.MatchedIndices))
+	}
+}
+
+func TestDirSearch_ExactMatchingCaseInsensitive(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "Main.Go", "package main")
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=main.go&recursive=false&exact=true", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+	results := events["result"]
+	if len(results) != 1 {
+		t.Fatalf("expected 1 case-insensitive exact match, got %d", len(results))
+	}
+}
+
 func TestDirSearch_IgnoresDirs(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

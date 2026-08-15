@@ -2,7 +2,16 @@
   <BottomSheet :open="open" auto @close="handleClose">
     <template #header>
       <Search :size="16" class="bs-header-icon" />
-      <span class="bs-header-title">{{ headerTitle }}</span>
+      <div class="bs-header-title">
+        <TransitionGroup name="title-word" tag="span" class="title-sentence">
+          <span
+            v-for="seg in titleSegments"
+            :key="seg.key"
+            class="title-seg"
+            :class="{ 'title-seg-accent': seg.highlight }"
+          >{{ seg.text }}</span>
+        </TransitionGroup>
+      </div>
       <div v-if="search.state.searchBasePath && search.state.scope === 'current'" class="bs-header-description">
         <HeaderMarquee :text="search.state.searchBasePath">{{ search.state.searchBasePath }}</HeaderMarquee>
       </div>
@@ -25,6 +34,14 @@
           @click="toggleRecursive"
         >
           <FolderTree :size="16" />
+        </button>
+        <button
+          class="fs-toggle-btn"
+          :class="{ active: search.state.exact }"
+          :title="t('file.search.exact')"
+          @click="toggleExact"
+        >
+          <WholeWord :size="16" />
         </button>
         <button
           class="fs-toggle-btn"
@@ -88,7 +105,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, FolderTree, Globe, RotateCcw, LocateFixed } from 'lucide-vue-next'
+import { Search, FolderTree, Globe, RotateCcw, LocateFixed, WholeWord } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
@@ -101,7 +118,7 @@ import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import { appLog } from '@/utils/appLog'
 import { isThumbableExt } from '@/utils/fileManager'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const props = defineProps<{
   open: boolean
@@ -117,15 +134,42 @@ const emit = defineEmits<{
 const search = useFileSearch()
 const inputRef = ref<InstanceType<typeof SearchInput> | null>(null)
 
-const headerTitle = computed(() => {
-  if (search.state.scope === 'global') {
-    return search.state.recursive
-      ? t('file.search.titleGlobalRecursive')
-      : t('file.search.titleGlobal')
+interface TitleSegment {
+  key: string
+  text: string
+  highlight: boolean
+}
+
+// Build the header title from highlighted modifier segments. Each segment maps
+// to a toggle button (exact / recursive / scope) and is highlighted + animated
+// so the user can perceive the connection between the buttons and the title.
+// Word order and spacing follow the active locale (zh: no spaces; en: SVO).
+const titleSegments = computed<TitleSegment[]>(() => {
+  const s = search.state
+  const isEn = locale.value.toLowerCase().startsWith('en')
+  const segs: TitleSegment[] = []
+
+  if (isEn) {
+    if (s.exact) segs.push({ key: 'exact', text: t('file.search.wordExact'), highlight: true })
+    if (s.recursive) {
+      const w = t('file.search.wordRecursive')
+      const text = s.exact ? `${w.charAt(0).toLowerCase()}${w.slice(1)}` : w
+      segs.push({ key: 'recursive', text, highlight: true })
+    }
+    const hasMod = s.exact || s.recursive
+    const verb = t('file.search.wordVerb')
+    const verbText = hasMod ? verb : `${verb.charAt(0).toUpperCase()}${verb.slice(1)}`
+    const scope = s.scope === 'global' ? t('file.search.wordGlobal') : t('file.search.wordCurrent')
+    segs.push({ key: `base-${scope}`, text: `${verbText} ${scope}`, highlight: false })
+  } else {
+    const scope = s.scope === 'global' ? t('file.search.wordGlobal') : t('file.search.wordCurrent')
+    segs.push({ key: `scope-${scope}`, text: scope, highlight: true })
+    if (s.exact) segs.push({ key: 'exact', text: t('file.search.wordExact'), highlight: true })
+    if (s.recursive) segs.push({ key: 'recursive', text: t('file.search.wordRecursive'), highlight: true })
+    segs.push({ key: 'verb', text: t('file.search.wordVerb'), highlight: false })
   }
-  return search.state.recursive
-    ? t('file.search.titleCurrentRecursive')
-    : t('file.search.titleCurrent')
+
+  return segs
 })
 
 // Focus input when drawer opens
@@ -164,6 +208,13 @@ watch(() => search.state.query, () => {
 
 function toggleRecursive() {
   search.state.recursive = !search.state.recursive
+  if (search.state.query.trim()) {
+    search.startSearch(props.currentDir)
+  }
+}
+
+function toggleExact() {
+  search.state.exact = !search.state.exact
   if (search.state.query.trim()) {
     search.startSearch(props.currentDir)
   }
@@ -270,6 +321,44 @@ defineExpose({ focusSearchInput })
 </script>
 
 <style scoped>
+.title-sentence {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.title-seg {
+  display: inline-block;
+}
+
+.title-seg-accent {
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 14%, transparent);
+  border-radius: 4px;
+  padding: 0 3px;
+  font-weight: 700;
+}
+
+/* Highlighted modifier segments slide+fade in/out as their toggle buttons change. */
+.title-word-enter-active,
+.title-word-leave-active {
+  transition: opacity 0.28s ease, transform 0.28s ease;
+}
+
+.title-word-enter-from {
+  opacity: 0;
+  transform: translateX(-6px);
+}
+
+.title-word-leave-to {
+  opacity: 0;
+  transform: translateX(6px);
+}
+
+.title-word-move {
+  transition: transform 0.28s ease;
+}
+
 .fs-body {
   flex: 1;
   overflow: hidden;

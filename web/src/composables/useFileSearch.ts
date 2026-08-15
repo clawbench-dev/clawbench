@@ -15,6 +15,7 @@ export interface FileSearchState {
   query: string
   recursive: boolean
   scope: SearchScope
+  exact: boolean
   results: FileSearchResult[]
   searching: boolean
   total: number
@@ -36,6 +37,7 @@ export function useFileSearch() {
     query: '',
     recursive: false,
     scope: 'current',
+    exact: false,
     results: [],
     searching: false,
     total: 0,
@@ -104,6 +106,7 @@ export function useFileSearch() {
     params.set('path', dir || '')
     params.set('q', state.query.trim())
     params.set('recursive', state.recursive ? 'true' : 'false')
+    params.set('exact', state.exact ? 'true' : 'false')
     params.set('limit', String(displayLimit + 1))
 
     const url = `/api/dir/search?${params.toString()}`

@@ -176,6 +176,19 @@ describe('useFileSearch', () => {
     expect(MockEventSource.instances[0].url).toContain('recursive=false')
   })
 
+  it('sends exact=false in URL by default and exact=true when enabled', () => {
+    const { state, startSearch } = useFileSearch()
+    state.query = 'test'
+    startSearch('')
+    vi.advanceTimersByTime(300)
+    expect(MockEventSource.instances[0].url).toContain('exact=false')
+
+    state.exact = true
+    startSearch('')
+    vi.advanceTimersByTime(300)
+    expect(MockEventSource.instances[1].url).toContain('exact=true')
+  })
+
   it('SSE error event clears searching state', () => {
     const { state, startSearch } = useFileSearch()
     state.query = 'test'

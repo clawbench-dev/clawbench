@@ -67,6 +67,7 @@ type dirSearchParams struct {
 	relPath   string
 	query     string
 	recursive bool
+	exact     bool
 	limit     int
 }
 
@@ -93,6 +94,13 @@ func parseSearchParams(w http.ResponseWriter, r *http.Request) (dirSearchParams,
 		}
 	}
 
+	exact := false
+	if e := r.URL.Query().Get("exact"); e != "" {
+		if parsed, err := strconv.ParseBool(e); err == nil {
+			exact = parsed
+		}
+	}
+
 	limit := model.ConfigInstance.FileSearch.DisplayLimit + 1
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
@@ -103,7 +111,7 @@ func parseSearchParams(w http.ResponseWriter, r *http.Request) (dirSearchParams,
 		limit = maxSearchLimit
 	}
 
-	return dirSearchParams{relPath: relPath, query: query, recursive: recursive, limit: limit}, true
+	return dirSearchParams{relPath: relPath, query: query, recursive: recursive, exact: exact, limit: limit}, true
 }
 
 // classifyEntry returns the entry type string for a directory entry.
@@ -188,9 +196,9 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if params.recursive {
-		walkAndMatchRecursive(ctx, absPath, basePath, params.query, onMatch)
+		walkAndMatchRecursive(ctx, absPath, basePath, params.query, params.exact, onMatch)
 	} else {
-		walkAndMatchFlat(ctx, absPath, basePath, params.query, onMatch)
+		walkAndMatchFlat(ctx, absPath, basePath, params.query, params.exact, onMatch)
 	}
 
 	// Check if context was cancelled
@@ -212,7 +220,7 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 
 // walkAndMatchRecursive walks the directory tree, fuzzy-matching each entry against the query.
 // On match, it calls onMatch. It respects context cancellation.
-func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, onMatch func(string, string, string, []int)) {
+func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int)) {
 	err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil //nolint:nilerr // skip inaccessible entries
@@ -238,10 +246,10 @@ func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string,
 		}
 
 		name := d.Name()
-		matches := fuzzy.Find(query, []string{name})
-		if len(matches) > 0 {
+		matchedIndexes := matchName(name, query, exact)
+		if len(matchedIndexes) > 0 {
 			entryType := classifyEntry(d, name)
-			onMatch(name, filepath.ToSlash(relPath), entryType, matches[0].MatchedIndexes)
+			onMatch(name, filepath.ToSlash(relPath), entryType, matchedIndexes)
 		}
 
 		return nil
@@ -252,7 +260,7 @@ func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string,
 }
 
 // walkAndMatchFlat reads only the top-level entries and fuzzy-matches against the query.
-func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, query string, onMatch func(string, string, string, []int)) {
+func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int)) {
 	select {
 	case <-ctx.Done():
 		return
@@ -278,10 +286,31 @@ func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, quer
 		}
 
 		name := d.Name()
-		matches := fuzzy.Find(query, []string{name})
-		if len(matches) > 0 {
+		matchedIndexes := matchName(name, query, exact)
+		if len(matchedIndexes) > 0 {
 			entryType := classifyEntry(d, name)
-			onMatch(name, filepath.ToSlash(relPath), entryType, matches[0].MatchedIndexes)
+			onMatch(name, filepath.ToSlash(relPath), entryType, matchedIndexes)
 		}
 	}
+}
+
+// matchName returns the matched character indices for name against query.
+// In exact mode, only a case-insensitive exact filename match returns indices (covering the whole name);
+// otherwise it uses fuzzy matching.
+func matchName(name, query string, exact bool) []int {
+	if exact {
+		if strings.EqualFold(name, query) {
+			idx := make([]int, len(name))
+			for i := range idx {
+				idx[i] = i
+			}
+			return idx
+		}
+		return nil
+	}
+	matches := fuzzy.Find(query, []string{name})
+	if len(matches) > 0 {
+		return matches[0].MatchedIndexes
+	}
+	return nil
 }

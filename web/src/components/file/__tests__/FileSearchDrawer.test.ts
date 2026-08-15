@@ -46,6 +46,7 @@ const mockState = {
   total: 0,
   truncated: false,
   searchBasePath: '',
+  exact: false,
 }
 const mockStartSearch = vi.fn()
 const mockCancelSearch = vi.fn()
@@ -77,8 +78,14 @@ const i18n = createI18n({
           titleCurrentRecursive: 'Recursive search in current directory',
           titleGlobal: 'Search in project',
           titleGlobalRecursive: 'Recursive search in project',
+          wordExact: 'Exact',
+          wordRecursive: 'Recursive',
+          wordCurrent: 'current directory',
+          wordGlobal: 'project',
+          wordVerb: 'search in',
           placeholder: 'Search filenames...',
           recursive: 'Recursive',
+          exact: 'Exact match',
           noResults: 'No files found',
           searching: 'Searching...',
           resultCount: '{count} files found',
@@ -130,6 +137,7 @@ beforeEach(() => {
   mockState.total = 0
   mockState.truncated = false
   mockState.searchBasePath = ''
+  mockState.exact = false
 })
 
 afterEach(() => {
@@ -137,11 +145,15 @@ afterEach(() => {
 })
 
 describe('FileSearchDrawer', () => {
+  // Header title is composed of modifier segments (highlighted words); the
+  // sentence reads correctly only through CSS gap, so assert on the segments.
+  const titleWords = (wrapper: ReturnType<typeof mountDrawer>) =>
+    wrapper.findAll('.title-seg').map((s) => s.text())
+
   it('renders when open', () => {
     const wrapper = mountDrawer({ open: true })
     expect(wrapper.find('.bottom-sheet-stub').exists()).toBe(true)
   })
-
   it('does not render when closed', () => {
     const wrapper = mountDrawer({ open: false })
     expect(wrapper.find('.bottom-sheet-stub').exists()).toBe(false)
@@ -284,32 +296,83 @@ describe('FileSearchDrawer', () => {
     expect(mockReset).toHaveBeenCalled()
   })
 
+  it('exact match button shows active when exact is enabled', () => {
+    mockState.exact = true
+    const wrapper = mountDrawer()
+    expect(wrapper.findAll('.fs-toggle-btn')[1].classes()).toContain('active')
+  })
+
+  it('clicking exact match button toggles exact and re-runs search', async () => {
+    mockState.query = 'main'
+    mockState.exact = false
+    const wrapper = mountDrawer()
+    await wrapper.findAll('.fs-toggle-btn')[1].trigger('click')
+    expect(mockState.exact).toBe(true)
+    expect(mockStartSearch).toHaveBeenCalled()
+  })
+
   it('header title shows "Recursive search in current directory" by default', () => {
     mockState.scope = 'current'
     mockState.recursive = true
     const wrapper = mountDrawer()
-    expect(wrapper.find('.bs-header-title').text()).toBe('Recursive search in current directory')
+    expect(titleWords(wrapper)).toEqual(['Recursive', 'search in current directory'])
   })
 
   it('header title shows "Search in current directory" when recursive is off', () => {
     mockState.scope = 'current'
     mockState.recursive = false
     const wrapper = mountDrawer()
-    expect(wrapper.find('.bs-header-title').text()).toBe('Search in current directory')
+    expect(titleWords(wrapper)).toEqual(['Search in current directory'])
   })
 
   it('header title shows "Recursive search in project" when scope is global', () => {
     mockState.scope = 'global'
     mockState.recursive = true
     const wrapper = mountDrawer()
-    expect(wrapper.find('.bs-header-title').text()).toBe('Recursive search in project')
+    expect(titleWords(wrapper)).toEqual(['Recursive', 'search in project'])
   })
 
   it('header title shows "Search in project" when scope is global and recursive is off', () => {
     mockState.scope = 'global'
     mockState.recursive = false
     const wrapper = mountDrawer()
-    expect(wrapper.find('.bs-header-title').text()).toBe('Search in project')
+    expect(titleWords(wrapper)).toEqual(['Search in project'])
+  })
+
+  it('header title includes the exact word when exact match is on', () => {
+    mockState.scope = 'current'
+    mockState.recursive = false
+    mockState.exact = true
+    const wrapper = mountDrawer()
+    expect(titleWords(wrapper)).toEqual(['Exact', 'search in current directory'])
+  })
+
+  it('header title combines exact and recursive modifiers', () => {
+    mockState.scope = 'current'
+    mockState.recursive = true
+    mockState.exact = true
+    const wrapper = mountDrawer()
+    expect(titleWords(wrapper)).toEqual(['Exact', 'recursive', 'search in current directory'])
+  })
+
+  it('highlighted modifier words in the title carry the accent class', () => {
+    mockState.scope = 'current'
+    mockState.recursive = true
+    mockState.exact = true
+    const wrapper = mountDrawer()
+    const segs = wrapper.findAll('.title-seg')
+    // exact, recursive are highlighted; base is not
+    expect(segs[0].classes()).toContain('title-seg-accent')
+    expect(segs[1].classes()).toContain('title-seg-accent')
+    expect(segs[2].classes()).not.toContain('title-seg-accent')
+  })
+
+  it('exact modifier word is not rendered when exact match is off', () => {
+    mockState.scope = 'current'
+    mockState.recursive = false
+    mockState.exact = false
+    const wrapper = mountDrawer()
+    expect(titleWords(wrapper)).toEqual(['Search in current directory'])
   })
 
   it('scope toggle button uses fs-toggle-btn style and shows active when global', () => {
@@ -318,7 +381,7 @@ describe('FileSearchDrawer', () => {
     // Find the scope toggle (3rd toggle btn: recursive, scope, reset)
     const toggleBtns = wrapper.findAll('.fs-toggle-btn')
     // The scope btn is the second one (index 1)
-    const scopeBtn = toggleBtns[1]
+    const scopeBtn = toggleBtns[2]
     expect(scopeBtn.classes()).toContain('active')
   })
 
@@ -326,7 +389,7 @@ describe('FileSearchDrawer', () => {
     mockState.scope = 'current'
     const wrapper = mountDrawer()
     const toggleBtns = wrapper.findAll('.fs-toggle-btn')
-    const scopeBtn = toggleBtns[1]
+    const scopeBtn = toggleBtns[2]
     expect(scopeBtn.classes()).not.toContain('active')
   })
 
@@ -334,7 +397,7 @@ describe('FileSearchDrawer', () => {
     mockState.scope = 'current'
     const wrapper = mountDrawer()
     const toggleBtns = wrapper.findAll('.fs-toggle-btn')
-    await toggleBtns[1].trigger('click')
+    await toggleBtns[2].trigger('click')
     expect(mockState.scope).toBe('global')
   })
 
@@ -342,7 +405,7 @@ describe('FileSearchDrawer', () => {
     mockState.scope = 'global'
     const wrapper = mountDrawer()
     const toggleBtns = wrapper.findAll('.fs-toggle-btn')
-    await toggleBtns[1].trigger('click')
+    await toggleBtns[2].trigger('click')
     expect(mockState.scope).toBe('current')
   })
 
