@@ -1663,7 +1663,7 @@ func TestRefactor_ACPConnManager_GetCommandsByAgentID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ACPConn Close / KillProcessForTest
+// ACPConn Close / KillProcessForTest / DeleteSession
 // ---------------------------------------------------------------------------
 
 func TestRefactor_ACPConn_Close(t *testing.T) {
@@ -1684,6 +1684,72 @@ func TestRefactor_ACPConn_KillProcessForTest_NoProcess(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no process to kill")
 }
+
+func TestRefactor_ACPConn_deleteACPSession(t *testing.T) {
+	resetGlobalRegistryForTest(t)
+	reg := GetAgentCapabilityRegistry()
+
+	t.Run("no_conn_skip", func(t *testing.T) {
+		conn := newACPConn(&model.Agent{ID: "del-noconn"}, "sid-del-noconn")
+		conn.SetSessionMappingForTest("sid-del-noconn", "acp-1")
+		conn.alive = true
+		// conn is nil — should log and skip, no panic
+		conn.deleteACPSession()
+	})
+
+	t.Run("no_acpSID_skip", func(t *testing.T) {
+		conn := newACPConn(&model.Agent{ID: "del-nosid"}, "sid-del-nosid")
+		conn.SetAliveForTest()
+		// no acpSID — should skip
+		conn.deleteACPSession()
+	})
+
+	t.Run("dead_conn_skip", func(t *testing.T) {
+		conn := newACPConn(&model.Agent{ID: "del-dead"}, "sid-del-dead")
+		conn.SetSessionMappingForTest("sid-del-dead", "acp-2")
+		// alive defaults false → skip
+		conn.deleteACPSession()
+	})
+
+	t.Run("no_capability_skip", func(t *testing.T) {
+		agent := &model.Agent{ID: "del-nocap", Backend: "acp-stdio", AcpCommand: "echo"}
+		reg.UpdateDeleteSession(agent.ID, false)
+		conn := newACPConn(agent, "sid-del-nocap")
+		conn.SetAliveForTest()
+		conn.SetSessionMappingForTest("sid-del-nocap", "acp-3")
+		// capability false → skip RPC, no panic
+		conn.deleteACPSession()
+	})
+
+	t.Run("capability_attempt_rpc", func(t *testing.T) {
+		agent := &model.Agent{ID: "del-cap", Backend: "acp-stdio", AcpCommand: "echo"}
+		reg.UpdateDeleteSession(agent.ID, true)
+		conn := newACPConn(agent, "sid-del-cap")
+		conn.SetAliveForTest()
+		conn.SetSessionMappingForTest("sid-del-cap", "acp-4")
+		// Pipe-based conn can't complete the RPC, but must not panic.
+		conn.deleteACPSession()
+	})
+}
+
+func TestRefactor_ACPConnManager_DeleteSession(t *testing.T) {
+	mgr := &ACPConnManager{
+		conns:     make(map[string]*ACPConn),
+		stopSweep: make(chan struct{}),
+	}
+
+	// nonexistent → no-op, no panic
+	mgr.DeleteSession("nonexistent")
+
+	// existing conn (dead, no process) → DeleteSession closes it, removing from map
+	agent := &model.Agent{ID: "test-deletesess", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "sid-deletesess")
+	conn.SetSessionMappingForTest("sid-deletesess", "acp-5")
+	mgr.conns["sid-deletesess"] = conn
+	mgr.DeleteSession("sid-deletesess")
+	assert.Nil(t, mgr.GetConn("sid-deletesess"), "connection should be removed after DeleteSession")
+}
+
 
 // ---------------------------------------------------------------------------
 // ACPConn.HasNewAvailableModes / IsModeAvailable / HasNewAvailableThinkingEfforts / HasNewAvailableModels

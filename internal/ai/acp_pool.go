@@ -350,6 +350,25 @@ func (m *ACPConnManager) CloseConn(clawbenchSID string) {
 	}
 }
 
+// DeleteSession best-effort tells the ACP agent to delete the session, then
+// closes the connection. Used when a ClawBench session is permanently deleted.
+// Failures are logged but not propagated — session deletion on the agent side
+// is best-effort and the frontend must not depend on it.
+func (m *ACPConnManager) DeleteSession(clawbenchSID string) {
+	m.mu.Lock()
+	conn, ok := m.conns[clawbenchSID]
+	if ok {
+		delete(m.conns, clawbenchSID)
+	}
+	m.mu.Unlock()
+
+	if !ok {
+		return
+	}
+	conn.deleteACPSession()
+	conn.close()
+}
+
 // MarkIdle marks the connection for a ClawBench session as idle by setting
 // lastUsed to the current time.
 func (m *ACPConnManager) MarkIdle(clawbenchSID string) {
@@ -1216,6 +1235,48 @@ func (c *ACPConn) close() {
 // Public alias for close().
 func (c *ACPConn) Close() {
 	c.close()
+}
+
+// deleteACPSession best-effort tells the ACP agent to delete this session via
+// session/delete (unstable capability). It only runs when the connection is
+// alive, has a known ACP session ID, and the agent advertises the delete
+// capability. Failures are logged, never propagated — the caller must not rely
+// on the result.
+func (c *ACPConn) deleteACPSession() {
+	c.mu.Lock()
+	conn := c.conn
+	acpSID := c.acpSID
+	alive := c.alive && c.isAliveLocked()
+	agentID := ""
+	if c.agent != nil {
+		agentID = c.agent.ID
+	}
+	c.mu.Unlock()
+
+	if conn == nil || acpSID == "" || !alive {
+		slog.Debug("acp: skip session/delete, connection not usable",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "alive", alive)
+		return
+	}
+
+	if !GetAgentCapabilityRegistry().GetDeleteSession(agentID) {
+		slog.Debug("acp: skip session/delete, agent does not advertise delete capability",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "agent_id", agentID)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := conn.UnstableDeleteSession(ctx, acp.UnstableDeleteSessionRequest{
+		SessionId: acp.SessionId(acpSID),
+	})
+	if err != nil {
+		slog.Warn("acp: session/delete failed (best-effort, ignored)",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
+		return
+	}
+	slog.Info("acp: session/delete succeeded",
+		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
 }
 
 // ---------------------------------------------------------------------------

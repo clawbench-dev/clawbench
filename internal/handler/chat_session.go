@@ -182,12 +182,6 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 	// block indefinitely if the agent subprocess doesn't exit cleanly,
 	// preventing the HTTP response from being sent.
 	agentID := service.GetSessionAgentID(sessionID)
-	if agentID != "" {
-		if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
-			slog.Info("acp: closing connection for archived session", "session_id", sessionID, "agent_id", agentID)
-			go ai.GetACPConnManager().CloseConn(sessionID)
-		}
-	}
 
 	// Empty sessions have nothing worth preserving for RAG — hard-delete instead.
 	// Use GetFinalizedMessageCount to exclude streaming placeholder rows,
@@ -196,6 +190,13 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 	msgCount := service.GetFinalizedMessageCount(sessionID)
 	if msgCount == 0 {
 		slog.Info("archiving empty session → hard-delete", "session_id", sessionID)
+
+		// Best-effort tell the ACP agent to delete its copy of the session on
+		// permanent deletion. Failures are logged, not propagated to the frontend.
+		if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
+			slog.Info("acp: deleting session for empty archived session", "session_id", sessionID, "agent_id", agentID)
+			go ai.GetACPConnManager().DeleteSession(sessionID)
+		}
 
 		// Delete RAG chunks (best-effort, no-op if RAG not initialized)
 		if chunksDeleted, err := service.PurgeRAGChunksBySessionIDs([]string{sessionID}); err != nil {
@@ -217,6 +218,12 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 	if err := service.ArchiveSession(projectPath, backend, sessionID); err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to archive session")))
 		return
+	}
+
+	// Close the ACP connection for a non-empty archived session.
+	if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
+		slog.Info("acp: closing connection for archived session", "session_id", sessionID, "agent_id", agentID)
+		go ai.GetACPConnManager().CloseConn(sessionID)
 	}
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
@@ -252,8 +259,8 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 	agentID := service.GetSessionAgentID(sessionID)
 	if agentID != "" {
 		if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
-			slog.Info("acp: closing connection for destroyed session", "session_id", sessionID, "agent_id", agentID)
-			go ai.GetACPConnManager().CloseConn(sessionID)
+			slog.Info("acp: deleting connection for destroyed session", "session_id", sessionID, "agent_id", agentID)
+			go ai.GetACPConnManager().DeleteSession(sessionID)
 		}
 	}
 

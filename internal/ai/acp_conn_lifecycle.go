@@ -543,11 +543,14 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	if c.agent != nil && c.agent.ID != "" {
 		reg := GetAgentCapabilityRegistry()
 		listSessions := initResp.AgentCapabilities.SessionCapabilities.List != nil
+		deleteSession := initResp.AgentCapabilities.SessionCapabilities.Delete != nil
 		reg.UpdateListSessions(c.agent.ID, listSessions)
+		reg.UpdateDeleteSession(c.agent.ID, deleteSession)
 		slog.Info("acp conn: extracted capabilities from Initialize",
 			"agent_id", c.agent.ID,
 			"loadSession", "skipped (use BackendSpec)",
-			"listSessions", listSessions)
+			"listSessions", listSessions,
+			"deleteSession", deleteSession)
 	}
 
 	c.cmd = cmd

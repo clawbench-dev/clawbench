@@ -33,6 +33,7 @@ type AgentCapability struct {
 	ConfigOptionState        *ConfigOptionState
 	LoadSession              *bool // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
 	ListSessions             *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
+	DeleteSession            *bool // SessionCapabilities.Delete != nil from ACP Initialize (nil = not yet set)
 	UpdatedAt                time.Time
 
 	// AvailableOptions stores selectable options by category for categories
@@ -59,6 +60,7 @@ func (c *AgentCapability) HasData() bool {
 		c.ConfigOptionState != nil ||
 		c.LoadSession != nil ||
 		c.ListSessions != nil ||
+		c.DeleteSession != nil ||
 		len(c.AvailableOptions) > 0
 }
 
@@ -185,6 +187,11 @@ func (r *AgentCapabilityRegistry) UpdateLoadSession(agentID string, val bool) {
 // UpdateListSessions updates only the ListSessions capability flag.
 func (r *AgentCapabilityRegistry) UpdateListSessions(agentID string, val bool) {
 	r.Update(agentID, &AgentCapability{ListSessions: &val})
+}
+
+// UpdateDeleteSession updates only the DeleteSession capability flag.
+func (r *AgentCapabilityRegistry) UpdateDeleteSession(agentID string, val bool) {
+	r.Update(agentID, &AgentCapability{DeleteSession: &val})
 }
 
 // ForceUpdate replaces all capability fields for an agent (full overwrite, not merge)
@@ -349,6 +356,14 @@ func (r *AgentCapabilityRegistry) GetListSessions(agentID string) bool {
 	defer r.mu.RUnlock()
 	agentCap, ok := r.caps[agentID]
 	return ok && agentCap != nil && agentCap.ListSessions != nil && *agentCap.ListSessions
+}
+
+// GetDeleteSession returns whether the agent supports DeleteSession.
+func (r *AgentCapabilityRegistry) GetDeleteSession(agentID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agentCap, ok := r.caps[agentID]
+	return ok && agentCap != nil && agentCap.DeleteSession != nil && *agentCap.DeleteSession
 }
 
 // HasAvailableModes checks whether an agent has available modes in the registry.
