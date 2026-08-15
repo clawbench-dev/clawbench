@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	backend TEXT NOT NULL DEFAULT 'claude',
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
+	external_message_id TEXT DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -3834,4 +3835,30 @@ func TestGetChatHistoryPagedViewSummaryKeepsEmptySummaryContent(t *testing.T) {
 	assert.NotEqual(t, "", msgs[0].Content, "messages with an empty summary must keep content so they remain visible")
 	require.NotNil(t, msgs[0].Summary)
 	assert.Equal(t, "", *msgs[0].Summary)
+}
+
+func TestReplaceSessionHistory_ReplacesMessages(t *testing.T) {
+	db := setupDB(t)
+	projectPath := "/proj"
+	sid := helperCreateSession(t, projectPath, "claude", "Test")
+
+	_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', 'old1', 'm1')", projectPath, sid)
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', 'old2', 'm2')", projectPath, sid)
+	require.NoError(t, err)
+
+	// Replace with a single new message.
+	msgs := []service.ReplayMessage{{Role: "user", Content: `{"blocks":[{"type":"text","text":"new"}]}`, ExtMsgID: "n1"}}
+	n, err := service.ReplaceSessionHistory(sid, projectPath, "claude", msgs)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	// Old messages are gone; only the new one remains.
+	var cnt int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt))
+	assert.Equal(t, 1, cnt)
+
+	var content string
+	require.NoError(t, db.QueryRow("SELECT content FROM chat_history WHERE session_id = ?", sid).Scan(&content))
+	assert.Contains(t, content, `"text":"new"`)
 }

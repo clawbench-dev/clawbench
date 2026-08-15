@@ -1667,6 +1667,60 @@ func HardDeleteSession(sessionID string) error {
 	return tx.Commit()
 }
 
+// ReplayMessage is a single message from a LoadSession replay, ready to persist.
+type ReplayMessage struct {
+	Role      string
+	Content   string // JSON: {"blocks":[...], "metadata":{...}}
+	ExtMsgID  string // external ACP messageId
+	ToolCalls []model.ContentBlock
+}
+
+// ReplaceSessionHistory atomically replaces a session's chat history with the
+// given messages (and their tool calls). It deletes the session's prior history
+// and child rows (tool calls, thinking, summaries, raw responses) then inserts
+// the new messages, all in one transaction — on any error the transaction rolls
+// back so the original history is preserved. Returns the number of messages
+// inserted.
+func ReplaceSessionHistory(sessionID, projectPath, backend string, messages []ReplayMessage) (int, error) {
+	tx, err := WriteBegin()
+	if err != nil {
+		return 0, err
+	}
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+
+	_, _ = tx.Exec("DELETE FROM ai_raw_responses WHERE session_id = ?", sessionID)
+	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id = ?", sessionID)
+	_, _ = tx.Exec("DELETE FROM chat_thinking WHERE session_id = ?", sessionID)
+	_, _ = tx.Exec("DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
+	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
+	if _, err := tx.Exec("DELETE FROM chat_history WHERE session_id = ?", sessionID); err != nil {
+		return 0, err
+	}
+
+	for _, m := range messages {
+		res, err := tx.Exec(
+			"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, indexed, external_message_id) VALUES (?, ?, ?, ?, ?, 0, 0, ?)",
+			projectPath, backend, sessionID, m.Role, m.Content, m.ExtMsgID,
+		)
+		if err != nil {
+			return 0, err
+		}
+		msgID, _ := res.LastInsertId()
+		for i := range m.ToolCalls {
+			tc := &m.ToolCalls[i]
+			inputJSON, _ := json.Marshal(tc.Input)
+			if err := UpsertToolCall(msgID, sessionID, tc.ID, tc.Name, inputJSON, tc.Output, tc.Status, tc.Summary, tc.Done, tc.DurationMs); err != nil {
+				slog.Warn("service: failed to persist replay tool call", "session_id", sessionID, "tool_id", tc.ID, "error", err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(messages), nil
+}
+
 // summarizeContentForView strips the heavy blocks from assistant message content
 // but preserves the metadata (and cancelled flag) so the frontend message-detail
 // panel can still show model/token/cost/duration/session info for summarized

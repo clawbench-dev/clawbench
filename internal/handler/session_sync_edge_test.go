@@ -193,33 +193,18 @@ func TestWaitForReplaySettled_NilClient(t *testing.T) {
 	waitForReplaySettled(nil) // should return immediately, no panic
 }
 
-func TestComputeSyncAdds_DeduplicatesByMessageID(t *testing.T) {
-	replay := []replayMessage{
-		{role: "user", content: `{"blocks":[{"type":"text","text":"dup"}]}`, extMsgID: "m1"},
-		{role: "user", content: `{"blocks":[{"type":"text","text":"new"}]}`, extMsgID: "m2"},
-	}
-	local := []replayMessage{{role: "user", content: `{"blocks":[{"type":"text","text":"old"}]}`, extMsgID: "m0"}}
-	existing := map[string]struct{}{"m1": {}}
+func TestFilterSystemPromptText(t *testing.T) {
+	// Pure <system-reminder> block → dropped.
+	assert.Equal(t, "", filterSystemPromptText("<system-reminder data-role=\"command-caveat\">Caveat: ...</system-reminder>"))
+	assert.Equal(t, "", filterSystemPromptText("  <system-reminder>...</system-reminder>  "))
 
-	adds := computeSyncAdds(replay, local, existing)
-	require.Len(t, adds, 1)
-	assert.Equal(t, "m2", adds[0].extMsgID)
+	// Legacy "[System Instructions: ...]\n\n<real text>" → keep real text.
+	assert.Equal(t, "你叫什么名字", filterSystemPromptText("[System Instructions: ## User Interaction\n...我同意后再实施。]\n\n你叫什么名字"))
+	// System instructions with no real text after → dropped.
+	assert.Equal(t, "", filterSystemPromptText("[System Instructions: ...]\n\n  "))
+
+	// Normal text → unchanged.
+	assert.Equal(t, "你几岁了", filterSystemPromptText("你几岁了"))
+	assert.Equal(t, "", filterSystemPromptText("   "))
 }
 
-func TestSameMessage_EmptyTextBranches(t *testing.T) {
-	// Both empty → equal.
-	assert.True(t, sameMessage(
-		replayMessage{role: "user", content: "{}"},
-		replayMessage{role: "user", content: "{}"},
-	))
-	// Different roles → not equal even when both empty.
-	assert.False(t, sameMessage(
-		replayMessage{role: "user", content: "{}"},
-		replayMessage{role: "assistant", content: "{}"},
-	))
-	// One empty, one non-empty → not equal.
-	assert.False(t, sameMessage(
-		replayMessage{role: "user", content: `{"blocks":[{"type":"text","text":"hi"}]}`},
-		replayMessage{role: "user", content: "{}"},
-	))
-}

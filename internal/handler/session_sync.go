@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -86,7 +87,9 @@ func groupLoadSessionReplay(client *ai.ClawBenchACPClient) []replayMessage {
 
 		if n.Update.UserMessageChunk != nil {
 			if text := n.Update.UserMessageChunk.Content.Text; text != nil && text.Text != "" {
-				ai.AccumulateBlock(&blocks, ai.StreamEvent{Type: strContent, Content: text.Text})
+				if cleaned := filterSystemPromptText(text.Text); cleaned != "" {
+					ai.AccumulateBlock(&blocks, ai.StreamEvent{Type: strContent, Content: cleaned})
+				}
 			}
 			continue
 		}
@@ -97,12 +100,46 @@ func groupLoadSessionReplay(client *ai.ClawBenchACPClient) []replayMessage {
 		for event := range ch {
 			switch event.Type {
 			case strContent, "thinking", "thinking_done", strToolUse, "tool_result", "warning", strError:
+				if event.Type == strContent {
+					event.Content = filterSystemPromptText(event.Content)
+				}
 				ai.AccumulateBlock(&blocks, event)
 			}
 		}
 	}
 	flush()
 	return messages
+}
+
+// systemInstructionsRe matches the leading "[System Instructions: ...]" block up
+// to the first ']' followed by whitespace, so the real user text after it is kept.
+var systemInstructionsRe = regexp.MustCompile(`^\[System Instructions[\s\S]*?\]\s`)
+
+// filterSystemPromptText strips injected system-prompt/reminder content from a
+// replayed text block. System prompts can be re-injected at ANY point in the
+// history (not just the first message), so this runs on every text block.
+// Returns "" when the block is purely system prompt (drop it).
+func filterSystemPromptText(text string) string {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return ""
+	}
+	// Current CodeBuddy format: a standalone <system-reminder ...> block.
+	if strings.HasPrefix(t, "<system-reminder") {
+		return ""
+	}
+	// Legacy format: system instructions prepended to a user message as
+	// "[System Instructions: ...]<whitespace><real user text>". Strip the block.
+	if strings.HasPrefix(t, "[System Instructions") {
+		if loc := systemInstructionsRe.FindStringIndex(t); loc != nil {
+			rest := strings.TrimSpace(t[loc[1]:])
+			if rest != "" {
+				return rest
+			}
+		}
+		return ""
+	}
+	return text
 }
 
 // persistReplayMessages 批量插入回放消息及其 tool calls，并记录外部 messageId。
@@ -247,44 +284,37 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		messages = groupLoadSessionReplay(client)
 	}
 
-	// 加载本地已有消息（有序）与 external_message_id，用于增量去重。
-	rows, err := service.ReadDB().Query(
-		"SELECT external_message_id, role, content FROM chat_history WHERE session_id = ? ORDER BY id ASC",
-		req.SessionID,
-	)
-	if err != nil {
-		slog.Error("handler: failed to query existing chat_history", "error", err)
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+	// 空回放守卫：外部会话没加载到任何消息时不覆盖，避免误删原会话。
+	var oldCount int
+	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", req.SessionID).Scan(&oldCount)
+	if len(messages) == 0 {
+		slog.Info("handler: acp-sync skipped (empty replay)", "session_id", req.SessionID, "acp_sid", acpSID)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "added": 0, "skipped": true})
 		return
 	}
-	defer func() { _ = rows.Close() }()
-	existingExtIDs := map[string]struct{}{}
-	var localMessages []replayMessage
-	for rows.Next() {
-		var extID, role, content string
-		if err := rows.Scan(&extID, &role, &content); err != nil {
-			slog.Warn("handler: failed scanning chat_history row", "error", err)
-			continue
-		}
-		if extID != "" {
-			existingExtIDs[extID] = struct{}{}
-		}
-		localMessages = append(localMessages, replayMessage{role: role, content: content, extMsgID: extID})
+
+	// 覆盖式同步：把当前会话的历史整体替换为加载到的完整外部历史。删除+插入在
+	// 同一事务内，任何失败回滚，原会话保持完好。
+	svcMsgs := make([]service.ReplayMessage, 0, len(messages))
+	for _, m := range messages {
+		svcMsgs = append(svcMsgs, service.ReplayMessage{Role: m.role, Content: m.content, ExtMsgID: m.extMsgID, ToolCalls: m.toolCalls})
 	}
-	if err := rows.Err(); err != nil {
-		slog.Error("handler: failed iterating existing chat_history", "error", err)
+	replaced, err := service.ReplaceSessionHistory(req.SessionID, projectPath, agent.Backend, svcMsgs)
+	if err != nil {
+		slog.Error("handler: ReplaceSessionHistory failed", "session_id", req.SessionID, "error", err)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 
-	// 仅追加外部历史中本地尚未拥有的消息。按"本地历史是外部历史前缀"的续接方式匹配：
-	// 即使消息没有稳定 external_message_id（如实时聊天的消息），也能正确去重。
-	toPersist := computeSyncAdds(messages, localMessages, existingExtIDs)
-	added := persistReplayMessages(req.SessionID, projectPath, agent.Backend, toPersist)
+	// 新增条数 = 覆盖后消息数 - 覆盖前消息数（钳到非负，供前端 toast）。
+	added := replaced - oldCount
+	if added < 0 {
+		added = 0
+	}
 
 	slog.Info("handler: acp-sync completed",
 		"session_id", req.SessionID, "agent", req.AgentID, "acp_sid", acpSID,
-		"replayed", len(messages), "added", added)
+		"replayed", len(messages), "old", oldCount, "replaced", replaced, "added", added)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
@@ -316,43 +346,4 @@ func waitForReplaySettled(client *ai.ClawBenchACPClient) {
 			return
 		}
 	}
-}
-
-// computeSyncAdds 计算应插入的增量消息。按"本地历史是外部历史的前缀"进行续接匹配：
-// 从本地第一条消息起，逐条与回放对齐（role + 纯文本近似），本地匹配耗尽后，把回放
-// 剩余的消息作为新增返回。即使本地消息没有稳定的 external_message_id（如实时聊天
-// 生成的消息），也能避免被重复拉取。
-func computeSyncAdds(replay []replayMessage, local []replayMessage, existingExtIDs map[string]struct{}) []replayMessage {
-	k := 0
-	for k < len(local) && k < len(replay) {
-		if !sameMessage(local[k], replay[k]) {
-			break
-		}
-		k++
-	}
-	var adds []replayMessage
-	for _, m := range replay[k:] {
-		// messageId 去重作为额外保险（前缀匹配错位时避免重复）
-		if m.extMsgID != "" {
-			if _, dup := existingExtIDs[m.extMsgID]; dup {
-				continue
-			}
-		}
-		adds = append(adds, m)
-	}
-	return adds
-}
-
-// sameMessage 判断两条消息是否代表同一条逻辑消息：角色相同，且纯文本相等或互为子串
-// （外部回放可能在消息文本中夹带系统指令等额外上下文）。
-func sameMessage(a, b replayMessage) bool {
-	if a.role != b.role {
-		return false
-	}
-	pa := strings.TrimSpace(service.ExtractPlainText(a.content))
-	pb := strings.TrimSpace(service.ExtractPlainText(b.content))
-	if pa == "" || pb == "" {
-		return pa == pb
-	}
-	return pa == pb || strings.Contains(pa, pb) || strings.Contains(pb, pa)
 }
