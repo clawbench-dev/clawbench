@@ -231,6 +231,15 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("handler: failed to update source_session_id", "session_id", sessionID, "error", errSrc)
 	}
 
+	// Also set external_session_id to the loaded ACP session id. Otherwise the
+	// session's external_session_id stays empty and a later live send would
+	// create a brand-new ACP session (overwriting external_session_id and
+	// losing the link to this loaded session), breaking resume/sync of the
+	// original conversation.
+	if errExt := service.UpdateExternalSessionID(sessionID, req.AcpSessionID); errExt != nil {
+		slog.Warn("handler: failed to update external_session_id for acp-load session", "session_id", sessionID, "error", errExt)
+	}
+
 	// Set transport to acp-stdio for ACP-loaded sessions
 	if errTransport := service.UpdateSessionTransport(sessionID, transportACP); errTransport != nil {
 		slog.Warn("handler: failed to update transport for acp-load session", "session_id", sessionID, "error", errTransport)

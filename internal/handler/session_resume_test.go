@@ -496,15 +496,16 @@ func TestServeACPLoadSession_SessionMetadataBeforeLoad(t *testing.T) {
 
 	// Find the session that was created (archived by cleanup on failure).
 	// Query without filtering on archived to find it.
-	var sourceID, transport string
+	var sourceID, transport, extID string
 	err := service.UnsafeDBForTest().QueryRow(
-		"SELECT source_session_id, transport FROM chat_sessions WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1",
+		"SELECT source_session_id, transport, external_session_id FROM chat_sessions WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1",
 		agentID,
-	).Scan(&sourceID, &transport)
+	).Scan(&sourceID, &transport, &extID)
 	if err == nil {
 		// If the session exists (may have been hard-deleted), verify metadata
 		assert.Equal(t, "acp:"+acpSessionID, sourceID, "source_session_id should be 'acp:<acpSessionId>'")
 		assert.Equal(t, "acp-stdio", transport, "transport should be 'acp-stdio'")
+		assert.Equal(t, acpSessionID, extID, "external_session_id should be the loaded ACP session id")
 	}
 }
 
