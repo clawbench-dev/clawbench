@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClawBench - Mobile-First AI Workstation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0a0f;
+    position: relative;
+  }
+
+  /* Generated background with blur */
+  .bg-image {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background: url('product_hero_assets/bg_tech.jpg') center/cover no-repeat;
+    filter: blur(8px) brightness(0.6);
+    transform: scale(1.05);
+  }
+
+  /* Grid background */
+  .grid-bg {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+    z-index: 0;
+  }
+
+  /* Radial glow */
+  .glow {
+    position: absolute;
+    z-index: 1;
+    border-radius: 50%;
+    pointer-events: none;
+  }
+  .glow-1 {
+    width: 1100px; height: 1100px;
+    top: 50%; left: 45%;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, rgba(245,158,11,0.14) 0%, rgba(245,158,11,0.05) 35%, transparent 65%);
+  }
+  .glow-2 {
+    width: 600px; height: 600px;
+    top: 55%; left: 55%;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, rgba(251,191,36,0.1) 0%, transparent 55%);
+  }
+  .glow-3 {
+    width: 500px; height: 500px;
+    top: 35%; left: 35%;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, rgba(217,119,6,0.08) 0%, transparent 55%);
+  }
+
+  /* Brand area - top left */
+  .brand {
+    position: absolute;
+    top: 50px;
+    left: 180px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .brand-top {
+    display: flex;
+    align-items: flex-end;
+    gap: 18px;
+  }
+
+  .brand-logo {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    object-fit: contain;
+    filter: drop-shadow(0 0 24px rgba(245,158,11,0.5));
+  }
+
+  .brand-name {
+    font-size: 52px;
+    font-weight: 800;
+    color: #ffffff;
+    letter-spacing: -0.5px;
+    text-shadow: 0 0 40px rgba(245,158,11,0.25);
+  }
+
+  .brand-tagline {
+    font-size: 30px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.75);
+    margin-top: 2px;
+    letter-spacing: 2px;
+  }
+
+  .brand-features {
+    display: flex;
+    gap: 16px;
+    margin-top: 6px;
+  }
+
+  .feature-tag {
+    font-size: 15px;
+    font-weight: 600;
+    color: #f59e0b;
+    padding: 8px 20px;
+    border: 1px solid rgba(245,158,11,0.35);
+    border-radius: 24px;
+    background: rgba(245,158,11,0.1);
+    letter-spacing: 0.5px;
+  }
+
+  /* Devices container - side by side */
+  .devices {
+    position: absolute;
+    bottom: 210px;
+    left: 42%;
+    transform: translateX(-50%);
+    z-index: 5;
+    display: flex;
+    align-items: flex-end;
+    gap: 60px;
+  }
+
+  /* Tablet device */
+  .tablet-device {
+    border-radius: 18px;
+    background: linear-gradient(180deg, #2a2a2e 0%, #1c1c20 50%, #111113 100%);
+    padding: 14px;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.08),
+      0 20px 60px rgba(0,0,0,0.6),
+      0 40px 80px rgba(0,0,0,0.4),
+      inset 0 1px 0 rgba(255,255,255,0.1),
+      inset 0 -1px 0 rgba(0,0,0,0.3);
+  }
+
+  .tablet-screen {
+    width: 820px;
+    height: 547px;
+    border-radius: 14px;
+    overflow: hidden;
+    position: relative;
+    background: #000;
+  }
+
+  .tablet-screen img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .tablet-camera {
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 5px;
+    height: 5px;
+    background: #1a1a2e;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.1);
+    z-index: 3;
+  }
+
+  .tablet-reflection {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 14px;
+    background:
+      linear-gradient(
+        125deg,
+        rgba(255,255,255,0.12) 0%,
+        rgba(255,255,255,0.06) 8%,
+        transparent 20%,
+        transparent 75%,
+        rgba(255,255,255,0.03) 100%
+      ),
+      linear-gradient(
+        135deg,
+        rgba(255,255,255,0.04) 0%,
+        transparent 40%,
+        transparent 60%,
+        rgba(255,255,255,0.02) 100%
+      );
+    pointer-events: none;
+    z-index: 4;
+  }
+
+  /* Phone device */
+  .phone-device {
+    border-radius: 28px;
+    background: linear-gradient(180deg, #2a2a2e 0%, #1c1c20 50%, #111113 100%);
+    padding: 6px;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.08),
+      0 20px 60px rgba(0,0,0,0.7),
+      0 40px 80px rgba(0,0,0,0.5),
+      0 0 80px rgba(245,158,11,0.06),
+      inset 0 1px 0 rgba(255,255,255,0.1),
+      inset 0 -1px 0 rgba(0,0,0,0.3);
+  }
+
+  .phone-screen {
+    width: 300px;
+    height: 660px;
+    border-radius: 24px;
+    overflow: hidden;
+    position: relative;
+    background: #000;
+  }
+
+  .phone-screen img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .phone-camera {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 10px;
+    height: 10px;
+    background: #0a0a0f;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.08);
+    z-index: 3;
+  }
+
+  .phone-reflection {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 24px;
+    background:
+      linear-gradient(
+        125deg,
+        rgba(255,255,255,0.12) 0%,
+        rgba(255,255,255,0.06) 6%,
+        transparent 16%,
+        transparent 80%,
+        rgba(255,255,255,0.03) 100%
+      ),
+      linear-gradient(
+        135deg,
+        rgba(255,255,255,0.04) 0%,
+        transparent 40%,
+        transparent 60%,
+        rgba(255,255,255,0.02) 100%
+      );
+    pointer-events: none;
+    z-index: 4;
+  }
+
+  /* Bottom reflection on floor */
+  .floor-reflection {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 200px;
+    background: linear-gradient(
+      to top,
+      rgba(245,158,11,0.03) 0%,
+      transparent 100%
+    );
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  /* Ambient light strip */
+  .ambient-strip {
+    position: absolute;
+    bottom: 150px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 900px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(245,158,11,0.3), rgba(251,191,36,0.5), rgba(245,158,11,0.3), transparent);
+    z-index: 4;
+    filter: blur(1px);
+  }
+
+  .ambient-strip::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 10%;
+    right: 10%;
+    height: 100%;
+    background: inherit;
+    filter: blur(8px);
+    opacity: 0.6;
+  }
+
+  /* Bottom footer: install command + GitHub link */
+  .footer {
+    position: absolute;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 40px;
+  }
+
+  .install-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 24px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px);
+    flex-shrink: 0;
+  }
+
+  .install-prompt {
+    font-size: 15px;
+    font-weight: 600;
+    color: #f59e0b;
+    font-family: 'Courier New', monospace;
+  }
+
+  .install-cmd {
+    font-size: 15px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.85);
+    font-family: 'Courier New', monospace;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+
+  .github-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 24px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px);
+    color: rgba(255,255,255,0.85);
+    text-decoration: none;
+    transition: all 0.3s;
+    flex-shrink: 0;
+  }
+
+  .github-link:hover {
+    background: rgba(255,255,255,0.09);
+    border-color: rgba(245,158,11,0.4);
+  }
+
+  .github-icon {
+    width: 20px;
+    height: 20px;
+    color: #f59e0b;
+    flex-shrink: 0;
+  }
+
+  .github-text {
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+
+  .license-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 24px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px);
+    color: rgba(255,255,255,0.85);
+    flex-shrink: 0;
+  }
+
+  .license-text {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+
+  /* Right side feature cards */
+  .features-right {
+    position: absolute;
+    top: 50%;
+    right: 180px;
+    transform: translateY(-50%);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .feature-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 22px;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    backdrop-filter: blur(10px);
+    width: 280px;
+  }
+
+  .feature-card-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+  }
+
+  .feature-card-icon.agent {
+    background: linear-gradient(135deg, rgba(245,158,11,0.2), rgba(245,158,11,0.05));
+    border: 1px solid rgba(245,158,11,0.2);
+    color: #f59e0b;
+  }
+
+  .feature-card-icon.stream {
+    background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(59,130,246,0.05));
+    border: 1px solid rgba(59,130,246,0.2);
+    color: #3b82f6;
+  }
+
+  .feature-card-icon.terminal {
+    background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.05));
+    border: 1px solid rgba(16,185,129,0.2);
+    color: #10b981;
+  }
+
+  .feature-card-icon.deploy {
+    background: linear-gradient(135deg, rgba(168,85,247,0.2), rgba(168,85,247,0.05));
+    border: 1px solid rgba(168,85,247,0.2);
+    color: #a855f7;
+  }
+
+  .feature-card-icon.forward {
+    background: linear-gradient(135deg, rgba(236,72,153,0.2), rgba(236,72,153,0.05));
+    border: 1px solid rgba(236,72,153,0.2);
+    color: #ec4899;
+  }
+
+  .feature-card-icon.files {
+    background: linear-gradient(135deg, rgba(20,184,166,0.2), rgba(20,184,166,0.05));
+    border: 1px solid rgba(20,184,166,0.2);
+    color: #14b8a6;
+  }
+
+  .feature-card-icon.notify {
+    background: linear-gradient(135deg, rgba(245,158,11,0.2), rgba(251,191,36,0.05));
+    border: 1px solid rgba(245,158,11,0.2);
+    color: #fbbf24;
+  }
+
+  .feature-card-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .feature-card-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.3px;
+  }
+
+  .feature-card-desc {
+    font-size: 14px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.5);
+    line-height: 1.4;
+  }
+
+  /* Floating particles */
+  .particle {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .p1 { width: 4px; height: 4px; top: 15%; left: 8%; background: rgba(245,158,11,0.4); filter: blur(1px); }
+  .p2 { width: 3px; height: 3px; top: 25%; left: 15%; background: rgba(251,191,36,0.3); filter: blur(1px); }
+  .p3 { width: 5px; height: 5px; top: 70%; left: 5%; background: rgba(245,158,11,0.25); filter: blur(2px); }
+  .p4 { width: 3px; height: 3px; top: 80%; left: 12%; background: rgba(217,119,6,0.3); filter: blur(1px); }
+  .p5 { width: 4px; height: 4px; top: 20%; right: 25%; background: rgba(59,130,246,0.3); filter: blur(1px); }
+  .p6 { width: 6px; height: 6px; top: 75%; right: 30%; background: rgba(245,158,11,0.2); filter: blur(2px); }
+  .p7 { width: 3px; height: 3px; bottom: 15%; left: 30%; background: rgba(16,185,129,0.3); filter: blur(1px); }
+  .p8 { width: 4px; height: 4px; top: 10%; right: 10%; background: rgba(168,85,247,0.3); filter: blur(1px); }
+
+  /* Decorative lines */
+  .deco-line {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .deco-line-1 {
+    top: 0; left: 120px;
+    width: 1px; height: 40px;
+    background: linear-gradient(180deg, rgba(245,158,11,0.3), transparent);
+  }
+  .deco-line-2 {
+    bottom: 0; right: 120px;
+    width: 1px; height: 40px;
+    background: linear-gradient(0deg, rgba(245,158,11,0.3), transparent);
+  }
+  .deco-line-3 {
+    top: 120px; left: 0;
+    width: 40px; height: 1px;
+    background: linear-gradient(90deg, rgba(245,158,11,0.3), transparent);
+  }
+  .deco-line-4 {
+    bottom: 120px; right: 0;
+    width: 40px; height: 1px;
+    background: linear-gradient(270deg, rgba(245,158,11,0.3), transparent);
+  }
+</style>
+</head>
+<body>
+  <!-- Background image with blur -->
+  <div class="bg-image"></div>
+
+  <!-- Background layers -->
+  <div class="grid-bg"></div>
+  <div class="glow glow-1"></div>
+  <div class="glow glow-2"></div>
+  <div class="glow glow-3"></div>
+  <div class="floor-reflection"></div>
+
+  <!-- Floating particles -->
+  <div class="particle p1"></div>
+  <div class="particle p2"></div>
+  <div class="particle p3"></div>
+  <div class="particle p4"></div>
+  <div class="particle p5"></div>
+  <div class="particle p6"></div>
+  <div class="particle p7"></div>
+  <div class="particle p8"></div>
+
+  <!-- Decorative lines -->
+  <div class="deco-line deco-line-1"></div>
+  <div class="deco-line deco-line-2"></div>
+  <div class="deco-line deco-line-3"></div>
+  <div class="deco-line deco-line-4"></div>
+
+  <!-- Brand -->
+  <div class="brand">
+    <div class="brand-top">
+      <img class="brand-logo" src="product_hero_assets/logo.png" alt="ClawBench Logo">
+      <span class="brand-name">ClawBench</span>
+    </div>
+    <div class="brand-tagline">Mobile-First AI Workstation</div>
+    <div class="brand-features">
+      <span class="feature-tag">Multi-Agent</span>
+      <span class="feature-tag">Cross-Platform</span>
+      <span class="feature-tag">One-Click Deploy</span>
+    </div>
+  </div>
+
+  <!-- Devices side by side -->
+  <div class="devices">
+    <!-- Tablet -->
+    <div class="tablet-device">
+      <div class="tablet-screen">
+        <div class="tablet-camera"></div>
+        <img src="product_hero_assets/tablet_screenshot.jpg" alt="Tablet Screenshot">
+        <div class="tablet-reflection"></div>
+      </div>
+    </div>
+
+    <!-- Phone -->
+    <div class="phone-device">
+      <div class="phone-screen">
+        <div class="phone-camera"></div>
+        <img src="product_hero_assets/phone_screenshot.jpg" alt="Phone Screenshot">
+        <div class="phone-reflection"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right side feature cards -->
+  <div class="features-right">
+    <div class="feature-card">
+      <div class="feature-card-icon agent">&#x1F916;</div>
+      <div class="feature-card-text">
+        <div class="feature-card-title">12+ AI Agents</div>
+        <div class="feature-card-desc">CodeBuddy / Claude / OpenCode / Codex ...</div>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-card-icon stream">&#x26A1;</div>
+      <div class="feature-card-text">
+        <div class="feature-card-title">Real-Time Streaming</div>
+        <div class="feature-card-desc">WebSocket streaming JSON events</div>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-card-icon terminal">&#x1F4BB;</div>
+      <div class="feature-card-text">
+        <div class="feature-card-title">Web Terminal</div>
+        <div class="feature-card-desc">PTY multi-tab + ring buffer playback</div>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-card-icon deploy">&#x1F680;</div>
+      <div class="feature-card-text">
+        <div class="feature-card-title">Zero-Config Deploy</div>
+        <div class="feature-card-desc">Single binary + one-click deploy</div>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-card-icon forward">&#x1F517;</div>
+      <div class="feature-card-text">
+        <div class="feature-card-title">Port Mapping</div>
+        <div class="feature-card-desc">SSH tunnel + HTTP reverse proxy</div>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-card-icon files">&#x1F4C1;</div>
+      <div class="feature-card-text">
+        <div class="feature-card-title">File Management</div>
+        <div class="feature-card-desc">Browse + edit + code symbol navigation</div>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-card-icon notify">&#x1F514;</div>
+      <div class="feature-card-text">
+        <div class="feature-card-title">Feishu & DingTalk Alerts</div>
+        <div class="feature-card-desc">IM push + instant task-complete alerts</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ambient light strip -->
+  <div class="ambient-strip"></div>
+
+  <!-- Bottom footer: install command + GitHub -->
+  <div class="footer">
+    <div class="install-box">
+      <span class="install-prompt">$</span>
+      <span class="install-cmd">npm install -g @xulongzhe/clawbench</span>
+    </div>
+    <a class="github-link" href="https://github.com/clawbench-dev/clawbench">
+      <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+      </svg>
+      <span class="github-text">github.com/clawbench-dev/clawbench</span>
+    </a>
+    <div class="license-box">
+      <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 0 1 2.6v4.4c0 4.1 2.9 7.6 7 9 4.1-1.4 7-4.9 7-9V2.6L8 0zm-.18 11.33L5.1 8.62l.9-.9 1.82 1.81 3.4-3.4.9.9-4.3 4.3z"/>
+      </svg>
+      <span class="license-text">MIT License</span>
+    </div>
+  </div>
+</body>
+</html>

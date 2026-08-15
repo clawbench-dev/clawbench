@@ -82,8 +82,8 @@ git log --oneline --since="24 hours ago" origin/main
 
 需要检查的补充文档列表：
 
-- `README.md` — 用户面向的功能介绍、截图、功能详解
-- `README.en.md` — 英文版 README
+- `README.md` — 英文版 README（GitHub 主页默认渲染，面向国际用户）
+- `README.zh.md` — 中文版 README
 - `AGENTS.md` — AI Agent 项目指引（架构、组件、配置、模式）
 - `docs/FAQ.md` — 常见问题
 - `docs/FAQ.en.md` — 英文FAQ
@@ -94,7 +94,7 @@ git log --oneline --since="24 hours ago" origin/main
 - 保持文档现有风格和格式一致；中文文档用中文，英文文档用英文
 - 如果新功能有截图，在 README 截图区域添加（仅当截图文件存在时）
 - **AGENTS.md** 的 Architecture 部分需要反映最新的组件、composable、handler 等
-- **README.md** 的功能详解部分需要覆盖所有面向用户的功能
+- **README.md** 与 **README.zh.md** 的功能详解部分需要覆盖所有面向用户的功能（英文版为默认主页）
 - 新增的 AI 后端需要在所有文档中同步添加；新增的配置项需要添加到 AGENTS.md 的 Configuration 表格中
 
 ### 第五步：更新系统设计文档（docs/spec/）
@@ -135,7 +135,7 @@ git log --oneline --since="24 hours ago" origin/main
 
 #### 更新策略
 
-- **README.md（总览）**：每次**全量重写**，反映系统真实状态（系统定位、模块地图、核心技术栈、文档导航）
+- **README.md（总览，英文默认主页）**：每次**全量重写**，反映系统真实状态（系统定位、模块地图、核心技术栈、文档导航）；**README.zh.md** 同步更新中文版
 - **模块文件**：**增量更新**——先读现有内容，对比当前代码，只更新过时的段落，未变化部分保持原样；发现新流程/设计就创建新文件；不要为了"看起来更新了"而重写未变化内容
 
 ### 第六步：自检
