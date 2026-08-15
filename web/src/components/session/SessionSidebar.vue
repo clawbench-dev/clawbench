@@ -12,8 +12,8 @@
           @create="handleCreateClick"
         >
           <template #actions>
-            <button class="header-action-btn sidebar-close-btn" @click.stop="$emit('close')" :title="t('session.closeSidebar')">
-              <PanelLeftClose :size="16" />
+            <button class="header-action-btn sidebar-pin-btn is-active" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
+              <Pin :size="16" :fill="'currentColor'" />
             </button>
           </template>
         </SessionListHeader>
@@ -34,7 +34,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PanelLeftClose } from 'lucide-vue-next'
+import { Pin } from 'lucide-vue-next'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
@@ -118,5 +118,9 @@ defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLoca
 .session-sidebar-header {
   flex-shrink: 0;
   cursor: default;
+}
+.header-action-btn.sidebar-pin-btn.is-active {
+  background: rgba(0, 102, 204, 0.15);
+  color: var(--accent-color, #0066cc);
 }
 </style>

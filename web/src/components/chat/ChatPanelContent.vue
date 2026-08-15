@@ -86,7 +86,6 @@
       :currentTransport="identity.currentTransport.value"
       :currentAgentId="identity.currentAgentId.value"
       :acpSyncing="acpSyncing"
-      :session-panel-open="sessionSidebarOpen"
       :active="props.active"
       @send="sendMessage"
       @cancel="stream.cancelStream"
@@ -215,7 +214,6 @@ const props = defineProps({
     keyboardActive: { type: Boolean, default: true },
     currentFile: Object,
     currentDir: String,
-    sessionSidebarOpen: Boolean,
 })
 const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click', 'open-session-search'])
 

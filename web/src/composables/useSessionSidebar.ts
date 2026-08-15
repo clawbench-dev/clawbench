@@ -89,13 +89,13 @@ export function useSessionSidebar() {
   function addSessionLocally(session: SidebarSession) {
     addLocallyFn?.(session)
   }
-  /** Bridge for openSessionTab: sidebar open → collapse it; else open the drawer. */
+  /** Bridge for openSessionTab: when pinned, switch back to drawer mode and open
+   *  it; otherwise just open the drawer. */
   function openSessionTabBridge() {
     if (open.value) {
       closeSidebar()
-    } else {
-      openDrawerFn?.()
     }
+    openDrawerFn?.()
   }
 
   return {

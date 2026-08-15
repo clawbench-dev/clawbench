@@ -69,16 +69,17 @@ describe('useSessionSidebar', () => {
     expect(openDrawer).not.toHaveBeenCalled()
   })
 
-  it('openSessionTabBridge toggles sidebar when open, else opens drawer', () => {
+  it('openSessionTabBridge switches pinned sidebar to drawer mode and opens it', () => {
     const s = useSessionSidebar()
     const openDrawer = vi.fn()
     s.registerOpenDrawer(openDrawer)
-    // Sidebar open → bridge toggles it closed (does NOT open drawer)
+    // Sidebar pinned → bridge closes it AND opens the drawer
     s.open.value = true
     s.openSessionTabBridge()
     expect(s.open.value).toBe(false)
-    expect(openDrawer).not.toHaveBeenCalled()
+    expect(openDrawer).toHaveBeenCalled()
     // Sidebar closed → bridge opens drawer
+    openDrawer.mockClear()
     s.openSessionTabBridge()
     expect(openDrawer).toHaveBeenCalled()
   })

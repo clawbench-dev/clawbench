@@ -660,15 +660,8 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('open-session-tab')).toBeTruthy()
   })
 
-  it('disables the session button when sessionPanelOpen is true', () => {
-    const wrapper = mountBar({ sessionPanelOpen: true })
-    const btn = wrapper.find('[data-action="session"]')
-    expect(btn.exists()).toBe(true)
-    expect((btn.element as HTMLButtonElement).disabled).toBe(true)
-  })
-
-  it('shows the session button enabled when sessionPanelOpen is false', () => {
-    const wrapper = mountBar({ sessionPanelOpen: false })
+  it('session button stays enabled', () => {
+    const wrapper = mountBar()
     const btn = wrapper.find('[data-action="session"]')
     expect(btn.exists()).toBe(true)
     expect((btn.element as HTMLButtonElement).disabled).toBe(false)

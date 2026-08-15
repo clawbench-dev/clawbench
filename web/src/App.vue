@@ -232,7 +232,6 @@
                       :keyboard-active="chatShortcutActive"
                       :current-file="currentFile"
                       :current-dir="currentDir"
-                      :session-sidebar-open="sessionSidebar.open.value && isWideScreen"
                       @open="switchTab('chat')"
                       @open-file="handleSelectFile"
                       @task-card-click="onTaskCardClick"

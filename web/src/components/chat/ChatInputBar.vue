@@ -7,8 +7,7 @@
           {{ t('chat.actions.session') }}
         </span>
         <button class="chat-action-btn" data-action="session"
-          :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning, 'is-disabled': sessionPanelOpen }"
-          :disabled="sessionPanelOpen"
+          :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
           @click="$emit('open-session-tab', 'sessions')"
           :title="t('chat.actions.session')">
           <List :size="14" />
@@ -450,7 +449,6 @@ const props = defineProps({
   currentAgentId: String,
   currentSessionRunning: Boolean,
   active: Boolean,
-  sessionPanelOpen: Boolean,
 })
 
 const emit = defineEmits([
@@ -1563,8 +1561,7 @@ defineExpose({
   transform: scale(0.92);
 }
 
-.chat-action-btn:disabled,
-.chat-action-btn.is-disabled {
+.chat-action-btn:disabled {
   cursor: not-allowed;
   opacity: 0.4;
   color: var(--text-muted, #999);
