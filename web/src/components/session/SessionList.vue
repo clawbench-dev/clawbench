@@ -1,36 +1,41 @@
 <template>
   <div class="session-list" ref="listRef">
-    <LoadingIndicator v-if="loading" size="sm" :label="t('common.loading')" />
+    <!-- Only show the full-screen spinner on first load / when the list is empty.
+         On background refreshes the existing list stays visible so it can be
+         swapped seamlessly to the new data (see loadSessions). -->
+    <LoadingIndicator v-if="loading && sessions.length === 0" size="sm" :label="t('common.loading')" />
     <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
     <template v-else>
-      <div
-        v-for="(session, idx) in sessionsWithStatus"
-        :key="session.id"
-        class="session-row"
-        :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx }"
-      >
-        <span v-if="session.running" class="session-running-line"></span>
+      <TransitionGroup name="session-list" tag="div" class="session-rows">
         <div
-          class="session-item"
-          :class="{ active: session.id === currentSessionId }"
-          @click="selectSession(session.id, session.backend)"
+          v-for="(session, idx) in sessionsWithStatus"
+          :key="session.id"
+          class="session-row"
+          :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx }"
         >
-          <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-          <div class="session-item-info">
-            <div class="session-item-header">
-              <span class="session-item-title">{{ session.title }}</span>
-            </div>
-            <div class="session-item-meta">
-              <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-              <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-              <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+          <span v-if="session.running" class="session-running-line"></span>
+          <div
+            class="session-item"
+            :class="{ active: session.id === currentSessionId }"
+            @click="selectSession(session.id, session.backend)"
+          >
+            <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+            <div class="session-item-info">
+              <div class="session-item-header">
+                <span class="session-item-title">{{ session.title }}</span>
+              </div>
+              <div class="session-item-meta">
+                <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+              </div>
             </div>
           </div>
+          <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
+            <Archive :size="15" />
+          </button>
         </div>
-        <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-          <Archive :size="15" />
-        </button>
-      </div>
+      </TransitionGroup>
       <div ref="sentinelRef" class="session-list-sentinel"></div>
       <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
       <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
@@ -87,7 +92,10 @@ const sessionsWithStatus = computed(() => {
 })
 
 async function loadSessions() {
-  loading.value = true
+  // Keep the existing list on screen during background refreshes — only show
+  // the loading spinner when there is nothing to render yet. This prevents the
+  // "clear then refill" flash when a WS-triggered reload fires.
+  loading.value = sessions.value.length === 0
   hasMore.value = false
   try {
     const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}`)
@@ -224,6 +232,30 @@ onUnmounted(() => {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+}
+
+.session-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.session-list-enter-active,
+.session-list-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.session-list-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.session-list-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.session-list-move {
+  transition: transform 0.2s ease;
 }
 
 .session-empty {

@@ -171,6 +171,38 @@ describe('SessionList', () => {
     expect(wrapper.vm.sessions.length).toBe(0)
   })
 
+  it('keeps the existing list visible during a background reload (no clear-then-refill flash)', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+    expect(wrapper.vm.sessions.length).toBe(1)
+
+    // Server state changed — next fetch returns s2. The reload must NOT show the
+    // loading spinner while the old list (s1) is still rendered; the flag is only
+    // for an empty list on first load.
+    let resolveFetch
+    mockFetch.mockReturnValueOnce(new Promise(r => { resolveFetch = r }))
+    const reloadPromise = wrapper.vm.loadSessions()
+    await nextTick()
+    expect(wrapper.vm.loading).toBe(false)
+    expect(wrapper.vm.sessions[0].id).toBe('s1')
+
+    resolveFetch({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
+    await reloadPromise
+    await flushPromises()
+    expect(wrapper.vm.sessions[0].id).toBe('s2')
+  })
+
+  it('uses a TransitionGroup so the refreshed list transitions instead of swapping', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'TransitionGroup' }).exists()).toBe(true)
+    expect(wrapper.findAll('.session-row').length).toBe(1)
+  })
+
   it('subscribes to session_update WS events and reloads the list (debounced)', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
     const wrapper = await mountList()
