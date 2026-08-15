@@ -14,6 +14,7 @@
  */
 
 import { dedupeFiles, type FileEntry } from '@/utils/fileAttachmentUtils'
+import { nextClientSeq } from '@/utils/chatStreamUtils'
 
 /** Generate a unique queue ID for matching pending messages to queue_drain events. */
 export function generateQueueId(): string {
@@ -29,6 +30,10 @@ export interface PendingUserMessage {
   files: FileEntry[]
   createdAt: string
   pending: true
+  /** Client-side monotonic sequence so this pending message sorts correctly
+   *  among the other transient (string-id) messages. Without it the message
+   *  sorts at TRANSIENT_BASE + 0, jumping above every earlier message. */
+  seq?: number
 }
 
 /** Result of the backend enqueue call (mirrors POST /api/ai/queue). */
@@ -75,6 +80,7 @@ export async function enqueueAndMaybeStart(opts: EnqueueAndMaybeStartOptions): P
     files: allFiles,
     createdAt: new Date().toISOString(),
     pending: true,
+    seq: nextClientSeq(),
   })
   opts.onPendingRendered?.()
 

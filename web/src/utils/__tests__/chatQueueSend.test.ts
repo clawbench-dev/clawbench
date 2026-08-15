@@ -40,6 +40,17 @@ describe('enqueueAndMaybeStart', () => {
     expect(msg.id).toMatch(/^pending-/)
   })
 
+  it('assigns a monotonic seq to the pushed pending message so it sorts among transients', async () => {
+    const opts = makeOpts()
+    await enqueueAndMaybeStart(opts)
+    const msg = (opts.pushMessage as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    // Without a seq, messageSortValue yields TRANSIENT_BASE + 0, jumping the
+    // queued message above every earlier still-transient question. A number
+    // guarantees a correct position in the transient ordering domain.
+    expect(typeof msg.seq).toBe('number')
+    expect(Number.isFinite(msg.seq)).toBe(true)
+  })
+
   it('dedupes pending and attached files into the pending message files', async () => {
     const pending: FileEntry[] = [{ path: '/a', isDir: false }]
     const attached: FileEntry[] = [

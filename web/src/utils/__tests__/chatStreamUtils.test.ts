@@ -671,24 +671,28 @@ describe('drainQueueMessage', () => {
 
   // ── dbMessageId parameter (queue_drain carries DB message ID) ──
 
-  it('uses dbMessageId as user message id when provided', () => {
+  it('keeps drained messages transient (string id) — does not adopt numeric DB id', () => {
     const messages: any[] = [
       { role: 'assistant', content: 'reply', blocks: [], streaming: true },
     ]
     drainQueueMessage(messages, '', 'B', [], 'claude', callbacks, undefined, 42)
     const userMsg = messages.find(m => m.role === 'user' && m.content === 'B')
     expect(userMsg).toBeDefined()
-    expect(userMsg.id).toBe(42)
+    // The numeric dbMessageId is NOT adopted mid-stream — the message stays in
+    // the client seq-order domain (string id) so it sorts correctly among the
+    // still-transient in-flight messages. loadHistory reconciles the DB id later.
+    expect(typeof userMsg.id).toBe('string')
+    expect(userMsg.id).not.toBe(42)
     expect(userMsg._drain).toBe(true)
   })
 
-  it('prefers dbMessageId over drainId when both provided', () => {
+  it('uses a string drain id (transient) even when dbMessageId is provided', () => {
     const messages: any[] = [
       { role: 'assistant', content: 'reply', blocks: [], streaming: true },
     ]
     drainQueueMessage(messages, '', 'B', [], 'claude', callbacks, 'drain-custom', 99)
     const userMsg = messages.find(m => m.role === 'user' && m.content === 'B')
-    expect(userMsg.id).toBe(99) // dbMessageId wins
+    expect(userMsg.id).toBe('drain-custom')
   })
 
   it('assigns stable drain ID to streaming assistant placeholder (never undefined)', () => {
@@ -728,14 +732,14 @@ describe('drainQueueMessage', () => {
     expect(userMsgs[0].content).toBe('hello')
   })
 
-  it('sets dbMessageId on the found pending message', () => {
+  it('keeps the found pending message transient (string id) — does not adopt DB id', () => {
     const messages: any[] = [
       { role: 'user', id: 'queue-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
     drainQueueMessage(messages, '', 'hello', [], 'claude', callbacks, undefined, 42)
     const userMsg = messages.find(m => m.role === 'user')
-    expect(userMsg.id).toBe(42)
+    expect(userMsg.id).toBe('queue-1')
     expect(userMsg.pending).toBeUndefined()
   })
 
@@ -769,14 +773,14 @@ describe('drainQueueMessage', () => {
 
   // ── queueId matching ──
 
-  it('matches pending message by queueId when provided', () => {
+  it('matches pending message by queueId when provided (keeps transient string id)', () => {
     const messages: any[] = [
       { role: 'user', id: 'pending-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
     drainQueueMessage(messages, 'pending-1', 'hello', [], 'claude', callbacks, undefined, 42)
     const userMsg = messages.find(m => m.role === 'user')
-    expect(userMsg.id).toBe(42)
+    expect(userMsg.id).toBe('pending-1')
     expect(userMsg.pending).toBeUndefined()
   })
 
@@ -814,7 +818,7 @@ describe('drainQueueMessage', () => {
     const userMsgs = messages.filter(m => m.role === 'user')
     expect(userMsgs).toHaveLength(1)
     expect(userMsgs[0]._remote).toBeUndefined()
-    expect(userMsgs[0].id).toBe(42)
+    expect(userMsgs[0].id).toBe('remote-1700000000000-abc')
   })
 
   it('prefers pending match over _remote match', () => {
@@ -873,10 +877,11 @@ describe('drainQueueMessage', () => {
     sortMessages(messages)
     const result = drainQueueMessage(messages, 'queue-B', 'B', [], 'claude', callbacks, undefined, 3)
 
-    // The queued bubble was updated in place (no duplicate) to the DB id.
+    // The queued bubble was updated in place (no duplicate); it keeps its
+    // transient string id (queueId) so ordering stays consistent mid-stream.
     const bUsers = messages.filter(m => m.role === 'user' && m.content === 'B')
     expect(bUsers).toHaveLength(1)
-    expect(bUsers[0].id).toBe(3)
+    expect(bUsers[0].id).toBe('queue-B')
     expect(bUsers[0].pending).toBeUndefined()
 
     // The previous assistant (A reply) was finalized.
@@ -913,6 +918,52 @@ describe('drainQueueMessage', () => {
     expect(contents.indexOf('C')).toBeLessThan(contents.indexOf('C reply'))
     // No duplicate user messages.
     expect(messages.filter(m => m.role === 'user')).toHaveLength(3)
+  })
+
+  it('keeps an earlier still-transient question above a later drained queued message (regression)', () => {
+    // Real-flow scenario: Q1 was sent while idle, so it is a plain optimistic
+    // push with a string id (NOT pending) and its reply S1 is streaming. Q2 was
+    // enqueued while S1 was generating, so it is pending. When Q2 is drained,
+    // the drained message must NOT be moved to the DB-id domain — otherwise it
+    // (and its reply) would sort above Q1/S1, whose DB ids the frontend doesn't
+    // know yet, producing the queued-message display misalignment.
+    const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: nextClientSeq() }
+    const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), afterSort: computeAfterSort(q1) }
+    const q2 = { role: 'user', id: 'queue-B', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true, seq: nextClientSeq() }
+    const messages: any[] = [q1, s1, q2]
+    sortMessages(messages)
+
+    const s2 = drainQueueMessage(messages, 'queue-B', 'Q2', [], 'claude', callbacks, undefined, 3)
+    s2!.blocks!.push({ type: 'text', text: 'S2 reply' })
+    sortMessages(messages)
+
+    const contents = messages.map(m => m.content || (m.blocks || []).map((b: any) => b.text || '').join(''))
+    expect(contents).toEqual(['Q1', 'S1 reply', 'Q2', 'S2 reply'])
+    // The drained Q2 keeps its transient string id (not the numeric 3).
+    const q2After = messages.find((m: any) => m.content === 'Q2')
+    expect(q2After.id).toBe('queue-B')
+    expect(q2After.pending).toBeUndefined()
+  })
+
+  it('keeps the earlier question above an enqueued message that lacks a seq (regression)', () => {
+    // Real enqueue path (enqueueAndMaybeStart) pushes the pending message WITHOUT
+    // a `seq`. messageSortValue treats a missing seq as 0 → TRANSIENT_BASE + 0,
+    // which sorts ABOVE every other transient message (seq >= 1). This sent the
+    // queued message to the very top and pushed the earlier question+reply to the
+    // bottom. The drained message must inherit a proper position.
+    const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: nextClientSeq() }
+    const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), afterSort: computeAfterSort(q1) }
+    // q2 has pending=true but NO seq — exactly what enqueueAndMaybeStart pushes.
+    const q2 = { role: 'user', id: 'queue-B', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true }
+    const messages: any[] = [q1, s1, q2]
+    sortMessages(messages)
+
+    const s2 = drainQueueMessage(messages, 'queue-B', 'Q2', [], 'claude', callbacks, undefined, 3)
+    s2!.blocks!.push({ type: 'text', text: 'S2 reply' })
+    sortMessages(messages)
+
+    const contents = messages.map(m => m.content || (m.blocks || []).map((b: any) => b.text || '').join(''))
+    expect(contents).toEqual(['Q1', 'S1 reply', 'Q2', 'S2 reply'])
   })
 
   it('cancel while queued: removes the queued messages from the array', () => {
@@ -1003,10 +1054,29 @@ describe('sortMessages', () => {
     // Even though it has a numeric id (7), while streaming it must sort after
     // its parent (3), not by id.
     expect(messageSortValue(streaming)).toBe(messageSortValue(parent) + 0.5)
-    // Once finalized (streaming removed), it becomes DB-backed and sorts by id.
+    // Once finalized, it must STILL stay anchored via afterSort: its parent may
+    // still be transient (string id), in which case falling back to the numeric
+    // id would sort the reply above its own question. Only loadHistory (which
+    // rebuilds without afterSort) restores DB-id ordering.
     delete streaming.streaming
     expect(isTransientMessage(streaming)).toBe(false)
-    expect(messageSortValue(streaming)).toBe(7)
+    expect(messageSortValue(streaming)).toBe(messageSortValue(parent) + 0.5)
+  })
+
+  it('keeps a finalized reply with a numeric id anchored after its still-transient question (regression)', () => {
+    // stream_start set the reply's id to a numeric DB id, then the reply was
+    // finalized (streaming removed). Because its question Q1 is still transient
+    // (string id → TRANSIENT_BASE+seq, huge), the reply must NOT fall back to its
+    // small numeric id — that would sort it ABOVE Q1 (the observed swap). It must
+    // stay anchored via afterSort until loadHistory rebuilds everything.
+    const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: 1 }
+    const a1 = { role: 'assistant', id: 5, content: 'A1 reply', blocks: [{ type: 'text', text: 'A1 reply' }], afterSort: computeAfterSort(q1) }
+    const q2 = { role: 'user', id: 'pending-2', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true, seq: 2 }
+    const a2 = { role: 'assistant', id: 6, content: 'A2 reply', blocks: [{ type: 'text', text: 'A2 reply' }], streaming: true, afterSort: computeAfterSort(q2) }
+    const messages: any[] = [a1, q1, q2, a2]
+    sortMessages(messages)
+    const contents = messages.map(m => m.content)
+    expect(contents).toEqual(['Q1', 'A1 reply', 'Q2', 'A2 reply'])
   })
 
   it('is idempotent — sorting an already-ordered array does not flip-flop', () => {

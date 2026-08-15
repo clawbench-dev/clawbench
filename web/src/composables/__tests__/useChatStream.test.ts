@@ -67,10 +67,13 @@ vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
     }
     if (pendingIdx !== -1) {
       delete messages[pendingIdx].pending
-      if (_dbMessageId) messages[pendingIdx].id = _dbMessageId
-      else if (_drainId) messages[pendingIdx].id = _drainId
+      // Keep the existing transient string id — the numeric _dbMessageId is
+      // intentionally NOT adopted mid-stream (see drainQueueMessage).
+      if (typeof messages[pendingIdx].id !== 'string') {
+        messages[pendingIdx].id = _drainId || `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      }
     } else if (userContent) {
-      const effectiveDrainId = _dbMessageId || _drainId || `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const effectiveDrainId = _drainId || `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       messages.push({ role: 'user', id: effectiveDrainId, _drain: true, content: userContent, blocks: [{ type: 'text', text: userContent }], files: (userFiles || []).map((f: any) => typeof f === 'string' ? { path: f } : f), createdAt: new Date().toISOString() })
     }
     const newStreamingMsg = { role: 'assistant', content: '', blocks: [], streaming: true, createdAt: new Date().toISOString(), backend: currentBackend }
@@ -2188,12 +2191,12 @@ describe('useChatStream', () => {
 
       simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'queue-B', text: 'B', messageId: 3 })
 
-      // Previous assistant finalized, queued message adopted the DB id.
+      // Previous assistant finalized, queued message keeps its transient string id.
       const aReply = options.messages.value.find((m: any) => m.content === 'A reply')
       expect(aReply.streaming).toBeUndefined()
       const b = options.messages.value.find((m: any) => m.content === 'B')
       expect(b.pending).toBeUndefined()
-      expect(b.id).toBe(3)
+      expect(b.id).toBe('queue-B')
       // A new streaming placeholder exists for B's reply.
       const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
       expect(streaming.length).toBe(1)
