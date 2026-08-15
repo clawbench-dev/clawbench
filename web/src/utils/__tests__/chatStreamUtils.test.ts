@@ -802,6 +802,29 @@ describe('drainQueueMessage', () => {
     expect(userMsg.pending).toBeUndefined()
   })
 
+  it('updates an optimistic (non-pending) user message in place instead of duplicating it, keeping reply below the question', () => {
+    // Fresh-path race: B was pushed optimistically WITHOUT the pending flag
+    // (data.running was false), but the session actually enqueued B. The drain
+    // must update the existing B — not push a second B that would make the
+    // reply stream ABOVE the still-shown queued bubble.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
+      { role: 'user', id: 'pending-1700000000000-abc', content: 'B', blocks: [{ type: 'text', text: 'B' }], seq: 10 },
+    ]
+    const result = drainQueueMessage(messages, 'pending-1700000000000-abc', 'B', [], 'claude', callbacks, undefined, 3)
+
+    // Exactly one user message with content 'B' (no duplicate).
+    const bUsers = messages.filter(m => m.role === 'user' && m.content === 'B')
+    expect(bUsers).toHaveLength(1)
+    // It was updated in place to the DB id, and the reply sorts right after it.
+    expect(bUsers[0].id).toBe(3)
+    sortMessages(messages)
+    const idxB = messages.findIndex(m => m.content === 'B')
+    const idxOut = messages.findIndex(m => m === result)
+    expect(idxOut).toBeGreaterThan(idxB)
+  })
+
   // ── _remote message matching (cross-device sync) ──
 
   it('finds _remote message by content and clears flag instead of pushing duplicate', () => {

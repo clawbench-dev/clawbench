@@ -426,6 +426,19 @@ export function drainQueueMessage(
   if (pendingIdx === -1 && userContent) {
     pendingIdx = messages.findIndex((m) => m.role === 'user' && (m.pending || m._remote) && m.content === userContent)
   }
+  // If still not found, match an optimistic user message pushed by
+  // sendMessageNow (id prefix `pending-`) that lost its pending flag (e.g. a
+  // fresh-path race where the session actually enqueued the message) and
+  // update it in place instead of pushing a duplicate. A duplicate would leave
+  // the original queued bubble at the bottom while the new reply streams up
+  // top, making the output appear ABOVE the question. `_drain`/`_remote`
+  // messages (different prefixes / numeric ids) are deliberately NOT matched —
+  // same content with different drain ids is a legitimate distinct turn.
+  if (pendingIdx === -1 && userContent) {
+    pendingIdx = messages.findIndex(
+      (m) => m.role === 'user' && typeof m.id === 'string' && m.id.startsWith('pending-') && m.content === userContent
+    )
+  }
   if (pendingIdx !== -1) {
     // Found the pending or remote message — clear flag, update id to stable DB id
     delete messages[pendingIdx].pending
