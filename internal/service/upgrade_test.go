@@ -18,7 +18,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +70,239 @@ func TestGetRegistryBase_NonChina(t *testing.T) {
 	platform.ChinaMirrorChecked.Store(2) // non-China
 	base := getRegistryBase()
 	assert.Equal(t, "https://registry.npmjs.org", base)
+}
+
+// --- getUserRegistryBase / parseNpmRcRegistry ---
+
+func TestGetUserRegistryBase_EnvVar(t *testing.T) {
+	orig := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", orig)
+	os.Setenv("NPM_CONFIG_REGISTRY", "https://registry.example.com")
+
+	got := getUserRegistryBase()
+	assert.Equal(t, "https://registry.example.com", got)
+}
+
+func TestGetUserRegistryBase_EnvVarLowercase(t *testing.T) {
+	orig := os.Getenv("npm_config_registry")
+	defer os.Setenv("npm_config_registry", orig)
+	os.Setenv("npm_config_registry", "https://registry.example.com/")
+
+	// Trailing slash should be trimmed.
+	got := getUserRegistryBase()
+	assert.Equal(t, "https://registry.example.com", got)
+}
+
+func TestGetUserRegistryBase_EnvVarPriorityOverNpmrc(t *testing.T) {
+	orig := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", orig)
+	os.Setenv("NPM_CONFIG_REGISTRY", "https://env.example.com")
+
+	// A valid .npmrc registry exists but env var should win.
+	withTempHome(t)
+	writeNpmRc(t, "registry=https://npmrc.example.com\n")
+
+	assert.Equal(t, "https://env.example.com", getUserRegistryBase())
+}
+
+func TestGetUserRegistryBase_InvalidEnvVarIgnored(t *testing.T) {
+	orig := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", orig)
+	os.Setenv("NPM_CONFIG_REGISTRY", "default")
+
+	// Should fall through to .npmrc, not return the invalid value.
+	withTempHome(t)
+	writeNpmRc(t, "registry=https://npmrc.example.com\n")
+
+	assert.Equal(t, "https://npmrc.example.com", getUserRegistryBase())
+}
+
+func TestGetUserRegistryBase_FromNpmRc(t *testing.T) {
+	withTempHome(t)
+	writeNpmRc(t, "registry=https://registry.npmmirror.com\n")
+
+	got := getUserRegistryBase()
+	assert.Equal(t, "https://registry.npmmirror.com", got)
+}
+
+func TestGetUserRegistryBase_NoNpmrc(t *testing.T) {
+	withTempHome(t)
+
+	assert.Equal(t, "", getUserRegistryBase())
+}
+
+func TestGetUserRegistryBase_CommentedNpmrc(t *testing.T) {
+	withTempHome(t)
+	writeNpmRc(t, "# registry=https://ignored.example.com\n")
+
+	assert.Equal(t, "", getUserRegistryBase())
+}
+
+func TestGetUserRegistryBase_DegenerateValuesIgnored(t *testing.T) {
+	for _, v := range []string{"http://", "https://", "http:", "default", "ftp://x"} {
+		orig := os.Getenv("NPM_CONFIG_REGISTRY")
+		os.Setenv("NPM_CONFIG_REGISTRY", v)
+		withTempHome(t)
+		// No valid .npmrc either.
+		got := getUserRegistryBase()
+		os.Setenv("NPM_CONFIG_REGISTRY", orig)
+		assert.Equal(t, "", got, "value %q should be rejected", v)
+	}
+}
+
+func TestGetUserRegistryBase_NoSchemeIgnored(t *testing.T) {
+	orig := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", orig)
+	os.Setenv("NPM_CONFIG_REGISTRY", "registry.example.com")
+	withTempHome(t)
+
+	assert.Equal(t, "", getUserRegistryBase())
+}
+
+// --- registryCandidates ---
+
+func TestRegistryCandidates_NoUserMirror(t *testing.T) {
+	orig := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(orig)
+	platform.ChinaMirrorChecked.Store(2)
+
+	// Ensure no user mirror.
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
+	os.Unsetenv("NPM_CONFIG_REGISTRY")
+	withTempHome(t)
+
+	assert.Equal(t, []string{"https://registry.npmjs.org"}, registryCandidates())
+}
+
+func TestRegistryCandidates_WithUserMirror(t *testing.T) {
+	orig := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(orig)
+	platform.ChinaMirrorChecked.Store(2)
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
+	os.Setenv("NPM_CONFIG_REGISTRY", "https://mirror.example.com")
+
+	assert.Equal(t, []string{"https://registry.npmjs.org", "https://mirror.example.com"}, registryCandidates())
+}
+
+// --- fetchUpgradeInfo fallback ---
+
+func TestFetchUpgradeInfo_FallsBackToUserMirror(t *testing.T) {
+	// Default registry returns 500; user mirror returns a valid response.
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failServer.Close()
+
+	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = "https://mirror.example.com/pkg/-/pkg-99.0.0.tgz"
+		resp.Dist.Integrity = "sha512-abcdef"
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mirrorServer.Close()
+
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+	// Default candidate resolves to the default base (npmjs) -> rewrite to
+	// failServer; the user mirror base (mirrorServer) -> rewrite to mirrorServer.
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: failServer.URL,
+		mirrorBase:  mirrorServer.URL,
+	}}
+
+	orig := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(orig)
+	platform.ChinaMirrorChecked.Store(2) // default = registry.npmjs.org
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
+	os.Setenv("NPM_CONFIG_REGISTRY", mirrorServer.URL)
+
+	info, err := fetchUpgradeInfo()
+	require.NoError(t, err)
+	assert.Equal(t, "99.0.0", info.LatestVersion)
+	assert.Contains(t, info.TarballURL, "mirror.example.com")
+}
+
+func TestFetchUpgradeInfo_AllSourcesFail(t *testing.T) {
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failServer.Close()
+
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: failServer.URL,
+		mirrorBase:  failServer.URL,
+	}}
+
+	orig := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(orig)
+	platform.ChinaMirrorChecked.Store(2)
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
+	os.Setenv("NPM_CONFIG_REGISTRY", failServer.URL)
+
+	_, err := fetchUpgradeInfo()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "all registry sources failed")
+}
+
+// --- helpers ---
+
+// failoverTransport routes the default registry base to defaultBase and the
+// user mirror base to mirrorBase. This lets tests simulate the default registry
+// being unreachable while the user's mirror works.
+type failoverTransport struct {
+	defaultBase string
+	mirrorBase  string
+	mirrorHit   *bool
+}
+
+func (t *failoverTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	target := t.defaultBase
+	// Requests to a user mirror host route to mirrorBase; the default registry
+	// host (npmjs) routes to defaultBase.
+	if req.URL.Host != "registry.npmjs.org" && req.URL.Host != "registry.npmmirror.com" {
+		target = t.mirrorBase
+		if t.mirrorHit != nil {
+			*t.mirrorHit = true
+		}
+	}
+	clone := req.Clone(req.Context())
+	clone.URL, _ = url.Parse(target + req.URL.Path)
+	return http.DefaultTransport.RoundTrip(clone)
+}
+
+// withTempHome redirects the process HOME (and USERPROFILE on Windows) to a
+// fresh temp dir so parseNpmRcRegistry reads a controlled .npmrc.
+func withTempHome(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", dir)
+	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	origUp := os.Getenv("USERPROFILE")
+	os.Setenv("USERPROFILE", dir)
+	t.Cleanup(func() { os.Setenv("USERPROFILE", origUp) })
+}
+
+func writeNpmRc(t *testing.T, content string) {
+	t.Helper()
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = os.Getenv("USERPROFILE")
+	}
+	if err := os.WriteFile(filepath.Join(home, ".npmrc"), []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write .npmrc: %v", err)
+	}
 }
 
 // --- verifyIntegrity ---
@@ -520,11 +752,7 @@ func fetchUpgradeInfoWithBase(baseURL string) (*UpgradeInfo, error) {
 		return nil, fmt.Errorf("no tarball URL in registry response")
 	}
 
-	registryBase := baseURL
-	if strings.HasPrefix(registryBase, "https://registry.npmmirror.com") {
-		tarballURL = strings.Replace(tarballURL,
-			"https://registry.npmjs.org", "https://registry.npmmirror.com", 1)
-	}
+	tarballURL = rewriteTarballURL(tarballURL, baseURL)
 
 	return &UpgradeInfo{
 		CurrentVersion: "0.0.1",

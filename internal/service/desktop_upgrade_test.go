@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -162,4 +163,97 @@ func TestFetchDesktopLatest_UsesRegistryBase(t *testing.T) {
 	require.NotNil(t, res)
 	assert.Equal(t, "0.5.0", res.Version)
 	assert.NotEmpty(t, res.Downloads)
+}
+
+func TestFetchDesktopLatest_FallsBackToUserMirrorOn404(t *testing.T) {
+	// Default registry returns 404 for every platform; user mirror returns a
+	// valid package. FetchDesktopLatest must fall through to the mirror.
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer failServer.Close()
+
+	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"0.9.0","dist":{"tarball":"https://mirror.example.com/pkg/-/x.tgz"}}`))
+	}))
+	defer mirrorServer.Close()
+
+	orig := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = orig }()
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: failServer.URL,
+		mirrorBase:  mirrorServer.URL,
+	}}
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2) // non-China → default base = npmjs
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
+	os.Setenv("NPM_CONFIG_REGISTRY", mirrorServer.URL)
+
+	res, err := FetchDesktopLatest()
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, "0.9.0", res.Version)
+	require.NotEmpty(t, res.Downloads)
+}
+
+func TestFetchDesktopLatest_AllSourcesFail(t *testing.T) {
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer failServer.Close()
+
+	orig := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = orig }()
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: failServer.URL,
+		mirrorBase:  failServer.URL,
+	}}
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2)
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
+	os.Setenv("NPM_CONFIG_REGISTRY", failServer.URL)
+
+	_, err := FetchDesktopLatest()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "all registry sources failed")
+}
+
+func TestFetchUpgradeInfo_DefaultSuccessSkipsMirror(t *testing.T) {
+	// When the default registry succeeds, the user mirror must not be contacted.
+	var mirrorHit bool
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"0.7.0","dist":{"tarball":"https://registry.npmjs.org/pkg/-/x.tgz"}}`))
+	}))
+	defer failServer.Close()
+
+	orig := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = orig }()
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: failServer.URL,
+		mirrorBase:  failServer.URL, // mirror host routed here too; flag below
+		mirrorHit:   &mirrorHit,
+	}}
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2)
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
+	os.Setenv("NPM_CONFIG_REGISTRY", "https://user-mirror.example.com")
+
+	info, err := fetchUpgradeInfo()
+	require.NoError(t, err)
+	assert.Equal(t, "0.7.0", info.LatestVersion)
+	assert.False(t, mirrorHit, "user mirror should not be contacted when default succeeds")
 }

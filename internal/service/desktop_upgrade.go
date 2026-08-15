@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -75,9 +77,25 @@ func fetchDesktopLatestFrom(base string) (*DesktopLatestResult, error) {
 	return res, nil
 }
 
-// FetchDesktopLatest queries the npm registry for the current region.
+// FetchDesktopLatest queries the npm registry for the current region, falling
+// back to the user's configured mirror if the default registry is unreachable
+// or yields no downloadable platforms.
 func FetchDesktopLatest() (*DesktopLatestResult, error) {
-	return fetchDesktopLatestFrom(getRegistryBase())
+	var errs []error
+	for _, base := range registryCandidates() {
+		res, err := fetchDesktopLatestFrom(base)
+		if err == nil {
+			// A response with no downloads (e.g. every platform returned 404)
+			// is not a usable result — fall through to the next candidate.
+			if len(res.Downloads) > 0 {
+				return res, nil
+			}
+			err = fmt.Errorf("registry returned no downloadable platforms")
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", base, err))
+		slog.Warn("upgrade: desktop registry query failed, trying next candidate", "base", base, "error", err)
+	}
+	return nil, fmt.Errorf("all registry sources failed: %w", errors.Join(errs...))
 }
 
 // rewriteTarballURL points the tarball at the same registry base used for the query.

@@ -7,11 +7,13 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,6 +98,80 @@ func getRegistryBase() string {
 	return "https://registry.npmjs.org"
 }
 
+// getUserRegistryBase returns the user's configured npm mirror base URL, or ""
+// if none is configured. It checks, in order: the NPM_CONFIG_REGISTRY env var,
+// the npm_config_registry env var, then the registry= line in the user-level
+// ~/.npmrc. The result is trimmed and validated as an http(s) URL.
+func getUserRegistryBase() string {
+	candidates := []string{
+		os.Getenv("NPM_CONFIG_REGISTRY"),
+		os.Getenv("npm_config_registry"),
+		parseNpmRcRegistry(),
+	}
+	for _, c := range candidates {
+		if c = strings.TrimSpace(c); c == "" {
+			continue
+		}
+		// Reject non-http(s) values (e.g. "default" or a registry scope key),
+		// and values with no host (e.g. "http://" or "http:"), which would
+		// otherwise produce a malformed request URL later.
+		if !isValidRegistryURL(c) {
+			continue
+		}
+		return strings.TrimRight(c, "/")
+	}
+	return ""
+}
+
+// isValidRegistryURL reports whether v is an http(s) URL with a usable host.
+func isValidRegistryURL(v string) bool {
+	u, err := url.Parse(strings.TrimSpace(v))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	switch u.Scheme {
+	case "http", "https":
+		return true
+	default:
+		return false
+	}
+}
+
+// parseNpmRcRegistry reads the user-level .npmrc and returns the value of the
+// registry= line, or "" if absent/unreadable. Path resolution uses
+// platform.UserHomeDir so it works on Windows, macOS and Linux.
+func parseNpmRcRegistry() string {
+	path := filepath.Join(platform.UserHomeDir(), ".npmrc")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(key) == "registry" {
+			return strings.TrimSpace(val)
+		}
+	}
+	return ""
+}
+
+// registryCandidates returns the ordered list of registry bases to try: the
+// default base first, followed by the user's configured mirror (if any).
+func registryCandidates() []string {
+	bases := []string{getRegistryBase()}
+	if m := getUserRegistryBase(); m != "" {
+		bases = append(bases, m)
+	}
+	return bases
+}
+
 // CheckForUpgrade queries the npm registry for the latest version.
 // Returns (currentVersion, latestVersion, error).
 func CheckForUpgrade() (string, string, error) {
@@ -106,7 +182,9 @@ func CheckForUpgrade() (string, string, error) {
 	return info.CurrentVersion, info.LatestVersion, nil
 }
 
-// fetchUpgradeInfo queries the npm registry once and returns all upgrade info.
+// fetchUpgradeInfo queries the npm registry for upgrade info, trying the
+// default registry base first and falling back to the user's configured mirror
+// if the default cannot be reached.
 func fetchUpgradeInfo() (*UpgradeInfo, error) {
 	currentVer := version.Get()
 	pkg, err := getPlatformPkg()
@@ -114,7 +192,21 @@ func fetchUpgradeInfo() (*UpgradeInfo, error) {
 		return nil, err
 	}
 
-	registryBase := getRegistryBase()
+	var errs []error
+	for _, registryBase := range registryCandidates() {
+		info, err := fetchUpgradeInfoFromBase(registryBase, pkg, currentVer)
+		if err == nil {
+			return info, nil
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", registryBase, err))
+		slog.Warn("upgrade: registry query failed, trying next candidate", "base", registryBase, "error", err)
+	}
+
+	return nil, fmt.Errorf("all registry sources failed: %w", errors.Join(errs...))
+}
+
+// fetchUpgradeInfoFromBase queries a single registry base and returns upgrade info.
+func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInfo, error) {
 	url := fmt.Sprintf("%s/%s/latest", registryBase, pkg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -145,11 +237,8 @@ func fetchUpgradeInfo() (*UpgradeInfo, error) {
 		return nil, fmt.Errorf("no tarball URL in registry response")
 	}
 
-	// If using npmmirror, rewrite tarball URL to npmmirror CDN
-	if strings.HasPrefix(registryBase, "https://registry.npmmirror.com") {
-		tarballURL = strings.Replace(tarballURL,
-			"https://registry.npmjs.org", "https://registry.npmmirror.com", 1)
-	}
+	// Point the tarball at the same base used for the query (e.g. a mirror).
+	tarballURL = rewriteTarballURL(tarballURL, registryBase)
 
 	hasUpgrade := version.CompareVersions(currentVer, npmResp.Version) < 0 || version.IsDevBuild(currentVer)
 
