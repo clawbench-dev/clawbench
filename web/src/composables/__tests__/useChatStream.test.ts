@@ -2174,4 +2174,65 @@ describe('useChatStream', () => {
       vi.useRealTimers()
     })
   })
+
+  describe('queue events (queue_drain / queue_cancel)', () => {
+    it('queue_drain: finalizes the previous streaming reply and starts a new one for the queued message', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      options.messages.value.push(
+        { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+        { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
+        { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
+      )
+      connectStream('test-session-1')
+
+      simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'queue-B', text: 'B', messageId: 3 })
+
+      // Previous assistant finalized, queued message adopted the DB id.
+      const aReply = options.messages.value.find((m: any) => m.content === 'A reply')
+      expect(aReply.streaming).toBeUndefined()
+      const b = options.messages.value.find((m: any) => m.content === 'B')
+      expect(b.pending).toBeUndefined()
+      expect(b.id).toBe(3)
+      // A new streaming placeholder exists for B's reply.
+      const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
+      expect(streaming.length).toBe(1)
+    })
+
+    it('queue_cancel: removes only the cancelled pending messages, leaving others queued', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      options.messages.value.push(
+        { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+        { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
+        { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
+        { role: 'user', id: 'queue-C', content: 'C', blocks: [{ type: 'text', text: 'C' }], pending: true },
+      )
+      connectStream('test-session-1')
+
+      simulateWsEvent('queue_cancel', { sessionId: 'test-session-1', queueIds: ['queue-B'] })
+
+      expect(options.messages.value.some((m: any) => m.content === 'B')).toBe(false)
+      expect(options.messages.value.some((m: any) => m.content === 'C')).toBe(true)
+    })
+
+    it('queue_drain for a different session is ignored', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      options.messages.value.push(
+        { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+        { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
+        { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
+      )
+      connectStream('test-session-1')
+
+      simulateWsEvent('queue_drain', { sessionId: 'OTHER-SESSION', queueId: 'queue-B', text: 'B', messageId: 3 })
+
+      // Nothing changed for the current session.
+      const b = options.messages.value.find((m: any) => m.content === 'B')
+      expect(b.pending).toBe(true)
+      const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
+      expect(streaming.length).toBe(1)
+    })
+  })
 })

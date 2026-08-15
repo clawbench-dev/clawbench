@@ -1595,6 +1595,87 @@ describe('switchSession', () => {
     expect(xyz[0].content).toBe('queued during reload')
   })
 
+  it('preserves multiple in-flight queued messages across a same-session reload', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: 'A' }, { id: 2, role: 'assistant', content: 'A reply' }],
+        total: 2,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+    lastSessionOptions!.messages.value.push(
+      { role: 'user', id: 'pending-b1', content: 'queued B', pending: true, seq: 1 },
+      { role: 'user', id: 'pending-b2', content: 'queued C', pending: true, seq: 2 },
+    )
+
+    await session.loadHistory(true, false, false)
+
+    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
+    const ids = pending.map((m: any) => m.id)
+    expect(ids).toContain('pending-b1')
+    expect(ids).toContain('pending-b2')
+  })
+
+  it('does NOT carry the old session\u2019s queued messages into a new session on switch', async () => {
+    // Regression: syncSessionState merges in-flight messages across a reload,
+    // but a session SWITCH must start fresh — otherwise the old session's
+    // queued messages would leak into the new session.
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's2',
+          messages: [{ id: 1, role: 'user', content: 'new A' }, { id: 2, role: 'assistant', content: 'new reply' }],
+          total: 2,
+          running: false,
+        }),
+      })
+      .mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+    // The old session has an in-flight queued message.
+    lastSessionOptions!.messages.value.push({
+      role: 'user', id: 'pending-old', content: 'queued in OLD session', pending: true, seq: 1,
+    })
+
+    await session.switchSession('s2')
+
+    const contents = lastSessionOptions!.messages.value.map((m: any) => m.content)
+    // The old session's queued message must NOT leak into the new session.
+    expect(contents).not.toContain('queued in OLD session')
+  })
+
+  it('a cancelled queued message does not reappear after reload (it was never persisted)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: 'A' }],
+        total: 1,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+    // A queued message is in flight, then cancelled (removed from the array).
+    lastSessionOptions!.messages.value.push({
+      role: 'user', id: 'pending-c', content: 'cancelled msg', pending: true, seq: 1,
+    })
+    lastSessionOptions!.messages.value = lastSessionOptions!.messages.value.filter((m: any) => m.id !== 'pending-c')
+
+    await session.loadHistory(true, false, false)
+
+    const contents = lastSessionOptions!.messages.value.map((m: any) => m.content)
+    expect(contents).not.toContain('cancelled msg')
+  })
+
   it('restores usage state from API response after switch', async () => {
     resetAdditionalMocks() // Ensure mock call records are clean
     mockClearUsageState.mockClear()

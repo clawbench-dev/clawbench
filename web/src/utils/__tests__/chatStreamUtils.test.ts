@@ -14,6 +14,7 @@ import {
   messageSortValue,
   computeAfterSort,
   isTransientMessage,
+  nextClientSeq,
 } from '@/utils/chatStreamUtils.ts'
 
 describe('FILE_MODIFYING_TOOLS', () => {
@@ -861,6 +862,70 @@ describe('drainQueueMessage', () => {
     expect(bIdx).not.toBe(-1)
     expect(messages[bIdx + 1].role).toBe('assistant')
     expect(messages[bIdx + 1].streaming).toBe(true)
+  })
+
+  it('single queued message: updates the queued bubble in place and places the reply directly below it', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
+      { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true, seq: nextClientSeq() },
+    ]
+    sortMessages(messages)
+    const result = drainQueueMessage(messages, 'queue-B', 'B', [], 'claude', callbacks, undefined, 3)
+
+    // The queued bubble was updated in place (no duplicate) to the DB id.
+    const bUsers = messages.filter(m => m.role === 'user' && m.content === 'B')
+    expect(bUsers).toHaveLength(1)
+    expect(bUsers[0].id).toBe(3)
+    expect(bUsers[0].pending).toBeUndefined()
+
+    // The previous assistant (A reply) was finalized.
+    const aReply = messages.find(m => m.content === 'A reply')
+    expect(aReply.streaming).toBeUndefined()
+
+    // The reply sorts immediately after its question.
+    sortMessages(messages)
+    const idxB = messages.findIndex(m => m.content === 'B')
+    const idxOut = messages.findIndex(m => m === result)
+    expect(idxOut).toBe(idxB + 1)
+  })
+
+  it('multiple queued messages: each reply stays between its own question and the next queued message', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A' },
+      { role: 'assistant', id: 2, content: 'A reply' },
+      { role: 'user', id: 'queue-B', content: 'B', pending: true, seq: nextClientSeq() },
+      { role: 'user', id: 'queue-C', content: 'C', pending: true, seq: nextClientSeq() },
+    ]
+    sortMessages(messages)
+
+    const rB = drainQueueMessage(messages, 'queue-B', 'B', [], 'claude', callbacks, undefined, 3)
+    rB!.blocks!.push({ type: 'text', text: 'B reply' })
+    const rC = drainQueueMessage(messages, 'queue-C', 'C', [], 'claude', callbacks, undefined, 5)
+    rC!.blocks!.push({ type: 'text', text: 'C reply' })
+
+    sortMessages(messages)
+    const contents = messages.map(m => m.content || (m.blocks || []).map((b: any) => b.text || '').join(''))
+    // Final order: A, A reply, B, B reply, C, C reply
+    expect(contents.indexOf('A')).toBeLessThan(contents.indexOf('B'))
+    expect(contents.indexOf('B')).toBeLessThan(contents.indexOf('B reply'))
+    expect(contents.indexOf('B reply')).toBeLessThan(contents.indexOf('C'))
+    expect(contents.indexOf('C')).toBeLessThan(contents.indexOf('C reply'))
+    // No duplicate user messages.
+    expect(messages.filter(m => m.role === 'user')).toHaveLength(3)
+  })
+
+  it('cancel while queued: removes the queued messages from the array', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A' },
+      { role: 'user', id: 'queue-B', content: 'B', pending: true, seq: nextClientSeq() },
+      { role: 'user', id: 'queue-C', content: 'C', pending: true, seq: nextClientSeq() },
+    ]
+    const removed = cancelPendingMessages(messages, ['queue-B'])
+    expect(removed).toBe(1)
+    expect(messages.some(m => m.content === 'B')).toBe(false)
+    // The other still-queued message is untouched.
+    expect(messages.some(m => m.content === 'C')).toBe(true)
   })
 })
 

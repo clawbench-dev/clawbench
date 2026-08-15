@@ -608,6 +608,10 @@ export function useChatSession(options: UseChatSessionOptions) {
     onDisconnectStream()
     lastMessageSnapshot = ''  // Invalidate snapshot — new session may have different data
     expandedTools.value = {}
+    // Start the new session's message list fresh. In-flight (queued/streaming)
+    // messages belong to the PREVIOUS session and must not be carried over by
+    // syncSessionState's in-flight merge into the new session.
+    messages.value = []
     // Clear stale blockAskQuestions from previous session
     Object.keys(blockTasks).forEach(k => delete blockTasks[k])
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
