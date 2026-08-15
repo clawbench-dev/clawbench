@@ -188,7 +188,13 @@ func (a *mockACPAgent) LoadSession(ctx context.Context, params acp.LoadSessionRe
 		s = &mockSession{mode: modeCode, thinkingEffort: effortMedium}
 		a.sessions[sid] = s
 	}
-	s.messages = a.loadMessages(sid)
+	// Cache the loaded history in-memory: a reused process returns this cached
+	// state on subsequent LoadSession calls (mirrors real agents like CodeBuddy
+	// which do NOT re-read the on-disk session each time). A fresh process loads
+	// the latest on-disk history.
+	if len(s.messages) == 0 {
+		s.messages = a.loadMessages(sid)
+	}
 	a.mu.Unlock()
 
 	// Replay the session's actual chat history (recorded by Prompt / external

@@ -209,7 +209,11 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 复用连接（全新连接会在此触发 LoadSession；已存活连接提前返回）
+	// 强制用全新进程做同步：复用的已存活进程在 LoadSession 时返回内存中的旧会话
+	// 状态（CodeBuddy 等），看不到外部新增消息。先关闭现有连接，让 getOrCreateConnForLoad
+	// 重新 spawn 一个进程，其 LoadSession 会重新读取磁盘上的最新会话历史。
+	ai.GetACPConnManager().CloseConn(req.SessionID)
+
 	conn, err := getOrCreateConnForLoad(r.Context(), agent, req.SessionID, acpSID, projectPath)
 	if err != nil {
 		if ai.IsACPResourceNotFound(err) {

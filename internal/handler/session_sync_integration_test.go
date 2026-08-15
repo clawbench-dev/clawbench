@@ -166,3 +166,55 @@ func TestACPSync_RealAgent_TwoTurnExternalHistory(t *testing.T) {
 
 	ai.GetACPConnManager().CloseConn(sid)
 }
+
+// TestACPSync_RealAgent_ExternalAdditionsAfterFirstSync verifies that a sync
+// AFTER the session was already loaded pulls newly-added external messages.
+// It reproduces the CodeBuddy behavior where a reused agent process returns stale
+// in-memory state on LoadSession: the fix forces a fresh process so LoadSession
+// re-reads the latest on-disk session.
+func TestACPSync_RealAgent_ExternalAdditionsAfterFirstSync(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agentID, dataDir := newMockSyncAgent(t)
+	extSID := "mock-sess-ext-additions"
+
+	// Initial external history: 2 turns = 4 messages.
+	initial := []mockMsg{
+		{Role: "user", Text: "当前是什么项目？"},
+		{Role: "assistant", Text: "ClawBench — 移动优先的 AI 工作站。"},
+		{Role: "user", Text: "/context"},
+		{Role: "assistant", Text: "Context 摘要…"},
+	}
+	writeMockHistory(t, dataDir, extSID, initial)
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", agentID, "", "default", "chat")
+	require.NoError(t, err)
+	service.UpdateExternalSessionID(sid, extSID)
+
+	// First sync (fresh process): empty local session pulls the initial 4.
+	added1 := syncViaRealAgent(t, agentID, sid)
+	assert.Equal(t, 4, added1, "first sync should pull the initial 4 messages")
+
+	// Externally, 2 more turns (4 messages) are added to the session on disk.
+	writeMockHistory(t, dataDir, extSID, append(append([]mockMsg{}, initial...), []mockMsg{
+		{Role: "user", Text: "你叫什么"},
+		{Role: "assistant", Text: "我是 CodeBuddy Code，你的 AI 编程助手。"},
+		{Role: "user", Text: "你几岁了？老铁。"},
+		{Role: "assistant", Text: "我没有年龄，我是 AI 助手。随时待命，老铁。"},
+	}...))
+
+	// Second sync: must use a FRESH process (the fix closes the previous conn)
+	// so LoadSession re-reads the on-disk history and pulls the 4 new messages.
+	added2 := syncViaRealAgent(t, agentID, sid)
+	assert.Equal(t, 4, added2, "second sync should pull the 4 externally-added messages")
+
+	var total int
+	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&total)
+	assert.Equal(t, 8, total, "final session should have all 8 messages")
+
+	assert.Equal(t, 1, countContent(t, sid, "你叫什么"), "externally-added user message must be synced")
+	assert.Equal(t, 1, countContent(t, sid, "你几岁了"), "externally-added user message must be synced")
+
+	ai.GetACPConnManager().CloseConn(sid)
+}
