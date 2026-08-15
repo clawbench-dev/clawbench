@@ -36,6 +36,20 @@ describe('LoadingIndicator', () => {
     expect(el.classes()).not.toContain('is-center')
   })
 
+  it('applies fixed full-screen class when fixed prop is set', () => {
+    const wrapper = mount(LoadingIndicator, { props: { fixed: true } })
+    const el = wrapper.find('.loading-indicator')
+    expect(el.classes()).toContain('fixed')
+    expect(el.classes()).not.toContain('overlay')
+  })
+
+  it('overlay and fixed are mutually applied when both set', () => {
+    const wrapper = mount(LoadingIndicator, { props: { overlay: true, fixed: true } })
+    const el = wrapper.find('.loading-indicator')
+    expect(el.classes()).toContain('overlay')
+    expect(el.classes()).toContain('fixed')
+  })
+
   it('renders default slot content', () => {
     const wrapper = mount(LoadingIndicator, {
       slots: { default: '<span class="extra">extra</span>' },

@@ -16,10 +16,7 @@
     </div>
 
     <!-- Loading overlay (absolute, does not block component mount) -->
-    <div v-if="loading" class="office-loading-overlay">
-      <Loader :size="32" />
-      <span class="office-loading-text">{{ t('common.loading') }}</span>
-    </div>
+    <LoadingIndicator v-if="loading" overlay size="md" :label="t('common.loading')" />
 
     <!-- Error overlay -->
     <div v-if="error" class="office-error-overlay">
@@ -47,7 +44,8 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Loader, FileX, Download, RefreshCw } from 'lucide-vue-next'
+import { FileX, Download, RefreshCw } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { appLog } from '@/utils/appLog.ts'
@@ -306,33 +304,6 @@ defineExpose({
   max-width: 100% !important;
   margin: 0 !important;
   padding: 0 !important;
-}
-
-/* Loading overlay */
-.office-loading-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-primary);
-  color: var(--text-muted);
-  gap: 12px;
-  z-index: 10;
-}
-
-.office-loading-overlay svg {
-  animation: office-spin 1s linear infinite;
-}
-
-.office-loading-text {
-  font-size: 14px;
-}
-
-@keyframes office-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 /* Error overlay */

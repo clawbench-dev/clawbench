@@ -57,12 +57,8 @@
     </div>
 
     <!-- Loading overlay -->
-    <Transition name="overlay-fade">
-      <div v-if="acpResuming" class="acp-resume-overlay">
-        <div class="acp-resume-overlay-content">
-          <LoadingIndicator size="sm" inline :label="t('chat.acpSession.resuming')" />
-        </div>
-      </div>
+    <Transition name="loading-fade">
+      <LoadingIndicator v-if="acpResuming" fixed size="md" :label="t('chat.acpSession.resuming')" />
     </Transition>
   </BottomSheet>
 </template>
@@ -339,41 +335,5 @@ function formatTime(iso: string): string {
   font-size: 11px;
   color: var(--text-muted, #999);
   text-align: center;
-}
-
-/* Loading overlay */
-.acp-resume-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(255, 255, 255, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10;
-  border-radius: inherit;
-}
-
-:root[data-theme="dark"] .acp-resume-overlay {
-  background: rgba(0, 0, 0, 0.6);
-}
-
-.acp-resume-overlay-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--accent-color, #0066cc);
-  font-weight: 500;
-}
-
-.overlay-fade-enter-active,
-.overlay-fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.overlay-fade-enter-from,
-.overlay-fade-leave-to {
-  opacity: 0;
 }
 </style>

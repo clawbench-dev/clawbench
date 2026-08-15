@@ -1,7 +1,7 @@
 <template>
   <div
     class="loading-indicator"
-    :class="[`size-${size}`, { inline, overlay, 'is-center': center }]"
+    :class="[`size-${size}`, { inline, overlay, fixed, 'is-center': center }]"
     role="status"
     aria-live="polite"
   >
@@ -18,6 +18,7 @@ withDefaults(
     size?: 'sm' | 'md' | 'lg'
     inline?: boolean
     overlay?: boolean
+    fixed?: boolean
     center?: boolean
   }>(),
   {
@@ -25,6 +26,7 @@ withDefaults(
     size: 'md',
     inline: false,
     overlay: false,
+    fixed: false,
     center: true,
   },
 )
@@ -52,6 +54,15 @@ withDefaults(
   position: absolute;
   inset: 0;
   z-index: 5;
+  background: var(--bg-primary, #fff);
+  opacity: 0.85;
+}
+
+/* Full-screen overlay (covers the entire viewport) */
+.loading-indicator.fixed {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
   background: var(--bg-primary, #fff);
   opacity: 0.85;
 }
@@ -91,5 +102,20 @@ withDefaults(
 
 @keyframes li-spin {
   to { transform: rotate(360deg); }
+}
+</style>
+
+<style>
+/* Shared fade transition for loading overlays (non-scoped, applied by callers
+   wrapping <LoadingIndicator> in <Transition name="loading-fade">). */
+.loading-fade-enter-active {
+  transition: opacity 0.12s ease-out;
+}
+.loading-fade-leave-active {
+  transition: opacity 0.18s ease-in;
+}
+.loading-fade-enter-from,
+.loading-fade-leave-to {
+  opacity: 0;
 }
 </style>

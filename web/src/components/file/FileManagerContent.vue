@@ -192,9 +192,7 @@
         </div>
       </Transition>
       <Transition name="loading-fade">
-        <div v-if="dirLoading" class="loading-mask">
-          <div class="loading-mask-spinner"></div>
-        </div>
+        <LoadingIndicator v-if="dirLoading" overlay size="sm" />
       </Transition>
       <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
@@ -250,9 +248,7 @@
         </div>
       </Transition>
       <Transition name="loading-fade">
-        <div v-if="dirLoading" class="loading-mask">
-          <div class="loading-mask-spinner"></div>
-        </div>
+        <LoadingIndicator v-if="dirLoading" overlay size="sm" />
       </Transition>
       <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
@@ -408,7 +404,7 @@
 </template>
 
 <script setup>
-import '@/assets/loading-mask.css'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'

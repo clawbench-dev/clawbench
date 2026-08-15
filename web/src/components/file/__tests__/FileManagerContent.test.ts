@@ -338,7 +338,7 @@ describe('FileManagerContent — rendering', () => {
 
   it('renders loading mask when dirLoading is true', () => {
     const wrapper = mountContent({ dirLoading: true })
-    expect(wrapper.find('.loading-mask').exists()).toBe(true)
+    expect(wrapper.find('.loading-indicator.overlay').exists()).toBe(true)
   })
 
   it('renders toolbar buttons', () => {

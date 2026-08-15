@@ -32,9 +32,7 @@
 
     <!-- Session switching overlay — placed here to cover the entire message area -->
     <Transition name="loading-fade">
-      <div v-if="session.switching.value" class="loading-mask">
-        <div class="loading-mask-spinner"></div>
-      </div>
+      <LoadingIndicator v-if="session.switching.value" overlay size="sm" />
     </Transition>
 
     <!-- Session swipe indicator — floats above the message area -->
@@ -203,8 +201,8 @@ import { store } from '@/stores/app.ts'
 import { useDialog } from '@/composables/useDialog'
 
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
-import '@/assets/loading-mask.css'
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
 
 const { t } = useI18n()

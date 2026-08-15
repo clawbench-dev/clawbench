@@ -28,9 +28,7 @@
         />
         <!-- File loading mask — same style as chat session-switch -->
         <Transition name="loading-fade">
-          <div v-if="fileLoading" class="loading-mask">
-            <div class="loading-mask-spinner"></div>
-          </div>
+          <LoadingIndicator v-if="fileLoading" overlay size="sm" />
         </Transition>
       </div>
 
@@ -66,7 +64,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import '@/assets/loading-mask.css'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import FileViewer from '@/components/file/FileViewer.vue'
 import TocDrawer from '@/components/TocDrawer.vue'
 import SearchDrawer from '@/components/common/SearchDrawer.vue'
