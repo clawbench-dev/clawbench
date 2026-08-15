@@ -64,8 +64,12 @@
         <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
       </span>
       <div class="chat-meta-actions">
-        <span v-if="msg.summary && !msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
-          <SummaryToggle mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
+        <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
+          <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
+          <button v-else class="chat-action-btn chat-action-btn--wide" disabled>
+            <Clock :size="14" class="speak-spinner" />
+            <span>{{ t('chat.message.summarizing') }}</span>
+          </button>
         </span>
         <span v-if="msg._loadingOriginal" class="chat-loading-original">{{ t('chat.message.loadingOriginal') }}</span>
         <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">

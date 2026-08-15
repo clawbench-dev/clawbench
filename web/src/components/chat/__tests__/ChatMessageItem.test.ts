@@ -107,6 +107,7 @@ const i18n = createI18n({
           readAloud: '朗读',
           speaking: '正在朗读',
           viewDetails: '详情',
+          summarizing: '摘要生成中',
         },
         contentBlocks: { cancelled: '已中断' },
         pending: { queuing: '排队中' },
@@ -211,6 +212,24 @@ describe('ChatMessageItem', () => {
     })
     expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
     expect(wrapper.find('.summary-toggle-stub').exists()).toBe(true)
+  })
+
+  it('shows the summary toggle even when the message has no summary', () => {
+    // Requirement: historical messages without a summary still show the summary
+    // button so the user can request one on demand.
+    const wrapper = createWrapper({
+      msg: { id: 'ns1', role: 'assistant', content: 'full text', blocks: [{ type: 'text', text: 'full text' }], streaming: false },
+    })
+    expect(wrapper.find('.summary-toggle-stub').exists()).toBe(true)
+  })
+
+  it('replaces the summary toggle with a loading indicator while summarizing', () => {
+    const wrapper = createWrapper({
+      msg: { id: 'sum1', role: 'assistant', content: 'full text', blocks: [{ type: 'text', text: 'full text' }], _summarizing: true, streaming: false },
+    })
+    expect(wrapper.find('.summary-toggle-stub').exists()).toBe(false)
+    expect(wrapper.find('.chat-summary-anchor button').exists()).toBe(true)
+    expect(wrapper.text()).toContain('摘要生成中')
   })
 
   it('shows read-aloud button for summary view with empty blocks (summary fallback)', () => {

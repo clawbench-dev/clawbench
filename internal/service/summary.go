@@ -20,11 +20,13 @@ func summarizeTarget(targetType string, targetID int64, blocks []model.ContentBl
 
 // summarizeSimple extracts the last answer text and saves it as a summary
 // without any AI call or length threshold. Shared by interactive chat and
-// scheduled tasks via summarizeTarget.
-func summarizeSimple(targetType string, targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) {
+// scheduled tasks via summarizeTarget. Returns an error when the summary could
+// not be saved so on-demand callers can surface a real failure to the user;
+// async callers (triggerChatSummarization) discard it and only log.
+func summarizeSimple(targetType string, targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) error {
 	text := summarize.ExtractLastAnswerFromBlocks(blocks)
 	if text == "" {
-		return
+		return nil
 	}
 	cards := extractSummaryCards(blocks)
 	if err := SaveSummaryWithCards(targetType, targetID, text, cards); err != nil {
@@ -34,9 +36,46 @@ func summarizeSimple(targetType string, targetID int64, blocks []model.ContentBl
 			slog.Int64("target_id", targetID),
 			slog.String("err", err.Error()),
 		)
-		return
+		return err
 	}
 	broadcastSummaryUpdate(targetType, targetID, text, cards, projectPath, sessionID)
+	return nil
+}
+
+// GenerateMessageSummaryOnDemand generates a reading summary for a single chat
+// message on demand, e.g. when the user clicks the summary button on a
+// historical message that has no summary yet. If a summary already exists it is
+// returned unchanged. Only non-streaming assistant messages can be summarized
+// (matching triggerChatSummarization); anything else returns ok=false. Returns
+// the summary text (empty when no answer could be extracted, e.g. the message
+// has no text/tool blocks), its cards, whether a summary is available, and any
+// load/save error.
+func GenerateMessageSummaryOnDemand(messageID int64) (summary string, cards *model.SummaryCards, ok bool, err error) {
+	msg, err := GetMessageByID(messageID)
+	if err != nil {
+		return "", nil, false, err
+	}
+	if msg.Role != "assistant" || msg.Streaming {
+		return "", nil, false, nil
+	}
+	if existing, found := GetSummary("chat_message", messageID); found {
+		_, existingCards, _ := GetSummaryWithCards("chat_message", messageID)
+		return existing, existingCards, true, nil
+	}
+	blocks, err := parseMessageBlocks(msg.Content)
+	if err != nil || len(blocks) == 0 {
+		return "", nil, false, nil
+	}
+	// Save errors must propagate so the caller can surface a real failure
+	// instead of silently reporting "no summary" to the user.
+	if err := summarizeSimple("chat_message", messageID, blocks, msg.ProjectPath, msg.SessionID); err != nil {
+		return "", nil, false, err
+	}
+	if existing, found := GetSummary("chat_message", messageID); found {
+		_, existingCards, _ := GetSummaryWithCards("chat_message", messageID)
+		return existing, existingCards, true, nil
+	}
+	return "", nil, false, nil
 }
 
 // broadcastSummaryUpdate emits a summary_update WebSocket event for a target.

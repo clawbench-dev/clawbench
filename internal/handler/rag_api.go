@@ -121,6 +121,57 @@ func ServeRAGMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, msg)
 }
 
+// ServeMessageSummarize handles POST /api/rag/message/summarize?id=<id> —
+// generates a reading summary for a chat message on demand and returns it.
+// Project isolation: remote requires project cookie; localhost may omit it.
+func ServeMessageSummarize(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	// Remote requests require project cookie; localhost (CLI) may omit it.
+	projectPath := middleware.GetProjectFromCookie(r)
+	if projectPath == "" && !middleware.IsLocalhost(r) {
+		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
+		return
+	}
+
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "MessageIdRequired")
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidMessageId")
+		return
+	}
+
+	msg, err := service.GetMessageByID(id)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "MessageNotFound")
+		return
+	}
+
+	// Verify the message belongs to the authenticated project (skip for localhost global access)
+	if projectPath != "" && msg.ProjectPath != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	summary, cards, ok, err := service.GenerateMessageSummaryOnDemand(id)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "SummarizeFailed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"summary":      summary,
+		"summaryCards": cards,
+		"hasSummary":   ok,
+	})
+}
+
 // ServeRAGMessageIndexStatus handles GET /api/rag/message-index-status?id=<id> —
 // returns FTS and vector embedding status for a specific message.
 // Project isolation: remote requires project cookie; localhost may omit it for cross-project access.

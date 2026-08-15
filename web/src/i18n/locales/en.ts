@@ -430,6 +430,7 @@ export default {
       copied: 'Copied',
       summaryViewOriginal: 'Original',
       summaryViewSummary: 'Summary',
+      summarizing: 'Generating summary...',
       deepThinking: 'Thinking',
       loadingOriginal: 'Loading original...',
     },

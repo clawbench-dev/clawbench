@@ -164,7 +164,7 @@
 import { ref, computed, watch, onUnmounted, onMounted, inject, provide, toRef, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
-import { apiGet } from '@/utils/api'
+import { apiGet, apiPost } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import ChatMetadataModal from './ChatMetadataModal.vue'
@@ -947,6 +947,11 @@ function handleSummaryUpdate(e) {
 async function handleToggleSummary(msgId) {
     const msg = messages.value.find(m => m.id === msgId)
     if (!msg) return
+    // Historical messages with no summary: generate one on demand first.
+    if (msg.summary == null || msg.summary === '') {
+        await generateMessageSummary(msg)
+        return
+    }
     const showingNow = shouldShowSummary(msg)
     // Switching FROM summary TO original: if blocks weren't loaded (content omitted in view=summary), fetch the full message.
     if (showingNow && (!msg.blocks || msg.blocks.length === 0)) {
@@ -955,6 +960,25 @@ async function handleToggleSummary(msgId) {
     // Record the user's explicit preference. If they were showing the summary,
     // toggle to original; otherwise toggle to summary.
     msg.showingSummary = !showingNow
+}
+
+// Generate a reading summary for a historical message on demand, then switch to
+// the summary view so the freshly-generated summary is displayed.
+async function generateMessageSummary(msg) {
+    if (msg._summarizing) return
+    msg._summarizing = true
+    try {
+        const data = await apiPost(`/api/rag/message/summarize?id=${msg.id}`, {})
+        if (data.summary) {
+            msg.summary = data.summary
+            if (data.summaryCards) msg.summaryCards = data.summaryCards
+            msg.showingSummary = true
+        }
+    } catch (err) {
+        appLog.w(TAG, 'failed to generate summary on demand', err)
+    } finally {
+        msg._summarizing = false
+    }
 }
 
 // Lazily fetch the full message content when the original view is requested but

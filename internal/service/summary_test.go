@@ -9,6 +9,111 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// --- GenerateMessageSummaryOnDemand tests ---
+
+func TestGenerateMessageSummaryOnDemand_GeneratesAndSaves(t *testing.T) {
+	db, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-1', 'claude')",
+		`{"blocks":[{"type":"text","text":"让我看看"},{"type":"tool_use","text":"Bash"},{"type":"text","text":"最终结论：搞定"}]}`)
+	assert.NoError(t, err)
+
+	summary, _, ok, err := GenerateMessageSummaryOnDemand(1)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "最终结论：搞定", summary)
+
+	// Persisted so a reload of history shows it.
+	persisted, found := GetSummary("chat_message", 1)
+	assert.True(t, found)
+	assert.Equal(t, "最终结论：搞定", persisted)
+}
+
+func TestGenerateMessageSummaryOnDemand_ReturnsExisting(t *testing.T) {
+	db, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-1', 'claude')",
+		`{"blocks":[{"type":"text","text":"已有摘要的消息"}]}`)
+	assert.NoError(t, err)
+	_, err = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 1, '已经存在')")
+	assert.NoError(t, err)
+
+	summary, _, ok, err := GenerateMessageSummaryOnDemand(1)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "已经存在", summary)
+}
+
+func TestGenerateMessageSummaryOnDemand_NoTextReturnsNotOK(t *testing.T) {
+	db, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	// Assistant message whose blocks contain no extractable answer text.
+	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-1', 'claude')",
+		`{"blocks":[{"type":"tool_use","text":"Bash"}]}`)
+	assert.NoError(t, err)
+
+	summary, _, ok, err := GenerateMessageSummaryOnDemand(1)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "", summary)
+
+	_, found := GetSummary("chat_message", 1)
+	assert.False(t, found)
+}
+
+func TestGenerateMessageSummaryOnDemand_MessageNotFound(t *testing.T) {
+	_, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	_, _, ok, err := GenerateMessageSummaryOnDemand(999)
+	assert.Error(t, err)
+	assert.False(t, ok)
+}
+
+func TestGenerateMessageSummaryOnDemand_UnparseableContent(t *testing.T) {
+	db, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	// Content is not valid blocks JSON — treated as no summary available.
+	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', 'not json at all', 'sess-1', 'claude')")
+	assert.NoError(t, err)
+
+	summary, _, ok, err := GenerateMessageSummaryOnDemand(1)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "", summary)
+}
+
+func TestGenerateMessageSummaryOnDemand_SkipsUserAndStreaming(t *testing.T) {
+	db, teardown := setupTestDBForTriggerSummary(t)
+	defer teardown()
+
+	// A user message should never be summarized.
+	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'user', '我的问题', 'sess-1', 'claude')")
+	assert.NoError(t, err)
+	summary, _, ok, err := GenerateMessageSummaryOnDemand(1)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "", summary)
+
+	// A streaming assistant message should not get an incomplete summary.
+	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-1', 'claude', 1)",
+		`{"blocks":[{"type":"text","text":"还在生成中"}]}`)
+	assert.NoError(t, err)
+	summary, _, ok, err = GenerateMessageSummaryOnDemand(2)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "", summary)
+
+	_, found := GetSummary("chat_message", 1)
+	assert.False(t, found)
+	_, found = GetSummary("chat_message", 2)
+	assert.False(t, found)
+}
+
 // --- summarizeSimple / summarizeTarget tests ---
 
 // setupTestDBForAsyncSummary creates an in-memory DB with summaries table

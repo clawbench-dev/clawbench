@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"clawbench/internal/model"
@@ -14,6 +16,81 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// ---------- ServeMessageSummarize ----------
+
+func TestServeMessageSummarize_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/message/summarize?id=1", nil)
+	w := callHandlerWithAuth(ServeMessageSummarize, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeMessageSummarize_MissingID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/rag/message/summarize", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeMessageSummarize, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeMessageSummarize_MessageNotFound(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/rag/message/summarize?id=999", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeMessageSummarize, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeMessageSummarize_GeneratesAndReturns(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Test", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	content := `{"blocks":[{"type":"text","text":"先查"},{"type":"tool_use","text":"Bash"},{"type":"text","text":"最终结论：完成"}]}`
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", content, nil, false, "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/rag/message/summarize?id=%d", msgID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeMessageSummarize, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Summary    string `json:"summary"`
+		HasSummary bool   `json:"hasSummary"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.HasSummary)
+	assert.Equal(t, "最终结论：完成", resp.Summary)
+}
+
+func TestServeMessageSummarize_WrongProjectDenied(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Test", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	content := `{"blocks":[{"type":"text","text":"最终结论：完成"}]}`
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", content, nil, false, "")
+	require.NoError(t, err)
+
+	// Authenticate as a different project that is still under a root path.
+	otherProject := filepath.Join(filepath.Dir(env.ProjectDir), "other")
+	_ = os.MkdirAll(otherProject, 0o755)
+
+	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/rag/message/summarize?id=%d", msgID), nil)
+	req = withProjectCookie(req, otherProject)
+	w := callHandlerWithAuth(ServeMessageSummarize, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
 
 // ---------- ServeRAGSearch ----------
 
