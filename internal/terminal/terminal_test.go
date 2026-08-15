@@ -1068,7 +1068,6 @@ func TestManager_HandleWebSocket_SessionLimit(t *testing.T) {
 		MaxBufferMB:  4,
 		MaxSessions:  1,
 	}
-
 	mgr := NewManager(cfg, 20000)
 	defer mgr.Close()
 
@@ -1108,6 +1107,49 @@ func TestManager_HandleWebSocket_SessionLimit(t *testing.T) {
 	if msg.Type != "error" || msg.ErrCode != ErrCodeSessionLimit {
 		t.Errorf("expected session limit error, got type=%q errcode=%q", msg.Type, msg.ErrCode)
 	}
+}
+
+// TestManager_EvictsDisconnectedSession verifies that when the session limit is
+// reached, a slot held by a session that lost its client (abrupt disconnect,
+// no graceful "close" message) is reclaimed so a new terminal can be created.
+func TestManager_EvictsDisconnectedSession(t *testing.T) {
+	skipIfWindows(t)
+	cfg := model.TerminalConfig{
+		Enabled:      true,
+		IdleTimeout:  "5m", // long enough that cleanup must come from eviction, not idle timeout
+		BufferLines:  100,
+		MaxLineBytes: 65536,
+		MaxBufferMB:  4,
+		MaxSessions:  1,
+	}
+
+	mgr := NewManager(cfg, 20000)
+	defer mgr.Close()
+
+	baseURL := startTestServer(t, mgr)
+
+	// First client fills the limit.
+	conn1 := dialWS(t, baseURL)
+	_ = readServerMessage(t, conn1)
+	if got := mgr.SessionCount(); got != 1 {
+		t.Fatalf("expected 1 session, got %d", got)
+	}
+
+	// Abruptly disconnect conn1 WITHOUT sending a "close" message — this
+	// mimics a killed app / dropped network, leaving the session orphaned.
+	_ = conn1.Close(websocket.StatusNormalClosure, "abrupt")
+
+	// Give the server's read loop a moment to notice the disconnect and clear
+	// the session's client (Disconnect). The orphaned session stays tracked.
+	time.Sleep(300 * time.Millisecond)
+	if got := mgr.SessionCount(); got != 1 {
+		t.Fatalf("expected the orphaned session to still be tracked before eviction, got %d", got)
+	}
+
+	// Second client should succeed because the orphaned session is evicted.
+	conn2 := dialWS(t, baseURL)
+	_ = readServerMessage(t, conn2)
+	_ = conn2.Close(websocket.StatusNormalClosure, "done")
 }
 
 func TestManager_HandleWebSocket_InvalidMessage(t *testing.T) {

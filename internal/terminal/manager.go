@@ -104,8 +104,12 @@ func (m *Manager) HandleWebSocket(w http.ResponseWriter, r *http.Request, projec
 
 	// Create new session if needed
 	if session == nil {
-		// Enforce session limit
-		if m.maxSessions > 0 && len(m.sessions) >= m.maxSessions {
+		// Enforce session limit. Before rejecting, reclaim slots held by
+		// sessions that lost their client (abrupt disconnect) without a graceful
+		// "close" message. Because idle_timeout defaults to "0" (never), those
+		// orphaned sessions would otherwise leak and block new terminals.
+		// NOTE: m.mu is held here, so eviction works on the map directly.
+		if !m.hasSessionSlotLocked() {
 			m.mu.Unlock()
 			// Upgrade to WebSocket just to send the error, then close
 			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -240,6 +244,43 @@ func (m *Manager) handleClientMessages(session *Session, conn *websocket.Conn) {
 			m.mu.Unlock()
 			return
 		}
+	}
+}
+
+// hasSessionSlotLocked reports whether a new session can be created. If the
+// limit is already reached it first evicts sessions that lost their client
+// (abrupt disconnect) to reclaim leaked slots, then re-checks. The caller must
+// hold m.mu.
+func (m *Manager) hasSessionSlotLocked() bool {
+	if m.maxSessions <= 0 || len(m.sessions) < m.maxSessions {
+		return true
+	}
+	m.evictDisconnectedSessions()
+	return m.maxSessions <= 0 || len(m.sessions) < m.maxSessions
+}
+
+// evictDisconnectedSessions closes any sessions that no longer have a live
+// WebSocket client, so their slots can be reused for new terminals. It is
+// called when the session limit is reached to recover slots leaked by abrupt
+// client disconnects (which never send a graceful "close" message).
+//
+// The caller must hold m.mu. Sessions are removed from the map here and the
+// orphaned PTYs are closed immediately; Session.Close only takes the session's
+// own lock, so this does not deadlock while m.mu is held.
+func (m *Manager) evictDisconnectedSessions() {
+	orphaned := make([]*Session, 0)
+	for id, s := range m.sessions {
+		if !s.HasClient() {
+			delete(m.sessions, id)
+			orphaned = append(orphaned, s)
+		}
+	}
+	for _, s := range orphaned {
+		slog.Info(
+			"terminal: evicting disconnected session to free slot",
+			slog.String("session", s.ID()),
+		)
+		s.Close()
 	}
 }
 

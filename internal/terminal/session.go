@@ -443,6 +443,13 @@ func (s *Session) Cwd() string {
 	return s.cwd
 }
 
+// HasClient reports whether the session currently has an active WebSocket client.
+func (s *Session) HasClient() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.closed && s.wsConn != nil
+}
+
 // IsRunning reports whether the PTY process is still alive.
 func (s *Session) IsRunning() bool {
 	s.mu.Lock()

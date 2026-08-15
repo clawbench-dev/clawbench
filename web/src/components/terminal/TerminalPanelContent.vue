@@ -150,6 +150,10 @@
             <button class="toolbar-btn btn-action" @click="keyConfigDrawer.open()" :title="t('terminal.keyConfigTitle')">
               <KeyboardIcon :size="14" />
             </button>
+            <!-- Help button -->
+            <button class="toolbar-btn btn-action" @click="helpDrawer.open()" :title="t('terminal.helpTitle')">
+              <CircleHelpIcon :size="14" />
+            </button>
           </div>
         </div>
         </div>
@@ -171,6 +175,14 @@
 
     <!-- Terminal input drawer -->
     <TerminalInputDrawer :open="inputDrawer.effectiveOpen.value" @close="inputDrawer.close()" @input="inputToTerminal" />
+
+    <!-- Terminal help drawer -->
+    <TerminalHelpDrawer
+      :open="helpDrawer.effectiveOpen.value"
+      :gestures="!isPC"
+      :app-mode="isAppMode"
+      @close="helpDrawer.close()"
+    />
 
     <!-- Tab three-dot menu -->
     <TerminalTabMenu
@@ -249,6 +261,7 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
+import TerminalHelpDrawer from '@/components/terminal/TerminalHelpDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import type { Terminal as TerminalType } from '@xterm/xterm'
@@ -286,7 +299,7 @@ import {
   lightTheme,
 } from '@/utils/terminalThemes'
 
-import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon, CircleHelp as CircleHelpIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -387,13 +400,10 @@ const tabMenuCwd = ref('')
 const { selectedKeys, selectedSymbols, fetchConfig: fetchKeyConfig } = useKeyConfig()
 const keyConfigDrawer = useTabDrawer('terminal')
 const inputDrawer = useTabDrawer('terminal')
+const helpDrawer = useTabDrawer('terminal')
 
-/** Keys visible in the toolbar, filtered by gesture mode (Tab/PgUp/PgDn/arrows hidden when gestures on) */
-const GESTURE_HIDDEN_KEYS = new Set(['tab', 'pgup', 'pgdn', 'arrow_up', 'arrow_down', 'arrow_left', 'arrow_right'])
-const visibleKeys = computed(() => {
-  if (gestures.mode.value !== 'gesture') return selectedKeys.value
-  return selectedKeys.value.filter(def => !GESTURE_HIDDEN_KEYS.has(def.id))
-})
+/** Keys visible in the toolbar — always show all keys; gesture inputs display on-screen hints via onGestureHint. */
+const visibleKeys = computed(() => selectedKeys.value)
 
 function handleSymbolClick(sym: string) {
   activeTab.value?.session.sendInput(sym)
@@ -947,12 +957,36 @@ function toolbarBtnClass(def: KeyDef): Record<string, boolean> {
   return {}
 }
 
+// Gesture-backed keys map to the gesture method that produces the same input,
+// so clicking them shows "how to do this with a gesture" as on-screen feedback.
+const GESTURE_KEY_LABELS: Record<string, string> = {
+  tab: 'gestureDoubleTap',
+  pgup: 'gestureTwoFingerUp',
+  pgdn: 'gestureTwoFingerDown',
+  arrow_up: 'gestureSwipeUp',
+  arrow_down: 'gestureSwipeDown',
+  arrow_left: 'gestureSwipeLeft',
+  arrow_right: 'gestureSwipeRight',
+}
+
+function showGestureHint(symbol: string) {
+  gestureHint.value = symbol
+  if (gestureHintTimer) clearTimeout(gestureHintTimer)
+  gestureHintTimer = setTimeout(() => { gestureHint.value = '' }, 600)
+}
+
 /** Handle click on a config-driven toolbar key */
 function handleToolbarKeyClick(def: KeyDef) {
   if (def.isModifier) {
     terminalKeys.toggleModifier(def.id as ModifierKey, false)
   } else {
     terminalKeys.send(def.id)
+  }
+  // In gesture mode, clicking a gesture-backed key shows which gesture can
+  // produce the same input, so the user knows they can swipe/tap instead.
+  if (gestures.mode.value === 'gesture') {
+    const labelKey = GESTURE_KEY_LABELS[def.id]
+    if (labelKey) showGestureHint(t('terminal.' + labelKey))
   }
   focusTerminal()
 }
