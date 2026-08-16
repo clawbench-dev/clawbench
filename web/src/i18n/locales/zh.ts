@@ -872,6 +872,8 @@ export default {
       lineCount: '行数',
       charCount: '字符数',
       encoding: '编码',
+      linkTarget: '实际路径',
+      brokenLink: '(链接已损坏)',
     },
     header: {
       toc: '目录',

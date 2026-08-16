@@ -871,6 +871,8 @@ export default {
       lineCount: 'Lines',
       charCount: 'Characters',
       encoding: 'Encoding',
+      linkTarget: 'Actual path',
+      brokenLink: '(Broken link)',
     },
     header: {
       toc: 'TOC',

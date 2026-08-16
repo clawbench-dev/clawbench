@@ -1850,6 +1850,29 @@ func TestGetFile_BrokenSymlink(t *testing.T) {
 
 		w := callHandler(GetFile, req)
 		assert.Equal(t, http.StatusOK, w.Code)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, "hello from real file", fc.Content)
+		assert.True(t, fc.IsSymlink, "symlink file should be marked isSymlink")
+		assert.Equal(t, "real_file.txt", fc.LinkTarget, "linkTarget should resolve to the target file")
+	})
+
+	t.Run("RegularFile_NotMarkedSymlink", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "plain.txt", "hello")
+		req := newRequest(t, http.MethodGet, "/api/file/plain.txt", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.False(t, fc.IsSymlink, "regular file should not be marked isSymlink")
+		assert.Empty(t, fc.LinkTarget, "regular file should have no linkTarget")
 	})
 }
 

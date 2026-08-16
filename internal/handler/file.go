@@ -316,13 +316,16 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		}
 		if isBinary {
 			respPath := responsePath(absPath, projectPath, isExternal)
+			linkTarget, isSymlink := resolveLinkTarget(absPath, projectPath, isExternal)
 			writeJSON(w, http.StatusOK, FileContent{
-				Content:   "",
-				Name:      info.Name(),
-				Path:      respPath,
-				Supported: false,
-				IsBinary:  true,
-				Size:      info.Size(),
+				Content:    "",
+				Name:       info.Name(),
+				Path:       respPath,
+				Supported:  false,
+				IsBinary:   true,
+				Size:       info.Size(),
+				LinkTarget: linkTarget,
+				IsSymlink:  isSymlink,
 			})
 			return
 		}
@@ -353,16 +356,45 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	linkTarget, isSymlink := resolveLinkTarget(absPath, projectPath, isExternal)
+
 	writeJSON(w, http.StatusOK, FileContent{
-		Content:   string(content),
-		Name:      info.Name(),
-		Path:      respPath,
-		Supported: model.IsSupportedFile(info.Name()),
-		Size:      info.Size(),
-		Truncated: truncated,
-		Subtype:   subtype,
-		SpecJSON:  specJSON,
+		Content:    string(content),
+		Name:       info.Name(),
+		Path:       respPath,
+		Supported:  model.IsSupportedFile(info.Name()),
+		Size:       info.Size(),
+		Truncated:  truncated,
+		Subtype:    subtype,
+		SpecJSON:   specJSON,
+		LinkTarget: linkTarget,
+		IsSymlink:  isSymlink,
 	})
+}
+
+// resolveLinkTarget returns the symlink target path (relative to projectPath when
+// the link is project-internal, absolute otherwise) for a symlink at absPath,
+// plus whether the entry is a symlink. Returns ("", false) for non-symlinks and
+// when the target cannot be read.
+func resolveLinkTarget(absPath, projectPath string, isExternal bool) (string, bool) {
+	linfo, err := os.Lstat(absPath)
+	if err != nil || linfo.Mode()&os.ModeSymlink == 0 {
+		return "", false
+	}
+	target, err := os.Readlink(absPath)
+	if err != nil {
+		return "", true
+	}
+	// Resolve a relative link target against the link's directory, then present
+	// it project-relative (or absolute for external files), matching respPath.
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(absPath), target)
+	}
+	resp := responsePath(target, projectPath, isExternal)
+	if resp == "" {
+		resp = target
+	}
+	return resp, true
 }
 
 // handleStatError writes an appropriate error response for os.Stat failures,
@@ -855,15 +887,17 @@ type FileInfo struct {
 
 // FileContent represents file content in API responses
 type FileContent struct {
-	Content   string `json:"content"`
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	Supported bool   `json:"supported"`
-	IsBinary  bool   `json:"isBinary,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
-	Size      int64  `json:"size"`
-	Subtype   string `json:"subtype,omitempty"`
-	SpecJSON  string `json:"specJson,omitempty"`
+	Content    string `json:"content"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Supported  bool   `json:"supported"`
+	IsBinary   bool   `json:"isBinary,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
+	Size       int64  `json:"size"`
+	Subtype    string `json:"subtype,omitempty"`
+	SpecJSON   string `json:"specJson,omitempty"`
+	LinkTarget string `json:"linkTarget,omitempty"`
+	IsSymlink  bool   `json:"isSymlink,omitempty"`
 }
 
 // buildDirEntries builds a sorted list of directory entries

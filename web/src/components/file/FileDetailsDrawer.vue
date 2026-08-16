@@ -105,6 +105,9 @@ const detailItems = computed(() => {
     { label: t('file.details.path'), value: absPath.value, copyable: true },
     { label: t('file.details.type'), value: fileType.value?.label || t('file.details.unknownType') },
   ]
+  if (props.file.isSymlink) {
+    items.push({ label: t('file.details.linkTarget'), value: props.file.linkTarget || t('file.details.brokenLink'), copyable: true })
+  }
   if (props.file.size != null) {
     items.push({ label: t('file.details.size'), value: formatFileSize(props.file.size) })
   }

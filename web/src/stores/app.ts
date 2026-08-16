@@ -107,6 +107,8 @@ interface CurrentFile {
     error?: string
     subtype?: string
     specJson?: string
+    linkTarget?: string
+    isSymlink?: boolean
 }
 
 interface AppState {
