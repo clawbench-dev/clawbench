@@ -1,5 +1,5 @@
 <template>
-  <div class="terminal-panel" :style="panelStyle">
+  <div class="terminal-panel">
     <!-- Platform unsupported state (top priority) -->
     <div v-if="platformUnsupported" class="terminal-empty-state terminal-platform-unsupported">
       <TerminalIcon :size="40" class="terminal-empty-icon" />
@@ -708,10 +708,6 @@ watch(() => tabs.value.length, (count) => {
   }
 }, { immediate: true })
 
-const panelStyle = computed(() => ({
-  '--keyboard-height': `${viewport.keyboardHeight.value}px`,
-}))
-
 // Per-tab error state helpers
 // NOTE: tab is a reactive() proxy which auto-unwraps Refs, so we MUST
 // access tab.session.connectionState directly (no .value). TypeScript
@@ -1128,7 +1124,7 @@ onBeforeUnmount(() => {
   tabManager.disposeAll()
 })
 
-defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewport.keyboardHeight })
+defineExpose({ activate: () => {}, deactivate: () => {} })
 </script>
 
 <style scoped>

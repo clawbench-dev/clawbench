@@ -1,68 +1,25 @@
 import { ref, type Ref } from 'vue'
 import type { Terminal } from '@xterm/xterm'
-import { useTerminalKeyboard } from './useTerminalKeyboard'
-import { usePlatformDetect } from './usePlatformDetect'
 
+/**
+ * Terminal viewport sizing/fit only.
+ *
+ * Soft-keyboard detection is NOT this composable's job anymore — it lives in
+ * useTerminalKeyboardDetect (owned by App.vue), so the terminal's layout is
+ * decoupled from the Dock-hide state that used to be synced through a shared
+ * module singleton here.
+ */
 export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef: Ref<HTMLElement | null>) {
   const viewportHeight = ref(0)
-  const keyboardHeight = ref(0)
 
   let fitTimer: ReturnType<typeof setTimeout> | null = null
   const FIT_DEBOUNCE_MS = 100
 
-  // Use the full-screen height captured at app startup (before any keyboard)
-  // as the baseline for detecting keyboard appearance on Android adjustResize.
-  const { fullScreenHeight, setKeyboardHeight: setSharedKeyboardHeight, setAdjustResize } = useTerminalKeyboard()
-  // A PC/laptop has no soft keyboard, so innerHeight changes are always user
-  // window resizes — never a keyboard. Bypass detection on PC to avoid treating
-  // a window resize as a keyboard open (which would hide the bottom dock).
-  const { isPC } = usePlatformDetect()
-
   function updateViewport() {
-    if (!containerRef.value) {
-      // No active terminal container (e.g. all session tabs were closed while
-      // the keyboard was open). The shared keyboard height would otherwise stay
-      // at its stale >0 value forever, keeping the Dock hidden via App.vue's
-      // anyKeyboardActive even though there is no terminal input anymore.
-      setSharedKeyboardHeight(0)
-      return
-    }
+    if (!containerRef.value) return
 
-    const currentInnerHeight = window.innerHeight
     const vv = window.visualViewport
-
-    if (vv) {
-      viewportHeight.value = vv.height
-      if (isPC.value) {
-        // Desktop/laptop: no soft keyboard. A window resize (shrinking innerHeight)
-        // must not be misread as a keyboard opening — doing so would set
-        // keyboardHeight > 0 and hide the bottom dock via App.vue's
-        // anyKeyboardActive even though no dock should disappear.
-        keyboardHeight.value = 0
-      } else {
-        // Method 1 (works in non-adjustResize browsers / mobile):
-        // keyboardHeight = innerHeight - visualViewport.height - offsetTop
-        const vvKeyboard = window.innerHeight - vv.height - vv.offsetTop
-
-        // Method 2 (works in Android adjustResize where innerHeight shrinks):
-        // keyboardHeight = fullScreenHeight - currentInnerHeight
-        const resizeKeyboard = fullScreenHeight - currentInnerHeight
-
-        // Detect adjustResize: if innerHeight actually shrunk, the browser
-        // is in adjustResize mode (Android native WebView). In this mode
-        // position:fixed containers auto-adjust, so no CSS compensation needed.
-        setAdjustResize(resizeKeyboard > 0)
-
-        // Use whichever gives a larger value — covers both scenarios
-        keyboardHeight.value = Math.max(vvKeyboard, resizeKeyboard, 0)
-      }
-    } else {
-      viewportHeight.value = containerRef.value.clientHeight
-      keyboardHeight.value = 0
-    }
-
-    // Sync to module-level singleton so App.vue can react
-    setSharedKeyboardHeight(keyboardHeight.value)
+    viewportHeight.value = vv ? vv.height : containerRef.value.clientHeight
 
     // Debounce fit() to prevent duplicate lines during keyboard animation.
     // Without debounce, each resize event during the keyboard slide-up
@@ -94,7 +51,8 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
   function startWatching() {
     updateViewport()
 
-    // Watch container size changes
+    // Watch container size changes (e.g. the container shrinks when the soft
+    // keyboard opens and the app container is compensated).
     if (containerRef.value) {
       resizeObserver = new ResizeObserver(() => {
         updateViewport()
@@ -102,11 +60,11 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
       resizeObserver.observe(containerRef.value)
     }
 
-    // Watch visualViewport for keyboard changes
+    // Watch visualViewport for keyboard changes.
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', updateViewport)
       // Don't watch scroll — it fires on every keyboard animation frame
-      // and causes excessive fit() calls that duplicate terminal content
+      // and causes excessive fit() calls that duplicate terminal content.
     }
   }
 
@@ -121,14 +79,10 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', updateViewport)
     }
-
-    // Reset adjustResize flag when keyboard closes
-    setAdjustResize(false)
   }
 
   return {
     viewportHeight,
-    keyboardHeight,
     fitTerminal,
     startWatching,
     stopWatching,
