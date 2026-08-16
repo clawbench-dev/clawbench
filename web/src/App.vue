@@ -474,7 +474,6 @@ import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
 import { requestNotificationPermission } from './composables/useNotification'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
-import { useTerminalKeyboardDetect } from './composables/useTerminalKeyboardDetect.ts'
 import { useChatKeyboard } from './composables/useChatKeyboard.ts'
 import { usePortForward } from './composables/usePortForward.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
@@ -938,12 +937,11 @@ window.addEventListener('clawbench-reconnect', handleReconnect)
 const terminalRequestedCwd = ref(null)
 
 // Terminal keyboard height for detecting when soft keyboard is open in terminal tab.
-// Dock is hidden only when keyboard is open.
+// Dock is hidden only when keyboard is open. Detection is driven by
+// useTerminalViewport (the terminal container ResizeObserver), which writes this
+// singleton — reliable on Android WebViews that don't dispatch window/viewport
+// resize events. App.vue only reads it here.
 const terminalActive = computed(() => activeTab.value === 'terminal')
-// Own the soft-keyboard detection here (start/stop by terminalActive), so it is
-// independent of the terminal panel's lifecycle. The shared singleton is written
-// by useTerminalKeyboardDetect and read below for the Dock gate + CSS shrink.
-useTerminalKeyboardDetect(terminalActive)
 const { keyboardHeight: terminalKeyboardHeight, isAdjustResize: terminalIsAdjustResize } = useTerminalKeyboard()
 const terminalKeyboardActive = computed(() => terminalActive.value && terminalKeyboardHeight.value > 0)
 // In PWA standalone / iOS (no adjustResize), position:fixed app-container doesn't
