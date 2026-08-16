@@ -8,7 +8,7 @@
     <!-- Scrollable message content -->
     <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
       <!-- Summary / Original tab bar (hidden during live streaming) -->
-      <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
+      <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value && !isRunning" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
         v-if="activeMsgData"
         :msg="activeMsgData"
@@ -226,7 +226,10 @@ const msgData = computed(() => {
     blocks,
     metadata: props.execDetail.metadata || null,
     createdAt: props.execDetail.createdAt || '',
-    streaming: false,
+    // While the execution is still running, always mark the message as
+    // streaming so the "streaming status" indicator is shown. Otherwise a
+    // running task's partial DB content renders like a completed answer.
+    streaming: isRunning.value,
     cancelled: false,
   }
 })
@@ -280,7 +283,9 @@ const activeMsgData = computed(() => {
   }
   // When not streaming, use the DB content (refreshed by refreshExecDetail)
   // we always show whatever partial content is available rather than "connecting..."
-  if (activeTab.value === 'summary' && summaryMsgData.value) return summaryMsgData.value
+  // During a running execution a summary isn't final yet, so never present it
+  // as a completed answer.
+  if (activeTab.value === 'summary' && summaryMsgData.value && !isRunning.value) return summaryMsgData.value
   return msgData.value
 })
 
