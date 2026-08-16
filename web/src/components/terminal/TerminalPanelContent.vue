@@ -1003,6 +1003,11 @@ watch(() => props.active, async (isActive) => {
      emit('open')
      enableVolumeKeys()
      await nextTick()
+    // Attach the visualViewport keyboard listener whenever the panel becomes
+    // active — even if every session tab is closed (activeTab is null). Otherwise
+    // re-opening the terminal with no sessions skips startWatching and the Dock
+    // never hides when the soft keyboard opens on mobile.
+    viewport.startWatching()
     const tab = activeTab.value
     if (tab) {
       const container = tabContainerRefs.get(tab.id)
@@ -1023,7 +1028,6 @@ watch(() => props.active, async (isActive) => {
           tabManager.syncTabSessionId(tab.id)
         } catch { /* error shown via overlay */ }
       }
-      viewport.startWatching()
       gestures.attach()
       focusTerminal()
     }
@@ -1093,6 +1097,7 @@ onMounted(async () => {
     enableVolumeKeys()
     // Wait for v-for :ref callbacks to populate tabContainerRefs
     await nextTick()
+    viewport.startWatching()
     const tab = activeTab.value
     if (tab) {
       const container = tabContainerRefs.get(tab.id)
@@ -1108,7 +1113,6 @@ onMounted(async () => {
           tabManager.syncTabSessionId(tab.id)
         } catch { /* error shown via overlay */ }
       }
-      viewport.startWatching()
       gestures.attach()
       focusTerminal()
     }
