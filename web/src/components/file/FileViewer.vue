@@ -264,12 +264,11 @@ import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
 import AudioPreview from '@/components/media/AudioPreview.vue'
 import VideoPreview from '@/components/media/VideoPreview.vue'
-import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
-const asyncOpts = { loadingComponent: AsyncComponentLoader }
-const OfficePreview = defineAsyncComponent(Object.assign({ loader: () => import('@/components/media/OfficePreview.vue') }, asyncOpts))
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent.ts'
+const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 import MarkdownPreview from './MarkdownPreview.vue'
-const CodeMirrorViewer = defineAsyncComponent(Object.assign({ loader: () => import('./CodeMirrorViewer.vue') }, asyncOpts))
-const OpenApiPreview = defineAsyncComponent(Object.assign({ loader: () => import('./OpenApiPreview.vue') }, asyncOpts))
+const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./CodeMirrorViewer.vue') }))
+const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./OpenApiPreview.vue') }))
 import DiffDrawer from './DiffDrawer.vue'
 import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
 import { diffDrawer } from '@/composables/useMarkdownDiff.ts'
