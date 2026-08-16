@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 // ServeFileFromFS serves a single file from an fs.FS using http.ServeContent
@@ -28,6 +29,14 @@ func ServeFileFromFS(w http.ResponseWriter, r *http.Request, fsys fs.FS, name st
 	if stat.IsDir() {
 		http.NotFound(w, r)
 		return
+	}
+
+	// The entry HTML must never be cached: it references content-hashed asset
+	// filenames, so a cached index.html would keep serving stale JS/CSS after a
+	// rebuild (the Android WebView uses LOAD_DEFAULT and otherwise serves the
+	// old index.html indefinitely). Force revalidation on every load.
+	if strings.HasSuffix(strings.ToLower(name), ".html") {
+		w.Header().Set("Cache-Control", "no-cache")
 	}
 
 	// If the file implements io.ReadSeeker, use it directly (zero-copy).

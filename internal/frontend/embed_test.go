@@ -88,6 +88,48 @@ func TestServeFileFromFS_ExistingFile(t *testing.T) {
 	}
 }
 
+func TestServeFileFromFS_HTMLIsNoCache(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("<html><body>app</body></html>")
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fsys := os.DirFS(dir)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/index.html", http.NoBody)
+
+	ServeFileFromFS(w, req, fsys, "index.html")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	// The entry HTML must not be cached so a rebuild always reaches the client.
+	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("expected Cache-Control: no-cache, got %q", got)
+	}
+}
+
+func TestServeFileFromFS_NonHTMLDoesNotForceNoCache(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.js"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fsys := os.DirFS(dir)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/test.js", http.NoBody)
+
+	ServeFileFromFS(w, req, fsys, "test.js")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("expected no Cache-Control header for non-HTML, got %q", got)
+	}
+}
+
 func TestServeFileFromFS_Directory(t *testing.T) {
 	// Serving a directory path should return 404
 	dir := t.TempDir()
