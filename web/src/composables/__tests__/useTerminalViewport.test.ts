@@ -134,12 +134,12 @@ describe('useTerminalViewport', () => {
     viewport.stopWatching()
   })
 
-  it('resets the shared keyboard height to 0 on stopWatching', () => {
+  it('keeps detecting an open keyboard across deactivate/reactivate cycles', () => {
     const terminal = ref(null)
     const containerRef = ref<HTMLElement | null>(container)
     const viewport = useTerminalViewport(terminal, containerRef)
 
-    // Keyboard open — shared singleton must reflect it (App.vue reads this)
+    // Keyboard open (non-adjustResize: innerHeight unchanged, vv shrunk)
     Object.defineProperty(window, 'visualViewport', {
       value: {
         height: 600,
@@ -159,10 +159,46 @@ describe('useTerminalViewport', () => {
     viewport.startWatching()
     expect(mockShared.keyboardHeight.value).toBe(200)
 
-    // Deactivating the terminal (closing/switching away from the tab page) must
-    // clear the shared keyboard state. Otherwise the dock stays hidden even
-    // though the terminal is no longer active.
+    // Leaving the terminal tab must not clobber keyboard detection: if the
+    // keyboard is still open on reactivation, the dock must hide again.
     viewport.stopWatching()
+    viewport.startWatching()
+    expect(mockShared.keyboardHeight.value).toBe(200)
+
+    viewport.stopWatching()
+  })
+
+  it('clears the shared keyboard height when the active container becomes null', () => {
+    let resizeHandler: (() => void) | null = null
+    const terminal = ref(null)
+    const containerRef = ref<HTMLElement | null>(container)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    // Keyboard open — shared singleton must reflect it (App.vue reads this)
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 600,
+        offsetTop: 0,
+        addEventListener: (_type: string, cb: () => void) => { resizeHandler = cb },
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+
+    viewport.startWatching()
+    expect(mockShared.keyboardHeight.value).toBe(200)
+
+    // Closing the last terminal session tab detaches the active container; the
+    // following keyboard-close resize must clear the stale shared height so the
+    // Dock is not left hidden forever.
+    containerRef.value = null
+    resizeHandler!()
     expect(mockShared.keyboardHeight.value).toBe(0)
   })
 

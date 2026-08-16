@@ -19,7 +19,14 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
   const { isPC } = usePlatformDetect()
 
   function updateViewport() {
-    if (!containerRef.value) return
+    if (!containerRef.value) {
+      // No active terminal container (e.g. all session tabs were closed while
+      // the keyboard was open). The shared keyboard height would otherwise stay
+      // at its stale >0 value forever, keeping the Dock hidden via App.vue's
+      // anyKeyboardActive even though there is no terminal input anymore.
+      setSharedKeyboardHeight(0)
+      return
+    }
 
     const currentInnerHeight = window.innerHeight
     const vv = window.visualViewport
@@ -117,12 +124,6 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
 
     // Reset adjustResize flag when keyboard closes
     setAdjustResize(false)
-
-    // Clear the shared keyboard height when the terminal view deactivates.
-    // The module-level singleton otherwise retains its last value forever, so
-    // anyKeyboardActive in App.vue would keep the Dock hidden even after the
-    // terminal tab page is closed / navigated away from.
-    setSharedKeyboardHeight(0)
   }
 
   return {
