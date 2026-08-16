@@ -2,16 +2,22 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref, nextTick } from 'vue'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 
+// Shared refs for the mocked module — exposed so tests can assert on the
+// module-level singleton state that App.vue reads (not just the local ref).
+const mockShared = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { ref } = require('vue') as typeof import('vue')
+  return { keyboardHeight: ref(0), isAdjustResize: ref(false) }
+})
+
 // Mock useTerminalKeyboard to avoid module-level side effects
-const mockIsAdjustResize = ref(false)
 vi.mock('@/composables/useTerminalKeyboard', () => {
-  const keyboardHeight = ref(0)
   return {
     useTerminalKeyboard: () => ({
-      keyboardHeight,
-      setKeyboardHeight: (h: number) => { keyboardHeight.value = h },
-      isAdjustResize: mockIsAdjustResize,
-      setAdjustResize: (v: boolean) => { mockIsAdjustResize.value = v },
+      keyboardHeight: mockShared.keyboardHeight,
+      setKeyboardHeight: (h: number) => { mockShared.keyboardHeight.value = h },
+      isAdjustResize: mockShared.isAdjustResize,
+      setAdjustResize: (v: boolean) => { mockShared.isAdjustResize.value = v },
       fullScreenHeight: 800,
     }),
   }
@@ -58,7 +64,8 @@ describe('useTerminalViewport', () => {
     document.body.appendChild(container)
 
     // Reset mock state
-    mockIsAdjustResize.value = false
+    mockShared.isAdjustResize.value = false
+    mockShared.keyboardHeight.value = 0
     mockIsPC.value = false
 
     // Save originals
@@ -125,6 +132,38 @@ describe('useTerminalViewport', () => {
     expect(viewport.keyboardHeight.value).toBe(200)
 
     viewport.stopWatching()
+  })
+
+  it('resets the shared keyboard height to 0 on stopWatching', () => {
+    const terminal = ref(null)
+    const containerRef = ref<HTMLElement | null>(container)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    // Keyboard open — shared singleton must reflect it (App.vue reads this)
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 600,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+
+    viewport.startWatching()
+    expect(mockShared.keyboardHeight.value).toBe(200)
+
+    // Deactivating the terminal (closing/switching away from the tab page) must
+    // clear the shared keyboard state. Otherwise the dock stays hidden even
+    // though the terminal is no longer active.
+    viewport.stopWatching()
+    expect(mockShared.keyboardHeight.value).toBe(0)
   })
 
   it('detects keyboard from Android adjustResize (innerHeight shrinks)', () => {
@@ -423,11 +462,11 @@ describe('useTerminalViewport', () => {
     })
 
     viewport.startWatching()
-    expect(mockIsAdjustResize.value).toBe(true)
+    expect(mockShared.isAdjustResize.value).toBe(true)
 
     viewport.stopWatching()
     // Reset on stop
-    expect(mockIsAdjustResize.value).toBe(false)
+    expect(mockShared.isAdjustResize.value).toBe(false)
   })
 
   it('keeps keyboard height at 0 on PC even when innerHeight shrinks (window resize)', () => {
@@ -460,7 +499,7 @@ describe('useTerminalViewport', () => {
 
     expect(viewport.viewportHeight.value).toBe(500)
     expect(viewport.keyboardHeight.value).toBe(0)
-    expect(mockIsAdjustResize.value).toBe(false)
+    expect(mockShared.isAdjustResize.value).toBe(false)
 
     viewport.stopWatching()
   })
@@ -488,7 +527,7 @@ describe('useTerminalViewport', () => {
     })
 
     viewport.startWatching()
-    expect(mockIsAdjustResize.value).toBe(false)
+    expect(mockShared.isAdjustResize.value).toBe(false)
     // keyboardHeight from visualViewport: 800 - 550 - 0 = 250
     expect(viewport.keyboardHeight.value).toBe(250)
 

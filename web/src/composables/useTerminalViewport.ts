@@ -117,6 +117,12 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
 
     // Reset adjustResize flag when keyboard closes
     setAdjustResize(false)
+
+    // Clear the shared keyboard height when the terminal view deactivates.
+    // The module-level singleton otherwise retains its last value forever, so
+    // anyKeyboardActive in App.vue would keep the Dock hidden even after the
+    // terminal tab page is closed / navigated away from.
+    setSharedKeyboardHeight(0)
   }
 
   return {
