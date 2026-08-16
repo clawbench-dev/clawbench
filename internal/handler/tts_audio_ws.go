@@ -22,9 +22,10 @@ const (
 
 	// TTS WS protocol constants (used instead of string literals
 	// to satisfy goconst; aligned with existing strError / frpKeyMessage).
-	ttsWSType   = "type"
-	ttsWSResult = "result"
-	ttsWSDone   = "done"
+	ttsWSType    = "type"
+	ttsWSResult  = "result"
+	ttsWSDone    = "done"
+	ttsWSSummary = "summary"
 )
 
 // ttsWSStartMessage is the client's initial message to start streaming.
@@ -172,9 +173,9 @@ func ttsWSEventFromTTSEvent(event service.TTSEvent) any {
 			}
 		}
 		return map[string]any{
-			ttsWSType:   ttsWSDone,
-			"audioPath": event.AudioPath,
-			"summary":   event.Summary,
+			ttsWSType:    ttsWSDone,
+			"audioPath":  event.AudioPath,
+			ttsWSSummary: event.Summary,
 		}
 	}
 	return map[string]any{

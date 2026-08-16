@@ -748,7 +748,7 @@ func readContextFile(projectPath, name string) string {
 // Kept as a thin wrapper over the shared summarizeSimple for the existing simple-mode
 // tests; new callers should use summarizeTarget directly.
 func summarizeChatSimple(msg *model.ChatMessage, blocks []model.ContentBlock, projectPath, sessionID string) {
-	summarizeSimple("chat_message", msg.ID, blocks, projectPath, sessionID)
+	_ = summarizeSimple("chat_message", msg.ID, blocks, projectPath, sessionID)
 }
 
 // RespondPermission delivers a user's approval/rejection response to a pending

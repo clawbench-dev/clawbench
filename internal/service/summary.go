@@ -15,7 +15,9 @@ import (
 // last answer text and save it directly (no AI call, no threshold). Cards
 // (AskUserQuestion, permission approval tools) are extracted unchanged.
 func summarizeTarget(targetType string, targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) { //nolint:unparam // targetType always "chat_message"; kept generic to mirror the previous AsyncSummarize signature
-	summarizeSimple(targetType, targetID, blocks, projectPath, sessionID)
+	// Async caller (triggerChatSummarization): discard the save error and rely on
+	// summarizeSimple's internal logging, matching the pre-refactor behavior.
+	_ = summarizeSimple(targetType, targetID, blocks, projectPath, sessionID)
 }
 
 // summarizeSimple extracts the last answer text and saves it as a summary
@@ -55,15 +57,17 @@ func GenerateMessageSummaryOnDemand(messageID int64) (summary string, cards *mod
 	if err != nil {
 		return "", nil, false, err
 	}
-	if msg.Role != "assistant" || msg.Streaming {
+	if msg.Role != roleAssistant || msg.Streaming {
 		return "", nil, false, nil
 	}
 	if existing, found := GetSummary("chat_message", messageID); found {
 		_, existingCards, _ := GetSummaryWithCards("chat_message", messageID)
 		return existing, existingCards, true, nil
 	}
-	blocks, err := parseMessageBlocks(msg.Content)
-	if err != nil || len(blocks) == 0 {
+	// Non-JSON content (e.g. a plain-text assistant message) means there are no
+	// blocks to summarize — treated as "no summary available", not an error.
+	blocks, _ := parseMessageBlocks(msg.Content)
+	if len(blocks) == 0 {
 		return "", nil, false, nil
 	}
 	// Save errors must propagate so the caller can surface a real failure

@@ -29,6 +29,12 @@ import (
 // osWindows is used for runtime.GOOS comparison to avoid goconst duplication.
 const osWindows = "windows"
 
+// URL schemes recognized by isValidRegistryURL.
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
 // upgradeHTTPClient is the HTTP client used for upgrade requests.
 // Overridden in tests to point at httptest.NewServer.
 var upgradeHTTPClient = http.DefaultClient
@@ -130,7 +136,7 @@ func isValidRegistryURL(v string) bool {
 		return false
 	}
 	switch u.Scheme {
-	case "http", "https":
+	case schemeHTTP, schemeHTTPS:
 		return true
 	default:
 		return false

@@ -1750,7 +1750,6 @@ func TestRefactor_ACPConnManager_DeleteSession(t *testing.T) {
 	assert.Nil(t, mgr.GetConn("sid-deletesess"), "connection should be removed after DeleteSession")
 }
 
-
 // ---------------------------------------------------------------------------
 // ACPConn.HasNewAvailableModes / IsModeAvailable / HasNewAvailableThinkingEfforts / HasNewAvailableModels
 // ---------------------------------------------------------------------------

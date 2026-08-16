@@ -214,4 +214,3 @@ func TestFilterSystemPromptText(t *testing.T) {
 	// Unterminated block → whole message treated as system prompt.
 	assert.Equal(t, "", filterSystemPromptText("[System Instructions: 未闭合"))
 }
-
