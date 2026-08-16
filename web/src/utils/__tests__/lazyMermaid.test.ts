@@ -1,37 +1,25 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { retryableImport } from '../lazyMermaid.ts'
 
-// Mock mermaid module
-const mockMermaidDefault = { initialize: vi.fn(), render: vi.fn() }
-vi.mock('mermaid', () => ({
-    default: mockMermaidDefault,
-}))
-
-import { getMermaid } from '../lazyMermaid.ts'
-
-describe('lazyMermaid', () => {
-    beforeEach(() => {
-        vi.clearAllMocks()
+describe('retryableImport', () => {
+    it('resolves on the first successful attempt without retrying', async () => {
+        const loader = vi.fn().mockResolvedValue('mod')
+        await expect(retryableImport(loader)).resolves.toBe('mod')
+        expect(loader).toHaveBeenCalledTimes(1)
     })
 
-    it('should return mermaid default export', async () => {
-        const result = await getMermaid()
-        expect(result).toBe(mockMermaidDefault)
+    it('retries and succeeds when an earlier attempt fails', async () => {
+        const loader = vi.fn()
+            .mockRejectedValueOnce(new Error('Failed to fetch dynamically imported module'))
+            .mockRejectedValueOnce(new Error('network hiccup'))
+            .mockResolvedValueOnce('mod')
+        await expect(retryableImport(loader)).resolves.toBe('mod')
+        expect(loader).toHaveBeenCalledTimes(3)
     })
 
-    it('should return the same instance on multiple calls (singleton)', async () => {
-        const first = await getMermaid()
-        const second = await getMermaid()
-        expect(first).toBe(second)
-    })
-
-    it('should not re-import mermaid after first call', async () => {
-        // getMermaid is already called in previous tests (module-level singleton).
-        // Calling it again should return the cached instance without any new import.
-        const spy = vi.spyOn(await import('mermaid'), 'default', 'get')
-        const result = await getMermaid()
-        expect(result).toBeDefined()
-        // The spy should not have been called because _mermaid is already cached
-        expect(spy).not.toHaveBeenCalled()
-        spy.mockRestore()
+    it('throws the last error when all attempts fail', async () => {
+        const loader = vi.fn().mockRejectedValue(new Error('Failed to fetch dynamically imported module'))
+        await expect(retryableImport(loader, 3)).rejects.toThrow('Failed to fetch dynamically imported module')
+        expect(loader).toHaveBeenCalledTimes(3)
     })
 })

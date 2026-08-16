@@ -2,6 +2,8 @@
 import { getMermaid } from './lazyMermaid.ts'
 import { appLog } from '@/utils/appLog'
 
+type MermaidModule = Awaited<ReturnType<typeof getMermaid>>
+
 let _initialized = false
 let _initPromise: Promise<void> | null = null
 
@@ -59,8 +61,26 @@ export async function renderMermaidInElement(
     const blocks = specificBlocks || el.querySelectorAll('pre.mermaid:not([data-rendered])')
     if (blocks.length === 0) return
 
-    await ensureInit()
-    const mermaid = await getMermaid()
+    let mermaid: MermaidModule
+    try {
+        await ensureInit()
+        mermaid = await getMermaid()
+    } catch (err: unknown) {
+        // Mermaid lazy-load failed (e.g. the dynamic chunk fetch over a flaky
+        // tunnel rejected). Previously this rejected before touching any block,
+        // silently leaving raw source visible. Instead, replace every block with
+        // an error fallback so the user sees feedback.
+        const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        Array.from(blocks).forEach((block, index) => {
+            ;(block as HTMLElement).setAttribute('data-rendered', '1')
+            const container = document.createElement('div')
+            container.className = 'mermaid'
+            container.id = `${prefix}-fail-${index}`
+            container.innerHTML = `<pre style="padding:12px;background:var(--code-bg);border-radius:6px;font-size:13px;overflow-x:auto;">Mermaid Error: ${escapeHtml((err as { message?: string })?.message || String(err))}</pre>`
+            ;(block as Element).replaceWith(container)
+        })
+        return
+    }
 
     const renderPromises = Array.from(blocks).map(async (block, index) => {
         (block as HTMLElement).setAttribute('data-rendered', '1')

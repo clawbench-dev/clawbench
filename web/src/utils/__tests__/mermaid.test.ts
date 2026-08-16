@@ -169,6 +169,33 @@ describe('mermaid', () => {
             expect(el.querySelectorAll('pre.mermaid').length).toBe(0)
             expect(el.querySelectorAll('div.mermaid').length).toBe(3)
         })
+
+        it('should not leave raw source when mermaid lazy-load fails (chunk fetch error)', async () => {
+            // Simulate the observed root cause: the dynamic import of the mermaid
+            // chunk fails (e.g. "Failed to fetch dynamically imported module" over
+            // a flaky SSH tunnel). Previously this rejected before touching any
+            // block, silently leaving the raw <pre class="mermaid"> source visible.
+            const { getMermaid } = await import('../lazyMermaid.ts')
+            vi.mocked(getMermaid).mockRejectedValueOnce(new Error('Failed to fetch dynamically imported module'))
+
+            const el = document.createElement('div')
+            for (let i = 0; i < 2; i++) {
+                const pre = document.createElement('pre')
+                pre.className = 'mermaid'
+                pre.textContent = `graph TD; A${i}-->B${i}`
+                el.appendChild(pre)
+            }
+
+            await renderMermaidInElement(el)
+
+            // Raw source must not remain; every block is replaced with an error
+            // fallback so the user sees feedback instead of silent source code.
+            expect(el.querySelectorAll('pre.mermaid').length).toBe(0)
+            expect(el.querySelectorAll('div.mermaid').length).toBe(2)
+            el.querySelectorAll('div.mermaid').forEach(div => {
+                expect(div.innerHTML).toContain('Mermaid Error')
+            })
+        })
     })
 
     // ── reRenderMermaid ──
