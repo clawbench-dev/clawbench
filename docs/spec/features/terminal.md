@@ -66,6 +66,7 @@ sequenceDiagram
 - **快捷指令**：预设常用命令一键发送（如 `git status`、`docker ps`），通过 `useCrudList` 管理 CRUD。与聊天快捷发送共享基础设施
 - **终端主题切换**：内置 157 个 xterm-theme 主题（如 Dracula、Solarized、Catppuccin 等），支持 `auto` 模式跟随 App 深色/浅色主题自动切换。主题选择持久化到 localStorage，懒加载 xterm-theme 模块避免首屏体积膨胀
 - **终端输入抽屉**：移动端多行文本输入的 BottomSheet，支持从剪贴板粘贴填充、清空和发送。解决移动端虚拟键盘在 xterm 中输入长命令的体验问题
+- **终端帮助抽屉**：`TerminalHelpDrawer` 展示手势操作、快捷键和符号输入的完整说明，按分类组织（手势、快捷键、修饰键、符号），触摸设备仅显示手势相关条目。帮助入口嵌入终端工具栏，一键查看无需记忆
 
 ### 设计要点
 
