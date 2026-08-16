@@ -219,9 +219,11 @@
             <img v-if="entry.type !== 'dir' && isThumbLoaded(entry)" class="file-thumb" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
             <FileIcon v-else :path="entry.name" :is-dir="entry.type === 'dir'" :size="28" class="file-icon" />
             <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
-              <Link2 :size="15" />
+              <Link2 :size="12" />
             </span>
-            <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
+            <span v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" @click.stop="toggleAttach(itemPath(entry.name))">
+              <Paperclip :size="12" />
+            </span>
           </div>
           <span class="file-name">{{ entry.name }}</span>
           <span class="file-meta">{{ entry.type === 'dir' ? formatDate(entry.modified) : `${formatFileSize(entry.size)} · ${formatDate(entry.modified)}` }}</span>
@@ -277,9 +279,11 @@
           <img v-if="isThumbLoaded(entry)" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
           <FileIcon v-else :path="entry.name" :is-dir="entry.type === 'dir'" :size="32" class="grid-icon" />
           <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
-            <Link2 :size="15" />
+            <Link2 :size="12" />
           </span>
-          <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
+          <span v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" @click.stop="toggleAttach(itemPath(entry.name))">
+            <Paperclip :size="12" />
+          </span>
         </div>
         <div class="grid-name">{{ entry.name }}</div>
       </div>
@@ -2054,11 +2058,14 @@ function currentFileForClipboard() {
 .attach-badge {
     position: absolute;
     bottom: -5px;
-    right: -5px;
+    left: -5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background: var(--accent-color, #4a90d9);
     color: #fff;
     border-radius: 50%;
-    padding: 3px;
+    padding: 2px;
     cursor: pointer;
     z-index: 2;
     transition: transform 0.15s, background 0.15s;
@@ -2071,16 +2078,15 @@ function currentFileForClipboard() {
 
 .symlink-badge {
     position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 22px;
-    height: 22px;
+    top: -5px;
+    right: -5px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--accent-color, #4a90d9);
     color: #fff;
     border-radius: 50%;
+    padding: 2px;
     z-index: 2;
 }
 
@@ -2091,8 +2097,6 @@ function currentFileForClipboard() {
 .grid-thumb .symlink-badge {
     top: 5px;
     right: 5px;
-    width: 22px;
-    height: 22px;
 }
 
 .file-thumb {
@@ -2218,10 +2222,13 @@ function currentFileForClipboard() {
     position: absolute;
     bottom: 4px;
     right: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background: var(--accent-color, #4a90d9);
     color: #fff;
     border-radius: 50%;
-    padding: 3px;
+    padding: 2px;
     cursor: pointer;
     z-index: 2;
     transition: transform 0.15s, background 0.15s;
