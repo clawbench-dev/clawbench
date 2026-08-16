@@ -32,7 +32,7 @@
 
     <!-- Session switching overlay — placed here to cover the entire message area -->
     <Transition name="loading-fade">
-      <LoadingIndicator v-if="session.switching.value" overlay size="sm" />
+      <LoadingIndicator v-if="session.switching.value" overlay size="md" />
     </Transition>
 
     <!-- Session swipe indicator — floats above the message area -->

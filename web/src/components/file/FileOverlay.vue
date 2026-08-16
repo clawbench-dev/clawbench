@@ -28,7 +28,7 @@
         />
         <!-- File loading mask — same style as chat session-switch -->
         <Transition name="loading-fade">
-          <LoadingIndicator v-if="fileLoading" overlay size="sm" />
+          <LoadingIndicator v-if="fileLoading" overlay size="md" />
         </Transition>
       </div>
 

@@ -11,7 +11,7 @@
     </div>
     <div v-if="hideHeader || !collapsed" class="section-body">
       <div v-if="loading" class="section-loading">
-        <div class="spinner" style="width:18px;height:18px;border-width:2px;" />
+        <LoadingIndicator size="sm" inline />
       </div>
       <div v-else-if="error" class="section-error">
         <span>{{ t('git.manage.loadError') }}</span>
@@ -36,6 +36,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronRight } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import GitBranchRow from './GitBranchRow.vue'
 
 const { t } = useI18n()
@@ -186,15 +187,4 @@ const sortedBranches = computed(() => {
   padding: 8px 12px;
 }
 
-.spinner {
-  border: 2px solid var(--border-color, #dee2e6);
-  border-top-color: var(--accent-color, #4a90d9);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
 </style>

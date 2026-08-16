@@ -31,7 +31,7 @@
       </div>
 
       <div class="session-search-content">
-        <LoadingIndicator v-if="searchState.loading" size="sm" :label="t('sessionSearch.searching')" />
+        <LoadingIndicator v-if="searchState.loading" size="md" :label="t('sessionSearch.searching')" />
         <div v-else-if="searchState.error" class="session-search-error">{{ searchState.error }}</div>
         <div v-else-if="searchState.results.length === 0" class="session-search-empty">{{ t('sessionSearch.noResults') }}</div>
         <div v-else class="session-search-results">

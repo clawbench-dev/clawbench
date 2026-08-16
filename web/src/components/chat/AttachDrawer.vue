@@ -87,7 +87,7 @@
 
       <!-- Recently shared -->
       <template v-if="activeTab === 'shares'">
-        <LoadingIndicator v-if="loading" size="sm" />
+        <LoadingIndicator v-if="loading" size="md" />
         <div v-else-if="!recentShares?.length" class="ad-empty">{{ t('chat.attach.emptyShares') }}</div>
         <button
           v-for="item in recentShares" :key="item.path"
@@ -127,7 +127,7 @@
           </div>
         </button>
         <!-- Completed uploads from server -->
-        <LoadingIndicator v-if="loading && !recentUploads?.length && pendingFiles.length === 0" size="sm" />
+        <LoadingIndicator v-if="loading && !recentUploads?.length && pendingFiles.length === 0" size="md" />
         <div v-else-if="!recentUploads?.length && pendingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
         <button
           v-for="item in recentUploads" :key="item.path"

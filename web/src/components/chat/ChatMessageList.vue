@@ -5,7 +5,7 @@
     <div class="chat-load-area">
       <Transition name="load-hint-fade">
         <div v-if="loadingMore" class="chat-load-more">
-          <span class="chat-load-spinner"></span>
+          <LoadingIndicator size="sm" inline />
           <span>{{ t('chat.messageList.loadingMore') }}</span>
         </div>
         <div v-else-if="hasMore && remainingCount > 0" class="chat-load-hint" @click="emit('load-more')">
@@ -132,6 +132,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
@@ -874,18 +875,6 @@ defineExpose({
   font-size: 11px;
 }
 
-.chat-load-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--text-secondary);
-  border-radius: 50%;
-  animation: tool-spin 0.6s linear infinite;
-}
-
-@keyframes tool-spin {
-  to { transform: rotate(360deg); }
-}
 
 /* Transition for load hint switching */
 .load-hint-fade-enter-active {

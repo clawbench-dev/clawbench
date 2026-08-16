@@ -5,7 +5,7 @@
       <span class="bs-header-title">{{ title }}</span>
     </template>
     <div class="agent-list">
-      <LoadingIndicator v-if="agentsLoading" size="sm" />
+      <LoadingIndicator v-if="agentsLoading" size="md" />
       <div v-else-if="agents.length === 0" class="agent-list-empty">{{ t('session.noAgentsTitle') }}</div>
       <div
         v-for="(agent, idx) in agents"

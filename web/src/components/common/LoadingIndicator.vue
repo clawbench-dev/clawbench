@@ -128,24 +128,16 @@ withDefaults(
   height: 36px;
 }
 
-/* Overlays: much larger, prettier indicator so it reads clearly over the mask */
+/* Overlays: respect the size prop (sm/md/lg) instead of forcing a fixed size,
+   so full-area masks match the content-area loading indicators. */
 .loading-indicator.overlay .li-spinner,
 .loading-indicator.fixed .li-spinner {
-  width: 52px;
-  height: 52px;
   filter: drop-shadow(0 4px 14px rgba(0, 102, 204, 0.25));
 }
 
 .loading-indicator.overlay .li-spinner::before,
 .loading-indicator.fixed .li-spinner::before {
-  border-width: 4px;
-}
-
-.loading-indicator.overlay .li-spinner::after,
-.loading-indicator.fixed .li-spinner::after {
-  width: 30%;
-  height: 30%;
-  background: var(--accent-color, #0066cc);
+  border-width: 3px;
 }
 
 @keyframes li-spin {

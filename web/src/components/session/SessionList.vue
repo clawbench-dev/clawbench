@@ -3,7 +3,7 @@
     <!-- Only show the full-screen spinner on first load / when the list is empty.
          On background refreshes the existing list stays visible so it can be
          swapped seamlessly to the new data (see loadSessions). -->
-    <LoadingIndicator v-if="loading && sessions.length === 0" size="sm" :label="t('common.loading')" />
+    <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
     <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
     <template v-else>
       <TransitionGroup name="session-list" tag="div" class="session-rows">

@@ -10,7 +10,7 @@
 
     <!-- Loading (initial) -->
     <div v-if="loading" class="git-history-loading">
-      <LoadingIndicator size="sm" />
+      <LoadingIndicator size="md" />
     </div>
 
     <!-- Error -->
@@ -53,7 +53,7 @@
       <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" />
       <div class="drilldown-body">
         <div v-if="filesLoading" class="git-history-loading">
-          <LoadingIndicator size="sm" />
+          <LoadingIndicator size="md" />
         </div>
         <div v-else-if="totalFileCount === 0" class="git-history-empty">{{ t('git.history.noFileChanges') }}</div>
         <!-- Merge commit: grouped by parent branch -->

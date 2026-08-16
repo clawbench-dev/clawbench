@@ -4,7 +4,7 @@
       <div class="drilldown-title">
         <span v-if="commits.length > 0" class="drilldown-count">
           <template v-if="searchLoading">
-            <span class="spinner" style="width:10px;height:10px;border-width:1.5px;margin-right:4px;display:inline-block;vertical-align:middle;" />
+            <LoadingIndicator size="sm" inline />
             {{ t('git.commitList.loadingAll') }}
           </template>
           <template v-else>
@@ -36,7 +36,7 @@
     </div>
     <div class="drilldown-body" ref="bodyRef">
       <div v-if="loading" class="git-history-loading">
-        <div class="spinner" style="width:24px;height:24px;border-width:2px;" />
+        <LoadingIndicator size="md" />
       </div>
       <div v-else-if="error" class="git-history-error">{{ error }}</div>
       <div v-else-if="!isGit" class="git-history-empty">
@@ -96,7 +96,7 @@
           </div>
           <div ref="listRef" class="git-load-more-sentinel">
             <div v-if="hasMore && loadingMore" class="git-load-more">
-              <div class="spinner" style="width:20px;height:20px;border-width:2px;" />
+              <LoadingIndicator size="sm" inline />
             </div>
           </div>
         </div>
@@ -111,6 +111,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { refLabelText } from '@/utils/gitGraph'

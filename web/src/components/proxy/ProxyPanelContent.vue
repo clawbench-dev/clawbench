@@ -146,7 +146,7 @@
         </template>
         <div class="port-scan-content">
           <div v-if="scanning" class="port-scan-loading">
-            <div class="port-scan-spinner"></div>
+            <LoadingIndicator size="md" />
             <span>{{ t('proxy.scanInProgress') }}</span>
           </div>
 
@@ -244,6 +244,7 @@ import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { usePortForward } from '@/composables/usePortForward.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer.ts'
 import { useToast } from '@/composables/useToast.ts'
@@ -824,18 +825,6 @@ async function handleRetryTunnel() {
   font-size: 13px;
 }
 
-.port-scan-spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--bg-tertiary, #e9ecef);
-  border-top-color: var(--accent-color, #0066cc);
-  border-radius: 50%;
-  animation: port-scan-spin 0.8s linear infinite;
-}
-
-@keyframes port-scan-spin {
-  to { transform: rotate(360deg); }
-}
 
 /* Rescan icon in drawer header */
 .port-scan-header-spacer {

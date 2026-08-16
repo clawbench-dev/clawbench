@@ -27,7 +27,7 @@
 
     <!-- Content -->
     <div class="dialog-content">
-      <LoadingIndicator v-if="loading" size="sm" :label="t('common.loading')" />
+      <LoadingIndicator v-if="loading" size="md" :label="t('common.loading')" />
       <div v-else-if="displayItems.length === 0" class="dialog-empty">{{ searchQuery ? t('projectDialog.noMatchDirs') : t('projectDialog.emptyDir') }}</div>
       <div
         v-else

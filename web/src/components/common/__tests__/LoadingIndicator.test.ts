@@ -50,6 +50,20 @@ describe('LoadingIndicator', () => {
     expect(el.classes()).toContain('fixed')
   })
 
+  it('overlay respects the size prop instead of forcing a fixed size', () => {
+    const wrapper = mount(LoadingIndicator, { props: { overlay: true, size: 'md' } })
+    const el = wrapper.find('.loading-indicator')
+    expect(el.classes()).toContain('overlay')
+    expect(el.classes()).toContain('size-md')
+  })
+
+  it('fixed respects the size prop instead of forcing a fixed size', () => {
+    const wrapper = mount(LoadingIndicator, { props: { fixed: true, size: 'sm' } })
+    const el = wrapper.find('.loading-indicator')
+    expect(el.classes()).toContain('fixed')
+    expect(el.classes()).toContain('size-sm')
+  })
+
   it('renders default slot content', () => {
     const wrapper = mount(LoadingIndicator, {
       slots: { default: '<span class="extra">extra</span>' },

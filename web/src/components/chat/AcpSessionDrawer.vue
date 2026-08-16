@@ -9,7 +9,7 @@
     </div>
     <div class="acp-session-list">
       <div v-if="acpSessionsLoading && acpSessions.length === 0" class="acp-session-empty">
-        <LoadingIndicator size="sm" :label="t('chat.acpSession.loading')" />
+        <LoadingIndicator size="md" :label="t('chat.acpSession.loading')" />
       </div>
       <div v-else-if="acpSessionsNotSupported" class="acp-session-empty">
         {{ t('chat.acpSession.notSupported') }}

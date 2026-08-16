@@ -14,7 +14,7 @@
       <span v-if="branch.behind > 0" class="track-behind">{{ t('git.manage.behind') }}{{ branch.behind }}</span>
     </div>
     <div v-if="switching" class="branch-spinner">
-      <div class="spinner" style="width:14px;height:14px;border-width:2px;" />
+      <LoadingIndicator size="sm" inline />
     </div>
     <button
       v-if="!branch.isCurrent && !branch.isDefault"
@@ -31,6 +31,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GitBranch, Trash2 } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const { t } = useI18n()
 
@@ -172,15 +173,4 @@ function handleClick() {
   background: var(--danger-bg, rgba(220, 53, 69, 0.15));
 }
 
-.spinner {
-  border: 2px solid var(--border-color, #dee2e6);
-  border-top-color: var(--accent-color, #4a90d9);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
 </style>

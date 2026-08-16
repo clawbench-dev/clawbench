@@ -10,7 +10,7 @@
             </svg>
           </button>
         </div>
-        <p v-if="loading" class="vm-body"><LoadingIndicator size="sm" /></p>
+        <p v-if="loading" class="vm-body"><LoadingIndicator size="md" /></p>
         <p v-else class="vm-body">{{ t('versionMismatch.message', { appVersion, serverVersion }) }}</p>
         <div class="vm-footer">
           <button class="vm-download" @click="downloadApk" :aria-label="t('versionMismatch.download')">{{ t('versionMismatch.download') }}</button>

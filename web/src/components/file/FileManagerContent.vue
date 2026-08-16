@@ -192,7 +192,7 @@
         </div>
       </Transition>
       <Transition name="loading-fade">
-        <LoadingIndicator v-if="dirLoading" overlay size="sm" />
+        <LoadingIndicator v-if="dirLoading" overlay size="md" />
       </Transition>
       <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
@@ -253,7 +253,7 @@
         </div>
       </Transition>
       <Transition name="loading-fade">
-        <LoadingIndicator v-if="dirLoading" overlay size="sm" />
+        <LoadingIndicator v-if="dirLoading" overlay size="md" />
       </Transition>
       <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />

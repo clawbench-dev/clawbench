@@ -29,7 +29,7 @@
       </div>
 
       <!-- Loading state -->
-      <LoadingIndicator v-else-if="loading" size="sm" :label="t('chat.messageClusters.loading')" />
+      <LoadingIndicator v-else-if="loading" size="md" :label="t('chat.messageClusters.loading')" />
 
       <!-- No cache (idle) -->
       <div v-else-if="!loaded || clusters.length === 0 && progress.status === 'idle'" class="mc-empty">

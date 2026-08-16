@@ -73,7 +73,7 @@
       >
         <!-- Rebuild overlay (per-tab) -->
         <div v-if="rebuildingTabId === tab.id" class="terminal-rebuild-overlay">
-          <span class="terminal-rebuild-spinner"></span>
+          <LoadingIndicator size="md" />
           <span>{{ t('terminal.rebuilding') }}</span>
         </div>
 
@@ -258,6 +258,7 @@ import { useI18n } from 'vue-i18n'
 import '@xterm/xterm/css/xterm.css'
 
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
@@ -1373,18 +1374,6 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   -webkit-user-select: none;
 }
 
-.terminal-rebuild-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: rgba(255, 255, 255, 0.8);
-  border-radius: 50%;
-  animation: terminal-spin 0.6s linear infinite;
-}
-
-@keyframes terminal-spin {
-  to { transform: rotate(360deg); }
-}
 
 .gesture-hint {
   position: absolute;

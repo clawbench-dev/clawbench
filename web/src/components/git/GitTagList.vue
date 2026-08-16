@@ -1,7 +1,7 @@
 <template>
   <div class="git-tag-list">
     <div v-if="loading" class="section-loading">
-      <div class="spinner" style="width:18px;height:18px;border-width:2px;" />
+      <LoadingIndicator size="sm" inline />
     </div>
     <div v-else-if="error" class="section-error">
       <span>{{ t('git.manage.loadError') }}</span>
@@ -41,6 +41,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tag, Trash2 } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const { t } = useI18n()
 
@@ -205,15 +206,4 @@ function shortDate(dateStr: string) {
   color: var(--text-muted, #999);
 }
 
-.spinner {
-  border: 2px solid var(--border-color, #dee2e6);
-  border-top-color: var(--accent-color, #4a90d9);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
 </style>

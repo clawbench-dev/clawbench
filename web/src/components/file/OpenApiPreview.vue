@@ -1,7 +1,7 @@
 <template>
   <div class="openapi-preview">
     <div v-if="loading" class="openapi-loading">
-      <div class="loading-spinner"></div>
+      <LoadingIndicator size="md" />
     </div>
     <iframe
       v-show="!loading"
@@ -16,6 +16,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { buildRedocSrcdoc } from '@/utils/redocHtml.ts'
 
 const props = defineProps({
@@ -66,18 +67,6 @@ function onIframeLoad() {
   flex: 1;
 }
 
-.loading-spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: loading-spin 0.7s linear infinite;
-}
-
-@keyframes loading-spin {
-  to { transform: rotate(360deg); }
-}
 
 .openapi-iframe {
   flex: 1;

@@ -57,7 +57,7 @@
       </div>
 
       <div class="fs-content">
-        <LoadingIndicator v-if="search.state.searching && search.state.results.length === 0" size="sm" :label="t('file.search.searching')" />
+        <LoadingIndicator v-if="search.state.searching && search.state.results.length === 0" size="md" :label="t('file.search.searching')" />
         <div v-else-if="!search.state.query.trim()" class="fs-empty">
           {{ t('file.search.placeholder') }}
         </div>

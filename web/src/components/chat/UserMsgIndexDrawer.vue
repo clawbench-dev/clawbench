@@ -5,8 +5,8 @@
       <span class="bs-header-title">{{ t('chat.messageList.conversationIndexTitle') }}</span>
       <span class="panel-count">{{ messages.length }}</span>
     </template>
-    <LoadingIndicator v-if="loading" size="sm" :label="t('chat.messageList.loadingMore')" />
-    <LoadingIndicator v-else-if="jumping" size="sm" :label="t('chat.messageList.loadingMore')" />
+    <LoadingIndicator v-if="loading" size="md" :label="t('chat.messageList.loadingMore')" />
+    <LoadingIndicator v-else-if="jumping" size="md" :label="t('chat.messageList.loadingMore')" />
     <div v-else-if="messages.length === 0" class="panel-empty">
       <span class="panel-empty-icon-wrap">
         <MessagesSquare :size="26" class="panel-empty-icon" />

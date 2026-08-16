@@ -33,7 +33,7 @@
     <div class="file-viewer-content" ref="contentRef">
       <!-- Loading (suppressed when external loading mask is active to avoid double flash) -->
       <div v-if="loading && !externalLoading" class="loading">
-        <div class="loading-spinner"></div>
+        <LoadingIndicator size="md" />
       </div>
 
       <!-- Error -->
@@ -260,6 +260,7 @@ import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { Download, Code2, AlertTriangle, Share2, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
 import AudioPreview from '@/components/media/AudioPreview.vue'
@@ -955,18 +956,6 @@ defineExpose({
     padding: 40px;
 }
 
-.loading-spinner {
-    width: 28px;
-    height: 28px;
-    border: 3px solid var(--border-color);
-    border-top-color: var(--accent-color);
-    border-radius: 50%;
-    animation: loading-spin 0.7s linear infinite;
-}
-
-@keyframes loading-spin {
-    to { transform: rotate(360deg); }
-}
 
 .error-bubble {
     display: inline-flex;

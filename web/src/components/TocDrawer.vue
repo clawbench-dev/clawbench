@@ -11,7 +11,7 @@
     <div class="toc-body">
       <SearchInput v-model="searchQuery" :placeholder="t('toc.searchPlaceholder')" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" @dblclick="clearSearch" />
       <div class="toc-list">
-        <LoadingIndicator v-if="loading" :label="t('toc.loading')" size="sm" />
+        <LoadingIndicator v-if="loading" :label="t('toc.loading')" size="md" />
         <div v-else-if="filteredToc.length === 0" class="toc-empty">{{ searchQuery ? t('toc.noMatch') : t('toc.noHeadings') }}</div>
         <a
           v-for="(item, idx) in filteredToc"
