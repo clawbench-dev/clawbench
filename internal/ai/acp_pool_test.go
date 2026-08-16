@@ -974,6 +974,41 @@ func TestGetOrCreateConn_DoesNotPrePopulateAcpSID_WhenEmpty(t *testing.T) {
 	mgr.CloseConn(clawbenchSID)
 }
 
+// TestACPConnManager_NewSessionFallback_ClearsStaleSession verifies that when
+// LoadSession/ResumeSession recovery fails (agent process killed, e.g. OOM/LMK),
+// NewSessionFallback drops the unrecoverable session mapping so a brand-new
+// session is created instead of retrying the dead one. With "echo" (not a real
+// ACP agent) the new-session attempt fails and the pool entry is cleaned up.
+func TestACPConnManager_NewSessionFallback_ClearsStaleSession(t *testing.T) {
+	mgr := GetACPConnManager()
+	clawbenchSID := "session-fallback-test"
+	agent := &model.Agent{ID: "test-fallback", Backend: "acp-stdio", AcpCommand: "echo"}
+
+	// Simulate a connection whose session could not be restored after the
+	// agent process was killed: alive=false with a stale session mapping.
+	conn := NewACPConnForTest(agent, clawbenchSID)
+	conn.SetSessionMappingForTest(clawbenchSID, "dead-acp-session")
+	conn.loadTargetSID = "dead-acp-session"
+	mgr.SetConnForTest(clawbenchSID, conn)
+
+	result := mgr.NewSessionFallback(context.Background(), agent, clawbenchSID, "/tmp")
+	assert.Nil(t, result, "echo agent cannot establish a new session, fallback should fail closed")
+
+	// The stale mappings must be cleared even though the new-session attempt failed.
+	conn.mu.Lock()
+	acpSID := conn.acpSID
+	loadTarget := conn.loadTargetSID
+	conn.mu.Unlock()
+	assert.Empty(t, acpSID, "stale acpSID should be cleared before new-session attempt")
+	assert.Empty(t, loadTarget, "stale loadTargetSID should be cleared")
+
+	// Failed fallback must not leave a stale (half-dead) conn in the pool.
+	mgr.mu.Lock()
+	_, exists := mgr.conns[clawbenchSID]
+	mgr.mu.Unlock()
+	assert.False(t, exists, "failed fallback should be cleaned up from conns map")
+}
+
 func TestWaitForLoadSessionDone(t *testing.T) {
 	agent := &model.Agent{ID: "a", Backend: "claude"}
 	conn := newACPConn(agent, "sid")

@@ -299,6 +299,45 @@ func (m *ACPConnManager) GetOrCreateConnForLoad(ctx context.Context, agent *mode
 	return conn, nil
 }
 
+// NewSessionFallback forces a brand-new ACP session on the given ClawBench
+// session's connection, ignoring any prior (unrecoverable) session mapping.
+// Used when LoadSession/ResumeSession recovery fails after the agent process
+// was killed (e.g. OOM/LMK) — the conversation continues in a fresh session
+// rather than hard-failing the request.
+//
+// It clears acpSID and loadTargetSID so ensureAliveWithSession creates a new
+// session instead of retrying the dead one. Returns the conn on success, or
+// nil if even a new session could not be established (the pool entry is
+// cleaned up so a later request starts fresh).
+func (m *ACPConnManager) NewSessionFallback(ctx context.Context, agent *model.Agent, clawbenchSID, cwd string) *ACPConn {
+	m.mu.Lock()
+	conn, ok := m.conns[clawbenchSID]
+	if !ok {
+		conn = newACPConn(agent, clawbenchSID)
+		m.conns[clawbenchSID] = conn
+	}
+	m.mu.Unlock()
+
+	// Drop the previous session mapping so ensureAliveWithSession goes down the
+	// NewSession branch instead of retrying the unrecoverable session.
+	conn.mu.Lock()
+	conn.acpSID = ""
+	conn.loadTargetSID = ""
+	conn.mu.Unlock()
+
+	if _, err := conn.ensureAliveWithSession(ctx, cwd); err != nil {
+		slog.Warn("acp: NewSessionFallback failed, cleaning up connection",
+			"clawbench_sid", clawbenchSID, "error", err)
+		m.mu.Lock()
+		if c, exists := m.conns[clawbenchSID]; exists && c == conn {
+			delete(m.conns, clawbenchSID)
+		}
+		m.mu.Unlock()
+		return nil
+	}
+	return conn
+}
+
 // GetConn returns the ACPConn for the given ClawBench session ID.
 // Returns nil if no connection exists.
 func (m *ACPConnManager) GetConn(clawbenchSID string) *ACPConn {

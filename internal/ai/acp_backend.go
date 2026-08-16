@@ -60,6 +60,35 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		conn, isNew, err := mgr.GetOrCreateConn(ctx, b.agent, req.SessionID, req.WorkDir)
 		slog.Info("acp: GetOrCreateConn done", "session_id", req.SessionID, "agent_id", b.agent.ID, "is_new", isNew, "elapsed", time.Since(connStart), "error", err)
 		if err != nil {
+			// The agent process may have just been killed (e.g. OOM/LMK), or a
+			// stale-alive race caused LoadSession to hit a dead connection.
+			// Retry once — a fresh respawn + LoadSession/ResumeSession usually
+			// restores the session, so we don't fail the user's turn on a
+			// transient disconnect.
+			if isACPPeerDisconnected(err) {
+				slog.Warn("acp: connection lost, retrying GetOrCreateConn once",
+					"session_id", req.SessionID, "agent_id", b.agent.ID, "error", err)
+				conn, isNew, err = mgr.GetOrCreateConn(ctx, b.agent, req.SessionID, req.WorkDir)
+			}
+			if err != nil && isACPPeerDisconnected(err) && shouldNewSessionFallback(req.AssistantMessageCount) {
+				// Session cannot be restored (process keeps dying / load keeps
+				// failing). Only fall back to a brand-new session when no
+				// conversation has happened yet (AssistantMessageCount==0) —
+				// rebuilding a session that already has history would lose it.
+				// In that case the error below is surfaced and the user retries,
+				// preserving the original session mapping.
+				slog.Error("acp: session recovery failed, starting new session",
+					"session_id", req.SessionID, "agent_id", b.agent.ID, "error", err)
+				if fb := mgr.NewSessionFallback(ctx, b.agent, req.SessionID, req.WorkDir); fb != nil {
+					conn, isNew, err = fb, true, nil
+					forwardACPEvent(ch, StreamEvent{
+						Type:    "warning",
+						Content: "ACP 会话无法恢复，已开启新会话（原有对话上下文已丢失）。", Reason: ReasonBackendExit,
+					})
+				}
+			}
+		}
+		if err != nil {
 			// ACP connection failed — surface the error directly.
 			// Do NOT fall back to CLI backend: the user chose ACP transport
 			// and silent fallback hides real problems (e.g., NewSession timeout).
@@ -210,6 +239,16 @@ func (b *ACPBackend) emitSessionAndCacheState(conn *ACPConn, isNew bool, ch chan
 	if planState := conn.GetCachedPlanState(); planState != nil {
 		forwardACPEvent(ch, StreamEvent{Type: "plan_update", Plan: planState})
 	}
+}
+
+// shouldNewSessionFallback reports whether a failed session recovery should
+// fall back to a brand-new session. We only do so when NO conversation has
+// happened yet (AssistantMessageCount == 0). If the session already has
+// assistant history, rebuilding it with a fresh ACP session would drop the
+// agent's memory of the prior conversation — so instead we surface the error
+// and let the user retry, preserving the original session mapping.
+func shouldNewSessionFallback(assistantMessageCount int) bool {
+	return assistantMessageCount == 0
 }
 
 // acpErrorText formats an ACP error for the UI warning banner, preserving both
