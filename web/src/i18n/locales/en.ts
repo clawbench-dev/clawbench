@@ -1431,7 +1431,7 @@ export default {
       chatInitialMessagesDesc: 'Number of history messages loaded on first chat open',
       chatPageSize: 'Page Size',
       chatPageSizeDesc: 'Messages loaded per page when scrolling up',
-      messageDisplayMode: 'Message display mode',
+      messageDisplayMode: 'Message Display Mode',
       messageDisplayModeDesc: 'Default view for messages with a summary; individual messages can still be toggled',
       messageDisplayModeSummary: 'Summary mode',
       messageDisplayModeOriginal: 'Original text',
