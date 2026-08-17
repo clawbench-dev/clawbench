@@ -1180,6 +1180,223 @@ func TestServeACPLoadSession_ReplayWithTitleTruncation(t *testing.T) {
 	assert.True(t, strings.HasSuffix(title, "..."), "truncated title should end with '...'")
 }
 
+func TestServeACPLoadSession_ReplayTitleSkipsInjectedSystemBlock(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agentID := "acp-load-skip-injected"
+	acpSessionID := "acp-sid-skip-injected"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Name: "ACP SkipInjected", Backend: "claude", Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+
+	mgr := ai.GetACPConnManager()
+	agent := model.Agents[agentID]
+	mockConn := ai.NewACPConnForTest(agent, "mock-session-skip")
+	mockConn.SetAliveForTest()
+	mockConn.SetSessionMappingForTest("mock-session-skip", acpSessionID)
+
+	// ClawBench-origin sessions carry the [System Instructions: ...] block
+	// prepended by buildPromptBlocks at the start of their first user turn,
+	// with the user's actual message after it.
+	client := ai.NewClawBenchACPClient()
+	client.SetLoadSessionBufForTest([]acp.SessionNotification{
+		{
+			Update: acp.SessionUpdate{
+				UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+					Content: acp.TextBlock("[System Instructions: repo coding rules]\n\n帮忙解释一下这个报错日志"),
+				},
+			},
+		},
+	})
+	mockConn.SetClientForTest(client)
+
+	origFn := getOrCreateConnForLoad
+	getOrCreateConnForLoad = func(ctx context.Context, ag *model.Agent, clawbenchSID, acpSID, cwd string) (*ai.ACPConn, error) {
+		mgr.SetConnForTest(clawbenchSID, mockConn)
+		return mockConn, nil
+	}
+	defer func() { getOrCreateConnForLoad = origFn }()
+
+	body := fmt.Sprintf(`{"agentId":%q,"acpSessionId":%q}`, agentID, acpSessionID)
+	req := httptest.NewRequest(http.MethodPost, "/api/ai/session/acp-load", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPLoadSession(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	sid := resp["sessionId"].(string)
+
+	require.Eventually(t, func() bool {
+		var title string
+		err := service.UnsafeDBForTest().QueryRow(
+			"SELECT title FROM chat_sessions WHERE id = ?",
+			sid,
+		).Scan(&title)
+		return err == nil && title != ""
+	}, 3*time.Second, 50*time.Millisecond, "title should be set after replay completes")
+
+	var title string
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT title FROM chat_sessions WHERE id = ?",
+		sid,
+	).Scan(&title)
+	assert.NoError(t, err)
+	assert.Equal(t, "帮忙解释一下这个报错日志", title)
+	assert.NotContains(t, title, "System Instructions")
+}
+
+func TestDeriveSessionTitleFromReplay(t *testing.T) {
+	userMsg := func(text string) replayMessage {
+		return replayMessage{
+			role:    strUser,
+			content: fmt.Sprintf(`{"blocks":[{"type":"text","text":%q}]}`, text),
+		}
+	}
+	assistantMsg := replayMessage{role: strAssistant, content: `{"blocks":[{"type":"text","text":"answer"}]}`}
+
+	t.Run("strips injected system block and keeps user text", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("[System Instructions: repo coding rules]\n\n用户的第一句话"),
+			assistantMsg,
+		}
+		assert.Equal(t, "用户的第一句话", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("bare injected block without user text is skipped", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("[System Instructions: rules]\n\n"),
+			assistantMsg,
+			userMsg("第二个真实问题"),
+		}
+		assert.Equal(t, "第二个真实问题", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("strips file reference header and keeps user text", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("[Current file: /tmp/a.png]\n看看这个截图"),
+		}
+		assert.Equal(t, "看看这个截图", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("interruption marker without user text is skipped", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("[Request interrupted by user for tool use]"),
+			userMsg("继续刚才的问题"),
+		}
+		assert.Equal(t, "继续刚才的问题", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("block-wrapped continuation summary without delimiter is skipped", func(t *testing.T) {
+		// Cross-session continuation seeds carry only the summary with no
+		// user text — machine-generated, must not become the title.
+		msgs := []replayMessage{
+			userMsg("[System Instructions: rules]\n\n[Below is the conversation history from before this session. The summary below covers the earlier portion of the conversation."),
+			assistantMsg,
+			userMsg("继续上次的部署问题"),
+		}
+		assert.Equal(t, "继续上次的部署问题", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("CLI-native continuation header is skipped", func(t *testing.T) {
+		// After compaction the CLI writes a plain-English continuation turn
+		// ("This session is being continued from a previous conversation
+		// that ran out of context. ...") — it must not become the title;
+		// the user's next real question should.
+		msgs := []replayMessage{
+			userMsg("This session is being continued from a previous conversation that ran out of context. The conversation is summarized below:\n<summary>…</summary>"),
+			assistantMsg,
+			userMsg("如何配置自动备份"),
+		}
+		assert.Equal(t, "如何配置自动备份", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("slash-command turn is skipped", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("<command-name>/model</command-name>\n<command-args>sonnet</command-args>"),
+			assistantMsg,
+			userMsg("帮忙解释一下这个报错日志"),
+		}
+		assert.Equal(t, "帮忙解释一下这个报错日志", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("caveat wrapper is stripped, trailing user text kept", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("Caveat: The messages below were generated by the user while running local commands. DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.\n\n这个接口为什么返回502？"),
+		}
+		assert.Equal(t, "这个接口为什么返回502？", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("caveat wrapper without user text is skipped", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("Caveat: The messages below were generated by the user while running local commands. DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to."),
+			assistantMsg,
+			userMsg("怎么导出数据库备份"),
+		}
+		assert.Equal(t, "怎么导出数据库备份", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("mid-session auto-compact turn keeps the trailing user question", func(t *testing.T) {
+		// Mid-file compaction turns embed the history summary between the
+		// injected block and the user's new message; the CLI marks the
+		// summary end explicitly and the user text follows that delimiter.
+		turn := "[System Instructions: rules]\n\n" +
+			"[Below is the conversation history from before this session.\n\nSummary:\n    earlier talk\n\n" +
+			"[End of conversation history. Now answer the user's new question.]\n\n" +
+			"现下载速度有点问题吧？"
+		msgs := []replayMessage{userMsg(turn)}
+		assert.Equal(t, "现下载速度有点问题吧？", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("auto-compact turn with trailing file header keeps the question", func(t *testing.T) {
+		turn := "[System Instructions: rules]\n\n" +
+			"[Below is the conversation history from before this session.\n\nSummary:\n    earlier talk\n\n" +
+			"[End of conversation history. Now answer the user's new question.]\n\n" +
+			"[Current file: /tmp/example.png]\n这个接口为什么返回502？"
+		msgs := []replayMessage{userMsg(turn)}
+		assert.Equal(t, "这个接口为什么返回502？", deriveSessionTitleFromReplay(msgs))
+	})
+
+	t.Run("assistant-only replay yields empty title", func(t *testing.T) {
+		assert.Equal(t, "", deriveSessionTitleFromReplay([]replayMessage{assistantMsg}))
+	})
+
+	t.Run("truncates long titles to 50 runes", func(t *testing.T) {
+		long := strings.Repeat("很", 60)
+		got := deriveSessionTitleFromReplay([]replayMessage{userMsg(long)})
+		assert.Equal(t, strings.Repeat("很", 50)+"...", got)
+	})
+
+	t.Run("blank user turn is skipped", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("   \n\t"),
+			userMsg("真实问题"),
+		}
+		assert.Equal(t, "真实问题", deriveSessionTitleFromReplay(msgs))
+	})
+}
+
+func TestStripMachineGeneratedUserText(t *testing.T) {
+	t.Run("plain user text passes through", func(t *testing.T) {
+		got, ok := stripMachineGeneratedUserText("普通消息")
+		assert.True(t, ok)
+		assert.Equal(t, "普通消息", got)
+	})
+
+	t.Run("malformed system block prefix without terminator is dropped", func(t *testing.T) {
+		_, ok := stripMachineGeneratedUserText("[System Instructions: no closing marker")
+		assert.False(t, ok)
+	})
+}
+
 // --- helper functions ---
 
 // newACPConnForHandlerTest creates an *ai.ACPConn for handler-level testing.
