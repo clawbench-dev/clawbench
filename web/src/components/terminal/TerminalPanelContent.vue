@@ -1,5 +1,6 @@
 <template>
   <div class="terminal-panel">
+
     <!-- Platform unsupported state (top priority) -->
     <div v-if="platformUnsupported" class="terminal-empty-state terminal-platform-unsupported">
       <TerminalIcon :size="40" class="terminal-empty-icon" />

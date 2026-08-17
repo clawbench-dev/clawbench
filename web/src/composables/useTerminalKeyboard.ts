@@ -10,11 +10,14 @@ const keyboardHeight = ref(0)
 // the same, so we must compensate with CSS bottom shrink.
 const isAdjustResize = ref(false)
 
-// Capture the full-screen innerHeight at module load time (before any keyboard opens).
-// This is critical for Android adjustResize where innerHeight shrinks when the
-// soft keyboard appears — if we only start watching when the terminal activates,
-// the keyboard may already be opening and we'd record a shrunken baseline.
-const fullScreenHeight = window.innerHeight
+// Baseline for Android adjustResize detection (keyboard height ≈ full height
+// minus the shrunken innerHeight). Captured from the LARGEST innerHeight seen,
+// because capturing it once at module load is unreliable: Android WebViews
+// report innerHeight == 0 during early script execution before the layout
+// viewport is sized. The keyboard only ever SHRINKS innerHeight, so tracking
+// the max observed value yields the correct full-screen height and self-heals
+// from a 0 baseline.
+let fullScreenHeight = 0
 
 /**
  * Reactive soft-keyboard height for the terminal.
@@ -35,5 +38,17 @@ export function useTerminalKeyboard() {
     isAdjustResize.value = v
   }
 
-  return { keyboardHeight, setKeyboardHeight, isAdjustResize, setAdjustResize, fullScreenHeight }
+  // Track the largest innerHeight seen as the full-screen baseline (see above).
+  function noteFullScreenHeight(h: number) {
+    if (h > fullScreenHeight) fullScreenHeight = h
+  }
+
+  return {
+    keyboardHeight,
+    setKeyboardHeight,
+    isAdjustResize,
+    setAdjustResize,
+    getFullScreenHeight: () => fullScreenHeight,
+    noteFullScreenHeight,
+  }
 }

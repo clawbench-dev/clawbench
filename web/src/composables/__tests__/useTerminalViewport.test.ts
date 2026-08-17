@@ -11,13 +11,15 @@ const mockShared = vi.hoisted(() => {
 })
 
 vi.mock('@/composables/useTerminalKeyboard', () => {
+  const fullScreenHeight = { value: 800 }
   return {
     useTerminalKeyboard: () => ({
       keyboardHeight: mockShared.keyboardHeight,
       setKeyboardHeight: (h: number) => { mockShared.keyboardHeight.value = h },
       isAdjustResize: mockShared.isAdjustResize,
       setAdjustResize: (v: boolean) => { mockShared.isAdjustResize.value = v },
-      fullScreenHeight: 800,
+      getFullScreenHeight: () => fullScreenHeight.value,
+      noteFullScreenHeight: (h: number) => { if (h > fullScreenHeight.value) fullScreenHeight.value = h },
     }),
   }
 })
@@ -188,6 +190,79 @@ describe('useTerminalViewport', () => {
     containerRef.value = null
     resizeHandler!()
     expect(mockShared.keyboardHeight.value).toBe(0)
+  })
+
+  it('detects keyboard via polling when no resize event fires (Android WebView)', () => {
+    vi.useFakeTimers()
+    const terminal = ref(null)
+    const containerRef = ref<HTMLElement | null>(container)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    // visualViewport present but its resize listener is a no-op (WebView quirk:
+    // no event dispatched even though height changes). window.resize also not fired.
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 800,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+
+    viewport.startWatching()
+    expect(mockShared.keyboardHeight.value).toBe(0)
+
+    // Keyboard opens on Android adjustResize: innerHeight + visualViewport both
+    // shrink, but no event fires. The 300ms poll must detect it.
+    Object.defineProperty(window, 'innerHeight', {
+      value: 500,
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 500,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+
+    vi.advanceTimersByTime(300)
+    // resizeKeyboard = fullScreenHeight(800) - innerHeight(500) = 300
+    expect(mockShared.keyboardHeight.value).toBe(300)
+    expect(mockShared.isAdjustResize.value).toBe(true)
+
+    // Keyboard closes silently: both restore to 800.
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 800,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    vi.advanceTimersByTime(300)
+    expect(mockShared.keyboardHeight.value).toBe(0)
+
+    viewport.stopWatching()
+    vi.useRealTimers()
   })
 
   it('detects keyboard from Android adjustResize (innerHeight shrinks)', () => {

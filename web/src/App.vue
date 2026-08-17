@@ -298,7 +298,7 @@
       />
 
       <!-- Bottom dock (tab bar) -->
-      <div v-if="isAuthenticated" v-show="!anyKeyboardActive && !isWideScreen" class="bottom-dock-wrapper">
+      <div v-if="isAuthenticated" v-show="!isWideScreen" class="bottom-dock-wrapper">
         <div ref="dockRef" class="bottom-dock">
           <div class="dock-center">
             <div class="dock-active-indicator" :style="dockIndicatorStyle"></div>
@@ -917,7 +917,13 @@ const terminalRequestedCwd = ref(null)
 // singleton — reliable on Android WebViews that don't dispatch window/viewport
 // resize events. App.vue only reads it here.
 const terminalActive = computed(() => activeTab.value === 'terminal')
-const { keyboardHeight: terminalKeyboardHeight, isAdjustResize: terminalIsAdjustResize } = useTerminalKeyboard()
+const { keyboardHeight: terminalKeyboardHeight, isAdjustResize: terminalIsAdjustResize, noteFullScreenHeight: seedFullHeight } = useTerminalKeyboard()
+// Seed the full-screen innerHeight baseline here: at app startup no soft keyboard
+// is open yet, so innerHeight is the true full height. This fixes the Android case
+// where the terminal's keyboard auto-opens before detection ever sees a full
+// (keyboard-closed) innerHeight — otherwise fullScreenHeight would latch onto the
+// shrunk value and the Dock would only hide after the keyboard is toggled once.
+if (window.innerHeight > 0) seedFullHeight(window.innerHeight)
 const terminalKeyboardActive = computed(() => terminalActive.value && terminalKeyboardHeight.value > 0)
 // In PWA standalone / iOS (no adjustResize), position:fixed app-container doesn't
 // auto-shrink when keyboard opens. We must compensate with CSS bottom shrink,
@@ -929,9 +935,6 @@ const terminalKeyboardNeedsShrink = computed(() => terminalKeyboardActive.value 
 // keyboard via visualViewport and compensate in the web layer.
 const { chatKeyboardHeight } = useChatKeyboard()
 const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKeyboardHeight.value > 0)
-
-// Unified: any soft keyboard is open (terminal or chat)
-const anyKeyboardActive = computed(() => terminalKeyboardActive.value || chatKeyboardActive.value)
 
 const quoteQuestion = useQuoteQuestion()
 const sessionDrawerRef = ref(null)
@@ -1487,15 +1490,6 @@ const {
 // Close overflow popup when layout changes (resize promotes/demotes items)
 watch(() => inlineOverflowTabs.value.length, () => {
   overflowMenuOpen.value = false
-})
-
-// Safety net: re-measure dock when it becomes visible again after keyboard closes.
-// ResizeObserver should handle this, but Android WebView may miss the callback
-// after display:none → display:flex transitions (especially with CSS zoom applied).
-watch(anyKeyboardActive, (active) => {
-  if (!active) {
-    nextTick(() => startDockResize())
-  }
 })
 
 // Safety net: re-measure dock when UI scale (CSS zoom) changes.
@@ -2192,12 +2186,15 @@ function handleCtrlF(e) {
     // Other tabs: don't preventDefault — let browser handle Ctrl+F natively
 }
 
-onMounted(() => {
-    document.addEventListener('keydown', handleCtrlF)
-    stopLocalLinkGuard = initLocalLinkGuard((href) => {
-        openFilePath(href)
-    })
-})
+ onMounted(() => {
+     document.addEventListener('keydown', handleCtrlF)
+     stopLocalLinkGuard = initLocalLinkGuard((href) => {
+         openFilePath(href)
+     })
+     // Safety net: re-seed the full-screen height baseline once mounted and laid
+     // out (no keyboard is open before the user opens the terminal).
+     if (window.innerHeight > 0) seedFullHeight(window.innerHeight)
+ })
 
 let stopLocalLinkGuard = null
 

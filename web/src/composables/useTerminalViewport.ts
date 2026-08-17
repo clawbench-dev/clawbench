@@ -23,10 +23,16 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
 
   let fitTimer: ReturnType<typeof setTimeout> | null = null
   const FIT_DEBOUNCE_MS = 100
+  // Poll the actual innerHeight/visualViewport every N ms. Android WebViews do
+  // NOT dispatch window/viewport/ResizeObserver events when the soft keyboard
+  // opens even though innerHeight & visualViewport.height DO change — so the
+  // poll is the only signal that reliably reaches detection there.
+  const POLL_INTERVAL_MS = 300
+  let pollTimer: ReturnType<typeof setInterval> | null = null
 
   // Use the full-screen height captured at app startup (before any keyboard)
   // as the baseline for detecting keyboard appearance on Android adjustResize.
-  const { fullScreenHeight, setKeyboardHeight: setSharedKeyboardHeight, setAdjustResize } = useTerminalKeyboard()
+  const { getFullScreenHeight, setKeyboardHeight: setSharedKeyboardHeight, setAdjustResize, noteFullScreenHeight } = useTerminalKeyboard()
 
   function updateViewport() {
     if (!containerRef.value) {
@@ -40,6 +46,10 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
     }
 
     const currentInnerHeight = window.innerHeight
+    // Track the largest innerHeight seen as the full-screen baseline. The
+    // keyboard only shrinks innerHeight, so max == full screen height, which
+    // self-heals the unreliable module-load baseline (0 on Android WebViews).
+    noteFullScreenHeight(currentInnerHeight)
     const vv = window.visualViewport
 
     if (vv) {
@@ -49,7 +59,7 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
 
       // Method 2 (works in Android adjustResize where innerHeight shrinks):
       // keyboardHeight = fullScreenHeight - currentInnerHeight
-      const resizeKeyboard = fullScreenHeight - currentInnerHeight
+      const resizeKeyboard = getFullScreenHeight() - currentInnerHeight
 
       // Detect adjustResize: if innerHeight actually shrunk, the browser
       // is in adjustResize mode (Android native WebView). In this mode
@@ -112,6 +122,13 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
       // Don't watch scroll — it fires on every keyboard animation frame
       // and causes excessive fit() calls that duplicate terminal content.
     }
+
+    // window.resize fires when innerHeight changes.
+    window.addEventListener('resize', updateViewport)
+
+    // Belt-and-suspenders: poll the real values. Some WebViews fire none of the
+    // above when the keyboard opens even though innerHeight/visualViewport change.
+    pollTimer = setInterval(updateViewport, POLL_INTERVAL_MS)
   }
 
   function stopWatching() {
@@ -119,9 +136,14 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
       clearTimeout(fitTimer)
       fitTimer = null
     }
+    if (pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
     resizeObserver?.disconnect()
     resizeObserver = null
 
+    window.removeEventListener('resize', updateViewport)
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', updateViewport)
     }
