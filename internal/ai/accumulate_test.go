@@ -947,3 +947,58 @@ func TestAccumulateBlock_ContentReplayAccumulatedPreservesNonReplayedText(t *tes
 	assert.Equal(t, "The tests look comprehensive.", blocks[3].Text)
 	assert.Equal(t, "tool_use", blocks[4].Type) // t3
 }
+
+func TestAccumulateBlock_ContentReplayPartialPrefixReemission(t *testing.T) {
+	// CodeBuddy streams a multi-sentence paragraph as deltas, then after a tool
+	// call re-emits a single finalized sentence that is a PREFIX of the already-
+	// accumulated block. The partial re-emission must NOT create a duplicate
+	// text block (regression: block duplicated because the new content was a
+	// prefix of existing, not a superset).
+	blocks := []model.ContentBlock{}
+
+	// Paragraph built from incremental chunks: sentence A + sentence B.
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "Let me read the files systematically by domain. I'll start with multiple parallel reads."})
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "所有 203 个 issues 都是 open 状态。让我获取变更文件中涉及的具体文件列表，以便后续 Step 5 检查。"})
+	assert.Len(t, blocks, 1)
+	assert.Equal(t,
+		"Let me read the files systematically by domain. I'll start with multiple parallel reads.所有 203 个 issues 都是 open 状态。让我获取变更文件中涉及的具体文件列表，以便后续 Step 5 检查。",
+		blocks[0].Text)
+
+	// Tool call creates a boundary.
+	AccumulateBlock(&blocks, StreamEvent{
+		Type: "tool_use",
+		Tool: &ToolCall{Name: "Bash", ID: "t1", Input: `{}`, Done: true},
+	})
+	assert.Len(t, blocks, 2)
+
+	// Partial re-emission: the first sentence only (a prefix of blocks[0]).
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "Let me read the files systematically by domain. I'll start with multiple parallel reads."})
+
+	// Must NOT create a new text block — content already present in blocks[0].
+	assert.Len(t, blocks, 2, "partial re-emission should not create a duplicate block")
+	assert.Equal(t, "text", blocks[0].Type)
+	assert.Equal(t, "tool_use", blocks[1].Type)
+	assert.Equal(t,
+		"Let me read the files systematically by domain. I'll start with multiple parallel reads.所有 203 个 issues 都是 open 状态。让我获取变更文件中涉及的具体文件列表，以便后续 Step 5 检查。",
+		blocks[0].Text)
+}
+
+func TestAccumulateBlock_ContentReplayPartialPrefixShortReemission(t *testing.T) {
+	// A short partial re-emission (<= 10 runes) must NOT be treated as a replay,
+	// to avoid deduplicating genuine distinct short statements.
+	blocks := []model.ContentBlock{}
+
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "Now let me read the config carefully."})
+	AccumulateBlock(&blocks, StreamEvent{
+		Type: "tool_use",
+		Tool: &ToolCall{Name: "Read", ID: "t1", Input: `{}`, Done: true},
+	})
+	// "Now" is a prefix of blocks[0] but too short (3 runes) to match.
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "Now"})
+
+	assert.Len(t, blocks, 3, "short partial prefix should not trigger replay dedup")
+	assert.Equal(t, "text", blocks[0].Type)
+	assert.Equal(t, "tool_use", blocks[1].Type)
+	assert.Equal(t, "text", blocks[2].Type)
+	assert.Equal(t, "Now", blocks[2].Text)
+}

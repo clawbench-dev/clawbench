@@ -48,7 +48,17 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 			// No text block found (separated by tool_use boundary).
 			// Check if this is a replay: ACP sub-agents re-emit complete paragraph
 			// text after tool calls complete. Search backward across tool_use
-			// boundaries for a text block whose content is a prefix of this event.
+			// boundaries for a text block whose content is a prefix of this event,
+			// OR where this event is a prefix of that block.
+			//
+			// NOTE (CodeBuddy-specific): the "this event is a prefix of the block"
+			// branch exists because CodeBuddy (via ACP acp-stdio) streams a multi-
+			// sentence paragraph as fine-grained deltas into one text block, then
+			// after a tool call re-emits a single finalized sentence that is a
+			// PREFIX of that accumulated block. Without this branch the re-emitted
+			// sentence becomes a duplicate text block (observed on codebuddy only —
+			// other backends replay either equal or superset paragraphs, which the
+			// existing branch already handled).
 			//
 			// To avoid false positives from unrelated paragraphs sharing a long
 			// prefix, we require the matched block to be immediately followed by
@@ -59,9 +69,13 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 					existing := (*blocks)[i].Text
 					// Require sufficient length to avoid false matches on short
 					// common prefixes like "Now". Use rune count for CJK safety:
-					// 10 runes ≈ 10 ASCII chars or ~5 CJK characters.
+					// 10 runes ≈ 10 ASCII chars or ~5 CJK characters. The
+					// existing branch implies event is at least as long as
+					// existing (so > 10); the partial branch needs its own guard.
+					eventLen := utf8.RuneCountInString(event.Content)
 					if utf8.RuneCountInString(existing) > 10 &&
-						strings.HasPrefix(event.Content, existing) {
+						(strings.HasPrefix(event.Content, existing) ||
+							(eventLen > 10 && strings.HasPrefix(existing, event.Content))) {
 						// Only match if this text block is immediately followed
 						// by a tool_use block (the replay pattern).
 						if i+1 < len(*blocks) && (*blocks)[i+1].Type == "tool_use" {
@@ -73,8 +87,9 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 			}
 			if replayIdx >= 0 {
 				existing := (*blocks)[replayIdx].Text
-				if event.Content == existing {
-					// Exact replay: skip, don't create a new block.
+				if event.Content == existing || strings.HasPrefix(existing, event.Content) {
+					// Exact replay or partial re-emission: the content is already
+					// shown in the existing block. Skip — don't create a new block.
 				} else {
 					// Accumulated replay (extends the original): replace original
 					// and remove intermediate text blocks whose content is
