@@ -568,6 +568,7 @@ export default {
         parse_error: 'AI 输出解析错误',
         backend_exit: 'AI 后端异常退出',
         request_failed: 'AI 请求失败',
+        stream_stall: 'AI 长时间无输出，已自动终止',
         restart: '服务重启，AI 响应中断',
         panic: 'AI 内部错误，请重试',
       },

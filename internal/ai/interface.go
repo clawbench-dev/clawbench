@@ -70,6 +70,7 @@ const (
 	ReasonParseError    = "parse_error"    // CLI output parsing error
 	ReasonBackendExit   = "backend_exit"   // CLI process exited abnormally
 	ReasonRequestFailed = "request_failed" // Codex turn.failed
+	ReasonStreamStall   = "stream_stall"   // CLI stream produced no output for the idle watchdog window
 	ReasonPanic         = "panic"          // AI goroutine panicked
 )
 
@@ -341,6 +342,11 @@ type AIBackend interface {
 	// Name returns the backend identifier (e.g., "claude", "codebuddy")
 	Name() string
 
-	// ExecuteStream runs the AI backend and returns a channel of streaming events
+	// ExecuteStream runs the AI backend and returns a channel of streaming events.
+	//
+	// Producer contract: the returned channel MUST always be closed, even on
+	// error, cancellation, or abnormal process exit. Consumers drain the channel
+	// until it closes (see SessionExecutor.Finalize) to unblock producer sends,
+	// so a producer that never closes its channel can hang the consumer.
 	ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error)
 }

@@ -776,6 +776,13 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		UpdateTaskStats(task)
 		// Finalize orphaned streaming messages since executor.Finalize() was skipped
 		FinalizeOrphanedMessages(sessionID, "")
+		// Drain the event channel in the background until the producer closes it.
+		// Without this the producer goroutine can block forever on a full channel
+		// (parser sends are not ctx-aware), leaking the goroutine.
+		go func() {
+			for range eventCh {
+			}
+		}()
 		return
 	}
 
@@ -797,6 +804,12 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		UpdateTaskStats(task)
 		// Finalize orphaned streaming messages since executor.Finalize() was skipped
 		FinalizeOrphanedMessages(sessionID, "")
+		// Drain the event channel in the background until the producer closes it.
+		// See comment on the cancel path above.
+		go func() {
+			for range eventCh {
+			}
+		}()
 		return
 	}
 

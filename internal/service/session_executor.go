@@ -494,47 +494,45 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 	return string(blocksJSON), blocks
 }
 
-// drainRemainingEvents reads remaining events from the channel without blocking.
-// In addition to raw_output (for debugging), it also processes tool_use/tool_result
-// events that arrived after the main event loop exited (e.g., debouncer flushAll
-// on cancel), persisting them via AccumulateBlock + upsertToolCallToDB.
+// drainRemainingEvents reads all remaining events from the channel until it is
+// closed. In addition to raw_output (for debugging), it also processes
+// tool_use/tool_result events that arrive after the main event loop exited
+// (e.g., debouncer flushAll on cancel), persisting them via AccumulateBlock +
+// upsertToolCallToDB.
 //
 // It also processes session_capture and metadata events to persist the external
 // session ID, even when the stream was cancelled before the main loop processed
 // these events. This prevents resume failures on subsequent prompts.
+//
+// Draining until close (rather than a one-shot non-blocking scan) guarantees
+// the producer's channel sends never block forever on a full buffer, so the
+// producer goroutine can always exit and close the channel.
 func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, rawOutput string) string {
 	if eventCh == nil {
 		return rawOutput
 	}
-	for {
-		select {
-		case event, ok := <-eventCh:
-			if !ok {
-				return rawOutput
+	for event := range eventCh {
+		switch event.Type {
+		case "raw_output":
+			if rawOutput != "" {
+				rawOutput += "\n"
 			}
-			switch event.Type {
-			case "raw_output":
-				if rawOutput != "" {
-					rawOutput += "\n"
-				}
-				rawOutput += event.RawOutput
-			case eventTypeToolUse, eventTypeToolResult:
-				e.trackToolDuration(&event)
-				ai.AccumulateBlock(&e.blocks, event)
-				e.upsertToolCallToDB(event)
-			case "session_capture":
-				if event.Content != "" {
-					e.captureExternalSessionID(event.Content)
-				}
-			case contentKeyMetadata:
-				if event.Meta != nil && event.Meta.SessionID != "" {
-					e.captureExternalSessionID(event.Meta.SessionID)
-				}
+			rawOutput += event.RawOutput
+		case eventTypeToolUse, eventTypeToolResult:
+			e.trackToolDuration(&event)
+			ai.AccumulateBlock(&e.blocks, event)
+			e.upsertToolCallToDB(event)
+		case "session_capture":
+			if event.Content != "" {
+				e.captureExternalSessionID(event.Content)
 			}
-		default:
-			return rawOutput
+		case contentKeyMetadata:
+			if event.Meta != nil && event.Meta.SessionID != "" {
+				e.captureExternalSessionID(event.Meta.SessionID)
+			}
 		}
 	}
+	return rawOutput
 }
 
 // Finalize persists the RunResult to the database: builds the content JSON,

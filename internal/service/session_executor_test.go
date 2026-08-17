@@ -239,6 +239,64 @@ func TestSessionExecutor_Finalize_DrainRawFromEventChannel(t *testing.T) {
 	}
 }
 
+// TestSessionExecutor_Finalize_DrainsUntilChannelCloses verifies that Finalize
+// keeps draining the event channel until it is closed, even after the terminal
+// event was consumed by RunWithChannel. Events that arrive late (e.g. tool
+// calls flushed by a debouncer after cancel) must be persisted — previously the
+// drain only took what was immediately available, which could leave the
+// producer blocked on a full channel and the late events dropped.
+func TestSessionExecutor_Finalize_DrainsUntilChannelCloses(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	eventCh := make(chan ai.StreamEvent, 4)
+	go func() {
+		eventCh <- ai.StreamEvent{Type: "content", Content: "partial"}
+		eventCh <- ai.StreamEvent{Type: "done"}
+		// A tool_use event arrives AFTER the terminal event. Finalize must keep
+		// draining until the channel closes to capture it.
+		time.Sleep(50 * time.Millisecond)
+		eventCh <- ai.StreamEvent{
+			Type: "tool_use",
+			Tool: &ai.ToolCall{Name: "Read", ID: "t1", Input: `{}`, Done: true},
+		}
+		close(eventCh)
+	}()
+
+	runResult := executor.RunWithChannel(eventCh)
+	if !runResult.ReceivedTerminal {
+		t.Fatal("expected terminal event received")
+	}
+
+	finalized := executor.Finalize(runResult, eventCh)
+
+	found := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "tool_use" && b.ID == "t1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected late tool_use event to be drained before the channel closed")
+	}
+}
+
 func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
 	// Verify Finalize works with minimal metadata — the function accesses
 	// responseMetadata fields directly, so nil is not supported.

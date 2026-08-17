@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -105,6 +106,238 @@ func TestCLIBackend_ExecuteStream_ContextCancelReapsProcess(t *testing.T) {
 			}
 		case <-timer.C:
 			t.Fatal("timed out waiting for channel to close — process may not have been reaped (ISS-232)")
+		}
+	}
+}
+
+// TestCLIBackend_ExecuteStream_WaitReapsWhenChildHoldsPipe verifies that a
+// spawned child inheriting the stdout pipe can no longer block the stream
+// forever. The parent `sh` exits immediately, but the backgrounded grandchild
+// `sleep` holds the pipe open. The stream must still terminate promptly:
+// Wait() is started immediately and closes the parent's pipe ends after the
+// process exits, unblocking the read loop.
+func TestCLIBackend_ExecuteStream_WaitReapsWhenChildHoldsPipe(t *testing.T) {
+	b := &CLIBackend{
+		BackendName: "test",
+		Cmd:         "sh",
+		BuildArgsFn: func(req ChatRequest) []string {
+			return []string{"-c", `echo '{"type":"result","session_id":"sess"}'; (sleep 10 2>/dev/null) 2>/dev/null &`}
+		},
+		NewParserFn: func() LineParser { return &StreamParser{} },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := b.ExecuteStream(ctx, ChatRequest{
+		Prompt:    "test",
+		SessionID: "test-grandchild-pipe",
+		WorkDir:   t.TempDir(),
+	})
+	assert.NoError(t, err, "sh should start successfully")
+
+	gotDone := false
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				// Channel closed — the stream terminated despite the grandchild
+				// holding the pipe. Success.
+				assert.True(t, gotDone, "expected a done event before the stream closed")
+				return
+			}
+			if ev.Type == "done" {
+				gotDone = true
+			}
+		case <-timer.C:
+			t.Fatal("timed out waiting for channel to close — grandchild held the stdout pipe and the stream blocked indefinitely")
+		}
+	}
+}
+
+// TestCLIBackend_ExecuteStream_ChildHoldsStderrClosesPromptly verifies that a
+// spawned child inheriting only stderr (stdout redirected) cannot delay the
+// stream end: the scanner reaches EOF on stdout quickly, but Wait() is held up
+// by exec's stderr copy goroutine until the child exits. The stream must still
+// close promptly (bounded by the 2s diagnostic wait), not wait for the child.
+func TestCLIBackend_ExecuteStream_ChildHoldsStderrClosesPromptly(t *testing.T) {
+	b := &CLIBackend{
+		BackendName: "test",
+		Cmd:         "sh",
+		BuildArgsFn: func(req ChatRequest) []string {
+			return []string{"-c", `echo '{"type":"result","session_id":"sess"}'; (sleep 20 1>/dev/null) &`}
+		},
+		NewParserFn: func() LineParser { return &StreamParser{} },
+	}
+	t.Cleanup(func() { _ = exec.Command("pkill", "-f", "sleep 20 1").Run() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := b.ExecuteStream(ctx, ChatRequest{
+		Prompt:    "test",
+		SessionID: "test-grandchild-stderr",
+		WorkDir:   t.TempDir(),
+	})
+	assert.NoError(t, err, "sh should start successfully")
+
+	gotDone := false
+	timer := time.NewTimer(8 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				assert.True(t, gotDone, "expected a done event before the stream closed")
+				return
+			}
+			if ev.Type == "done" {
+				gotDone = true
+			}
+		case <-timer.C:
+			t.Fatal("timed out waiting for channel to close — a child holding stderr delayed Wait() and the stream end")
+		}
+	}
+}
+
+// TestCLIBackend_ExecuteStream_WatchdogTerminatesStalledStream verifies the
+// no-progress watchdog: when the CLI produces output and then goes silent
+// without exiting, the stream is terminated and a stream_stall warning is
+// emitted. Without the watchdog the process group would live forever and the
+// session would stay in the streaming state indefinitely.
+func TestCLIBackend_ExecuteStream_WatchdogTerminatesStalledStream(t *testing.T) {
+	b := &CLIBackend{
+		BackendName: "test",
+		Cmd:         "sh",
+		BuildArgsFn: func(req ChatRequest) []string {
+			return []string{"-c", `echo '{"type":"assistant","subtype":"text","text":"hi"}'; sleep 311`}
+		},
+		NewParserFn:       func() LineParser { return &StreamParser{} },
+		NoProgressTimeout: 500 * time.Millisecond,
+	}
+	t.Cleanup(func() { _ = exec.Command("pkill", "-f", "sleep 311").Run() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := b.ExecuteStream(ctx, ChatRequest{
+		Prompt:    "test",
+		SessionID: "test-watchdog",
+		WorkDir:   t.TempDir(),
+	})
+	assert.NoError(t, err)
+
+	gotStall := false
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				assert.True(t, gotStall, "expected a stream_stall warning event before the channel closed")
+				return
+			}
+			if ev.Type == "warning" && ev.Reason == ReasonStreamStall {
+				gotStall = true
+			}
+		case <-timer.C:
+			t.Fatal("timed out waiting for the watchdog to terminate the stalled stream")
+		}
+	}
+}
+
+// TestCLIBackend_ExecuteStream_WatchdogDisabled verifies that a negative
+// NoProgressTimeout disables the watchdog: a quiet but alive process is not
+// force-killed and the stream only ends when the process exits on its own.
+func TestCLIBackend_ExecuteStream_WatchdogDisabled(t *testing.T) {
+	b := &CLIBackend{
+		BackendName: "test",
+		Cmd:         "sh",
+		BuildArgsFn: func(req ChatRequest) []string {
+			return []string{"-c", `echo '{"type":"assistant","subtype":"text","text":"hi"}'; sleep 2`}
+		},
+		NewParserFn:       func() LineParser { return &StreamParser{} },
+		NoProgressTimeout: -1,
+	}
+
+	start := time.Now()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := b.ExecuteStream(ctx, ChatRequest{
+		Prompt:    "test",
+		SessionID: "test-watchdog-disabled",
+		WorkDir:   t.TempDir(),
+	})
+	assert.NoError(t, err)
+
+	gotContent := false
+	var closedAt time.Time
+loop:
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				closedAt = time.Now()
+				break loop
+			}
+			if ev.Type == "content" {
+				gotContent = true
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("channel never closed (process leaked?)")
+		}
+	}
+
+	assert.True(t, gotContent, "expected a content event")
+	// The watchdog is disabled: the stream must survive the quiet window
+	// between the content line and the process exiting (~2s). If the watchdog
+	// fired anyway it would force-close the channel almost immediately.
+	if closedAt.Sub(start) < 1500*time.Millisecond {
+		t.Fatalf("stream closed after %v — disabled watchdog must not kill a quiet but alive process", closedAt.Sub(start))
+	}
+}
+
+// TestCLIBackend_ExecuteStream_CancelKillsProcessGroup verifies that cancelling
+// the context kills the whole process group. The command spawns a child
+// (`sleep`) that inherits the pipes; killing only the leader would leave the
+// child holding the pipe open and the channel would never close.
+func TestCLIBackend_ExecuteStream_CancelKillsProcessGroup(t *testing.T) {
+	b := &CLIBackend{
+		BackendName: "test",
+		Cmd:         "sh",
+		BuildArgsFn: func(req ChatRequest) []string {
+			return []string{"-c", `echo '{"type":"assistant","subtype":"text","text":"hi"}'; sleep 313`}
+		},
+		NewParserFn: func() LineParser { return &StreamParser{} },
+	}
+	t.Cleanup(func() { _ = exec.Command("pkill", "-f", "sleep 313").Run() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := b.ExecuteStream(ctx, ChatRequest{
+		Prompt:    "test",
+		SessionID: "test-cancel-group",
+		WorkDir:   t.TempDir(),
+	})
+	assert.NoError(t, err)
+
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return // channel closed — the whole process group was killed
+			}
+		case <-timer.C:
+			t.Fatal("timed out waiting for channel to close after cancel — child process group was not killed, pipe held open")
 		}
 	}
 }
