@@ -10,6 +10,7 @@ const makeWorktree = (overrides: Record<string, unknown> = {}) => ({
   path: '/repo/.worktrees/feature-a',
   branch: 'feature-a',
   isCurrent: false,
+  isMain: false,
   dirty: false,
   locked: false,
   missing: false,
@@ -32,6 +33,16 @@ function mountCard(worktree: Record<string, unknown>) {
 }
 
 describe('GitWorktreeCard inline actions', () => {
+  it('shows a main badge for the main worktree', () => {
+    const wrapper = mountCard(makeWorktree({ isMain: true }))
+    expect(wrapper.find('.wt-badge-main').exists()).toBe(true)
+  })
+
+  it('does not show a main badge for a linked worktree', () => {
+    const wrapper = mountCard(makeWorktree({ isMain: false }))
+    expect(wrapper.find('.wt-badge-main').exists()).toBe(false)
+  })
+
   it('shows delete button for a non-current worktree', () => {
     const wrapper = mountCard(makeWorktree())
     expect(wrapper.findAll('.wt-action-btn').length).toBe(1)

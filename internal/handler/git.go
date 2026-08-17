@@ -1112,6 +1112,7 @@ type worktreeInfo struct {
 	DisplayPath  string `json:"displayPath"`
 	Branch       string `json:"branch"`
 	IsCurrent    bool   `json:"isCurrent"`
+	IsMain       bool   `json:"isMain"`
 	Dirty        bool   `json:"dirty"`
 	ChangeCount  int    `json:"changeCount"`
 	UntrackedCnt int    `json:"untrackedCount"`
@@ -1173,6 +1174,12 @@ func parseWorktreePorcelain(output, projectPath string) []worktreeInfo {
 			info.DisplayPath = "."
 		} else {
 			info.DisplayPath = info.Path
+		}
+		// The main worktree is the repository's primary working tree. Its .git
+		// is a directory (the repo's git dir), whereas linked worktrees have a
+		// .git FILE whose contents point at the per-worktree git dir.
+		if fi, err := os.Stat(filepath.Join(info.Path, ".git")); err == nil && fi.IsDir() {
+			info.IsMain = true
 		}
 		info.IsCurrent = info.Path == projectPath
 		trees = append(trees, info)

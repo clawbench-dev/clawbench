@@ -8,6 +8,7 @@
       <div class="wt-row-name">
         <FolderTree :size="14" class="wt-row-icon" />
         <span>{{ worktree.branch || '—' }}</span>
+        <span v-if="worktree.isMain" class="wt-badge wt-badge-main">{{ t('git.manage.main') }}</span>
       </div>
       <div class="wt-row-path">{{ worktree.path }}</div>
     </div>
@@ -170,6 +171,11 @@ defineEmits(['switch', 'delete'])
 .wt-badge-dirty {
   background: var(--warning-bg, rgba(255, 159, 64, 0.15));
   color: var(--warning-color, #e67e22);
+}
+
+.wt-badge-main {
+  background: var(--accent-bg, rgba(74, 144, 217, 0.12));
+  color: var(--accent-color, #4a90d9);
 }
 
 .wt-badge-clean {

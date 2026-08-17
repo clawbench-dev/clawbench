@@ -963,6 +963,32 @@ branch refs/heads/feature-x
 	assert.False(t, trees[1].IsCurrent)
 }
 
+func TestParseWorktreePorcelain_IsMainWorktree(t *testing.T) {
+	mainDir := t.TempDir()
+	linkedDir := filepath.Join(mainDir, ".worktrees", "feature-x")
+	if err := os.MkdirAll(linkedDir, 0o755); err != nil {
+		t.Fatalf("mkdir linked worktree: %v", err)
+	}
+	// Main worktree: .git is a directory.
+	if err := os.Mkdir(filepath.Join(mainDir, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	// Linked worktree: .git is a FILE pointing at the per-worktree git dir.
+	gitdirFile := filepath.Join(mainDir, ".git", "worktrees", "feature-x")
+	if err := os.MkdirAll(gitdirFile, 0o755); err != nil {
+		t.Fatalf("mkdir worktree gitdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(linkedDir, ".git"), []byte("gitdir: "+gitdirFile+"\n"), 0o644); err != nil {
+		t.Fatalf("write .git file: %v", err)
+	}
+
+	output := "worktree " + mainDir + "\nHEAD abc123\ndetached\n\nworktree " + linkedDir + "\nHEAD def789\nbranch refs/heads/feature-x\n"
+	trees := parseWorktreePorcelain(output, mainDir)
+	assert.Len(t, trees, 2)
+	assert.True(t, trees[0].IsMain, "main worktree should be flagged IsMain")
+	assert.False(t, trees[1].IsMain, "linked worktree should not be flagged IsMain")
+}
+
 func TestParseWorktreePorcelain_LockedWorktree(t *testing.T) {
 	output := `worktree /home/user/project
 HEAD abc123def456
@@ -1069,12 +1095,55 @@ func TestServeGitWorktrees_SingleWorktree(t *testing.T) {
 
 	wt, _ := worktrees[0].(map[string]interface{})
 	assert.Equal(t, true, wt["isCurrent"])
+	assert.Equal(t, true, wt["isMain"])
 	// Resolve symlinks before comparing — macOS /var is a symlink to /private/var,
 	// so os.Getwd() returns /private/var/... while t.TempDir() returns /var/...
 	pathStr, _ := wt["path"].(string)
 	actualPath, _ := filepath.EvalSymlinks(pathStr)
 	expectedPath, _ := filepath.EvalSymlinks(env.ProjectDir)
 	assert.Equal(t, expectedPath, actualPath)
+}
+
+func TestServeGitWorktrees_MainAndLinkedWorktree(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	wtPath := filepath.Join(filepath.Dir(env.ProjectDir), "wt-main-and-linked")
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+	run("git", "worktree", "add", wtPath, "-b", "wt-branch")
+
+	req := newRequest(t, http.MethodGet, "/api/git/worktrees", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeGitWorktrees, req)
+	assertOK(t, w)
+
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	worktrees, ok := resp["worktrees"].([]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, 2, len(worktrees))
+
+	byIsMain := map[bool]map[string]interface{}{}
+	for _, item := range worktrees {
+		wt, _ := item.(map[string]interface{})
+		isMain, _ := wt["isMain"].(bool)
+		byIsMain[isMain] = wt
+	}
+	mainWT := byIsMain[true]
+	linkedWT := byIsMain[false]
+	assert.NotNil(t, mainWT)
+	assert.NotNil(t, linkedWT)
+	assert.Equal(t, true, mainWT["isCurrent"])
+	assert.Equal(t, false, linkedWT["isCurrent"])
 }
 
 func TestServeGitWorktrees_WrongMethod(t *testing.T) {

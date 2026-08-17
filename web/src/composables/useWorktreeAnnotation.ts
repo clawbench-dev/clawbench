@@ -30,6 +30,7 @@ interface WorktreeInfo {
     displayPath: string
     branch: string
     isCurrent: boolean
+    isMain: boolean
     dirty: boolean
     changeCount: number
     untrackedCount: number

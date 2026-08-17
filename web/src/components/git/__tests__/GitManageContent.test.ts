@@ -147,6 +147,18 @@ describe('GitManageContent', () => {
   })
 
   describe('onSwitchWorktree', () => {
+    it('confirms with a message that reassures current workspace changes are kept', async () => {
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onSwitchWorktree({ path: '/worktree/path' })
+
+      expect(mockDialogConfirm).toHaveBeenCalledWith(
+        'git.manage.openWorktreeAsProject',
+        expect.objectContaining({ title: 'git.manage.switchWorktree' }),
+      )
+    })
+
     it('calls store.setProject when no hotSwitchProject after confirm', async () => {
       const wrapper = mountContent()
       await flushPromises()
