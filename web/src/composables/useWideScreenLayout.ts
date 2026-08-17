@@ -9,6 +9,21 @@ export const WIDE_SCREEN_MIN_PHYSICAL_WIDTH = 1280
 export const WIDE_SCREEN_LEFT_TAB_KEY = 'clawbench-widescreen-left-tab'
 export const WIDE_SCREEN_SPLIT_RATIO_KEY = 'clawbench-widescreen-split-ratio'
 export const WIDE_SCREEN_DOCK_TABS = ['browse', 'view', 'history', 'tasks', 'terminal', 'proxy', 'settings']
+/**
+ * Tabs that are always rendered in the wide-screen vertical dock, in order.
+ * The wide dock shows every tab inline — no overflow/popup — so this is the
+ * fixed head of the dock; secondary tabs (overflowTabs) follow it.
+ */
+export const WIDE_SCREEN_PRIMARY_TABS = ['browse', 'view', 'history']
+
+/**
+ * Visible tab order of the wide-screen vertical dock: fixed primary tabs first,
+ * then the (already-filtered) secondary tabs. Used for rendering and for the
+ * active-indicator position. Deterministic — never depends on runtime geometry.
+ */
+export function wideDockTabOrder(overflowTabs: string[]): string[] {
+  return [...WIDE_SCREEN_PRIMARY_TABS, ...overflowTabs]
+}
 
 /**
  * Wide-screen detection. Active when the CSS viewport is ≥1024px (desktop), or

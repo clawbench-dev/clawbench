@@ -16,6 +16,8 @@ import {
   WIDE_SCREEN_DOCK_TABS,
   WIDE_SCREEN_LEFT_TAB_KEY,
   WIDE_SCREEN_SPLIT_RATIO_KEY,
+  WIDE_SCREEN_PRIMARY_TABS,
+  wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
 
 beforeEach(() => {
@@ -204,6 +206,27 @@ describe('activePane focus tracking', () => {
     resetWideScreenState()
     const { activePane } = useWideScreenLayout()
     expect(activePane.value).toBe('right')
+  })
+})
+
+describe('wideDockTabOrder', () => {
+  it('puts the fixed primary tabs first, then the secondary tabs in given order', () => {
+    const all = wideDockTabOrder(['tasks', 'terminal', 'proxy', 'settings'])
+    expect(all).toEqual(['browse', 'view', 'history', 'tasks', 'terminal', 'proxy', 'settings'])
+    expect(all).toEqual(WIDE_SCREEN_DOCK_TABS)
+  })
+
+  it('preserves secondary-tab order after filtering (terminal/proxy disabled)', () => {
+    expect(wideDockTabOrder(['tasks', 'settings'])).toEqual(['browse', 'view', 'history', 'tasks', 'settings'])
+    expect(wideDockTabOrder([])).toEqual(['browse', 'view', 'history'])
+  })
+
+  it('is deterministic regardless of any runtime geometry', () => {
+    const order = wideDockTabOrder(['tasks', 'settings'])
+    expect(order).toEqual(wideDockTabOrder(['tasks', 'settings']))
+    // The whole visible dock never depends on measured space — regression guard
+    // for the old height-measured overflow that collapsed tabs into a popup.
+    expect(order).toHaveLength(WIDE_SCREEN_PRIMARY_TABS.length + 2)
   })
 })
 
