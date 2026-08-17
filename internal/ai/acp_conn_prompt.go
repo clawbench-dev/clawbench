@@ -100,17 +100,18 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	if err != nil {
 		if ctx.Err() != nil {
 			slog.Info("acp conn: prompt cancelled", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
-			c.mu.Lock()
-			c.alive = false
-			c.mu.Unlock()
+			// Only mark this connection dead if it's still the active one. A
+			// concurrent respawn may have replaced it (and set alive=true) while
+			// this prompt was in flight; we must not clobber that state.
+			c.markDeadIfCurrent(conn)
 			return ctx.Err()
 		}
 
 		if !c.IsAlive() {
 			diag := c.collectCrashDiagnostics()
-			c.mu.Lock()
-			c.alive = false
-			c.mu.Unlock()
+			// See markDeadIfCurrent: only clear alive if this is still the
+			// active connection, so a stale prompt can't kill a respawned one.
+			c.markDeadIfCurrent(conn)
 
 			slog.Error("acp conn: prompt failed (peer disconnected)",
 				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,

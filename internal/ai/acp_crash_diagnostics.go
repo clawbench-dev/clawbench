@@ -3,6 +3,7 @@ package ai
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -11,6 +12,13 @@ import (
 // ---------------------------------------------------------------------------
 // Crash diagnostics — collected after an agent process exits unexpectedly
 // ---------------------------------------------------------------------------
+
+// crashDiagWaitTimeout bounds how long collectCrashDiagnostics will block
+// waiting for the agent process to exit. When the connection drops but the
+// process is still alive (e.g. a respawn replaced it while a stale goroutine
+// collected diagnostics), cmd.Process.Wait() would otherwise block forever and
+// hang the session. Package-level so tests can shrink it.
+var crashDiagWaitTimeout = 3 * time.Second
 
 // crashDiagnostics holds crash info collected after an agent process exits unexpectedly.
 type crashDiagnostics struct {
@@ -131,11 +139,7 @@ func (c *ACPConn) collectCrashDiagnostics() crashDiagnostics {
 	// Use cmdWaitOnce to safely call Wait() exactly once, caching the result.
 	// This avoids a race between collectCrashDiagnostics and spawnLocked both
 	// calling Wait() on the same process.
-	c.cmdWaitOnce.Do(func() {
-		if state, err := cmd.Process.Wait(); err == nil {
-			c.cmdWaitState = state
-		}
-	})
+	c.waitProcessExitOnce(cmd)
 
 	if c.cmdWaitState != nil {
 		diag.ExitCode = c.cmdWaitState.ExitCode()
@@ -161,6 +165,32 @@ func (c *ACPConn) collectCrashDiagnostics() crashDiagnostics {
 	c.mu.Unlock()
 
 	return diag
+}
+
+// waitProcessExitOnce calls cmd.Process.Wait() exactly once (via cmdWaitOnce)
+// and caches the resulting state, but bounds the wait by crashDiagWaitTimeout.
+// collectCrashDiagnostics is a best-effort diagnostic helper; if the process is
+// still running (e.g. it was superseded by a respawn and this is a stale
+// goroutine collecting diagnostics), blocking forever would hang the caller
+// (Prompt / setConfigOptionWithCrashCheck) on a healthy process. Returning
+// partial diagnostics is preferable.
+func (c *ACPConn) waitProcessExitOnce(cmd *exec.Cmd) {
+	waitDone := make(chan struct{})
+	go func() {
+		defer close(waitDone)
+		c.cmdWaitOnce.Do(func() {
+			if state, err := cmd.Process.Wait(); err == nil {
+				c.cmdWaitState = state
+			}
+		})
+	}()
+
+	select {
+	case <-waitDone:
+		// process exited (or Wait was already performed)
+	case <-time.After(crashDiagWaitTimeout):
+		// process still alive — don't block the caller
+	}
 }
 
 // readProcStatus reads PPid and VmRSS from /proc/<pid>/status.

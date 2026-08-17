@@ -2985,6 +2985,84 @@ func TestRefactor_ReadProcStatus_NonexistentPID(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// stale-goroutine alive clobber race (see session hang d0354ab1)
+// ---------------------------------------------------------------------------
+
+// TestRefactor_MarkDeadIfCurrent_StaleConn_DoesNotClobberAlive verifies that a
+// prompt goroutine from a connection that was superseded by a respawn cannot
+// clear the alive flag of the freshly respawned connection. The race: the old
+// prompt's error path runs `c.alive = false` after spawnLocked already set the
+// new connection's alive=true, causing the next prompt to think the (healthy)
+// new process is dead and block forever in collectCrashDiagnostics.
+func TestRefactor_MarkDeadIfCurrent_StaleConn_DoesNotClobberAlive(t *testing.T) {
+	agent := &model.Agent{ID: "test-markdead", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-markdead")
+
+	oldConn := &acp.ClientSideConnection{}
+	newConn := &acp.ClientSideConnection{}
+
+	// Simulate the post-respawn state: alive=true with the NEW connection active.
+	conn.mu.Lock()
+	conn.alive = true
+	conn.conn = newConn
+	conn.mu.Unlock()
+
+	// A stale goroutine still holding the OLD connection tries to mark dead.
+	conn.markDeadIfCurrent(oldConn)
+
+	conn.mu.Lock()
+	aliveAfterStale := conn.alive
+	conn.mu.Unlock()
+	assert.True(t, aliveAfterStale, "stale goroutine must NOT clear alive flag of a respawned connection")
+
+	// A goroutine for the CURRENT connection should still be able to mark dead.
+	conn.markDeadIfCurrent(newConn)
+	conn.mu.Lock()
+	assert.False(t, conn.alive, "current connection goroutine should clear alive flag")
+	conn.mu.Unlock()
+}
+
+// TestRefactor_CollectCrashDiagnostics_DoesNotBlockOnLiveProcess verifies that
+// collectCrashDiagnostics returns promptly (does not hang forever in
+// cmd.Process.Wait) when called against a process that is still running. A
+// healthy-but-orphaned process must not block the caller indefinitely.
+func TestRefactor_CollectCrashDiagnostics_DoesNotBlockOnLiveProcess(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skipf("skipping: /proc only available on Linux (current: %s)", runtime.GOOS)
+	}
+
+	orig := crashDiagWaitTimeout
+	crashDiagWaitTimeout = 100 * time.Millisecond
+	defer func() { crashDiagWaitTimeout = orig }()
+
+	agent := &model.Agent{ID: "test-crash-live", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-crash-live")
+
+	cmd := exec.Command("sleep", "60")
+	require.NoError(t, cmd.Start())
+	defer func() {
+		_ = cmd.Process.Kill()
+	}()
+
+	conn.mu.Lock()
+	conn.cmd = cmd
+	conn.startedAt = time.Now().Add(-5 * time.Second)
+	conn.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		conn.collectCrashDiagnostics()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// returned without blocking — good
+	case <-time.After(2 * time.Second):
+		t.Fatal("collectCrashDiagnostics blocked on a live (still running) process")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // AgentCapabilityRegistry — additional coverage for persist, LoadSession/ListSessions merge
 // ---------------------------------------------------------------------------
 

@@ -753,6 +753,21 @@ func (c *ACPConn) IsAlive() bool {
 	return c.alive && c.isAliveLocked()
 }
 
+// markDeadIfCurrent marks the connection dead (alive=false) only if conn is
+// still the current active connection. This guards against a stale goroutine
+// (a prompt whose connection was superseded by a respawn) clobbering the alive
+// flag of a freshly respawned connection. Without this guard, the old prompt's
+// error path would set alive=false after spawnLocked had already set the new
+// connection's alive=true, causing the next prompt to treat a healthy process
+// as dead and hang in collectCrashDiagnostics.
+func (c *ACPConn) markDeadIfCurrent(conn *acp.ClientSideConnection) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == conn {
+		c.alive = false
+	}
+}
+
 // GetClient returns the ClawBenchACPClient for this connection.
 func (c *ACPConn) GetClient() *ClawBenchACPClient {
 	c.mu.Lock()
