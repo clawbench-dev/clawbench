@@ -1264,9 +1264,7 @@ func TestGetChatMessageCount_NonExistent(t *testing.T) {
 func TestUpdateLastRead(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Test")
-	// UpdateLastRead runs in a goroutine. Since the test DB uses :memory: SQLite
-	// with MaxOpenConns=1, the goroutine may not complete before we check.
-	// Instead, test the SQL directly to verify the UPDATE works.
+	// UpdateLastRead is now synchronous. Test the SQL directly to verify the UPDATE works.
 	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sid)
 	assert.NoError(t, err)
 	var lastRead sql.NullTime

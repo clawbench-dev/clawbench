@@ -626,9 +626,12 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 }
 
 // UpdateLastRead sets the last_read_at timestamp for a session to now.
-// Runs asynchronously to avoid blocking the read path with a DB write.
+// Must run synchronously so that subsequent GetSessions queries (triggered by
+// loadSessionsOnce after switchSession) see the updated last_read_at.
+// Previously ran asynchronously (goroutine), which caused a race: the session
+// list still showed unread messages after the user opened the session.
 func UpdateLastRead(sessionID string) {
-	go WriteExec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
+	WriteExec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
 }
 
 // GetSessionBackend returns the backend of a session, or empty string if not found or archived.
