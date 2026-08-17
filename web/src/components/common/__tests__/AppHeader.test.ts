@@ -126,6 +126,20 @@ describe('AppHeader logic', () => {
     expect(mockIsAppMode.value).toBe(false)
   })
 
+  it('shortcut tips ticker only renders on wide, non-APP screens when enabled', () => {
+    // Mirrors the AppHeader v-if: isWideScreen && !isAppMode && localConfig.headerShortcutTips
+    const shouldShowTicker = (isWideScreen: boolean, isAppMode: boolean, enabled: boolean) =>
+      isWideScreen && !isAppMode && enabled
+    // Mobile web: narrow viewport → ticker hidden (fixes flashing vertical line)
+    expect(shouldShowTicker(false, false, true)).toBe(false)
+    // Android WebView (APP mode) → hidden
+    expect(shouldShowTicker(true, true, true)).toBe(false)
+    // Feature disabled in settings → hidden
+    expect(shouldShowTicker(true, false, false)).toBe(false)
+    // PC / wide web with feature enabled → shown
+    expect(shouldShowTicker(true, false, true)).toBe(true)
+  })
+
   // ── dropdown position calculation ──
 
   it('dropdownStyle calculates fixed position from element rect', () => {

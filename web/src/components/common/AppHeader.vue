@@ -33,7 +33,7 @@
 
     <!-- Shortcut tips marquee: fills the empty middle area (PC / web only) -->
     <ShortcutTipTicker
-      v-if="!isAppMode && localConfig.headerShortcutTips"
+      v-if="isWideScreen && !isAppMode && localConfig.headerShortcutTips"
       :context="shortcutContext"
       class="header-tips"
       :title="t('appHeader.shortcutTipsDialog.openTip')"
