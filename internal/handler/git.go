@@ -1144,37 +1144,11 @@ func parseWorktreePorcelain(output, projectPath string) []worktreeInfo {
 		if block == "" {
 			continue
 		}
-		var info worktreeInfo
-		for _, line := range strings.Split(block, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			switch {
-			case strings.HasPrefix(line, "worktree "):
-				path := strings.TrimPrefix(line, "worktree ")
-				if resolved, err := filepath.EvalSymlinks(path); err == nil {
-					path = resolved
-				}
-				info.Path = path
-			case strings.HasPrefix(line, "branch "):
-				branch := strings.TrimPrefix(line, "branch refs/heads/")
-				info.Branch = branch
-			case line == "locked" || strings.HasPrefix(line, "locked "):
-				info.Locked = true
-			}
-		}
+		info := parseWorktreeBlock(block)
 		if info.Path == "" {
 			continue
 		}
-		// Compute DisplayPath
-		if strings.HasPrefix(info.Path, projectPath+"/") {
-			info.DisplayPath = "." + info.Path[len(projectPath):]
-		} else if info.Path == projectPath {
-			info.DisplayPath = "."
-		} else {
-			info.DisplayPath = info.Path
-		}
+		info.DisplayPath = worktreeDisplayPath(info.Path, projectPath)
 		// The main worktree is the repository's primary working tree. Its .git
 		// is a directory (the repo's git dir), whereas linked worktrees have a
 		// .git FILE whose contents point at the per-worktree git dir.
@@ -1185,6 +1159,42 @@ func parseWorktreePorcelain(output, projectPath string) []worktreeInfo {
 		trees = append(trees, info)
 	}
 	return trees
+}
+
+// parseWorktreeBlock parses a single worktree block from git worktree list --porcelain output.
+func parseWorktreeBlock(block string) worktreeInfo {
+	var info worktreeInfo
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			path := strings.TrimPrefix(line, "worktree ")
+			if resolved, err := filepath.EvalSymlinks(path); err == nil {
+				path = resolved
+			}
+			info.Path = path
+		case strings.HasPrefix(line, "branch "):
+			branch := strings.TrimPrefix(line, "branch refs/heads/")
+			info.Branch = branch
+		case line == "locked" || strings.HasPrefix(line, "locked "):
+			info.Locked = true
+		}
+	}
+	return info
+}
+
+// worktreeDisplayPath computes a human-readable display path relative to projectPath.
+func worktreeDisplayPath(path, projectPath string) string {
+	if strings.HasPrefix(path, projectPath+"/") {
+		return "." + path[len(projectPath):]
+	}
+	if path == projectPath {
+		return "."
+	}
+	return path
 }
 
 // branchInfo represents a git branch in API responses.
