@@ -365,6 +365,26 @@ describe('FileManagerContent — rendering', () => {
     expect(wrapper.find('.loading-indicator.overlay').exists()).toBe(true)
   })
 
+  it('keeps the loading overlay outside the scrollable list so it covers the whole viewport when scrolled', () => {
+    const wrapper = mountContent({ dirLoading: true })
+    const overlay = wrapper.find('.loading-indicator.overlay')
+    expect(overlay.exists()).toBe(true)
+    // The overlay must not live inside the scrollable list/grid container —
+    // an absolutely-positioned child of a scroll container scrolls with its
+    // content, leaving only a partial mask and hiding the spinner when the
+    // listing is scrolled.
+    expect(wrapper.find('.file-list .loading-indicator.overlay').exists()).toBe(false)
+    expect(wrapper.find('.file-grid .loading-indicator.overlay').exists()).toBe(false)
+  })
+
+  it('keeps the loading overlay outside the scrollable grid in grid view', async () => {
+    const wrapper = mountContent({ dirLoading: true })
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    expect(wrapper.find('.file-grid').exists()).toBe(true)
+    expect(wrapper.find('.file-grid .loading-indicator.overlay').exists()).toBe(false)
+  })
+
   it('renders toolbar buttons', () => {
     const wrapper = mountContent()
     const toolbarBtns = wrapper.findAll('.toolbar-btn')

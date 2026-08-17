@@ -173,6 +173,10 @@
       <div class="dir-upload-progress-count">{{ dirUploadDone }}/{{ dirUploadTotal }}</div>
     </div>
 
+    <!-- File list / grid area wrapper — non-scrolling, so overlays (loading,
+         paste) stay fixed over the visible viewport instead of scrolling away
+         with the list content -->
+    <div class="file-list-area">
     <!-- File list -->
     <div v-if="viewMode === 'list'" class="file-list" ref="fileListRef"
       @click="handleItemClick"
@@ -185,15 +189,6 @@
       @drop.prevent="onDrop"
       @dragend="onDragEnd"
     >
-      <Transition name="paste-fade">
-        <div v-if="isPasteOver" class="paste-overlay">
-          <ClipboardPaste :size="32" :stroke-width="1.5" />
-          <span>{{ t('file.pasteToUpload') }}</span>
-        </div>
-      </Transition>
-      <Transition name="loading-fade">
-        <LoadingIndicator v-if="dirLoading" overlay size="md" />
-      </Transition>
       <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
@@ -246,15 +241,6 @@
       @drop.prevent="onDrop"
       @dragend="onDragEnd"
     >
-      <Transition name="paste-fade">
-        <div v-if="isPasteOver" class="paste-overlay">
-          <ClipboardPaste :size="32" :stroke-width="1.5" />
-          <span>{{ t('file.pasteToUpload') }}</span>
-        </div>
-      </Transition>
-      <Transition name="loading-fade">
-        <LoadingIndicator v-if="dirLoading" overlay size="md" />
-      </Transition>
       <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
@@ -290,6 +276,19 @@
       <div v-if="hasMoreEntries" class="truncate-hint">
         {{ t('file.truncateHint', { max: MAX_VISIBLE_ENTRIES, total: filteredEntries.length }) }}
       </div>
+    </div>
+
+    <!-- Loading / paste overlays — siblings of the scrollable list/grid, so
+         they stay fixed over the whole visible area even when scrolled -->
+    <Transition name="paste-fade">
+      <div v-if="isPasteOver" class="paste-overlay">
+        <ClipboardPaste :size="32" :stroke-width="1.5" />
+        <span>{{ t('file.pasteToUpload') }}</span>
+      </div>
+    </Transition>
+    <Transition name="loading-fade">
+      <LoadingIndicator v-if="dirLoading" overlay size="md" />
+    </Transition>
     </div>
 
     <!-- Multi-select bottom action bar -->
@@ -1878,9 +1877,22 @@ function currentFileForClipboard() {
 }
 
 /* ── File list area ── */
+/* Non-scrolling wrapper: holds the scrollable list/grid plus the fixed overlays
+   (loading/paste). Overlays must be siblings of the scroller, not children —
+   an absolutely-positioned child of a scroll container scrolls with its
+   content, leaving only a partial mask when the listing is scrolled. */
+.file-list-area {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .file-list {
     position: relative;
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 4px 6px;
 }
@@ -2160,6 +2172,7 @@ function currentFileForClipboard() {
 .file-grid {
     position: relative;
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 8px;
     display: grid;
