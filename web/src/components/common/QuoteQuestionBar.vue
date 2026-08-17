@@ -4,7 +4,7 @@
 
       <!-- Collapsed row (mobile): quoted snippet (single-line) + add action.
            Clicking the quote area expands the input box and the quote together. -->
-      <div v-if="!expanded" class="quote-bar-row" @click="expand()">
+      <div v-if="!expanded" class="quote-bar-row" @click="expand()" @pointerdown="onRowPointerDown">
         <div class="qq-quoted-snippet qq-quoted-snippet--inline">
           <span class="qq-quoted-text">{{ displayQuoteText }}</span>
         </div>
@@ -53,11 +53,9 @@
 import { XCircle, Plus, Send } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
 
 const { t } = useI18n()
-const { isPC } = usePlatformDetect()
 
 const props = defineProps({
   visible: Boolean,
@@ -79,14 +77,13 @@ const displayQuoteText = computed(() => {
 
 const canSend = computed(() => canSendInput(inputText.value))
 
-// Desktop: the bar is always expanded (input visible) after selecting text.
-// Mobile: keep it collapsed and let the user click to expand. Reset on hide.
+// Both PC and mobile show the collapsed bar on selection: it has no input, so it
+// never grabs focus and doesn't disturb the active selection. Clicking the row
+// expands it and focuses the input. Reset back to collapsed on hide.
 function onVisibleChange(val) {
   if (!val) {
     expanded.value = false
     inputText.value = ''
-  } else if (isPC.value) {
-    expand()
   }
 }
 
@@ -136,6 +133,13 @@ async function expand() {
   focusInput()
 }
 
+// Pin on pointerdown so the global selection handler's pointerup re-evaluation
+// (which runs before the row's click/expand and can clear the selection) cannot
+// hide the bar before expand() runs.
+function onRowPointerDown() {
+  emit('pin')
+}
+
 function autoResizeTextarea() {
   const el = inputRef.value
   if (!el) return
@@ -179,7 +183,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   border-radius: 0;
   box-shadow: var(--shadow-md);
   z-index: 2400;
-  max-width: 400px;
+  max-width: 600px;
   margin: 0 auto;
   overflow: hidden;
 }
@@ -260,10 +264,10 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 }
 
 .qq-quoted-text--expanded {
-  white-space: normal;
+  white-space: pre-wrap;
   overflow-y: auto;
   text-overflow: clip;
-  word-break: break-all;
+  word-break: break-word;
   max-height: 120px;
 }
 

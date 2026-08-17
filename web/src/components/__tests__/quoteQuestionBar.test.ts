@@ -5,11 +5,6 @@ import { createI18n } from 'vue-i18n'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
 import QuoteQuestionBar from '@/components/common/QuoteQuestionBar.vue'
 
-const mocks = vi.hoisted(() => ({ isPC: { value: false } }))
-vi.mock('@/composables/usePlatformDetect', () => ({
-  usePlatformDetect: () => ({ isPC: mocks.isPC }),
-}))
-
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
@@ -342,62 +337,68 @@ describe('QuoteQuestionBar component', () => {
     expect(expandedSnippet.find('.lucide-message-square').exists()).toBe(false)
   })
 
-  it('desktop: always expands and pins when the bar becomes visible', async () => {
-    mocks.isPC.value = true
-    try {
-      const wrapper = mountBar()
-      const vm = wrapper.vm as any
-      expect(vm.expanded).toBe(false)
-
-      await vm.onVisibleChange(true)
-      await nextTick()
-
-      expect(wrapper.emitted('pin')).toBeTruthy()
-      expect(vm.expanded).toBe(true)
-    } finally {
-      mocks.isPC.value = false
-    }
-  })
-
-  it('desktop: quote is shown in full once the bar auto-expands', async () => {
-    mocks.isPC.value = true
-    try {
-      const longText = 'a'.repeat(200)
-      const wrapper = mountBar({ quoteData: { text: longText } })
-      const vm = wrapper.vm as any
-
-      await vm.onVisibleChange(true)
-      await nextTick()
-
-      expect(vm.expanded).toBe(true)
-      expect(vm.displayQuoteText).toBe(longText)
-    } finally {
-      mocks.isPC.value = false
-    }
-  })
-
-  it('mobile: stays collapsed when the bar becomes visible', async () => {
-    mocks.isPC.value = false
+  it('stays collapsed (no auto-expand / no pin) when the bar becomes visible', async () => {
     const wrapper = mountBar()
     const vm = wrapper.vm as any
 
     await vm.onVisibleChange(true)
     await nextTick()
 
+    // Unified PC & mobile: the bar surfaces collapsed, never auto-expands or
+    // pins, so it doesn't grab focus or disturb the active selection.
     expect(vm.expanded).toBe(false)
     expect(wrapper.emitted('pin')).toBeFalsy()
   })
 
-  it('expands on desktop only when the bar becomes visible, not on mobile', async () => {
-    mocks.isPC.value = true
-    try {
-      const wrapper = mountBar()
-      const vm = wrapper.vm as any
-      await vm.onVisibleChange(true)
-      await nextTick()
-      expect(vm.expanded).toBe(true)
-    } finally {
-      mocks.isPC.value = false
-    }
+  it('unified: quote stays single-line collapsed on show and only expands on click', async () => {
+    const longText = 'a'.repeat(200)
+    const wrapper = mountBar({ quoteData: { text: longText } })
+    const vm = wrapper.vm as any
+
+    await vm.onVisibleChange(true)
+    await nextTick()
+
+    expect(vm.expanded).toBe(false)
+    expect(vm.displayQuoteText).toBe('a'.repeat(80) + '…')
+
+    await vm.expand()
+    expect(vm.expanded).toBe(true)
+    expect(vm.displayQuoteText).toBe(longText)
+    expect(wrapper.emitted('pin')).toBeTruthy()
+  })
+
+  it('does not focus the input while collapsed', async () => {
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.onVisibleChange(true)
+    await nextTick()
+    expect(vm.expanded).toBe(false)
+    const active = document.activeElement
+    expect(active?.classList.contains('qq-textarea')).toBe(false)
+  })
+
+  it('pins on pointerdown so selection loss on click does not hide the bar', async () => {
+    const wrapper = mountBar()
+    // pointerdown on the collapsed row must pin immediately, before the click
+    // handler's expand(). This keeps the bar visible when the global selection
+    // handler re-evaluates on pointerup and sees a cleared selection.
+    await wrapper.find('.quote-bar-row').trigger('pointerdown')
+    expect(wrapper.emitted('pin')).toBeTruthy()
+  })
+
+  it('expands and focuses the input when the collapsed bar is clicked', async () => {
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    // Collapsed initially with no input focus.
+    expect(vm.expanded).toBe(false)
+
+    // Clicking the collapsed row calls expand() → focuses input.
+    await wrapper.find('.quote-bar-row').trigger('click')
+    await nextTick()
+
+    expect(wrapper.emitted('pin')).toBeTruthy()
+    expect(vm.expanded).toBe(true)
+    const active = document.activeElement
+    expect(active?.classList.contains('qq-textarea')).toBe(true)
   })
 })

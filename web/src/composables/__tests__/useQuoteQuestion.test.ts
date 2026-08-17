@@ -588,8 +588,9 @@ describe('useQuoteQuestion', () => {
         vi.advanceTimersByTime(150) // debounce fires while dragging -> must be suppressed
         expect(useQuoteQuestion().visible.value).toBe(false)
 
-        // Finishing the drag re-evaluates the final selection.
+        // Finishing the drag re-evaluates the final selection (deferred 120ms).
         document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+        vi.advanceTimersByTime(120)
         expect(useQuoteQuestion().visible.value).toBe(true)
         expect(ctx.quoteData.value?.text).toBe('selected code text')
       })
@@ -604,6 +605,53 @@ describe('useQuoteQuestion', () => {
         expect(useQuoteQuestion().visible.value).toBe(false)
 
         document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+        vi.advanceTimersByTime(120)
+
+        expect(useQuoteQuestion().visible.value).toBe(true)
+        expect(ctx.quoteData.value?.text).toBe('selected code text')
+      })
+
+      it('shows the bar on mobile when the selection finalizes just after pointerup', () => {
+        // Touch: at pointerup the browser has not registered the selection yet,
+        // so an immediate evaluate would hide the bar. The deferred evaluate must
+        // wait and pick up the selection once it settles.
+        guardWrapper = mountWithComposable()
+        // Selection is empty when the pointer is released (still settling).
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, bubbles: true }))
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+
+        // The final selection registers right after pointerup.
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/settle.md' })
+        // The pointerup deferred evaluate may be rescheduled by the late
+        // selectionchange; advance past the debounce so it runs.
+        vi.advanceTimersByTime(200)
+
+        expect(useQuoteQuestion().visible.value).toBe(true)
+        expect(ctx.quoteData.value?.text).toBe('selected code text')
+      })
+
+      it('releases the guard on touchend when pointerup is swallowed (mobile)', () => {
+        // Mobile native selection UI can swallow pointerup, leaving pointerCount
+        // held. touchend still fires and must release the guard so the bar shows.
+        guardWrapper = mountWithComposable()
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, bubbles: true }))
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/touch.md' })
+        // No pointerup — it is swallowed by the native selection UI.
+        document.dispatchEvent(new Event('touchend'))
+        vi.advanceTimersByTime(120)
+
+        expect(useQuoteQuestion().visible.value).toBe(true)
+        expect(ctx.quoteData.value?.text).toBe('selected code text')
+      })
+
+      it('self-heals the guard when neither pointerup nor touchend fires', () => {
+        // Worst case: both release events are swallowed. The 700ms safety timer
+        // must drop the guard so a settling selection still surfaces the bar.
+        guardWrapper = mountWithComposable()
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, bubbles: true }))
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/stale.md' })
+        // Advance past the safety timer (no release event fired).
+        vi.advanceTimersByTime(800)
 
         expect(useQuoteQuestion().visible.value).toBe(true)
         expect(ctx.quoteData.value?.text).toBe('selected code text')

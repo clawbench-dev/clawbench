@@ -23,6 +23,7 @@ const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the
 const sheetOpen = ref(false)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let pointerReleaseTimer: ReturnType<typeof setTimeout> | null = null
 
 // Active pointer (mouse/touch) tracking. Browsers fire selectionchange while the
 // user is still dragging, so a debounced evaluation can run mid-drag and surface
@@ -82,19 +83,46 @@ function onSelectionChange() {
 
 function onPointerDown() {
   pointerCount++
-}
-
-function onPointerUp() {
-  if (pointerCount > 0) pointerCount--
-  if (pointerCount === 0) {
-    // The drag has ended and the selection is final — surface the bar without
-    // waiting for another selectionchange (the browser may not fire one).
+  // Safety net: mobile native selection UI can swallow the matching pointerup/
+  // touchend, which would leave the guard held forever and block the quote bar
+  // from appearing. Release it after a short window so a settling selection can
+  // still surface the bar (the collapsed bar no longer steals focus mid-drag).
+  if (pointerReleaseTimer) clearTimeout(pointerReleaseTimer)
+  pointerReleaseTimer = setTimeout(() => {
+    pointerCount = 0
+    pointerReleaseTimer = null
+    // Re-evaluate: a selection that settled while the guard was stuck can now
+    // surface the bar.
     if (debounceTimer) {
       clearTimeout(debounceTimer)
       debounceTimer = null
     }
-    evaluateSelection()
+    debounceTimer = setTimeout(evaluateSelection, 0)
+  }, 700)
+}
+
+function releasePointer() {
+  if (pointerReleaseTimer) {
+    clearTimeout(pointerReleaseTimer)
+    pointerReleaseTimer = null
   }
+  if (pointerCount > 0) pointerCount--
+  if (pointerCount === 0) {
+    // Re-run the check, but deferred: on touch the final selection often settles
+    // only after the pointer is released, so an immediate evaluate can see an
+    // empty/collapsed selection and hide the bar (and, by clearing the debounce
+    // timer, leave it hidden). On desktop the selection is already final, so the
+    // short delay is harmless.
+    if (debounceTimer) {
+      clearTimeout(debounceTimer)
+      debounceTimer = null
+    }
+    debounceTimer = setTimeout(evaluateSelection, 120)
+  }
+}
+
+function onPointerUp() {
+  releasePointer()
 }
 
 /** True while any pointer button is held (used to gate mid-drag selection UI). */
@@ -120,6 +148,9 @@ export function useQuoteQuestion() {
       document.addEventListener('selectionchange', onSelectionChange)
       document.addEventListener('pointerdown', onPointerDown)
       document.addEventListener('pointerup', onPointerUp)
+      document.addEventListener('pointercancel', onPointerUp)
+      document.addEventListener('touchend', onPointerUp)
+      document.addEventListener('touchcancel', onPointerUp)
     }
   })
 
@@ -129,7 +160,14 @@ export function useQuoteQuestion() {
       document.removeEventListener('selectionchange', onSelectionChange)
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('pointercancel', onPointerUp)
+      document.removeEventListener('touchend', onPointerUp)
+      document.removeEventListener('touchcancel', onPointerUp)
       pointerCount = 0
+      if (pointerReleaseTimer) {
+        clearTimeout(pointerReleaseTimer)
+        pointerReleaseTimer = null
+      }
     }
   })
 
