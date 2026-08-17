@@ -85,6 +85,8 @@ export function parseMessages(
   })
 }
 
+export type MessageDisplayMode = 'summary' | 'original'
+
 /**
  * Decide whether a message should render its summary view.
  *
@@ -100,10 +102,10 @@ export function parseMessages(
  *    interrupted: the summary is generated asynchronously AFTER the message
  *    was already marked showingSummary=false.
  *  - Otherwise (content present), respect the user's preference, defaulting
- *    to summary when a summary exists and the user has not chosen.
+ *    to the global `defaultMode` when a summary exists and the user has not
+ *    chosen. In 'original' mode with stripped content, this returns false so
+ *    the component can lazily fetch the full content.
  */
-export type MessageDisplayMode = 'summary' | 'original'
-
 export function shouldShowSummary(
   msg: Record<string, unknown> | { summary?: unknown; blocks?: unknown; showingSummary?: unknown },
   defaultMode: MessageDisplayMode = 'summary',
@@ -121,9 +123,8 @@ export function shouldShowSummary(
     return msg.showingSummary !== false
   }
   // No explicit preference: use the global default. In original mode with
-  // stripped content we return false so the component triggers a lazy fetch
-  // of the full content.
-  if (blocksEmpty) return defaultMode === 'summary'
+  // stripped content this returns false so the component triggers a lazy
+  // fetch of the full content.
   return defaultMode === 'summary'
 }
 
