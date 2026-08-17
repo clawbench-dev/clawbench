@@ -252,6 +252,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   lineNumbers: false,
   stickyScroll: true,
   fileView: 'list',
+  messageDisplayMode: 'summary',
   terminalFontSize: 12,
   logCapture: false,
   swipeSession: false,

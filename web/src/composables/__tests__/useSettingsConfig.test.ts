@@ -130,6 +130,23 @@ describe('useSettingsConfig', () => {
     expect('swipeSession' in localConfig).toBe(true)
   })
 
+  it('localConfig has messageDisplayMode defaulting to summary', () => {
+    const { localConfig } = useSettingsConfig()
+    localStorage.removeItem('clawbench-settings-messageDisplayMode')
+    expect('messageDisplayMode' in localConfig).toBe(true)
+    expect(localConfig.messageDisplayMode).toBe('summary')
+  })
+
+  it('setLocalConfig persists messageDisplayMode to localStorage', () => {
+    const { localConfig, setLocalConfig } = useSettingsConfig()
+
+    setLocalConfig('messageDisplayMode', 'original')
+    expect(localConfig.messageDisplayMode).toBe('original')
+    expect(localStorage.getItem('clawbench-settings-messageDisplayMode')).toBe('"original"')
+
+    localStorage.removeItem('clawbench-settings-messageDisplayMode')
+  })
+
   it('reads persisted localStorage value via setLocalConfig', () => {
     const { localConfig, setLocalConfig } = useSettingsConfig()
 
