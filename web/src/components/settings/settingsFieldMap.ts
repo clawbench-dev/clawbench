@@ -126,6 +126,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.autoSpeech', descriptionKey: 'settings.items.autoSpeechDesc', key: 'autoSpeech', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatInteractionSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.preventScreenLock', descriptionKey: 'settings.items.preventScreenLockDesc', key: 'preventScreenLock', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatInteractionSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.swipeSession', descriptionKey: 'settings.items.swipeSessionDesc', key: 'swipeSession', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatMessageSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.messageDisplayMode', descriptionKey: 'settings.items.messageDisplayModeDesc', key: 'messageDisplayMode', type: 'select', source: 'local', sectionHeader: 'settings.items.chatMessageSection', options: [
+      { labelKey: 'settings.items.messageDisplayModeSummary', value: 'summary' },
+      { labelKey: 'settings.items.messageDisplayModeOriginal', value: 'original' },
+    ]}},
     { type: 'item', spec: { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server' } },
