@@ -32,7 +32,7 @@ import { tags } from '@lezer/highlight'
 import { buildLangExtension } from '@/utils/codeEditorLang'
 import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
-import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
+import { useQuoteQuestion, isPointerPressed } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useCodeStickyScroll } from '@/composables/useCodeStickyScroll.ts'
@@ -196,30 +196,48 @@ const interactionExtension = EditorView.domEventHandlers({
 // never fires for it. Watch selection changes here and surface the quote bar with
 // accurate line numbers from the editor state.
 let selDebounceTimer = null
-function handleSelectionChange(update) {
-    if (props.editable) return // only read-only browse
-    if (!update.selectionSet && !update.docChanged) return
-    const sel = update.state.selection.main
-    if (selDebounceTimer) clearTimeout(selDebounceTimer)
+function maybeShowQuoteBar() {
+    if (props.editable) return
+    const editor = view.value
+    if (!editor) return
+    const sel = editor.state.selection.main
     if (sel.empty) {
-        selDebounceTimer = setTimeout(() => quoteQuestion.hideBar(), 200)
+        quoteQuestion.hideBar()
         return
     }
-    const text = update.state.sliceDoc(sel.from, sel.to).trim()
+    const text = editor.state.sliceDoc(sel.from, sel.to).trim()
     if (!text) return
-    const startLine = update.state.doc.lineAt(sel.from).number
-    const endLine = update.state.doc.lineAt(sel.to).number
-    selDebounceTimer = setTimeout(() => {
-        // delay: 0 — double-click is not used in code mode, so there is no
-        // pointerdown that could immediately close the bar (see useQuoteQuestion).
-        quoteQuestion.showBar({
-            text,
-            filePath: props.file?.path || '',
-            language: props.language,
-            startLine,
-            endLine,
-        }, { delay: 0 })
-    }, 200)
+    // Skip while a pointer is still pressed: the selection is mid-drag and not
+    // final. Surfacing the bar here would show a half-selected range and, on
+    // desktop, steal focus when the bar expands. pointerup re-runs this check.
+    if (isPointerPressed()) return
+    const startLine = editor.state.doc.lineAt(sel.from).number
+    const endLine = editor.state.doc.lineAt(sel.to).number
+    quoteQuestion.showBar({
+        text,
+        filePath: props.file?.path || '',
+        language: props.language,
+        startLine,
+        endLine,
+    }, { delay: 0 })
+}
+
+function handleSelectionChange(update) {
+    if (props.editable) return
+    if (!update.selectionSet && !update.docChanged) return
+    if (selDebounceTimer) clearTimeout(selDebounceTimer)
+    selDebounceTimer = setTimeout(maybeShowQuoteBar, 200)
+}
+
+// The pointer release ends a drag-select: re-evaluate the now-final internal
+// selection instead of waiting for another selectionSet update.
+function onDocPointerUp() {
+    if (props.editable) return
+    if (selDebounceTimer) {
+        clearTimeout(selDebounceTimer)
+        selDebounceTimer = null
+    }
+    maybeShowQuoteBar()
 }
 
 const selectionExtension = EditorView.updateListener.of(handleSelectionChange)
@@ -414,10 +432,12 @@ onMounted(() => {
     mountLang()
     sticky.init(view.value, props.file?.path, stickyScrollEnabled())
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
+    document.addEventListener('pointerup', onDocPointerUp)
 })
 
 onUnmounted(() => {
     window.removeEventListener('cm-scroll-to-line', onScrollToLine)
+    document.removeEventListener('pointerup', onDocPointerUp)
     if (pendingScrollRAF) cancelAnimationFrame(pendingScrollRAF)
     pendingScrollRAF = null
     pendingScrollRequestId = null

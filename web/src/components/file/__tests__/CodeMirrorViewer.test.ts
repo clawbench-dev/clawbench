@@ -9,12 +9,12 @@ const i18n = createI18n({
   messages: { en: { file: { editor: { save: 'Save', saving: 'Saving', cancel: 'Cancel', dirty: 'Unsaved' } } } },
 })
 
-const quoteMocks = vi.hoisted(() => ({ showBar: vi.fn(), hideBar: vi.fn() }))
+const quoteMocks = vi.hoisted(() => ({ showBar: vi.fn(), hideBar: vi.fn(), isPointerPressed: vi.fn(() => false) }))
 
 vi.mock('@/composables/useMarkdownDiff.ts', () => ({ diffMarkers: ref([]), openDiffDrawer: vi.fn() }))
 vi.mock('@/composables/useFileRefresh.ts', () => ({ flashRanges: ref([]), flashType: ref('add') }))
 vi.mock('@/stores/app.ts', () => ({ store: { state: { projectRoot: '/p', homeDir: '/home' } } }))
-vi.mock('@/composables/useQuoteQuestion.ts', () => ({ useQuoteQuestion: () => quoteMocks }))
+vi.mock('@/composables/useQuoteQuestion.ts', () => ({ useQuoteQuestion: () => quoteMocks, isPointerPressed: quoteMocks.isPointerPressed }))
 const dialogMocks = vi.hoisted(() => ({ confirm: vi.fn() }))
 vi.mock('@/composables/useDialog.ts', () => ({ useDialog: () => ({ confirm: dialogMocks.confirm, prompt: vi.fn(), alert: vi.fn(), resolve: vi.fn(), state: ref({ visible: false }) }) }))
 const fetchSymbolsMock = vi.hoisted(() => vi.fn())
@@ -246,6 +246,38 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(data.startLine).toBe(1)
     expect(data.endLine).toBe(2)
     expect(data.text).toContain('aaa')
+    wrapper.unmount()
+  })
+
+  it('does not show quote question while the pointer is still pressed (mid-drag)', async () => {
+    quoteMocks.isPointerPressed.mockReturnValue(true)
+    const wrapper = mountViewer({ content: 'aaa\nbbb\nccc', file: { path: '/p/main.go' } })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    view.dispatch({ selection: { anchor: 0, head: 7 } })
+    await sleep(700) // debounce 200ms + showBar 400ms
+    expect(quoteMocks.showBar).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('shows quote question after pointerup ends the selection drag', async () => {
+    quoteMocks.isPointerPressed.mockReturnValue(true)
+    const wrapper = mountViewer({ content: 'aaa\nbbb\nccc', file: { path: '/p/main.go' } })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    view.dispatch({ selection: { anchor: 0, head: 7 } })
+    await sleep(300) // debounce (200ms) fires while pointer pressed -> suppressed
+    expect(quoteMocks.showBar).not.toHaveBeenCalled()
+
+    // Releasing the pointer re-evaluates the internal selection.
+    quoteMocks.isPointerPressed.mockReturnValue(false)
+    document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+    await sleep(50)
+    expect(quoteMocks.showBar).toHaveBeenCalledTimes(1)
+    expect(quoteMocks.showBar.mock.calls[0][0].filePath).toBe('/p/main.go')
+    expect(quoteMocks.showBar.mock.calls[0][0].startLine).toBe(1)
+    expect(quoteMocks.showBar.mock.calls[0][0].endLine).toBe(2)
+    wrapper.unmount()
   })
 
   it('does not show quote question on selection in editable mode', async () => {

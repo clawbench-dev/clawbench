@@ -511,7 +511,8 @@ describe('FileManagerContent — onSortSelect', () => {
 })
 
 describe('FileManagerContent — handleItemClick', () => {
-  it('emits navigateDir when clicking a dir item', async () => {
+  // PC (jsdom resolves isPC=true): single click selects, double-click opens.
+  it('PC: single click selects a dir item but does not navigate', async () => {
     const wrapper = mountContent()
     const dirItem = document.createElement('div')
     dirItem.classList.add('file-item')
@@ -523,11 +524,27 @@ describe('FileManagerContent — handleItemClick', () => {
 
     wrapper.vm.handleItemClick(event)
 
+    expect(wrapper.vm.selectedPath).toBe('src')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+  })
+
+  it('PC: double-click emits navigateDir for a dir item', async () => {
+    const wrapper = mountContent()
+    const dirItem = document.createElement('div')
+    dirItem.classList.add('file-item')
+    dirItem.dataset.action = 'dir'
+    dirItem.dataset.path = 'src'
+
+    const event = { target: dirItem, ...new MouseEvent('dblclick') }
+    Object.defineProperty(event, 'target', { value: dirItem, writable: false })
+
+    wrapper.vm.handleItemDblClick(event)
+
     expect(wrapper.emitted('navigateDir')).toBeTruthy()
     expect(wrapper.emitted('navigateDir')[0]).toEqual(['src'])
   })
 
-  it('emits selectFile when clicking a file item', async () => {
+  it('PC: single click selects a file item but does not open it', async () => {
     const wrapper = mountContent()
     const fileItem = document.createElement('div')
     fileItem.classList.add('file-item')
@@ -538,6 +555,22 @@ describe('FileManagerContent — handleItemClick', () => {
     Object.defineProperty(event, 'target', { value: fileItem, writable: false })
 
     wrapper.vm.handleItemClick(event)
+
+    expect(wrapper.vm.selectedPath).toBe('test.ts')
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+  })
+
+  it('PC: double-click emits selectFile for a file item', async () => {
+    const wrapper = mountContent()
+    const fileItem = document.createElement('div')
+    fileItem.classList.add('file-item')
+    fileItem.dataset.action = 'file'
+    fileItem.dataset.path = 'test.ts'
+
+    const event = { target: fileItem, ...new MouseEvent('dblclick') }
+    Object.defineProperty(event, 'target', { value: fileItem, writable: false })
+
+    wrapper.vm.handleItemDblClick(event)
 
     expect(wrapper.emitted('selectFile')).toBeTruthy()
     expect(wrapper.emitted('selectFile')[0]).toEqual(['test.ts'])

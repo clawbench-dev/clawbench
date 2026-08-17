@@ -54,14 +54,15 @@ describe('useQuoteQuestion', () => {
   })
 
   afterEach(() => {
-    // Drain all pending timers before switching to real timers
-    vi.runAllTimers()
-    vi.useRealTimers()
-    // Clean up DOM
+    // Clean up DOM first, then flush pending timers while fake timers are still
+    // active. jsdom's removeAllRanges() schedules an async selectionchange via
+    // setTimeout; draining it here keeps that event from leaking into the next
+    // test as a real timer (which races the listener and flakes assertions).
     document.body.innerHTML = ''
-    // Clear window selection (suppress jsdom's async selectionchange)
     const sel = window.getSelection()
     if (sel) sel.removeAllRanges()
+    vi.runAllTimers()
+    vi.useRealTimers()
   })
 
   describe('pinBar', () => {
@@ -549,6 +550,64 @@ describe('useQuoteQuestion', () => {
       expect(qq.visible.value).toBe(true)
 
       wrapper.unmount()
+    })
+
+    describe('pointer-drag guard', () => {
+      // Track the mounted wrapper so it is always unmounted even when an
+      // assertion fails mid-test (a leaked listener otherwise bleeds into the
+      // next test and breaks listenerCount bookkeeping).
+      let guardWrapper: ReturnType<typeof mountWithComposable> | null = null
+      afterEach(() => {
+        guardWrapper?.unmount()
+        guardWrapper = null
+      })
+
+      it('does not show the bar while the pointer is still pressed (mid-drag)', () => {
+        guardWrapper = mountWithComposable()
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/drag.md' })
+
+        // User is still dragging: pointer down + selection built up so far.
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, bubbles: true }))
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        const qq = useQuoteQuestion()
+        expect(qq.visible.value).toBe(false)
+        expect(ctx.quoteData.value).toBeNull()
+
+        // Release so the pointer count does not leak into other tests.
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+      })
+
+      it('suppresses a debounced evaluation that fires while the user pauses mid-drag', () => {
+        guardWrapper = mountWithComposable()
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/drag.md' })
+
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, bubbles: true }))
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150) // debounce fires while dragging -> must be suppressed
+        expect(useQuoteQuestion().visible.value).toBe(false)
+
+        // Finishing the drag re-evaluates the final selection.
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+        expect(useQuoteQuestion().visible.value).toBe(true)
+        expect(ctx.quoteData.value?.text).toBe('selected code text')
+      })
+
+      it('shows the bar after pointerup even without a trailing selectionchange', () => {
+        guardWrapper = mountWithComposable()
+        createSelectionInContainer('markdown-body', { 'data-file-path': '/drag.md' })
+
+        document.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, bubbles: true }))
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+        expect(useQuoteQuestion().visible.value).toBe(false)
+
+        document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+
+        expect(useQuoteQuestion().visible.value).toBe(true)
+        expect(ctx.quoteData.value?.text).toBe('selected code text')
+      })
     })
 
     it('removes listener when component unmounts (listenerCount goes to 0)', () => {

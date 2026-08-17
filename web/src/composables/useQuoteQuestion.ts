@@ -24,48 +24,82 @@ const sheetOpen = ref(false)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
+// Active pointer (mouse/touch) tracking. Browsers fire selectionchange while the
+// user is still dragging, so a debounced evaluation can run mid-drag and surface
+// the bar before the pointer is released — on desktop the bar then auto-expands
+// and focuses its input, stealing focus and cutting the selection short. While
+// any pointer button is held the bar is held back; pointerup re-runs the check.
+let pointerCount = 0
+
+function evaluateSelection() {
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+    // Drop only the active selection. Staged quotes remain in the chat draft.
+    if (!barPinned.value) {
+      barVisible.value = false
+      setQuoteData(null)
+    }
+    return
+  }
+
+  // The pointer is still pressed — the selection is mid-drag and not final yet.
+  if (pointerCount > 0) return
+
+  // CodeMirror viewers (CodeMirrorViewer) manage their own selection + quote
+  // bar via an internal selection listener. This DOM selection is only a
+  // shadow of CM's internal one, so skip it — otherwise it would hide/show
+  // the bar in parallel with the editor's own handler.
+  if (closestElement(sel.anchorNode, '.cm-editor')) return
+
+  // Check if selection is within a code, markdown, or office preview area
+  const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body')
+  if (!container) {
+    if (!barPinned.value) {
+      barVisible.value = false
+    }
+    return
+  }
+
+  const text = sel.toString().trim()
+  if (!text) {
+    if (!barPinned.value) {
+      barVisible.value = false
+    }
+    return
+  }
+
+  const { filePath, language } = getFileInfo(container)
+  const { startLine, endLine } = getLineInfo(sel)
+
+  setQuoteData({ text, filePath, language, startLine, endLine })
+  barVisible.value = true
+}
+
 function onSelectionChange() {
   if (debounceTimer) clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => {
-    const sel = window.getSelection()
-    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
-      // Drop only the active selection. Staged quotes remain in the chat draft.
-      if (!barPinned.value) {
-        barVisible.value = false
-        setQuoteData(null)
-      }
-      return
+  debounceTimer = setTimeout(evaluateSelection, 150)
+}
+
+function onPointerDown() {
+  pointerCount++
+}
+
+function onPointerUp() {
+  if (pointerCount > 0) pointerCount--
+  if (pointerCount === 0) {
+    // The drag has ended and the selection is final — surface the bar without
+    // waiting for another selectionchange (the browser may not fire one).
+    if (debounceTimer) {
+      clearTimeout(debounceTimer)
+      debounceTimer = null
     }
+    evaluateSelection()
+  }
+}
 
-    // CodeMirror viewers (CodeMirrorViewer) manage their own selection + quote
-    // bar via an internal selection listener. This DOM selection is only a
-    // shadow of CM's internal one, so skip it — otherwise it would hide/show
-    // the bar in parallel with the editor's own handler.
-    if (closestElement(sel.anchorNode, '.cm-editor')) return
-
-    // Check if selection is within a code, markdown, or office preview area
-    const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body')
-    if (!container) {
-      if (!barPinned.value) {
-        barVisible.value = false
-      }
-      return
-    }
-
-    const text = sel.toString().trim()
-    if (!text) {
-      if (!barPinned.value) {
-        barVisible.value = false
-      }
-      return
-    }
-
-    const { filePath, language } = getFileInfo(container)
-    const { startLine, endLine } = getLineInfo(sel)
-
-    setQuoteData({ text, filePath, language, startLine, endLine })
-    barVisible.value = true
-  }, 150)
+/** True while any pointer button is held (used to gate mid-drag selection UI). */
+export function isPointerPressed() {
+  return pointerCount > 0
 }
 
 // Global listener management
@@ -84,6 +118,8 @@ export function useQuoteQuestion() {
     listenerCount++
     if (listenerCount === 1) {
       document.addEventListener('selectionchange', onSelectionChange)
+      document.addEventListener('pointerdown', onPointerDown)
+      document.addEventListener('pointerup', onPointerUp)
     }
   })
 
@@ -91,6 +127,9 @@ export function useQuoteQuestion() {
     listenerCount--
     if (listenerCount === 0) {
       document.removeEventListener('selectionchange', onSelectionChange)
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('pointerup', onPointerUp)
+      pointerCount = 0
     }
   })
 
