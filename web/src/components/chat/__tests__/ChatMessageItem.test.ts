@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
@@ -599,6 +599,11 @@ describe('ChatMessageItem', () => {
       ;(cfg.localConfig as any).messageDisplayMode = 'summary'
     })
 
+    afterEach(async () => {
+      const cfg = await import('@/composables/useSettingsConfig')
+      ;(cfg.localConfig as any).messageDisplayMode = 'summary'
+    })
+
     it('emits ensure-content for a stripped message when global mode is original', async () => {
       const cfg = await import('@/composables/useSettingsConfig')
       ;(cfg.localConfig as any).messageDisplayMode = 'original'
@@ -653,6 +658,18 @@ describe('ChatMessageItem', () => {
       })
       toggle = wrapper.findComponent({ name: 'SummaryToggle' })
       expect(toggle.props('showingSummary')).toBe(false)
+    })
+
+    it('does not re-emit ensure-content and keeps summary placeholder after a failed load attempt', async () => {
+      const cfg = await import('@/composables/useSettingsConfig')
+      ;(cfg.localConfig as any).messageDisplayMode = 'original'
+      const wrapper = createWrapper({
+        msg: { id: 'fail1', role: 'assistant', content: '', blocks: [], summary: 'Summary', _loadAttempted: true, streaming: false },
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('ensure-content')).toBeUndefined()
+      const toggle = wrapper.findComponent({ name: 'SummaryToggle' })
+      expect(toggle.props('showingSummary')).toBe(true)
     })
   })
 

@@ -213,7 +213,7 @@ const msgText = computed(() => {
   if (props.msg?.role !== 'assistant') return ''
   const text = extractSpeakableText(props.msg?.blocks || [])
   if (text) return text
-  if (shouldShowSummary(props.msg, displayMode.value) && props.msg?.summary) return props.msg.summary
+  if (showSummary.value && props.msg?.summary) return props.msg.summary
   return ''
 })
 
@@ -225,18 +225,22 @@ const msgText = computed(() => {
 const showSummary = computed(() => {
   if (!props.msg) return false
   if (props.msg._loadingOriginal) return true
+  const blocksEmpty = !props.msg.blocks || props.msg.blocks.length === 0
+  if (blocksEmpty && props.msg._loadAttempted && props.msg.summary) return true
   return shouldShowSummary(props.msg, displayMode.value)
 })
 
 // In global original mode, a summarized message whose content was stripped by
 // view=summary has nothing to render in original view — request the full text
-// once. Guarded by _loadingOriginal and blocks-present to fire exactly once.
+// once. Guarded by _loadingOriginal, blocks-present, and _loadAttempted (latch
+// set after the first fetch completes) to fire exactly once even on failure.
 const needsLazyOriginal = computed(() =>
   displayMode.value === 'original' &&
   props.msg?.summary != null && props.msg.summary !== '' &&
   (!props.msg.blocks || props.msg.blocks.length === 0) &&
   props.msg.showingSummary === undefined &&
-  props.msg._loadingOriginal !== true
+  props.msg._loadingOriginal !== true &&
+  props.msg._loadAttempted !== true
 )
 
 watch(needsLazyOriginal, (needs) => {

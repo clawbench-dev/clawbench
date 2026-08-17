@@ -1002,6 +1002,7 @@ async function ensureMessageContent(msg) {
         appLog.w(TAG, 'failed to load original content', err)
     } finally {
         msg._loadingOriginal = false
+        msg._loadAttempted = true
     }
 }
 
