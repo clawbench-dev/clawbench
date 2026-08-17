@@ -291,6 +291,35 @@ describe('parseMessages', () => {
     expect(shouldShowSummary({ blocks: [{ type: 'text', text: 'x' }] })).toBe(false)
   })
 
+  it('shouldShowSummary respects global default mode when user has no explicit preference', () => {
+    // default 'summary' preserves current behavior
+    expect(shouldShowSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }] })).toBe(true)
+    expect(shouldShowSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }] }, 'summary')).toBe(true)
+    // global original mode → show full text
+    expect(shouldShowSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }] }, 'original')).toBe(false)
+  })
+
+  it('shouldShowSummary with original default and stripped content returns false to trigger lazy load', () => {
+    expect(shouldShowSummary({ summary: 'sum', blocks: [] }, 'original')).toBe(false)
+    expect(shouldShowSummary({ summary: 'sum', blocks: [], showingSummary: undefined }, 'original')).toBe(false)
+  })
+
+  it('shouldShowSummary with summary default and stripped content returns true', () => {
+    expect(shouldShowSummary({ summary: 'sum', blocks: [] })).toBe(true)
+    expect(shouldShowSummary({ summary: 'sum', blocks: [] }, 'summary')).toBe(true)
+  })
+
+  it('shouldShowSummary keeps explicit preference overriding global original mode', () => {
+    expect(shouldShowSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }], showingSummary: true }, 'original')).toBe(true)
+    expect(shouldShowSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }], showingSummary: false }, 'summary')).toBe(false)
+  })
+
+  it('shouldShowSummary keeps forcing summary for stripped content with explicit original preference', () => {
+    // Regression preserved: stream interrupted → summary generated async after
+    // showingSummary=false; stripped content (blocks empty) must still show summary.
+    expect(shouldShowSummary({ summary: 'late sum', blocks: [], showingSummary: false }, 'original')).toBe(true)
+  })
+
   it('shouldShowSummary returns true when summary exists and user has no explicit preference (content present)', () => {
     expect(shouldShowSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }] })).toBe(true)
   })
