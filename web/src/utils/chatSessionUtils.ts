@@ -129,6 +129,29 @@ export function shouldShowSummary(
 }
 
 /**
+ * Effective summary-visibility decision used by the UI. Wraps
+ * `shouldShowSummary` with the lazy-load placeholder state: while the full
+ * content is being fetched (`_loadingOriginal`), or a fetch attempt already
+ * ended without content (`_loadAttempted`, e.g. a failed load or genuinely
+ * empty content), the summary stays visible so the message bubble is never
+ * blank. Components must use this (not `shouldShowSummary` directly) so the
+ * toggle button and the rendered view never disagree.
+ */
+export function isShowingSummary(
+  msg: Record<string, unknown> | {
+    summary?: unknown; blocks?: unknown; showingSummary?: unknown; _loadingOriginal?: unknown; _loadAttempted?: unknown
+  },
+  defaultMode: MessageDisplayMode = 'summary',
+): boolean {
+  const hasSummary = msg.summary != null && msg.summary !== ''
+  if (!hasSummary) return false
+  const blocksArr = msg.blocks as unknown as Array<unknown> | undefined
+  const blocksEmpty = !blocksArr || blocksArr.length === 0
+  if (blocksEmpty && hasSummary && (msg._loadingOriginal === true || msg._loadAttempted === true)) return true
+  return shouldShowSummary(msg, defaultMode)
+}
+
+/**
  * Apply a summary update to a message object.
  * Auto-switches to summary view only when the user is at the bottom of the chat.
  * If the user has scrolled up to read earlier messages, the summary is stored

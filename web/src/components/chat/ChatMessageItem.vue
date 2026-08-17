@@ -136,7 +136,7 @@ import { formatDuration } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
-import { shouldShowSummary } from '@/utils/chatSessionUtils.ts'
+import { isShowingSummary } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
@@ -207,7 +207,7 @@ function handleToggleSummary() {
 // Uses extractSpeakableText to include AskUserQuestion blocks.
 // Falls back to the summary text when blocks are empty (summary-first loading
 // strips content), so the read-aloud button stays available in summary view.
-const displayMode = computed(() => (localConfig.messageDisplayMode || 'summary'))
+const displayMode = computed(() => (localConfig.messageDisplayMode === 'original' ? 'original' : 'summary'))
 
 const msgText = computed(() => {
   if (props.msg?.role !== 'assistant') return ''
@@ -222,13 +222,7 @@ const msgText = computed(() => {
 // default display mode. While the full text is being lazily fetched in
 // original mode, keep showing the summary as a placeholder so the message
 // bubble is never blank.
-const showSummary = computed(() => {
-  if (!props.msg) return false
-  if (props.msg._loadingOriginal) return true
-  const blocksEmpty = !props.msg.blocks || props.msg.blocks.length === 0
-  if (blocksEmpty && props.msg._loadAttempted && props.msg.summary) return true
-  return shouldShowSummary(props.msg, displayMode.value)
-})
+const showSummary = computed(() => (props.msg ? isShowingSummary(props.msg, displayMode.value) : false))
 
 // In global original mode, a summarized message whose content was stripped by
 // view=summary has nothing to render in original view — request the full text

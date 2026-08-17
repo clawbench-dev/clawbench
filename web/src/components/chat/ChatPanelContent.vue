@@ -183,7 +183,7 @@ import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
-import { applySummaryUpdate, shouldShowSummary } from '@/utils/chatSessionUtils.ts'
+import { applySummaryUpdate, isShowingSummary } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
 import { nextClientSeq, sortMessages } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
@@ -959,7 +959,7 @@ async function handleToggleSummary(msgId) {
         return
     }
     const mode = (localConfig.messageDisplayMode === 'original' ? 'original' : 'summary')
-    const showingNow = shouldShowSummary(msg, mode)
+    const showingNow = isShowingSummary(msg, mode)
     // Switching FROM summary TO original: if blocks weren't loaded (content omitted in view=summary), fetch the full message.
     if (showingNow && (!msg.blocks || msg.blocks.length === 0)) {
         await ensureMessageContent(msg)

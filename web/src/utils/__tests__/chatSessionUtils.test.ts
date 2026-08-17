@@ -4,6 +4,7 @@ import {
   parseMessages,
   applySummaryUpdate,
   shouldShowSummary,
+  isShowingSummary,
 } from '@/utils/chatSessionUtils.ts'
 
 // ── buildMessageSnapshot ──
@@ -318,6 +319,27 @@ describe('parseMessages', () => {
     // Regression preserved: stream interrupted → summary generated async after
     // showingSummary=false; stripped content (blocks empty) must still show summary.
     expect(shouldShowSummary({ summary: 'late sum', blocks: [], showingSummary: false }, 'original')).toBe(true)
+  })
+
+  // ── isShowingSummary: the latch-aware UI decision ──
+
+  it('isShowingSummary keeps summary visible while content is being lazily fetched', () => {
+    expect(isShowingSummary({ summary: 'sum', blocks: [], _loadingOriginal: true }, 'original')).toBe(true)
+  })
+
+  it('isShowingSummary keeps summary visible after a load attempt ended without content', () => {
+    expect(isShowingSummary({ summary: 'sum', blocks: [], _loadAttempted: true }, 'original')).toBe(true)
+  })
+
+  it('isShowingSummary releases the placeholder once content is available', () => {
+    expect(isShowingSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'Full' }], _loadAttempted: true }, 'original')).toBe(false)
+  })
+
+  it('isShowingSummary falls back to shouldShowSummary when no load is pending or attempted', () => {
+    expect(isShowingSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }] }, 'original')).toBe(false)
+    expect(isShowingSummary({ summary: 'sum', blocks: [{ type: 'text', text: 'x' }] }, 'summary')).toBe(true)
+    expect(isShowingSummary({ summary: 'sum', blocks: [], showingSummary: true }, 'original')).toBe(true)
+    expect(isShowingSummary({ blocks: [{ type: 'text', text: 'x' }] }, 'summary')).toBe(false)
   })
 
   it('shouldShowSummary returns true when summary exists and user has no explicit preference (content present)', () => {
