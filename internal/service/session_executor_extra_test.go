@@ -369,6 +369,83 @@ func TestDrainRemainingEvents_ToolResultEvents(t *testing.T) {
 	assert.True(t, found, "tool_result should update existing block")
 }
 
+func TestDrainRemainingEvents_SessionCaptureEvent(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	ch := make(chan ai.StreamEvent, 2)
+	ch <- ai.StreamEvent{Type: "session_capture", Content: "ext-drain-captured"}
+	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "raw"}
+	close(ch)
+
+	result := executor.drainRemainingEvents(ch, "")
+	assert.Contains(t, result, "raw")
+
+	// Verify external session ID was persisted
+	extID := GetExternalSessionID(sid)
+	assert.Equal(t, "ext-drain-captured", extID)
+}
+
+func TestDrainRemainingEvents_MetadataWithSessionID(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	ch := make(chan ai.StreamEvent, 2)
+	ch <- ai.StreamEvent{Type: "metadata", Meta: &ai.Metadata{SessionID: "ext-drain-meta"}}
+	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "raw"}
+	close(ch)
+
+	result := executor.drainRemainingEvents(ch, "")
+	assert.Contains(t, result, "raw")
+
+	// Verify external session ID from metadata was persisted
+	extID := GetExternalSessionID(sid)
+	assert.Equal(t, "ext-drain-meta", extID)
+}
+
+func TestDrainRemainingEvents_MetadataWithNilMeta(t *testing.T) {
+	ctx := context.Background()
+	cfg := RunConfig{SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test", ChatRequest: ai.ChatRequest{Prompt: "hello"}}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	ch := make(chan ai.StreamEvent, 1)
+	ch <- ai.StreamEvent{Type: "metadata", Meta: nil}
+	close(ch)
+
+	result := executor.drainRemainingEvents(ch, "")
+	assert.Equal(t, "", result)
+}
+
 // --- buildContentJSON additional coverage ---
 
 func TestSessionExecutor_BuildContentJSON_EmptyWithUserCancel(t *testing.T) {
