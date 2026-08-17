@@ -144,6 +144,24 @@
       </Transition>
     </Teleport>
 
+    <!-- Dirty worktree checkout modal -->
+    <Teleport to="body">
+      <div v-if="dirtyModalOpen" class="ht-dirty-overlay" @click.self="dirtyModalOpen = false">
+        <div class="ht-dirty-dialog">
+          <div class="ht-dirty-title">
+            <span class="ht-dirty-title-icon"><GitBranch :size="16" /></span>
+            <span>{{ t('git.manage.switchBranch') }}</span>
+          </div>
+          <p class="ht-dirty-msg">{{ t('git.manage.dirty', { count: dirtyCount }) }}</p>
+          <div class="ht-dirty-actions">
+            <button class="ht-dirty-btn ht-dirty-stash" @click="doDirtyCheckout('stash')">{{ t('git.manage.stashSwitch') }}</button>
+            <button class="ht-dirty-btn ht-dirty-force" @click="doDirtyCheckout('force')">{{ t('git.manage.forceSwitch') }}</button>
+            <button class="ht-dirty-btn ht-dirty-cancel" @click="dirtyModalOpen = false">{{ t('common.cancel') }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Server button: merged gauge + status dot. Icon color reflects connection status -->
     <button ref="serverBtnRef" class="server-toggle" :class="[statusDotClass, { 'pressure-alert': isUnderPressure && showMetricIcon }]" @click="toggleResourcesMenu" :title="t('systemResources.title')">
       <Server v-if="!isUnderPressure || !showMetricIcon" :size="15" />
@@ -295,25 +313,56 @@ async function loadBranches() {
     }
 }
 
+// Dirty worktree checkout state (shown at the first moment, before the confirm step)
+const dirtyModalOpen = ref(false)
+const dirtyBranch = ref('')
+const dirtyCount = ref(0)
+
 async function selectBranch(b: BranchEntry) {
     branchDropdownOpen.value = false
     if (b.name === gitBranch.value) return
+    // Warn about a dirty worktree up front instead of only after confirming.
+    if (store.state.gitDirty) {
+        dirtyBranch.value = b.name
+        dirtyCount.value = store.state.gitWorkingTreeChangeCount || 0
+        dirtyModalOpen.value = true
+        return
+    }
     const ok = await dialog.confirm(
         t('appHeader.switchBranchConfirm', { branch: b.name }),
         { title: t('git.manage.switchBranch'), confirmText: t('common.confirm'), cancelText: t('common.cancel') },
     )
     if (!ok) return
+    await doCheckout(b.name)
+}
+
+async function doCheckout(name: string) {
     try {
-        const result = await apiPost('/api/git/checkout', { branch: b.name }) as { success?: boolean; error?: string; errorDetail?: string }
+        const result = await apiPost('/api/git/checkout', { branch: name }) as { success?: boolean; error?: string; errorDetail?: string; untrackedCount?: number }
         if (result.success) {
             await store.loadGitBranch()
             await store.loadFiles(store.state.currentDir)
         } else if (result.error === 'dirty_worktree') {
-            toast?.show(t('appHeader.branchDirtyWorktree'), { icon: '⚠️', type: 'error', duration: 3000 })
-            openHistory()
+            // Worktree became dirty after the upfront check — surface the modal here.
+            dirtyBranch.value = name
+            dirtyCount.value = result.untrackedCount || store.state.gitWorkingTreeChangeCount || 0
+            dirtyModalOpen.value = true
         } else if (result.error) {
             toast?.show(t('appHeader.switchBranchFailed', { error: result.errorDetail || result.error }), { icon: '⚠️', type: 'error', duration: 3000 })
         }
+    } catch {
+        toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: '⚠️', type: 'error', duration: 3000 })
+    }
+}
+
+async function doDirtyCheckout(mode: 'stash' | 'force') {
+    dirtyModalOpen.value = false
+    const name = dirtyBranch.value
+    dirtyBranch.value = ''
+    try {
+        await apiPost('/api/git/checkout', { branch: name, stash: mode === 'stash', force: mode === 'force' })
+        await store.loadGitBranch()
+        await store.loadFiles(store.state.currentDir)
     } catch {
         toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: '⚠️', type: 'error', duration: 3000 })
     }
@@ -1143,5 +1192,95 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .dropdown-leave-to {
     opacity: 0;
     transform: translateY(-4px);
+}
+
+/* ─── Dirty worktree checkout modal ──────────────────────────────── */
+
+.ht-dirty-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.ht-dirty-dialog {
+    background: var(--bg-primary, #fff);
+    border-radius: 12px;
+    padding: 20px;
+    width: min(320px, 85vw);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.ht-dirty-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary, #1a1a1a);
+    margin-bottom: 8px;
+}
+
+.ht-dirty-title-icon {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ht-dirty-msg {
+    font-size: 13px;
+    color: var(--text-secondary, #666);
+    margin: 0 0 16px;
+    line-height: 1.5;
+    white-space: pre-line;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.ht-dirty-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ht-dirty-btn {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: center;
+    background: transparent;
+    transition: opacity 0.15s;
+}
+
+.ht-dirty-btn:active {
+    opacity: 0.7;
+}
+
+.ht-dirty-stash {
+    border-color: var(--accent-color, #4a90d9);
+    color: var(--accent-color, #4a90d9);
+}
+
+.ht-dirty-force {
+    border-color: var(--danger-color, #dc3545);
+    color: var(--danger-color, #dc3545);
+}
+
+.ht-dirty-cancel {
+    border-color: var(--border-color, #dee2e6);
+    color: var(--text-secondary, #666);
 }
 </style>

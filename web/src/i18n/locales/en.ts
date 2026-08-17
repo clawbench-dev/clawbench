@@ -106,7 +106,6 @@ export default {
     branches: 'Branches',
     moreBranches: 'Manage branches',
     switchBranchConfirm: 'Switch to branch "{branch}"?',
-    branchDirtyWorktree: 'Working tree has uncommitted changes. Manage it in the history tab.',
     switchBranchFailed: 'Failed to switch branch: {error}',
     switchBranchNetworkError: 'network error',
     removeProject: 'Remove from recent projects',

@@ -106,7 +106,6 @@ export default {
     branches: '分支',
     moreBranches: '管理分支',
     switchBranchConfirm: '切换到分支 "{branch}"？',
-    branchDirtyWorktree: '工作区有未提交的更改，请在历史标签中管理。',
     switchBranchFailed: '切换分支失败：{error}',
     switchBranchNetworkError: '网络错误',
     removeProject: '从最近项目中移除',
