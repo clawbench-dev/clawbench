@@ -129,7 +129,7 @@
 </template>
 
 <script setup>
-import { ref, inject, computed, nextTick } from 'vue'
+import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split } from 'lucide-vue-next'
 import { formatDuration } from '@/utils/format.ts'
@@ -137,6 +137,7 @@ import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
 import { shouldShowSummary } from '@/utils/chatSessionUtils.ts'
+import { localConfig } from '@/composables/useSettingsConfig'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import ContentBlocks from './ContentBlocks.vue'
@@ -160,7 +161,7 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'remove-pending', 'fork-from-message'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'fork-from-message'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
@@ -206,18 +207,41 @@ function handleToggleSummary() {
 // Uses extractSpeakableText to include AskUserQuestion blocks.
 // Falls back to the summary text when blocks are empty (summary-first loading
 // strips content), so the read-aloud button stays available in summary view.
+const displayMode = computed(() => (localConfig.messageDisplayMode || 'summary'))
+
 const msgText = computed(() => {
   if (props.msg?.role !== 'assistant') return ''
   const text = extractSpeakableText(props.msg?.blocks || [])
   if (text) return text
-  if (shouldShowSummary(props.msg) && props.msg?.summary) return props.msg.summary
+  if (shouldShowSummary(props.msg, displayMode.value) && props.msg?.summary) return props.msg.summary
   return ''
 })
 
 // Whether to render the summary view. Computed from message state (summary
-// exists, content stripped) plus the user's explicit preference, rather than
-// reading the raw showingSummary field which only stores the user's choice.
-const showSummary = computed(() => !!props.msg && shouldShowSummary(props.msg))
+// exists, content stripped), the user's explicit preference, and the global
+// default display mode. While the full text is being lazily fetched in
+// original mode, keep showing the summary as a placeholder so the message
+// bubble is never blank.
+const showSummary = computed(() => {
+  if (!props.msg) return false
+  if (props.msg._loadingOriginal) return true
+  return shouldShowSummary(props.msg, displayMode.value)
+})
+
+// In global original mode, a summarized message whose content was stripped by
+// view=summary has nothing to render in original view — request the full text
+// once. Guarded by _loadingOriginal and blocks-present to fire exactly once.
+const needsLazyOriginal = computed(() =>
+  displayMode.value === 'original' &&
+  props.msg?.summary != null && props.msg.summary !== '' &&
+  (!props.msg.blocks || props.msg.blocks.length === 0) &&
+  props.msg.showingSummary === undefined &&
+  props.msg._loadingOriginal !== true
+)
+
+watch(needsLazyOriginal, (needs) => {
+  if (needs && props.msg) emit('ensure-content', props.msg)
+}, { immediate: true })
 
 // Handle speak button click: play or stop (no popover)
 function handleSpeak() {

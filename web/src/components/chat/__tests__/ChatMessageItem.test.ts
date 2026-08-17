@@ -66,6 +66,10 @@ vi.mock('@/stores/app', () => ({
   store: { state: { projectRoot: '/home/user/project' } },
 }))
 
+vi.mock('@/composables/useSettingsConfig', () => ({
+  localConfig: { messageDisplayMode: 'summary' },
+}))
+
 const { drawerMocks } = vi.hoisted(() => ({
   drawerMocks: [] as Array<{ effectiveOpen: { value: boolean }; isOpen: { value: boolean }; open: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; toggle: ReturnType<typeof vi.fn> }>,
 }))
@@ -85,7 +89,7 @@ vi.mock('@/components/chat/FileAttachmentList.vue', () => ({
   default: { name: 'FileAttachmentList', template: '<div class="file-attachment-list-stub" />' },
 }))
 vi.mock('@/components/common/SummaryToggle.vue', () => ({
-  default: { name: 'SummaryToggle', template: '<span class="summary-toggle-stub" />' },
+  default: { name: 'SummaryToggle', props: ['showingSummary'], template: '<span class="summary-toggle-stub" />' },
 }))
 vi.mock('@/components/chat/FileChangesDrawer.vue', () => ({
   default: { name: 'FileChangesDrawer', template: '<div class="file-changes-drawer-stub" />' },
@@ -586,6 +590,69 @@ describe('ChatMessageItem', () => {
       vi.useRealTimers()
       wrapper.unmount()
       host.remove()
+    })
+  })
+
+  describe('global message display mode (original lazy-load)', () => {
+    beforeEach(async () => {
+      const cfg = await import('@/composables/useSettingsConfig')
+      ;(cfg.localConfig as any).messageDisplayMode = 'summary'
+    })
+
+    it('emits ensure-content for a stripped message when global mode is original', async () => {
+      const cfg = await import('@/composables/useSettingsConfig')
+      ;(cfg.localConfig as any).messageDisplayMode = 'original'
+      const wrapper = createWrapper({
+        msg: { id: 'ec1', role: 'assistant', content: '', blocks: [], summary: 'Summary', streaming: false },
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('ensure-content')).toBeTruthy()
+      expect(wrapper.emitted('ensure-content')![0]).toEqual([expect.objectContaining({ id: 'ec1' })])
+    })
+
+    it('does not emit ensure-content in summary mode', async () => {
+      const cfg = await import('@/composables/useSettingsConfig')
+      ;(cfg.localConfig as any).messageDisplayMode = 'summary'
+      const wrapper = createWrapper({
+        msg: { id: 'no-ec', role: 'assistant', content: '', blocks: [], summary: 'Summary', streaming: false },
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('ensure-content')).toBeUndefined()
+    })
+
+    it('does not emit ensure-content when blocks are already present', async () => {
+      const cfg = await import('@/composables/useSettingsConfig')
+      ;(cfg.localConfig as any).messageDisplayMode = 'original'
+      const wrapper = createWrapper({
+        msg: { id: 'has-blocks', role: 'assistant', content: '', blocks: [{ type: 'text', text: 'Full' }], summary: 'Summary', streaming: false },
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('ensure-content')).toBeUndefined()
+    })
+
+    it('does not emit ensure-content when an explicit preference exists', async () => {
+      const cfg = await import('@/composables/useSettingsConfig')
+      ;(cfg.localConfig as any).messageDisplayMode = 'original'
+      const wrapper = createWrapper({
+        msg: { id: 'pref', role: 'assistant', content: '', blocks: [], summary: 'Summary', showingSummary: true, streaming: false },
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('ensure-content')).toBeUndefined()
+    })
+
+    it('keeps summary as placeholder while lazy-loading and releases it once content arrives', async () => {
+      const cfg = await import('@/composables/useSettingsConfig')
+      ;(cfg.localConfig as any).messageDisplayMode = 'original'
+      const wrapper = createWrapper({
+        msg: { id: 'pl1', role: 'assistant', content: '', blocks: [], summary: 'Summary', _loadingOriginal: true, streaming: false },
+      })
+      let toggle = wrapper.findComponent({ name: 'SummaryToggle' })
+      expect(toggle.props('showingSummary')).toBe(true)
+      await wrapper.setProps({
+        msg: { id: 'pl1', role: 'assistant', content: '', blocks: [{ type: 'text', text: 'Full' }], summary: 'Summary', _loadingOriginal: false, streaming: false },
+      })
+      toggle = wrapper.findComponent({ name: 'SummaryToggle' })
+      expect(toggle.props('showingSummary')).toBe(false)
     })
   })
 
