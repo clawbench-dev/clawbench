@@ -421,6 +421,54 @@ describe('useQuoteQuestion', () => {
       wrapper.unmount()
     })
 
+    it('waits for pointerup before showing the bar during a drag selection', () => {
+      const wrapper = mountWithComposable()
+      createSelectionInContainer('markdown-body', {
+        'data-file-path': '/drag.md',
+      })
+
+      document.dispatchEvent(new MouseEvent('pointerdown', { button: 0 }))
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value).toBe(false)
+
+      document.dispatchEvent(new MouseEvent('pointerup', { button: 0 }))
+      vi.advanceTimersByTime(0)
+
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value?.text).toBe('selected code text')
+
+      wrapper.unmount()
+    })
+
+    it('defers a programmatic CodeMirror bar request until pointerup', () => {
+      const wrapper = mountWithComposable()
+      createSelectionInContainer('cm-editor')
+      const qq = useQuoteQuestion()
+
+      document.dispatchEvent(new MouseEvent('pointerdown', { button: 0 }))
+      qq.showBar({
+        text: 'selected code text',
+        filePath: '/main.ts',
+        language: 'typescript',
+        startLine: 1,
+        endLine: 1,
+      }, { delay: 0 })
+      vi.advanceTimersByTime(0)
+
+      expect(qq.visible.value).toBe(false)
+
+      document.dispatchEvent(new MouseEvent('pointerup', { button: 0 }))
+      vi.advanceTimersByTime(0)
+
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value?.filePath).toBe('/main.ts')
+
+      wrapper.unmount()
+    })
+
     it('shows bar when text is selected inside .raw-content-pre', () => {
       const wrapper = mountWithComposable()
       createSelectionInContainer('raw-content-pre', {

@@ -23,10 +23,16 @@ const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the
 const sheetOpen = ref(false)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let pointerSelecting = false
+let pendingShow: QuoteData | null = null
 
-function onSelectionChange() {
+function scheduleSelectionChange(delay = 150) {
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
+    // A native text selection can emit selectionchange while the pointer is
+    // still down. Do not show the bar until the drag has finished.
+    if (pointerSelecting) return
+
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.toString().trim()) {
       // Drop only the active selection. Staged quotes remain in the chat draft.
@@ -65,7 +71,36 @@ function onSelectionChange() {
 
     setQuoteData({ text, filePath, language, startLine, endLine })
     barVisible.value = true
-  }, 150)
+  }, delay)
+}
+
+function onSelectionChange() {
+  scheduleSelectionChange()
+}
+
+function applyShow(data: QuoteData) {
+  setQuoteData(data)
+  barVisible.value = true
+}
+
+function onPointerDown(event: PointerEvent) {
+  if (event.button === 0) pointerSelecting = true
+}
+
+function onPointerUp() {
+  if (!pointerSelecting) return
+  pointerSelecting = false
+
+  // CodeMirror reports its selection independently of the DOM. If its
+  // callback fired during the drag, flush that request after release.
+  if (pendingShow) {
+    const data = pendingShow
+    pendingShow = null
+    applyShow(data)
+  }
+
+  // Process the final native selection immediately after pointerup.
+  scheduleSelectionChange(0)
 }
 
 // Global listener management
@@ -84,6 +119,9 @@ export function useQuoteQuestion() {
     listenerCount++
     if (listenerCount === 1) {
       document.addEventListener('selectionchange', onSelectionChange)
+      document.addEventListener('pointerdown', onPointerDown)
+      document.addEventListener('pointerup', onPointerUp)
+      document.addEventListener('pointercancel', onPointerUp)
     }
   })
 
@@ -91,10 +129,18 @@ export function useQuoteQuestion() {
     listenerCount--
     if (listenerCount === 0) {
       document.removeEventListener('selectionchange', onSelectionChange)
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('pointercancel', onPointerUp)
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = null
+      pointerSelecting = false
+      pendingShow = null
     }
   })
 
   function closeSheet() {
+    pendingShow = null
     const sel = window.getSelection()
     if (sel) sel.removeAllRanges()
     barVisible.value = false
@@ -116,6 +162,7 @@ export function useQuoteQuestion() {
    * selection is internal and never reaches the global selectionchange handler).
    */
   function hideBar() {
+    pendingShow = null
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
@@ -125,12 +172,15 @@ export function useQuoteQuestion() {
    * 编程式显示引用问答栏（不依赖 selectionchange 事件）。
    * 默认延迟 400ms 显示，避免双击的 pointerdown 事件触发"点击外部关闭"
    * （markdown 预览双击复制依赖此延迟）。传 { delay: 0 } 可立即显示
-   * （代码模式拖选无 pointerdown 干扰）。
+   * （代码模式使用此路径；拖选期间仍会统一等到 pointerup）。
    */
   function showBar(data: QuoteData, opts: { delay?: number } = {}) {
     setTimeout(() => {
-      setQuoteData(data)
-      barVisible.value = true
+      if (pointerSelecting) {
+        pendingShow = data
+        return
+      }
+      applyShow(data)
     }, opts.delay ?? 400)
   }
 

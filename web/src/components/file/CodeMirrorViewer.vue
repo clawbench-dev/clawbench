@@ -210,8 +210,8 @@ function handleSelectionChange(update) {
     const startLine = update.state.doc.lineAt(sel.from).number
     const endLine = update.state.doc.lineAt(sel.to).number
     selDebounceTimer = setTimeout(() => {
-        // delay: 0 — double-click is not used in code mode, so there is no
-        // pointerdown that could immediately close the bar (see useQuoteQuestion).
+        // Code mode does not need the double-click delay. useQuoteQuestion
+        // still defers the actual bar display until pointerup during a drag.
         quoteQuestion.showBar({
             text,
             filePath: props.file?.path || '',
