@@ -61,7 +61,7 @@ sequenceDiagram
 - **手势交互**：三模式手势系统（浏览/手势/选择），支持双指捏合缩放字体、双指滑动 PgUp/PgDn、左右滑动切换终端。选择模式下拖拽选择文本，浮动复制栏显示字符数和复制按钮。浏览模式为默认态，手势操作不干扰终端交互
 - **虚拟修饰键**：Ctrl/Alt/Shift 三态状态机（inactive → once → locked），发送对应转义序列。解决移动端缺少物理修饰键的问题
 - **选择模式复制**：选择模式下通过触摸坐标映射到 xterm 单元格，拖拽选择文本后浮动复制栏提供一键复制和字符计数。移动端终端文本选取的体验瓶颈被解决
-- **键盘避让**：检测 Android 软键盘高度，自动调整终端视口，防止虚拟键盘遮挡终端内容。焦点切换时通过 `shouldAutoRefocusTerminal` 判断是否重新聚焦 xterm，避免 Android WebView 键盘闪烁
+- **键盘避让**：`useTerminalKeyboard` 跟踪 Android 软键盘高度，键盘关闭时自动复位为 0；`useTerminalViewport` 检测 adjustResize 模式（`innerHeight` 缩小时 `fullScreenHeight - currentInnerHeight` 为正），此模式下浏览器自动调整 `position:fixed` 容器，无需额外 CSS 补偿。视口调整使用 `visualViewport` 高度，PC 端跳过键盘检测避免将窗口缩放误判为键盘弹出。焦点切换时通过 `shouldAutoRefocusTerminal` 判断是否重新聚焦 xterm，避免 Android WebView 键盘闪烁
 - **键位与符号配置**：自定义虚拟键盘的按键和符号布局，配置持久化到数据库。用户可以添加常用的特殊符号，调整修饰键的排列
 - **快捷指令**：预设常用命令一键发送（如 `git status`、`docker ps`），通过 `useCrudList` 管理 CRUD。与聊天快捷发送共享基础设施
 - **终端主题切换**：内置 157 个 xterm-theme 主题（如 Dracula、Solarized、Catppuccin 等），支持 `auto` 模式跟随 App 深色/浅色主题自动切换。主题选择持久化到 localStorage，懒加载 xterm-theme 模块避免首屏体积膨胀

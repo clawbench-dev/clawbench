@@ -37,6 +37,7 @@ sequenceDiagram
 - **断线恢复**：升级导致 WebSocket 断开后自动切换为状态轮询，服务恢复后重新同步状态。升级本身造成的重启不会被误判为普通网络故障
 - **版本跳过**：启动提示允许按版本记录"暂不提醒"，只跳过指定版本；出现更新版本后重新提示
 - **Android 版本不匹配检测**：Android WebView 启动时对比 APK 版本与服务器版本，不匹配时展示 `VersionMismatchOverlay` 提示用户下载新版 APK。服务端升级后客户端可能落后，检测确保版本一致性
+- **桌面端升级检查**：`GET /api/desktop/latest` 查询 npm registry 获取 ClawBench 桌面端（Electron）的最新版本和各平台下载链接（linux-x64/arm64、darwin-x64/arm64、win32-x64）。桌面端通过 `@xulongzhe/clawbench-desktop-*` 平台包分发，与服务器自升级和 Android APK 检测是三个独立的升级通道
 
 ### 设计要点
 

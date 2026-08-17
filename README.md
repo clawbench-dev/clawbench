@@ -282,7 +282,9 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - Static HTML login page: shown on first launch or connection failure, matches web UI visual style
 - SSH password management, server dialog
 - WebView connection protection: WebView hidden during connection attempts to prevent browser error page flash
-- Terminal volume key mapping: volume keys act as arrow keys when terminal is open
+- **Self-Update**: One-click version check, binary download, and service restart from the Web UI; disconnect recovery with polling fallback; version skip option
+- **Desktop App Upgrade**: `GET /api/desktop/latest` checks npm registry for the latest ClawBench desktop (Electron) version and per-platform download links
+- **Android Version Mismatch Detection**: WebView startup compares APK version with server version; shows `VersionMismatchOverlay` prompting APK update when mismatched
 
 ### 🔔 Notifications
 - Notification sound + haptic feedback (alerts when AI completes)

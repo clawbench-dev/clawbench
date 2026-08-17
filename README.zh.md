@@ -295,6 +295,9 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - SSH 密码管理、服务器对话框
 - WebView 连接保护：连接期间隐藏 WebView，防止浏览器错误页闪现
 - 终端音量键映射：打开终端时音量键作为方向键
+- **应用自升级**：Web 端一键检查版本、下载二进制、重启服务；断线恢复轮询兜底；版本跳过选项
+- **桌面端升级检查**：`GET /api/desktop/latest` 查询 npm registry 获取桌面端（Electron）最新版本和各平台下载链接
+- **Android 版本不匹配检测**：WebView 启动时对比 APK 版本与服务器版本，不匹配时展示 `VersionMismatchOverlay` 提示下载新版 APK
 
 ### 🔔 通知
 - 通知音效 + 触觉反馈（AI 完成时提醒）
