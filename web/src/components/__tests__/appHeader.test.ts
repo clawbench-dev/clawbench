@@ -921,6 +921,64 @@ describe('AppHeader', () => {
     vi.unstubAllGlobals()
   })
 
+  it('doDirtyCheckout performs a force checkout and refreshes', async () => {
+    mockState.gitBranch = 'main'
+    mockState.gitDirty = true
+    const wrapper = mountAndTrack()
+    wrapper.vm.dirtyBranch = 'feature'
+    wrapper.vm.dirtyModalOpen = true
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ success: true }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await (wrapper.vm as any).doDirtyCheckout('force')
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/git/checkout', expect.objectContaining({ body: expect.stringContaining('"force":true') }))
+    expect(loadGitBranchFn).toHaveBeenCalled()
+    expect(wrapper.vm.dirtyModalOpen).toBe(false)
+    expect(wrapper.vm.dirtyBranch).toBe('')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('doDirtyCheckout handles API failure gracefully', async () => {
+    mockState.gitBranch = 'main'
+    mockState.gitDirty = true
+    const wrapper = mountAndTrack()
+    wrapper.vm.dirtyBranch = 'dev'
+    wrapper.vm.dirtyModalOpen = true
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ success: false, error: 'checkout failed' }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await (wrapper.vm as any).doDirtyCheckout('stash')
+
+    // Modal should still close even on failure
+    expect(wrapper.vm.dirtyModalOpen).toBe(false)
+    expect(wrapper.vm.dirtyBranch).toBe('')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('dirty worktree modal renders with stash and force buttons', async () => {
+    mockState.gitBranch = 'main'
+    mockState.gitDirty = true
+    mockState.gitWorkingTreeChangeCount = 3
+    const wrapper = mountAndTrack()
+    wrapper.vm.dirtyModalOpen = true
+    wrapper.vm.dirtyBranch = 'dev'
+    wrapper.vm.dirtyCount = 3
+    await wrapper.vm.$nextTick()
+
+    // The modal should be teleported to body
+    const overlay = document.body.querySelector('.ht-dirty-overlay')
+    expect(overlay).toBeTruthy()
+    const stashBtn = overlay?.querySelector('.ht-dirty-stash')
+    const forceBtn = overlay?.querySelector('.ht-dirty-force')
+    expect(stashBtn).toBeTruthy()
+    expect(forceBtn).toBeTruthy()
+
+    wrapper.vm.dirtyModalOpen = false
+  })
+
   // ── handleLogout ──
 
   it('handleLogout calls ClawBenchNative.showServerDialog in APP mode', async () => {

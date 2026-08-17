@@ -77,3 +77,12 @@ describe('ChatMessageList — scroll sticky抖动 fix', () => {
     expect(userTouching && !force).toBe(false)
   })
 })
+
+describe('ChatMessageList — ensure-content event pass-through', () => {
+  it('ChatMessageList source defines ensure-content emit', async () => {
+    // Verify the emit is defined by reading the raw source
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain("'ensure-content'")
+  })
+})
