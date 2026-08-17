@@ -847,6 +847,7 @@ export default {
       archiveFailed: 'Pack failed',
       archiveFailedDetail: 'Pack failed: {error}',
       deleteFailed: 'Delete failed',
+      renameFailed: 'Rename failed',
     },
     prompt: {
       fileName: 'Enter file name:',

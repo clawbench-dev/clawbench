@@ -1431,7 +1431,7 @@ function doDelete() {
 }
 
 // ── PC keyboard shortcuts (Ctrl+C/X/V, Delete) ──
-function handleKeydown(e) {
+async function handleKeydown(e) {
     // Only active when browse tab is focused
     if (activeTab.value !== 'browse') return
     // Focus-aware: in wide-screen mode also require the left pane to be focused
@@ -1540,7 +1540,10 @@ function handleKeydown(e) {
         const path = selectedPath.value || props.currentFile?.path
         if (path) {
             e.preventDefault()
-            emit('rename', { path, name: path.split('/').pop() || path })
+            const oldName = path.split('/').pop() || path
+            const newName = await dialog.prompt(t('file.prompt.newName'), { value: oldName })
+            if (!newName || newName === oldName) return
+            emit('rename', { path, name: newName })
         }
         return
     }

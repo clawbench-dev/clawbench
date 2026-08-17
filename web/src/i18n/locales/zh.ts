@@ -848,6 +848,7 @@ export default {
       archiveFailed: '打包失败',
       archiveFailedDetail: '打包失败: {error}',
       deleteFailed: '删除失败',
+      renameFailed: '重命名失败',
     },
     prompt: {
       fileName: '输入文件名：',

@@ -846,15 +846,43 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     expect(wrapper.emitted('navigateBack')).toBeTruthy()
   })
 
-  it('F2 emits rename for the current file', async () => {
+  it('F2 opens the rename dialog and emits rename with the new name', async () => {
+    mockDialogPrompt.mockResolvedValue('renamed.ts')
     const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
     await nextTick()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))
     await nextTick()
+    await nextTick()
 
+    expect(mockDialogPrompt).toHaveBeenCalled()
     expect(wrapper.emitted('rename')).toBeTruthy()
-    expect(wrapper.emitted('rename')![0]).toEqual([{ path: 'test.ts', name: 'test.ts' }])
+    expect(wrapper.emitted('rename')![0]).toEqual([{ path: 'test.ts', name: 'renamed.ts' }])
+  })
+
+  it('F2 does not emit rename when the dialog is cancelled', async () => {
+    mockDialogPrompt.mockResolvedValue('')
+    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))
+    await nextTick()
+    await nextTick()
+
+    expect(mockDialogPrompt).toHaveBeenCalled()
+    expect(wrapper.emitted('rename')).toBeFalsy()
+  })
+
+  it('F2 does not emit rename when the name is unchanged', async () => {
+    mockDialogPrompt.mockResolvedValue('test.ts')
+    const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
+    await nextTick()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }))
+    await nextTick()
+    await nextTick()
+
+    expect(wrapper.emitted('rename')).toBeFalsy()
   })
 
   it('Ctrl+R emits refresh', async () => {
