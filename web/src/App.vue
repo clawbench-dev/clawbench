@@ -779,7 +779,7 @@ const { getAgentBackend, getAgentName } = useAgents()
 const sessionSidebar = useSessionSidebar()
 sessionSidebar.registerOpenDrawer(() => sessionIdentity.sessionDrawer.open())
 // Route the session-list entry (Ctrl+K / session button) through the sidebar
-// bridge: when the sidebar is open, collapse it instead of opening the drawer.
+// bridge: keep the pinned sidebar as-is and open the session drawer.
 registerOpenSessionTabOverride(() => sessionSidebar.openSessionTabBridge())
 
 // Register chat-scoped drawers with tab-drawer binding
