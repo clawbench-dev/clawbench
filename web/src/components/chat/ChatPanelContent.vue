@@ -961,7 +961,9 @@ async function handleToggleSummary(msgId) {
     const mode = (localConfig.messageDisplayMode === 'original' ? 'original' : 'summary')
     const showingNow = isShowingSummary(msg, mode)
     // Switching FROM summary TO original: if blocks weren't loaded (content omitted in view=summary), fetch the full message.
+    // Reset _loadAttempted so a previously failed load can be retried on explicit user action.
     if (showingNow && (!msg.blocks || msg.blocks.length === 0)) {
+        msg._loadAttempted = false
         await ensureMessageContent(msg)
     }
     // Record the user's explicit preference. If they were showing the summary,

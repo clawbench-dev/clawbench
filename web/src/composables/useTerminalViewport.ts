@@ -23,6 +23,9 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
 
   let fitTimer: ReturnType<typeof setTimeout> | null = null
   const FIT_DEBOUNCE_MS = 100
+  // Track the last shared keyboard height so we only schedule fit() when it
+  // changes (not on every poll tick). undefined means "first call — always fit".
+  let lastSharedKeyboardHeight: number | undefined = undefined
   // Poll the actual innerHeight/visualViewport every N ms. Android WebViews do
   // NOT dispatch window/viewport/ResizeObserver events when the soft keyboard
   // opens even though innerHeight & visualViewport.height DO change — so the
@@ -75,13 +78,18 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
     }
 
     // Sync to module-level singleton so App.vue can react
+    const prevShared = lastSharedKeyboardHeight
     setSharedKeyboardHeight(keyboardHeight.value)
 
-    // Debounce fit() to prevent duplicate lines during keyboard animation.
-    // Without debounce, each resize event during the keyboard slide-up
-    // triggers fit() → PTY resize → SIGWINCH → shell redraws prompt,
-    // duplicating the current line.
-    scheduleFit()
+    // Only schedule fit() when the keyboard height actually changed or when
+    // this is the first call. The 300ms poll timer fires updateViewport
+    // repeatedly; calling fit() on every tick is wasteful and can cause
+    // excessive PTY resizes. Container ResizeObserver and window resize
+    // events already cover layout changes that need a refit.
+    if (keyboardHeight.value !== prevShared || prevShared === undefined) {
+      lastSharedKeyboardHeight = keyboardHeight.value
+      scheduleFit()
+    }
   }
 
   function scheduleFit() {
@@ -150,6 +158,7 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
 
     // Reset adjustResize flag when keyboard closes
     setAdjustResize(false)
+    lastSharedKeyboardHeight = undefined
   }
 
   return {

@@ -356,7 +356,16 @@ async function doCheckout(name: string) {
 }
 
 async function doDirtyCheckout(mode: 'stash' | 'force') {
-    dirtyModalOpen.value = false
+    if (mode === 'force') {
+        dirtyModalOpen.value = false
+        const ok = await dialog.confirm(
+            t('git.manage.forceSwitchConfirm'),
+            { title: t('git.manage.switchBranch'), confirmText: t('common.confirm'), cancelText: t('common.cancel') },
+        )
+        if (!ok) return
+    } else {
+        dirtyModalOpen.value = false
+    }
     const name = dirtyBranch.value
     dirtyBranch.value = ''
     try {
