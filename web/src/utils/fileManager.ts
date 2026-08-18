@@ -78,6 +78,21 @@ export function formatSize(size: number | null | undefined): string {
   return (size / (1024 * 1024)).toFixed(1) + ' M'
 }
 
+/**
+ * Build a numbered name for same-name conflict auto-resolution,
+ * mirroring the backend upload auto-numbering (name_1.ext, name_2.ext, …).
+ * index must be >= 1. Hidden files like ".env" are treated as extensionless.
+ */
+export function numberedName(baseName: string, index: number): string {
+  const lastDot = baseName.lastIndexOf('.')
+  if (lastDot <= 0) {
+    return `${baseName}_${index}`
+  }
+  const nameWithoutExt = baseName.slice(0, lastDot)
+  const ext = baseName.slice(lastDot)
+  return `${nameWithoutExt}_${index}${ext}`
+}
+
 // ── Multi-select state factory ──
 
 export interface MultiSelectState {
