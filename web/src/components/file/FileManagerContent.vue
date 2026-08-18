@@ -989,6 +989,14 @@ async function transferEntries(entries, destDir, isMove) {
                 appLog.d(TAG, '[transfer] same-path no-op, skipping:', srcEntry.path)
                 continue
             }
+            // Copy to the same directory: the backend treats src==dest as a no-op (200),
+            // so skip the original name and start with a numbered name directly.
+            let attempt = 0
+            if (!isMove && srcEntry.path === destPath) {
+                attempt = 1
+                destPath = (destDir ? destDir + '/' : '') + numberedName(srcEntry.name, attempt)
+                appLog.d(TAG, '[transfer] same-dir copy, using numbered name:', destPath)
+            }
             // Guard: don't move a directory into itself or one of its descendants
             if (isMove && (srcEntry.path === destDir || destDir.startsWith(srcEntry.path + '/'))) {
                 appLog.d(TAG, '[transfer] skip self-nesting move:', srcEntry.path, '→', destDir)
@@ -996,7 +1004,6 @@ async function transferEntries(entries, destDir, isMove) {
             }
             appLog.d(TAG, '[transfer]', isMove ? 'moving' : 'copying', srcEntry.path, '→', destPath)
             let resp
-            let attempt = 0
             while (true) {
                 resp = await fetch(api, {
                     method: 'POST',

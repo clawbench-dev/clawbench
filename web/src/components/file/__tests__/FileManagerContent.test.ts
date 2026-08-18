@@ -1882,6 +1882,8 @@ describe('FileManagerContent — clipboard paste (doPaste)', () => {
   })
 
   it('auto-numbers the destination name on 409 instead of prompting', async () => {
+    // Copying to the same dir: src==dest so frontend skips original name and
+    // starts with numbered name. 409 on test_1.ts → retry with test_2.ts.
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: false, status: 409, text: async () => '' })
       .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' })
@@ -1896,10 +1898,12 @@ describe('FileManagerContent — clipboard paste (doPaste)', () => {
     await wrapper.vm.doPaste()
     await nextTick()
 
-    // First call: original name. Second call: auto-numbered name.
+    // First call: test_1.ts (same-dir skip). Second call: test_2.ts (after 409).
     expect(fetchMock).toHaveBeenCalledTimes(2)
+    const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(firstBody.dest).toBe('test_1.ts')
     const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body)
-    expect(secondBody.dest).toBe('test_1.ts')
+    expect(secondBody.dest).toBe('test_2.ts')
     // No naming dialog should be invoked
     expect(mockDialogPrompt).not.toHaveBeenCalled()
     expect(wrapper.emitted('refresh')).toBeTruthy()
@@ -1918,13 +1922,14 @@ describe('FileManagerContent — clipboard paste (doPaste)', () => {
     await wrapper.vm.doPaste()
     await nextTick()
 
-    // original name + name_1..name_9999 = 10000 calls, then loop breaks
-    expect(fetchMock).toHaveBeenCalledTimes(10000)
+    // Same-dir copy skips original name → starts with test_1.ts.
+    // test_1..test_9999 all 409 = 9999 calls, then loop breaks.
+    expect(fetchMock).toHaveBeenCalledTimes(9999)
   })
 
   it('keeps incrementing on repeated collisions (test_2.ts)', async () => {
+    // Same-dir copy: starts with test_1.ts (409), then test_2.ts (200).
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: false, status: 409, text: async () => '' })
       .mockResolvedValueOnce({ ok: false, status: 409, text: async () => '' })
       .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' })
     vi.stubGlobal('fetch', fetchMock)
@@ -1938,9 +1943,31 @@ describe('FileManagerContent — clipboard paste (doPaste)', () => {
     await wrapper.vm.doPaste()
     await nextTick()
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
-    const lastBody = JSON.parse(fetchMock.mock.calls[2][1].body)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const lastBody = JSON.parse(fetchMock.mock.calls[1][1].body)
     expect(lastBody.dest).toBe('test_2.ts')
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+  })
+
+  it('same-dir copy skips original name and uses numbered name directly', async () => {
+    // Copying to the same directory: backend returns 200 no-op for src==dest,
+    // so frontend must skip the original name and start with a numbered name.
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountContent({ currentDir: '' })
+    await nextTick()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await wrapper.vm.doCopy()
+    await nextTick()
+
+    await wrapper.vm.doPaste()
+    await nextTick()
+
+    // Only one fetch call, with the numbered name test_1.ts
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.dest).toBe('test_1.ts')
     expect(wrapper.emitted('refresh')).toBeTruthy()
   })
 })
