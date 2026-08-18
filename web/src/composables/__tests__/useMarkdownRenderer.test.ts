@@ -155,6 +155,58 @@ describe('renderKatexInString', () => {
     renderKatexInString(input)
     expect(mockKatexRenderToString).toHaveBeenCalledWith('x^2 + y^2', expect.objectContaining({ displayMode: true }))
   })
+
+  it('does not match prices like $5 and $10', () => {
+    const input = '<p>花费 $5 和 $10，共 $15。</p>'
+    const result = renderKatexInString(input)
+    expect(result).toBe(input)
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+  })
+
+  it('does not match $5 at start of text (digit after $)', () => {
+    const input = '<p>$5 is the price</p>'
+    const result = renderKatexInString(input)
+    expect(result).toBe(input)
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+  })
+
+  it('does not match when digit precedes $ (like 5$)', () => {
+    const input = '<p>total 5$</p>'
+    const result = renderKatexInString(input)
+    expect(result).toBe(input)
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+  })
+
+  it('handles escaped \\$ as literal dollar sign', () => {
+    const input = '<p>cost \\$5 and \\$10</p>'
+    const result = renderKatexInString(input)
+    expect(result).toContain('$5')
+    expect(result).toContain('$10')
+    expect(result).not.toContain('\\$')
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+  })
+
+  it('does not match math inside <code> blocks', () => {
+    const input = '<p>use <code>$cost</code> and <code>$$total$$</code></p>'
+    const result = renderKatexInString(input)
+    expect(result).toContain('<code>$cost</code>')
+    expect(result).toContain('<code>$$total$$</code>')
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+  })
+
+  it('still matches math outside <code> blocks', () => {
+    const input = '<p>formula $x^2$ inside, code <code>$cost</code></p>'
+    const result = renderKatexInString(input)
+    expect(result).toContain('inline:x^2')
+    expect(result).toContain('<code>$cost</code>')
+  })
+
+  it('protects multi-line <code> blocks from KaTeX', () => {
+    const input = '<p>before</p>\n<code>$$formula$$\n$inline$</code>\n<p>after</p>'
+    const result = renderKatexInString(input)
+    expect(result).toContain('<code>$$formula$$\n$inline$</code>')
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+  })
 })
 
 // --- renderMarkdown ---
@@ -252,12 +304,36 @@ describe('renderMarkdown', () => {
     expect(mockDOMPurifySanitize).toHaveBeenCalled()
   })
 
-  it('skips KaTeX when skipEnhancements=true', () => {
+  it('renders KaTeX when skipEnhancements=true but skipKatex not set', () => {
     mockMarkedParse.mockReturnValue('<p>$$x^2$$</p>')
     mockDOMPurifySanitize.mockImplementation((s: string) => s)
 
     renderMarkdown('content', { skipEnhancements: true })
+    expect(mockKatexRenderToString).toHaveBeenCalled()
+  })
+
+  it('renders KaTeX when skipEnhancements=true and skipKatex=false (file preview)', () => {
+    mockMarkedParse.mockReturnValue('<p>$$x^2$$</p>')
+    mockDOMPurifySanitize.mockImplementation((s: string) => s)
+
+    renderMarkdown('content', { skipEnhancements: true, skipKatex: false })
+    expect(mockKatexRenderToString).toHaveBeenCalled()
+  })
+
+  it('skips KaTeX when skipKatex=true regardless of skipEnhancements', () => {
+    mockMarkedParse.mockReturnValue('<p>$$x^2$$</p>')
+    mockDOMPurifySanitize.mockImplementation((s: string) => s)
+
+    renderMarkdown('content', { skipKatex: true })
     expect(mockKatexRenderToString).not.toHaveBeenCalled()
+  })
+
+  it('renders KaTeX by default (skipKatex not set)', () => {
+    mockMarkedParse.mockReturnValue('<p>$$x^2$$</p>')
+    mockDOMPurifySanitize.mockImplementation((s: string) => s)
+
+    renderMarkdown('content')
+    expect(mockKatexRenderToString).toHaveBeenCalled()
   })
 
   it('returns RenderResult with html, detectedPaths, detectedSHAs', () => {

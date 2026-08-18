@@ -161,11 +161,12 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
 
   /**
    * Render markdown to HTML using the unified pipeline.
-   * When skipEnhancements=true (streaming mode), KaTeX and path annotations are skipped.
+   * When skipEnhancements=true (streaming mode), path annotations are skipped.
+   * When skipKatex=true, KaTeX rendering is also skipped (streaming, formulas may be incomplete).
    * After rendering, schedules nextTick verifyFilePaths/verifyCommitHashes if detected.
    */
-  function renderMarkdown(text: string, { skipEnhancements = false }: { skipEnhancements?: boolean } = {}): string {
-    const { html, detectedPaths, detectedSHAs } = baseRenderMarkdown(text, { skipEnhancements })
+  function renderMarkdown(text: string, { skipEnhancements = false, skipKatex }: { skipEnhancements?: boolean; skipKatex?: boolean } = {}): string {
+    const { html, detectedPaths, detectedSHAs } = baseRenderMarkdown(text, { skipEnhancements, skipKatex })
 
     // Schedule async verification for detected paths/commits
     if (detectedPaths.length > 0) {
@@ -206,7 +207,7 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
   function renderTextBlock(text: string, msgId: string, blockIdx: number, streaming = false, deferEnhancements = false) {
     // ── Streaming: pure markdown only (no detections/verification) ──
     if (streaming) {
-      return renderMarkdownHtml(text, { skipEnhancements: true })
+      return renderMarkdownHtml(text, { skipEnhancements: true, skipKatex: true })
     }
 
     // ── Post-streaming: full pipeline ──

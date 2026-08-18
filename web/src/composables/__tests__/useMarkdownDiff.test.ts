@@ -21,7 +21,7 @@ vi.mock('@/utils/globals', () => ({
         .replace(/^(?!<[hupobl])/gm, (m) => m.trim() ? `<p>${m}</p>` : m)
     },
   },
-  katex: { renderToString: vi.fn() },
+  katex: { renderToString: vi.fn((math: string, opts: any) => opts?.displayMode ? `<div class="katex-display"><span class="katex">${math}</span></div>` : `<span class="katex">${math}</span>`) },
   mermaid: { render: vi.fn() },
   DOMPurify: { sanitize: (html: string) => html },
 }))
@@ -303,16 +303,17 @@ describe('offscreenExtractBlocks', () => {
     expect(mermaidBlock!.mermaidSource).toContain('graph TD')
   })
 
-  it('uses skipEnhancements=true to match live DOM rendering', () => {
-    // KaTeX display math ($$...$$) is skipped when skipEnhancements=true,
-    // so offscreen rendering should NOT produce div.katex-display blocks.
+  it('renders KaTeX in offscreen to match MarkdownPreview live DOM', () => {
+    // KaTeX display math ($$...$$) IS rendered in offscreen extraction
+    // (skipEnhancements=true only skips path annotations, not KaTeX),
+    // so offscreen rendering SHOULD produce div.katex-display blocks.
     // This ensures block indices align with MarkdownPreview's live DOM.
     const content = '# Title\n\nSome text\n\n$$x^2$$\n\nMore text'
     const blocks = offscreenExtractBlocks(content)
-    // Should have H1 and two P blocks (no katex-display block)
+    // Should have katex-display block (KaTeX is rendered)
     const katexBlocks = blocks.filter(b => b.tag === 'DIV' && b.innerHTML?.includes('katex'))
-    expect(katexBlocks.length).toBe(0)
-    // Should still find the title and text blocks
+    expect(katexBlocks.length).toBeGreaterThan(0)
+    // Should still find the title block
     expect(blocks.some(b => b.tag === 'H1')).toBe(true)
   })
 })

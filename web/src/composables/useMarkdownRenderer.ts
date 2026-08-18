@@ -19,8 +19,10 @@ export interface MarkdownRenderOptions {
     sanitize?: boolean
     /** 是否包装表格（添加滚动容器），默认true */
     wrapTables?: boolean
-    /** 跳过增强步骤（KaTeX、图片/音频/路径注解），流式模式用 */
+    /** 跳过增强步骤（路径注解、媒体转换等），流式模式用。不影响KaTeX渲染 */
     skipEnhancements?: boolean
+    /** 跳过KaTeX渲染，流式模式用（公式可能不完整）。默认false */
+    skipKatex?: boolean
     /** 图片路径修复函数，MarkdownPreview 用 */
     fixImagePaths?: (html: string) => string
 }
@@ -39,9 +41,16 @@ export interface RenderResult {
  * Inline math $...$ 匹配正则。
  *
  * 不使用 lookbehind（Safari/iPadOS < 16.4 不支持，导致 bundle 解析失败白屏），
- * 用捕获组 `(^|[^$])` 保留前置字符并在回调中回填，语义与 `(?<!\$)` 等价。
+ * 用捕获组 `(^|[^$\d\\])` 保留前置字符并在回调中回填，语义与 `(?<![\$\d\\])` 等价。
+ *
+ * 前置排除：
+ * - $: 避免匹配 $$$（连续美元符号）
+ * - \d: 避免匹配价格如 "花费$5"（数字后的 $ 是货币符号）
+ * - \\: 避免匹配转义 \$（转义美元应保持字面意思）
+ *
+ * 后置排除：`(?!\d)` 避免匹配如 "$5"（$ 后紧跟数字是价格）
  */
-export const INLINE_MATH_RE = /(^|[^$])\$(?!\$)([^$\n]+?)\$(?!\$)/g
+export const INLINE_MATH_RE = /(^|[^$\d\\])\$(?!\$)([^$\n]+?)\$(?!\d)/g
 
 /**
  * 在HTML字符串中渲染KaTeX数学公式（字符串级别，不操作DOM）
@@ -57,9 +66,32 @@ export const INLINE_MATH_RE = /(^|[^$])\$(?!\$)([^$\n]+?)\$(?!\$)/g
  * 相比之下，Mermaid 可以用 DOM 级渲染，因为它是整个节点替换
  * （<pre> → <div>+SVG），Vue 下次 innerHTML 覆盖后 Mermaid
  * 重新渲染即可，是幂等的，不会产生冲突。
+ *
+ * 保护措施：
+ * - <code>...</code> 内容不受 KaTeX 匹配影响（先提取占位，渲染后还原）
+ * - \$ 转义序列保持字面意思，不被当成公式定界符
  */
 export function renderKatexInString(html: string): string {
     if (!html) return html
+
+    // 0. Protect <code> blocks from KaTeX matching (inline code and code blocks)
+    //    Extract <code>...</code> content, replace with placeholders, restore after KaTeX.
+    //    Placeholders use zero-width characters that cannot appear in valid HTML.
+    const CODE_PH_L = '\u200B\u200C'  // ZWSP + ZWNJ — impossible in marked output
+    const CODE_PH_R = '\u200C\u200B'
+    const codeBlocks: string[] = []
+    let codeIdx = 0
+    html = html.replace(/<code[\s>][^]*?<\/code>/gi, (match) => {
+        const placeholder = `${CODE_PH_L}CODE${codeIdx}${CODE_PH_R}`
+        codeBlocks.push(match)
+        codeIdx++
+        return placeholder
+    })
+
+    // 0b. Handle escaped \$ — replace with placeholder to prevent KaTeX matching
+    //     After all KaTeX rendering, replace placeholder back to literal $
+    const ESC_DOLLAR_PH = '\u200D\u200D'  // ZWJ pair — impossible in marked output
+    html = html.replace(/\\\$/g, ESC_DOLLAR_PH)
 
     // Display math: $$...$$  和  \[...\]
     html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, math) => {
@@ -79,7 +111,7 @@ export function renderKatexInString(html: string): string {
 
     // Inline math: $...$  和  \(...\)
     // 注意：$ 必须匹配非空内容，且左右不能是数字或字母（避免误匹配价格等）
-    // 不使用 lookbehind（Safari < 16.4 不支持），用 (^|[^$]) 捕获前缀再回填
+    // 不使用 lookbehind（Safari < 16.4 不支持），用 (^|[^$\d\\]) 捕获前缀再回填
     html = html.replace(INLINE_MATH_RE, (whole, pre, math) => {
         try {
             return pre + katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
@@ -94,6 +126,14 @@ export function renderKatexInString(html: string): string {
             return escapeHtml(_)
         }
     })
+
+    // Restore escaped \$ — replace placeholder back to literal $
+    html = html.replace(/\u200D\u200D/g, '$')
+
+    // Restore <code> blocks (use function form to avoid $$ special replacement patterns)
+    for (let i = 0; i < codeBlocks.length; i++) {
+        html = html.replace(`${CODE_PH_L}CODE${i}${CODE_PH_R}`, () => codeBlocks[i])
+    }
 
     return html
 }
@@ -131,6 +171,7 @@ export function renderMarkdown(
         sanitize = true,
         wrapTables = true,
         skipEnhancements = false,
+        skipKatex,
         fixImagePaths,
     } = options
 
@@ -141,8 +182,10 @@ export function renderMarkdown(
     resetHeadingIds()
     let html = marked.parse((content || '').trim()) as string
 
-    // 2. KaTeX (skip during streaming — formula may be incomplete)
-    if (!skipEnhancements) {
+    // 2. KaTeX rendering
+    //    skipKatex=true: skip KaTeX (streaming, formulas may be incomplete)
+    //    skipKatex omitted or false: always render KaTeX (even with skipEnhancements)
+    if (!skipKatex) {
         html = renderKatexInString(html)
     }
 

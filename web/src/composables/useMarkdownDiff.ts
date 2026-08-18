@@ -765,10 +765,8 @@ const domParser = new DOMParser()
  * so the block structure matches the live DOM.
  *
  * IMPORTANT: Uses skipEnhancements=true to match MarkdownPreview's doRender,
- * which also uses skipEnhancements=true. A mismatch causes block count
- * divergence (e.g. KaTeX display math adds div.katex-display blocks
- * in offscreen but not in live DOM), making markers' blockIndex misalign
- * with the live DOM and preventing diff markers from appearing.
+ * which also uses skipEnhancements=true. KaTeX is rendered in both paths
+ * (skipKatex defaults to false), so block structures match.
  */
 export function offscreenExtractBlocks(content: string): BlockInfo[] {
     const html = renderMarkdownHtml(content, { sanitize: false, skipEnhancements: true })
