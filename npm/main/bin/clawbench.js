@@ -4,31 +4,20 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import os from "os";
+import { resolvePlatformPackage, resolveBinName } from "./platform.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
-const PLATFORM_MAP = {
-  "linux-x64": "@xulongzhe/clawbench-linux-x64",
-  "linux-arm64": "@xulongzhe/clawbench-linux-arm64",
-  "darwin-x64": "@xulongzhe/clawbench-darwin-x64",
-  "darwin-arm64": "@xulongzhe/clawbench-darwin-arm64",
-  "win32-x64": "@xulongzhe/clawbench-win32-x64",
-};
+const resolved = resolvePlatformPackage(process.platform, process.arch);
 
-// Termux 上报 process.platform === "android"，但它运行的是 Linux 用户态，
-// 其中 linux-arm64 的 Go 二进制可以直接执行，因此归一化到 linux。
-const platform = process.platform === "android" ? "linux" : process.platform;
-
-const key = `${platform}-${process.arch}`;
-const pkg = PLATFORM_MAP[key];
-
-if (!pkg) {
+if (!resolved) {
   console.error(`clawbench: 不支持的平台 ${process.platform}-${process.arch}`);
   process.exit(1);
 }
 
-const binName = platform === "win32" ? "clawbench.exe" : "clawbench";
+const { pkg } = resolved;
+const binName = resolveBinName(process.platform);
 
 let binPath;
 if (process.env.CLAWBENCH_BINARY_PATH) {
