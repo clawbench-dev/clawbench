@@ -2037,7 +2037,7 @@ function currentFileForClipboard() {
 }
 
 .file-item.ctx-highlight .file-icon-wrap {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
+    background: color-mix(in srgb, white 50%, var(--accent-color, #4a90d9));
 }
 
 .file-item.active .file-icon-wrap .file-icon,
@@ -2314,7 +2314,7 @@ function currentFileForClipboard() {
 }
 
 [data-theme="dark"] .file-item.ctx-highlight .file-icon-wrap {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
+    background: color-mix(in srgb, white 30%, var(--accent-color, #4a90d9));
 }
 
 /* Upload progress bar */
