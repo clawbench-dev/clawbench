@@ -19,4 +19,16 @@ describe('numberedName', () => {
   it('handles hidden files without extension', () => {
     expect(numberedName('.env', 1)).toBe('.env_1')
   })
+
+  it('handles hidden files with extension', () => {
+    expect(numberedName('.gitignore', 2)).toBe('.gitignore_2')
+  })
+
+  it('handles single-character names', () => {
+    expect(numberedName('a', 5)).toBe('a_5')
+  })
+
+  it('handles single-character extension', () => {
+    expect(numberedName('file.c', 1)).toBe('file_1.c')
+  })
 })
