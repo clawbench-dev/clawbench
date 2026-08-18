@@ -2390,3 +2390,61 @@ func assertNoMoreACPEvents(ch chan StreamEvent, t *testing.T) {
 		}
 	}
 }
+
+// --- ACPConn raw output buffer tests ---
+
+func TestACPConn_AppendRawOutput(t *testing.T) {
+	conn := &ACPConn{}
+
+	conn.AppendRawOutput(`{"type":"agent_message_chunk"}`)
+	assert.Equal(t, `{"type":"agent_message_chunk"}`, conn.rawOutputBuf.String())
+
+	conn.AppendRawOutput(`{"type":"tool_call_update"}`)
+	assert.Equal(t, `{"type":"agent_message_chunk"}
+{"type":"tool_call_update"}`, conn.rawOutputBuf.String())
+}
+
+func TestACPConn_ResetRawOutput(t *testing.T) {
+	conn := &ACPConn{}
+
+	// Empty buffer returns empty string
+	s := conn.ResetRawOutput()
+	assert.Equal(t, "", s)
+
+	// After appending, ResetRawOutput returns accumulated and clears
+	conn.AppendRawOutput("line1")
+	conn.AppendRawOutput("line2")
+	s = conn.ResetRawOutput()
+	assert.Equal(t, "line1\nline2", s)
+
+	// Buffer is cleared after reset
+	s = conn.ResetRawOutput()
+	assert.Equal(t, "", s)
+}
+
+func TestACPConn_AppendRawOutput_Concurrent(t *testing.T) {
+	conn := &ACPConn{}
+	done := make(chan struct{})
+
+	// Two goroutines appending concurrently should not race
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for i := 0; i < 100; i++ {
+			conn.AppendRawOutput(`{"goroutine":"a"}`)
+		}
+	}()
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for i := 0; i < 100; i++ {
+			conn.AppendRawOutput(`{"goroutine":"b"}`)
+		}
+	}()
+
+	<-done
+	<-done
+
+	// Should have 200 entries total (separated by newlines)
+	result := conn.ResetRawOutput()
+	lines := strings.Split(result, "\n")
+	assert.Len(t, lines, 200)
+}

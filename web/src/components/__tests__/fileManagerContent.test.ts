@@ -108,6 +108,11 @@ vi.mock('@/utils/fileManager', () => ({
     clear: vi.fn(),
   }),
   resolveClickAction: vi.fn(),
+  numberedName: (baseName: string, index: number) => {
+    const lastDot = baseName.lastIndexOf('.')
+    if (lastDot <= 0) return `${baseName}_${index}`
+    return `${baseName.slice(0, lastDot)}_${index}${baseName.slice(lastDot)}`
+  },
 }))
 
 vi.mock('@/components/common/SearchInput.vue', () => ({

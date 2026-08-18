@@ -34,7 +34,7 @@ describe('StreamFrameScheduler', () => {
     // Use deferred mock so callbacks don't fire immediately
     rafSpy.mockRestore()
     let capturedCb: FrameRequestCallback | null = null
-    rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+    rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       capturedCb = cb
       return 1
     })
@@ -48,7 +48,7 @@ describe('StreamFrameScheduler', () => {
     expect(fn2).not.toHaveBeenCalled()
 
     // Flush — only fn2 should run (fn1 was replaced)
-    if (capturedCb) capturedCb(0)
+    if (capturedCb) (capturedCb as FrameRequestCallback)(0)
     expect(fn1).not.toHaveBeenCalled()
     expect(fn2).toHaveBeenCalledTimes(1)
   })
@@ -62,7 +62,7 @@ describe('StreamFrameScheduler', () => {
     // Mock rAF to defer execution so both can be queued
     rafSpy.mockRestore()
     let capturedCb: FrameRequestCallback | null = null
-    rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+    rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       capturedCb = cb
       return 1
     })
@@ -75,7 +75,7 @@ describe('StreamFrameScheduler', () => {
     expect(fn2).not.toHaveBeenCalled()
 
     // Flush the rAF
-    if (capturedCb) capturedCb(0)
+    if (capturedCb) (capturedCb as FrameRequestCallback)(0)
     expect(fn1).toHaveBeenCalledTimes(1)
     expect(fn2).toHaveBeenCalledTimes(1)
     expect(order).toEqual(['a', 'b'])
@@ -88,7 +88,7 @@ describe('StreamFrameScheduler', () => {
     // Mock rAF to NOT execute immediately so we can test cancel
     rafSpy.mockRestore()
     let rafCallback: FrameRequestCallback | null = null
-    rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+    rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       rafCallback = cb
       return 42
     })
@@ -103,7 +103,7 @@ describe('StreamFrameScheduler', () => {
     expect(cancelRafSpy).toHaveBeenCalledWith(42)
 
     // Simulate the rAF firing (shouldn't happen, but verify no-op)
-    if (rafCallback) rafCallback(0)
+    if (rafCallback) (rafCallback as FrameRequestCallback)(0)
     expect(fn).not.toHaveBeenCalled()
   })
 

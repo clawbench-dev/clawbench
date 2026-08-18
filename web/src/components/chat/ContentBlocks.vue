@@ -24,7 +24,7 @@
         </div>
       </template>
       <!-- Scheduled task cards from summaryCards.taskIDs (task data fetched in real time) -->
-      <template v-for="(tid, ti) in summaryTaskIDs" :key="'sum-task-' + tid">
+      <template v-for="tid in summaryTaskIDs" :key="'sum-task-' + tid">
         <div class="scheduled-task-card" :class="{ deleted: summaryTaskData[tid]?.deleted }" @click="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task && $emit('task-card-click', tid)">
           <div class="stask-header">
             <Archive v-if="summaryTaskData[tid]?.deleted" :size="14" class="stask-icon" />
@@ -174,13 +174,13 @@
 
       <!-- Text block with @ command badge (user message starting with @chatsearch/@task) -->
       <template v-else-if="block.type === 'text' && extractAtCommand(block.text || '')">
-        <span class="at-command-badge">{{ extractAtCommand(block.text).command }}</span>
-        <span v-if="extractAtCommand(block.text).rest.trim()" class="at-command-rest">{{ extractAtCommand(block.text).rest.trim() }}</span>
+        <span class="at-command-badge">{{ extractAtCommand(block.text)!.command }}</span>
+        <span v-if="extractAtCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractAtCommand(block.text)!.rest.trim() }}</span>
       </template>
       <!-- Text block with slash command badge (user message starting with /command from ACP backend) -->
       <template v-else-if="block.type === 'text' && extractSlashCommand(block.text || '')">
-        <span class="slash-command-badge">{{ extractSlashCommand(block.text).command }}</span>
-        <span v-if="extractSlashCommand(block.text).rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text).rest.trim() }}</span>
+        <span class="slash-command-badge">{{ extractSlashCommand(block.text)!.command }}</span>
+        <span v-if="extractSlashCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text)!.rest.trim() }}</span>
       </template>
       <!-- Text block: streaming uses throttled render to avoid UI freeze -->
       <div v-else-if="block.type === 'text'" v-html="getBlockHtml(bi, block)"></div>
@@ -196,6 +196,7 @@
 </template>
 
 <script setup lang="ts">
+/* eslint-disable @typescript-eslint/no-explicit-any -- defineProps runtime declarations require any for complex prop types */
 import { ref, watch, onUnmounted, computed, onMounted, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { handleToolAction, shouldAutoExpandTool } from '@/utils/renderToolDetail.ts'
@@ -232,7 +233,7 @@ const thinkingContent = useThinkingContent()
 
 // Auto-expand tools (AskUserQuestion, PermissionApproval) need input to render inline.
 // In slim format, input is absent from DB-loaded content — fetch from API automatically.
-const fetchedAutoExpandBlocks = new Set()
+const fetchedAutoExpandBlocks = new Set<string>()
 onMounted(() => {
   for (let i = 0; i < props.blocks.length; i++) {
     const block = props.blocks[i]
@@ -247,7 +248,7 @@ onMounted(() => {
     }
   }
 })
-async function fetchToolCallInputForAutoExpand(block, msgId) {
+async function fetchToolCallInputForAutoExpand(block: any, msgId: string | number) {
   try {
     let url = `/api/ai/chat/tool-call?tool_id=${encodeURIComponent(block.id)}&message_id=${encodeURIComponent(msgId)}`
     if (props.sessionId) url += `&session_id=${encodeURIComponent(props.sessionId)}`
@@ -267,19 +268,19 @@ async function fetchToolCallInputForAutoExpand(block, msgId) {
 }
 
 // Re-export utility functions with i18n context bound
-function getWarningText(block) { return getWarningTextUtil(block, t) }
-function statusClass(task) { return statusClassUtil(task) }
-function statusLabel(task) { return statusLabelUtil(task, t) }
-function statusLabelSimple(task) { return statusLabelSimpleUtil(task, t) }
-function formatTime(iso) { return formatTimeUtil(iso, locale.value, t) }
-function askQuestionSummary(input) { return askQuestionSummaryUtil(input) }
+function getWarningText(block: any) { return getWarningTextUtil(block, t) }
+function statusClass(task: any) { return statusClassUtil(task) }
+function statusLabel(task: any) { return statusLabelUtil(task, t) }
+function statusLabelSimple(task: any) { return statusLabelSimpleUtil(task, t) }
+function formatTime(iso: string) { return formatTimeUtil(iso, locale.value, t) }
+function askQuestionSummary(input: any) { return askQuestionSummaryUtil(input) }
 
-function shouldAutoExpand(block) {
+function shouldAutoExpand(block: any) {
   return shouldAutoExpandTool(block.name || '')
 }
 
 /** Handle tool call bar click: open overlay for regular tools, toggle inline for AskUserQuestion. */
-function handleToolClick(block, blockKeyStr, blockIdx) {
+function handleToolClick(block: any, blockKeyStr: string, blockIdx: number) {
   // AskUserQuestion stays inline — toggle expand state
   if (shouldAutoExpand(block)) {
     emit('toggle-tool', blockKeyStr)
@@ -302,37 +303,37 @@ function handleToolClick(block, blockKeyStr, blockIdx) {
 }
 
 const props = defineProps({
-  blocks: { type: Array, default: () => [] },
+  blocks: { type: Array as () => any[], default: () => [] },
   msgId: { type: [String, Number], default: '' },
   msgIndex: { type: Number, default: 0 },
   sessionId: { type: String, default: '' },
-  expandedTools: { type: Object, default: () => ({}) },
-  blockTasks: { type: Object, default: () => ({}) },
-  blockAskQuestions: { type: Object, default: () => ({}) },
+  expandedTools: { type: Object as () => Record<string, any>, default: () => ({}) },
+  blockTasks: { type: Object as () => Record<string, any>, default: () => ({}) },
+  blockAskQuestions: { type: Object as () => Record<string, any>, default: () => ({}) },
   streaming: { type: Boolean, default: false },
   startedAt: { type: String, default: '' },
   cancelled: { type: Boolean, default: false },
-  summary: { type: String, default: null },
-  summaryCards: { type: Object, default: null },
+  summary: { type: String as () => string | null, default: null },
+  summaryCards: { type: Object as () => Record<string, any> | null, default: null },
   showingSummary: { type: Boolean, default: false },
   // Render functions
-  renderTextBlock: { type: Function, required: true },
-  formatToolInput: { type: Function, required: true },
-  toolCallSummary: { type: Function, required: true },
-  humanizeCron: { type: Function, default: () => '' },
-  repeatLabel: { type: Function, default: () => '' },
-  truncate: { type: Function, default: (s) => s },
-  getAgentBackend: { type: Function, default: () => '' },
-  getAgentName: { type: Function, default: () => '' },
+  renderTextBlock: { type: Function as any, required: true },
+  formatToolInput: { type: Function as any, required: true },
+  toolCallSummary: { type: Function as any, required: true },
+  humanizeCron: { type: Function as any, default: () => '' },
+  repeatLabel: { type: Function as any, default: () => '' },
+  truncate: { type: Function as any, default: (s: string) => s },
+  getAgentBackend: { type: Function as any, default: () => '' },
+  getAgentName: { type: Function as any, default: () => '' },
   // Performance: static block cache from useChatRender (Problem 6)
-  staticBlockCache: { type: Object, default: null },
+  staticBlockCache: { type: Object as () => any, default: null },
   active: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session'])
 
 const elapsedSeconds = ref(0)
-let elapsedTimer = null
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
 let fallbackStartedAt = Date.now()
 
 function updateElapsed() {
@@ -369,12 +370,12 @@ const elapsedLabel = computed(() => {
 })
 
 // Key helper: use msgId if available, otherwise msgIndex
-function key(bi) {
+function key(bi: number) {
   return blockKey(props.msgId, bi)
 }
 
 // Key for blockTasks/blockAskQuestions lookup — prefix format used in useChatRender.ts
-function blockTaskKey(bi) {
+function blockTaskKey(bi: number) {
   return blockTaskKeyUtil(props.msgId, bi)
 }
 
@@ -383,7 +384,7 @@ function blockTaskKey(bi) {
 // The actual card UI is gated by blockAskQuestions[key] being truthy, so false positives
 // from this simple check are harmless — they just trigger a renderTextBlock call that
 // won't populate blockAskQuestions if the content isn't a real structured question.
-function detectAskQuestionInText(block) {
+function detectAskQuestionInText(block: any) {
   return block.text && block.text.includes('<ask-question')
 }
 
@@ -391,12 +392,12 @@ function detectAskQuestionInText(block) {
 const taskKeyIndex = computed(() => buildTaskKeyIndex(props.msgId, props.blockTasks))
 
 // Check if a block has any scheduled tasks
-function hasScheduledTasks(bi) {
+function hasScheduledTasks(bi: number) {
   return hasScheduledTasksUtil(taskKeyIndex.value, bi)
 }
 
 // Return all scheduled task keys for a block, sorted by tag index
-function scheduledTaskKeys(bi) {
+function scheduledTaskKeys(bi: number) {
   return scheduledTaskKeysUtil(taskKeyIndex.value, bi)
 }
 
@@ -410,19 +411,19 @@ const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [
 // Local map of scheduled-task data keyed by task id, fetched in real time when the
 // summary is visible with taskIDs. Unlike blockTasks (which scans text blocks), summary
 // mode has empty blocks, so we fetch directly from the /api/tasks list API.
-const summaryTaskData = reactive({})
+const summaryTaskData: Record<string, any> = reactive({})
 
 async function fetchSummaryTaskData() {
   const ids = summaryTaskIDs.value
   if (!ids || ids.length === 0) return
-  const pending = ids.filter((id) => !summaryTaskData[id]?.task && !summaryTaskData[id]?.loading && !summaryTaskData[id]?.deleted)
+  const pending = ids.filter((id: string) => !summaryTaskData[id]?.task && !summaryTaskData[id]?.loading && !summaryTaskData[id]?.deleted)
   if (pending.length === 0) return
   for (const id of pending) {
     summaryTaskData[id] = { taskId: id, task: null, loading: true, deleted: false }
   }
   try {
-    const data = await apiGet('/api/tasks')
-    const taskMap = new Map((data.tasks || []).map((t) => [t.id, t]))
+    const data: any = await apiGet('/api/tasks')
+    const taskMap = new Map((data.tasks || []).map((t: any) => [t.id, t]))
     for (const id of pending) {
       const entry = summaryTaskData[id]
       entry.loading = false
@@ -445,10 +446,10 @@ watch(summaryTaskIDs, fetchSummaryTaskData, { immediate: true })
 // or a not-yet-populated store, not an actual deletion.
 watch(
   () => store.state.tasks,
-  (tasks) => {
+  (tasks: any[]) => {
     const ids = summaryTaskIDs.value
     if (!ids || ids.length === 0) return
-    const taskMap = new Map((tasks || []).map((t) => [t.id, t]))
+    const taskMap = new Map((tasks || []).map((t: any) => [t.id, t]))
     for (const id of ids) {
       const entry = summaryTaskData[id]
       if (!entry || entry.deleted) continue
@@ -462,7 +463,7 @@ watch(
   { deep: true },
 )
 
-function handleSummaryToolClick(tool, ti) {
+function handleSummaryToolClick(tool: any, ti: number) {
   const name = tool.name || ''
   if (shouldAutoExpandTool(name)) {
     emit('toggle-tool', `summary-tool-${ti}`)
@@ -487,7 +488,7 @@ function handleSummaryToolClick(tool, ti) {
  *            falling back to block._key (key assigned at creation/parsing)
  *  text: text-${bi} (text blocks merge so index is stable)
  *  other: type-bi (fallback) */
-function stableBlockKey(bi, block) {
+function stableBlockKey(bi: number, block: any) {
   if (block.type === 'tool_use' && block.id) return block.id
   if (block.type === 'thinking') {
     if (block.think_id) return block.think_id
@@ -496,7 +497,7 @@ function stableBlockKey(bi, block) {
   return `${block.type || 'other'}-${bi}`
 }
 
-function handleThinkingClick(block, bi) {
+function handleThinkingClick(block: any, bi: number) {
   const blockKey = stableBlockKey(bi, block)
   if (isThinkingCollapsed(block, bi)) {
     // Expand inline with animation
@@ -530,20 +531,20 @@ function handleThinkingClick(block, bi) {
  *  (ACP backend), which sets `block.done = true`. When explicitly done, the
  *  spinner and inline content should hide immediately. Otherwise, fall back
  *  to the message-level `streaming` prop. */
-function isThinkingStreaming(block) {
+function isThinkingStreaming(block: any) {
   if (block.done) return false
   return props.streaming
 }
 
 /** Whether a thinking block is done (not streaming) but still expanded with inline content visible. */
-function isThinkingExpandedDone(block, bi) {
+function isThinkingExpandedDone(block: any, bi: number) {
   if (isThinkingStreaming(block)) return false
   if (collapsingThinking.value[stableBlockKey(bi, block)]) return false
   return !!thinkingExpanded.value[stableBlockKey(bi, block)]
 }
 
 /** Whether a thinking block is collapsed to a chip (done, not streaming, not expanded, not collapsing). */
-function isThinkingCollapsed(block, bi) {
+function isThinkingCollapsed(block: any, bi: number) {
   if (isThinkingStreaming(block)) return false
   if (collapsingThinking.value[stableBlockKey(bi, block)]) return false
   if (thinkingExpanded.value[stableBlockKey(bi, block)]) return false
@@ -551,23 +552,23 @@ function isThinkingCollapsed(block, bi) {
 }
 
 /** Whether the given block index is the last block in the blocks array. */
-function isLastBlock(bi) {
+function isLastBlock(bi: number) {
   return bi === (props.blocks?.length || 0) - 1
 }
 
 // ── Thinking block collapse/expand animation state ──
-const collapsingThinking = ref({})   // { [blockKey]: true } for blocks mid-collapse
-const expandingThinking = ref({})    // { [blockKey]: true } for blocks mid-expand
-const thinkingExpanded = ref({})     // { [blockKey]: true } — completed blocks that are still expanded (only collapses on manual click)
-let _collapseElKeys = new Set()       // blockKeys of thinking blocks tracked during streaming
-let _collapseTimers = []             // setTimeout IDs for collapse animation (cleaned up on unmount)
+const collapsingThinking = ref<Record<string, any>>({})   // { [blockKey]: true } for blocks mid-collapse
+const expandingThinking = ref<Record<string, any>>({})    // { [blockKey]: true } for blocks mid-expand
+const thinkingExpanded = ref<Record<string, any>>({})     // { [blockKey]: true } — completed blocks that are still expanded (only collapses on manual click)
+let _collapseElKeys = new Set<string>()       // blockKeys of thinking blocks tracked during streaming
+let _collapseTimers: ReturnType<typeof setTimeout>[] = []             // setTimeout IDs for collapse animation (cleaned up on unmount)
 
 // Animation constants
 const EXPAND_TRANSITION_MS = 300     // ms — expand animation duration
 const COLLAPSE_TRANSITION_MS = 350   // ms — collapse animation duration
 
 /** Trigger the collapse animation for a completed thinking block. */
-function triggerThinkingCollapse(blockKey) {
+function triggerThinkingCollapse(blockKey: string) {
   // Mark as collapsing — this removes thinking-content-open from the wrapper,
   // triggering the CSS grid 0fr transition. We also clear thinkingExpanded so
   // the wrapper transitions from 1fr→0fr immediately.
@@ -582,7 +583,7 @@ function triggerThinkingCollapse(blockKey) {
 }
 
 /** Track thinking block keys during streaming for collapse animation. */
-function setThinkingRef(key, el) {
+function setThinkingRef(key: string, el: any) {
   if (el) {
     _collapseElKeys.add(key)
   } else {
@@ -591,19 +592,21 @@ function setThinkingRef(key, el) {
 }
 
 /** Click inside expanded tool-detail: dispatch to tool action handlers first, then fall through to generic behavior. */
-function handleToolDetailClick(event) {
+function handleToolDetailClick(event: Event) {
   // Try tool-specific action handler first (via data-tool-name on the .tool-detail container)
-  const toolName = event.currentTarget.dataset?.toolName
-  if (toolName && handleToolAction(toolName, event, emit)) return
+  const el = event.currentTarget as HTMLElement | null
+  const toolName = el?.dataset?.toolName
+  if (toolName && handleToolAction(toolName, event as any, emit as any)) return
   // Allow file-open buttons, file-path spans, commit-hash elements, and table rows to bubble
-  if (event.target.closest('.chat-file-open-btn') || event.target.closest('.chat-file-path') || event.target.closest('a[href]') || event.target.closest('.chat-commit-hash, .chat-commit-open-btn') || event.target.closest('.chat-worktree-btn') || event.target.closest('tbody tr[data-row-idx]')) {
+  const target = event.target as HTMLElement
+  if (target.closest('.chat-file-open-btn') || target.closest('.chat-file-path') || target.closest('a[href]') || target.closest('.chat-commit-hash, .chat-commit-open-btn') || target.closest('.chat-worktree-btn') || target.closest('tbody tr[data-row-idx]')) {
     return
   }
   event.stopPropagation()
 }
 
 // ── Throttled streaming render ──
-const blockHtmlCache = ref({})
+const blockHtmlCache = ref<Record<string, any>>({})
 let _throttleTimer: ReturnType<typeof setTimeout> | null = null
 let _throttlePending = false
 const THROTTLE_MS = 300
@@ -621,7 +624,7 @@ function flushBlockHtml() {
   // Schedule the actual work in the next rAF to coalesce with
   // other streaming updates (debouncedRender, scrollTick).
   _blockFlushScheduler.schedule('flush', () => {
-    const newCache = {}
+    const newCache: Record<string, string> = {}
     for (let i = 0; i < (props.blocks?.length || 0); i++) {
       const block = props.blocks[i]
       const key = stableBlockKey(i, block)
@@ -641,7 +644,7 @@ function flushBlockHtml() {
   })
 }
 
-function getBlockHtml(bi, block) {
+function getBlockHtml(bi: number, block: any) {
   if (!props.streaming) {
     // Non-streaming: full pipeline with cache
     if (props.staticBlockCache) {
@@ -687,7 +690,7 @@ function getBlockHtml(bi, block) {
 
 /** Get HTML for thinking block content. Live blocks render text inline;
  *  slim blocks (think_id) render from the lazy-load cache/loading/error state. */
-function getThinkingHtml(bi, block) {
+function getThinkingHtml(bi: number, block: any) {
   if (block.text) {
     return getThinkingTextHtml(block.text, bi, block)
   }
@@ -703,7 +706,7 @@ function getThinkingHtml(bi, block) {
 }
 
 /** Existing throttled streaming/inline render path (unchanged behavior). */
-function getThinkingTextHtml(text, bi, block) {
+function getThinkingTextHtml(text: string, bi: number, block: any) {
   if (!props.streaming || !props.active) {
     return renderMarkdownHtml(text)
   }
@@ -744,8 +747,8 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
 // Watch for thinking blocks that become "done" mid-stream (via thinking_done SSE event).
 // Only the block currently being streamed stays expanded — when its output
 // completes it collapses immediately. Blocks the user manually expanded are kept open.
-let _prevDoneKeys = new Set()
-watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => stableBlockKey(props.blocks.indexOf(b), b)), (doneKeys) => {
+let _prevDoneKeys = new Set<string>()
+watch(() => props.blocks.filter((b: any) => b.type === 'thinking' && b.done).map((b: any) => stableBlockKey(props.blocks.indexOf(b), b)), (doneKeys: string[]) => {
   if (!props.streaming) {
     // Not streaming: nothing to collapse live; remember the done set for later.
     _prevDoneKeys = new Set(doneKeys)
