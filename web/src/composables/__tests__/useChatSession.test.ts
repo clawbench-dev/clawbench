@@ -2983,6 +2983,79 @@ describe('createSession', () => {
     // inputDisabled should be reset
     expect(inputDisabled.value).toBe(false)
   })
+
+  it('clears messages immediately before async POST to prevent stale messages from recovery path', async () => {
+    // Simulate: previous session has messages, createSession clears them
+    // synchronously before the async POST so that concurrent loadHistory
+    // (recovery path) cannot re-populate stale messages.
+    let postResolve!: (v: any) => void
+    const postPromise = new Promise(resolve => { postResolve = resolve })
+
+    globalThis.fetch = vi.fn()
+      .mockImplementationOnce(() => postPromise) // POST /api/ai/sessions — held
+      .mockResolvedValueOnce({ // GET /api/ai/chat?session_id=new-s1
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'new-s1',
+          sessionTitle: 'New',
+          messages: [],
+          total: 0,
+          backend: 'codebuddy',
+          agentId: 'agent1',
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({ // GET /api/ai/sessions
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 1 }),
+      })
+
+    const messages = ref([{ id: 1, role: 'user', content: 'old message' }] as any[])
+    const currentSessionId = ref('old-s1')
+    const options = {
+      currentSessionId,
+      messages,
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // Start createSession — it will block on the POST
+    const createPromise = session.createSession()
+
+    // Before the POST resolves, messages should already be cleared
+    // (clearSessionIdentity and messages.value = [] run synchronously before await)
+    expect(messages.value).toEqual([])
+
+    // Now resolve the POST
+    postResolve({
+      ok: true,
+      json: () => Promise.resolve({
+        ok: true,
+        sessionId: 'new-s1',
+        title: 'New',
+        backend: 'codebuddy',
+        agentId: 'agent1',
+        sessionCount: 1,
+      }),
+    })
+
+    await createPromise
+
+    // After completion, session should be the new one with empty messages
+    expect(currentSessionId.value).toBe('new-s1')
+    expect(messages.value).toEqual([])
+  })
 })
 
 // ───────────────────────────────────────────────────────────

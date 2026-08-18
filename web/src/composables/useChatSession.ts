@@ -662,6 +662,17 @@ export function useChatSession(options: UseChatSessionOptions) {
     // we need to restore it to avoid disabling the delete button.
     const prevSessionId = currentSessionId.value
     clearSessionIdentity()
+    // Bump loadHistorySeq to invalidate any in-flight loadHistory (e.g.
+    // polling) so its recovery path cannot re-populate stale messages while
+    // currentSessionId is empty. This mirrors switchSession's ++loadHistorySeq.
+    ++loadHistorySeq
+    // Clear messages immediately so the recovery path in any concurrent
+    // loadHistory (e.g. from the active watcher) cannot re-populate stale
+    // messages from the previous session via the cookie-based fallback.
+    // switchSession also clears messages, but it runs after the async POST —
+    // the gap between clearSessionIdentity('') and switchSession is the
+    // window where the recovery path can load old messages.
+    messages.value = []
     try {
       const body = agentId ? { agentId } : {}
       const resp = await fetch('/api/ai/sessions', {
@@ -712,6 +723,12 @@ export function useChatSession(options: UseChatSessionOptions) {
       // after a rare TOCTOU race (pre-check passed but backend still 409'd).
       if (prevSessionId && !currentSessionId.value) {
         currentSessionId.value = prevSessionId
+      }
+      // Reload messages for the restored session — messages were cleared
+      // above before the async POST, so we need to re-fetch them.
+      // showOverlay=false: switching overlay was already reset above.
+      if (currentSessionId.value) {
+        loadHistory(false, false, false).catch(() => {})
       }
     }
   }
