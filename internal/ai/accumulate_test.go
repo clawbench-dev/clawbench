@@ -775,5 +775,3 @@ func TestMergeConsecutiveThinkingBlocks_TwoBlocks(t *testing.T) {
 	assert.Len(t, result, 1)
 	assert.Equal(t, "ab", result[0].Text)
 }
-
-
