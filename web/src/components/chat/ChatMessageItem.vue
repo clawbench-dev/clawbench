@@ -822,6 +822,7 @@ function handleCopyMessage() {
 }
 
 .chat-message.user code {
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
     padding: 2px 6px;
     font-size: 13px;
     background: rgba(0, 0, 0, 0.15);
@@ -976,6 +977,7 @@ function handleCopyMessage() {
 }
 
 .chat-message.assistant code {
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
     padding: 2px 6px;
     font-size: 13px;
 }
