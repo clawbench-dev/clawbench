@@ -167,6 +167,11 @@ vi.mock('@/utils/fileManager', () => ({
     return `${s} B`
   },
   THUMBABLE_EXTS: [],
+  numberedName: (baseName: string, index: number) => {
+    const lastDot = baseName.lastIndexOf('.')
+    if (lastDot <= 0) return `${baseName}_${index}`
+    return `${baseName.slice(0, lastDot)}_${index}${baseName.slice(lastDot)}`
+  },
   createMultiSelect: () => {
     const state = reactive({ active: false, selected: new Set() })
     return {
@@ -1869,6 +1874,30 @@ describe('FileManagerContent — clipboard paste (doPaste)', () => {
     await wrapper.vm.doPaste()
 
     expect(wrapper.emitted('refresh')).toBeFalsy()
+  })
+
+  it('auto-numbers the destination name on 409 instead of prompting', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409, text: async () => '' })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountContent({ currentDir: '' })
+    await nextTick()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await wrapper.vm.doCopy()
+    await nextTick()
+
+    await wrapper.vm.doPaste()
+    await nextTick()
+
+    // First call: original name. Second call: auto-numbered name.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body)
+    expect(secondBody.dest).toBe('test_1.ts')
+    // No naming dialog should be invoked
+    expect(mockDialogPrompt).not.toHaveBeenCalled()
+    expect(wrapper.emitted('refresh')).toBeTruthy()
   })
 })
 
