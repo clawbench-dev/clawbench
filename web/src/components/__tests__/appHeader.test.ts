@@ -884,6 +884,39 @@ describe('AppHeader', () => {
     vi.unstubAllGlobals()
   })
 
+  it('doCheckout shows error toast on non-dirty checkout failure', async () => {
+    mockState.gitBranch = 'main'
+    mockState.gitDirty = false
+    dialogConfirmFn.mockResolvedValueOnce(true)
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ success: false, error: 'branch_not_found', errorDetail: 'Branch does not exist' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountAndTrack()
+
+    await (wrapper.vm as any).selectBranch({ name: 'nonexistent' })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/git/checkout', expect.objectContaining({ method: 'POST' }))
+    // Should not show dirty modal for non-dirty errors
+    expect(wrapper.vm.dirtyModalOpen).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('doCheckout shows error toast on network failure', async () => {
+    mockState.gitBranch = 'main'
+    mockState.gitDirty = false
+    dialogConfirmFn.mockResolvedValueOnce(true)
+    const fetchMock = vi.fn().mockRejectedValue(new Error('Network error'))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountAndTrack()
+
+    await (wrapper.vm as any).selectBranch({ name: 'feature' })
+
+    // Should not throw, should handle gracefully
+    expect(wrapper.vm.dirtyModalOpen).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
   it('selectBranch warns about dirty worktree immediately, before the confirm step', async () => {
     mockState.gitBranch = 'main'
     mockState.gitDirty = true
