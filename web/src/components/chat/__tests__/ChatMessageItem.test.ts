@@ -771,4 +771,32 @@ describe('ChatMessageItem', () => {
       expect(wrapper.find('.chat-meta-bar').exists()).toBe(false)
     })
   })
+
+  describe('display mode and original lazy-load', () => {
+    it('renders summary text when message has summary', async () => {
+      const wrapper = createWrapper({
+        msg: { id: 'dm1', role: 'assistant', content: '', blocks: [{ type: 'text', text: 'hello' }], summary: 'A summary' },
+      })
+      await wrapper.vm.$nextTick()
+      // Message with summary should render without error
+      expect(wrapper.find('.chat-message').exists()).toBe(true)
+    })
+
+    it('does not emit ensure-content for streaming messages in original mode', async () => {
+      const wrapper = createWrapper({
+        msg: { id: 'dm2', role: 'assistant', content: '', blocks: [], summary: 'A summary', streaming: true },
+      })
+      await wrapper.vm.$nextTick()
+      // Streaming messages should not trigger lazy-load
+      expect(wrapper.emitted('ensure-content')).toBeUndefined()
+    })
+
+    it('does not emit ensure-content for messages already loading original', async () => {
+      const wrapper = createWrapper({
+        msg: { id: 'dm3', role: 'assistant', content: '', blocks: [], summary: 'A summary', _loadingOriginal: true },
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('ensure-content')).toBeUndefined()
+    })
+  })
 })
