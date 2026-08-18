@@ -147,6 +147,13 @@ export function useChatSession(options: UseChatSessionOptions) {
     // ── Message replacement ──
     const prevCount = messages.value.length
     const newCount = rawMsgs.length
+    // Diagnostic: log when messages are being set for a session (helps debug
+    // stale-messages-in-new-session issues). Only logs when the message count
+    // changes or when a non-empty list replaces an empty one.
+    if (newCount > 0 || prevCount > 0) {
+      const sid = (sessionData.sessionId as string) || '?'
+      appLog.d(TAG, `syncSessionState: ${prevCount}→${newCount} msgs, sid=${sid.slice(0,8)}, skip=${skipIfUnchanged}, snap=${newSnapshot.slice(0,20)}`)
+    }
     const sameCore = prevCount === newCount && prevCount > 0 && rawMsgs.slice(0, -1).every((m: Record<string, unknown>, i: number) => m.id === messages.value[i]?.id)
     if (!sameCore) {
       expandedTools.value = {}
