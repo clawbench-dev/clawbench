@@ -3,8 +3,6 @@ package ai
 
 import (
 	"encoding/json"
-	"strings"
-	"unicode/utf8"
 
 	"clawbench/internal/model"
 )
@@ -45,83 +43,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 		if idx, found := findLastBlockOfType("text"); found {
 			(*blocks)[idx].Text += event.Content
 		} else {
-			// No text block found (separated by tool_use boundary).
-			// Check if this is a replay: ACP sub-agents re-emit complete paragraph
-			// text after tool calls complete. Search backward across tool_use
-			// boundaries for a text block whose content is a prefix of this event,
-			// OR where this event is a prefix of that block.
-			//
-			// NOTE (CodeBuddy-specific): the "this event is a prefix of the block"
-			// branch exists because CodeBuddy (via ACP acp-stdio) streams a multi-
-			// sentence paragraph as fine-grained deltas into one text block, then
-			// after a tool call re-emits a single finalized sentence that is a
-			// PREFIX of that accumulated block. Without this branch the re-emitted
-			// sentence becomes a duplicate text block (observed on codebuddy only —
-			// other backends replay either equal or superset paragraphs, which the
-			// existing branch already handled).
-			//
-			// To avoid false positives from unrelated paragraphs sharing a long
-			// prefix, we require the matched block to be immediately followed by
-			// a tool_use block (the ACP replay pattern is: text → tool_use → replay).
-			replayIdx := -1
-			for i := len(*blocks) - 1; i >= 0; i-- {
-				if (*blocks)[i].Type == "text" {
-					existing := (*blocks)[i].Text
-					// Require sufficient length to avoid false matches on short
-					// common prefixes like "Now". Use rune count for CJK safety:
-					// 10 runes ≈ 10 ASCII chars or ~5 CJK characters. The
-					// existing branch implies event is at least as long as
-					// existing (so > 10); the partial branch needs its own guard.
-					eventLen := utf8.RuneCountInString(event.Content)
-					if utf8.RuneCountInString(existing) > 10 &&
-						(strings.HasPrefix(event.Content, existing) ||
-							(eventLen > 10 && strings.HasPrefix(existing, event.Content))) {
-						// Only match if this text block is immediately followed
-						// by a tool_use block (the replay pattern).
-						if i+1 < len(*blocks) && (*blocks)[i+1].Type == "tool_use" {
-							replayIdx = i
-						}
-						break
-					}
-				}
-			}
-			if replayIdx >= 0 {
-				existing := (*blocks)[replayIdx].Text
-				if event.Content == existing || strings.HasPrefix(existing, event.Content) {
-					// Exact replay or partial re-emission: the content is already
-					// shown in the existing block. Skip — don't create a new block.
-				} else {
-					// Accumulated replay (extends the original): replace original
-					// and remove intermediate text blocks whose content is
-					// contained within the replay text.
-					(*blocks)[replayIdx].Text = event.Content
-					newBlocks := make([]model.ContentBlock, 0, len(*blocks))
-					for i := 0; i <= replayIdx; i++ {
-						newBlocks = append(newBlocks, (*blocks)[i])
-					}
-					// Scan forward: keep non-text blocks, only skip text blocks
-					// whose content appears in the replay text after the original.
-					// Use strings.Index to handle minor whitespace differences
-					// (e.g., the original ends with "." but the replay has ". "
-					// before the next paragraph).
-					replayRemainder := event.Content[len(existing):]
-					for i := replayIdx + 1; i < len(*blocks); i++ {
-						if (*blocks)[i].Type == "text" {
-							candidate := (*blocks)[i].Text
-							idx := strings.Index(replayRemainder, candidate)
-							if idx >= 0 {
-								// Found in replay — skip this block and advance
-								replayRemainder = replayRemainder[idx+len(candidate):]
-								continue
-							}
-						}
-						newBlocks = append(newBlocks, (*blocks)[i])
-					}
-					*blocks = newBlocks
-				}
-			} else {
-				*blocks = append(*blocks, model.ContentBlock{Type: "text", Text: event.Content})
-			}
+			*blocks = append(*blocks, model.ContentBlock{Type: "text", Text: event.Content})
 		}
 	case "thinking":
 		// Coalesce incremental thinking deltas into the most recent thinking block.
