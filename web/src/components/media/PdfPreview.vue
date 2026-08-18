@@ -164,8 +164,17 @@ async function loadPdf() {
   renderedPages.clear()
 
   try {
-    const pdfjsLib = await import('pdfjs-dist')
-    const workerUrl = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+    // Use pdfjs-dist's *legacy* builds which bundle core-js polyfills for
+    // older engines (mobile WebViews, Chrome < 133). The modern build hard
+    // requires Uint8Array.prototype.toHex (Chromium 133+, used in worker for
+    // PDF fingerprints), URL.parse (126+) and Promise.try (134+). The worker
+    // must come from the same legacy tree or the handshake dies mid-parse.
+    // Cost: worker grows ~50KB (core-js). On new engines, polyfills are no-ops.
+    // 改用 legacy 构建（内嵌 core-js），兼容旧引擎。现代构建硬依赖
+    // toHex/URL.parse/Promise.try，旧引擎上报错或永久转圈。主模块与 worker
+    // 必须来自同一 legacy 树，否则握手中途失败。代价：worker +50KB。
+    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const workerUrl = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')
     pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl.default || workerUrl
 
     const loadingTask = pdfjsLib.getDocument(mediaUrl.value)

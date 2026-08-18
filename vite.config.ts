@@ -212,7 +212,10 @@ export default defineConfig({
       output: {
         manualChunks: {
           'vendor-vue': ['vue', 'vue-i18n'],
-          'vendor-pdf': ['pdfjs-dist'],
+          // Legacy subpath must be in the same chunk so the library stays
+          // in one cacheable, separately-testable chunk.
+          // legacy 子路径须落入同一 chunk，保持可缓存、可独立测试。
+          'vendor-pdf': ['pdfjs-dist', 'pdfjs-dist/legacy/build/pdf.mjs'],
           'vendor-diff': ['diff'],
           'vendor-purify': ['dompurify'],
           'vendor-redoc': ['redoc'],

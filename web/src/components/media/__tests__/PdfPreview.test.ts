@@ -15,12 +15,12 @@ vi.mock('@/utils/download.ts', () => ({
 
 // Mock pdfjs-dist. getDocument's return value is set per-test so existing
 // tests (which never resolve a document) keep failing over to the error path.
-vi.mock('pdfjs-dist', () => ({
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
   GlobalWorkerOptions: {},
   getDocument: vi.fn(),
 }))
 
-vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({
+vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({
   default: 'mock-worker-url',
 }))
 
@@ -131,7 +131,7 @@ describe('PdfPreview', () => {
       destroy: vi.fn(),
     }
 
-    const pdfjs = await import('pdfjs-dist')
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
     ;(pdfjs.getDocument as any).mockReturnValue({ promise: Promise.resolve(fakeDoc) })
 
     const wrapper = mountPdf()
