@@ -63,6 +63,8 @@ const props = defineProps({
   msgId: { type: [String, Number], default: '' },
   /** Write/Edit tool call IDs for this file (from summaryCards when blocks are stripped). */
   toolIds: { type: Array, default: () => [] },
+  /** Session ID — optional fallback for tool-call API when tool_id + message_id lookup fails. */
+  sessionId: { type: String, default: '' },
   formatToolInput: { type: Function, required: true },
 })
 
@@ -160,7 +162,9 @@ async function fetchDiff(item) {
     return
   }
   try {
-    const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(item.toolId)}&message_id=${encodeURIComponent(props.msgId)}`)
+    let url = `/api/ai/chat/tool-call?tool_id=${encodeURIComponent(item.toolId)}&message_id=${encodeURIComponent(props.msgId)}`
+    if (props.sessionId) url += `&session_id=${encodeURIComponent(props.sessionId)}`
+    const resp = await fetch(url)
     if (!resp.ok) throw new Error('tool-call fetch failed')
     const data = await resp.json()
     let input

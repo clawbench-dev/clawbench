@@ -6,7 +6,7 @@ import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 const mockRegisterBackHandler = vi.fn(() => vi.fn())
 
 vi.mock('@/composables/useBackHandler', () => ({
-  registerBackHandler: (...args: any[]) => mockRegisterBackHandler(...args),
+  registerBackHandler: (arg: any) => mockRegisterBackHandler(arg),
   PRIORITY_OVERLAY: 1000,
 }))
 

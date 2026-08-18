@@ -120,6 +120,7 @@
       :blocks="msg.blocks || []"
       :msg-id="msg.id"
       :tool-ids="selectedFile?.toolIds || []"
+      :session-id="sessionId"
       :format-tool-input="formatToolInput"
       @close="fileDiffsDrawer.close()"
       @file-open="handleOpenFilePayload"
@@ -254,7 +255,7 @@ const chatRender = inject('chatRender', {})
 const chatSession = inject('chatSession', {})
 
 const { renderTextBlock, toolCallSummary, formatToolInput, humanizeCron, repeatLabel, truncate, hasImagesInContent } = chatRender
-const { getAgentBackend, getAgentName } = chatSession
+const { getAgentBackend, getAgentName, sessionId } = chatSession
 
 // File changes extraction (Write → created, Edit → modified).
 // Uses summaryCards as fallback when blocks are empty (summary-only view).

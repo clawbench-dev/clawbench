@@ -555,7 +555,7 @@ provide('chatRender', {
   truncate: render.truncate,
   hasImagesInContent: render.hasImagesInContent,
 })
-provide('chatSession', { getAgentBackend, getAgentName })
+provide('chatSession', { getAgentBackend, getAgentName, sessionId: identity.currentSessionId })
 // openFilePath (via open-file-overlay / open-file-manager events) already routes to
 // the correct tab (file → view, dir → browse), so this is a no-op to avoid overriding.
 provide('chatUI', { navigateToFileViewer: () => {} })
