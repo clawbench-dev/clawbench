@@ -11,7 +11,8 @@ vi.mock('@napi-rs/canvas', () => new Proxy({}, {
 
 // Regression test for the PDF preview on older engines (mobile WebViews,
 // Chromium < 133).
-// 旧引擎（手机 WebView、Chromium < 133）上 PDF 预览的回归测试。 pdfjs-dist's modern build hard-requires
+// 旧引擎（手机 WebView、Chromium < 133）上 PDF 预览的回归测试。
+// pdfjs-dist's modern build hard-requires
 // Uint8Array.prototype.toHex (worker-side, used for PDF fingerprints),
 // URL.parse and Promise.try. PdfPreview therefore imports the *legacy*
 // builds, which bundle core-js polyfills. This test simulates an old engine

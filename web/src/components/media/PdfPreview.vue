@@ -164,26 +164,15 @@ async function loadPdf() {
   renderedPages.clear()
 
   try {
-    // Use pdfjs-dist's *legacy* builds, which bundle core-js polyfills for
-    // older engines (mobile WebViews, older Chrome). The modern build hard
-    // requires very new APIs on both the main thread and inside the worker:
-    // URL.parse (Chromium 126+), Promise.try (134+) and — fatally for
-    // parsing, because the worker computes PDF fingerprints with it —
-    // Uint8Array.prototype.toHex (Chromium 133+ / Node 22+). On engines
-    // below that, opening a PDF throws "URL.parse is not a function" or
-    // hangs forever with the spinner ("a.toHex is not a function" inside
-    // the worker). The worker must come from the same legacy tree, or the
-    // handshake still dies mid-parse. Cost: worker grows ~50KB (core-js).
-    //
-    // 改用 pdfjs-dist 的 *legacy* 构建（内嵌 core-js polyfill，兼容旧引擎：
-    // 手机 WebView、旧版 Chrome）。现代构建在主线程和 worker 两侧都硬依赖极新
-    // 的 API：URL.parse（Chromium 126+）、Promise.try（134+），以及最致命的
-    // Uint8Array.prototype.toHex（Chromium 133+ / Node 22+）——worker 计算 PDF
-    // 指纹（calculateMD5(...).toHex()）必经此路径。低于上述版本的引擎上，打开
-    // PDF 要么抛 "URL.parse is not a function"，要么永久转圈（worker 内
-    // "a.toHex is not a function"）。主线程模块与 worker 必须来自同一 legacy
-    // 树，混用会导致握手中途失败。代价：worker 增大约 50KB（core-js）。
-    // 在新引擎上 polyfill 经特性检测为无操作，行为零变化。
+    // Use pdfjs-dist's *legacy* builds which bundle core-js polyfills for
+    // older engines (mobile WebViews, Chrome < 133). The modern build hard
+    // requires Uint8Array.prototype.toHex (Chromium 133+, used in worker for
+    // PDF fingerprints), URL.parse (126+) and Promise.try (134+). The worker
+    // must come from the same legacy tree or the handshake dies mid-parse.
+    // Cost: worker grows ~50KB (core-js). On new engines, polyfills are no-ops.
+    // 改用 legacy 构建（内嵌 core-js），兼容旧引擎。现代构建硬依赖
+    // toHex/URL.parse/Promise.try，旧引擎上报错或永久转圈。主模块与 worker
+    // 必须来自同一 legacy 树，否则握手中途失败。代价：worker +50KB。
     const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
     const workerUrl = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')
     pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl.default || workerUrl
