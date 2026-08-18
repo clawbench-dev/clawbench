@@ -852,7 +852,6 @@ export default {
       fileName: 'Enter file name:',
       folderName: 'Enter folder name:',
       newName: 'Enter new name:',
-      pasteNewName: '"{name}" already exists. Enter a new name:',
     },
     viewer: {
       fileTooLarge: 'File too large to preview in browser',

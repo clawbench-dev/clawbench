@@ -853,7 +853,6 @@ export default {
       fileName: '输入文件名：',
       folderName: '输入文件夹名：',
       newName: '输入新名称：',
-      pasteNewName: '"{name}" 已存在，请输入新名称：',
     },
     viewer: {
       fileTooLarge: '文件过大，无法在浏览器中预览',
