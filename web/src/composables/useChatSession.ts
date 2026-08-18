@@ -152,7 +152,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     // changes or when a non-empty list replaces an empty one.
     if (newCount > 0 || prevCount > 0) {
       const sid = (sessionData.sessionId as string) || '?'
-      appLog.d(TAG, `syncSessionState: ${prevCount}→${newCount} msgs, sid=${sid.slice(0,8)}, skip=${skipIfUnchanged}, snap=${newSnapshot.slice(0,20)}`)
+      const curSid = currentSessionId.value || '?'
+      appLog.d(TAG, `syncSessionState: ${prevCount}→${newCount} msgs, curSid=${curSid.slice(0,12)}, respSid=${sid.slice(0,12)}, skip=${skipIfUnchanged}`)
     }
     const sameCore = prevCount === newCount && prevCount > 0 && rawMsgs.slice(0, -1).every((m: Record<string, unknown>, i: number) => m.id === messages.value[i]?.id)
     if (!sameCore) {
@@ -668,6 +669,13 @@ export function useChatSession(options: UseChatSessionOptions) {
     // race where another client created a session between pre-check and POST),
     // we need to restore it to avoid disabling the delete button.
     const prevSessionId = currentSessionId.value
+    // Mirror switchSession's synchronous pre-flight cleanup so the async POST
+    // gap doesn't leak stale state (stream events, snapshots, blocks).
+    onDisconnectStream()
+    lastMessageSnapshot = ''
+    expandedTools.value = {}
+    Object.keys(blockTasks).forEach(k => delete blockTasks[k])
+    Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
     clearSessionIdentity()
     // Bump loadHistorySeq to invalidate any in-flight loadHistory (e.g.
     // polling) so its recovery path cannot re-populate stale messages while
@@ -735,7 +743,9 @@ export function useChatSession(options: UseChatSessionOptions) {
       // above before the async POST, so we need to re-fetch them.
       // showOverlay=false: switching overlay was already reset above.
       if (currentSessionId.value) {
-        loadHistory(false, false, false).catch(() => {})
+        loadHistory(false, false, false).catch((e) => {
+          appLog.w(TAG, 'Failed to reload messages after createSession error:', e)
+        })
       }
     }
   }
