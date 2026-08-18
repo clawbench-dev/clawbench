@@ -633,7 +633,7 @@ function flushBlockHtml() {
         newCache[key] = props.renderTextBlock(block.text, props.msgId, i, true)
       } else if (block.type === 'thinking') {
         // Thinking blocks use renderMarkdownHtml during streaming
-        newCache[`t-${key}`] = renderMarkdownHtml(block.text)
+        newCache[`t-${key}`] = renderMarkdownHtml(block.text, { skipKatex: true })
       }
     }
     blockHtmlCache.value = newCache
@@ -710,12 +710,14 @@ function getThinkingTextHtml(text: string, bi: number, block: any) {
   if (!props.streaming || !props.active) {
     return renderMarkdownHtml(text)
   }
+  // Streaming: skip KaTeX (formulas may be incomplete)
+  const streamingOpts = { skipKatex: true } as const
   const cacheKey = `t-${stableBlockKey(bi, block)}`
   // Streaming: deferred rendering with throttling (same pattern as text blocks)
   if (blockHtmlCache.value[cacheKey] !== undefined) {
     if (!_throttleTimer) {
       const newCache = { ...blockHtmlCache.value }
-      newCache[cacheKey] = renderMarkdownHtml(text)
+      newCache[cacheKey] = renderMarkdownHtml(text, streamingOpts)
       blockHtmlCache.value = newCache
       _throttleTimer = setTimeout(flushBlockHtml, THROTTLE_MS)
     } else {
@@ -723,7 +725,7 @@ function getThinkingTextHtml(text: string, bi: number, block: any) {
     }
     return blockHtmlCache.value[cacheKey]
   }
-  const html = renderMarkdownHtml(text)
+  const html = renderMarkdownHtml(text, streamingOpts)
   blockHtmlCache.value = { ...blockHtmlCache.value, [cacheKey]: html }
   return html
 }
