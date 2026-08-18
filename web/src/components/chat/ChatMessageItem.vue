@@ -255,7 +255,8 @@ const chatRender = inject('chatRender', {})
 const chatSession = inject('chatSession', {})
 
 const { renderTextBlock, toolCallSummary, formatToolInput, humanizeCron, repeatLabel, truncate, hasImagesInContent } = chatRender
-const { getAgentBackend, getAgentName, sessionId } = chatSession
+const { getAgentBackend, getAgentName } = chatSession
+const sessionId = computed(() => chatSession.sessionId?.() || '')
 
 // File changes extraction (Write → created, Edit → modified).
 // Uses summaryCards as fallback when blocks are empty (summary-only view).

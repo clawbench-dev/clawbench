@@ -154,6 +154,42 @@ describe('FileDiffsDrawer', () => {
     expect(wrapper.findAll('.fd-diff-item').length).toBe(2)
   })
 
+  it('appends session_id to fetch URL when sessionId prop is provided', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ name: 'Edit', input: { file_path: '/a.ts', old_string: 'old', new_string: 'new' }, done: true, status: 'success', output: '' }),
+    }))
+    const wrapper = mountDrawer({
+      filePath: '/a.ts',
+      toolName: 'Edit',
+      blocks: [],
+      toolIds: ['e1'],
+      msgId: 7,
+      sessionId: 'sess-abc',
+    })
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(global.fetch).toHaveBeenCalledWith('/api/ai/chat/tool-call?tool_id=e1&message_id=7&session_id=sess-abc')
+  })
+
+  it('omits session_id from fetch URL when sessionId prop is empty', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ name: 'Edit', input: { file_path: '/a.ts', old_string: 'old', new_string: 'new' }, done: true, status: 'success', output: '' }),
+    }))
+    const wrapper = mountDrawer({
+      filePath: '/a.ts',
+      toolName: 'Edit',
+      blocks: [],
+      toolIds: ['e1'],
+      msgId: 7,
+      sessionId: '',
+    })
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(global.fetch).toHaveBeenCalledWith('/api/ai/chat/tool-call?tool_id=e1&message_id=7')
+  })
+
   it('shows an error state and retries when a fetch fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
     const wrapper = mountDrawer({ filePath: '/a.ts', toolName: 'Edit', blocks: [], toolIds: ['e1'], msgId: 7 })
