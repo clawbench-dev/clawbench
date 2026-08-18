@@ -1,5 +1,6 @@
 import { onUnmounted, watch, type Ref } from 'vue'
 import { appLog } from '@/utils/appLog'
+import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
@@ -56,7 +57,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   } = options
 
   let streamTimeout: ReturnType<typeof setTimeout> | null = null
-  let renderTimer: number | null = null
+  const renderScheduler = new StreamFrameScheduler()
   // Track tool_use timeout timers so we can clean them up
   const toolUseTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map()
   // Counter for assigning stable _key to thinking blocks during streaming
@@ -80,18 +81,15 @@ export function useChatStream(options: UseChatStreamOptions) {
   const { onEvent, sendWsMessage, connected } = useGlobalEvents()
 
   function debouncedRender() {
-    if (renderTimer) clearTimeout(renderTimer)
+    renderScheduler.cancel('render')
+    renderScheduler.cancel('scroll')
     // Panel not visible: skip rendering and scrolling — data still accumulates,
     // rendering will catch up when the tab becomes active (loadHistory on re-activate)
     if (!isOpen.value) {
-      renderTimer = null
       return
     }
-    renderTimer = window.setTimeout(() => {
-      onRenderNeeded()
-      onScrollBottom()
-      renderTimer = null
-    }, 80)
+    renderScheduler.schedule('render', onRenderNeeded)
+    renderScheduler.schedule('scroll', () => onScrollBottom())
   }
 
   function hasPendingPermissionApproval(): boolean {
@@ -722,6 +720,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   onUnmounted(() => {
     disconnectStream()
     clearToolUseTimeouts()
+    renderScheduler.cancelAll()
     unsubscribeFromWs()
     stopConnectedWatch()
     window.removeEventListener('online', handleOnline)

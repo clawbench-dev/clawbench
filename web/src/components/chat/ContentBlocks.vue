@@ -206,6 +206,7 @@ import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
+import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
 import {
   isSevereWarning,
@@ -603,9 +604,10 @@ function handleToolDetailClick(event) {
 
 // ── Throttled streaming render ──
 const blockHtmlCache = ref({})
-let _throttleTimer = null
+let _throttleTimer: ReturnType<typeof setTimeout> | null = null
 let _throttlePending = false
 const THROTTLE_MS = 300
+const _blockFlushScheduler = new StreamFrameScheduler()
 
 function flushBlockHtml() {
   _throttleTimer = null
@@ -616,23 +618,27 @@ function flushBlockHtml() {
     return
   }
   _throttlePending = false
-  const newCache = {}
-  for (let i = 0; i < (props.blocks?.length || 0); i++) {
-    const block = props.blocks[i]
-    const key = stableBlockKey(i, block)
-    if (block.type === 'text') {
-      // streaming=true: deferred rendering — pure markdown only
-      newCache[key] = props.renderTextBlock(block.text, props.msgId, i, true)
-    } else if (block.type === 'thinking') {
-      // Thinking blocks use renderMarkdownHtml during streaming
-      newCache[`t-${key}`] = renderMarkdownHtml(block.text)
+  // Schedule the actual work in the next rAF to coalesce with
+  // other streaming updates (debouncedRender, scrollTick).
+  _blockFlushScheduler.schedule('flush', () => {
+    const newCache = {}
+    for (let i = 0; i < (props.blocks?.length || 0); i++) {
+      const block = props.blocks[i]
+      const key = stableBlockKey(i, block)
+      if (block.type === 'text') {
+        // streaming=true: deferred rendering — pure markdown only
+        newCache[key] = props.renderTextBlock(block.text, props.msgId, i, true)
+      } else if (block.type === 'thinking') {
+        // Thinking blocks use renderMarkdownHtml during streaming
+        newCache[`t-${key}`] = renderMarkdownHtml(block.text)
+      }
     }
-  }
-  blockHtmlCache.value = newCache
-  // Throttled render flush can change content height (paragraph wrapping, code blocks, etc.)
-  // without a corresponding onScrollBottom call from the stream handler. Notify the parent
-  // so it can re-sync the scroll position if the user is at the bottom.
-  emit('render-flush')
+    blockHtmlCache.value = newCache
+    // Throttled render flush can change content height (paragraph wrapping, code blocks, etc.)
+    // without a corresponding onScrollBottom call from the stream handler. Notify the parent
+    // so it can re-sync the scroll position if the user is at the bottom.
+    emit('render-flush')
+  })
 }
 
 function getBlockHtml(bi, block) {
@@ -723,6 +729,7 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
   if (wasStreaming && !streaming) {
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
+    _blockFlushScheduler.cancelAll()
     // Collapse all completed thinking blocks when message ends
     for (const blockKey of _collapseElKeys) {
       delete thinkingExpanded.value[blockKey]
@@ -769,6 +776,7 @@ watch(() => props.active, (active) => {
 onUnmounted(() => {
   stopElapsedTimer()
   if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
+  _blockFlushScheduler.cancelAll()
   _collapseTimers.forEach(t => clearTimeout(t))
   _collapseTimers = []
 })

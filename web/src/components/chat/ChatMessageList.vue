@@ -147,6 +147,7 @@ import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
+import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 
 const { t } = useI18n()
 
@@ -322,11 +323,11 @@ let programmaticScrolling = false
 let userTouching = false
 
 // Throttle scrollTick for nearestUserMsgId recomputation
-let scrollTickTimer = null
+const scrollFrameScheduler = new StreamFrameScheduler()
 
 function handleScroll() {
-  if (!scrollTickTimer) {
-    scrollTickTimer = setTimeout(() => { scrollTick.value++; scrollTickTimer = null }, 100)
+  if (!scrollFrameScheduler.has('tick')) {
+    scrollFrameScheduler.schedule('tick', () => { scrollTick.value++ })
   }
   if (!messagesRef.value) return
   const el = messagesRef.value
@@ -446,7 +447,7 @@ onMounted(() => document.addEventListener('keydown', handleCtrlArrowMsgJump))
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick, true)
   document.removeEventListener('keydown', handleCtrlArrowMsgJump)
-  clearTimeout(scrollTickTimer)
+  scrollFrameScheduler.cancelAll()
 })
 
 function scrollToBottom(force = false) {
@@ -646,8 +647,7 @@ watch(() => props.currentSessionId, () => {
   userTouching = false
   clearTimeout(scrollUpTimer)
   clearTimeout(scrollDownTimer)
-  clearTimeout(scrollTickTimer)
-  scrollTickTimer = null
+  scrollFrameScheduler.cancelAll()
   scrollTick.value = 0
   userMsgIndexDrawer.close()
   userMsgIndexList.value = []

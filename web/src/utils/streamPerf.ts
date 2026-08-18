@@ -261,7 +261,7 @@ export class StaticBlockCache {
     this.upgradeScheduled = true
     const schedule = typeof requestIdleCallback !== 'undefined'
       ? requestIdleCallback
-      : (cb: () => void) => setTimeout(cb, 1)
+      : (cb: () => void) => requestAnimationFrame(cb)
     schedule(() => {
       this.upgradeScheduled = false
       if (this.upgradeFn && this.deferredKeys.size > 0) {
