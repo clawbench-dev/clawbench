@@ -3,10 +3,10 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 
-const mockRegisterBackHandler = vi.fn(() => vi.fn())
+const mockRegisterBackHandler = vi.fn((_: unknown) => vi.fn())
 
 vi.mock('@/composables/useBackHandler', () => ({
-  registerBackHandler: (arg: any) => mockRegisterBackHandler(arg),
+  registerBackHandler: (arg: unknown) => mockRegisterBackHandler(arg),
   PRIORITY_OVERLAY: 1000,
 }))
 
