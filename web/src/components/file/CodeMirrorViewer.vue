@@ -579,12 +579,11 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     background: var(--code-bg);
     position: relative;
 }
-/* Edit mode: tint the whole code area with the accent color and frame the top
-   with an accent line so browse vs edit are clearly distinct at a glance. */
+/* Edit mode: tint the whole code area with the accent color so browse vs edit
+   are clearly distinct at a glance. */
 .cm-viewer.is-editable {
     --code-bg-editing: color-mix(in srgb, var(--accent-color) 6%, var(--code-bg));
     background: var(--code-bg-editing);
-    border-top: 2px solid var(--accent-color);
 }
 .cm-host {
     flex: 1;
