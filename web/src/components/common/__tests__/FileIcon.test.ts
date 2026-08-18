@@ -7,6 +7,10 @@ vi.mock('@/utils/materialIcons', () => ({
   getFolderIconUrl: (path: string, open: boolean) => Promise.resolve(`/icons/folder-${open ? 'open' : 'closed'}-${path}.svg`),
 }))
 
+vi.mock('@/utils/appLog', () => ({
+  appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
 describe('FileIcon', () => {
   it('renders file icon', async () => {
     const wrapper = mount(FileIcon, { props: { path: 'test.ts' } })
