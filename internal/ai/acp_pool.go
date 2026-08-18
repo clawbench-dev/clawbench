@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -688,6 +689,40 @@ type ACPConn struct {
 	// listSessionsFn overrides ListSessions for testing. If nil, the real
 	// ACP JSON-RPC call is used.
 	listSessionsFn func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error)
+
+	// rawOutputBuf accumulates raw ACP JSON-RPC notification payloads for
+	// debugging (written to ai_raw_responses on Finalize). This is a separate
+	// buffer from the StreamEvent channel so raw_output events don't consume
+	// channel buffer space and cause content events to be dropped when the
+	// channel is full (previously ~27K drops/day on busy sessions).
+	// Protected by rawOutputMu. Cleared at the start of each Prompt call.
+	rawOutputMu  sync.Mutex
+	rawOutputBuf strings.Builder
+}
+
+// AppendRawOutput appends a raw ACP notification payload to the connection's
+// raw output buffer. Called from mapACPSessionUpdate (on the ACP SDK's
+// notification goroutine) instead of sending a raw_output StreamEvent through
+// the channel, which would consume channel buffer space and cause content
+// events to be dropped when the channel is full.
+func (c *ACPConn) AppendRawOutput(rawJSON string) {
+	c.rawOutputMu.Lock()
+	if c.rawOutputBuf.Len() > 0 {
+		c.rawOutputBuf.WriteByte('\n')
+	}
+	c.rawOutputBuf.WriteString(rawJSON)
+	c.rawOutputMu.Unlock()
+}
+
+// ResetRawOutput clears the raw output buffer and returns the accumulated
+// content. Called at the start of each Prompt to reset the buffer, and after
+// Prompt returns to collect the raw output for the completed turn.
+func (c *ACPConn) ResetRawOutput() string {
+	c.rawOutputMu.Lock()
+	s := c.rawOutputBuf.String()
+	c.rawOutputBuf.Reset()
+	c.rawOutputMu.Unlock()
+	return s
 }
 
 // TouchSessionUpdate records the current time as the connection's most recent

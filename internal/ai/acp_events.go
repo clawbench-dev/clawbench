@@ -22,11 +22,15 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	if conn != nil {
 		backendID = conn.BackendID()
 	}
-	// Emit raw_output event for each ACP notification so the handler can
-	// persist the original protocol data to ai_raw_responses for debugging.
-	// This mirrors how CLIBackend collects raw stdout lines.
-	if rawJSON, err := json.Marshal(update); err == nil {
-		forwardACPEvent(ch, StreamEvent{Type: "raw_output", RawOutput: string(rawJSON)})
+	// Accumulate raw ACP notification payloads for debugging (ai_raw_responses).
+	// Previously sent as raw_output StreamEvent through the channel, but this
+	// consumed channel buffer space and caused content events to be dropped when
+	// the channel was full (~27K drops/day on busy sessions). Now accumulated
+	// directly on the ACPConn buffer instead.
+	if conn != nil {
+		if rawJSON, err := json.Marshal(update); err == nil {
+			conn.AppendRawOutput(string(rawJSON))
+		}
 	}
 
 	switch {

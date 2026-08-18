@@ -1501,9 +1501,9 @@ func TestMapACPSessionUpdate_UsageUpdate(t *testing.T) {
 
 	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
 
-	// Should get 2 events: raw_output + usage_update
+	// Should get 1 event: usage_update (raw_output is now accumulated on ACPConn, not sent through channel)
 	var foundUsage bool
-	for range 2 {
+	for range 1 {
 		select {
 		case evt := <-ch:
 			if evt.Type == "usage_update" && evt.Usage != nil {
@@ -1534,7 +1534,7 @@ func TestMapACPSessionUpdate_UsageUpdate_WithoutCost(t *testing.T) {
 	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
 
 	var foundUsage bool
-	for range 2 {
+	for range 1 {
 		select {
 		case evt := <-ch:
 			if evt.Type == "usage_update" && evt.Usage != nil {
