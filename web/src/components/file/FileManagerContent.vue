@@ -998,21 +998,21 @@ async function transferEntries(entries, destDir, isMove) {
             let resp
             let attempt = 0
             while (true) {
-              resp = await fetch(api, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: srcEntry.path, dest: destPath }),
-              })
-              // Same-name conflict: auto-append a numeric suffix and retry
-              // (mirrors backend upload numbering), no naming dialog.
-              if (resp.status === 409 && attempt < 9999) {
-                attempt++
-                const candidate = numberedName(srcEntry.name, attempt)
-                destPath = (destDir ? destDir + '/' : '') + candidate
-                appLog.d(TAG, '[transfer] conflict, retrying as:', destPath)
-                continue
-              }
-              break
+                resp = await fetch(api, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: srcEntry.path, dest: destPath }),
+                })
+                // Same-name conflict: auto-append a numeric suffix and retry
+                // (mirrors backend upload numbering), no naming dialog.
+                if (resp.status === 409 && attempt < 9999) {
+                    attempt++
+                    const candidate = numberedName(srcEntry.name, attempt)
+                    destPath = (destDir ? destDir + '/' : '') + candidate
+                    appLog.d(TAG, '[transfer] conflict, retrying as:', destPath)
+                    continue
+                }
+                break
             }
             if (!resp.ok) {
                 const errBody = await resp.text().catch(() => '')
