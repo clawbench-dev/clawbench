@@ -867,6 +867,23 @@ describe('AppHeader', () => {
     expect(wrapper.vm.branchDropdownOpen).toBe(false)
   })
 
+  it('selectBranch calls doCheckout on clean worktree after confirm', async () => {
+    mockState.gitBranch = 'main'
+    mockState.gitDirty = false
+    dialogConfirmFn.mockResolvedValueOnce(true)
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ success: true }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountAndTrack()
+
+    await (wrapper.vm as any).selectBranch({ name: 'feature' })
+
+    expect(dialogConfirmFn).toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledWith('/api/git/checkout', expect.objectContaining({ method: 'POST' }))
+    expect(loadGitBranchFn).toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+  })
+
   it('selectBranch warns about dirty worktree immediately, before the confirm step', async () => {
     mockState.gitBranch = 'main'
     mockState.gitDirty = true
