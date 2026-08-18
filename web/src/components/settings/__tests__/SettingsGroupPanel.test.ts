@@ -333,7 +333,7 @@ function mountPanel(config: GroupPanelConfig, showTitle = true) {
         SettingsItem: {
           name: 'SettingsItem',
           props: ['label', 'description', 'type', 'modelValue', 'options', 'min', 'max', 'step', 'needsRestart', 'disabled', 'forceClose', 'defaultValue', 'displayFormat', 'displayTransform', 'noDivider', 'progress', 'refreshable', 'refreshing'],
-          template: '<div class="mock-settings-item" :data-key="label" :data-type="type" :data-value="modelValue" :data-disabled="disabled" :data-refreshable="refreshable" @update:model-value="$emit(\'update:modelValue\', $event)" @edit-toggle="$emit(\'editToggle\', $event)" @desc-toggle="$emit(\'descToggle\', $event)" @click="$emit(\'click\')"><button v-if="refreshable" class="group-panel__refresh-btn" @click="$emit(\'refresh\')">↻</button></div>',
+          template: '<div class="mock-settings-item" :data-key="label" :data-type="type" :data-value="modelValue" :data-disabled="disabled" :data-refreshable="refreshable" @update:model-value="$emit(\'update:modelValue\', $event)" @edit-toggle="$emit(\'editToggle\', $event)" @desc-toggle="$emit(\'descToggle\', $event)" @click="$emit(\'click\')"><button v-if="refreshable" class="settings-item__refresh" @click="$emit(\'refresh\')">↻</button></div>',
           emits: ['update:modelValue', 'editToggle', 'descToggle', 'click', 'refresh'],
         },
         BottomSheet: {
