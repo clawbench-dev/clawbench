@@ -32,7 +32,7 @@ const (
 const maxReplayTitleRunes = 50
 
 // machineGeneratedUserPrefixes is the single source of truth for every
-// machine-generated header stripMachineGeneratedUserText recognises. A user
+// machine-generated header stripMachineGeneratedUserText recognizes. A user
 // turn starting with any of these is machine text (injected system prompt,
 // CLI continuation/compaction header, slash command, local-command caveat,
 // attachment header, interruption marker) rather than a human question.
@@ -187,27 +187,45 @@ func stripMachineGeneratedUserText(text string) (string, bool) {
 			text = text[idx+3:]
 			continue
 		}
-		stripped := false
-		for _, marker := range []string{
-			"[Current file: ",
-			"[Current directory: ",
-			"[User uploaded ",
-		} {
-			if !strings.HasPrefix(text, marker) {
-				continue
-			}
-			nl := strings.IndexByte(text, '\n')
-			if nl < 0 {
-				return "", false // header without any user text line
-			}
-			text = text[nl+1:]
-			stripped = true
-			break
+		remaining, handled := stripPrefixMarker(text)
+		if handled == markerDiscard {
+			return "", false
 		}
-		if !stripped {
-			return text, true
+		if handled == markerStripped {
+			text = remaining
+			continue
 		}
+		return text, true
 	}
+}
+
+type markerResult int
+
+const (
+	markerNone     markerResult = iota // no marker matched
+	markerStripped                     // marker stripped, continue with remaining
+	markerDiscard                      // marker found but malformed, discard turn
+)
+
+// stripPrefixMarker strips a single machine-generated prefix marker (e.g.
+// "[Current file: ...") from text. Returns the remaining text and a result
+// indicating whether a marker was found and how to proceed.
+func stripPrefixMarker(text string) (string, markerResult) {
+	for _, marker := range []string{
+		"[Current file: ",
+		"[Current directory: ",
+		"[User uploaded ",
+	} {
+		if !strings.HasPrefix(text, marker) {
+			continue
+		}
+		nl := strings.IndexByte(text, '\n')
+		if nl < 0 {
+			return "", markerDiscard // header without any user text line
+		}
+		return text[nl+1:], markerStripped
+	}
+	return "", markerNone
 }
 
 // getOrCreateConnForLoadFn is the function signature for obtaining an ACP

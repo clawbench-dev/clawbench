@@ -2429,13 +2429,13 @@ func TestACPConn_AppendRawOutput_Concurrent(t *testing.T) {
 	// Two goroutines appending concurrently should not race
 	go func() {
 		defer func() { done <- struct{}{} }()
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			conn.AppendRawOutput(`{"goroutine":"a"}`)
 		}
 	}()
 	go func() {
 		defer func() { done <- struct{}{} }()
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			conn.AppendRawOutput(`{"goroutine":"b"}`)
 		}
 	}()

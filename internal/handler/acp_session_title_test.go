@@ -253,7 +253,7 @@ func TestIsMachineGeneratedTitle_HumanTitles(t *testing.T) {
 
 func TestMachinePrefixesMatchStrip(t *testing.T) {
 	// Sync contract: every prefix in machineGeneratedUserPrefixes must be
-	// recognised by stripMachineGeneratedUserText (so a title detected as
+	// recognized by stripMachineGeneratedUserText (so a title detected as
 	// machine is one whose source turn would actually be stripped).
 	//
 	// There are two categories of prefixes:
@@ -284,9 +284,9 @@ func TestMachinePrefixesMatchStrip(t *testing.T) {
 		wantRem string // expected remaining text
 	}{
 		{
-			marker: "[System Instructions:",
-			input:  "[System Instructions: rules]\n\n",
-			wantOK: true, // header stripped, remainder is whitespace-only
+			marker:  "[System Instructions:",
+			input:   "[System Instructions: rules]\n\n",
+			wantOK:  true, // header stripped, remainder is whitespace-only
 			wantRem: "",
 		},
 		{
@@ -297,7 +297,7 @@ func TestMachinePrefixesMatchStrip(t *testing.T) {
 		},
 		{
 			marker: "[Below is the conversation history",
-			input: "[Below is the conversation history from before this session.\n\nSummary:\n    old talk]",
+			input:  "[Below is the conversation history from before this session.\n\nSummary:\n    old talk]",
 			wantOK: false, // no compactEnd delimiter → whole turn
 		},
 		{

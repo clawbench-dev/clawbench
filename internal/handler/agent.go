@@ -1026,9 +1026,9 @@ const maxTranscriptSizeBytes int64 = 32 << 20 // 32 MB
 var transcriptTitleCache sync.Map // map[string]transcriptTitleResult
 
 type transcriptTitleResult struct {
-	CustomTitle string // newest custom-title record, or ""
+	CustomTitle   string // newest custom-title record, or ""
 	FirstQuestion string // first real user question, or ""
-	ModTime     int64  // file.ModTime().UnixNano()
+	ModTime       int64  // file.ModTime().UnixNano()
 }
 
 // scanTranscriptForTitles performs a single-pass scan of a transcript file
@@ -1045,7 +1045,7 @@ func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
 	if err != nil {
 		return "", ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Skip files exceeding the size limit.
 	fi, err := f.Stat()
@@ -1058,7 +1058,10 @@ func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
 	sid := filepath.Base(path)
 	sid = strings.TrimSuffix(sid, ".jsonl")
 	if cached, ok := transcriptTitleCache.Load(sid); ok {
-		c := cached.(transcriptTitleResult)
+		c, ok := cached.(transcriptTitleResult)
+		if !ok {
+			return "", ""
+		}
 		if c.ModTime == modTime {
 			return c.CustomTitle, c.FirstQuestion
 		}
@@ -1070,8 +1073,8 @@ func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
 	foundFirst := false
 	for scanner.Scan() {
 		var d struct {
-			Type        string          `json:"type"`
-			CustomTitle string          `json:"customTitle"`
+			Type        string `json:"type"`
+			CustomTitle string `json:"customTitle"`
 			Message     *struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
