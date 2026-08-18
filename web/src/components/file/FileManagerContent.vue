@@ -1687,8 +1687,6 @@ function scrollSelectedIntoView(path) {
     })
 }
 
-// Build a clipboard entry from the currently viewed/selected file
-
 </script>
 
 <style scoped>

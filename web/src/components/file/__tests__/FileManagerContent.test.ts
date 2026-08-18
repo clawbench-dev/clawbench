@@ -831,6 +831,22 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     expect(mockToastShow).toHaveBeenCalled()
   })
 
+  it('Ctrl+C copies selectedPath entry to clipboard (browse-list selection)', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+    // Simulate browse-list click: no currentFile, only selectedPath
+    wrapper.vm._setSelectedPath('test.ts')
+    await nextTick()
+
+    const event = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true })
+    document.dispatchEvent(event)
+    await nextTick()
+
+    expect(wrapper.vm.clipboard.entries).toHaveLength(1)
+    expect(wrapper.vm.clipboard.entries[0]).toEqual({ type: 'file', name: 'test.ts', path: 'test.ts' })
+    expect(wrapper.vm.clipboard.isCut).toBe(false)
+  })
+
   it('Ctrl+X cuts current file to clipboard', async () => {
     const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
     await nextTick()
@@ -840,6 +856,21 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     await nextTick()
 
     expect(mockToastShow).toHaveBeenCalled()
+  })
+
+  it('Ctrl+X cuts selectedPath entry to clipboard (browse-list selection)', async () => {
+    const wrapper = mountContent()
+    await nextTick()
+    wrapper.vm._setSelectedPath('test.ts')
+    await nextTick()
+
+    const event = new KeyboardEvent('keydown', { key: 'x', ctrlKey: true, bubbles: true })
+    document.dispatchEvent(event)
+    await nextTick()
+
+    expect(wrapper.vm.clipboard.entries).toHaveLength(1)
+    expect(wrapper.vm.clipboard.entries[0]).toEqual({ type: 'file', name: 'test.ts', path: 'test.ts' })
+    expect(wrapper.vm.clipboard.isCut).toBe(true)
   })
 
   it('Delete emits delete for current file', async () => {
