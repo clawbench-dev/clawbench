@@ -156,6 +156,11 @@ vi.mock('@/utils/fileType', () => ({
   }),
 }))
 
+// No-op logger: keeps the 9999-retry loop test from flooding /api/client-log.
+vi.mock('@/utils/appLog', () => ({
+  appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
 vi.mock('@/utils/fileManager', () => ({
   buildThumbUrl: (dir: string, name: string) => `/api/file/thumb?path=${dir}/${name}`,
   isImage: (e: any) => /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(e.name || ''),
@@ -1897,6 +1902,45 @@ describe('FileManagerContent — clipboard paste (doPaste)', () => {
     expect(secondBody.dest).toBe('test_1.ts')
     // No naming dialog should be invoked
     expect(mockDialogPrompt).not.toHaveBeenCalled()
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+  })
+
+  it('stops retrying at the 9999 cap (no infinite loop)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 409, text: async () => '' })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountContent({ currentDir: '' })
+    await nextTick()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await wrapper.vm.doCopy()
+    await nextTick()
+
+    await wrapper.vm.doPaste()
+    await nextTick()
+
+    // original name + name_1..name_9999 = 10000 calls, then loop breaks
+    expect(fetchMock).toHaveBeenCalledTimes(10000)
+  })
+
+  it('keeps incrementing on repeated collisions (test_2.ts)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 409, text: async () => '' })
+      .mockResolvedValueOnce({ ok: false, status: 409, text: async () => '' })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountContent({ currentDir: '' })
+    await nextTick()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await wrapper.vm.doCopy()
+    await nextTick()
+
+    await wrapper.vm.doPaste()
+    await nextTick()
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const lastBody = JSON.parse(fetchMock.mock.calls[2][1].body)
+    expect(lastBody.dest).toBe('test_2.ts')
     expect(wrapper.emitted('refresh')).toBeTruthy()
   })
 })
