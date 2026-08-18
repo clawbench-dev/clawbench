@@ -471,6 +471,24 @@ describe('useFileRefresh clearOnError', () => {
     globalThis.fetch = originalFetch
   })
 
+  it('passes noLoading=true to selectFile during refresh (avoids loading mask flicker)', async () => {
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'old\n' }
+    store.state.currentDir = ''
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ content: 'new\n' }),
+    })
+
+    await refreshCurrentFile()
+
+    const args = store.selectFile.mock.calls[0]
+    expect(args[6]).toBe(true) // noLoading — suppress loading mask on auto-refresh
+
+    globalThis.fetch = originalFetch
+  })
+
   it('passes silent=true to selectFile when clearOnError is set (no toast on deletion)', async () => {
     store.state.currentFile = { name: 'gone.go', path: 'src/gone.go', content: 'x\n' }
     store.state.currentDir = 'src'

@@ -369,6 +369,7 @@ async function doRefreshCurrentFile(options: {
     false,
     false,
     clearOnError, // silent: deleted file should close without an error toast
+    true, // noLoading: refresh should not show loading mask (avoids flicker on auto-refresh)
   )
 
   if (gen !== refreshGeneration) return

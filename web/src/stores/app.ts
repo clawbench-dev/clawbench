@@ -396,7 +396,7 @@ async function loadFiles(dir = '', silent = false, _depth = 0): Promise<void> {
     }
 }
 
-async function selectFile(path: string, isImageFile = false, isAudioFile = false, addToHistory = true, forceText = false, silent = false): Promise<boolean> {
+async function selectFile(path: string, isImageFile = false, isAudioFile = false, addToHistory = true, forceText = false, silent = false, noLoading = false): Promise<boolean> {
     const seq = ++selectFileSeq // this call supersedes any earlier in-flight call
 
     // Detect media files by extension (avoids dynamic import)
@@ -441,7 +441,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         // encoding issues: encodeURIComponent("/path") produces %2Fpath which
         // Go's ServeMux decodes back to /, making it look like a relative path.
         // Project-internal relative paths continue to use URL path encoding.
-        state.fileLoading = true
+        if (!noLoading) state.fileLoading = true
         const isAbsPath = path.startsWith('/')
         let url: string
         if (isAbsPath) {
