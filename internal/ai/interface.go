@@ -70,7 +70,6 @@ const (
 	ReasonParseError    = "parse_error"    // CLI output parsing error
 	ReasonBackendExit   = "backend_exit"   // CLI process exited abnormally
 	ReasonRequestFailed = "request_failed" // Codex turn.failed
-	ReasonStreamStall   = "stream_stall"   // CLI stream produced no output for the idle watchdog window
 	ReasonPanic         = "panic"          // AI goroutine panicked
 )
 

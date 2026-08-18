@@ -48,6 +48,12 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	c.lastUsed = time.Now()
 	c.mu.Unlock()
 
+	// Reset the stall baseline and in-flight tool state for this turn so the
+	// watchdog counts progress from now, and a leftover in-flight tool from a
+	// previous turn can't suppress it.
+	c.TouchSessionUpdate()
+	c.SetToolInFlight(false)
+
 	if conn == nil || acpSID == "" {
 		return fmt.Errorf("acp: connection not initialized")
 	}
@@ -89,6 +95,18 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		c.mu.Unlock()
 		promptCancel()
 	}()
+
+	// No-progress watchdog: conn.Prompt has no hard timeout (the agent process
+	// is expected to send SessionUpdates), and the idle sweep skips running
+	// sessions, so a hung-but-alive agent would otherwise block the session
+	// forever. If the prompt makes no progress (no SessionUpdate and no
+	// in-flight tool) for the stall window, cancel the prompt and kill the
+	// agent process so the connection is not reused in its stuck state.
+	stopWatchdog := c.startStallWatchdog(promptCtx, func() {
+		promptCancel()
+		c.close()
+	})
+	defer stopWatchdog()
 
 	promptStart := time.Now()
 	slog.Info("acp conn: conn.Prompt starting", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)

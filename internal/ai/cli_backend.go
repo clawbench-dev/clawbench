@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -219,14 +218,10 @@ func (b *CLIBackend) runStream(
 	// block forever, and kills the whole process group. Closing the read end
 	// first makes the scanner unblock deterministically (the kill's fd teardown
 	// is async and could otherwise race to a clean EOF); it also kills any
-	// daemon child that tries to write to the pipe. `stall` distinguishes an
-	// idle-timeout termination (reported to the user) from a cancellation or
-	// pipe-hold cleanup (which end the stream quietly).
-	var stalled atomic.Bool
+	// daemon child that tries to write to the pipe.
 	var terminateOnce sync.Once
-	terminate := func(stall bool) {
+	terminate := func() {
 		terminateOnce.Do(func() {
-			stalled.Store(stall)
 			_ = pr.Close()
 			if cmd.Process != nil {
 				killProcessGroup(cmd.Process)
@@ -256,7 +251,7 @@ func (b *CLIBackend) runStream(
 			select {
 			case <-scanDone:
 			case <-time.After(streamDrainGrace):
-				terminate(false)
+				terminate()
 				<-scanDone
 			}
 		}
@@ -299,7 +294,7 @@ func (b *CLIBackend) runStream(
 		// Check if this is the final "result" line — send raw_output
 		// before parsing so the handler receives it before the "done" event.
 		if strings.HasPrefix(line, `{"type":"result"`) {
-			sendEvent(ctx, ch, StreamEvent{Type: "raw_output", RawOutput: rawLines.String()})
+			ch <- StreamEvent{Type: "raw_output", RawOutput: rawLines.String()}
 		}
 
 		slog.Debug(b.BackendName+" stream: raw line", "session_id", req.SessionID, "line", line)
@@ -310,7 +305,7 @@ func (b *CLIBackend) runStream(
 		// is cancelled before step_finish/turn.completed emits the metadata event.
 		if capturedID := parser.GetCapturedSessionID(); capturedID != "" && capturedID != lastCapturedSessionID {
 			lastCapturedSessionID = capturedID
-			sendEvent(ctx, ch, StreamEvent{Type: "session_capture", Content: capturedID})
+			ch <- StreamEvent{Type: "session_capture", Content: capturedID}
 		}
 
 		// Check context after parsing
@@ -321,7 +316,7 @@ func (b *CLIBackend) runStream(
 				slog.String("session_id", req.SessionID),
 			)
 			if rawLines.Len() > 0 {
-				sendEvent(ctx, ch, StreamEvent{Type: "raw_output", RawOutput: rawLines.String()})
+				ch <- StreamEvent{Type: "raw_output", RawOutput: rawLines.String()}
 			}
 			return
 		default:
@@ -340,30 +335,22 @@ func (b *CLIBackend) runStream(
 	case <-time.After(2 * time.Second):
 	}
 
-	// Scanner-level failure — but only report it when the stream was NOT
-	// cancelled (which produces its own terminal signal) and the error is a
-	// genuine parsing problem rather than the pipe being closed by us.
-	if err := scanner.Err(); err != nil && ctx.Err() == nil {
-		if stalled.Load() {
-			sendEvent(ctx, ch, StreamEvent{
-				Type:    "warning",
-				Content: fmt.Sprintf("AI stream stalled: no output for %s, terminated", idleTimeout),
-				Reason:  ReasonStreamStall,
-			})
-		} else if !isStreamEndError(err) {
-			sendEvent(ctx, ch, StreamEvent{
-				Type:    "warning",
-				Content: fmt.Sprintf("AI output parse error: %v", err),
-				Reason:  ReasonParseError,
-			})
+	// Scanner-level failure — only report genuine parsing problems, not the pipe
+	// being closed by terminate() or normal EOF. A cancelled stream produces its
+	// own terminal signal, so it is also skipped here.
+	if err := scanner.Err(); err != nil && ctx.Err() == nil && !isStreamEndError(err) {
+		ch <- StreamEvent{
+			Type:    "warning",
+			Content: fmt.Sprintf("AI output parse error: %v", err),
+			Reason:  ReasonParseError,
 		}
 	}
 
 	// Completion diagnostics (abnormal exit / stderr output) unless the stream
-	// was cancelled or stalled — those already signaled their own terminal state.
-	// Also skipped when Wait hasn't returned yet (pathological pipe-hold case):
-	// reading waitErr/stderrBuf then would race with exec's copy goroutine.
-	if ctx.Err() == nil && !stalled.Load() && procDoneClosed {
+	// was cancelled. Also skipped when Wait hasn't returned yet (pathological
+	// pipe-hold case): reading waitErr/stderrBuf then would race with exec's
+	// copy goroutine.
+	if ctx.Err() == nil && procDoneClosed {
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) || (waitErr != nil && !errors.Is(waitErr, exec.ErrWaitDelay)) {
 			stderr := stderrBuf.String()
@@ -377,7 +364,7 @@ func (b *CLIBackend) runStream(
 			if stderr != "" {
 				warnMsg = fmt.Sprintf("AI backend exited abnormally\n%s", stderr)
 			}
-			sendEvent(ctx, ch, StreamEvent{Type: "warning", Content: warnMsg, Reason: ReasonBackendExit})
+			ch <- StreamEvent{Type: "warning", Content: warnMsg, Reason: ReasonBackendExit}
 		} else if stderrBuf.Len() > 0 {
 			stderr := stderrBuf.String()
 			slog.Warn(
@@ -385,13 +372,13 @@ func (b *CLIBackend) runStream(
 				slog.String("session_id", req.SessionID),
 				slog.String("stderr", stderr),
 			)
-			sendEvent(ctx, ch, StreamEvent{Type: "warning", Content: stderr})
+			ch <- StreamEvent{Type: "warning", Content: stderr}
 		}
 	}
 
 	// Send raw output event after all other events
 	if rawLines.Len() > 0 {
-		sendEvent(ctx, ch, StreamEvent{Type: "raw_output", RawOutput: rawLines.String()})
+		ch <- StreamEvent{Type: "raw_output", RawOutput: rawLines.String()}
 	}
 }
 
@@ -404,13 +391,13 @@ func (b *CLIBackend) watchStream(
 	watchDone <-chan struct{},
 	progress <-chan struct{},
 	idleTimeout time.Duration,
-	onTerminate func(stall bool),
+	onTerminate func(),
 ) {
 	if idleTimeout <= 0 {
 		// Watchdog disabled: only react to cancellation.
 		select {
 		case <-ctx.Done():
-			onTerminate(false)
+			onTerminate()
 		case <-procDone:
 		case <-watchDone:
 		}
@@ -421,7 +408,7 @@ func (b *CLIBackend) watchStream(
 	for {
 		select {
 		case <-ctx.Done():
-			onTerminate(false)
+			onTerminate()
 			return
 		case <-procDone:
 			return
@@ -437,7 +424,9 @@ func (b *CLIBackend) watchStream(
 			}
 			timer.Reset(idleTimeout)
 		case <-timer.C:
-			onTerminate(true)
+			slog.Warn("cli stream stalled: no output for "+idleTimeout.String()+", terminating",
+				slog.String("backend", b.BackendName))
+			onTerminate()
 			return
 		}
 	}
@@ -451,22 +440,6 @@ func isStreamEndError(err error) bool {
 	return errors.Is(err, io.ErrClosedPipe) ||
 		errors.Is(err, os.ErrClosed) ||
 		errors.Is(err, syscall.EBADF)
-}
-
-// sendEvent sends ev on ch unless the context is already done. This prevents
-// the producer from blocking forever on a full channel once the consumer has
-// stopped reading (e.g. after cancellation or the terminal event).
-//
-// NOTE: this only guards runStream's own emits. The parsers' sends
-// (ParseLine) remain plain blocking sends and are safe only because the
-// consumer drains the channel until it closes (SessionExecutor.Finalize) — so
-// callers must NOT stop reading the channel without ensuring the producer can
-// still close it (see the producer contract on AIBackend.ExecuteStream).
-func sendEvent(ctx context.Context, ch chan<- StreamEvent, ev StreamEvent) {
-	select {
-	case ch <- ev:
-	case <-ctx.Done():
-	}
 }
 
 // filterSkipNonJSON returns a line filter that discards lines

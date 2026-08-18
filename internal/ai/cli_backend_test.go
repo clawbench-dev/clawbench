@@ -204,9 +204,9 @@ func TestCLIBackend_ExecuteStream_ChildHoldsStderrClosesPromptly(t *testing.T) {
 
 // TestCLIBackend_ExecuteStream_WatchdogTerminatesStalledStream verifies the
 // no-progress watchdog: when the CLI produces output and then goes silent
-// without exiting, the stream is terminated and a stream_stall warning is
-// emitted. Without the watchdog the process group would live forever and the
-// session would stay in the streaming state indefinitely.
+// without exiting, the stream is terminated (channel closed) by the watchdog.
+// Without it the process group would live forever and the session would stay
+// in the streaming state indefinitely.
 func TestCLIBackend_ExecuteStream_WatchdogTerminatesStalledStream(t *testing.T) {
 	b := &CLIBackend{
 		BackendName: "test",
@@ -229,18 +229,13 @@ func TestCLIBackend_ExecuteStream_WatchdogTerminatesStalledStream(t *testing.T) 
 	})
 	assert.NoError(t, err)
 
-	gotStall := false
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 	for {
 		select {
-		case ev, ok := <-ch:
+		case _, ok := <-ch:
 			if !ok {
-				assert.True(t, gotStall, "expected a stream_stall warning event before the channel closed")
-				return
-			}
-			if ev.Type == "warning" && ev.Reason == ReasonStreamStall {
-				gotStall = true
+				return // channel closed — the watchdog terminated the stalled stream
 			}
 		case <-timer.C:
 			t.Fatal("timed out waiting for the watchdog to terminate the stalled stream")

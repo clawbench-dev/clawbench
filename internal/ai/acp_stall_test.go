@@ -1,0 +1,154 @@
+package ai
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	acp "github.com/coder/acp-go-sdk"
+	"github.com/stretchr/testify/assert"
+
+	"clawbench/internal/model"
+)
+
+func TestACPConn_EffectiveStallTimeout(t *testing.T) {
+	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
+
+	// Zero uses the default.
+	conn.stallTimeout = 0
+	assert.Equal(t, defaultACPStallTimeout, conn.effectiveStallTimeout())
+
+	// Negative disables (0).
+	conn.stallTimeout = -1
+	assert.Equal(t, time.Duration(0), conn.effectiveStallTimeout())
+
+	// Positive is honored.
+	conn.stallTimeout = 90 * time.Second
+	assert.Equal(t, 90*time.Second, conn.effectiveStallTimeout())
+}
+
+func TestACPConn_IsStalled(t *testing.T) {
+	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
+
+	t.Run("disabled timeout is never stalled", func(t *testing.T) {
+		assert.False(t, conn.isStalled(0), "zero timeout disables the watchdog")
+		assert.False(t, conn.isStalled(-1), "negative timeout disables the watchdog")
+	})
+
+	t.Run("fresh activity is not stalled", func(t *testing.T) {
+		conn.SetToolInFlight(false)
+		conn.TouchSessionUpdate()
+		assert.False(t, conn.isStalled(30*time.Minute))
+	})
+
+	t.Run("old activity with no tool is stalled", func(t *testing.T) {
+		conn.SetToolInFlight(false)
+		conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+		assert.True(t, conn.isStalled(30*time.Second))
+	})
+
+	t.Run("in-flight tool suppresses stall regardless of staleness", func(t *testing.T) {
+		conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+		conn.SetToolInFlight(true)
+		assert.False(t, conn.isStalled(30*time.Second),
+			"an in-flight tool must keep the stream alive (e.g. a long-running `sleep`)")
+	})
+
+	t.Run("no SessionUpdate yet but fresh connection is not stalled", func(t *testing.T) {
+		conn.SetToolInFlight(false)
+		conn.lastSessionUpdate.Store(0) // no SessionUpdate received yet
+		conn.lastUsed = time.Now()      // but the connection was just created/used
+		assert.False(t, conn.isStalled(30*time.Second), "a brand-new connection must not be killed immediately")
+	})
+}
+
+func TestACPConn_SetToolInFlight_ViaSessionUpdate(t *testing.T) {
+	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
+	ch := make(chan StreamEvent, 16)
+	ctx := context.Background()
+
+	// A tool_call starts the tool — should mark in-flight.
+	mapACPSessionUpdate(acp.SessionUpdate{
+		ToolCall: &acp.SessionUpdateToolCall{
+			ToolCallId:    "call_1",
+			Title:         "Bash",
+			SessionUpdate: "tool_call",
+		},
+	}, ch, ctx, conn, nil)
+	assert.True(t, conn.toolInFlight.Load(), "tool_call should set toolInFlight")
+
+	// An in-progress update keeps it in-flight.
+	progress := acp.ToolCallStatusInProgress
+	mapACPSessionUpdate(acp.SessionUpdate{
+		ToolCallUpdate: &acp.SessionToolCallUpdate{
+			ToolCallId:    "call_1",
+			SessionUpdate: "tool_call_update",
+			Status:        &progress,
+		},
+	}, ch, ctx, conn, nil)
+	assert.True(t, conn.toolInFlight.Load())
+
+	// A completed update clears it.
+	completed := acp.ToolCallStatusCompleted
+	mapACPSessionUpdate(acp.SessionUpdate{
+		ToolCallUpdate: &acp.SessionToolCallUpdate{
+			ToolCallId:    "call_1",
+			SessionUpdate: "tool_call_update",
+			Status:        &completed,
+		},
+	}, ch, ctx, conn, nil)
+	assert.False(t, conn.toolInFlight.Load(), "completed tool_call_update should clear toolInFlight")
+}
+
+func TestACPConn_StartStallWatchdog_CancelsOnStall(t *testing.T) {
+	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
+	conn.stallTimeout = 200 * time.Millisecond
+	// No activity for a while, no tool in flight → stalled.
+	conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stalled := make(chan struct{})
+	stop := conn.startStallWatchdog(ctx, func() { close(stalled) })
+	defer stop()
+
+	select {
+	case <-stalled:
+		// Watchdog fired — good.
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchdog did not fire on a stalled prompt")
+	}
+}
+
+func TestACPConn_StartStallWatchdog_DoesNotFireWithToolInFlight(t *testing.T) {
+	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
+	conn.stallTimeout = 200 * time.Millisecond
+	conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+	conn.SetToolInFlight(true) // agent is running a long tool (e.g. `sleep`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fired := make(chan struct{})
+	stop := conn.startStallWatchdog(ctx, func() { close(fired) })
+	defer stop()
+
+	// Wait well past the stall window; the watchdog must NOT fire while a
+	// tool is in flight.
+	select {
+	case <-fired:
+		t.Fatal("watchdog fired despite an in-flight tool")
+	case <-time.After(600 * time.Millisecond):
+		// Not fired — good.
+	}
+
+	// Once the tool completes (not in flight), it becomes stalled and fires.
+	conn.SetToolInFlight(false)
+	select {
+	case <-fired:
+		// Fired after the tool completed — good.
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchdog did not fire after the in-flight tool completed")
+	}
+}

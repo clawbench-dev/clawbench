@@ -89,6 +89,11 @@ const (
 	// idleConnTimeout is the maximum duration a connection can be idle
 	// before it is closed and removed from the pool.
 	idleConnTimeout = 5 * time.Minute
+	// defaultACPStallTimeout is the default no-progress watchdog window for a
+	// running ACP prompt. The idle sweep skips actively-running sessions, and
+	// conn.Prompt has no hard timeout, so without this a hung agent process
+	// (alive but unresponsive) blocks the session forever.
+	defaultACPStallTimeout = 30 * time.Minute
 )
 
 var (
@@ -625,6 +630,18 @@ type ACPConn struct {
 	// (see waitNotificationsUpTo in the ACP SDK).
 	lastSessionUpdate atomic.Int64
 
+	// toolInFlight is true while the agent is executing a tool call (a
+	// tool_use was emitted but no tool_result yet). A no-progress stall
+	// watchdog treats an in-flight tool as activity, so long-running
+	// legitimate tools (e.g. `sleep`, builds) are never killed.
+	toolInFlight atomic.Bool
+
+	// stallTimeout bounds how long a running prompt may go without any
+	// SessionUpdate and without an in-flight tool before the connection is
+	// terminated. Zero uses defaultACPStallTimeout; negative disables the
+	// watchdog. See isStalled / startStallWatchdog.
+	stallTimeout time.Duration
+
 	// cmdWaitOnce ensures cmd.Wait() is called exactly once; the result is
 	// cached in cmdWaitState for subsequent readers.
 	cmdWaitOnce  sync.Once
@@ -693,6 +710,87 @@ func (c *ACPConn) lastActivityNano() int64 {
 		return su
 	}
 	return lastUsedNano
+}
+
+// stallTimeout returns the effective no-progress watchdog window.
+// 0 → defaultACPStallTimeout, negative → disabled (0).
+func (c *ACPConn) effectiveStallTimeout() time.Duration {
+	switch {
+	case c.stallTimeout == 0:
+		return defaultACPStallTimeout
+	case c.stallTimeout < 0:
+		return 0
+	default:
+		return c.stallTimeout
+	}
+}
+
+// SetToolInFlight records whether the agent is currently executing a tool call.
+// Set true when a tool_use is emitted and false when its tool_result arrives,
+// so the stall watchdog treats long-running tools as active.
+func (c *ACPConn) SetToolInFlight(inFlight bool) {
+	c.toolInFlight.Store(inFlight)
+}
+
+// isStalled reports whether the running prompt has made no progress for the
+// given window. Progress is defined as any incoming SessionUpdate OR an
+// in-flight tool call. A zero window disables the check.
+func (c *ACPConn) isStalled(timeout time.Duration) bool {
+	if timeout <= 0 {
+		return false
+	}
+	if c.toolInFlight.Load() {
+		return false
+	}
+	last := c.lastSessionUpdate.Load()
+	if last == 0 {
+		last = c.lastUsed.UnixNano()
+	}
+	if last == 0 {
+		// No activity recorded yet — treat as not stalled so a freshly
+		// started prompt is never killed immediately.
+		return false
+	}
+	return time.Since(time.Unix(0, last)) > timeout
+}
+
+// startStallWatchdog starts a goroutine that calls onStall once the running
+// prompt has made no progress for the stall window. It stops when ctx is done
+// or when the returned stop func is called. A disabled or zero timeout starts
+// no goroutine and returns a no-op stop func.
+func (c *ACPConn) startStallWatchdog(ctx context.Context, onStall func()) func() {
+	timeout := c.effectiveStallTimeout()
+	if timeout <= 0 {
+		return func() {}
+	}
+	interval := timeout / 10
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
+	}
+	stop := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-ticker.C:
+				if c.isStalled(timeout) {
+					slog.Warn("acp: prompt stalled (no progress for "+timeout.String()+"), terminating connection",
+						"clawbench_sid", c.clawbenchSID)
+					once.Do(onStall)
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() { close(stop) })
+	}
 }
 
 // Cwd returns the project working directory for this connection,

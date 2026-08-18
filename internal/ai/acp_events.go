@@ -49,6 +49,11 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// When the agent transitions from thinking to tool use, emit
 		// thinking_done so the frontend can stop the thinking spinner.
 		forwardACPEvent(ch, StreamEvent{Type: "thinking_done"})
+		// A tool call is starting — mark it in-flight so the stall watchdog
+		// treats the agent as active while it runs the tool.
+		if conn != nil {
+			conn.SetToolInFlight(true)
+		}
 		tc := update.ToolCall
 		// Flush any pending debounce batch for this tool ID before the new call.
 		if deb != nil {
@@ -59,6 +64,17 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 
 	case update.ToolCallUpdate != nil:
 		tcu := update.ToolCallUpdate
+
+		// Track in-flight tool state from the status regardless of debouncing,
+		// so the stall watchdog knows whether a tool is still executing.
+		if conn != nil && tcu.Status != nil {
+			switch *tcu.Status {
+			case acp.ToolCallStatusCompleted, acp.ToolCallStatusFailed:
+				conn.SetToolInFlight(false)
+			case acp.ToolCallStatusPending, acp.ToolCallStatusInProgress:
+				conn.SetToolInFlight(true)
+			}
+		}
 
 		// Debounce non-terminal ToolCallUpdate events to reduce WS traffic.
 		// ACP agents emit ToolCallUpdate deltas every ~30ms during tool input
