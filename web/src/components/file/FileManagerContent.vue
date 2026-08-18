@@ -1462,9 +1462,11 @@ async function handleKeydown(e) {
         if (multiSelect.active && multiSelect.selected.size > 0) {
             e.preventDefault()
             doBatchCopy()
-        } else if (currentFileForClipboard()) {
+        } else if (selectedPath.value) {
             e.preventDefault()
-            clipboard.entries = [currentFileForClipboard()]
+            const name = selectedPath.value.split('/').pop() || ''
+            const entry = props.entries.find(e => e.name === name)
+            clipboard.entries = [{ type: entry?.type || 'file', name, path: selectedPath.value }]
             clipboard.isCut = false
             if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
         }
@@ -1478,9 +1480,11 @@ async function handleKeydown(e) {
         if (multiSelect.active && multiSelect.selected.size > 0) {
             e.preventDefault()
             doBatchCut()
-        } else if (currentFileForClipboard()) {
+        } else if (selectedPath.value) {
             e.preventDefault()
-            clipboard.entries = [currentFileForClipboard()]
+            const name = selectedPath.value.split('/').pop() || ''
+            const entry = props.entries.find(e => e.name === name)
+            clipboard.entries = [{ type: entry?.type || 'file', name, path: selectedPath.value }]
             clipboard.isCut = true
             if (toast) toast.show(t('file.toast.cutDone'), { icon: '✂️', type: 'success', duration: 1500 })
         }
@@ -1684,13 +1688,6 @@ function scrollSelectedIntoView(path) {
 }
 
 // Build a clipboard entry from the currently viewed/selected file
-function currentFileForClipboard() {
-    if (!props.currentFile) return null
-    const path = props.currentFile.path
-    const name = path.split('/').pop() || ''
-    const entry = props.entries.find(e => e.name === name)
-    return { type: entry?.type || 'file', name, path }
-}
 
 </script>
 
