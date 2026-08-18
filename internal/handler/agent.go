@@ -1038,6 +1038,20 @@ type transcriptTitleResult struct {
 // I/O for large files.
 //
 // 单次扫描转录文件，同时提取最新的 custom-title 记录和第一条真实用户问题。
+// cachedTitleResult returns the cached title result for sid if it exists and
+// matches modTime. Extracted from scanTranscriptForTitles to reduce cyclomatic complexity.
+func cachedTitleResult(sid string, modTime int64) (transcriptTitleResult, bool) {
+	cached, ok := transcriptTitleCache.Load(sid)
+	if !ok {
+		return transcriptTitleResult{}, false
+	}
+	c, ok := cached.(transcriptTitleResult)
+	if !ok || c.ModTime != modTime {
+		return transcriptTitleResult{}, false
+	}
+	return c, true
+}
+
 // 替代之前的两次全文件扫描（customTitleFromTranscript +
 // firstRealQuestionFromTranscript），将 I/O 减半。
 func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
@@ -1057,14 +1071,8 @@ func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
 	// Check cache.
 	sid := filepath.Base(path)
 	sid = strings.TrimSuffix(sid, ".jsonl")
-	if cached, ok := transcriptTitleCache.Load(sid); ok {
-		c, ok := cached.(transcriptTitleResult)
-		if !ok {
-			return "", ""
-		}
-		if c.ModTime == modTime {
-			return c.CustomTitle, c.FirstQuestion
-		}
+	if c, ok := cachedTitleResult(sid, modTime); ok {
+		return c.CustomTitle, c.FirstQuestion
 	}
 
 	scanner := bufio.NewScanner(f)
