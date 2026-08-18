@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -959,22 +961,24 @@ func acpDisplayTitleFromHome(home, cwd, sessionID, agentTitle string) string {
 	// Tier 1: the CLI's own persisted session title ("custom-title" records —
 	// auto-generated topic title or manual rename) outranks every derived
 	// candidate.
-	// 第 1 层：CLI 自持久化的会话标题（custom-title 记录，自动主题名或手动改名），
-	// 优先于一切派生候选。
-	if path != "" {
-		if t := customTitleFromTranscript(path); t != "" {
-			return capTitle(t)
-		}
-	}
 	// Tier 2: the transcript's first real user question (machine headers
 	// stripped). The agent-reported title is deliberately NOT used here:
 	// claude reports an inconsistent user message (often the last or a middle
 	// one), not a reliable first question.
+	// Both tiers are extracted in a single file scan (scanTranscriptForTitles).
+	//
+	// 第 1 层：CLI 自持久化的会话标题（custom-title 记录，自动主题名或手动改名），
+	// 优先于一切派生候选。
 	// 第 2 层：转录首问（剥离机器前缀后）。此处刻意不用 agent 上报标题：claude
 	// 上报的是不一致的某条用户消息（常为末问或中间某条），并非可靠的首问。
+	// 两层在单次文件扫描中提取（scanTranscriptForTitles）。
 	if path != "" {
-		if t := firstRealQuestionFromTranscript(path); t != "" {
-			return capTitle(t)
+		custom, first := scanTranscriptForTitles(path)
+		if custom != "" {
+			return capTitle(custom)
+		}
+		if first != "" {
+			return capTitle(first)
 		}
 	}
 	// Tier 3: fall back to the agent-reported title only when the transcript
@@ -999,6 +1003,110 @@ func capTitle(t string) string {
 	return t
 }
 
+// maxTranscriptSizeBytes caps the transcript file size read for title
+// derivation. Files larger than this are skipped to avoid multi-second I/O
+// on every list request (the PR mentions 82MB transcripts). The first user
+// question and custom-title records are typically near the top / bottom of
+// the file respectively, so skipping huge files is safe.
+//
+// 标题派生时读取转录文件的大小上限。超过此大小的文件跳过，避免每次列表请求
+// 触发数秒 I/O（PR 中提到 82MB 转录）。首问和 custom-title 通常在文件头部/尾部，
+// 跳过大文件是安全的。
+const maxTranscriptSizeBytes int64 = 32 << 20 // 32 MB
+
+// transcriptTitleCache caches the result of transcript title derivation
+// keyed by (sessionID, fileModTime). When the file hasn't changed, the
+// cached result is reused instead of re-reading the file. The cache has
+// no expiry — entries are invalidated by modTime change — but it is
+// bounded by the number of distinct sessions ever listed.
+//
+// 转录标题派生结果缓存，以 (sessionID, modTime) 为键。文件未变时复用缓存，
+// 不再重新读取。缓存无 TTL，通过 modTime 变化淘汰，但大小受限于曾列出过的
+// 不同会话数。
+var transcriptTitleCache sync.Map // map[string]transcriptTitleResult
+
+type transcriptTitleResult struct {
+	CustomTitle string // newest custom-title record, or ""
+	FirstQuestion string // first real user question, or ""
+	ModTime     int64  // file.ModTime().UnixNano()
+}
+
+// scanTranscriptForTitles performs a single-pass scan of a transcript file
+// extracting both the newest custom-title record and the first real user
+// question. This replaces the previous two separate full-file scans
+// (customTitleFromTranscript + firstRealQuestionFromTranscript), halving
+// I/O for large files.
+//
+// 单次扫描转录文件，同时提取最新的 custom-title 记录和第一条真实用户问题。
+// 替代之前的两次全文件扫描（customTitleFromTranscript +
+// firstRealQuestionFromTranscript），将 I/O 减半。
+func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", ""
+	}
+	defer f.Close()
+
+	// Skip files exceeding the size limit.
+	fi, err := f.Stat()
+	if err != nil || fi.Size() > maxTranscriptSizeBytes {
+		return "", ""
+	}
+	modTime := fi.ModTime().UnixNano()
+
+	// Check cache.
+	sid := filepath.Base(path)
+	sid = strings.TrimSuffix(sid, ".jsonl")
+	if cached, ok := transcriptTitleCache.Load(sid); ok {
+		c := cached.(transcriptTitleResult)
+		if c.ModTime == modTime {
+			return c.CustomTitle, c.FirstQuestion
+		}
+	}
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	lastCustom := ""
+	foundFirst := false
+	for scanner.Scan() {
+		var d struct {
+			Type        string          `json:"type"`
+			CustomTitle string          `json:"customTitle"`
+			Message     *struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &d); err != nil {
+			continue
+		}
+		// Extract custom-title (keep the newest).
+		if d.Type == "custom-title" {
+			if s := strings.TrimSpace(d.CustomTitle); s != "" {
+				lastCustom = s
+			}
+			continue
+		}
+		// Extract first real user question.
+		if !foundFirst && d.Type == "user" && d.Message != nil {
+			raw := transcriptContentText(d.Message.Content)
+			text, ok := stripMachineGeneratedUserText(raw)
+			if ok {
+				if t := strings.TrimSpace(text); t != "" {
+					firstQuestion = t
+					foundFirst = true
+				}
+			}
+		}
+	}
+
+	transcriptTitleCache.Store(sid, transcriptTitleResult{
+		CustomTitle:   lastCustom,
+		FirstQuestion: firstQuestion,
+		ModTime:       modTime,
+	})
+	return lastCustom, firstQuestion
+}
+
 // resolveTranscriptPath locates the CLI transcript for a session: first the
 // munged project dir for cwd, then a global lookup by session ID (the
 // transcript may live under a different project directory). Returns "" when
@@ -1017,47 +1125,10 @@ func resolveTranscriptPath(home, cwd, sessionID string) string {
 		if len(matches) == 0 {
 			return ""
 		}
+		sort.Strings(matches)
 		path = matches[0]
 	}
 	return path
-}
-
-// customTitleFromTranscript scans a transcript top-down and returns the
-// NEWEST "custom-title" line, e.g. for
-//
-//	{"type":"custom-title","sessionId":"...","customTitle":"palminput-demo-pcb-design"}
-//
-// it returns "palminput-demo-pcb-design". The CLI may write the line many
-// times (re-writes on activity); the last one wins. This is the CLI's own
-// authoritative name for the session and outranks every derived candidate.
-// No such line ever written → "".
-//
-// 返回 CLI 自己持久化的最新会话标题（"custom-title" 记录——新版 claude-code 会
-// 自动生成 kebab-case 主题标题写入转录；手动改名也落同一记录）。这是 CLI 对该
-// 会话的权威标题，优先级高于一切派生候选。CLI 从未写过则返回 ""。
-func customTitleFromTranscript(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	last := ""
-	for scanner.Scan() {
-		var d struct {
-			Type        string `json:"type"`
-			CustomTitle string `json:"customTitle"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &d); err != nil || d.Type != "custom-title" {
-			continue
-		}
-		if s := strings.TrimSpace(d.CustomTitle); s != "" {
-			last = s
-		}
-	}
-	return last
 }
 
 // deriveSessionTitleForAgent picks the title for an acp-load (import) session,
@@ -1138,11 +1209,6 @@ func deriveSessionTitleForAgent(agent *model.Agent, projectPath, acpSessionID st
 }
 
 // isMachineGeneratedTitle reports whether an agent-reported session title was
-// derived from a machine-generated user turn (injected system prompt block or
-// continuation summary) rather than from user-typed text. Agents truncate
-// titles, so a title that is a prefix of a marker (truncation cut inside the
-// marker itself) also counts.
-// isMachineGeneratedTitle reports whether an agent-reported session title was
 // derived from a machine-generated user turn (injected system prompt block,
 // CLI continuation/compaction header, slash command, local-command caveat,
 // attachment header, interruption marker) rather than from user-typed text.
@@ -1188,6 +1254,10 @@ func acpTranscriptPath(home, cwd, sessionID string) string {
 		return ""
 	}
 	munged := strings.ReplaceAll(cwd, "/", "-")
+	// TODO: on Windows, cwd uses backslashes (e.g. C:\Users\luo\Desktop\foo)
+	// which are not munged here. The Claude CLI itself replaces both / and \
+	// with '-', so Windows users would get a mismatch. Add
+	// strings.ReplaceAll(munged, `\`, "-") when Windows support is needed.
 	return filepath.Join(home, ".claude", "projects", munged, sessionID+".jsonl")
 }
 
@@ -1230,64 +1300,6 @@ func transcriptContentText(content json.RawMessage) string {
 		}
 	}
 	return raw
-}
-
-// firstRealQuestionFromTranscript reads a transcript top-down, line by
-// line (each line = one JSON record), and returns the FIRST human input:
-//
-//	line 1  {"type":"summary",...}                    → skipped (not user)
-//	line 2  {"type":"user", content:"查看当前目录..."}  → candidate!
-//	        strip machine prefixes → "查看当前目录..." stays
-//	        → return it (capped by caller)
-//	line 3+ never reached
-//
-// A user line that is 100% machine text (compaction header, slash command)
-// is skipped and the scan continues. The content field appears as either a
-// plain string or a list of text blocks — transcriptContentText handles
-// both shapes, so neither form is missed.
-//
-// 只读扫描 CLI 转录，返回剥离机器前缀后的第一条人类输入（剥离规则见
-// stripMachineGeneratedUserText）。转录的 content 字段有两种形式（纯字符串 /
-// 文本块列表），由 transcriptContentText 统一处理。
-func firstRealQuestionFromTranscript(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for scanner.Scan() {
-		var d struct {
-			Type    string `json:"type"`
-			Message *struct {
-				// Content is either a plain string ("the question") or a
-				// list of blocks [{type:"text",text:"..."},...]. claude-code
-				// uses both forms across versions/contexts, so decode as
-				// RawMessage and handle each shape.
-				// content 可能是纯字符串（"问题"），也可能是块列表
-				// [{type:"text",text:"..."}]。claude-code 在不同版本/场景
-				// 下两种形式都有，故用 RawMessage 解码后分别处理。
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &d); err != nil || d.Type != "user" {
-			continue
-		}
-		if d.Message == nil {
-			continue
-		}
-		raw := transcriptContentText(d.Message.Content)
-		text, ok := stripMachineGeneratedUserText(raw)
-		if !ok {
-			continue
-		}
-		if t := strings.TrimSpace(text); t != "" {
-			return t
-		}
-	}
-	return ""
 }
 
 func findExistingACPSessions(acpSessionIDs []string) map[string]bool {
