@@ -66,7 +66,7 @@ flowchart LR
 - **聊天渲染管线**：`useChatRender` 是聊天 Block 渲染的核心 composable，管理 `blockTasks`、`blockAskQuestions` 两类结构化 Block 的解析和渲染状态。流式期间仅做纯 Markdown 渲染（跳过 KaTeX、路径标注、Mermaid 等增强）；流式结束后启动完整管线（结构化检测 → 标签剥离 → 增强 Markdown）。历史消息首次加载使用 `deferEnhancements` 快速路径（跳过 KaTeX/路径标注以即时显示），通过 `requestIdleCallback` 分批升级缓存（每批 5 Block）。Mermaid 渲染延迟到流式结束后执行（流式期间块内容不完整）
 - **thinking 惰性加载**：`useThinkingContent` composable 封装 thinking Block 的按需加载逻辑。流结束后 thinking Block 只显示缩略信息（`think_id`），用户点击展开时通过 `GET /api/ai/chat/thinking` 加载完整文本。缓存按 `think_id` 存储，会话切换时自动清空
 - **Read 工具行范围展示**：Read 工具调用结果中包含行范围（`startLine-endLine`）时，前端将路径展示为 `path:start-end` 格式，帮助用户快速定位 AI 关注的代码区域
-- **统一 Markdown 渲染器**：`useMarkdownRenderer` 为所有 Markdown 渲染场景（聊天、文件预览等）提供统一管线：`marked.parse` → KaTeX 字符级渲染（`renderToString`，避免与 Vue `v-html` 冲突）→ DOMPurify → 图片路径修正 → 视频链接转换（内联播放器）→ 表格包装 → 代码块/表格标注头 → 文件路径/commit hash/localhost URL/worktree 路径标注。`skipEnhancements=true` 用于流式期间。返回 `RenderResult { html, detectedPaths[], detectedSHAs[] }` 供异步验证
+- **统一 Markdown 渲染器**：`useMarkdownRenderer` 为所有 Markdown 渲染场景（聊天、文件预览等）提供统一管线：数学块提取（保护 LaTeX 的 `_`/`*` 不被 marked 误解析为强调）→ `marked.parse` → KaTeX 字符级渲染（`renderToString`，避免与 Vue `v-html` 冲突）→ 代码块还原 → DOMPurify → 图片路径修正 → 视频链接转换（内联播放器）→ 表格包装 → 代码块/表格标注头 → 文件路径/commit hash/localhost URL/worktree 路径标注。`skipEnhancements=true` 用于流式期间（跳过路径标注、媒体转换等，不影响 KaTeX）；`skipKatex=true` 用于流式期间公式可能不完整时单独跳过 KaTeX。返回 `RenderResult { html, detectedPaths[], detectedSHAs[] }` 供异步验证
 - **代码编辑器**：CodeMirrorViewer 统一代码浏览与编辑，通过 `editable` prop 切换模式。`codeEditorLang` 工具支持 30+ 语言扩展（高频语言静态导入，低频语言懒加载），含 Markdown 代码围栏嵌套语法高亮。编辑模式使用 `shallowRef` 管理 EditorView 防止 Vue reactive proxy 破坏 undo/redo
 - **终端选择模式**：`useTerminalGestures` 实现三模式手势系统（浏览/手势/选择），选择模式下触摸坐标映射到 xterm 单元格进行文本选取，浮动复制栏提供一键复制。`terminalBlurUtils` 处理 Android WebView 键盘焦点稳定性
 - **终端主题切换**：`terminalThemes` 提供 157 个 xterm-theme 主题选择（懒加载），`auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage
@@ -79,6 +79,8 @@ flowchart LR
 - **文件刷新与差异高亮**：`useFileRefresh` 统一三种刷新触发（手动刷新、fsnotify 自动刷新、聊天驱动刷新），保存滚动位置并高亮变更。Markdown 使用块级差异标记（无闪烁动画），代码文件使用行级差异 + 两阶段闪烁（红色删除→蓝色新增）。编辑中文件被外部修改时弹窗确认，防止静默覆盖
 - **Diff 前后导航**：`useDiffNavigation` 为 Git 提交详情中的文件列表提供 prev/next 顺序导航，用户无需返回文件列表即可逐个浏览文件差异
 - **搜索工具集**：`searchUtils` 提供纯搜索工具函数：文本高亮、语法感知标记、原始内容搜索、基于 rune 的位置匹配（RAG 搜索）和 Markdown 图片布局稳定性检测（搜索跳转修正）。`markdownScroll` 提供 Markdown 渲染预览与源码编辑间的标题锚定滚动同步
+- **流式渲染帧调度**：`StreamFrameScheduler` 将多个流式回调（渲染、滚动、Block 刷新）批量调度到同一 `requestAnimationFrame` 帧，替代多个独立的 `setTimeout`——消除 Chrome "[Violation] 'setTimeout' handler took Nms" 长任务警告，减少帧间重叠
+- **前台恢复自包含重连**：App 从后台恢复时，WS 重连分支自包含地执行 `reset → connect`，不依赖后台分支中可能被 Android `pauseTimers()` 冻结的 `setTimeout` 定时器——消除旧方案中 reset 定时器被冻结导致重连状态不一致的竞态
 
 ### appLog 统一日志（强制规范）
 

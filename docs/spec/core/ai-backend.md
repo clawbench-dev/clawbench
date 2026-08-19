@@ -97,6 +97,9 @@ sequenceDiagram
 - **ACP LoadSession 异步回放**：ACP LoadSession 立即返回 `replayPending: true`，前端无需等待历史回放即可发送新消息——Agent 已从加载的会话获得完整上下文。回放在后台 goroutine 中异步执行，持久化消息到 DB 后通过 `replay_done` WS 事件通知前端。LoadSession 能力来源是 `BackendSpec.ACPLoadSession` 而非 ACP Initialize 响应（Initialize 报告的 LoadSession 可能不可靠，以 BackendSpec 为准）。CodeBuddy 经集成测试验证真实支持 `session/load`（RPC 成功且能恢复上下文），其 `BackendSpec.ACPLoadSession=true`
 - **工具名称归一化**：不同后端对同一操作使用不同的工具名称（如 `read_file` vs `Read`），归一化层统一映射，保证前端显示和 RAG 索引的一致性
 - **孤儿进程清理**：服务启动时扫描系统中的 AI 子进程孤儿（通过环境变量标记），检查父进程存活后安全清理。防止服务崩溃后遗留的进程占用资源
+- **CLI 无进度看门狗**：`CLIBackend.NoProgressTimeout`（默认 30min，负值禁用）监控 CLI 子进程的 stdout 输出，超时无输出则终止进程。防止 CLI 挂起（如被 spawn 的子进程持有 stdout 管道、进程无响应）导致会话永远无法完成
+- **ACP 无进度看门狗**：`ACPConn.stallTimeout`（默认 30min，负值禁用）监控 ACP Prompt 的进度，将 `SessionUpdate` 事件或进行中的工具调用视为进度。超时无进度则取消 Prompt 并关闭连接。区分"Agent 在忙"（有工具调用在执行）和"Agent 卡死"（完全无响应），只有后者触发看门狗。看门狗触发时使用 `killAndMarkDead()` 而非 `close()`，保留 `acpSID` 使后续 Prompt 可通过 LoadSession/ResumeSession 恢复会话——避免因看门狗导致会话失忆（amnesia）
+- **CLI 进程组管理**：`cmd.Cancel` 终止整个进程组（而非仅主进程），防止 spawn 的子进程持有 stdout/stderr 管道导致 `cmd.Wait` 阻塞。进程退出后 2s 内强制关闭 stdout 管道的读取端，避免子进程持有管道导致 scanner 永远阻塞
 - **ACP Stdout 过滤器（acpStdoutFilter）**：所有 ACP 连接的 stdout 经过过滤器处理，修复三类 JSON-RPC 协议违规：
   1. **String-Number ID 不匹配**：CodeWhale 等后端在响应中返回 `"id":"1"`（字符串），而请求发送的是 `"id":1`（数字）。ACP SDK 严格匹配 ID，`"1" != 1` 会导致响应被静默丢弃。过滤器检测并转换回数字形式
   2. **非 JSON 行**：某些后端在 ACP stdio 模式下向 stdout 输出终端转义序列，过滤器跳过不以 `{` 开头的行
@@ -112,6 +115,8 @@ sequenceDiagram
 - **ACP EnsureAlive**：仅确保 ACP 连接存活，不创建或恢复会话。用于 `ListSessions` 等不需要会话上下文的场景
 - **LoadSession 优先恢复路径**：当后端支持 `LoadSession` 但不支持 `ResumeSession` 时，`ensureAliveWithSession` 优先使用 `LoadSession` 恢复会话，避免 `Method not found` 错误。`supportsLoadSession` 从 `BackendSpec.ACPLoadSession` 和 `AgentCapabilityRegistry` 双重判断
 - **CodeBuddy MCP 配置注入**：CodeBuddy ACP 连接 spawn 时读取 `~/.codebuddy/.mcp.json` 并通过 `--mcp-config` 参数注入，使 MCP 工具（websearch、tavily 等）在 ACP 模式下可用
+- **CodeBuddy Plugin Skills 竞态修复**：CodeBuddy 的 PluginManager 在 NewSession 后 ~3s 才加载完成，然后发送包含插件技能的 `AvailableCommandsUpdate`。首个 `AvailableCommandsUpdate` 仅包含内置命令，插件命令缺失。三阶段修复：spawn 时预扫描 `~/.codebuddy/.codebuddy/skills/` 缓存目录提取插件命令、合并到 ACP client 缓存和 registry（`MergeCommandsFromScan`）；`SessionUpdate` 到达时 `mergeAndSyncCommands` 将 ACP 命令与预扫描命令合并（ACP 优先）；`ScheduleCommandsReEmit` 在 `codebuddyPluginLoadDelay`（~3s）后重发 `commands_update` 事件，确保前端看到完整命令列表
+- **raw_output 累积缓冲**：ACP 通知的原始 JSON 不再作为 `raw_output` StreamEvent 通过 channel 发送——改为直接累积到 `ACPConn.rawOutputBuf`，Prompt 返回后一次性刷出。之前每条通知产生 2-3 个 channel 事件，channel 满（buffer=512）时内容事件被丢弃（约 27K drops/day）。移出后 channel 压力减半
 - **reapplyConfigAfterResume**：ResumeSession 后重新应用 mode/model/thinkingEffort 配置，确保恢复后的会话与用户期望的设置一致
 - **共享规则模板（commonRulesTemplate）**：所有 Agent 的系统提示词前注入 `commonRulesTemplate`，包含用户交互格式规范（XML `ask-question` 标签）和媒体生成规则。模板用 `«»` 占位反引号，运行时替换。另有 `mediaRulesTemplate` 仅在用户消息携带文件附件时注入
 
@@ -128,3 +133,4 @@ sequenceDiagram
 - **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent。自动发现只更新基础设施字段（`acp_command`、`transport`），用户自定义的 `name`、`command` 不被覆盖。ACP 相关字段（`transport`、`acp_command`、可用模式、思考深度、命令等）持久化在 `agents` 表中，重启后无需重新发现
 - **ListSessions 使用磁盘回退而非降级**：磁盘扫描不是降级，而是补充——ACP 协议的 `session/list` 是可选能力，后端可以不实现，磁盘扫描保证功能完整性
 - **CodeBuddy MCP 配置注入是 workaround**：CodeBuddy ACP 不原生支持 MCP 配置传递，通过 `--mcp-config` 命令行参数注入是临时方案
+- **CodeBuddy Plugin Skills 竞态是 ACP 协议的时序问题**：ACP NewSession 时 Agent 尚未完成初始化，后续的 `AvailableCommandsUpdate` 才包含完整命令——这不是 CodeBuddy 的 bug，而是 ACP 单次握手模型与异步初始化的固有矛盾。预扫描 + 延迟重发是在协议约束下的务实补偿

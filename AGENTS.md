@@ -50,7 +50,7 @@ npm test                             # Vitest 前端测试
 |---|------|
 | `internal/handler/` | HTTP 端点，所有 `/api/` 路由经 `middleware.Auth` 鉴权，聊天通过 WebSocket 流式传输 |
 | `internal/service/` | 业务逻辑：聊天持久化、自动摘要、对话推荐、调度器、SQLite、Schema 迁移、Agent 存储、会话归档留存期自动清理（SessionCleanupWorker）、桌面端升级检查 |
-| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）。13 个后端子包通过 `ai.RegisterBackend()` 注册 |
+| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）。13 个后端子包通过 `ai.RegisterBackend()` 注册。CLI/ACP 均支持无进度看门狗（NoProgressTimeout/stallTimeout），防止进程挂起。CodeBuddy ACP 含 Plugin Skills 竞态修复（预扫描+延迟重发） |
 | `internal/model/` | 数据模型、后端注册表、模型发现、28 个 LLM Provider |
 | `internal/speech/` | TTS：Edge TTS、Piper、Kokoro、MOSS-TTS-Nano |
 | `internal/stt/` | STT（语音输入）：vLLM Whisper，流式/非流式双端点 |

@@ -61,7 +61,7 @@ sequenceDiagram
 - **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`
 - **订阅超时清理**：客户端超过 120s 无活动即清理订阅，避免僵尸连接
 - **重连时 ACP 状态重发**：`StreamHub` 在客户端重新订阅时，重新推送该会话缓存的 ACP 状态（mode/effort/config/commands），使断线后状态保持一致
-- **前端重连状态同步**：WS 重连后前端主动检查当前会话是否仍在运行（通过 `loadSessionsOnce` 刷新状态）。若会话在断线期间完成，清理卡住的流式状态并重新加载历史。页面可见性恢复时若仍在流式中，断开并重连以重新同步状态。`session_update` 事件到达时若流式状态不一致（如 `completed` 但 `loading` 仍为 true），强制清理并重载历史——防止因 WS 事件丢失导致界面卡死
+- **前端重连状态同步**：WS 重连后前端主动检查当前会话是否仍在运行（通过 `loadSessionsOnce` 刷新状态）。若会话在断线期间完成，清理卡住的流式状态并重新加载历史。App 从后台恢复时，WS 重连采用自包含的前景分支（`reset → connect`），不依赖后台分支中可能被 Android `pauseTimers()` 冻结的 `setTimeout`——消除旧方案中 reset 定时器被冻结导致重连状态不一致的竞态。`session_update` 事件到达时若流式状态不一致（如 `completed` 但 `loading` 仍为 true），强制清理并重载历史——防止因 WS 事件丢失导致界面卡死
 - **subscribeOnly 模式**：前端在回放等待中的会话使用 `subscribeOnly` 模式连接 WS 流——仅接收事件，不触发流式 assistant 消息创建。适用于 LoadSession 异步回放尚未完成的场景
 - **HTTP cancel 兜底**：`StreamHub` 还提供 `POST /api/ai/cancel` HTTP 端点作为 cancel 备选通道——WS 不可达时仍能取消（来自 `handler.go`，由 `SessionExecutor` 监听）
 
