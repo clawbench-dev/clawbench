@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount, shallowMount } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive } from 'vue'
 import SettingsCategory from '@/components/settings/SettingsCategory.vue'
@@ -19,26 +19,38 @@ const localConfig = reactive<Record<string, any>>({
   theme: 'auto',
   locale: 'zh',
   autoSpeech: false,
+  preventScreenLock: false,
+  swipeSession: false,
+  messageDisplayMode: 'summary',
   showHidden: false,
   wordWrap: true,
   lineNumbers: true,
+  stickyScroll: false,
   fileView: 'list',
+  sortField: null,
+  sortDir: 'asc',
+  recentFilesCount: 10,
   terminalFontSize: 12,
   androidLogCapture: false,
-  swipeSession: false,
+  uiScale: 1,
+  headerShortcutTips: true,
 })
 
 const serverConfig = ref<Record<string, any>>({
   version: 'dev',
   default_agent: '',
-  chat: { initial_messages: 20, page_size: 20, system_prompt_interval: 10 },
-  session: { max_count: 10 },
+  chat: { initial_messages: 20, page_size: 20, system_prompt_interval: 10, recommend_enabled: false, recommend_context_messages: 5 },
+  session: { max_count: 10, archive_retention_enabled: false, archive_retention_days: 0 },
+  recent_projects: { max_count: 10 },
+  file_search: { display_limit: 50 },
   upload: { max_size_mb: 100, max_files: 20 },
   terminal: { enabled: true, idle_timeout: '10m', max_sessions: 10, buffer_lines: 2000 },
   tts: { engine: 'edge', voice: '', speed: 1.0, max_cache_files: 100, format: '' },
   rag: { enabled: false, base_url: 'http://localhost:11434', model: 'bge-m3', api_key: '', chunk_size: 512, search_limit: 5, retention_days: 90 },
   port_forward: { enabled: true, port: 0 },
   summarize: { backend: 'simple', model: '' },
+  localhost_auth_exempt: false,
+  tls: { cert_dir: '' },
 })
 
 const mockAgents = [
@@ -106,6 +118,17 @@ vi.mock('@/composables/usePwaInstall', () => ({
   }),
 }))
 
+vi.mock('@/composables/useDesktopDownload', () => ({
+  useDesktopDownload: () => ({
+    latest: ref(null),
+    loading: ref(false),
+    isDesktop: false,
+    loadLatest: vi.fn(),
+    currentDownloadUrl: () => '',
+    downloadDesktop: vi.fn(),
+  }),
+}))
+
 vi.mock('@/utils/api', () => ({
   apiPost: vi.fn().mockResolvedValue({ needs_restart: true }),
 }))
@@ -128,18 +151,49 @@ const i18n = createI18n({
       common: { ok: '确定' },
       settings: {
         needsRestart: '需重启',
-        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口映射', push: '推送', terminal: '终端', rag: 'RAG', projectFiles: '项目与文件', about: '关于', android: 'Android', security: '安全' },
+        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口映射', push: '推送', terminal: '终端', rag: 'RAG', projectFiles: '项目与文件', about: '关于', android: 'Android', security: '安全', basic: '其他' },
         items: {
           defaultAgent: '默认智能体',
           autoSpeech: '自动语音',
+          autoSpeechDesc: 'AI 回复完成后自动朗读',
+          preventScreenLock: '输出期间不锁屏',
+          preventScreenLockDesc: 'AI 输出期间抑制屏幕休眠',
           swipeSession: '滑动切换会话',
+          swipeSessionDesc: '聊天区域左右滑动切换会话',
+          messageDisplayMode: '消息展示模式',
+          messageDisplayModeDesc: '有摘要的消息默认展示方式',
+          messageDisplayModeSummary: '摘要模式',
+          messageDisplayModeOriginal: '原文模式',
           chatInitialMessages: '初始消息数',
+          chatInitialMessagesDesc: '打开会话时加载的消息数量',
           chatPageSize: '每页消息数',
+          chatPageSizeDesc: '每页消息数',
           chatSystemPromptInterval: '系统提示间隔',
+          chatSystemPromptIntervalDesc: '每隔多少条消息插入一次系统提示',
+          chatRecommendEnabled: '推荐回复',
+          chatRecommendEnabledDesc: '推荐回复',
+          chatRecommendContextMessages: '推荐上下文消息数',
+          chatRecommendContextMessagesDesc: '推荐上下文消息数',
           sessionMaxCount: '最大会话数',
+          sessionMaxCountDesc: '最大会话数',
+          archiveRetentionEnabled: '自动清理归档会话',
+          archiveRetentionEnabledDesc: '归档会话到期后自动物理删除',
+          archiveRetentionDays: '留存天数',
+          archiveRetentionDaysDesc: '归档会话保留天数',
+          recentProjectsMaxCount: '最近项目数量',
+          recentProjectsMaxCountDesc: '最近项目数量',
+          fileSearchDisplayLimit: '搜索结果数量上限',
+          fileSearchDisplayLimitDesc: '搜索结果数量上限',
           theme: '主题',
+          themeDesc: '主题',
           locale: '语言',
+          localeDesc: '语言',
+          uiScale: '界面缩放',
+          uiScaleDesc: '界面缩放',
+          headerShortcutTips: '顶栏快捷键提示',
+          headerShortcutTipsDesc: '顶栏快捷键提示',
           ttsEngine: 'TTS引擎',
+          ttsEngineDesc: 'TTS引擎',
           ttsEngineEdge: 'Edge',
           ttsEnginePiper: 'Piper',
           ttsEngineKokoro: 'Kokoro',
@@ -168,18 +222,41 @@ const i18n = createI18n({
           terminalBufferLines: '缓冲行数',
           terminalFontSize: '终端字号',
           showHidden: '显示隐藏文件',
+          showHiddenDesc: '显示隐藏文件',
           wordWrap: '自动换行',
+          wordWrapDesc: '自动换行',
           lineNumbers: '行号',
+          lineNumbersDesc: '行号',
+          stickyScroll: '粘性滚动',
+          stickyScrollDesc: '粘性滚动',
           fileView: '视图模式',
+          fileViewDesc: '视图模式',
           fileViewList: '列表',
           fileViewGrid: '网格',
+          recentFilesCount: '最近文件数量',
+          recentFilesCountDesc: '最近文件数量',
+          sortField: '默认排序',
+          sortFieldDesc: '默认排序',
+          sortFieldDefault: '默认',
+          sortFieldName: '按名称',
+          sortFieldTime: '按时间',
+          sortFieldType: '按类型',
+          sortFieldSize: '按大小',
+          sortDir: '排序方向',
+          sortDirHint: '排序方向',
+          sortDirAsc: '升序',
+          sortDirDesc: '降序',
           uploadMaxSize: '上传大小上限',
+          uploadMaxSizeDesc: '上传大小上限',
           uploadMaxFiles: '上传文件上限',
+          uploadMaxFilesDesc: '上传文件上限',
           ragChunkSize: '分块大小',
           ragSearchLimit: '搜索限制',
           ragRetentionDays: '保留天数',
           aboutServerVersion: '服务器版本',
+          aboutServerVersionDesc: '服务器版本',
           aboutAppVersion: 'APP版本',
+          aboutAppVersionDesc: 'APP版本',
           serverRestart: '重启服务器',
           logCapture: '日志抓取',
           reconfigureServer: '重新配置服务器',
@@ -193,14 +270,42 @@ const i18n = createI18n({
           changePassword: '修改密码',
           changePasswordDesc: '更改登录密码',
           localhostAuthExempt: '本地免认证',
+          localhostAuthExemptDesc: '本地免认证',
           localhostAuthExemptConfirm: '确定禁用？',
           addToHomeScreen: '添加到主屏幕',
           downloadAndroidApp: '下载APK',
+          downloadDesktopApp: '下载桌面版',
+          downloadDesktopAppDesc: '下载桌面版',
+          showWelcome: '打开欢迎界面',
+          showWelcomeDesc: '打开欢迎界面',
+          checkUpgrade: '检查更新',
+          checkUpgradeDesc: '检查更新',
           saveFailed: '保存失败',
           passwordChanged: '密码修改成功',
           passwordDiscarded: '密码已丢弃',
           restartServer: '重启服务器',
+          restartServerDesc: '重启服务器',
           restartServerConfirm: '确定重启？',
+          tlsCertDir: 'TLS证书目录',
+          tlsCertDirDesc: 'TLS证书目录',
+          // Section headers
+          chatInteractionSection: '交互',
+          chatMessageSection: '消息与历史',
+          archiveRetentionSectionHeader: '归档留存',
+          recommendSectionHeader: '推荐回复',
+          appearanceDisplaySection: '显示',
+          appearanceHeaderSection: '顶栏',
+          projectSectionHeader: '项目',
+          searchSectionHeader: '搜索',
+          fileDisplaySection: '文件显示',
+          uploadSection: '上传',
+          aboutVersionSection: '版本',
+          aboutActionsSection: '操作',
+          securitySection: '安全',
+          debugSection: '调试',
+          // aiSummary nav
+          aiSummaryRef: 'AI摘要',
+          aiSummaryRefDesc: 'AI摘要',
         },
         dialog: {
           changePasswordTitle: '修改密码',
@@ -227,10 +332,21 @@ const i18n = createI18n({
 })
 
 function mountCategory(categoryId: string, { deep = false }: { deep?: boolean } = {}) {
-  const mountFn = deep ? mount : shallowMount
-  return mountFn(SettingsCategory, {
+  return mount(SettingsCategory, {
     props: { categoryId },
-    global: { plugins: [i18n] },
+    global: {
+      plugins: [i18n],
+      stubs: deep
+        ? {}
+        : {
+            SettingsGroupPanel: true,
+            IosInstallDrawer: true,
+            UpgradeDialog: true,
+            BottomSheet: true,
+            ProviderIcon: true,
+            PasswordChangeDialog: true,
+          },
+    },
   })
 }
 
