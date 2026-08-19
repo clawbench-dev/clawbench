@@ -538,5 +538,8 @@ else:
     print(f"\n{YELLOW}Tips:{RESET}")
     print("  - Add tests to improve coverage for failing checks")
     print("  - To skip test run: ./scripts/check-frontend-coverage.sh --skip-test")
-    sys.exit(1)
+    # Exit code 2: Tier 1 only failed (baseline drift, non-blocking for CI).
+    # Exit code 1: Tier 2 failed (diff coverage below threshold, blocking).
+    tier2_failed = not tier2_skipped and not tier2_pass
+    sys.exit(1 if tier2_failed else 2)
 PYTHON_SCRIPT

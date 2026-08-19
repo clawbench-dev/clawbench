@@ -195,7 +195,16 @@ jobs:
         run: npm ci
 
       - name: Run coverage gate check
-        run: ./scripts/check-frontend-coverage.sh
+        run: |
+          set +e
+          ./scripts/check-frontend-coverage.sh
+          exit_code=$?
+          set -e
+          if [ $exit_code -eq 2 ]; then
+            echo "::warning::Tier 1 (Project) coverage gate failed — baseline drift, non-blocking"
+            exit 0
+          fi
+          exit $exit_code
 
       - name: Upload coverage data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

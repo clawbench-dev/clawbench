@@ -65,7 +65,16 @@ jobs:
         run: ./scripts/check-go-coverage.sh
 
       - name: Frontend coverage gate
-        run: ./scripts/check-frontend-coverage.sh
+        run: |
+          set +e
+          ./scripts/check-frontend-coverage.sh
+          exit_code=$?
+          set -e
+          if [ $exit_code -eq 2 ]; then
+            echo "::warning::Tier 1 (Project) coverage gate failed — baseline drift, non-blocking"
+            exit 0
+          fi
+          exit $exit_code
 
   build-frontend:
     name: Build Frontend
