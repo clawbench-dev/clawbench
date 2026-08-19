@@ -91,7 +91,7 @@ func STTTranscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"text": text})
+	writeJSON(w, http.StatusOK, map[string]any{sttWSText: text})
 }
 
 // sttWSWriteTimeout is the timeout for individual WebSocket writes.

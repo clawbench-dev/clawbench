@@ -651,16 +651,51 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 
 // ServeACPSessions handles GET /api/agents/{id}/acp-sessions — lists ACP sessions
 // for an agent that supports LoadSession + ListSessions.
-//
-//nolint:gocyclo // ServeACPSessions has multiple sequential checks and branches for ACP capability validation; restructuring would reduce readability
 func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
-	// Extract agent ID from path: /api/agents/{id}/acp-sessions
+	agentID, agent, ok := acpSessionsAgentCheck(w, r)
+	if !ok {
+		return
+	}
+
+	reg := ai.GetAgentCapabilityRegistry()
+	mgr := ai.GetACPConnManager()
+	conn := mgr.GetConnByAgentID(agentID)
+	if conn == nil {
+		conn = mgr.GetOrCreateConnNoSession(r.Context(), agent)
+	}
+
+	spec := model.FindSpecByBackend(agent.Backend)
+	loadSession := spec != nil && spec.ACPLoadSession
+	listSessions := reg.GetListSessions(agentID)
+	diskListSessions := ai.HasListSessionsFromDisk(agent.Backend)
+
+	if !acpSessionsCapCheck(w, r, loadSession, listSessions, diskListSessions) {
+		return
+	}
+
+	cursor := r.URL.Query().Get("cursor")
+	sessions, nextCursor, ok := fetchACPSessions(w, r, agent, agentID, conn, listSessions, cursor)
+	if !ok {
+		return
+	}
+
+	sessions = filterAndRetitleACPSessions(sessions, agent, r)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sessions":   sessions,
+		"nextCursor": nextCursor,
+	})
+}
+
+// acpSessionsAgentCheck validates the agent ID from the URL and returns the
+// agent. If validation fails it writes an error response and returns ok=false.
+func acpSessionsAgentCheck(w http.ResponseWriter, r *http.Request) (string, *model.Agent, bool) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/agents/")
 	agentID := strings.TrimSuffix(path, "/acp-sessions")
 
 	if !isValidAgentID(agentID) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
-		return
+		return "", nil, false
 	}
 
 	configMutex.RLock()
@@ -669,98 +704,68 @@ func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
 
 	if !ok {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
-		return
+		return "", nil, false
 	}
 
 	if !agent.SupportsACP() {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
-		return
+		return "", nil, false
 	}
 
-	reg := ai.GetAgentCapabilityRegistry()
+	return agentID, agent, true
+}
 
-	// Try to get an existing alive connection first.
-	mgr := ai.GetACPConnManager()
-	conn := mgr.GetConnByAgentID(agentID)
-
-	// If no alive connection exists, try to spawn one to discover capabilities.
-	// This solves the chicken-and-egg problem: GetListSessions is only populated
-	// after Initialize, which requires spawning a connection. We use EnsureAlive
-	// which spawns without creating a session.
-	if conn == nil {
-		conn = mgr.GetOrCreateConnNoSession(r.Context(), agent)
-	}
-
-	// Check capabilities — use BackendSpec as authoritative source for LoadSession
-	// (some agents like CodeBuddy report LoadSession=true in ACP Initialize but
-	// don't actually support it). ListSessions still comes from registry.
-	spec := model.FindSpecByBackend(agent.Backend)
-	loadSession := spec != nil && spec.ACPLoadSession
-	listSessions := reg.GetListSessions(agentID)
-
-	// ListSessions can be served either by the ACP session/list RPC (when the
-	// agent advertises the capability) or by an on-disk scanner fallback
-	// (registered by backends that don't implement session/list, e.g. CodeBuddy).
-	// Determine which path to take.
-	diskListSessions := ai.HasListSessionsFromDisk(agent.Backend)
-
-	// If none of LoadSession / session/list RPC / disk scanner is available,
-	// return 501.
+// acpSessionsCapCheck verifies that at least one session enumeration path is
+// available. Returns true if the request should proceed; false if an error
+// response was written.
+func acpSessionsCapCheck(w http.ResponseWriter, r *http.Request, loadSession, listSessions, diskListSessions bool) bool {
 	if !loadSession && !listSessions && !diskListSessions {
 		writeLocalizedErrorf(w, r, http.StatusNotImplemented, "NotImplemented")
-		return
+		return false
 	}
-
-	// If the agent supports LoadSession but has NO way to enumerate sessions
-	// (neither session/list RPC nor an on-disk scanner), there is nothing to
-	// list — return 501 so the drawer shows "not supported".
 	if !listSessions && !diskListSessions {
 		writeLocalizedErrorf(w, r, http.StatusNotImplemented, "NotImplemented")
-		return
+		return false
 	}
+	return true
+}
 
-	cursor := r.URL.Query().Get("cursor")
-
-	var sessions []acp.SessionInfo
-	var nextCursor *string
-	var err error
-
+// fetchACPSessions retrieves sessions via the ACP session/list RPC or the
+// on-disk scanner fallback. Returns (sessions, nextCursor, ok); if ok is
+// false an error response was written.
+func fetchACPSessions(w http.ResponseWriter, r *http.Request, agent *model.Agent, agentID string, conn *ai.ACPConn, listSessions bool, cursor string) ([]acp.SessionInfo, *string, bool) {
 	if listSessions {
-		// session/list RPC path — needs an alive connection.
 		if conn == nil {
 			slog.Warn("handler: failed to spawn ACP connection for ListSessions", "agent", agentID)
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "ServiceUnavailable")
-			return
+			return nil, nil, false
 		}
 		var cursorPtr *string
 		if cursor != "" {
 			cursorPtr = &cursor
 		}
-		sessions, nextCursor, err = conn.ListSessions(r.Context(), cursorPtr)
+		sessions, nextCursor, err := conn.ListSessions(r.Context(), cursorPtr)
 		if err != nil {
 			slog.Error("handler: ListSessions failed", "agent", agentID, "error", err)
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
+			return nil, nil, false
 		}
-	} else {
-		// On-disk scanner fallback (e.g. CodeBuddy). No connection required.
-		// Scope the scan to the current project root (from cookie) so the
-		// scanner only walks the project's own session directory.
-		cwd := middleware.GetProjectFromCookie(r)
-		sessions, err = ai.ListSessionsFromDisk(agent, cwd)
-		if err != nil {
-			slog.Error("handler: on-disk ListSessions failed", "agent", agentID, "error", err)
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
-		}
+		return sessions, nextCursor, true
 	}
 
-	// Filter out ACP sessions that already exist in ClawBench's session manager.
-	// Each loaded ACP session has source_session_id = "acp:{acpSessionId}".
-	// The @resume drawer shows only "native" ACP sessions — sessions the user has
-	// not yet loaded into ClawBench. Sessions that already exist locally (active
-	// or archived) are excluded so the user resumes them from the local session
-	// list instead of re-loading from the agent.
+	cwd := middleware.GetProjectFromCookie(r)
+	sessions, err := ai.ListSessionsFromDisk(agent, cwd)
+	if err != nil {
+		slog.Error("handler: on-disk ListSessions failed", "agent", agentID, "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return nil, nil, false
+	}
+	return sessions, nil, true
+}
+
+// filterAndRetitleACPSessions removes sessions already loaded into ClawBench
+// and re-derives display titles from transcript data when available.
+func filterAndRetitleACPSessions(sessions []acp.SessionInfo, agent *model.Agent, r *http.Request) []acp.SessionInfo {
 	if len(sessions) > 0 {
 		acpSessionIDs := make([]string, len(sessions))
 		for i, s := range sessions {
@@ -819,10 +824,7 @@ func ServeACPSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"sessions":   sessions,
-		"nextCursor": nextCursor,
-	})
+	return sessions
 }
 
 // findExistingACPSessions returns a set of ACP session IDs that already
