@@ -1550,7 +1550,7 @@ async function respondPermission(sessionId: string, toolCallId: string, optionId
   }
 }
 
-function updateAskSubmitState(view: Element) {
+export function updateAskSubmitState(view: Element) {
   const items = view.querySelectorAll('.ask-question-item')
   let allAnswered = true
   for (const item of items) {
@@ -1559,9 +1559,11 @@ function updateAskSubmitState(view: Element) {
       break
     }
   }
+  const supplementaryInput = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+  const hasSupplementary = !!supplementaryInput?.value?.trim()
   const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
   if (submitBtn) {
-    submitBtn.disabled = !allAnswered
+    submitBtn.disabled = !allAnswered && !hasSupplementary
   }
 }
 
@@ -1645,14 +1647,13 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
           answers.push(labels.join(', '))
         }
       }
-      if (answers.length === 0) return true
-
       // Append supplementary text if provided
       const supplementaryInput = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
       const supplementaryText = supplementaryInput?.value?.trim()
       if (supplementaryText) {
         answers.push(supplementaryText)
       }
+      if (answers.length === 0) return true
 
       // Mark as submitted
       view.classList.add('ask-submitted')

@@ -8,6 +8,7 @@ import {
   registerToolActionHandler,
   handleToolAction,
   handleToolContentHeaderClick,
+  updateAskSubmitState,
 } from '@/utils/renderToolDetail.ts'
 
 // ── Mock for useAppMode (controlled via mutable ref) ──
@@ -1086,14 +1087,64 @@ describe('AskUserQuestion action handler', () => {
       const { container, emit } = createAskDOM(false)
       const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
 
-      // Submit without selecting anything (button would be disabled in real DOM,
+      // Submit without selecting anything and no supplementary text (button would be disabled in real DOM,
       // but handler should also not emit)
       const clickSubmit = new MouseEvent('click', { bubbles: true, cancelable: true })
       Object.defineProperty(clickSubmit, 'target', { value: submitBtn, writable: false })
       handleToolAction('AskUserQuestion', clickSubmit, emit)
 
-      // Should not emit send-message (no answers)
+      // Should not emit send-message (no answers and no supplementary text)
       expect(emit).not.toHaveBeenCalledWith('send-message', expect.anything())
+      cleanup(container)
+    })
+
+    it('emits supplementary text only when no option selected', () => {
+      const { container, emit } = createAskDOM(false)
+      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
+
+      // Type supplementary text without selecting any option
+      suppInput.value = 'I want something else'
+      updateAskSubmitState(container)
+      expect(submitBtn.disabled).toBe(false)
+
+      const clickSubmit = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(clickSubmit, 'target', { value: submitBtn, writable: false })
+      handleToolAction('AskUserQuestion', clickSubmit, emit)
+
+      // Should emit with only the supplementary text
+      expect(emit).toHaveBeenCalledWith('send-message', 'I want something else')
+      cleanup(container)
+    })
+
+    it('enables submit when supplementary text is entered without selecting options', () => {
+      const { container, emit } = createAskDOM(false)
+      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
+
+      expect(submitBtn.disabled).toBe(true)
+
+      // Enter supplementary text
+      suppInput.value = 'extra info'
+      updateAskSubmitState(container)
+
+      expect(submitBtn.disabled).toBe(false)
+      cleanup(container)
+    })
+
+    it('disables submit when supplementary text is cleared and no options selected', () => {
+      const { container, emit } = createAskDOM(false)
+      const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+      const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
+
+      // Enter and then clear supplementary text
+      suppInput.value = 'temp'
+      updateAskSubmitState(container)
+      expect(submitBtn.disabled).toBe(false)
+
+      suppInput.value = ''
+      updateAskSubmitState(container)
+      expect(submitBtn.disabled).toBe(true)
       cleanup(container)
     })
   })

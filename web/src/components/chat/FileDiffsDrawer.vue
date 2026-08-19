@@ -7,7 +7,7 @@
       <FileIcon :path="filePath" :size="16" class="bs-header-icon" />
       <span class="fd-header-path">{{ baseName }}</span>
     </template>
-    <div class="fd-body tool-detail-body" @click="handleBodyClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+    <div class="fd-body tool-detail-body" @click="handleBodyClick" @input="handleBodyInput" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
       <!-- Full path + jump + badge + change count at the top of the content area -->
       <div class="fd-file-info">
         <span class="fd-file-info-path" :title="displayPath">{{ displayPath }}</span>
@@ -48,7 +48,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
-import { handleToolAction, handleToolContentHeaderClick } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, handleToolContentHeaderClick, updateAskSubmitState } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 
@@ -214,6 +214,11 @@ function handleBodyClick(event) {
   }
 
   event.stopPropagation()
+}
+
+function handleBodyInput(event) {
+  const askView = event.target.closest('.ask-question-view')
+  if (askView) updateAskSubmitState(askView)
 }
 </script>
 

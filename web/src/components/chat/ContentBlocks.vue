@@ -19,7 +19,7 @@
           <span class="tool-name">{{ toolDisplayName(tool.name, tool.input, tool.display_name) }}</span>
           <CheckCircle2 :size="14" color="#22c55e" class="tool-check" />
         </div>
-        <div v-if="shouldAutoExpandTool(tool.name || '')" class="tool-detail" :data-tool-name="tool.name" @click="handleToolDetailClick">
+        <div v-if="shouldAutoExpandTool(tool.name || '')" class="tool-detail" :data-tool-name="tool.name" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div v-html="formatToolInput(tool.input || {}, tool.name, { done: tool.done, status: tool.status, output: tool.output })"></div>
         </div>
       </template>
@@ -55,7 +55,7 @@
           <span class="tool-name">{{ t('tool.askUser.name') }}</span>
           <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
         </div>
-        <div class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput({ questions: summaryAskQuestions }, 'AskUserQuestion')"></div>
+        <div class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput" v-html="formatToolInput({ questions: summaryAskQuestions }, 'AskUserQuestion')"></div>
       </template>
     </template>
     <!-- Original content mode -->
@@ -107,7 +107,7 @@
           <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
         </div>
         <!-- Inline detail for auto-expand tools (AskUserQuestion, PermissionApproval) -->
-        <div v-if="shouldAutoExpand(block)" class="tool-detail" :data-tool-name="block.name" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick">
+        <div v-if="shouldAutoExpand(block)" class="tool-detail" :data-tool-name="block.name" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
         </div>
       </template>
@@ -168,7 +168,7 @@
             <span class="tool-summary">{{ askQuestionSummary(blockAskQuestions[blockTaskKey(bi)]) }}</span>
             <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
           </div>
-          <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
+          <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
         </template>
       </template>
 
@@ -199,7 +199,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- defineProps runtime declarations require any for complex prop types */
 import { ref, watch, onUnmounted, computed, onMounted, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { handleToolAction, shouldAutoExpandTool } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState } from '@/utils/renderToolDetail.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronRight, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, Clock, Archive } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -603,6 +603,14 @@ function handleToolDetailClick(event: Event) {
     return
   }
   event.stopPropagation()
+}
+
+function handleToolDetailInput(event: Event) {
+  const target = event.target as HTMLElement
+  const askView = target.closest('.ask-question-view')
+  if (askView) {
+    updateAskSubmitState(askView)
+  }
 }
 
 // ── Throttled streaming render ──

@@ -11,7 +11,7 @@
         <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-detail-status" />
       </div>
     </template>
-    <div class="tool-detail-body" @click="handleBodyClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+    <div class="tool-detail-body" @click="handleBodyClick" @input="handleBodyInput" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
       <div v-html="toolInputHtml"></div>
       <!-- Tool output section -->
       <div v-if="toolOutputHtml" class="tool-output-section tool-content-wrap word-wrap">
@@ -46,7 +46,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { getToolIcon } from '@/utils/icons'
 import { formatDuration } from '@/utils/format.ts'
-import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG, updateAskSubmitState } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
@@ -120,6 +120,11 @@ function handleBodyClick(event) {
     return
   }
   event.stopPropagation()
+}
+
+function handleBodyInput(event) {
+  const askView = event.target.closest('.ask-question-view')
+  if (askView) updateAskSubmitState(askView)
 }
 
 </script>
