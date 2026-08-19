@@ -461,19 +461,36 @@ export function useGlobalEvents() {
     // In browser mode, keep WS alive on background so that browser
     // notifications can be shown for terminal events (completed/cancelled/
     // permission_pending/failed). Desktop browsers keep WS alive in background.
+    //
+    // Design principle: the foreground ('visible') branch is self-contained —
+    // it resets reconnect state and reconnects without depending on any timer
+    // that may have been scheduled during the background ('hidden') branch.
+    // This eliminates the old race where setTimeout(reset, 100) was frozen by
+    // Android's pauseTimers() and fired unpredictably (or never) on resume.
     function handleVisibilityChange() {
         if (document.visibilityState === 'visible') {
-            // Returning to foreground — reconnect if disconnected and do full state pull
+            // Returning to foreground — self-contained state reset + reconnect.
+            // Always reset reconnect state first (it may be disabled from
+            // background or have stale attempt counts from backgrounded
+            // reconnect attempts that the OS killed).
+            reconnect.reset()
+            // Reconnect if disconnected
             if (!connected.value) connect()
             // Emit a custom event that other composables can listen to
             window.dispatchEvent(new CustomEvent('clawbench-foreground'))
         } else {
             if (isAppMode.value) {
-                // App mode: always disconnect WebSocket on background
+                // App mode: disconnect WebSocket on background.
+                // Disable reconnect to prevent the onclose handler from
+                // scheduling reconnects while backgrounded (the OS will
+                // just kill them again, wasting resources and battery).
                 disconnect()
-                reconnect.disable() // prevent auto-reconnect while backgrounded
-                // Re-enable reconnect for next foreground
-                setTimeout(() => reconnect.reset(), 100)
+                reconnect.disable()
+                // No setTimeout(reset, 100) here — the foreground branch
+                // handles the reset atomically. The old setTimeout approach
+                // was fragile: Android pauseTimers() froze it, and even
+                // without pauseTimers it created a 100ms window where
+                // reconnect was disabled but no foreground event had fired.
             }
             // Browser mode: keep WS alive for background notifications
         }

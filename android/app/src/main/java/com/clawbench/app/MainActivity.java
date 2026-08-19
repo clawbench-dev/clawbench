@@ -1424,16 +1424,24 @@ public class MainActivity extends AppCompatActivity {
         handleResumeIntent();
     }
 
-    /** Pause WebView rendering and JS timers to release CPU/GPU resources. */
+    /** Pause WebView rendering to release CPU/GPU resources. */
     void pauseWebView() {
         webView.onPause();
-        webView.pauseTimers();
+        // Note: intentionally NOT calling webView.pauseTimers() here.
+        // pauseTimers() is a global API that freezes ALL JS timers across ALL
+        // WebViews in the process, which breaks the frontend's reconnect state
+        // management (setTimeout-based reconnect.reset() after disable() gets
+        // frozen and may never fire or fire at unpredictable times after
+        // resumeTimers()). webView.onPause() already pauses the WebView's
+        // rendering pipeline, which is sufficient to release GPU resources.
+        // JS timers continue running so the frontend can manage its own state
+        // (e.g., heartbeat detection, reconnect scheduling) reliably.
     }
 
-    /** Resume WebView rendering and JS timers when returning to foreground. */
+    /** Resume WebView rendering when returning to foreground. */
     void resumeWebView() {
         webView.onResume();
-        webView.resumeTimers();
+        // No webView.resumeTimers() needed — pauseTimers() is no longer called.
     }
 
     /**

@@ -640,16 +640,16 @@ public class BrowserActivity extends AppCompatActivity {
         resumeWebView();
     }
 
-    /** Pause WebView rendering and JS timers to release CPU/GPU resources. */
+    /** Pause WebView rendering to release CPU/GPU resources. */
     void pauseWebView() {
         webView.onPause();
-        webView.pauseTimers();
+        // Not calling pauseTimers() — see MainActivity.pauseWebView() for rationale.
     }
 
-    /** Resume WebView rendering and JS timers when returning to foreground. */
+    /** Resume WebView rendering when returning to foreground. */
     void resumeWebView() {
         webView.onResume();
-        webView.resumeTimers();
+        // No resumeTimers() needed — pauseTimers() is no longer called.
     }
 
     /**

@@ -418,6 +418,80 @@ describe('useGlobalEvents', () => {
             const newWs = getLatestWs()
             expect(newWs).not.toBe(ws)
         })
+
+        it('should reset reconnect state atomically on foreground (no stale disabled)', () => {
+            appModeState.value = true
+            events.init()
+            const ws = connectAndGetWs()
+
+            // Go to background — disconnect + disable reconnect
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'hidden',
+                writable: true,
+                configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+            expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+
+            // Simulate onclose firing after disconnect (normal behavior)
+            // Before the fix, reconnect was disabled and the onclose handler
+            // would not schedule reconnect. Now, on foreground we always reset.
+            ws.onclose?.(new CloseEvent('close'))
+
+            // Come back to foreground
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'visible',
+                writable: true,
+                configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+
+            // A new WebSocket should be created — reconnect.reset() was called
+            // atomically in the visible branch, so disabled state is cleared.
+            const newWs = getLatestWs()
+            expect(newWs).not.toBe(ws)
+
+            // Verify reconnect is not disabled by simulating a failed connect:
+            // if the new WS closes, shouldReconnect() should return true
+            newWs.onclose?.(new CloseEvent('close'))
+            // With the old code, reconnect was disabled and would never retry.
+            // With the new code, reconnect.reset() in the visible branch
+            // ensures the reconnect system is always ready on foreground.
+            expect(events.wsStatus.value).not.toBe('disconnected') // should be 'reconnecting'
+        })
+
+        it('foreground always resets reconnect even if WS was already connected', () => {
+            appModeState.value = true
+            events.init()
+            const ws = connectAndGetWs()
+
+            // Go to background
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'hidden',
+                writable: true,
+                configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+
+            // Come back to foreground
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'visible',
+                writable: true,
+                configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+
+            // A new WebSocket was created — verify reconnect is not stuck
+            // in disabled state by checking that if the new WS fails,
+            // reconnect.shouldReconnect() returns true (not disabled).
+            const newWs = getLatestWs()
+            expect(newWs).not.toBe(ws)
+            // Simulate connection failure — onclose should schedule reconnect
+            newWs.onclose?.(new CloseEvent('close'))
+            // wsStatus should be 'reconnecting' (not stuck at 'disconnected'
+            // with disabled=true as in the old code)
+            expect(events.wsStatus.value).toBe('reconnecting')
+        })
     })
 
     describe('wsStatus computed', () => {

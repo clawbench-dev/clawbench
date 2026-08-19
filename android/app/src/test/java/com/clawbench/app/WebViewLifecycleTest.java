@@ -56,25 +56,28 @@ public class WebViewLifecycleTest {
     // =====================================================
 
     @Test
-    public void browserActivity_pauseWebView_callsWebViewPauseAndPauseTimers() throws Exception {
+    public void browserActivity_pauseWebView_callsWebViewPauseOnly() throws Exception {
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(browserActivity, "webView", mockWebView);
 
         invokeMethod(browserActivity, "pauseWebView");
 
         verify(mockWebView).onPause();
-        verify(mockWebView).pauseTimers();
+        // pauseTimers() is intentionally NOT called — it globally freezes JS
+        // timers and breaks the frontend's reconnect state management.
+        verify(mockWebView, never()).pauseTimers();
     }
 
     @Test
-    public void browserActivity_resumeWebView_callsWebViewResumeAndResumeTimers() throws Exception {
+    public void browserActivity_resumeWebView_callsWebViewResumeOnly() throws Exception {
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(browserActivity, "webView", mockWebView);
 
         invokeMethod(browserActivity, "resumeWebView");
 
         verify(mockWebView).onResume();
-        verify(mockWebView).resumeTimers();
+        // No resumeTimers() since pauseTimers() is no longer called.
+        verify(mockWebView, never()).resumeTimers();
     }
 
     // =====================================================
@@ -82,25 +85,28 @@ public class WebViewLifecycleTest {
     // =====================================================
 
     @Test
-    public void mainActivity_pauseWebView_callsWebViewPauseAndPauseTimers() throws Exception {
+    public void mainActivity_pauseWebView_callsWebViewPauseOnly() throws Exception {
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(mainActivity, "webView", mockWebView);
 
         invokeMethod(mainActivity, "pauseWebView");
 
         verify(mockWebView).onPause();
-        verify(mockWebView).pauseTimers();
+        // pauseTimers() is intentionally NOT called — it globally freezes JS
+        // timers and breaks the frontend's reconnect state management.
+        verify(mockWebView, never()).pauseTimers();
     }
 
     @Test
-    public void mainActivity_resumeWebView_callsWebViewResumeAndResumeTimers() throws Exception {
+    public void mainActivity_resumeWebView_callsWebViewResumeOnly() throws Exception {
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(mainActivity, "webView", mockWebView);
 
         invokeMethod(mainActivity, "resumeWebView");
 
         verify(mockWebView).onResume();
-        verify(mockWebView).resumeTimers();
+        // No resumeTimers() since pauseTimers() is no longer called.
+        verify(mockWebView, never()).resumeTimers();
     }
 
     // =====================================================

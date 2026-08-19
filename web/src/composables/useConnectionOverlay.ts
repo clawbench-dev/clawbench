@@ -71,8 +71,9 @@ export function useConnectionOverlay() {
     )
 
     // On foreground: reset the timer so the overlay doesn't flash immediately
-    // after resuming from background (the old timer may have nearly expired
-    // during pauseTimers).
+    // after resuming from background (the old timer may have been scheduled
+    // just before the app went to background and its remaining time is
+    // uncertain).
     function onForeground() {
         resetTimer()
     }
