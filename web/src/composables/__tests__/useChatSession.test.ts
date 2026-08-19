@@ -616,6 +616,34 @@ describe('onSessionEvent', () => {
     expect(mockState.chatUnreadCount).toBe(0)
   })
 
+  it('recovers loading state when session_update running arrives while loading is false', () => {
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'current-s1'
+
+    // Simulate: session is running, but loading got stuck at false
+    // (e.g. stale completed event arrived before the fresh running event)
+    options.loading.value = false
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'running' })
+
+    // Should recover: loading=true, connectStream called
+    expect(options.loading.value).toBe(true)
+    expect(options.onConnectStream).toHaveBeenCalledWith('current-s1', { reuseExistingStreaming: true })
+  })
+
+  it('does not recover loading for a different session', () => {
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'current-s1'
+
+    options.loading.value = false
+
+    session.onSessionEvent({ session_id: 'other-s2', status: 'running' })
+
+    // Should NOT recover — it's a different session
+    expect(options.loading.value).toBe(false)
+    expect(options.onConnectStream).not.toHaveBeenCalled()
+  })
+
   // ── onSessionEvent → loadHistory (replaces old msgCountPolling) ──
 
   it('calls loadHistory when has_new_messages=true for current session', async () => {

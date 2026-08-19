@@ -176,7 +176,7 @@ func sendMessageToSessionFromPush(sessionID, message string) error {
 	// Session not running — persist user message and launch execution
 	msgID, err := AddChatMessage(info.ProjectPath, info.Backend, sessionID, roleUser, message, nil, false, info.Title)
 	if err != nil {
-		SetSessionRunning(sessionID, false) // rollback running state
+		SetSessionRunning(sessionID, false, true) // rollback running state; skipEvent — session never actually started
 		return fmt.Errorf("persist message: %w", err)
 	}
 	// Emit user_message for cross-device sync
@@ -218,7 +218,7 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 	go func() {
 		defer handleSessionPanic(cfg, sessionID, cancel)
 
-		defer SetSessionRunning(sessionID, false)
+		defer SetSessionRunning(sessionID, false, true) // skipEvent: markDoneAndSendFinal already emitted the terminal event
 		defer cancel()
 		defer UnregisterSessionCancel(sessionID)
 		defer handleACPCleanup(sessionID, cfg.AgentID)

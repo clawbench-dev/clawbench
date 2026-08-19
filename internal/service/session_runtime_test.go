@@ -990,6 +990,39 @@ func TestSetSessionRunning_SkipEventTrue(t *testing.T) {
 	assert.False(t, IsSessionRunning("session-skip"))
 }
 
+func TestSetSessionRunning_DoubleStopWithSkipEvent_NoDuplicateBroadcast(t *testing.T) {
+	cleanupActiveSessions()
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-dblstop", "")
+	_ = sub
+
+	// Simulate the normal completion flow:
+	// 1. markDoneAndSendFinal calls SetSessionRunning(false, true) — skips event
+	// 2. goroutine defer calls SetSessionRunning(false, true) — should also skip
+	SetSessionRunning("session-dblstop", true, true) // start, skip event
+	assert.True(t, IsSessionRunning("session-dblstop"))
+
+	// First stop (markDoneAndSendFinal) — skipEvent
+	SetSessionRunning("session-dblstop", false, true)
+	assert.False(t, IsSessionRunning("session-dblstop"))
+
+	// Second stop (deferred) — skipEvent should prevent duplicate event
+	SetSessionRunning("session-dblstop", false, true)
+
+	// No session_update events should have been emitted
+	buffered := sub.GetBufferedEvents()
+	for _, msg := range buffered {
+		if msg.Event == "session_update" {
+			t.Fatalf("expected no session_update events, got one with status=%v", msg.Data)
+		}
+	}
+}
+
 // --- emitTaskEvent tests ---
 
 func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {

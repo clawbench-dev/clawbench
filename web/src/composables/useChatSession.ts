@@ -844,6 +844,15 @@ export function useChatSession(options: UseChatSessionOptions) {
 
     if (data.status === 'running') {
       if (sid) { runningSessions.value.add(sid); runningSessionsVersion.value++ }
+      // Recovery: if the current session started running but loading is false,
+      // it means we missed the transition (e.g. WS reconnect delivered a stale
+      // "completed" before the fresh "running", or drain loop continued). Re-enter
+      // streaming state so the UI shows the correct "executing" indicator.
+      if (sid === currentSessionId.value && !loading.value) {
+        appLog.w(TAG, `session_update running received but loading is false — recovering streaming state`)
+        loading.value = true
+        onConnectStream(currentSessionId.value, { reuseExistingStreaming: true })
+      }
     } else if (data.status === 'permission_pending' || data.status === 'permission_resolved') {
       // Permission approval state changed — reload sessions to update dot indicators
       if (permissionDebounce) clearTimeout(permissionDebounce)

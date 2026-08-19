@@ -499,7 +499,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage"))
 	if err != nil {
-		service.SetSessionRunning(sessionID, false)
+		service.SetSessionRunning(sessionID, false, true) // skipEvent: session never actually started
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to save message")))
 		return
 	}
@@ -535,7 +535,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					slog.Any("panic", r),
 					slog.String("stack", string(debug.Stack())),
 				)
-				service.SetSessionRunning(sessionID, false)
+				service.SetSessionRunning(sessionID, false, true) // skipEvent: error event already emitted below
 				service.UnregisterSessionCancel(sessionID)
 				cancel()
 				// Emit error event to WS clients
@@ -547,7 +547,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		slog.Info("ai goroutine started", slog.String("project", projectPath))
-		defer service.SetSessionRunning(sessionID, false)
+		defer service.SetSessionRunning(sessionID, false, true) // skipEvent: markDoneAndSendFinal already emitted the terminal event
 		defer cancel()
 		defer service.UnregisterSessionCancel(sessionID)
 		// Mark session as not-running BEFORE sending terminal WS event.
