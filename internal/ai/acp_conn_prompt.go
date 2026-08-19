@@ -111,7 +111,7 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	// agent process so the connection is not reused in its stuck state.
 	stopWatchdog := c.startStallWatchdog(promptCtx, func() {
 		promptCancel()
-		c.close()
+		c.killAndMarkDead() // kill process but preserve acpSID for recovery
 	})
 	defer stopWatchdog()
 

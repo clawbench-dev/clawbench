@@ -152,3 +152,55 @@ func TestACPConn_StartStallWatchdog_DoesNotFireWithToolInFlight(t *testing.T) {
 		t.Fatal("watchdog did not fire after the in-flight tool completed")
 	}
 }
+
+func TestACPConn_KillAndMarkDead_PreservesAcpSID(t *testing.T) {
+	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
+	conn.acpSID = "acp-session-123"
+
+	conn.killAndMarkDead()
+
+	assert.False(t, conn.alive, "connection should be dead after killAndMarkDead")
+	assert.Equal(t, "acp-session-123", conn.acpSID,
+		"acpSID must be preserved so ensureAliveWithSession can recover via LoadSession/ResumeSession")
+	assert.Nil(t, conn.conn, "ACP connection should be nil")
+	assert.Nil(t, conn.client, "ACP client should be nil")
+}
+
+func TestACPConn_Close_ClearsAcpSID(t *testing.T) {
+	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
+	conn.acpSID = "acp-session-456"
+
+	conn.close()
+
+	assert.False(t, conn.alive, "connection should be dead after close")
+	assert.Empty(t, conn.acpSID, "close() must clear acpSID (unlike killAndMarkDead)")
+}
+
+func TestACPConn_StallWatchdog_UsesKillAndMarkDead(t *testing.T) {
+	// Verify that the stall watchdog preserves acpSID by using killAndMarkDead
+	// (not close), ensuring LoadSession/ResumeSession recovery on next prompt.
+	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
+	conn.stallTimeout = 200 * time.Millisecond
+	conn.acpSID = "acp-session-789"
+	conn.lastSessionUpdate.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stalled := make(chan struct{})
+	stop := conn.startStallWatchdog(ctx, func() {
+		conn.killAndMarkDead()
+		close(stalled)
+	})
+	defer stop()
+
+	select {
+	case <-stalled:
+		// Watchdog fired — verify acpSID is preserved.
+		assert.False(t, conn.alive, "connection should be dead")
+		assert.Equal(t, "acp-session-789", conn.acpSID,
+			"stall watchdog must preserve acpSID for session recovery")
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchdog did not fire")
+	}
+}

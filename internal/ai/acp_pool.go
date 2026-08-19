@@ -1382,7 +1382,41 @@ func (c *ACPConn) ProcessPID() int {
 	return 0
 }
 
+// killAndMarkDead kills the agent process and marks the connection as dead,
+// but preserves acpSID so ensureAliveWithSession can recover the session via
+// LoadSession/ResumeSession on the next prompt. Used by the stall watchdog
+// which kills a stuck process but must not cause amnesia on recovery.
+func (c *ACPConn) killAndMarkDead() {
+	c.mu.Lock()
+
+	if c.cmd != nil && c.cmd.Process != nil {
+		if c.stdoutFilter != nil {
+			c.stdoutFilter.Close()
+			c.stdoutFilter = nil
+		}
+		killProcessGroup(c.cmd.Process)
+		oldCmd := c.cmd
+		c.mu.Unlock()
+		_ = oldCmd.Wait()
+		c.mu.Lock()
+		if c.cmd == oldCmd {
+			c.cmd = nil
+		}
+	}
+
+	c.cmd = nil
+	c.conn = nil
+	c.client = nil
+	c.alive = false
+	// Intentionally preserve c.acpSID — ensureAliveWithSession needs it
+	// to recover the session via LoadSession/ResumeSession after respawn.
+	c.resetLastSetConfig()
+	c.mu.Unlock()
+}
+
 // close kills the agent process and marks the connection as dead.
+// Unlike killAndMarkDead, this clears acpSID because callers (idle sweep,
+// pool teardown, RemoveConn) permanently discard the connection.
 func (c *ACPConn) close() {
 	c.mu.Lock()
 
