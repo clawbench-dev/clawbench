@@ -291,6 +291,93 @@ func TestClawBenchACPClient_GetCommandsAsInfo_Empty(t *testing.T) {
 	assert.Empty(t, info)
 }
 
+// --- MergeCommandsFromScan + SessionUpdate merge tests (issue #383) ---
+
+func TestClawBenchACPClient_MergeCommandsFromScan_EmptyClient(t *testing.T) {
+	c := NewClawBenchACPClient()
+
+	pluginCmds := []AvailableCommandInfo{
+		{Name: "brainstorm", Description: "Brainstorm ideas"},
+		{Name: "execute-plan", Description: "Execute plan"},
+	}
+	c.MergeCommandsFromScan(pluginCmds)
+
+	cmds := c.GetCommands()
+	require.Len(t, cmds, 2)
+	assert.Equal(t, "brainstorm", cmds[0].Name)
+	assert.Equal(t, "execute-plan", cmds[1].Name)
+}
+
+func TestClawBenchACPClient_MergeCommandsFromScan_ACPWins(t *testing.T) {
+	c := NewClawBenchACPClient()
+
+	// Set existing ACP commands
+	c.SetCommands([]acp.AvailableCommand{
+		{Name: "compact", Description: "ACP compact"},
+		{Name: "brainstorm", Description: "ACP brainstorm", Input: &acp.AvailableCommandInput{
+			Unstructured: &acp.UnstructuredCommandInput{Hint: "topic"},
+		}},
+	})
+
+	// Merge plugin commands — "brainstorm" already exists in ACP, so ACP version wins
+	pluginCmds := []AvailableCommandInfo{
+		{Name: "brainstorm", Description: "Plugin brainstorm"},
+		{Name: "execute-plan", Description: "Execute plan"},
+	}
+	c.MergeCommandsFromScan(pluginCmds)
+
+	cmds := c.GetCommands()
+	require.Len(t, cmds, 3)
+	assert.Equal(t, "compact", cmds[0].Name)
+	assert.Equal(t, "ACP brainstorm", cmds[1].Description) // ACP version preserved
+	assert.Equal(t, "topic", cmds[1].Input.Unstructured.Hint)
+	assert.Equal(t, "execute-plan", cmds[2].Name)
+}
+
+func TestClawBenchACPClient_MergeCommandsFromScan_EmptyInput(t *testing.T) {
+	c := NewClawBenchACPClient()
+	c.MergeCommandsFromScan(nil) // should not panic
+	assert.Nil(t, c.GetCommands())
+}
+
+func TestClawBenchACPClient_SessionUpdate_MergesWithPreScanned(t *testing.T) {
+	c := NewClawBenchACPClient()
+	ch := make(chan StreamEvent, 10)
+	c.RegisterSession("sess-1", ch)
+
+	// Pre-scan adds plugin commands
+	pluginCmds := []AvailableCommandInfo{
+		{Name: "brainstorm", Description: "Brainstorm ideas"},
+		{Name: "execute-plan", Description: "Execute plan"},
+	}
+	c.MergeCommandsFromScan(pluginCmds)
+
+	// First ACP update (built-in only, no plugin commands yet)
+	ctx := context.Background()
+	notif := acp.SessionNotification{
+		SessionId: acp.SessionId("sess-1"),
+		Update: acp.SessionUpdate{
+			AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{
+				AvailableCommands: []acp.AvailableCommand{
+					{Name: "compact", Description: "Compact history"},
+				},
+			},
+		},
+	}
+	err := c.SessionUpdate(ctx, notif)
+	assert.NoError(t, err)
+
+	// Pre-scanned commands should NOT be lost — merge preserves them
+	cmds := c.GetCommands()
+	require.Len(t, cmds, 3)
+	assert.Equal(t, "compact", cmds[0].Name)
+	assert.Equal(t, "brainstorm", cmds[1].Name)
+	assert.Equal(t, "execute-plan", cmds[2].Name)
+
+	// Drain the event from channel
+	<-ch
+}
+
 // --- Permission request/respond flow tests ---
 
 func TestClawBenchACPClient_RequestPermission_NoOptions_AutoCancel(t *testing.T) {

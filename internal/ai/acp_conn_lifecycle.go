@@ -553,6 +553,23 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 			"deleteSession", deleteSession)
 	}
 
+	// Pre-scan CodeBuddy plugin commands to work around the AvailableCommandsUpdate
+	// race condition (issue #383). Plugin skills aren't available at NewSession time
+	// because CodeBuddy's PluginManager hasn't finished loading yet. Scanning the
+	// plugin cache directory pre-populates the registry so EmitCommandsUpdate can
+	// include plugin commands from the start.
+	if isCodeBuddyBackend(c.agent) {
+		if pluginCmds := ScanCodeBuddyPluginCommands(); len(pluginCmds) > 0 {
+			agentID := c.agent.ID
+			existing := GetAgentCapabilityRegistry().GetCommands(agentID)
+			merged := MergeCommands(existing, pluginCmds)
+			GetAgentCapabilityRegistry().UpdateCommands(agentID, merged)
+			client.MergeCommandsFromScan(pluginCmds)
+			slog.Info("acp: pre-scanned CodeBuddy plugin commands",
+				"agent", agentID, "plugin_count", len(pluginCmds), "merged_count", len(merged))
+		}
+	}
+
 	c.cmd = cmd
 	c.conn = conn
 	c.client = client

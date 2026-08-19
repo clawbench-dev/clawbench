@@ -120,6 +120,18 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		slog.Info("acp perf: ExecuteStream.step2_emitSession_start", "session_id", req.SessionID, "is_new", isNew, "after_GetOrCreateConn", time.Since(streamStart))
 		b.emitSessionAndCacheState(conn, isNew, ch)
 
+		// Schedule delayed commands re-emit for CodeBuddy (plugin race fix, issue #383).
+		// CodeBuddy's PluginManager finishes loading ~3s after NewSession, then sends
+		// an updated AvailableCommandsUpdate with plugin skills. Re-emit commands after
+		// codebuddyPluginLoadDelay so the frontend sees the complete list.
+		var cancelCmdTimer func()
+		if isCodeBuddyBackend(b.agent) {
+			cancelCmdTimer = conn.ScheduleCommandsReEmit(ch, codebuddyPluginLoadDelay)
+		}
+		if cancelCmdTimer != nil {
+			defer cancelCmdTimer()
+		}
+
 		// Step 3: Send prompt
 		slog.Info("acp perf: ExecuteStream.step3_Prompt_start", "session_id", req.SessionID, "after_emitSession", time.Since(streamStart))
 		promptBlocks := b.buildPromptBlocks(req)

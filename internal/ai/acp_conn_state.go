@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	acp "github.com/coder/acp-go-sdk"
 
@@ -248,6 +249,23 @@ func (c *ACPConn) EmitCommandsUpdate(ch chan<- StreamEvent) {
 		return "client_fallback"
 	}())
 	forwardACPEvent(ch, StreamEvent{Type: "commands_update", Commands: cmds})
+}
+
+// ScheduleCommandsReEmit starts a timer that re-emits the commands_update event
+// after the given delay. This allows time for CodeBuddy's plugin system to load
+// and send an updated AvailableCommandsUpdate via ACP (issue #383).
+// Returns a stop function that cancels the timer.
+func (c *ACPConn) ScheduleCommandsReEmit(ch chan<- StreamEvent, delay time.Duration) func() {
+	timer := time.AfterFunc(delay, func() {
+		agentID := c.AgentID()
+		cmds := GetAgentCapabilityRegistry().GetCommands(agentID)
+		if len(cmds) == 0 {
+			return
+		}
+		slog.Info("acp: delayed re-emitting commands_update (plugin race fix)", "agent", agentID, "count", len(cmds))
+		forwardACPEvent(ch, StreamEvent{Type: "commands_update", Commands: cmds})
+	})
+	return func() { timer.Stop() }
 }
 
 // isACPPeerDisconnected checks whether the error is an ACP peer-disconnect error.

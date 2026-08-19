@@ -151,10 +151,23 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 			infos = append(infos, info)
 		}
-		// Update agent-level commands in registry
+		// Update agent-level commands in registry.
+		// For CodeBuddy: merge with any pre-scanned plugin commands (issue #383).
+		// The first AvailableCommandsUpdate only has built-in commands (plugins not
+		// loaded yet), so we must preserve pre-scanned commands that ACP doesn't include.
+		//
+		// MergeCommands(acpCommands=infos, pluginCommands=existing) puts ACP commands
+		// first, then adds commands from `existing` (registry: may contain pre-scanned
+		// plugin commands + prior ACP updates) that are not already in the ACP list.
+		// This assumes CodeBuddy never removes previously-available commands from one
+		// AvailableCommandsUpdate to the next — only adds new ones (plugin skills).
 		if conn != nil {
 			agentID := conn.AgentID()
 			if agentID != "" {
+				if isCodeBuddyBackend(conn.agent) {
+					existing := GetAgentCapabilityRegistry().GetCommands(agentID)
+					infos = MergeCommands(infos, existing)
+				}
 				GetAgentCapabilityRegistry().UpdateCommands(agentID, infos)
 			}
 		}

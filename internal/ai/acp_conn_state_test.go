@@ -3,6 +3,7 @@ package ai
 import (
 	"strings"
 	"testing"
+	"time"
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
@@ -917,4 +918,67 @@ func TestEmitPromptResponseUsage_WithCachedState(t *testing.T) {
 	assert.Equal(t, 1000, u.Size)
 	assert.Equal(t, 1.5, u.Cost)
 	assert.Equal(t, "USD", u.Currency)
+}
+
+// ---------------------------------------------------------------------------
+// ScheduleCommandsReEmit tests (issue #383 plugin race fix)
+// ---------------------------------------------------------------------------
+
+func TestScheduleCommandsReEmit_FiresAndEmits(t *testing.T) {
+	agent := &model.Agent{ID: "test-schedule-emit", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-schedule-emit")
+
+	// Pre-populate registry with commands
+	GetAgentCapabilityRegistry().UpdateCommands(agent.ID, []AvailableCommandInfo{
+		{Name: "compact", Description: "Compact history"},
+		{Name: "brainstorm", Description: "Brainstorm ideas"},
+	})
+
+	ch := make(chan StreamEvent, 64)
+	stop := conn.ScheduleCommandsReEmit(ch, 50*time.Millisecond)
+	defer stop()
+
+	// Wait for the timer to fire
+	time.Sleep(100 * time.Millisecond)
+
+	events := drainStreamEvents(ch)
+	require.Len(t, events, 1)
+	assert.Equal(t, "commands_update", events[0].Type)
+	require.Len(t, events[0].Commands, 2)
+	assert.Equal(t, "compact", events[0].Commands[0].Name)
+	assert.Equal(t, "brainstorm", events[0].Commands[1].Name)
+}
+
+func TestScheduleCommandsReEmit_StopCancelsTimer(t *testing.T) {
+	agent := &model.Agent{ID: "test-schedule-stop", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-schedule-stop")
+
+	GetAgentCapabilityRegistry().UpdateCommands(agent.ID, []AvailableCommandInfo{
+		{Name: "compact", Description: "Compact history"},
+	})
+
+	ch := make(chan StreamEvent, 64)
+	stop := conn.ScheduleCommandsReEmit(ch, 50*time.Millisecond)
+	stop() // Cancel immediately
+
+	// Wait past the timer deadline
+	time.Sleep(100 * time.Millisecond)
+
+	events := drainStreamEvents(ch)
+	assert.Empty(t, events, "no events expected when timer is cancelled")
+}
+
+func TestScheduleCommandsReEmit_NoCommands_NoEmit(t *testing.T) {
+	agent := &model.Agent{ID: "test-schedule-nocmds", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-schedule-nocmds")
+	// No commands in registry
+
+	ch := make(chan StreamEvent, 64)
+	stop := conn.ScheduleCommandsReEmit(ch, 50*time.Millisecond)
+	defer stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	events := drainStreamEvents(ch)
+	assert.Empty(t, events, "no events expected when registry has no commands")
 }

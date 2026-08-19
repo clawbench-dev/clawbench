@@ -169,17 +169,93 @@ func (c *ClawBenchACPClient) SetCommands(cmds []acp.AvailableCommand) {
 	c.commands = cmds
 }
 
+// MergeCommandsFromScan merges pre-scanned plugin commands with cached ACP commands.
+// ACP commands (from AvailableCommandsUpdate) take precedence. The merge ensures
+// plugin commands are available in the client cache even before the ACP agent sends
+// its delayed AvailableCommandsUpdate (issue #383).
+func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommandInfo) {
+	if len(pluginCmds) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Build set of existing command names from ACP
+	existing := make(map[string]struct{}, len(c.commands))
+	for _, cmd := range c.commands {
+		existing[cmd.Name] = struct{}{}
+	}
+
+	// Add plugin commands not already present
+	for _, info := range pluginCmds {
+		if _, found := existing[info.Name]; !found {
+			c.commands = append(c.commands, acp.AvailableCommand{
+				Name:        info.Name,
+				Description: info.Description,
+			})
+			existing[info.Name] = struct{}{}
+		}
+	}
+}
+
 // SessionUpdate converts ACP session update notifications to StreamEvents.
 // Called by the SDK's internal goroutine from Connection.receive().
 // It routes the update to the correct StreamEvent channel based on the
 // ACP session ID. If no route is registered (session unregistered or
 // cancelled), the update is silently dropped.
 func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNotification) error {
-	// Cache available commands from the update (before route lookup)
+	// Cache available commands from the update (before route lookup).
+	// Merge with any pre-scanned plugin commands to avoid losing them
+	// when the first AvailableCommandsUpdate only contains built-in commands
+	// (CodeBuddy plugin race, issue #383). ACP commands take precedence.
+	// Also sync the merged result to the registry so mapACPSessionUpdate()
+	// reads consistent state when it runs next.
 	if n.Update.AvailableCommandsUpdate != nil {
 		c.mu.Lock()
-		c.commands = n.Update.AvailableCommandsUpdate.AvailableCommands
+		acpCmds := n.Update.AvailableCommandsUpdate.AvailableCommands
+		if len(c.commands) > 0 {
+			// Merge: ACP commands first, then pre-scanned commands not in ACP
+			acpNames := make(map[string]struct{}, len(acpCmds))
+			for _, cmd := range acpCmds {
+				acpNames[cmd.Name] = struct{}{}
+			}
+			merged := make([]acp.AvailableCommand, 0, len(acpCmds)+len(c.commands))
+			merged = append(merged, acpCmds...)
+			for _, cmd := range c.commands {
+				if _, inACP := acpNames[cmd.Name]; !inACP {
+					merged = append(merged, cmd)
+				}
+			}
+			c.commands = merged
+		} else {
+			c.commands = acpCmds
+		}
+		// Copy merged commands before releasing lock (for registry sync below)
+		cmdsCopy := make([]acp.AvailableCommand, len(c.commands))
+		copy(cmdsCopy, c.commands)
 		c.mu.Unlock()
+
+		// Sync merged commands to registry so mapACPSessionUpdate reads
+		// consistent state. This prevents client cache and registry from
+		// diverging when the first AvailableCommandsUpdate (built-in only)
+		// overwrites pre-scanned plugin commands in the registry.
+		if c.connRef != nil {
+			agentID := c.connRef.AgentID()
+			if agentID != "" {
+				infos := make([]AvailableCommandInfo, 0, len(cmdsCopy))
+				for _, cmd := range cmdsCopy {
+					info := AvailableCommandInfo{
+						Name:        cmd.Name,
+						Description: cmd.Description,
+					}
+					if cmd.Input != nil && cmd.Input.Unstructured != nil {
+						info.InputHint = cmd.Input.Unstructured.Hint
+					}
+					infos = append(infos, info)
+				}
+				GetAgentCapabilityRegistry().UpdateCommands(agentID, infos)
+			}
+		}
 	}
 
 	// Keep the connection alive for async workflows (e.g. /deep-research):

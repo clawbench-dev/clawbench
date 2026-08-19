@@ -1278,7 +1278,77 @@ func TestMapACPSessionUpdate_AvailableCommandsUpdate(t *testing.T) {
 	assertNoMoreACPEvents(ch, t)
 }
 
-// --- mapACPSessionUpdate CurrentModeUpdate tests ---
+// --- mapACPSessionUpdate AvailableCommandsUpdate + CodeBuddy merge (issue #383) ---
+
+func TestMapACPSessionUpdate_AvailableCommandsUpdate_CodeBuddyMerge(t *testing.T) {
+	// When conn.agent is CodeBuddy and the registry already has pre-scanned plugin
+	// commands, an incoming AvailableCommandsUpdate (built-in only) should merge
+	// with the existing commands rather than overwriting them.
+	agent := &model.Agent{ID: "test-cb-merge-cmds", Backend: "codebuddy", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-cb-merge-sid")
+
+	// Pre-populate registry with pre-scanned plugin commands
+	GetAgentCapabilityRegistry().UpdateCommands(agent.ID, []AvailableCommandInfo{
+		{Name: "brainstorm", Description: "Brainstorm ideas"},
+		{Name: "execute-plan", Description: "Execute plan in batches"},
+	})
+
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	// ACP update with only built-in commands (plugin not loaded yet)
+	update := acp.SessionUpdate{
+		AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{
+			AvailableCommands: []acp.AvailableCommand{
+				{Name: "compact", Description: "Compact history"},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, conn, nil)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "commands_update", events[0].Type)
+	// Should have both ACP (compact) and pre-scanned plugin commands
+	require.Len(t, events[0].Commands, 3)
+	assert.Equal(t, "compact", events[0].Commands[0].Name)
+	assert.Equal(t, "brainstorm", events[0].Commands[1].Name)
+	assert.Equal(t, "execute-plan", events[0].Commands[2].Name)
+
+	// Registry should also be updated with merged list
+	regCmds := GetAgentCapabilityRegistry().GetCommands(agent.ID)
+	require.Len(t, regCmds, 3)
+}
+
+func TestMapACPSessionUpdate_AvailableCommandsUpdate_NonCodeBuddy_NoMerge(t *testing.T) {
+	// Non-CodeBuddy agents should NOT trigger merge behavior.
+	agent := &model.Agent{ID: "test-noncb-merge-cmds", Backend: "claude", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-noncb-merge-sid")
+
+	// Pre-populate registry (as if from a previous session)
+	GetAgentCapabilityRegistry().UpdateCommands(agent.ID, []AvailableCommandInfo{
+		{Name: "old-cmd", Description: "Old command"},
+	})
+
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{
+			AvailableCommands: []acp.AvailableCommand{
+				{Name: "new-cmd", Description: "New command"},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, conn, nil)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "commands_update", events[0].Type)
+	// For non-CodeBuddy, only ACP commands (no merge)
+	require.Len(t, events[0].Commands, 1)
+	assert.Equal(t, "new-cmd", events[0].Commands[0].Name)
+}
 
 func TestMapACPSessionUpdate_CurrentModeUpdate(t *testing.T) {
 	ch := make(chan StreamEvent, 10)
