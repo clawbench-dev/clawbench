@@ -920,15 +920,20 @@ export function useChatSession(options: UseChatSessionOptions) {
   // prevents runningSessions from being updated.
 
   function handleVisibilityChange() {
-    if (document.visibilityState === 'visible' && loading.value) {
-      // Page became visible while streaming - reconnect
+    if (document.visibilityState !== 'visible') return
+    if (loading.value) {
+      // Page became visible while streaming - disconnect stale stream first
       // Don't force scroll to bottom — user may have scrolled up to read history
       onDisconnectStream()
-      loadHistory(false, false, true).catch(() => {
-        // loadHistory failed — reset loading state so user isn't stuck
-        loading.value = false
-      })
     }
+    // Always reload history when returning to foreground to ensure state
+    // consistency (AI may have finished, mode may have changed, etc. while
+    // the app was backgrounded). skipIfUnchanged=true avoids unnecessary
+    // UI updates when nothing changed.
+    loadHistory(false, false, true).catch(() => {
+      // loadHistory failed — reset loading state so user isn't stuck
+      loading.value = false
+    })
   }
 
   /**

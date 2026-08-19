@@ -3337,7 +3337,7 @@ describe('handleVisibilityChange', () => {
     vi.restoreAllMocks()
   })
 
-  it('when visible and loading=false: does nothing', async () => {
+  it('when visible and loading=false: reloads history (skipIfUnchanged)', async () => {
     const loading = ref(false)
     const onDisconnectStream = vi.fn()
     const options = {
@@ -3358,11 +3358,26 @@ describe('handleVisibilityChange', () => {
     }
     const session = useChatSession(options)
 
+    // Mock fetch for the loadHistory call
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1', messages: [], total: 0, running: false,
+      }),
+    })
+
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
 
     session.handleVisibilityChange()
 
+    // Should NOT disconnect stream (not streaming), but SHOULD reload history
     expect(onDisconnectStream).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=s1'),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
 
     vi.restoreAllMocks()
   })
@@ -3388,11 +3403,20 @@ describe('handleVisibilityChange', () => {
     }
     const session = useChatSession(options)
 
+    // Mock fetch to detect any loadHistory calls
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1', messages: [], total: 0, running: false,
+      }),
+    })
+
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
 
     session.handleVisibilityChange()
 
     expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
 
     vi.restoreAllMocks()
   })
