@@ -931,7 +931,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     // the app was backgrounded). skipIfUnchanged=true avoids unnecessary
     // UI updates when nothing changed.
     loadHistory(false, false, true).catch(() => {
-      // loadHistory failed — reset loading state so user isn't stuck
+      // loadHistory failed — if we were streaming, reset loading state
+      // so the user isn't stuck with a permanent spinner
       loading.value = false
     })
   }

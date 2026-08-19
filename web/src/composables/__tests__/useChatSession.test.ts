@@ -3420,8 +3420,56 @@ describe('handleVisibilityChange', () => {
 
     vi.restoreAllMocks()
   })
-})
 
+  it('when visible and no session selected: reloads history via recovery path', async () => {
+    const loading = ref(false)
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref(''),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // Mock fetch for the recovery path (no session_id in URL)
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'recovered-s1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+
+    session.handleVisibilityChange()
+
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      // Recovery path: URL does NOT contain session_id parameter
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?limit='),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+      expect(globalThis.fetch).not.toHaveBeenCalledWith(
+        expect.stringContaining('session_id'),
+        expect.anything()
+      )
+    })
+
+    vi.restoreAllMocks()
+  })
+})
 // ───────────────────────────────────────────────────────────
 // handleWsReconnect
 // ───────────────────────────────────────────────────────────
