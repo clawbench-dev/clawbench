@@ -130,7 +130,7 @@ function extractCodeAndMath(markdown: string): {
     })
 
     // 2c. Inline math: $...$ (same exclusion rules as INLINE_MATH_RE)
-    result = result.replace(/(^|[^$\d\\])\$(?!\$)([^$\n]+?)\$(?!\d)/g, (whole, pre, math) => {
+    result = result.replace(/(^|[^$\d\\])\$(?!\$)([^$\n]+?)\$(?!\d)/g, (_whole, pre, math) => {
         mathEntries.push({ math: math.trim(), displayMode: false })
         return pre + ph(false)
     })

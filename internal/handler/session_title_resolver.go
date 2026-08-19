@@ -269,7 +269,7 @@ func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
 			continue
 		}
 		// Extract first real user question.
-		if !foundFirst && d.Type == "user" && d.Message != nil {
+		if !foundFirst && d.Type == strUser && d.Message != nil {
 			raw := transcriptContentText(d.Message.Content)
 			// Claude transcript first-question extraction strips with the
 			// claude rule set (universal + claude-native) — the transcript

@@ -31,10 +31,10 @@ func TestIsCodeBuddyBackend(t *testing.T) {
 
 func TestParseCommandFrontmatter(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       string
-		wantDesc    string
-		wantOK      bool
+		name     string
+		input    string
+		wantDesc string
+		wantOK   bool
 	}{
 		{
 			name: "valid frontmatter with description",

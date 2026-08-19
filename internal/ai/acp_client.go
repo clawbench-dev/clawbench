@@ -211,51 +211,7 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	// Also sync the merged result to the registry so mapACPSessionUpdate()
 	// reads consistent state when it runs next.
 	if n.Update.AvailableCommandsUpdate != nil {
-		c.mu.Lock()
-		acpCmds := n.Update.AvailableCommandsUpdate.AvailableCommands
-		if len(c.commands) > 0 {
-			// Merge: ACP commands first, then pre-scanned commands not in ACP
-			acpNames := make(map[string]struct{}, len(acpCmds))
-			for _, cmd := range acpCmds {
-				acpNames[cmd.Name] = struct{}{}
-			}
-			merged := make([]acp.AvailableCommand, 0, len(acpCmds)+len(c.commands))
-			merged = append(merged, acpCmds...)
-			for _, cmd := range c.commands {
-				if _, inACP := acpNames[cmd.Name]; !inACP {
-					merged = append(merged, cmd)
-				}
-			}
-			c.commands = merged
-		} else {
-			c.commands = acpCmds
-		}
-		// Copy merged commands before releasing lock (for registry sync below)
-		cmdsCopy := make([]acp.AvailableCommand, len(c.commands))
-		copy(cmdsCopy, c.commands)
-		c.mu.Unlock()
-
-		// Sync merged commands to registry so mapACPSessionUpdate reads
-		// consistent state. This prevents client cache and registry from
-		// diverging when the first AvailableCommandsUpdate (built-in only)
-		// overwrites pre-scanned plugin commands in the registry.
-		if c.connRef != nil {
-			agentID := c.connRef.AgentID()
-			if agentID != "" {
-				infos := make([]AvailableCommandInfo, 0, len(cmdsCopy))
-				for _, cmd := range cmdsCopy {
-					info := AvailableCommandInfo{
-						Name:        cmd.Name,
-						Description: cmd.Description,
-					}
-					if cmd.Input != nil && cmd.Input.Unstructured != nil {
-						info.InputHint = cmd.Input.Unstructured.Hint
-					}
-					infos = append(infos, info)
-				}
-				GetAgentCapabilityRegistry().UpdateCommands(agentID, infos)
-			}
-		}
+		c.mergeAndSyncCommands(n.Update.AvailableCommandsUpdate.AvailableCommands)
 	}
 
 	// Keep the connection alive for async workflows (e.g. /deep-research):
@@ -294,6 +250,56 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 
 	mapACPSessionUpdate(n.Update, ch, ctx, c.connRef, deb)
 	return nil
+}
+
+// mergeAndSyncCommands merges incoming ACP commands with pre-scanned plugin
+// commands (ACP takes precedence) and syncs the result to the agent capability
+// registry so mapACPSessionUpdate reads consistent state.
+func (c *ClawBenchACPClient) mergeAndSyncCommands(acpCmds []acp.AvailableCommand) {
+	c.mu.Lock()
+	if len(c.commands) > 0 {
+		// Merge: ACP commands first, then pre-scanned commands not in ACP
+		acpNames := make(map[string]struct{}, len(acpCmds))
+		for _, cmd := range acpCmds {
+			acpNames[cmd.Name] = struct{}{}
+		}
+		merged := make([]acp.AvailableCommand, 0, len(acpCmds)+len(c.commands))
+		merged = append(merged, acpCmds...)
+		for _, cmd := range c.commands {
+			if _, inACP := acpNames[cmd.Name]; !inACP {
+				merged = append(merged, cmd)
+			}
+		}
+		c.commands = merged
+	} else {
+		c.commands = acpCmds
+	}
+	// Copy merged commands before releasing lock (for registry sync below)
+	cmdsCopy := make([]acp.AvailableCommand, len(c.commands))
+	copy(cmdsCopy, c.commands)
+	c.mu.Unlock()
+
+	// Sync merged commands to registry so mapACPSessionUpdate reads
+	// consistent state. This prevents client cache and registry from
+	// diverging when the first AvailableCommandsUpdate (built-in only)
+	// overwrites pre-scanned plugin commands in the registry.
+	if c.connRef != nil {
+		agentID := c.connRef.AgentID()
+		if agentID != "" {
+			infos := make([]AvailableCommandInfo, 0, len(cmdsCopy))
+			for _, cmd := range cmdsCopy {
+				info := AvailableCommandInfo{
+					Name:        cmd.Name,
+					Description: cmd.Description,
+				}
+				if cmd.Input != nil && cmd.Input.Unstructured != nil {
+					info.InputHint = cmd.Input.Unstructured.Hint
+				}
+				infos = append(infos, info)
+			}
+			GetAgentCapabilityRegistry().UpdateCommands(agentID, infos)
+		}
+	}
 }
 
 // PermissionKey returns the map key for a pending permission request.

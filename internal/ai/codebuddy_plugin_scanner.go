@@ -18,7 +18,6 @@ import (
 // active=2 at T+3s), plus a 1s safety margin.
 const codebuddyPluginLoadDelay = 4 * time.Second
 
-
 // isCodeBuddyBackend returns true if the agent uses CodeBuddy as its ACP backend.
 func isCodeBuddyBackend(agent *model.Agent) bool {
 	return agent != nil && agent.Backend == "codebuddy"
@@ -71,7 +70,7 @@ func scanPluginCommandsFromDir(cacheDir string) []AvailableCommandInfo {
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // G122: path is from filepath.WalkDir which resolves symlinks; plugin commands are trusted local files
 		if err != nil {
 			slog.Debug("acp plugin scan: cannot read command file", "path", path, "error", err)
 			return nil

@@ -69,8 +69,8 @@ func TestMergeCommands_MultipleOverlaps(t *testing.T) {
 		{Name: "review", Description: "ACP review"},
 	}
 	plugin := []AvailableCommandInfo{
-		{Name: "compact", Description: "Plugin compact"},   // duplicate
-		{Name: "review", Description: "Plugin review"},     // duplicate
+		{Name: "compact", Description: "Plugin compact"}, // duplicate
+		{Name: "review", Description: "Plugin review"},   // duplicate
 		{Name: "brainstorm", Description: "Plugin brainstorm"},
 		{Name: "execute-plan", Description: "Plugin execute-plan"},
 	}

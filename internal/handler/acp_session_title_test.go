@@ -286,10 +286,10 @@ func TestMachinePrefixesMatchStrip(t *testing.T) {
 		{"<local-command", stripSkipTurn, ""},
 	}
 	stripWithDelimiterCases := []struct {
-		rule     stripRule
-		input    string // marker + delimiter + optional user text
-		wantOK   bool
-		wantRem  string // expected remaining text
+		rule    stripRule
+		input   string // marker + delimiter + optional user text
+		wantOK  bool
+		wantRem string // expected remaining text
 	}{
 		{
 			rule:    stripRule{"[System Instructions:", stripToBracketClose, ""},
