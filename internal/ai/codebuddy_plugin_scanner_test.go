@@ -3,6 +3,7 @@ package ai
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"clawbench/internal/model"
@@ -229,6 +230,9 @@ Body`), 0o644))
 }
 
 func TestScanCodeBuddyPluginCommands_SkipsUnreadableFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not supported on Windows")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("root user can read all files, permission-based test unreliable")
 	}
@@ -269,8 +273,8 @@ Body`), 0o644))
 }
 
 func TestScanCodeBuddyPluginCommands_RealHomeDir(t *testing.T) {
-	// Test ScanCodeBuddyPluginCommands by setting HOME to a temp dir.
-	// This covers the os.UserHomeDir path in the real function.
+	// Test ScanCodeBuddyPluginCommands by overriding the home directory.
+	// On Windows, os.UserHomeDir reads USERPROFILE; on Unix, it reads HOME.
 	tmpDir := t.TempDir()
 	cacheDir := filepath.Join(tmpDir, ".codebuddy", "plugins", "cache")
 	cmdDir := filepath.Join(cacheDir, "superpowers", "4.0.3", "commands")
@@ -280,10 +284,15 @@ description: "Brainstorm ideas"
 ---
 Body`), 0o644))
 
-	// Override HOME
-	origHome := os.Getenv("HOME")
-	require.NoError(t, os.Setenv("HOME", tmpDir))
-	defer os.Setenv("HOME", origHome)
+	if runtime.GOOS == "windows" {
+		origProfile := os.Getenv("USERPROFILE")
+		require.NoError(t, os.Setenv("USERPROFILE", tmpDir))
+		defer os.Setenv("USERPROFILE", origProfile)
+	} else {
+		origHome := os.Getenv("HOME")
+		require.NoError(t, os.Setenv("HOME", tmpDir))
+		defer os.Setenv("HOME", origHome)
+	}
 
 	cmds := ScanCodeBuddyPluginCommands()
 	require.Len(t, cmds, 1)
@@ -293,15 +302,24 @@ Body`), 0o644))
 func TestScanCodeBuddyPluginCommands_RealHomeDir_NoCacheDir(t *testing.T) {
 	// Test ScanCodeBuddyPluginCommands when cache dir doesn't exist.
 	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	require.NoError(t, os.Setenv("HOME", tmpDir))
-	defer os.Setenv("HOME", origHome)
+	if runtime.GOOS == "windows" {
+		origProfile := os.Getenv("USERPROFILE")
+		require.NoError(t, os.Setenv("USERPROFILE", tmpDir))
+		defer os.Setenv("USERPROFILE", origProfile)
+	} else {
+		origHome := os.Getenv("HOME")
+		require.NoError(t, os.Setenv("HOME", tmpDir))
+		defer os.Setenv("HOME", origHome)
+	}
 
 	cmds := ScanCodeBuddyPluginCommands()
 	assert.Nil(t, cmds)
 }
 
 func TestScanCodeBuddyPluginCommands_CannotResolveHomeDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.UserHomeDir on Windows uses USERPROFILE which always has a value")
+	}
 	// Test the os.UserHomeDir error path by unsetting HOME.
 	// On Linux, os.UserHomeDir falls back to $HOME; clearing it returns an error.
 	origHome := os.Getenv("HOME")
