@@ -366,6 +366,13 @@ async function renderDualThemeMermaid(clone: HTMLElement): Promise<void> {
                 block.parentNode?.replaceChild(wrapper, block)
             } catch {
                 // Failed to render opposite theme — keep only the current theme SVG
+                // Mermaid v11 inserts an error SVG + wrapper div into document.body
+                // (not the clone) before throwing — remove them
+                const orphanId = `mermaid-export-${mermaidCounter - 1}`
+                const orphan = document.getElementById(orphanId)
+                if (orphan) orphan.remove()
+                const orphanDiv = document.getElementById(`d${orphanId}`)
+                if (orphanDiv) orphanDiv.remove()
             }
         }
     } finally {

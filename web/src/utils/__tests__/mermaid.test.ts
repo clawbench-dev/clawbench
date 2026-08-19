@@ -137,6 +137,35 @@ describe('mermaid', () => {
             expect(errorDiv?.innerHTML).toContain('&lt;script&gt;')
         })
 
+        it('should remove Mermaid v11 error SVG + wrapper div orphans from DOM on render failure', async () => {
+            // Simulate Mermaid v11 behavior: it inserts a <div id="d{id}"> wrapping
+            // an <svg id="{id}"> error diagram into document.body before throwing
+            mockRender.mockImplementation(async (id: string) => {
+                const svg = document.createElement('svg')
+                svg.id = id
+                const div = document.createElement('div')
+                div.id = `d${id}`
+                div.appendChild(svg)
+                document.body.appendChild(div)
+                addedElements.push(div)
+                throw new Error('Syntax error in text')
+            })
+
+            const el = document.createElement('div')
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.textContent = 'invalid'
+            el.appendChild(pre)
+
+            await renderMermaidInElement(el)
+
+            // The orphan SVG and wrapper div should be cleaned from document.body
+            const renderId = mockRender.mock.calls[0]?.[0] as string | undefined
+            expect(renderId).toBeTruthy()
+            expect(document.getElementById(renderId!)).toBeNull()
+            expect(document.getElementById(`d${renderId!}`)).toBeNull()
+        })
+
         it('should accept specificBlocks parameter', async () => {
             mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
 

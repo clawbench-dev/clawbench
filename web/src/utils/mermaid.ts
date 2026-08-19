@@ -4,6 +4,14 @@ import { appLog } from '@/utils/appLog'
 
 type MermaidModule = Awaited<ReturnType<typeof getMermaid>>
 
+/** Remove Mermaid v11 orphan error elements that render() inserts before throwing */
+function cleanupMermaidOrphan(id: string): void {
+    const orphan = document.getElementById(id)
+    if (orphan) orphan.remove()
+    const orphanDiv = document.getElementById(`d${id}`)
+    if (orphanDiv) orphanDiv.remove()
+}
+
 let _initialized = false
 let _initPromise: Promise<void> | null = null
 
@@ -100,6 +108,10 @@ export async function renderMermaidInElement(
             container.appendChild(expandIcon)
             ;(block as Element).replaceWith(container)
         } catch (err: unknown) {
+            // Mermaid v11 inserts an error SVG + wrapper div into the DOM
+            // with the render id before throwing — remove them so they don't
+            // flash on page transitions
+            cleanupMermaidOrphan(id)
             const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             container.innerHTML = `<pre style="padding:12px;background:var(--code-bg);border-radius:6px;font-size:13px;overflow-x:auto;">Mermaid Error: ${escapeHtml((err as { message?: string })?.message || String(err))}</pre>`
             ;(block as Element).replaceWith(container)
@@ -126,6 +138,8 @@ export async function reRenderMermaid(): Promise<void> {
             expandIcon.className = 'lightbox-expand-icon'
             container.appendChild(expandIcon)
         }).catch(err => {
+            // Mermaid v11 inserts an error SVG + wrapper div before throwing
+            cleanupMermaidOrphan(id)
             appLog.w('Mermaid', 'Re-render failed', err)
         })
     })
