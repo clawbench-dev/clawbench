@@ -1263,12 +1263,14 @@ func TestDeriveSessionTitleFromReplay(t *testing.T) {
 	}
 	assistantMsg := replayMessage{role: strAssistant, content: `{"blocks":[{"type":"text","text":"answer"}]}`}
 
+	// Tests that work with universal rules only (nil resolver).
+	// 通用规则（nil resolver）即可通过的测试。
 	t.Run("strips injected system block and keeps user text", func(t *testing.T) {
 		msgs := []replayMessage{
 			userMsg("[System Instructions: repo coding rules]\n\n用户的第一句话"),
 			assistantMsg,
 		}
-		assert.Equal(t, "用户的第一句话", deriveSessionTitleFromReplay(msgs))
+		assert.Equal(t, "用户的第一句话", deriveSessionTitleFromReplay(msgs, nil))
 	})
 
 	t.Run("bare injected block without user text is skipped", func(t *testing.T) {
@@ -1277,22 +1279,14 @@ func TestDeriveSessionTitleFromReplay(t *testing.T) {
 			assistantMsg,
 			userMsg("第二个真实问题"),
 		}
-		assert.Equal(t, "第二个真实问题", deriveSessionTitleFromReplay(msgs))
+		assert.Equal(t, "第二个真实问题", deriveSessionTitleFromReplay(msgs, nil))
 	})
 
 	t.Run("strips file reference header and keeps user text", func(t *testing.T) {
 		msgs := []replayMessage{
 			userMsg("[Current file: /tmp/a.png]\n看看这个截图"),
 		}
-		assert.Equal(t, "看看这个截图", deriveSessionTitleFromReplay(msgs))
-	})
-
-	t.Run("interruption marker without user text is skipped", func(t *testing.T) {
-		msgs := []replayMessage{
-			userMsg("[Request interrupted by user for tool use]"),
-			userMsg("继续刚才的问题"),
-		}
-		assert.Equal(t, "继续刚才的问题", deriveSessionTitleFromReplay(msgs))
+		assert.Equal(t, "看看这个截图", deriveSessionTitleFromReplay(msgs, nil))
 	})
 
 	t.Run("block-wrapped continuation summary without delimiter is skipped", func(t *testing.T) {
@@ -1303,7 +1297,56 @@ func TestDeriveSessionTitleFromReplay(t *testing.T) {
 			assistantMsg,
 			userMsg("继续上次的部署问题"),
 		}
-		assert.Equal(t, "继续上次的部署问题", deriveSessionTitleFromReplay(msgs))
+		assert.Equal(t, "继续上次的部署问题", deriveSessionTitleFromReplay(msgs, nil))
+	})
+
+	t.Run("mid-session auto-compact turn keeps the trailing user question", func(t *testing.T) {
+		// Mid-file compaction turns embed the history summary between the
+		// injected block and the user's new message; the CLI marks the
+		// summary end explicitly and the user text follows that delimiter.
+		turn := "[System Instructions: rules]\n\n" +
+			"[Below is the conversation history from before this session.\n\nSummary:\n    earlier talk\n\n" +
+			"[End of conversation history. Now answer the user's new question.]\n\n" +
+			"现下载速度有点问题吧？"
+		msgs := []replayMessage{userMsg(turn)}
+		assert.Equal(t, "现下载速度有点问题吧？", deriveSessionTitleFromReplay(msgs, nil))
+	})
+
+	t.Run("auto-compact turn with trailing file header keeps the question", func(t *testing.T) {
+		turn := "[System Instructions: rules]\n\n" +
+			"[Below is the conversation history from before this session.\n\nSummary:\n    earlier talk\n\n" +
+			"[End of conversation history. Now answer the user's new question.]\n\n" +
+			"[Current file: /tmp/example.png]\n这个接口为什么返回502？"
+		msgs := []replayMessage{userMsg(turn)}
+		assert.Equal(t, "这个接口为什么返回502？", deriveSessionTitleFromReplay(msgs, nil))
+	})
+
+	t.Run("assistant-only replay yields empty title", func(t *testing.T) {
+		assert.Equal(t, "", deriveSessionTitleFromReplay([]replayMessage{assistantMsg}, nil))
+	})
+
+	t.Run("truncates long titles to 50 runes", func(t *testing.T) {
+		long := strings.Repeat("很", 60)
+		got := deriveSessionTitleFromReplay([]replayMessage{userMsg(long)}, nil)
+		assert.Equal(t, strings.Repeat("很", 50)+"...", got)
+	})
+
+	t.Run("blank user turn is skipped", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("   \n\t"),
+			userMsg("真实问题"),
+		}
+		assert.Equal(t, "真实问题", deriveSessionTitleFromReplay(msgs, nil))
+	})
+
+	// Tests requiring claude-native rules (claudeTranscriptResolver).
+	// 需要 claude 原生规则的测试。
+	t.Run("interruption marker without user text is skipped", func(t *testing.T) {
+		msgs := []replayMessage{
+			userMsg("[Request interrupted by user for tool use]"),
+			userMsg("继续刚才的问题"),
+		}
+		assert.Equal(t, "继续刚才的问题", deriveSessionTitleFromReplay(msgs, claudeTranscriptResolver{}))
 	})
 
 	t.Run("CLI-native continuation header is skipped", func(t *testing.T) {
@@ -1316,7 +1359,7 @@ func TestDeriveSessionTitleFromReplay(t *testing.T) {
 			assistantMsg,
 			userMsg("如何配置自动备份"),
 		}
-		assert.Equal(t, "如何配置自动备份", deriveSessionTitleFromReplay(msgs))
+		assert.Equal(t, "如何配置自动备份", deriveSessionTitleFromReplay(msgs, claudeTranscriptResolver{}))
 	})
 
 	t.Run("slash-command turn is skipped", func(t *testing.T) {
@@ -1325,14 +1368,14 @@ func TestDeriveSessionTitleFromReplay(t *testing.T) {
 			assistantMsg,
 			userMsg("帮忙解释一下这个报错日志"),
 		}
-		assert.Equal(t, "帮忙解释一下这个报错日志", deriveSessionTitleFromReplay(msgs))
+		assert.Equal(t, "帮忙解释一下这个报错日志", deriveSessionTitleFromReplay(msgs, claudeTranscriptResolver{}))
 	})
 
 	t.Run("caveat wrapper is stripped, trailing user text kept", func(t *testing.T) {
 		msgs := []replayMessage{
 			userMsg("Caveat: The messages below were generated by the user while running local commands. DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.\n\n这个接口为什么返回502？"),
 		}
-		assert.Equal(t, "这个接口为什么返回502？", deriveSessionTitleFromReplay(msgs))
+		assert.Equal(t, "这个接口为什么返回502？", deriveSessionTitleFromReplay(msgs, claudeTranscriptResolver{}))
 	})
 
 	t.Run("caveat wrapper without user text is skipped", func(t *testing.T) {
@@ -1341,59 +1384,30 @@ func TestDeriveSessionTitleFromReplay(t *testing.T) {
 			assistantMsg,
 			userMsg("怎么导出数据库备份"),
 		}
-		assert.Equal(t, "怎么导出数据库备份", deriveSessionTitleFromReplay(msgs))
-	})
-
-	t.Run("mid-session auto-compact turn keeps the trailing user question", func(t *testing.T) {
-		// Mid-file compaction turns embed the history summary between the
-		// injected block and the user's new message; the CLI marks the
-		// summary end explicitly and the user text follows that delimiter.
-		turn := "[System Instructions: rules]\n\n" +
-			"[Below is the conversation history from before this session.\n\nSummary:\n    earlier talk\n\n" +
-			"[End of conversation history. Now answer the user's new question.]\n\n" +
-			"现下载速度有点问题吧？"
-		msgs := []replayMessage{userMsg(turn)}
-		assert.Equal(t, "现下载速度有点问题吧？", deriveSessionTitleFromReplay(msgs))
-	})
-
-	t.Run("auto-compact turn with trailing file header keeps the question", func(t *testing.T) {
-		turn := "[System Instructions: rules]\n\n" +
-			"[Below is the conversation history from before this session.\n\nSummary:\n    earlier talk\n\n" +
-			"[End of conversation history. Now answer the user's new question.]\n\n" +
-			"[Current file: /tmp/example.png]\n这个接口为什么返回502？"
-		msgs := []replayMessage{userMsg(turn)}
-		assert.Equal(t, "这个接口为什么返回502？", deriveSessionTitleFromReplay(msgs))
-	})
-
-	t.Run("assistant-only replay yields empty title", func(t *testing.T) {
-		assert.Equal(t, "", deriveSessionTitleFromReplay([]replayMessage{assistantMsg}))
-	})
-
-	t.Run("truncates long titles to 50 runes", func(t *testing.T) {
-		long := strings.Repeat("很", 60)
-		got := deriveSessionTitleFromReplay([]replayMessage{userMsg(long)})
-		assert.Equal(t, strings.Repeat("很", 50)+"...", got)
-	})
-
-	t.Run("blank user turn is skipped", func(t *testing.T) {
-		msgs := []replayMessage{
-			userMsg("   \n\t"),
-			userMsg("真实问题"),
-		}
-		assert.Equal(t, "真实问题", deriveSessionTitleFromReplay(msgs))
+		assert.Equal(t, "怎么导出数据库备份", deriveSessionTitleFromReplay(msgs, claudeTranscriptResolver{}))
 	})
 }
 
-func TestStripMachineGeneratedUserText(t *testing.T) {
+func TestStripMachineText(t *testing.T) {
 	t.Run("plain user text passes through", func(t *testing.T) {
-		got, ok := stripMachineGeneratedUserText("普通消息")
+		got, ok := stripMachineText("普通消息", stripRulesFor(nil))
 		assert.True(t, ok)
 		assert.Equal(t, "普通消息", got)
 	})
 
 	t.Run("malformed system block prefix without terminator is dropped", func(t *testing.T) {
-		_, ok := stripMachineGeneratedUserText("[System Instructions: no closing marker")
+		_, ok := stripMachineText("[System Instructions: no closing marker", stripRulesFor(nil))
 		assert.False(t, ok)
+	})
+
+	t.Run("claude-native prefix is not stripped with nil resolver", func(t *testing.T) {
+		// Claude-native prefixes (e.g. "Caveat: ...") are not in the
+		// universal rule set, so they pass through unmodified when
+		// using nil resolver — isolation guarantee.
+		// claude 原生前缀不在通用规则集中，nil resolver 下原样通过——隔离保证。
+		got, ok := stripMachineText("Caveat: The messages below were generated by the user.\n\nreal question", stripRulesFor(nil))
+		assert.True(t, ok)
+		assert.Contains(t, got, "Caveat:")
 	})
 }
 

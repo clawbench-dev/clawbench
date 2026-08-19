@@ -2,17 +2,13 @@
 package handler
 
 import (
-	"bufio"
 	"database/sql"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
-	"sync"
 	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -792,34 +788,24 @@ func filterAndRetitleACPSessions(sessions []acp.SessionInfo, agent *model.Agent,
 	//
 	// Backend support: title detection (isMachineGeneratedTitle) and this
 	// display-layer hook are backend-agnostic, but transcript recovery
-	// needs a per-backend resolver — where the CLI stores sessions and how
-	// to extract user messages from its format. Only the Claude CLI is
-	// implemented (acpTranscriptPath + resolveTranscriptPath +
-	// customTitleFromTranscript + firstRealQuestionFromTranscript, reading
-	// ~/.claude/projects/<munged-cwd>/<sid>.jsonl). To support another
-	// backend (e.g. opencode, codex): implement its transcript path
-	// resolution and first-question extraction mirroring those four
-	// functions, then widen the Backend == "claude" gate below to a
-	// backend→resolver dispatch. The acp-load import path
-	// (deriveSessionTitleForAgent in agent.go) uses the SAME resolver set
-	// and must be widened in lockstep so the two lists stay consistent.
+	// needs a per-backend resolver (sessionTranscriptResolver). Backends
+	// with a registered resolver get transcript-based re-titling;
+	// unregistered backends keep the agent-reported title as-is.
+	// deriveSessionTitleForAgent uses the SAME resolver registry, so the
+	// two lists (external + acp-load) stay consistent automatically.
 	//
 	// 后端支持：标题检测（isMachineGeneratedTitle）与本展示层钩子与后端无关，但
-	// 转录恢复需要逐后端的解析器——CLI 把会话存何处、如何从其格式提取用户消息。
-	// 目前仅实现 Claude CLI（acpTranscriptPath + resolveTranscriptPath +
-	// customTitleFromTranscript + firstRealQuestionFromTranscript，读取
-	// ~/.claude/projects/<munged-cwd>/<sid>.jsonl）。新增后端（如 opencode、codex）
-	// 时：仿照这四个函数实现该后端的转录路径解析与首问提取，再把下方的
-	// Backend == "claude" 门控改为后端→解析器分发。acp-load 导入路径
-	// （agent.go 的 deriveSessionTitleForAgent）使用同一套解析器，必须同步放宽，
-	// 以保证两个列表一致。
+	// 转录恢复需要逐后端的解析器（sessionTranscriptResolver）。已注册解析器的
+	// 后端获取基于转录的重新命名；未注册后端保留 agent 上报标题不变。
+	// deriveSessionTitleForAgent 使用同一套解析器注册表，两个列表（外部+acp-load）
+	// 自动保持一致。
 	cwd := middleware.GetProjectFromCookie(r)
-	if agent.Backend == "claude" {
+	if r := transcriptResolverFor(agent.Backend); r != nil {
 		for i := range sessions {
 			if sessions[i].Title == nil {
 				continue
 			}
-			display := acpDisplayTitle(cwd, string(sessions[i].SessionId), *sessions[i].Title)
+			display := acpDisplayTitle(cwd, string(sessions[i].SessionId), *sessions[i].Title, r)
 			sessions[i].Title = &display
 		}
 	}
@@ -863,12 +849,12 @@ func filterAndRetitleACPSessions(sessions []acp.SessionInfo, agent *model.Agent,
 // 层级（claude，从高到低）：1) CLI 持久化的会话标题（custom-title 记录，自动主题名）；
 // 2) 转录首问（剥离机器前缀后）；3) 回退到 agent 上报标题（仅当转录不可读或无首问时）。
 // acp-load（会话搜索）复用本函数（传 agentTitle=""），使会话在两列表间循环时标题一致。
-func acpDisplayTitle(cwd, sessionID, agentTitle string) string {
+func acpDisplayTitle(cwd, sessionID, agentTitle string, r sessionTranscriptResolver) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return agentTitle
 	}
-	return acpDisplayTitleFromHome(home, cwd, sessionID, agentTitle)
+	return acpDisplayTitleFromHome(home, cwd, sessionID, agentTitle, r)
 }
 
 // acpDisplayTitleFromHome decides the display title for ONE session in the
@@ -958,8 +944,8 @@ func acpDisplayTitle(cwd, sessionID, agentTitle string) string {
 //
 // acp-load(会话搜索)以 agentTitle="" 调用本函数,两列表共用一条代码路径,
 // 会话在两列表间循环时标题保持不变。
-func acpDisplayTitleFromHome(home, cwd, sessionID, agentTitle string) string {
-	path := resolveTranscriptPath(home, cwd, sessionID)
+func acpDisplayTitleFromHome(home, cwd, sessionID, agentTitle string, r sessionTranscriptResolver) string {
+	path := r.TranscriptPath(home, cwd, sessionID)
 	// Tier 1: the CLI's own persisted session title ("custom-title" records —
 	// auto-generated topic title or manual rename) outranks every derived
 	// candidate.
@@ -975,7 +961,8 @@ func acpDisplayTitleFromHome(home, cwd, sessionID, agentTitle string) string {
 	// 上报的是不一致的某条用户消息（常为末问或中间某条），并非可靠的首问。
 	// 两层在单次文件扫描中提取（scanTranscriptForTitles）。
 	if path != "" {
-		custom, first := scanTranscriptForTitles(path)
+		custom := r.CustomTitle(path)
+		first := r.FirstQuestion(path)
 		if custom != "" {
 			return capTitle(custom)
 		}
@@ -985,12 +972,12 @@ func acpDisplayTitleFromHome(home, cwd, sessionID, agentTitle string) string {
 	}
 	// Tier 3: fall back to the agent-reported title only when the transcript
 	// is unreadable or yields no question — but never display machine noise
-	// (isMachineGeneratedTitle); return empty so the caller falls back further
+	// (isMachineGeneratedTitleFor); return empty so the caller falls back further
 	// (acp-load: to the replay; external list: empty field).
 	// 第 3 层：仅当转录不可读或无首问时回退到 agent 上报标题，但绝不显示机器文本
-	// （isMachineGeneratedTitle）；返回空，让调用方继续回退（acp-load：到重放；
+	// （isMachineGeneratedTitleFor）；返回空，让调用方继续回退（acp-load：到重放；
 	// 外部列表：空字段）。
-	if agentTitle != "" && !isMachineGeneratedTitle(agentTitle) {
+	if agentTitle != "" && !isMachineGeneratedTitleFor(agentTitle, r) {
 		return agentTitle
 	}
 	return ""
@@ -1003,145 +990,6 @@ func capTitle(t string) string {
 		return string(runes[:maxReplayTitleRunes]) + "..."
 	}
 	return t
-}
-
-// maxTranscriptSizeBytes caps the transcript file size read for title
-// derivation. Files larger than this are skipped to avoid multi-second I/O
-// on every list request (the PR mentions 82MB transcripts). The first user
-// question and custom-title records are typically near the top / bottom of
-// the file respectively, so skipping huge files is safe.
-//
-// 标题派生时读取转录文件的大小上限。超过此大小的文件跳过，避免每次列表请求
-// 触发数秒 I/O（PR 中提到 82MB 转录）。首问和 custom-title 通常在文件头部/尾部，
-// 跳过大文件是安全的。
-const maxTranscriptSizeBytes int64 = 32 << 20 // 32 MB
-
-// transcriptTitleCache caches the result of transcript title derivation
-// keyed by (sessionID, fileModTime). When the file hasn't changed, the
-// cached result is reused instead of re-reading the file. The cache has
-// no expiry — entries are invalidated by modTime change — but it is
-// bounded by the number of distinct sessions ever listed.
-//
-// 转录标题派生结果缓存，以 (sessionID, modTime) 为键。文件未变时复用缓存，
-// 不再重新读取。缓存无 TTL，通过 modTime 变化淘汰，但大小受限于曾列出过的
-// 不同会话数。
-var transcriptTitleCache sync.Map // map[string]transcriptTitleResult
-
-type transcriptTitleResult struct {
-	CustomTitle   string // newest custom-title record, or ""
-	FirstQuestion string // first real user question, or ""
-	ModTime       int64  // file.ModTime().UnixNano()
-}
-
-// scanTranscriptForTitles performs a single-pass scan of a transcript file
-// extracting both the newest custom-title record and the first real user
-// question. This replaces the previous two separate full-file scans
-// (customTitleFromTranscript + firstRealQuestionFromTranscript), halving
-// I/O for large files.
-//
-// 单次扫描转录文件，同时提取最新的 custom-title 记录和第一条真实用户问题。
-// cachedTitleResult returns the cached title result for sid if it exists and
-// matches modTime. Extracted from scanTranscriptForTitles to reduce cyclomatic complexity.
-func cachedTitleResult(sid string, modTime int64) (transcriptTitleResult, bool) {
-	cached, ok := transcriptTitleCache.Load(sid)
-	if !ok {
-		return transcriptTitleResult{}, false
-	}
-	c, ok := cached.(transcriptTitleResult)
-	if !ok || c.ModTime != modTime {
-		return transcriptTitleResult{}, false
-	}
-	return c, true
-}
-
-// 替代之前的两次全文件扫描（customTitleFromTranscript +
-// firstRealQuestionFromTranscript），将 I/O 减半。
-func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", ""
-	}
-	defer func() { _ = f.Close() }()
-
-	// Skip files exceeding the size limit.
-	fi, err := f.Stat()
-	if err != nil || fi.Size() > maxTranscriptSizeBytes {
-		return "", ""
-	}
-	modTime := fi.ModTime().UnixNano()
-
-	// Check cache.
-	sid := filepath.Base(path)
-	sid = strings.TrimSuffix(sid, ".jsonl")
-	if c, ok := cachedTitleResult(sid, modTime); ok {
-		return c.CustomTitle, c.FirstQuestion
-	}
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	lastCustom := ""
-	foundFirst := false
-	for scanner.Scan() {
-		var d struct {
-			Type        string `json:"type"`
-			CustomTitle string `json:"customTitle"`
-			Message     *struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &d); err != nil {
-			continue
-		}
-		// Extract custom-title (keep the newest).
-		if d.Type == "custom-title" {
-			if s := strings.TrimSpace(d.CustomTitle); s != "" {
-				lastCustom = s
-			}
-			continue
-		}
-		// Extract first real user question.
-		if !foundFirst && d.Type == "user" && d.Message != nil {
-			raw := transcriptContentText(d.Message.Content)
-			text, ok := stripMachineGeneratedUserText(raw)
-			if ok {
-				if t := strings.TrimSpace(text); t != "" {
-					firstQuestion = t
-					foundFirst = true
-				}
-			}
-		}
-	}
-
-	transcriptTitleCache.Store(sid, transcriptTitleResult{
-		CustomTitle:   lastCustom,
-		FirstQuestion: firstQuestion,
-		ModTime:       modTime,
-	})
-	return lastCustom, firstQuestion
-}
-
-// resolveTranscriptPath locates the CLI transcript for a session: first the
-// munged project dir for cwd, then a global lookup by session ID (the
-// transcript may live under a different project directory). Returns "" when
-// no transcript exists.
-//
-// 定位会话的 CLI 转录文件：先按 cwd 映射的项目目录找（~/.claude/projects/
-// <cwd斜杠转横线>/<sid>.jsonl），找不到再按会话 ID 全局兜底（转录可能挂在别的
-// 项目目录下）。找不到返回 ""。
-func resolveTranscriptPath(home, cwd, sessionID string) string {
-	path := acpTranscriptPath(home, cwd, sessionID)
-	if path == "" {
-		return ""
-	}
-	if _, err := os.Stat(path); err != nil {
-		matches, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", sessionID+".jsonl"))
-		if len(matches) == 0 {
-			return ""
-		}
-		sort.Strings(matches)
-		path = matches[0]
-	}
-	return path
 }
 
 // deriveSessionTitleForAgent picks the title for an acp-load (import) session,
@@ -1172,9 +1020,9 @@ func resolveTranscriptPath(home, cwd, sessionID string) string {
 // the two lists byte-identical while the session is cycled between them.
 //
 // Adding a backend: implement its transcript path resolution + first-question
-// extraction (mirror acpTranscriptPath / firstRealQuestionFromTranscript /
-// customTitleFromTranscript) and widen the Backend == "claude" gate below to
-// a backend→resolver dispatch; acpDisplayTitleFromHome callers stay as-is.
+// extraction (mirror acpTranscriptPath / scanTranscriptForTitles /
+// transcriptContentText) as a sessionTranscriptResolver, register it in
+// sessionTranscriptResolvers; acpDisplayTitleFromHome callers stay as-is.
 //
 // deriveSessionTitleForAgent 决定 acp-load(导入)会话的标题——即用户把外部会话
 // "下载"进"会话搜索"时写进 chat_sessions.title 的值。操作上就是把外部列表的
@@ -1184,13 +1032,12 @@ func resolveTranscriptPath(home, cwd, sessionID string) string {
 //	  → acp-load 经 ACP 重放会话(重放 = CLI 当前上下文)
 //	  → 重放完成 → 本函数决定标题:
 //
-//	      是 claude 后端?
-//	        是 → 调 acpDisplayTitleFromHome(home, projectPath, sid, "")
-//	            (与外部列表完全同一个函数;agentTitle="" 是因为 acp-load 手头
+//	      后端已注册 resolver?
+//	        是 → 调 resolver.TranscriptPath/CustomTitle/FirstQuestion
+//	            (与外部列表完全同一代码路径;agentTitle="" 是因为 acp-load 手头
 //	             没有 session/list RPC 可向 CLI 要上报标题)
-//	            → 在转录上执行该函数的第 1-3 步(custom-title → 首问)
 //	            → 非空 → 写入 DB,结束。
-//	        转录读不到 / 不是 claude 后端?
+//	        resolver 为 nil / 转录读不到?
 //	          → deriveSessionTitleFromReplay(重放):取重放里第一条人类消息,
 //	            剥机器前缀,截 50 字。
 //
@@ -1198,55 +1045,62 @@ func resolveTranscriptPath(home, cwd, sessionID string) string {
 // 压缩头开头、后面是较晚的消息——标题会漂移,与从顶部读转录的外部列表不一致。
 // 两条路径读同一份转录,会话在两列表间循环时标题逐字节一致。
 //
-// 新增后端:实现该后端的转录路径解析与首问提取(仿照 acpTranscriptPath /
-// firstRealQuestionFromTranscript / customTitleFromTranscript),把下方的
-// Backend == "claude" 门控改为后端→解析器分发;acpDisplayTitleFromHome 的调用
-// 方无须改动。
+// 新增后端:实现 sessionTranscriptResolver 接口并在 sessionTranscriptResolvers
+// 注册;acpDisplayTitleFromHome 的调用方无须改动。
 func deriveSessionTitleForAgent(agent *model.Agent, projectPath, acpSessionID string, replay []replayMessage) string {
-	if agent != nil && agent.Backend == "claude" {
-		if home, err := os.UserHomeDir(); err == nil {
-			// Reuse the external list's derivation (acpDisplayTitleFromHome) so
-			// both lists share ONE code path. acp-load has no agent-reported
-			// title (no session/list RPC), so pass "" — tiers 1-2 drive the
-			// result, and "" makes the agent-title fallback tier a no-op,
-			// falling through to the replay below when nothing is found.
-			// 复用外部列表的派生函数（acpDisplayTitleFromHome），使两列表共用一条
-			// 代码路径。acp-load 无 agent 上报标题（无 session/list RPC），故传 ""：
-			// 第 1-2 层决定结果，"" 使上报标题兜底层为空操作，未命中时回退到重放。
-			if title := acpDisplayTitleFromHome(home, projectPath, acpSessionID, ""); title != "" {
-				return title
+	var resolver sessionTranscriptResolver
+	if agent != nil {
+		resolver = transcriptResolverFor(agent.Backend)
+		if resolver != nil {
+			if home, err := os.UserHomeDir(); err == nil {
+				path := resolver.TranscriptPath(home, projectPath, acpSessionID)
+				if path != "" {
+					if custom := resolver.CustomTitle(path); custom != "" {
+						return capTitle(custom)
+					}
+					if first := resolver.FirstQuestion(path); first != "" {
+						return capTitle(first)
+					}
+				}
 			}
 		}
 	}
-	return deriveSessionTitleFromReplay(replay)
+	return deriveSessionTitleFromReplay(replay, resolver)
 }
 
-// isMachineGeneratedTitle reports whether an agent-reported session title was
-// derived from a machine-generated user turn (injected system prompt block,
-// CLI continuation/compaction header, slash command, local-command caveat,
-// attachment header, interruption marker) rather than from user-typed text.
-// Agents truncate the reported title (~200 chars), so the check is
-// truncation-tolerant: a title that is a prefix of a known marker also counts.
+// isMachineGeneratedTitleFor reports whether an agent-reported session title
+// was derived from a machine-generated user turn for the given backend, using
+// the prefix list derived from stripRulesFor (universal + that backend's
+// native rules). A nil resolver uses universal rules only. Agents truncate the
+// reported title (~200 chars), so the check is truncation-tolerant: a title
+// that is a prefix of a known marker also counts.
 //
-// Uses machineGeneratedUserPrefixes (the same list stripMachineGeneratedUserText
-// strips on), so detection stays in lockstep with stripping.
-//
-// 判断 agent 上报的会话标题是否来自机器生成的用户轮次（注入系统提示块、CLI
-// 续接/压缩头、斜杠命令、本地命令警示、附件头、中断标记）而非人类输入。
-// agent 会把标题截断（约 200 字符），故匹配容忍截断：标题是某已知标记的前缀
-// 时同样判定为机器文本。复用 machineGeneratedUserPrefixes（与
-// stripMachineGeneratedUserText 剥离所用同一份列表），保证判定与剥离同步。
-func isMachineGeneratedTitle(title string) bool {
+// 判断 agent 上报的会话标题是否来自机器生成的用户轮次（按给定后端的规则集）。
+// 前缀列表由 stripRulesFor 推导（通用 + 该后端原生规则）。resolver 为 nil 时
+// 只用通用规则。agent 会把标题截断（约 200 字符），故匹配容忍截断。
+func isMachineGeneratedTitleFor(title string, r sessionTranscriptResolver) bool {
 	if title == "" {
 		return false
 	}
-	for _, marker := range machineGeneratedUserPrefixes {
+	for _, marker := range machinePrefixesFor(r) {
 		if strings.HasPrefix(title, marker) ||
 			(len(title) < len(marker) && strings.HasPrefix(marker, title)) {
 			return true
 		}
 	}
 	return false
+}
+
+// isMachineGeneratedTitle is the backend-agnostic convenience wrapper that
+// checks against both the universal (client-injected) prefix set and the
+// claude-native prefix set. Prefer isMachineGeneratedTitleFor when the
+// backend is known.
+//
+// 后端无关的便捷包装，检查通用（客户端注入）+ claude 原生前缀集。后端已知
+// 时优先使用 isMachineGeneratedTitleFor。
+func isMachineGeneratedTitle(title string) bool {
+	return isMachineGeneratedTitleFor(title, nil) ||
+		isMachineGeneratedTitleFor(title, claudeTranscriptResolver{})
 }
 
 // acpTranscriptPath returns the expected CLI transcript path for a session,
@@ -1272,47 +1126,6 @@ func acpTranscriptPath(home, cwd, sessionID string) string {
 	// with '-', so Windows users would get a mismatch. Add
 	// strings.ReplaceAll(munged, `\`, "-") when Windows support is needed.
 	return filepath.Join(home, ".claude", "projects", munged, sessionID+".jsonl")
-}
-
-// transcriptContentText extracts the plain text from a claude-cli transcript
-// user-message "content" field, which claude-code writes in either of two
-// shapes:
-//   - a plain string: "content": "the question"
-//   - a list of blocks: "content": [{"type":"text","text":"..."}, ...]
-//
-// RawMessage is used so both shapes decode without error; this returns "" for
-// any other shape.
-//
-// 从 claude-cli 转录用户消息的 content 字段提取纯文本。claude-code 的 content
-// 有两种形式：纯字符串 "content":"问题"；或块列表 "content":[{type:text,text:...}]。
-// 用 RawMessage 解码使两种形式都不报错；其他形式返回 ""。
-func transcriptContentText(content json.RawMessage) string {
-	if len(content) == 0 {
-		return ""
-	}
-	// String form: starts with '"'.
-	if content[0] == '"' {
-		var s string
-		if err := json.Unmarshal(content, &s); err == nil {
-			return s
-		}
-		return ""
-	}
-	// List-of-blocks form.
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(content, &blocks); err != nil {
-		return ""
-	}
-	raw := ""
-	for _, b := range blocks {
-		if b.Type == "text" {
-			raw += b.Text
-		}
-	}
-	return raw
 }
 
 func findExistingACPSessions(acpSessionIDs []string) map[string]bool {
