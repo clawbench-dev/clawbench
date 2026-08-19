@@ -209,6 +209,323 @@ describe('renderKatexInString', () => {
   })
 })
 
+// --- Math block protection (extractMathBlocks before marked.parse) ---
+
+describe('Math block protection (issue #384)', () => {
+  beforeEach(() => {
+    mockMarkedParse.mockClear()
+    mockKatexRenderToString.mockClear()
+    mockDOMPurifySanitize.mockImplementation((s: string) => s)
+  })
+
+  it('protects LaTeX _ subscripts from marked emphasis parsing', () => {
+    // Issue #384: a^{0}_{i} + b^{0}_{j} → marked would produce <em> without protection
+    const input = '$a^{0}_{i} + b^{0}_{j}$'
+    const result = renderMarkdown(input)
+
+    // Math content should be passed to KaTeX intact (with _ not mangled)
+    expect(mockKatexRenderToString).toHaveBeenCalledWith(
+      'a^{0}_{i} + b^{0}_{j}',
+      expect.objectContaining({ displayMode: false })
+    )
+    // No <em> tags should appear in output
+    expect(result.html).not.toContain('<em>')
+    expect(result.html).toContain('inline:a^{0}_{i} + b^{0}_{j}')
+  })
+
+  it('protects display math with mixed super/subscripts', () => {
+    const input = '$$\\mathcal{B}=\\{(x_{i},\\tau^{0}_{i},y^{0}_{i})\\}_{i=1}^{n}$$'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith(
+      expect.stringContaining('\\tau^{0}_{i}'),
+      expect.objectContaining({ displayMode: true })
+    )
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('preserves displayMode for display math vs inline math', () => {
+    const input = 'Display: $$x^2$$ and inline $y^2$'
+    renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('x^2', expect.objectContaining({ displayMode: true }))
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('y^2', expect.objectContaining({ displayMode: false }))
+  })
+
+  it('handles \\[...\\] display math with subscripts', () => {
+    const input = '\\[a^{0}_{i}\\]'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('a^{0}_{i}', expect.objectContaining({ displayMode: true }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('handles \\(...\\) inline math with subscripts', () => {
+    const input = 'text \\(a^{0}_{i}\\) more'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('a^{0}_{i}', expect.objectContaining({ displayMode: false }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('extracts math before marked.parse so marked never sees $ delimiters', () => {
+    const input = '$x^{2}_{i}$'
+    renderMarkdown(input)
+
+    // marked.parse should receive the placeholder, not the raw $ delimiters
+    const markedInput = mockMarkedParse.mock.calls[0][0] as string
+    expect(markedInput).not.toContain('$x^{2}_{i}$')
+    expect(markedInput).toMatch(/\x00MATH/)
+  })
+
+  it('does not extract prices as math blocks', () => {
+    const input = 'cost $5 and $10'
+    renderMarkdown(input)
+
+    // No math should be extracted
+    const markedInput = mockMarkedParse.mock.calls[0][0] as string
+    expect(markedInput).toContain('$5')
+    expect(markedInput).toContain('$10')
+    expect(markedInput).not.toMatch(/\x00MATH/)
+  })
+
+  it('handles mixed math and non-math content correctly', () => {
+    const input = 'Before $a_{i}$ middle $b_{j}$ after'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('a_{i}', expect.objectContaining({ displayMode: false }))
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('b_{j}', expect.objectContaining({ displayMode: false }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('protects * from marked strong/emphasis in display math', () => {
+    // * is also used in LaTeX (e.g., \*, multiplication), protect from marked
+    const input = '$$a * b + c_{i}$$'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('a * b + c_{i}', expect.objectContaining({ displayMode: true }))
+    expect(result.html).not.toContain('<strong>')
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('does not extract math inside backtick code spans', () => {
+    // Code spans must be protected before math extraction.
+    // Verify that marked.parse receives input without $ delimiters inside code spans.
+    const input = 'use `$a_{i}$` and `$b_{j}$` in code'
+    renderMarkdown(input)
+
+    const markedInput = mockMarkedParse.mock.calls[0][0] as string
+    // The $ delimiters inside backtick code spans should NOT be extracted as math
+    // (they remain as backtick-wrapped code in the protected markdown)
+    expect(markedInput).toContain('`')
+    expect(markedInput).not.toMatch(/\x00MATH/)
+  })
+
+  it('does not extract math inside fenced code blocks', () => {
+    const input = '```\n$a_{i} + b^{0}_{j}$\n```'
+    renderMarkdown(input)
+
+    const markedInput = mockMarkedParse.mock.calls[0][0] as string
+    expect(markedInput).not.toMatch(/\x00MATH/)
+  })
+
+  it('extracts math outside code spans while preserving code content', () => {
+    const input = 'formula $x^{2}_{i}$ and code `$cost`'
+    const result = renderMarkdown(input)
+
+    // Math outside code should be rendered
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('x^{2}_{i}', expect.objectContaining({ displayMode: false }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('strips math placeholders when skipKatex=true (no NUL bytes in output)', () => {
+    const input = 'formula $a^{0}_{i}$ and display $$x^2$$'
+    const result = renderMarkdown(input, { skipKatex: true })
+
+    // No KaTeX rendering
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+    // No NUL bytes or garbage "MATHD0"/"MATHI0" text in output
+    expect(result.html).not.toContain('\x00')
+    expect(result.html).not.toContain('MATHD')
+    expect(result.html).not.toContain('MATHI')
+    // Should contain escaped raw math delimiters
+    expect(result.html).toContain('a^{0}_{i}')
+    expect(result.html).toContain('x^2')
+  })
+
+  it('no garbage text when skipKatex=true and no math present', () => {
+    const input = 'plain text without math'
+    const result = renderMarkdown(input, { skipKatex: true })
+
+    expect(result.html).not.toContain('\x00')
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+  })
+
+  // --- Additional edge-case scenarios ---
+
+  it('handles adjacent inline math blocks with space separator', () => {
+    // Adjacent $a_{i}$$b_{j}$ without space: the second $ after } is preceded by $,
+    // so the inline math regex (^|[^$\d\\]) won't match it as a new math start.
+    // This is correct behavior — users should add a space between adjacent inline formulas.
+    const input = 'text $a_{i}$ $b_{j}$ more'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('a_{i}', expect.objectContaining({ displayMode: false }))
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('b_{j}', expect.objectContaining({ displayMode: false }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('adjacent inline math without space only matches first block', () => {
+    // $a_{i}$$b_{j}$ — the }$ at end of first block means the next $ is preceded by $,
+    // so the regex excludes it. Only the first block is matched.
+    const input = '$a_{i}$$b_{j}$'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('a_{i}', expect.objectContaining({ displayMode: false }))
+    // The second math block is not extracted (preceding $ excluded by regex)
+    expect(mockKatexRenderToString).not.toHaveBeenCalledWith('b_{j}', expect.any(Object))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('handles ambiguous $x$$y^2$ — only first inline $x$ is extracted', () => {
+    // $x$$y^2$ — display $$ regex looks for $$..$$ but there's no closing $$.
+    // The inline regex matches $x$ (first pair). The remaining $y^2$ is NOT
+    // extracted because its opening $ is preceded by $ (excluded by the regex).
+    const input = '$x$$y^2$'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('x', expect.objectContaining({ displayMode: false }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('handles whitespace-only math blocks gracefully', () => {
+    // $$ $$ and $ $ — after trim, math is empty string; KaTeX should handle or error gracefully
+    const input = 'display $$ $$ and inline $ $'
+    const result = renderMarkdown(input)
+
+    // Should not crash; empty math is passed to KaTeX which handles it
+    expect(result).toBeDefined()
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('single subscript without superscript is unaffected', () => {
+    // $x_{i}$ — a single _ is not paired by marked, so it would work even without protection.
+    // But with protection, it should still work correctly.
+    const input = '$x_{i}$'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('x_{i}', expect.objectContaining({ displayMode: false }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('single subscript followed by letter is unaffected by marked (word-internal _)', () => {
+    // $x_{i}+y_{j}$ — _ followed by a letter is word-internal, marked ignores it.
+    // Verify it still works correctly with protection.
+    const input = '$x_{i}+y_{j}$'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('x_{i}+y_{j}', expect.objectContaining({ displayMode: false }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('display math with both * and _ together', () => {
+    // Combined emphasis attack: * for strong, _ for em, in same formula
+    const input = '$$a * b_{i} + c^{0}_{j}$$'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('a * b_{i} + c^{0}_{j}', expect.objectContaining({ displayMode: true }))
+    expect(result.html).not.toContain('<em>')
+    expect(result.html).not.toContain('<strong>')
+  })
+
+  it('does not extract math inside tilde fenced code blocks', () => {
+    const input = '~~~\n$x_{i} + b^{0}_{j}$\n~~~'
+    renderMarkdown(input)
+
+    const markedInput = mockMarkedParse.mock.calls[0][0] as string
+    expect(markedInput).not.toMatch(/\x00MATH/)
+  })
+
+  it('does not extract math inside fenced code blocks with info string', () => {
+    const input = '```python\n$x_{i} + b^{0}_{j}$\n```'
+    renderMarkdown(input)
+
+    const markedInput = mockMarkedParse.mock.calls[0][0] as string
+    expect(markedInput).not.toMatch(/\x00MATH/)
+  })
+
+  it('handles escaped \\$ before math block (not treated as math start)', () => {
+    // \$ before $ means the first $ is escaped, so the math block starts at the second $
+    const input = 'cost \\$5 and formula $x_{i}$'
+    renderMarkdown(input)
+
+    // Only $x_{i}$ should be extracted as math; \$5 is a literal dollar + price
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('x_{i}', expect.objectContaining({ displayMode: false }))
+    // Price $5 should not be extracted (digit after $)
+    const mathCalls = mockKatexRenderToString.mock.calls.map(c => c[0])
+    expect(mathCalls).not.toContain('5')
+  })
+
+  it('stripMathPlaceholders restores $$ delimiters for display math when skipKatex=true', () => {
+    const input = '$$a^{0}_{i}$$'
+    const result = renderMarkdown(input, { skipKatex: true })
+
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+    expect(result.html).not.toContain('\x00')
+    // Display math should be wrapped in $$ delimiters in the stripped output
+    expect(result.html).toContain('$$')
+    expect(result.html).toContain('a^{0}_{i}')
+  })
+
+  it('skipKatex=true shows raw formula source for complex subscript expression', () => {
+    const input = 'Result: $\\tau^{0}_{i} + y^{0}_{i}$'
+    const result = renderMarkdown(input, { skipKatex: true })
+
+    expect(result.html).not.toContain('\x00')
+    expect(result.html).not.toContain('MATHD')
+    expect(result.html).not.toContain('MATHI')
+    expect(result.html).toContain('\\tau^{0}_{i}')
+  })
+
+  it('handles multiple display math blocks in same content', () => {
+    const input = '$$a^{0}_{i}$$ text $$b^{0}_{j}$$'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('a^{0}_{i}', expect.objectContaining({ displayMode: true }))
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('b^{0}_{j}', expect.objectContaining({ displayMode: true }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('handles mixed display and inline math with subscripts', () => {
+    const input = 'Inline $a^{0}_{i}$ and display $$b^{0}_{j}$$ and another $c_{k}$'
+    const result = renderMarkdown(input)
+
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('a^{0}_{i}', expect.objectContaining({ displayMode: false }))
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('b^{0}_{j}', expect.objectContaining({ displayMode: true }))
+    expect(mockKatexRenderToString).toHaveBeenCalledWith('c_{k}', expect.objectContaining({ displayMode: false }))
+    expect(result.html).not.toContain('<em>')
+  })
+
+  it('extractCodeAndMath does not modify content without math or code', () => {
+    const input = 'plain text with _emphasis_ and *strong*'
+    renderMarkdown(input)
+
+    const markedInput = mockMarkedParse.mock.calls[0][0] as string
+    // No extraction happened; marked receives the original content
+    expect(markedInput).toBe(input)
+    expect(markedInput).toContain('_emphasis_')
+    expect(markedInput).toContain('*strong*')
+  })
+
+  it('code span with display math $$ is protected from extraction', () => {
+    const input = 'use `$$x^{2}_{i}$$` in template'
+    renderMarkdown(input)
+
+    const markedInput = mockMarkedParse.mock.calls[0][0] as string
+    expect(markedInput).not.toMatch(/\x00MATH/)
+  })
+})
+
 // --- renderMarkdown ---
 
 describe('renderMarkdown', () => {
@@ -218,12 +535,13 @@ describe('renderMarkdown', () => {
     mockDOMPurifySanitize.mockClear()
   })
 
-  it('calls marked.parse with trimmed content', () => {
+  it('calls marked.parse with trimmed content (no math/code extraction)', () => {
     mockMarkedParse.mockReturnValue('<p>hello</p>')
     mockDOMPurifySanitize.mockImplementation((s: string) => s)
 
     renderMarkdown('  hello  ')
 
+    // With no math/code delimiters, extractCodeAndMath passes content through unchanged
     expect(mockMarkedParse).toHaveBeenCalledWith('hello')
   })
 

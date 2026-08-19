@@ -37,6 +37,121 @@ export interface RenderResult {
     detectedSHAs: string[]
 }
 
+// ---------------------------------------------------------------------------
+// Math block extraction: protect LaTeX from marked's emphasis parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Math block extraction: protect LaTeX formulas from marked's emphasis parsing.
+ *
+ * marked.parse treats _ and * as emphasis delimiters. LaTeX subscripts (e.g. _{i})
+ * get misinterpreted, especially when multiple _ appear in one formula block
+ * (e.g. a^{0}_{i} + b^{0}_{j} → a^{0}<em>{i} + b^{0}</em>{j}).
+ *
+ * Solution: extract all math blocks before marked.parse, replace with NUL-delimited
+ * placeholders that encode display/inline mode, then restore+render in renderKatexInString.
+ *
+ * Placeholder format:
+ *   Display: \x00MATHD<n>\x00
+ *   Inline:  \x00MATHI<n>\x00
+ * (NUL bytes cannot appear in valid HTML/text content)
+ *
+ * Code span protection: markdown code spans (backtick-wrapped) and fenced code blocks
+ * are extracted FIRST, before math, so that math-like content inside code
+ * (e.g. `$a_{i}$` inside a backtick span) is never incorrectly extracted.
+ */
+
+/** Pre-extracted math entry with display mode info */
+export interface MathEntry {
+    math: string
+    displayMode: boolean
+}
+
+// eslint-disable-next-line no-control-regex -- NUL bytes are intentional placeholder delimiters
+const MATH_PH_RE = /\x00MATH([DI])(\d+)\x00/g
+
+/**
+ * Extract markdown code spans/blocks before math, so $...$ inside code
+ * is not mistakenly treated as math delimiters.
+ *
+ * Matches:
+ * - Fenced code blocks: ```...``` or ~~~...~~~ (with optional info string)
+ * - Inline code spans: `...` (including backtick-escaped spans like ``...``)
+ *
+ * Placeholders use \x01 (SOH) — distinct from math placeholders (\x00)
+ * so they don't interfere.
+ */
+// eslint-disable-next-line no-control-regex -- SOH bytes are intentional placeholder delimiters
+const CODE_SPAN_PH_RE = /\x01CODE(\d+)\x01/g
+
+function extractCodeAndMath(markdown: string): {
+    protected: string
+    mathEntries: MathEntry[]
+} {
+    // Phase 1: Protect code spans/blocks
+    const codeBlocks: string[] = []
+    let codeIdx = 0
+
+    // 1a. Fenced code blocks: ```...``` or ~~~...~~~ (with optional info string)
+    //     Must match before inline code spans to avoid partial matches.
+    let result = markdown.replace(/(?:^|\n)(~~~+|```+)[^\n]*\n[\s\S]*?\n\1[ \t]*(?=\n|$)/g, (match) => {
+        const ph = `\x01CODE${codeIdx++}\x01`
+        codeBlocks.push(match)
+        return ph
+    })
+
+    // 1b. Inline code spans: one or more backticks, content between matching runs.
+    //     [^`] forbids backticks in content (standard markdown rule).
+    result = result.replace(/(`+)([^`]+?)\1/g, (match) => {
+        const ph = `\x01CODE${codeIdx++}\x01`
+        codeBlocks.push(match)
+        return ph
+    })
+
+    // Phase 2: Extract math blocks (same logic as before)
+    const mathEntries: MathEntry[] = []
+    let idx = 0
+
+    const ph = (displayMode: boolean) => {
+        const prefix = displayMode ? 'MATHD' : 'MATHI'
+        return `\x00${prefix}${idx++}\x00`
+    }
+
+    // 2a. Display math: $$...$$
+    result = result.replace(/\$\$([\s\S]+?)\$\$/g, (_, math) => {
+        mathEntries.push({ math: math.trim(), displayMode: true })
+        return ph(true)
+    })
+
+    // 2b. Display math: \[...\]
+    result = result.replace(/\\\[([\s\S]+?)\\\]/g, (_, math) => {
+        mathEntries.push({ math: math.trim(), displayMode: true })
+        return ph(true)
+    })
+
+    // 2c. Inline math: $...$ (same exclusion rules as INLINE_MATH_RE)
+    result = result.replace(/(^|[^$\d\\])\$(?!\$)([^$\n]+?)\$(?!\d)/g, (whole, pre, math) => {
+        mathEntries.push({ math: math.trim(), displayMode: false })
+        return pre + ph(false)
+    })
+
+    // 2d. Inline math: \(...\)
+    result = result.replace(/\\\(([^\\\n]+?)\\\)/g, (_, math) => {
+        mathEntries.push({ math: math.trim(), displayMode: false })
+        return ph(false)
+    })
+
+    // Phase 3: Restore code spans/blocks — they pass through marked.parse intact
+    // (the placeholders are plain text that marked won't transform)
+    result = result.replace(CODE_SPAN_PH_RE, (_, ci) => codeBlocks[parseInt(ci, 10)])
+
+    return { protected: result, mathEntries }
+}
+
+// ---------------------------------------------------------------------------
+// INLINE_MATH_RE — kept for backward compatibility (standalone renderKatexInString)
+// ---------------------------------------------------------------------------
+
 /**
  * Inline math $...$ 匹配正则。
  *
@@ -51,6 +166,10 @@ export interface RenderResult {
  * 后置排除：`(?!\d)` 避免匹配如 "$5"（$ 后紧跟数字是价格）
  */
 export const INLINE_MATH_RE = /(^|[^$\d\\])\$(?!\$)([^$\n]+?)\$(?!\d)/g
+
+// ---------------------------------------------------------------------------
+// renderKatexInString
+// ---------------------------------------------------------------------------
 
 /**
  * 在HTML字符串中渲染KaTeX数学公式（字符串级别，不操作DOM）
@@ -67,17 +186,21 @@ export const INLINE_MATH_RE = /(^|[^$\d\\])\$(?!\$)([^$\n]+?)\$(?!\d)/g
  * （<pre> → <div>+SVG），Vue 下次 innerHTML 覆盖后 Mermaid
  * 重新渲染即可，是幂等的，不会产生冲突。
  *
+ * 渲染模式：
+ * - 占位符模式（mathEntries 非空）：由 extractCodeAndMath 预提取，
+ *   直接从 mathEntries 数组还原并渲染，不重新匹配定界符。
+ * - 回退模式（mathEntries 为空/undefined）：兼容旧调用方，
+ *   从 HTML 中匹配 $...$ / $$...$$ / \[...\] / \(...\) 定界符并渲染。
+ *
  * 保护措施：
  * - <code>...</code> 内容不受 KaTeX 匹配影响（先提取占位，渲染后还原）
  * - \$ 转义序列保持字面意思，不被当成公式定界符
  */
-export function renderKatexInString(html: string): string {
+export function renderKatexInString(html: string, mathEntries?: MathEntry[]): string {
     if (!html) return html
 
     // 0. Protect <code> blocks from KaTeX matching (inline code and code blocks)
-    //    Extract <code>...</code> content, replace with placeholders, restore after KaTeX.
-    //    Placeholders use zero-width characters that cannot appear in valid HTML.
-    const CODE_PH_L = '\u200B\u200C'  // ZWSP + ZWNJ — impossible in marked output
+    const CODE_PH_L = '\u200B\u200C'
     const CODE_PH_R = '\u200C\u200B'
     const codeBlocks: string[] = []
     let codeIdx = 0
@@ -89,43 +212,58 @@ export function renderKatexInString(html: string): string {
     })
 
     // 0b. Handle escaped \$ — replace with placeholder to prevent KaTeX matching
-    //     After all KaTeX rendering, replace placeholder back to literal $
-    const ESC_DOLLAR_PH = '\u200D\u200D'  // ZWJ pair — impossible in marked output
+    const ESC_DOLLAR_PH = '\u200D\u200D'
     html = html.replace(/\\\$/g, ESC_DOLLAR_PH)
 
-    // Display math: $$...$$  和  \[...\]
-    html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, math) => {
-        try {
-            return katex.renderToString(math.trim(), { displayMode: true, throwOnError: false })
-        } catch {
-            return escapeHtml(_)
-        }
-    })
-    html = html.replace(/\\\[([\s\S]+?)\\\]/g, (_, math) => {
-        try {
-            return katex.renderToString(math.trim(), { displayMode: true, throwOnError: false })
-        } catch {
-            return escapeHtml(_)
-        }
-    })
+    if (mathEntries && mathEntries.length > 0) {
+        // --- Placeholder path: math blocks were pre-extracted before marked.parse ---
+        // mode ('D' or 'I') is intentionally captured but not used here —
+        // displayMode info comes from mathEntries[idx].displayMode.
+        html = html.replace(MATH_PH_RE, (_, _mode, idxStr) => {
+            const idx = parseInt(idxStr, 10)
+            const entry = mathEntries[idx]
+            if (!entry) return _
+            try {
+                return katex.renderToString(entry.math, { displayMode: entry.displayMode, throwOnError: false })
+            } catch {
+                return escapeHtml(entry.math)
+            }
+        })
+    } else {
+        // --- Legacy path: no pre-extraction, match delimiters in HTML ---
 
-    // Inline math: $...$  和  \(...\)
-    // 注意：$ 必须匹配非空内容，且左右不能是数字或字母（避免误匹配价格等）
-    // 不使用 lookbehind（Safari < 16.4 不支持），用 (^|[^$\d\\]) 捕获前缀再回填
-    html = html.replace(INLINE_MATH_RE, (whole, pre, math) => {
-        try {
-            return pre + katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
-        } catch {
-            return pre + escapeHtml(whole.slice(pre.length))
-        }
-    })
-    html = html.replace(/\\\(([\s\S]+?)\\\)/g, (_, math) => {
-        try {
-            return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
-        } catch {
-            return escapeHtml(_)
-        }
-    })
+        // Display math: $$...$$  和  \[...\]
+        html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, math) => {
+            try {
+                return katex.renderToString(math.trim(), { displayMode: true, throwOnError: false })
+            } catch {
+                return escapeHtml(_)
+            }
+        })
+        html = html.replace(/\\\[([\s\S]+?)\\\]/g, (_, math) => {
+            try {
+                return katex.renderToString(math.trim(), { displayMode: true, throwOnError: false })
+            } catch {
+                return escapeHtml(_)
+            }
+        })
+
+        // Inline math: $...$  和  \(...\)
+        html = html.replace(INLINE_MATH_RE, (whole, pre, math) => {
+            try {
+                return pre + katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
+            } catch {
+                return pre + escapeHtml(whole.slice(pre.length))
+            }
+        })
+        html = html.replace(/\\\(([^\\\n]+?)\\\)/g, (_, math) => {
+            try {
+                return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
+            } catch {
+                return escapeHtml(_)
+            }
+        })
+    }
 
     // Restore escaped \$ — replace placeholder back to literal $
     html = html.replace(/\u200D\u200D/g, '$')
@@ -138,22 +276,39 @@ export function renderKatexInString(html: string): string {
     return html
 }
 
-// DOMPurify 配置：取所有调用方的并集
+/**
+ * Strip NUL-delimited math placeholders from HTML, replacing them with
+ * escaped raw math text. Used when skipKatex=true (streaming mode)
+ * to avoid leaking NUL bytes or garbage text into the rendered output.
+ */
+function stripMathPlaceholders(html: string, mathEntries: MathEntry[]): string {
+    return html.replace(MATH_PH_RE, (_, _mode, idxStr) => {
+        const idx = parseInt(idxStr, 10)
+        const entry = mathEntries[idx]
+        if (!entry) return ''
+        const delimiter = entry.displayMode ? '$$' : '$'
+        return escapeHtml(delimiter + entry.math + delimiter)
+    })
+}
+
+// ---------------------------------------------------------------------------
+// DOMPurify config
+// ---------------------------------------------------------------------------
+
 const DOMPURIFY_ADD_TAGS = ['math', 'button']
 const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-path', 'data-table-idx', 'data-row-idx']
-// DOMPurify default allowed URI schemes, plus "file:" so local file links
-// survive sanitization. Such links are opened in-app (not by the browser) —
-// click handlers and a document-level guard preventDefault before navigation.
-// The trailing alternative must match a FULL relative path (e.g. img/logo.png,
-// ./a.png, ../b.png) — a single non-scheme char after the prefix would only
-// match "img/" and let DOMPurify strip the src of relative markdown images.
 const DOMPURIFY_ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file):|[^a-z]|[a-z+.-]+(?:[/?#][\s\S]*)?$)/i
+
+// ---------------------------------------------------------------------------
+// renderMarkdown
+// ---------------------------------------------------------------------------
 
 /**
  * 渲染Markdown内容为HTML（统一管线，所有调用方共用）
  *
- * 管线：marked.parse → [KaTeX] → DOMPurify → fixImagePaths → table-wrap
- *       → injectTableRowAttrs → annotateCodeBlockHeaders → annotateTableBlockHeaders
+ * 管线：extractCodeAndMath → marked.parse → [renderKatexInString | stripMathPlaceholders]
+ *       → DOMPurify → fixImagePaths → table-wrap → injectTableRowAttrs
+ *       → annotateCodeBlockHeaders → annotateTableBlockHeaders
  *       → [rewriteImageUrls → convertAudioLinks → convertVideoLinks → annotateWorktreePaths
  *          → annotateFilePaths → annotateCommitHashes → annotateLocalhostUrls]
  *
@@ -178,15 +333,23 @@ export function renderMarkdown(
     let detectedPaths: string[] = []
     let detectedSHAs: string[] = []
 
+    const trimmed = (content || '').trim()
+
+    // 0. Extract code spans/blocks and math blocks BEFORE marked.parse
+    //    to protect _ and * from emphasis parsing (issue #384)
+    const { protected: protectedMarkdown, mathEntries } = extractCodeAndMath(trimmed)
+
     // 1. Parse markdown (reset heading ID counter for deduplication)
     resetHeadingIds()
-    let html = marked.parse((content || '').trim()) as string
+    let html = marked.parse(protectedMarkdown) as string
 
-    // 2. KaTeX rendering
-    //    skipKatex=true: skip KaTeX (streaming, formulas may be incomplete)
-    //    skipKatex omitted or false: always render KaTeX (even with skipEnhancements)
+    // 2. KaTeX rendering — restore math placeholders and render
+    //    skipKatex=true: strip placeholders to escaped raw math (streaming, formulas incomplete)
+    //    skipKatex omitted or false: render KaTeX (even with skipEnhancements)
     if (!skipKatex) {
-        html = renderKatexInString(html)
+        html = renderKatexInString(html, mathEntries)
+    } else if (mathEntries.length > 0) {
+        html = stripMathPlaceholders(html, mathEntries)
     }
 
     // 3. Sanitize HTML (XSS prevention)
