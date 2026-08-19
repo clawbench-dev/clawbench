@@ -212,3 +212,102 @@ Body`), 0o644))
 	require.Len(t, cmds, 1)
 	assert.Equal(t, "valid", cmds[0].Name)
 }
+
+func TestScanCodeBuddyPluginCommands_SkipsDotMdFilename(t *testing.T) {
+	tmpDir := t.TempDir()
+	cmdDir := filepath.Join(tmpDir, "test-plugin", "1.0.0", "commands")
+	require.NoError(t, os.MkdirAll(cmdDir, 0o755))
+
+	// File named ".md" — cmdName becomes empty after TrimSuffix, should be skipped
+	require.NoError(t, os.WriteFile(filepath.Join(cmdDir, ".md"), []byte(`---
+description: "Should be skipped"
+---
+Body`), 0o644))
+
+	cmds := scanPluginCommandsFromDir(tmpDir)
+	assert.Nil(t, cmds)
+}
+
+func TestScanCodeBuddyPluginCommands_SkipsUnreadableFile(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root user can read all files, permission-based test unreliable")
+	}
+	tmpDir := t.TempDir()
+	cmdDir := filepath.Join(tmpDir, "test-plugin", "1.0.0", "commands")
+	require.NoError(t, os.MkdirAll(cmdDir, 0o755))
+
+	// Create a file with no read permission
+	unreadable := filepath.Join(cmdDir, "unreadable.md")
+	require.NoError(t, os.WriteFile(unreadable, []byte(`---
+description: "Cannot read me"
+---
+Body`), 0o644))
+	require.NoError(t, os.Chmod(unreadable, 0o000))
+	defer os.Chmod(unreadable, 0o644) // restore for cleanup
+
+	cmds := scanPluginCommandsFromDir(tmpDir)
+	assert.Nil(t, cmds) // unreadable file skipped, no valid commands
+}
+
+func TestScanCodeBuddyPluginCommands_SkipsNonMdFilesInCommands(t *testing.T) {
+	tmpDir := t.TempDir()
+	cmdDir := filepath.Join(tmpDir, "test-plugin", "1.0.0", "commands")
+	require.NoError(t, os.MkdirAll(cmdDir, 0o755))
+
+	// Non-.md file in commands/ — should be skipped
+	require.NoError(t, os.WriteFile(filepath.Join(cmdDir, "helper.py"), []byte("print('hello')"), 0o644))
+
+	// Valid .md file
+	require.NoError(t, os.WriteFile(filepath.Join(cmdDir, "valid.md"), []byte(`---
+description: "Valid command"
+---
+Body`), 0o644))
+
+	cmds := scanPluginCommandsFromDir(tmpDir)
+	require.Len(t, cmds, 1)
+	assert.Equal(t, "valid", cmds[0].Name)
+}
+
+func TestScanCodeBuddyPluginCommands_RealHomeDir(t *testing.T) {
+	// Test ScanCodeBuddyPluginCommands by setting HOME to a temp dir.
+	// This covers the os.UserHomeDir path in the real function.
+	tmpDir := t.TempDir()
+	cacheDir := filepath.Join(tmpDir, ".codebuddy", "plugins", "cache")
+	cmdDir := filepath.Join(cacheDir, "superpowers", "4.0.3", "commands")
+	require.NoError(t, os.MkdirAll(cmdDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cmdDir, "brainstorm.md"), []byte(`---
+description: "Brainstorm ideas"
+---
+Body`), 0o644))
+
+	// Override HOME
+	origHome := os.Getenv("HOME")
+	require.NoError(t, os.Setenv("HOME", tmpDir))
+	defer os.Setenv("HOME", origHome)
+
+	cmds := ScanCodeBuddyPluginCommands()
+	require.Len(t, cmds, 1)
+	assert.Equal(t, "brainstorm", cmds[0].Name)
+}
+
+func TestScanCodeBuddyPluginCommands_RealHomeDir_NoCacheDir(t *testing.T) {
+	// Test ScanCodeBuddyPluginCommands when cache dir doesn't exist.
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	require.NoError(t, os.Setenv("HOME", tmpDir))
+	defer os.Setenv("HOME", origHome)
+
+	cmds := ScanCodeBuddyPluginCommands()
+	assert.Nil(t, cmds)
+}
+
+func TestScanCodeBuddyPluginCommands_CannotResolveHomeDir(t *testing.T) {
+	// Test the os.UserHomeDir error path by unsetting HOME.
+	// On Linux, os.UserHomeDir falls back to $HOME; clearing it returns an error.
+	origHome := os.Getenv("HOME")
+	os.Unsetenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	cmds := ScanCodeBuddyPluginCommands()
+	assert.Nil(t, cmds)
+}
