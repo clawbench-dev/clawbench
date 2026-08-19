@@ -5,12 +5,14 @@ import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 import { apiGet } from '@/utils/api'
 import { store } from '@/stores/app.ts'
+import { updateAskSubmitState } from '@/utils/renderToolDetail.ts'
 
 // ── Mocks ──
 
 vi.mock('@/utils/renderToolDetail.ts', () => ({
   handleToolAction: vi.fn().mockReturnValue(false),
   shouldAutoExpandTool: (name: string) => name === 'AskUserQuestion' || name === 'PermissionApproval',
+  updateAskSubmitState: vi.fn(),
 }))
 
 vi.mock('@/utils/icons', () => ({
@@ -863,5 +865,63 @@ describe('summary mode with empty blocks (view=summary stripped content)', () =>
     })
     expect(wrapper.html()).toContain('index-DVJhC1nf.js')
     expect(wrapper.html()).toContain('Service currently')
+  })
+})
+
+describe('handleToolDetailInput', () => {
+  beforeEach(() => {
+    vi.mocked(updateAskSubmitState).mockClear()
+  })
+
+  it('calls updateAskSubmitState when input event target is inside .ask-question-view', async () => {
+    const wrapper = mountBlocks({
+      blocks: [{
+        type: 'tool_use',
+        name: 'AskUserQuestion',
+        id: 'tu-1',
+        input: { questions: [{ header: 'Approach', options: [{ label: 'A' }, { label: 'B' }] }] },
+        done: true,
+        status: 'success',
+      }],
+      formatToolInput: () => '<div class="ask-question-view"><div class="ask-question-item"><div class="ask-question-option selected">A</div></div></div>',
+    })
+    await nextTick()
+
+    const toolDetail = wrapper.find('.tool-detail')
+    expect(toolDetail.exists()).toBe(true)
+
+    // Dispatch a native input event from within .ask-question-view
+    const askView = toolDetail.element.querySelector('.ask-question-view')
+    expect(askView).toBeTruthy()
+    const inputEl = document.createElement('input')
+    inputEl.className = 'ask-supplementary-input'
+    askView!.appendChild(inputEl)
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+
+    expect(updateAskSubmitState).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call updateAskSubmitState when no .ask-question-view ancestor', async () => {
+    const wrapper = mountBlocks({
+      blocks: [{
+        type: 'tool_use',
+        name: 'PermissionApproval',
+        id: 'tu-2',
+        input: { toolName: 'Bash', options: [{ label: 'Allow' }] },
+        done: true,
+        status: 'success',
+      }],
+    })
+    await nextTick()
+
+    const toolDetail = wrapper.find('.tool-detail')
+    if (toolDetail.exists()) {
+      const inputEl = document.createElement('input')
+      toolDetail.element.appendChild(inputEl)
+      inputEl.dispatchEvent(new Event('input', { bubbles: true }))
+      await nextTick()
+      expect(updateAskSubmitState).not.toHaveBeenCalled()
+    }
   })
 })

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import FileDiffsDrawer from '@/components/chat/FileDiffsDrawer.vue'
+import { updateAskSubmitState } from '@/utils/renderToolDetail'
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
   default: { name: 'BottomSheet', template: '<div class="bottom-sheet-stub"><slot name="header"></slot><slot></slot></div>' },
@@ -29,6 +31,7 @@ vi.mock('@/composables/useTableRowExpand', () => ({
 vi.mock('@/utils/renderToolDetail', () => ({
   handleToolAction: vi.fn(() => false),
   handleToolContentHeaderClick: vi.fn(() => false),
+  updateAskSubmitState: vi.fn(),
 }))
 
 const i18n = createI18n({
@@ -262,5 +265,44 @@ describe('FileDiffsDrawer', () => {
     await btn.trigger('click')
     expect(wrapper.emitted('file-open')).toBeTruthy()
     expect(wrapper.emitted('file-open')[0][0]).toEqual({ path: '/a.ts', lineStart: 5, lineEnd: undefined })
+  })
+})
+
+describe('handleBodyInput', () => {
+  beforeEach(() => {
+    vi.mocked(updateAskSubmitState).mockClear()
+  })
+
+  it('calls updateAskSubmitState when input event target is inside .ask-question-view', async () => {
+    const wrapper = mountDrawer({
+      filePath: '/a.ts',
+      toolName: 'Edit',
+      blocks: makeInlineBlocks('/a.ts', 'Edit', 1),
+    })
+    await flushPromises()
+
+    const body = wrapper.find('.fd-body')
+    expect(body.exists()).toBe(true)
+
+    // Inject ask-question-view HTML into the body to simulate rendered ask-question
+    body.element.innerHTML += '<div class="ask-question-view"><input class="ask-supplementary-input" value="test" /></div>'
+    await nextTick()
+
+    const askView = body.find('.ask-question-view')
+    await askView.trigger('input')
+    expect(updateAskSubmitState).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call updateAskSubmitState when no .ask-question-view ancestor', async () => {
+    const wrapper = mountDrawer({
+      filePath: '/a.ts',
+      toolName: 'Edit',
+      blocks: makeInlineBlocks('/a.ts', 'Edit', 1),
+    })
+    await flushPromises()
+
+    const body = wrapper.find('.fd-body')
+    await body.trigger('input')
+    expect(updateAskSubmitState).not.toHaveBeenCalled()
   })
 })
