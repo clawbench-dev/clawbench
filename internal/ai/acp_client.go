@@ -460,9 +460,8 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 
 	// Notify frontend that this session has a pending approval
 	if c.connRef != nil {
-		c.connRef.mu.Lock()
+		// clawbenchSID is immutable after construction, safe to read without lock.
 		csid := c.connRef.clawbenchSID
-		c.connRef.mu.Unlock()
 		onPermissionStateChange(csid, true, toolName, toolInput)
 	}
 
@@ -475,9 +474,8 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 
 		// Notify frontend that this session's pending approval was resolved
 		if c.connRef != nil {
-			c.connRef.mu.Lock()
+			// clawbenchSID is immutable after construction, safe to read without lock.
 			csid := c.connRef.clawbenchSID
-			c.connRef.mu.Unlock()
 			onPermissionStateChange(csid, false, "", "")
 		}
 

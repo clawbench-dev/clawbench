@@ -617,9 +617,28 @@ func (m *ACPConnManager) GetPendingApprovalSessionIDs() map[string]bool {
 
 // ACPConn represents a dedicated ACP stdio connection for one ClawBench session.
 // One session = one agent process = one ACP session. No sharing, no pooling.
+//
+// DEADLOCK SAFETY: Methods called from the SDK's processNotifications goroutine
+// (via ClawBenchACPClient.SessionUpdate → mapACPSessionUpdate, mergeAndSyncCommands,
+// handleConfigOptionSelect, RequestPermission, etc.) MUST NOT acquire c.mu.
+// RPC methods like NewSession/ResumeSession hold c.mu while waiting for queued
+// notifications to be processed (SDK waitNotificationsUpTo), so acquiring c.mu in
+// a notification callback would deadlock.
+//
+// Safe patterns for notification callbacks:
+//   - Read immutable fields (agent, clawbenchSID) directly without locking
+//   - Use atomic operations (TouchSessionUpdate, SetToolInFlight)
+//   - Use dedicated locks (rawOutputMu, lastSetConfigMu) that don't interact with c.mu
+//   - Use ClawBenchACPClient.mu (different lock) for client-internal state
+//
+// If an RPC must be made while holding c.mu (e.g. reapplyConfigOption), the only
+// safe pattern is: unlock → RPC → re-lock. See reapplyConfigOption for an example.
 type ACPConn struct {
+	// Immutable fields — set once in newACPConn, never modified.
+	// Safe to read without c.mu from any goroutine (including notification callbacks).
 	agent        *model.Agent
 	clawbenchSID string
+
 	cwd          string // project working directory, set on first ensureAliveWithSession
 	mu           sync.Mutex
 
@@ -896,9 +915,12 @@ func (c *ACPConn) AcpSID() string {
 }
 
 // AgentID returns the ID of the agent this connection belongs to.
+// c.agent is set once at construction and never mutated, so no lock needed.
+// This must NOT acquire c.mu — it is called from the SDK's processNotifications
+// goroutine (via ClawBenchACPClient.SessionUpdate → mergeAndSyncCommands →
+// connRef.AgentID()), and ensureAliveWithSession holds c.mu during ResumeSession
+// and other RPCs. Acquiring c.mu here would deadlock.
 func (c *ACPConn) AgentID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.agent != nil {
 		return c.agent.ID
 	}
@@ -907,9 +929,10 @@ func (c *ACPConn) AgentID() string {
 
 // BackendID returns the backend identifier of the agent this connection belongs to.
 // Used for ACP event mapping to look up backend-specific tool name and input remap tables.
+// c.agent is set once at construction and never mutated, so no lock needed.
+// This must NOT acquire c.mu — same deadlock risk as AgentID (called from
+// mapACPSessionUpdate during notification processing while c.mu is held).
 func (c *ACPConn) BackendID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.agent != nil {
 		return c.agent.Backend
 	}

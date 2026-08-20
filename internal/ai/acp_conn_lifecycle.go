@@ -304,6 +304,13 @@ func (c *ACPConn) reapplyConfigAfterResume(ctx context.Context, acpSID string, p
 
 // reapplyConfigOption sets a config option on the resumed session if the value is non-empty
 // and the connection is still alive. Called with c.mu held; temporarily unlocks for the RPC.
+//
+// This unlock→RPC→re-lock pattern is the ONLY safe way to make an RPC while holding c.mu.
+// The SDK's SendRequest (used by all RPC methods) calls waitNotificationsUpTo after
+// receiving the response, which waits for the processNotifications goroutine to finish
+// processing queued notifications. If c.mu were held during the RPC, any notification
+// callback that tries to acquire c.mu would deadlock, preventing waitNotificationsUpTo
+// from completing.
 func (c *ACPConn) reapplyConfigOption(ctx context.Context, acpSID, configID, value string) {
 	if value == "" || !c.alive || !c.isAliveLocked() {
 		return

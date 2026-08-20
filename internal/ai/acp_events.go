@@ -15,6 +15,15 @@ import (
 // which runs on the SDK's internal goroutine.
 // If conn is non-nil, mode/config/thinking cache updates are applied to the connection
 // so that re-emitted WS events reflect the latest state.
+// mapACPSessionUpdate converts ACP SessionUpdate notifications to StreamEvents.
+//
+// DEADLOCK SAFETY: This function runs on the SDK's processNotifications goroutine
+// (via ClawBenchACPClient.SessionUpdate). Methods called on conn MUST NOT acquire
+// conn.mu, because RPCs like NewSession/ResumeSession hold conn.mu while waiting
+// for queued notifications to be processed (SDK waitNotificationsUpTo).
+// Only lock-free operations are safe: reading immutable fields (AgentID, BackendID),
+// atomic operations (SetToolInFlight, TouchSessionUpdate), or dedicated locks
+// (rawOutputMu, ClawBenchACPClient.mu).
 func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, conn *ACPConn, deb *toolCallDebouncer) { //nolint:gocognit,gocyclo,revive,unparam // ACP protocol has many event types, each branch is simple; ctx position follows ACP SDK convention; ctx reserved for future use
 	// Extract backendID once for all downstream ACP event mapping.
 	// conn.agent.Backend provides the backend identifier (e.g. "kimi", "claude").
@@ -285,6 +294,10 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 // Category-specific behaviors:
 //   - "mode": validates currentID against available modes (bridge adapter filter)
 //   - "thought_level": conditionally updates cache only on change
+// handleConfigOptionSelect processes a SelectState config option update.
+//
+// DEADLOCK SAFETY: Same rules as mapACPSessionUpdate — runs on the SDK's
+// processNotifications goroutine. Do not acquire conn.mu here.
 func handleConfigOptionSelect(sel SelectState, conn *ACPConn, ch chan<- StreamEvent) []string {
 	if sel.IsEmpty() {
 		return nil
