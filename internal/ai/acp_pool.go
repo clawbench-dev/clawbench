@@ -156,6 +156,9 @@ func (m *ACPConnManager) sweepOnce() {
 	m.mu.Lock()
 	now := time.Now()
 	for sid, conn := range m.conns {
+		if conn == nil {
+			continue
+		}
 		conn.mu.Lock()
 		lastActivity := conn.lastActivityNano()
 		alive := conn.alive

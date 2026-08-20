@@ -1216,3 +1216,22 @@ func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 	assert.False(t, idleConn.alive, "idle (non-running) session should be killed")
 	idleConn.mu.Unlock()
 }
+
+func TestSweepOnce_NilConnInMap(t *testing.T) {
+	// Regression: sweepOnce must skip nil entries in the conns map
+	// instead of panicking with nil pointer dereference.
+	// This can happen when a concurrent test clears a conn slot.
+	mgr := GetACPConnManager()
+
+	mgr.mu.Lock()
+	mgr.conns["nil-slot"] = nil
+	mgr.mu.Unlock()
+
+	// Must not panic
+	mgr.sweepOnce()
+
+	// Clean up
+	mgr.mu.Lock()
+	delete(mgr.conns, "nil-slot")
+	mgr.mu.Unlock()
+}
