@@ -668,6 +668,43 @@ describe('onSessionEvent', () => {
     })
   })
 
+  it('calls onRenderUpdate(true) after loadHistory resolves to re-render Mermaid on final DOM (#387)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    const loading = ref(true)
+    const onRenderUpdate = vi.fn()
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate,
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    await vi.waitFor(() => {
+      // Fix for #387: onRenderUpdate(true) called after loadHistory resolves
+      const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
+      expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
   it('requests view=summary in loadHistory URL', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -3469,9 +3506,48 @@ describe('handleVisibilityChange', () => {
 
     vi.restoreAllMocks()
   })
+
+  it('calls onRenderUpdate(true) after loadHistory resolves to re-render Mermaid on final DOM (#387)', async () => {
+    const loading = ref(false)
+    const onRenderUpdate = vi.fn()
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate,
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+
+    session.handleVisibilityChange()
+
+    await vi.waitFor(() => {
+      const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
+      expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
+    })
+
+    vi.restoreAllMocks()
+  })
 })
-// ───────────────────────────────────────────────────────────
-// handleWsReconnect
 // ───────────────────────────────────────────────────────────
 
 describe('handleWsReconnect', () => {
@@ -3637,6 +3713,47 @@ describe('handleWsReconnect', () => {
     await session.handleWsReconnect()
 
     expect(onDisconnectStream).not.toHaveBeenCalled()
+
+    vi.restoreAllMocks()
+  })
+
+  it('calls onRenderUpdate(true) after loadHistory resolves to re-render Mermaid on final DOM (#387)', async () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onRenderUpdate = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate,
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // Mock loadSessionsOnce: s1 is NOT running
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: [],
+        totalCount: 0,
+      }),
+    })
+
+    await session.handleWsReconnect()
+
+    await vi.waitFor(() => {
+      const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
+      expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
+    })
 
     vi.restoreAllMocks()
   })

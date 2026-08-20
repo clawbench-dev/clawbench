@@ -905,6 +905,50 @@ describe('useChatStream', () => {
       })
       expect(options.onNotification).toHaveBeenCalled()
     })
+
+    it('should call onRenderNeeded(true) after loadHistory resolves to re-render Mermaid on final DOM', async () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      // Clear calls from connectStream
+      options.onRenderNeeded.mockClear()
+
+      simulateWsEvent('done', {})
+
+      await vi.waitFor(() => {
+        expect(options.onLoadHistory).toHaveBeenCalled()
+      })
+      // Wait for the .then() callback to execute after loadHistory resolves
+      await vi.waitFor(() => {
+        const forceFullCalls = options.onRenderNeeded.mock.calls.filter((c: any[]) => c[0] === true)
+        // Fix for #387: onRenderNeeded(true) called from onLoadHistory().then()
+        // (the mocked _forceCleanupStreamingState doesn't call onRenderNeeded)
+        expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+  })
+
+  describe('WS event handling — replay_done', () => {
+    it('should call onRenderNeeded(true) after loadHistory resolves to re-render Mermaid', async () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+
+      simulateWsEvent('replay_done', {})
+
+      await vi.waitFor(() => {
+        expect(options.onLoadHistory).toHaveBeenCalled()
+      })
+      await vi.waitFor(() => {
+        const forceFullCalls = options.onRenderNeeded.mock.calls.filter((c: any[]) => c[0] === true)
+        // Fix for #387: onRenderNeeded(true) after loadHistory resolves
+        expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
+      })
+    })
   })
 
   describe('WS event handling — cancelled', () => {
@@ -1001,6 +1045,25 @@ describe('useChatStream', () => {
 
       // Error disconnects before guard check, but guard prevents onLoadHistory/onStreamEnd
       expect(options.onStreamEnd).not.toHaveBeenCalledWith('error')
+    })
+
+    it('should call onRenderNeeded(true) after loadHistory resolves to re-render Mermaid', async () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+
+      simulateWsEvent('error', { error: 'session not running' })
+
+      await vi.waitFor(() => {
+        expect(options.onLoadHistory).toHaveBeenCalled()
+      })
+      await vi.waitFor(() => {
+        const forceFullCalls = options.onRenderNeeded.mock.calls.filter((c: any[]) => c[0] === true)
+        // Fix for #387: onRenderNeeded(true) after loadHistory resolves
+        expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
+      })
     })
   })
 
