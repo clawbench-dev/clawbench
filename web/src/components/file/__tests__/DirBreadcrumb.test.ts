@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import DirBreadcrumb from '@/components/file/DirBreadcrumb.vue'
+import { _setWideScreenForTest, _resetForTest } from '@/composables/useWideScreenLayout.ts'
 
 const LucideStub = { template: '<span class="lucide-stub" />' }
 
@@ -154,6 +155,117 @@ describe('DirBreadcrumb', () => {
       expect(crumbs.length).toBe(2) // root + "C:\"
       expect(crumbs[1].text()).toBe('C:\\')
     })
+  })
+})
+
+describe('DirBreadcrumb — drag to attach', () => {
+  afterEach(() => _resetForTest())
+
+  function mountBreadcrumbWide(props: Record<string, any> = {}) {
+    _setWideScreenForTest(true)
+    return mount(DirBreadcrumb, {
+      props: { path: '', ...props },
+      global: {
+        stubs: { 'lucide-vue-next': LucideStub },
+        plugins: [i18n],
+        provide: { toast: mockToast },
+      },
+    })
+  }
+
+  it('crumb segments are draggable on wide screen', () => {
+    const wrapper = mountBreadcrumbWide({ path: '/home/user/docs' })
+    const crumbs = wrapper.findAll('.crumb')
+    // All crumbs (including home) should be draggable
+    for (const crumb of crumbs) {
+      expect(crumb.attributes('draggable')).toBe('true')
+    }
+  })
+
+  it('crumb segments are not draggable on narrow screen', async () => {
+    _setWideScreenForTest(false)
+    const wrapper = mount(DirBreadcrumb, {
+      props: { path: '/home/user/docs' },
+      global: {
+        stubs: { 'lucide-vue-next': LucideStub },
+        plugins: [i18n],
+        provide: { toast: mockToast },
+      },
+    })
+    // initWideScreen runs on mount and may reset isWideScreen based on jsdom viewport,
+    // so force narrow again after mount to ensure the component reflects the state.
+    _setWideScreenForTest(false)
+    await nextTick()
+    const crumbs = wrapper.findAll('.crumb')
+    for (const crumb of crumbs) {
+      expect(crumb.attributes('draggable')).toBe('false')
+    }
+  })
+
+  it('crumb home has crumb-home class', () => {
+    const wrapper = mountBreadcrumbWide({ path: '/home/user' })
+    const homeCrumb = wrapper.findAll('.crumb')[0]
+    expect(homeCrumb.classes()).toContain('crumb-home')
+  })
+
+  it('dragstart on a crumb sets attach drag data', async () => {
+    const setDataMock = vi.fn()
+    const setDragImageSpy = vi.fn()
+    const wrapper = mountBreadcrumbWide({ path: '/home/user/docs' })
+    const crumbs = wrapper.findAll('.crumb')
+    const userCrumb = crumbs[2] // "user"
+    await userCrumb.trigger('dragstart', {
+      dataTransfer: {
+        setData: setDataMock,
+        effectAllowed: '',
+        setDragImage: setDragImageSpy,
+      },
+    })
+    // setAttachDragData writes the custom MIME and text/plain
+    expect(setDataMock).toHaveBeenCalledWith(
+      'application/x-clawbench-attach',
+      expect.stringContaining('"path":"home/user"'),
+    )
+    expect(setDataMock).toHaveBeenCalledWith('text/plain', 'home/user')
+    expect(setDragImageSpy).toHaveBeenCalled()
+  })
+
+  it('dragstart on home crumb attaches root path "/"', async () => {
+    const setDataMock = vi.fn()
+    const setDragImageSpy = vi.fn()
+    const wrapper = mountBreadcrumbWide({ path: '/home/user/docs' })
+    const homeCrumb = wrapper.findAll('.crumb')[0]
+    await homeCrumb.trigger('dragstart', {
+      dataTransfer: {
+        setData: setDataMock,
+        effectAllowed: '',
+        setDragImage: setDragImageSpy,
+      },
+    })
+    expect(setDataMock).toHaveBeenCalledWith(
+      'application/x-clawbench-attach',
+      expect.stringContaining('"path":"/"'),
+    )
+  })
+
+  it('dragstart on narrow screen does not set attach drag data', async () => {
+    _setWideScreenForTest(false)
+    const setDataMock = vi.fn()
+    const wrapper = mount(DirBreadcrumb, {
+      props: { path: '/home/user/docs' },
+      global: {
+        stubs: { 'lucide-vue-next': LucideStub },
+        plugins: [i18n],
+        provide: { toast: mockToast },
+      },
+    })
+    _setWideScreenForTest(false)
+    await nextTick()
+    const crumbs = wrapper.findAll('.crumb')
+    await crumbs[1].trigger('dragstart', {
+      dataTransfer: { setData: setDataMock, effectAllowed: '', setDragImage: vi.fn() },
+    })
+    expect(setDataMock).not.toHaveBeenCalled()
   })
 })
 
