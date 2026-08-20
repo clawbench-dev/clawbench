@@ -1439,6 +1439,8 @@ export default {
       chatSystemPromptIntervalDesc: '每隔多少条消息插入一次系统提示',
       sessionMaxCount: '最大会话数',
       sessionMaxCountDesc: '允许同时存在的聊天会话上限',
+      acpMaxLiveConns: 'ACP 最大存活连接数',
+      acpMaxLiveConnsDesc: '允许同时存活的 ACP 连接上限，设为 0 则不限制',
       archiveRetentionSectionHeader: '归档留存',
       archiveRetentionEnabled: '自动清理归档会话',
       archiveRetentionEnabledDesc: '归档会话到期后自动物理删除',

@@ -140,6 +140,16 @@ func TestPersist_SessionMaxCount(t *testing.T) {
 	assert.Equal(t, 20, getNestedValue(cfg, "session.max_count"))
 }
 
+func TestPersist_ACPMaxLiveConns(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+
+	cfg := patchAndReadConfig(t, `{"acp":{"max_live_conns":5}}`)
+	assert.Equal(t, 5, getNestedValue(cfg, "acp.max_live_conns"))
+}
+
 // ─── Upload section ──────────────────────────────────────
 
 func TestPersist_UploadMaxSizeMB(t *testing.T) {

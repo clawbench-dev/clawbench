@@ -1118,3 +1118,197 @@ func TestWaitForLoadSessionDone(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "still loading")
 }
+
+// --- sweepOnce: respect SessionMaxCount ---
+
+func TestSweepOnce_BelowMaxCount_DoesNotKillIdle(t *testing.T) {
+	mgr := GetACPConnManager()
+
+	// Save and restore ACPMaxLiveConns
+	origMaxCount := model.ACPMaxLiveConns
+	model.ACPMaxLiveConns = 10
+	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+
+	// Create 3 alive, idle connections (all idle > 5 min)
+	for i := 0; i < 3; i++ {
+		sid := "session-sweep-below-" + string(rune('A'+i))
+		agent := &model.Agent{ID: "test-sweep-below", Backend: "acp-stdio", AcpCommand: "echo"}
+		conn := newACPConn(agent, sid)
+		conn.SetAliveForTest()
+		conn.mu.Lock()
+		conn.lastUsed = time.Now().Add(-10 * time.Minute)
+		conn.mu.Unlock()
+		mgr.SetConnForTest(sid, conn)
+		defer mgr.CloseConn(sid)
+	}
+
+	// alive=3 < max=10 → sweep should not kill any
+	mgr.sweepOnce()
+
+	// Verify all connections are still alive
+	for i := 0; i < 3; i++ {
+		sid := "session-sweep-below-" + string(rune('A'+i))
+		conn := mgr.GetConn(sid)
+		conn.mu.Lock()
+		alive := conn.alive
+		conn.mu.Unlock()
+		assert.True(t, alive, "connection %s should still be alive when below max count", sid)
+	}
+}
+
+func TestSweepOnce_AboveMaxCount_KillsOnlyNecessary(t *testing.T) {
+	mgr := GetACPConnManager()
+
+	origMaxCount := model.ACPMaxLiveConns
+	model.ACPMaxLiveConns = 2
+	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+
+	// Create 4 alive, idle connections with different idle durations
+	// A: idle 20min, B: idle 15min, C: idle 10min, D: idle 7min
+	agents := []*model.Agent{{ID: "test-sweep-above", Backend: "acp-stdio", AcpCommand: "echo"}}
+	sids := []string{"session-sweep-A", "session-sweep-B", "session-sweep-C", "session-sweep-D"}
+	idleDurations := []time.Duration{20 * time.Minute, 15 * time.Minute, 10 * time.Minute, 7 * time.Minute}
+
+	for i := range sids {
+		conn := newACPConn(agents[0], sids[i])
+		conn.SetAliveForTest()
+		conn.mu.Lock()
+		conn.lastUsed = time.Now().Add(-idleDurations[i])
+		conn.mu.Unlock()
+		mgr.SetConnForTest(sids[i], conn)
+		defer mgr.CloseConn(sids[i])
+	}
+
+	// alive=4, max=2 → need to kill 2, longest-idle first (A, B)
+	mgr.sweepOnce()
+
+	// A and B should be dead; C and D should still be alive
+	for i, sid := range sids {
+		conn := mgr.GetConn(sid)
+		if conn == nil {
+			continue
+		}
+		conn.mu.Lock()
+		alive := conn.alive
+		conn.mu.Unlock()
+		if i < 2 {
+			assert.False(t, alive, "connection %s (idle %v) should be killed — longest idle", sid, idleDurations[i])
+		} else {
+			assert.True(t, alive, "connection %s (idle %v) should survive — within max count", sid, idleDurations[i])
+		}
+	}
+}
+
+func TestSweepOnce_ZeroMaxCount_KeepsAlive(t *testing.T) {
+	mgr := GetACPConnManager()
+
+	origMaxCount := model.ACPMaxLiveConns
+	model.ACPMaxLiveConns = 0 // unlimited → old behavior: kill all idle
+	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+
+	agent := &model.Agent{ID: "test-sweep-zero", Backend: "acp-stdio", AcpCommand: "echo"}
+	sid := "session-sweep-zero"
+	conn := newACPConn(agent, sid)
+	conn.SetAliveForTest()
+	conn.mu.Lock()
+	conn.lastUsed = time.Now().Add(-10 * time.Minute)
+	conn.mu.Unlock()
+	mgr.SetConnForTest(sid, conn)
+	defer mgr.CloseConn(sid)
+
+	mgr.sweepOnce()
+
+	conn = mgr.GetConn(sid)
+	conn.mu.Lock()
+	alive := conn.alive
+	conn.mu.Unlock()
+	// max=0 means no limit → all idle connections kept alive
+	assert.True(t, alive, "connection should stay alive when max_count=0 (unlimited)")
+}
+
+func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
+	mgr := GetACPConnManager()
+
+	origMaxCount := model.ACPMaxLiveConns
+	model.ACPMaxLiveConns = 1
+	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+
+	// Create 2 alive connections: one running, one idle
+	agent := &model.Agent{ID: "test-sweep-running", Backend: "acp-stdio", AcpCommand: "echo"}
+
+	runningSid := "session-sweep-running"
+	runningConn := newACPConn(agent, runningSid)
+	runningConn.SetAliveForTest()
+	runningConn.mu.Lock()
+	runningConn.lastUsed = time.Now().Add(-10 * time.Minute)
+	runningConn.mu.Unlock()
+	mgr.SetConnForTest(runningSid, runningConn)
+	defer mgr.CloseConn(runningSid)
+
+	idleSid := "session-sweep-idle"
+	idleConn := newACPConn(agent, idleSid)
+	idleConn.SetAliveForTest()
+	idleConn.mu.Lock()
+	idleConn.lastUsed = time.Now().Add(-10 * time.Minute)
+	idleConn.mu.Unlock()
+	mgr.SetConnForTest(idleSid, idleConn)
+	defer mgr.CloseConn(idleSid)
+
+	// Mark the "running" session as actively running
+	mgr.SetSessionRunningChecker(func(sid string) bool {
+		return sid == runningSid
+	})
+	defer mgr.SetSessionRunningChecker(nil)
+
+	// alive=2, max=1 → need to kill 1. The running one is excluded,
+	// so the idle one should be killed.
+	mgr.sweepOnce()
+
+	runningConn = mgr.GetConn(runningSid)
+	runningConn.mu.Lock()
+	assert.True(t, runningConn.alive, "running session should not be killed")
+	runningConn.mu.Unlock()
+
+	idleConn = mgr.GetConn(idleSid)
+	idleConn.mu.Lock()
+	assert.False(t, idleConn.alive, "idle session should be killed when over max count")
+	idleConn.mu.Unlock()
+}
+
+func TestSweepOnce_DeadConnectionsNotCounted(t *testing.T) {
+	mgr := GetACPConnManager()
+
+	origMaxCount := model.ACPMaxLiveConns
+	model.ACPMaxLiveConns = 2
+	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+
+	agent := &model.Agent{ID: "test-sweep-dead", Backend: "acp-stdio", AcpCommand: "echo"}
+
+	// Create 1 alive idle + 2 dead connections → alive count = 1, max = 2
+	aliveSid := "session-sweep-alive"
+	aliveConn := newACPConn(agent, aliveSid)
+	aliveConn.SetAliveForTest()
+	aliveConn.mu.Lock()
+	aliveConn.lastUsed = time.Now().Add(-10 * time.Minute)
+	aliveConn.mu.Unlock()
+	mgr.SetConnForTest(aliveSid, aliveConn)
+	defer mgr.CloseConn(aliveSid)
+
+	for _, sid := range []string{"session-sweep-dead1", "session-sweep-dead2"} {
+		deadConn := newACPConn(agent, sid)
+		// alive=false by default (never spawned)
+		deadConn.mu.Lock()
+		deadConn.lastUsed = time.Now().Add(-10 * time.Minute)
+		deadConn.mu.Unlock()
+		mgr.SetConnForTest(sid, deadConn)
+		defer mgr.CloseConn(sid)
+	}
+
+	// alive=1 < max=2 → no killing needed
+	mgr.sweepOnce()
+
+	aliveConn = mgr.GetConn(aliveSid)
+	aliveConn.mu.Lock()
+	assert.True(t, aliveConn.alive, "idle connection should survive when alive count < max")
+	aliveConn.mu.Unlock()
+}

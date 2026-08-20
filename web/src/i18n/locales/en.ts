@@ -1438,6 +1438,8 @@ export default {
       chatSystemPromptIntervalDesc: 'Insert a system prompt every N messages',
       sessionMaxCount: 'Max Sessions',
       sessionMaxCountDesc: 'Maximum number of concurrent chat sessions',
+      acpMaxLiveConns: 'Max Live ACP Connections',
+      acpMaxLiveConnsDesc: 'Maximum concurrent live ACP connections (0 = unlimited)',
       archiveRetentionSectionHeader: 'Archive Retention',
       archiveRetentionEnabled: 'Auto-Purge Archived Sessions',
       archiveRetentionEnabledDesc: 'Automatically delete archived sessions after the retention period expires',

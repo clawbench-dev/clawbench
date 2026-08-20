@@ -57,6 +57,8 @@ var hotReloadFields = map[string]bool{
 	"terminal.idle_timeout": true,
 	"terminal.max_sessions": true,
 	"terminal.buffer_lines": true,
+	// ACP connection pool — idle sweep reads the global on each pass
+	"acp.max_live_conns": true,
 	// TTS engine + sub-configs — recreate provider
 	"tts.engine":                 true,
 	"tts.tts_model":              true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
@@ -201,6 +203,7 @@ type configResponse struct {
 	Feishu              configFeishu         `json:"feishu"`
 	PushMode            string               `json:"push_mode"`
 	FileSearch          configFileSearch     `json:"file_search"`
+	ACP                 configACP            `json:"acp"`
 	TLS                 configTLS            `json:"tls"`
 }
 
@@ -335,6 +338,10 @@ type configFileSearch struct {
 	DisplayLimit int `json:"display_limit"`
 }
 
+type configACP struct {
+	MaxLiveConns int `json:"max_live_conns"`
+}
+
 // configTLS exposes the HTTPS cert directory to the settings panel.
 // It includes the resolved HTTPS active state for display, without exposing
 // private key paths or contents.
@@ -362,6 +369,7 @@ var PatchableConfigPaths = map[string]bool{
 	"terminal.idle_timeout":             true,
 	"terminal.max_sessions":             true,
 	"terminal.buffer_lines":             true,
+	"acp.max_live_conns":                true,
 	"tts.engine":                        true,
 	"tts.tts_model":                     true,
 	"tts.format":                        true,
@@ -562,6 +570,9 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		FileSearch: configFileSearch{
 			DisplayLimit: cfg.FileSearch.DisplayLimit,
 		},
+		ACP: configACP{
+			MaxLiveConns: cfg.ACP.MaxLiveConns,
+		},
 		TLS: configTLS{
 			CertDir: cfg.TLS.CertDir,
 			Active:  cfg.ResolveTLSActive(),
@@ -742,6 +753,12 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 					return fmt.Errorf("tts.moss_nano.backend must be one of: onnx,pytorch")
 				}
 			}
+		}
+	}
+
+	if acpVal, ok := patch["acp"].(map[string]any); ok {
+		if v, ok := acpVal["max_live_conns"].(float64); ok && v < 0 {
+			return fmt.Errorf("acp.max_live_conns must be non-negative")
 		}
 	}
 
@@ -1036,6 +1053,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
+	if acpVal, ok := patch["acp"].(map[string]any); ok {
+		if v, ok := acpVal["max_live_conns"].(float64); ok {
+			cfg.ACP.MaxLiveConns = int(v)
+		}
+	}
+
 	if terminal, ok := patch["terminal"].(map[string]any); ok {
 		if v, ok := terminal["enabled"].(bool); ok {
 			cfg.Terminal.Enabled = v
@@ -1289,6 +1312,7 @@ func applyHotReloadGlobals() {
 	model.UploadMaxSizeMB = cfg.Upload.MaxSizeMB
 	model.UploadMaxFiles = cfg.Upload.MaxFiles
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
+	model.ACPMaxLiveConns = cfg.ACP.MaxLiveConns
 	model.DefaultAgentID = cfg.DefaultAgent
 	model.LocalhostAuthExempt = cfg.LocalhostAuthExempt
 

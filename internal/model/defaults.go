@@ -163,6 +163,11 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.Session.ArchiveRetentionDays = 30
 	}
 
+	// --- ACP ---
+	if cfg.ACP.MaxLiveConns <= 0 {
+		cfg.ACP.MaxLiveConns = 10
+	}
+
 	// --- Recent Projects ---
 	if cfg.RecentProjects.MaxCount <= 0 {
 		cfg.RecentProjects.MaxCount = 10

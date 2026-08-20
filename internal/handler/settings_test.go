@@ -756,6 +756,32 @@ func TestServeConfig_Patch_SessionMaxCount_IsHotField(t *testing.T) {
 	assert.Empty(t, changed)
 }
 
+func TestServeConfig_Patch_ACPMaxLiveConns_IsHotField(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.ACP.MaxLiveConns = 10
+	model.ConfigInstance = cfg
+
+	// acp.max_live_conns is a hot-reload field — no restart should be needed
+	body := `{"acp":{"max_live_conns":5}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.False(t, resp["needs_restart"].(bool), "acp.max_live_conns is hot-reloadable, should not need restart")
+	changed, ok := resp["changed_cold_fields"].([]any)
+	assert.True(t, ok)
+	assert.Empty(t, changed)
+}
+
 // --- validatePatchValues additional coverage ---
 
 func TestServeConfig_Patch_TTSFormatInvalid(t *testing.T) {
