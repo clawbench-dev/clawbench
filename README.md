@@ -153,6 +153,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - File upload (all file types supported, configurable size and count)
 - Toggle hidden file visibility
 - **Document search exclusion**: Office documents are excluded from file content search to improve performance (same as PDF)
+- **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
 - **Breadcrumb Drag to Chat**: Drag breadcrumb segments (including Home icon) to chat area to attach directory path as context — consistent with file manager drag behavior
 - **Ctrl+F/Cmd+F Context-Aware Search**: Automatically opens the appropriate search drawer based on current tab — Chat tab: session search (RAG); `view` tab with a file open: in-file content search; `view` tab empty state or `browse` tab: filename search; if already open, focuses the search input
 - **Separate File View Tab**: Directory browsing (`browse`) and file viewing (`view`) are independent tabs — opening a file auto-switches to `view`, closing it stays on `view` showing empty state (recent files list), no auto-return to file manager
