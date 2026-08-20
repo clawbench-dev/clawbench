@@ -104,9 +104,10 @@ export function toRgba(color: string, alpha: number): string {
 
 /**
  * Draw a bold, vivid drag ghost for an attach drag. Uses a solid accent-filled
- * chip with a white icon circle badge on the left and bold text — stands out
- * clearly over both light and dark content. Falls back to a blank canvas
- * (and thus the OS ghost) if 2D canvas is unavailable.
+ * pill with a canvas-drawn folder/file icon and bold white text — stands out
+ * clearly over both light and dark content.  Avoids emoji on canvas because
+ * Chrome renders them as empty or □ glyphs in a 2D canvas context.
+ * Falls back to a blank canvas (and thus the OS ghost) if 2D canvas is unavailable.
  */
 export function buildAttachDragImage(name: string, isDir: boolean): HTMLCanvasElement {
   const { w, h } = computeAttachDragImageSize(name)
@@ -120,7 +121,7 @@ export function buildAttachDragImage(name: string, isDir: boolean): HTMLCanvasEl
 
   ctx.scale(scale, scale)
 
-  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim() || '#4a90d9'
+  const accent = resolveAccentColor()
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
 
   // ── Drop shadow ──
@@ -138,7 +139,7 @@ export function buildAttachDragImage(name: string, isDir: boolean): HTMLCanvasEl
   ctx.shadowBlur = 0
   ctx.shadowOffsetY = 0
 
-  // ── Left icon badge (white circle with emoji) ──
+  // ── Left icon badge (white circle with drawn icon) ──
   const badgeR = 12
   const badgeCx = pad + 16
   const badgeCy = pad + h / 2
@@ -147,11 +148,17 @@ export function buildAttachDragImage(name: string, isDir: boolean): HTMLCanvasEl
   ctx.arc(badgeCx, badgeCy, badgeR, 0, Math.PI * 2)
   ctx.fill()
 
-  ctx.font = '14px system-ui, sans-serif'
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'center'
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
-  ctx.fillText(isDir ? '📁' : '📄', badgeCx, badgeCy + 1)
+  // Draw a simple folder or file glyph in white inside the badge
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
+  ctx.lineWidth = 1.4
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  if (isDir) {
+    drawFolderGlyph(ctx, badgeCx - 6, badgeCy - 5, 12, 10)
+  } else {
+    drawFileGlyph(ctx, badgeCx - 5, badgeCy - 6, 10, 12)
+  }
 
   // ── File/dir name (white bold) ──
   ctx.font = ATTACH_DRAG_GHOST_FONT
@@ -161,6 +168,76 @@ export function buildAttachDragImage(name: string, isDir: boolean): HTMLCanvasEl
   ctx.fillText(name, pad + 8 + ATTACH_DRAG_GHOST_ICON_W + ATTACH_DRAG_GHOST_GAP, pad + h / 2 + 1)
 
   return canvas
+}
+
+/** Resolve the accent color from CSS variable, with a hard fallback. */
+function resolveAccentColor(): string {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim()
+    if (v) return v
+  } catch { /* ignore */ }
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+  return isDark ? '#5b9bd5' : '#4a90d9'
+}
+
+/**
+ * Draw a simple folder glyph (tab + body) centred in the bounding box.
+ * Uses only stroke/fill — no emoji, so it works in all browsers on canvas.
+ */
+function drawFolderGlyph(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  const tabW = w * 0.45
+  const tabH = h * 0.25
+  // Tab
+  ctx.beginPath()
+  ctx.moveTo(x, y + tabH)
+  ctx.lineTo(x, y)
+  ctx.lineTo(x + tabW, y)
+  ctx.lineTo(x + tabW + 2, y + tabH)
+  ctx.lineTo(x + w, y + tabH)
+  ctx.stroke()
+  // Body
+  ctx.beginPath()
+  ctx.moveTo(x, y + tabH)
+  ctx.lineTo(x, y + h)
+  ctx.lineTo(x + w, y + h)
+  ctx.lineTo(x + w, y + tabH)
+  ctx.closePath()
+  ctx.fill()
+}
+
+/**
+ * Draw a simple file glyph (page with folded corner) centred in the bounding box.
+ * Uses only stroke/fill — no emoji, so it works in all browsers on canvas.
+ */
+function drawFileGlyph(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  const fold = Math.min(w, h) * 0.3
+  // Page outline with dog-ear
+  ctx.beginPath()
+  ctx.moveTo(x, y)
+  ctx.lineTo(x + w - fold, y)
+  ctx.lineTo(x + w, y + fold)
+  ctx.lineTo(x + w, y + h)
+  ctx.lineTo(x, y + h)
+  ctx.closePath()
+  ctx.stroke()
+  // Dog-ear fold
+  ctx.beginPath()
+  ctx.moveTo(x + w - fold, y)
+  ctx.lineTo(x + w - fold, y + fold)
+  ctx.lineTo(x + w, y + fold)
+  ctx.stroke()
+  // Two text lines
+  const lineY1 = y + h * 0.5
+  const lineY2 = y + h * 0.7
+  const lineX1 = x + 2
+  const lineX2 = x + w - 3
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(lineX1, lineY1)
+  ctx.lineTo(lineX2, lineY1)
+  ctx.moveTo(lineX1, lineY2)
+  ctx.lineTo(lineX2 * 0.6, lineY2)
+  ctx.stroke()
 }
 
 function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

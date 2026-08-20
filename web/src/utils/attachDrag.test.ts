@@ -231,6 +231,8 @@ describe('buildAttachDragImage', () => {
       fillStyle: '',
       strokeStyle: '',
       lineWidth: 0,
+      lineCap: '',
+      lineJoin: '',
       shadowColor: '',
       shadowBlur: 0,
       shadowOffsetY: 0,
@@ -238,7 +240,8 @@ describe('buildAttachDragImage', () => {
       textBaseline: '',
       textAlign: '',
       beginPath: () => calls.push('beginPath'),
-      moveTo: () => {},
+      moveTo: () => calls.push('moveTo'),
+      lineTo: () => calls.push('lineTo'),
       arc: () => calls.push('arc'),
       arcTo: () => calls.push('arcTo'),
       closePath: () => calls.push('closePath'),
@@ -269,6 +272,8 @@ describe('buildAttachDragImage', () => {
       fillStyle: '',
       strokeStyle: '',
       lineWidth: 0,
+      lineCap: '',
+      lineJoin: '',
       shadowColor: '',
       shadowBlur: 0,
       shadowOffsetY: 0,
@@ -277,6 +282,7 @@ describe('buildAttachDragImage', () => {
       textAlign: '',
       beginPath: () => {},
       moveTo: () => {},
+      lineTo: () => {},
       arc: () => {},
       arcTo: () => {},
       closePath: () => {},
@@ -284,14 +290,9 @@ describe('buildAttachDragImage', () => {
       stroke: () => {},
       fillText: () => {},
     }
-    const origCreate = document.createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-      if (tag === 'canvas') {
-        const el = origCreate('canvas')
-        ;(el as any).getContext = (type: string) => type === '2d' ? fakeCtx : null
-        return el
-      }
-      return origCreate(tag)
+    const origGetContext = HTMLCanvasElement.prototype.getContext
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement, type: string) {
+      return type === '2d' ? fakeCtx as unknown as CanvasRenderingContext2D : origGetContext.call(this, type)
     })
     document.documentElement.setAttribute('data-theme', 'light')
     const canvas = buildAttachDragImage('file.txt', false)
