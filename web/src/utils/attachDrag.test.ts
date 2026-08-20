@@ -7,7 +7,7 @@ import {
   estimateTextWidth,
   computeAttachDragImageSize,
   buildAttachDragImage,
-  removeAttachDragGhost,
+  cleanupDragGhost,
   resolveAccentColor,
 } from '@/utils/attachDrag'
 
@@ -198,6 +198,7 @@ describe('resolveAccentColor', () => {
 describe('buildAttachDragImage', () => {
   beforeEach(() => {
     document.documentElement.setAttribute('data-theme', 'dark')
+    cleanupDragGhost()
   })
 
   it('returns a DOM element appended to the body', () => {
@@ -205,40 +206,49 @@ describe('buildAttachDragImage', () => {
     expect(el).toBeInstanceOf(HTMLElement)
     expect(el.getAttribute('data-attach-ghost')).toBe('')
     expect(el.parentElement).toBe(document.body)
-    removeAttachDragGhost(el)
+    cleanupDragGhost()
   })
 
   it('contains the file name as text', () => {
     const el = buildAttachDragImage('hello.md', false)
     expect(el.textContent).toContain('hello.md')
-    removeAttachDragGhost(el)
+    cleanupDragGhost()
   })
 
   it('contains folder SVG for directories', () => {
     const el = buildAttachDragImage('src', true)
     const svg = el.querySelector('svg')
     expect(svg).toBeTruthy()
-    removeAttachDragGhost(el)
+    cleanupDragGhost()
   })
 
   it('contains file SVG for files', () => {
     const el = buildAttachDragImage('a.ts', false)
     const svg = el.querySelector('svg')
     expect(svg).toBeTruthy()
-    removeAttachDragGhost(el)
+    cleanupDragGhost()
   })
 
   it('uses accent background color', () => {
     const el = buildAttachDragImage('x.ts', false)
     const bg = el.style.background || el.style.backgroundColor
     expect(bg).toBeTruthy()
-    removeAttachDragGhost(el)
+    cleanupDragGhost()
   })
 
-  it('removeAttachDragGhost removes the element from DOM', () => {
+  it('cleanupDragGhost removes the element from DOM', () => {
     const el = buildAttachDragImage('y.ts', false)
     expect(el.parentElement).toBe(document.body)
-    removeAttachDragGhost(el)
+    cleanupDragGhost()
     expect(el.parentElement).toBeNull()
+  })
+
+  it('buildAttachDragImage cleans up previous ghost', () => {
+    const el1 = buildAttachDragImage('first.ts', false)
+    expect(el1.parentElement).toBe(document.body)
+    const el2 = buildAttachDragImage('second.ts', false)
+    expect(el1.parentElement).toBeNull() // first ghost cleaned up
+    expect(el2.parentElement).toBe(document.body)
+    cleanupDragGhost()
   })
 })

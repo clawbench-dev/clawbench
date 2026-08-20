@@ -57,7 +57,15 @@ export function hasAttachDragData(dt: DataTransfer | null | undefined): boolean 
 // item renders with a jarring gradient + tint over the browser's translucent
 // ghost.  Canvas-based ghosts also fail in Chrome (shows a blank/noise square),
 // so we use a real DOM element appended off-screen — the browser snapshots it
-// reliably, then we remove it immediately after setDragImage.
+// reliably.
+//
+// IMPORTANT: The ghost element must stay in the DOM until the drag operation
+// completes.  Chrome snapshots setDragImage's element asynchronously — removing
+// it synchronously after setDragImage causes a blank/noise ghost.  We store the
+// reference and clean it up in cleanupDragGhost(), called from dragend or as a
+// safety timeout.
+
+let pendingGhost: HTMLElement | null = null
 
 export const ATTACH_DRAG_GHOST_FONT = 'bold 13px system-ui, sans-serif'
 export const ATTACH_DRAG_GHOST_PAD_X = 14
@@ -98,12 +106,18 @@ export function resolveAccentColor(): string {
 /**
  * Build a real DOM element to use as the drag ghost image.
  * Uses an off-screen div with accent background pill, icon badge, and bold
- * white text — then it's passed to setDragImage and immediately removed.
+ * white text — then it's passed to setDragImage.
+ *
+ * The ghost element is kept in the DOM and tracked internally.  Call
+ * cleanupDragGhost() from a dragend handler (or it auto-cleans after 5s).
  *
  * Chrome cannot snapshot canvas content for setDragImage (renders as noise),
  * so we must use a real DOM element for reliable rendering.
  */
 export function buildAttachDragImage(name: string, isDir: boolean): HTMLElement {
+  // Clean up any previous ghost first
+  cleanupDragGhost()
+
   const accent = resolveAccentColor()
   const el = document.createElement('div')
   el.setAttribute('data-attach-ghost', '')
@@ -149,12 +163,23 @@ export function buildAttachDragImage(name: string, isDir: boolean): HTMLElement 
   el.appendChild(label)
 
   document.body.appendChild(el)
+  pendingGhost = el
+
+  // Safety timeout: auto-clean after 5s in case dragend never fires
+  setTimeout(cleanupDragGhost, 5000)
+
   return el
 }
 
-/** Clean up a drag ghost element previously created by buildAttachDragImage. */
-export function removeAttachDragGhost(el: HTMLElement | null) {
-  if (el && el.parentNode) el.parentNode.removeChild(el)
+/**
+ * Remove the pending drag ghost element from the DOM.
+ * Call this from a dragend handler, or it auto-cleans after the safety timeout.
+ */
+export function cleanupDragGhost() {
+  if (pendingGhost && pendingGhost.parentNode) {
+    pendingGhost.parentNode.removeChild(pendingGhost)
+  }
+  pendingGhost = null
 }
 
 // ── Minimal inline SVGs for file/folder icons ─────────────────────────────

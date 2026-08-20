@@ -436,7 +436,7 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
-import { setAttachDragData, hasAttachDragData, buildAttachDragImage, removeAttachDragGhost } from '@/utils/attachDrag'
+import { setAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import DirBreadcrumb from './DirBreadcrumb.vue'
@@ -532,6 +532,7 @@ function onDragEnd() {
     dropTargetPath.value = null
     dragCounter.value = 0
     isDragOver.value = false
+    cleanupDragGhost()
 }
 
 /** Resolve the set of paths being dragged: a full multi-selection if the dragged item is selected. */
@@ -571,10 +572,9 @@ function onItemDragStart(entry, e) {
     setAttachDragData(e.dataTransfer, path, entry.type === 'dir')
     e.dataTransfer.effectAllowed = 'move'
     // Build a DOM ghost element off-screen for reliable snapshot in Chrome.
-    // Canvas-based ghosts render as blank/noise in Chrome's setDragImage.
+    // The ghost must stay in the DOM until dragend — cleanupDragGhost() handles that.
     const ghost = buildAttachDragImage(entry.name, entry.type === 'dir')
     e.dataTransfer.setDragImage(ghost, 14, 16)
-    removeAttachDragGhost(ghost)
 }
 
 // ── Clipboard paste handler ──

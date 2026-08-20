@@ -4,6 +4,7 @@
       class="crumb crumb-home"
       :draggable="isWideScreen"
       @dragstart="onCrumbDragStart('/', 'Home', $event)"
+      @dragend="cleanupDragGhost()"
       @click="$emit('navigate', '')"
     >
       <Home :size="14" />
@@ -15,6 +16,7 @@
         :class="{ current: i === parts.length - 1 }"
         :draggable="isWideScreen"
         @dragstart="onCrumbDragStart(reconstructPath(parts.slice(0, i + 1)), part, $event)"
+        @dragend="cleanupDragGhost()"
         @click="i < parts.length - 1 && $emit('navigate', reconstructPath(parts.slice(0, i + 1)))"
       >{{ part }}</span>
     </template>
@@ -30,7 +32,7 @@ import { computed, inject, ref } from 'vue'
 import { Home, Copy } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { splitPath } from '@/utils/path.ts'
-import { setAttachDragData, buildAttachDragImage, removeAttachDragGhost } from '@/utils/attachDrag.ts'
+import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 
 const props = defineProps({
@@ -48,7 +50,6 @@ function onCrumbDragStart(path, name, e) {
   e.dataTransfer.effectAllowed = 'move'
   const ghost = buildAttachDragImage(name || '/', true)
   e.dataTransfer.setDragImage(ghost, 14, 16)
-  removeAttachDragGhost(ghost)
 }
 
 function copyFullPath() {
