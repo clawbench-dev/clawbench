@@ -130,6 +130,23 @@ describe('useSettingsConfig', () => {
     expect('swipeSession' in localConfig).toBe(true)
   })
 
+  it('localConfig has notificationSound defaulting to true', () => {
+    const { localConfig } = useSettingsConfig()
+    localStorage.removeItem('clawbench-settings-notificationSound')
+    expect('notificationSound' in localConfig).toBe(true)
+    expect(localConfig.notificationSound).toBe(true)
+  })
+
+  it('setLocalConfig persists notificationSound to localStorage', () => {
+    const { localConfig, setLocalConfig } = useSettingsConfig()
+
+    setLocalConfig('notificationSound', false)
+    expect(localConfig.notificationSound).toBe(false)
+    expect(localStorage.getItem('clawbench-settings-notificationSound')).toBe('false')
+
+    localStorage.removeItem('clawbench-settings-notificationSound')
+  })
+
   it('localConfig has messageDisplayMode defaulting to summary', () => {
     const { localConfig } = useSettingsConfig()
     localStorage.removeItem('clawbench-settings-messageDisplayMode')

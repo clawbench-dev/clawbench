@@ -33,6 +33,7 @@ const localConfig = reactive<Record<string, any>>({
   terminalFontSize: 12,
   androidLogCapture: false,
   uiScale: 1,
+  notificationSound: true,
   headerShortcutTips: true,
 })
 
@@ -246,6 +247,9 @@ const i18n = createI18n({
           sortDirHint: '排序方向',
           sortDirAsc: '升序',
           sortDirDesc: '降序',
+          notificationSound: '任务完成提示音',
+          notificationSoundDesc: '任务完成或需要审批时播放提示音和振动',
+          notificationSoundSection: '提示音',
           uploadMaxSize: '上传大小上限',
           uploadMaxSizeDesc: '上传大小上限',
           uploadMaxFiles: '上传文件上限',
@@ -844,6 +848,42 @@ describe('SettingsCategory', () => {
       await vm.$.setupState.handleUpdate({ key: 'localhost_auth_exempt', source: 'local' }, false)
       expect(mockDialogConfirm).toHaveBeenCalled()
       expect(mockSetLocalConfig).toHaveBeenCalledWith('localhost_auth_exempt', false)
+    })
+  })
+
+  // ─── Notification category ──────────────────────────────
+  describe('notification category', () => {
+    it('renders notificationSound as switch item', () => {
+      const wrapper = mountCategory('notification')
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = allItems.find(i => i.props().label === '任务完成提示音')
+      expect(item).toBeTruthy()
+      expect(item!.props().type).toBe('switch')
+    })
+
+    it('saves notificationSound locally when toggled off', async () => {
+      const wrapper = mountCategory('notification')
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = allItems.find(i => i.props().label === '任务完成提示音')
+      expect(item).toBeTruthy()
+
+      await item!.vm.$emit('update:modelValue', false)
+      await wrapper.vm.$nextTick()
+
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('notificationSound', false)
+    })
+
+    it('saves notificationSound locally when toggled on', async () => {
+      localConfig.notificationSound = false
+      const wrapper = mountCategory('notification')
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = allItems.find(i => i.props().label === '任务完成提示音')
+      expect(item).toBeTruthy()
+
+      await item!.vm.$emit('update:modelValue', true)
+      await wrapper.vm.$nextTick()
+
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('notificationSound', true)
     })
   })
 
