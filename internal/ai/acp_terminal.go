@@ -88,7 +88,30 @@ func (c *ClawBenchACPClient) CreateTerminal(ctx context.Context, req acp.CreateT
 	cmd.Stdout = &ts.output
 	cmd.Stderr = &ts.output
 
+	// Detach the terminal command from the server's controlling terminal.
+	// Without Setsid:true, a command like `sudo` would prompt for a password
+	// on the ClawBench server console via /dev/tty and block the whole
+	// session. A new session has no controlling terminal, so sudo fails fast
+	// with "no tty present" instead of hanging. This also enables
+	// killProcessGroup to reach the entire process tree on cancellation.
+	setProcessGroup(cmd)
+
+	// Replace the default leader-only kill with a process-group kill: when
+	// a spawned child inherits the pipes, killing only the leader leaves the
+	// child holding the pipes open and cmd.Wait() blocks indefinitely.
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			killProcessGroup(cmd.Process)
+		}
+		return nil
+	}
+	// Bound how long pipes may stay open after the process exits when a
+	// spawned child inherited them. Wait() forcibly closes the parent's pipe
+	// ends after the delay, unblocking the output buffer read.
+	cmd.WaitDelay = streamWaitDelay
+
 	if err := cmd.Start(); err != nil {
+		cancel() // release the context timeout
 		return acp.CreateTerminalResponse{}, fmt.Errorf("start command: %w", err)
 	}
 

@@ -884,7 +884,8 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		Mode:                  effectiveMode,
 		Resume:                resume,
 		HasAttachments:        hasAttachments,
-		AssistantMessageCount: service.GetAssistantMessageCount(sessionID),
+		AssistantMessageCount:   service.GetAssistantMessageCount(sessionID),
+		HasConversationHistory:  service.GetChatMessageCount(sessionID) > 0,
 		ForkContext:           forkContext,
 	}
 }

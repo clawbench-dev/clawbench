@@ -21,7 +21,8 @@ type ChatRequest struct {
 	Resume                bool   // If true, resume an existing session instead of creating new
 	ScheduledExecution    bool   // If true, this is a scheduled task execution — skill-level anti-recursion block
 	HasAttachments        bool   // If true, the user message carries file attachments (triggers media rules injection)
-	AssistantMessageCount int    // Number of finalized assistant messages in the session (0 for new sessions)
+	AssistantMessageCount int    // Number of finalized assistant messages in the session (0 for new sessions). Used for logging and periodic summary logic.
+	HasConversationHistory bool  // True if the session has any messages in DB (user + assistant, finalized + streaming). Drives shouldNewSessionFallback: true blocks silent fallback to NewSession on recovery failure (amnesia prevention). Differs from AssistantMessageCount: a session with only an in-flight user prompt has AssistantMessageCount=0 but HasConversationHistory=true.
 	ForkContext           string // Formatted history from parent session, injected on fork's first message so the AI has context
 }
 

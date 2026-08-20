@@ -70,11 +70,11 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 					"session_id", req.SessionID, "agent_id", b.agent.ID, "error", err)
 				conn, isNew, err = mgr.GetOrCreateConn(ctx, b.agent, req.SessionID, req.WorkDir)
 			}
-			if err != nil && isACPPeerDisconnected(err) && shouldNewSessionFallback(req.AssistantMessageCount) {
+			if err != nil && isACPPeerDisconnected(err) && shouldNewSessionFallback(req.HasConversationHistory) {
 				// Session cannot be restored (process keeps dying / load keeps
-				// failing). Only fall back to a brand-new session when no
-				// conversation has happened yet (AssistantMessageCount==0) —
-				// rebuilding a session that already has history would lose it.
+				// failing). Only fall back to a brand-new session when the
+				// session has no conversation history at all — rebuilding a
+				// session that already has history would lose it (amnesia).
 				// In that case the error below is surfaced and the user retries,
 				// preserving the original session mapping.
 				slog.Error("acp: session recovery failed, starting new session",
@@ -254,13 +254,13 @@ func (b *ACPBackend) emitSessionAndCacheState(conn *ACPConn, isNew bool, ch chan
 }
 
 // shouldNewSessionFallback reports whether a failed session recovery should
-// fall back to a brand-new session. We only do so when NO conversation has
-// happened yet (AssistantMessageCount == 0). If the session already has
-// assistant history, rebuilding it with a fresh ACP session would drop the
-// agent's memory of the prior conversation — so instead we surface the error
-// and let the user retry, preserving the original session mapping.
-func shouldNewSessionFallback(assistantMessageCount int) bool {
-	return assistantMessageCount == 0
+// fall back to a brand-new session. We only do so when the session has NO
+// conversation history at all (no user or assistant messages). If the session
+// already has any messages, rebuilding it with a fresh ACP session would drop
+// the agent's memory of the prior conversation — so instead we surface the
+// error and let the user retry, preserving the original session mapping.
+func shouldNewSessionFallback(hasHistory bool) bool {
+	return !hasHistory
 }
 
 // acpErrorText formats an ACP error for the UI warning banner, preserving both

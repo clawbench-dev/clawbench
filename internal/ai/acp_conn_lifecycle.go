@@ -115,8 +115,22 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	}
 
 	// Recover a previous session after the process died.
-	if preSpawnAcpSID != "" {
-		acpSID := preSpawnAcpSID
+	// Check both in-memory acpSID (saved before spawnLocked cleared it) and
+	// the DB (external_session_id). The DB fallback handles cases where the
+	// in-memory acpSID was lost — e.g., after ResumeSession failure called
+	// killProcessLocked (which clears acpSID), or after idle sweep called
+	// close() (which also clears acpSID and removes from pool, but the new
+	// conn's GetOrCreateConn may not pre-populate if the DB write was delayed).
+	acpSID := preSpawnAcpSID
+	if acpSID == "" {
+		if extID := getExternalSessionID(c.clawbenchSID); extID != "" {
+			acpSID = extID
+			slog.Info("acp conn: recovered acpSID from DB (in-memory was empty)",
+				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
+		}
+	}
+
+	if acpSID != "" {
 
 		// Always use ResumeSession for automatic recovery after process death.
 		// LoadSession replays the entire conversation history, which is very slow
@@ -136,9 +150,12 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 		// Do NOT silently fall back to NewSession (amnesia): the user
 		// would lose all conversation context without any indication.
 		// Surface the error so the user knows the session needs a fresh start.
+		// Use killAndMarkDead (not killProcessLocked) so acpSID is preserved —
+		// a future prompt can retry ResumeSession instead of becoming
+		// permanently unrecoverable.
 		slog.Error("acp conn: ResumeSession failed, session is unrecoverable",
 			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
-		c.killProcessLocked()
+		c.killAndMarkDead()
 		return false, fmt.Errorf("acp: session %s ResumeSession failed: %w", acpSID, err)
 	}
 

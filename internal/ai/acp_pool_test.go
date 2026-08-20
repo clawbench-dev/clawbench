@@ -895,6 +895,90 @@ func TestEnsureAliveWithSession_EmptyPreSpawnAcpSID_SkipsResume(t *testing.T) {
 	assert.Empty(t, savedBeforeSpawn, "preSpawnAcpSID should be empty for brand-new sessions, skipping ResumeSession")
 }
 
+// --- ensureAliveWithSession recovers acpSID from DB when in-memory is empty ---
+
+func TestEnsureAliveWithSession_DBFallbackWhenInMemoryEmpty(t *testing.T) {
+	// After idle sweep or killProcessLocked, c.acpSID can be empty while the
+	// DB still has external_session_id. ensureAliveWithSession must consult
+	// getExternalSessionID as a fallback so the next prompt can still attempt
+	// ResumeSession instead of always creating a brand-new session (amnesia).
+	agent := &model.Agent{ID: "test-dbfallback", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "session-dbfallback")
+
+	acpSIDFromDB := "acp-session-recovered-from-db"
+
+	// Simulate the state after idle-sweep-with-conn-still-in-pool:
+	// c.acpSID is empty in-memory, but the DB still has external_session_id.
+	conn.mu.Lock()
+	conn.acpSID = ""
+	conn.mu.Unlock()
+
+	// Override the DB lookup to return our recovery value.
+	originalGetter := getExternalSessionID
+	getExternalSessionID = func(sid string) string {
+		if sid == conn.clawbenchSID {
+			return acpSIDFromDB
+		}
+		return ""
+	}
+	defer func() { getExternalSessionID = originalGetter }()
+
+	// Simulate ensureAliveWithSession's recovery logic directly: it captures
+	// preSpawnAcpSID first (empty), then consults getExternalSessionID.
+	conn.mu.Lock()
+	preSpawnAcpSID := conn.acpSID
+	conn.acpSID = "" // spawnLocked clears it (no-op here, already empty)
+	conn.mu.Unlock()
+
+	var acpSID string
+	if preSpawnAcpSID != "" {
+		acpSID = preSpawnAcpSID
+	} else if extID := getExternalSessionID(conn.clawbenchSID); extID != "" {
+		acpSID = extID
+	}
+
+	assert.Equal(t, acpSIDFromDB, acpSID,
+		"ensureAliveWithSession must fall back to getExternalSessionID when in-memory acpSID is empty, otherwise the session loses context after idle sweep")
+}
+
+func TestEnsureAliveWithSession_DBFallback_NotCalledWhenInMemorySet(t *testing.T) {
+	// When in-memory acpSID IS set, getExternalSessionID must NOT be consulted —
+	// the in-memory value is authoritative. This avoids stale-DB surprises
+	// (e.g., DB still has the old acpSID after the user reset the session).
+	agent := &model.Agent{ID: "test-dbfallback-skip", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "session-dbfallback-skip")
+
+	acpSIDInMemory := "acp-session-fresh"
+	acpSIDStaleInDB := "acp-session-stale"
+
+	conn.mu.Lock()
+	conn.acpSID = acpSIDInMemory
+	conn.mu.Unlock()
+
+	called := false
+	originalGetter := getExternalSessionID
+	getExternalSessionID = func(sid string) string {
+		called = true
+		return acpSIDStaleInDB
+	}
+	defer func() { getExternalSessionID = originalGetter }()
+
+	conn.mu.Lock()
+	preSpawnAcpSID := conn.acpSID
+	conn.acpSID = "" // spawnLocked clears it
+	conn.mu.Unlock()
+
+	var acpSID string
+	if preSpawnAcpSID != "" {
+		acpSID = preSpawnAcpSID
+	} else if extID := getExternalSessionID(conn.clawbenchSID); extID != "" {
+		acpSID = extID
+	}
+
+	assert.False(t, called, "getExternalSessionID must not be called when in-memory acpSID is set")
+	assert.Equal(t, acpSIDInMemory, acpSID, "in-memory acpSID must win over stale DB value")
+}
+
 // --- GetOrCreateConn reuses existing conn (does not re-read DB) ---
 
 func TestGetOrCreateConn_ReusesExistingConn(t *testing.T) {

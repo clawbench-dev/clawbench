@@ -199,17 +199,19 @@ func (m *ACPConnManager) sweepOnce() {
 			continue // session started running since initial scan
 		}
 
-		// Re-acquire manager lock to atomically delete + close.
+		// Kill the idle connection but preserve acpSID so the session
+		// can be recovered via ResumeSession on the next prompt.
+		// Do NOT delete from pool or call close() (which clears acpSID) —
+		// that would cause amnesia if the DB external_session_id was
+		// not yet persisted (e.g., session_capture missed).
 		m.mu.Lock()
 		conn, ok = m.conns[sid]
-		if ok {
-			delete(m.conns, sid)
-		}
 		m.mu.Unlock()
 
 		if ok {
-			slog.Info("acp: idle sweep closing connection", "clawbench_sid", sid, "idle_duration", time.Since(time.Unix(0, lastActivity)))
-			conn.close()
+			slog.Info("acp: idle sweep killing idle connection (preserving acpSID for recovery)",
+				"clawbench_sid", sid, "idle_duration", time.Since(time.Unix(0, lastActivity)))
+			conn.killAndMarkDead()
 		}
 	}
 }
