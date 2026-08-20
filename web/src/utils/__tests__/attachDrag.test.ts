@@ -6,7 +6,6 @@ import {
   hasAttachDragData,
   estimateTextWidth,
   computeAttachDragImageSize,
-  toRgba,
 } from '@/utils/attachDrag'
 
 /** Minimal DataTransfer stand-in that mirrors jsdom/browser behavior for set/getData + types. */
@@ -87,11 +86,4 @@ describe('attachDrag helpers', () => {
     expect(long.h).toBe(44)
   })
 
-  it('toRgba converts hex and rgb() to rgba with the requested alpha', () => {
-    expect(toRgba('#4a90d9', 0.5)).toBe('rgba(74, 144, 217, 0.5)')
-    expect(toRgba('#0af', 1)).toBe('rgba(0, 170, 255, 1)')
-    expect(toRgba('rgb(255, 0, 0)', 0.25)).toBe('rgba(255, 0, 0, 0.25)')
-    // Unknown/unparsable colors fall back to the default accent
-    expect(toRgba('color-mix(...)', 0.5)).toBe('rgba(74, 144, 217, 0.5)')
-  })
 })

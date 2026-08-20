@@ -6,8 +6,9 @@ import {
   hasAttachDragData,
   estimateTextWidth,
   computeAttachDragImageSize,
-  toRgba,
   buildAttachDragImage,
+  removeAttachDragGhost,
+  resolveAccentColor,
 } from '@/utils/attachDrag'
 
 function mockDataTransfer(): DataTransfer {
@@ -172,33 +173,25 @@ describe('computeAttachDragImageSize', () => {
   })
 })
 
-describe('toRgba', () => {
-  it('converts 6-digit hex', () => {
-    expect(toRgba('#4a90d9', 0.5)).toBe('rgba(74, 144, 217, 0.5)')
+describe('resolveAccentColor', () => {
+  it('returns a non-empty color string', () => {
+    const color = resolveAccentColor()
+    expect(color).toBeTruthy()
+    expect(color.length).toBeGreaterThan(0)
   })
 
-  it('converts 3-digit hex', () => {
-    expect(toRgba('#abc', 1)).toBe('rgba(170, 187, 204, 1)')
+  it('returns light fallback when CSS variable is absent and theme is light', () => {
+    document.documentElement.removeAttribute('style')
+    document.documentElement.setAttribute('data-theme', 'light')
+    const color = resolveAccentColor()
+    expect(color).toBe('#4a90d9')
   })
 
-  it('converts hex without # prefix', () => {
-    expect(toRgba('4a90d9', 0.3)).toBe('rgba(74, 144, 217, 0.3)')
-  })
-
-  it('converts rgb() string', () => {
-    expect(toRgba('rgb(74, 144, 217)', 0.8)).toBe('rgba(74, 144, 217, 0.8)')
-  })
-
-  it('converts rgba() string replacing alpha', () => {
-    expect(toRgba('rgba(74, 144, 217, 0.5)', 0.9)).toBe('rgba(74, 144, 217, 0.9)')
-  })
-
-  it('returns default for unrecognized color', () => {
-    expect(toRgba('purple', 0.5)).toBe('rgba(74, 144, 217, 0.5)')
-  })
-
-  it('handles empty string', () => {
-    expect(toRgba('', 0.5)).toBe('rgba(74, 144, 217, 0.5)')
+  it('returns dark fallback when CSS variable is absent and theme is dark', () => {
+    document.documentElement.removeAttribute('style')
+    document.documentElement.setAttribute('data-theme', 'dark')
+    const color = resolveAccentColor()
+    expect(color).toBe('#5b9bd5')
   })
 })
 
@@ -207,96 +200,45 @@ describe('buildAttachDragImage', () => {
     document.documentElement.setAttribute('data-theme', 'dark')
   })
 
-  it('returns a canvas element', () => {
-    const canvas = buildAttachDragImage('test.ts', false)
-    expect(canvas).toBeInstanceOf(HTMLCanvasElement)
+  it('returns a DOM element appended to the body', () => {
+    const el = buildAttachDragImage('test.ts', false)
+    expect(el).toBeInstanceOf(HTMLElement)
+    expect(el.getAttribute('data-attach-ghost')).toBe('')
+    expect(el.parentElement).toBe(document.body)
+    removeAttachDragGhost(el)
   })
 
-  it('sets canvas dimensions based on name', () => {
-    const canvas = buildAttachDragImage('test.ts', false)
-    expect(canvas.width).toBeGreaterThan(0)
-    expect(canvas.height).toBeGreaterThan(0)
+  it('contains the file name as text', () => {
+    const el = buildAttachDragImage('hello.md', false)
+    expect(el.textContent).toContain('hello.md')
+    removeAttachDragGhost(el)
   })
 
-  it('creates larger canvas for longer names', () => {
-    const short = buildAttachDragImage('a.ts', false)
-    const long = buildAttachDragImage('a-very-long-component-name.vue', false)
-    expect(long.width).toBeGreaterThan(short.width)
+  it('contains folder SVG for directories', () => {
+    const el = buildAttachDragImage('src', true)
+    const svg = el.querySelector('svg')
+    expect(svg).toBeTruthy()
+    removeAttachDragGhost(el)
   })
 
-  it('exercises canvas drawing with stubbed 2D context (dark theme)', () => {
-    const calls: string[] = []
-    const fakeCtx = {
-      scale: () => calls.push('scale'),
-      fillStyle: '',
-      strokeStyle: '',
-      lineWidth: 0,
-      lineCap: '',
-      lineJoin: '',
-      shadowColor: '',
-      shadowBlur: 0,
-      shadowOffsetY: 0,
-      font: '',
-      textBaseline: '',
-      textAlign: '',
-      beginPath: () => calls.push('beginPath'),
-      moveTo: () => calls.push('moveTo'),
-      lineTo: () => calls.push('lineTo'),
-      arc: () => calls.push('arc'),
-      arcTo: () => calls.push('arcTo'),
-      closePath: () => calls.push('closePath'),
-      fill: () => calls.push('fill'),
-      stroke: () => calls.push('stroke'),
-      fillText: () => calls.push('fillText'),
-    }
-    const origCreate = document.createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-      if (tag === 'canvas') {
-        const el = origCreate('canvas')
-        ;(el as any).getContext = (type: string) => type === '2d' ? fakeCtx : null
-        return el
-      }
-      return origCreate(tag)
-    })
-    document.documentElement.setAttribute('data-theme', 'dark')
-    buildAttachDragImage('folder', true)
-    expect(calls).toContain('scale')
-    expect(calls).toContain('fill')
-    expect(calls).toContain('fillText')
-    vi.restoreAllMocks()
+  it('contains file SVG for files', () => {
+    const el = buildAttachDragImage('a.ts', false)
+    const svg = el.querySelector('svg')
+    expect(svg).toBeTruthy()
+    removeAttachDragGhost(el)
   })
 
-  it('exercises canvas drawing with stubbed 2D context (light theme)', () => {
-    const fakeCtx = {
-      scale: () => {},
-      fillStyle: '',
-      strokeStyle: '',
-      lineWidth: 0,
-      lineCap: '',
-      lineJoin: '',
-      shadowColor: '',
-      shadowBlur: 0,
-      shadowOffsetY: 0,
-      font: '',
-      textBaseline: '',
-      textAlign: '',
-      beginPath: () => {},
-      moveTo: () => {},
-      lineTo: () => {},
-      arc: () => {},
-      arcTo: () => {},
-      closePath: () => {},
-      fill: () => {},
-      stroke: () => {},
-      fillText: () => {},
-    }
-    const origGetContext = HTMLCanvasElement.prototype.getContext
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement, type: string) {
-      return type === '2d' ? fakeCtx as unknown as CanvasRenderingContext2D : origGetContext.call(this, type)
-    })
-    document.documentElement.setAttribute('data-theme', 'light')
-    const canvas = buildAttachDragImage('file.txt', false)
-    expect(canvas).toBeInstanceOf(HTMLCanvasElement)
-    vi.restoreAllMocks()
+  it('uses accent background color', () => {
+    const el = buildAttachDragImage('x.ts', false)
+    const bg = el.style.background || el.style.backgroundColor
+    expect(bg).toBeTruthy()
+    removeAttachDragGhost(el)
+  })
+
+  it('removeAttachDragGhost removes the element from DOM', () => {
+    const el = buildAttachDragImage('y.ts', false)
+    expect(el.parentElement).toBe(document.body)
+    removeAttachDragGhost(el)
+    expect(el.parentElement).toBeNull()
   })
 })

@@ -55,8 +55,9 @@ export function hasAttachDragData(dt: DataTransfer | null | undefined): boolean 
 // ── Custom drag ghost ──────────────────────────────────────────────────────
 // The OS-native drag image snapshots the source element, so a selected/accent
 // item renders with a jarring gradient + tint over the browser's translucent
-// ghost. We instead draw a flat, semi-transparent chip ourselves and hand it
-// to setDragImage — a plain opacity look with no gradient.
+// ghost.  Canvas-based ghosts also fail in Chrome (shows a blank/noise square),
+// so we use a real DOM element appended off-screen — the browser snapshots it
+// reliably, then we remove it immediately after setDragImage.
 
 export const ATTACH_DRAG_GHOST_FONT = 'bold 13px system-ui, sans-serif'
 export const ATTACH_DRAG_GHOST_PAD_X = 14
@@ -84,94 +85,8 @@ export function computeAttachDragImageSize(name: string): AttachDragImageSize {
   return { w, h: 44 }
 }
 
-/** Convert a hex (#rgb/#rrggbb) or rgb()/rgba() color to an rgba() string with the given alpha. */
-export function toRgba(color: string, alpha: number): string {
-  const c = (color || '').trim()
-  const hex = c.match(/^#?([0-9a-f]{6}|[0-9a-f]{3})$/i)
-  if (hex) {
-    let s = hex[1]
-    if (s.length === 3) s = s.split('').map((ch) => ch + ch).join('')
-    const n = parseInt(s, 16)
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
-  }
-  const rgb = c.match(/rgba?\(([^)]+)\)/)
-  if (rgb) {
-    const parts = rgb[1].split(',').map((x) => parseFloat(x.trim()))
-    return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha})`
-  }
-  return `rgba(74, 144, 217, ${alpha})`
-}
-
-/**
- * Draw a bold, vivid drag ghost for an attach drag. Uses a solid accent-filled
- * pill with a canvas-drawn folder/file icon and bold white text — stands out
- * clearly over both light and dark content.  Avoids emoji on canvas because
- * Chrome renders them as empty or □ glyphs in a 2D canvas context.
- * Falls back to a blank canvas (and thus the OS ghost) if 2D canvas is unavailable.
- */
-export function buildAttachDragImage(name: string, isDir: boolean): HTMLCanvasElement {
-  const { w, h } = computeAttachDragImageSize(name)
-  const pad = 6
-  const scale = 2
-  const canvas = document.createElement('canvas')
-  canvas.width = (w + pad * 2) * scale
-  canvas.height = (h + pad * 2) * scale
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return canvas
-
-  ctx.scale(scale, scale)
-
-  const accent = resolveAccentColor()
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
-
-  // ── Drop shadow ──
-  ctx.shadowColor = isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.18)'
-  ctx.shadowBlur = 8
-  ctx.shadowOffsetY = 2
-
-  // ── Solid accent background pill ──
-  ctx.fillStyle = accent
-  roundRectPath(ctx, pad, pad, w, h, 10)
-  ctx.fill()
-
-  // ── Clear shadow for subsequent draws ──
-  ctx.shadowColor = 'transparent'
-  ctx.shadowBlur = 0
-  ctx.shadowOffsetY = 0
-
-  // ── Left icon badge (white circle with drawn icon) ──
-  const badgeR = 12
-  const badgeCx = pad + 16
-  const badgeCy = pad + h / 2
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.25)'
-  ctx.beginPath()
-  ctx.arc(badgeCx, badgeCy, badgeR, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Draw a simple folder or file glyph in white inside the badge
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
-  ctx.lineWidth = 1.4
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  if (isDir) {
-    drawFolderGlyph(ctx, badgeCx - 6, badgeCy - 5, 12, 10)
-  } else {
-    drawFileGlyph(ctx, badgeCx - 5, badgeCy - 6, 10, 12)
-  }
-
-  // ── File/dir name (white bold) ──
-  ctx.font = ATTACH_DRAG_GHOST_FONT
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'left'
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
-  ctx.fillText(name, pad + 8 + ATTACH_DRAG_GHOST_ICON_W + ATTACH_DRAG_GHOST_GAP, pad + h / 2 + 1)
-
-  return canvas
-}
-
 /** Resolve the accent color from CSS variable, with a hard fallback. */
-function resolveAccentColor(): string {
+export function resolveAccentColor(): string {
   try {
     const v = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim()
     if (v) return v
@@ -181,71 +96,77 @@ function resolveAccentColor(): string {
 }
 
 /**
- * Draw a simple folder glyph (tab + body) centred in the bounding box.
- * Uses only stroke/fill — no emoji, so it works in all browsers on canvas.
+ * Build a real DOM element to use as the drag ghost image.
+ * Uses an off-screen div with accent background pill, icon badge, and bold
+ * white text — then it's passed to setDragImage and immediately removed.
+ *
+ * Chrome cannot snapshot canvas content for setDragImage (renders as noise),
+ * so we must use a real DOM element for reliable rendering.
  */
-function drawFolderGlyph(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
-  const tabW = w * 0.45
-  const tabH = h * 0.25
-  // Tab
-  ctx.beginPath()
-  ctx.moveTo(x, y + tabH)
-  ctx.lineTo(x, y)
-  ctx.lineTo(x + tabW, y)
-  ctx.lineTo(x + tabW + 2, y + tabH)
-  ctx.lineTo(x + w, y + tabH)
-  ctx.stroke()
-  // Body
-  ctx.beginPath()
-  ctx.moveTo(x, y + tabH)
-  ctx.lineTo(x, y + h)
-  ctx.lineTo(x + w, y + h)
-  ctx.lineTo(x + w, y + tabH)
-  ctx.closePath()
-  ctx.fill()
+export function buildAttachDragImage(name: string, isDir: boolean): HTMLElement {
+  const accent = resolveAccentColor()
+  const el = document.createElement('div')
+  el.setAttribute('data-attach-ghost', '')
+  el.style.cssText = `
+    position: fixed;
+    top: -9999px;
+    left: -9999px;
+    display: inline-flex;
+    align-items: center;
+    gap: ${ATTACH_DRAG_GHOST_GAP}px;
+    padding: 6px 14px;
+    border-radius: 10px;
+    background: ${accent};
+    color: #fff;
+    font: ${ATTACH_DRAG_GHOST_FONT};
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    z-index: -1;
+  `
+
+  // Icon badge
+  const badge = document.createElement('span')
+  badge.style.cssText = `
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.22);
+    flex-shrink: 0;
+  `
+
+  // Use Lucide-style SVG icons (simple, no font dependency)
+  badge.innerHTML = isDir ? folderSvg : fileSvg
+
+  const label = document.createElement('span')
+  label.textContent = name
+  label.style.cssText = 'overflow: hidden; text-overflow: ellipsis;'
+
+  el.appendChild(badge)
+  el.appendChild(label)
+
+  document.body.appendChild(el)
+  return el
 }
 
-/**
- * Draw a simple file glyph (page with folded corner) centred in the bounding box.
- * Uses only stroke/fill — no emoji, so it works in all browsers on canvas.
- */
-function drawFileGlyph(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
-  const fold = Math.min(w, h) * 0.3
-  // Page outline with dog-ear
-  ctx.beginPath()
-  ctx.moveTo(x, y)
-  ctx.lineTo(x + w - fold, y)
-  ctx.lineTo(x + w, y + fold)
-  ctx.lineTo(x + w, y + h)
-  ctx.lineTo(x, y + h)
-  ctx.closePath()
-  ctx.stroke()
-  // Dog-ear fold
-  ctx.beginPath()
-  ctx.moveTo(x + w - fold, y)
-  ctx.lineTo(x + w - fold, y + fold)
-  ctx.lineTo(x + w, y + fold)
-  ctx.stroke()
-  // Two text lines
-  const lineY1 = y + h * 0.5
-  const lineY2 = y + h * 0.7
-  const lineX1 = x + 2
-  const lineX2 = x + w - 3
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(lineX1, lineY1)
-  ctx.lineTo(lineX2, lineY1)
-  ctx.moveTo(lineX1, lineY2)
-  ctx.lineTo(lineX2 * 0.6, lineY2)
-  ctx.stroke()
+/** Clean up a drag ghost element previously created by buildAttachDragImage. */
+export function removeAttachDragGhost(el: HTMLElement | null) {
+  if (el && el.parentNode) el.parentNode.removeChild(el)
 }
 
-function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath()
-  ctx.moveTo(x + r, y)
-  ctx.arcTo(x + w, y, x + w, y + h, r)
-  ctx.arcTo(x + w, y + h, x, y + h, r)
-  ctx.arcTo(x, y + h, x, y, r)
-  ctx.arcTo(x, y, x + w, y, r)
-  ctx.closePath()
-}
+// ── Minimal inline SVGs for file/folder icons ─────────────────────────────
+// Kept as raw strings so they render instantly with no font/icon dependency.
+
+const folderSvg = `<svg width="14" height="12" viewBox="0 0 14 12" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1 3V2a1 1 0 0 1 1-1h3l1.5 2H12a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3z"/>
+</svg>`
+
+const fileSvg = `<svg width="12" height="14" viewBox="0 0 12 14" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1 1.5a1 1 0 0 1 1-1h5.5L11 4v8.5a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-12z"/>
+  <path d="M7.5 0.5v3.5H11"/>
+  <line x1="3.5" y1="7.5" x2="8.5" y2="7.5"/>
+  <line x1="3.5" y1="9.5" x2="6.5" y2="9.5"/>
+</svg>`

@@ -30,7 +30,7 @@ import { computed, inject, ref } from 'vue'
 import { Home, Copy } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { splitPath } from '@/utils/path.ts'
-import { setAttachDragData, buildAttachDragImage } from '@/utils/attachDrag.ts'
+import { setAttachDragData, buildAttachDragImage, removeAttachDragGhost } from '@/utils/attachDrag.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 
 const props = defineProps({
@@ -48,6 +48,7 @@ function onCrumbDragStart(path, name, e) {
   e.dataTransfer.effectAllowed = 'move'
   const ghost = buildAttachDragImage(name || '/', true)
   e.dataTransfer.setDragImage(ghost, 14, 16)
+  removeAttachDragGhost(ghost)
 }
 
 function copyFullPath() {
