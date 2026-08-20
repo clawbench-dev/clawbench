@@ -10,7 +10,7 @@
       <Home :size="14" />
     </span>
     <template v-for="(part, i) in parts" :key="i">
-      <span class="crumb-sep">›</span>
+      <span class="crumb-sep">/</span>
       <span
         class="crumb"
         :class="{ current: i === parts.length - 1 }"
@@ -144,7 +144,7 @@ const parts = computed(() => {
 
 .crumb-sep {
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .crumb-copy-btn {
