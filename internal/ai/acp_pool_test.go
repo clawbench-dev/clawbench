@@ -1124,10 +1124,10 @@ func TestWaitForLoadSessionDone(t *testing.T) {
 func TestSweepOnce_BelowMaxCount_DoesNotKillIdle(t *testing.T) {
 	mgr := GetACPConnManager()
 
-	// Save and restore ACPMaxLiveConns
-	origMaxCount := model.ACPMaxLiveConns
-	model.ACPMaxLiveConns = 10
-	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+	// Save and restore ACPIdleReclaimThreshold
+	origMaxCount := model.ACPIdleReclaimThreshold
+	model.ACPIdleReclaimThreshold = 10
+	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
 
 	// Create 3 alive, idle connections (all idle > 5 min)
 	for i := 0; i < 3; i++ {
@@ -1159,9 +1159,9 @@ func TestSweepOnce_BelowMaxCount_DoesNotKillIdle(t *testing.T) {
 func TestSweepOnce_AboveMaxCount_KillsOnlyNecessary(t *testing.T) {
 	mgr := GetACPConnManager()
 
-	origMaxCount := model.ACPMaxLiveConns
-	model.ACPMaxLiveConns = 2
-	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+	origMaxCount := model.ACPIdleReclaimThreshold
+	model.ACPIdleReclaimThreshold = 2
+	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
 
 	// Create 4 alive, idle connections with different idle durations
 	// A: idle 20min, B: idle 15min, C: idle 10min, D: idle 7min
@@ -1202,9 +1202,9 @@ func TestSweepOnce_AboveMaxCount_KillsOnlyNecessary(t *testing.T) {
 func TestSweepOnce_ZeroMaxCount_KeepsAlive(t *testing.T) {
 	mgr := GetACPConnManager()
 
-	origMaxCount := model.ACPMaxLiveConns
-	model.ACPMaxLiveConns = 0 // unlimited → old behavior: kill all idle
-	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+	origMaxCount := model.ACPIdleReclaimThreshold
+	model.ACPIdleReclaimThreshold = 0 // unlimited → old behavior: kill all idle
+	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
 
 	agent := &model.Agent{ID: "test-sweep-zero", Backend: "acp-stdio", AcpCommand: "echo"}
 	sid := "session-sweep-zero"
@@ -1229,9 +1229,9 @@ func TestSweepOnce_ZeroMaxCount_KeepsAlive(t *testing.T) {
 func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 	mgr := GetACPConnManager()
 
-	origMaxCount := model.ACPMaxLiveConns
-	model.ACPMaxLiveConns = 1
-	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+	origMaxCount := model.ACPIdleReclaimThreshold
+	model.ACPIdleReclaimThreshold = 1
+	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
 
 	// Create 2 alive connections: one running, one idle
 	agent := &model.Agent{ID: "test-sweep-running", Backend: "acp-stdio", AcpCommand: "echo"}
@@ -1278,9 +1278,9 @@ func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 func TestSweepOnce_DeadConnectionsNotCounted(t *testing.T) {
 	mgr := GetACPConnManager()
 
-	origMaxCount := model.ACPMaxLiveConns
-	model.ACPMaxLiveConns = 2
-	defer func() { model.ACPMaxLiveConns = origMaxCount }()
+	origMaxCount := model.ACPIdleReclaimThreshold
+	model.ACPIdleReclaimThreshold = 2
+	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
 
 	agent := &model.Agent{ID: "test-sweep-dead", Backend: "acp-stdio", AcpCommand: "echo"}
 

@@ -58,7 +58,7 @@ var hotReloadFields = map[string]bool{
 	"terminal.max_sessions": true,
 	"terminal.buffer_lines": true,
 	// ACP connection pool — idle sweep reads the global on each pass
-	"acp.max_live_conns": true,
+	"acp.idle_reclaim_threshold": true,
 	// TTS engine + sub-configs — recreate provider
 	"tts.engine":                 true,
 	"tts.tts_model":              true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
@@ -339,7 +339,7 @@ type configFileSearch struct {
 }
 
 type configACP struct {
-	MaxLiveConns int `json:"max_live_conns"`
+	IdleReclaimThreshold int `json:"idle_reclaim_threshold"`
 }
 
 // configTLS exposes the HTTPS cert directory to the settings panel.
@@ -369,7 +369,7 @@ var PatchableConfigPaths = map[string]bool{
 	"terminal.idle_timeout":             true,
 	"terminal.max_sessions":             true,
 	"terminal.buffer_lines":             true,
-	"acp.max_live_conns":                true,
+	"acp.idle_reclaim_threshold":        true,
 	"tts.engine":                        true,
 	"tts.tts_model":                     true,
 	"tts.format":                        true,
@@ -571,7 +571,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			DisplayLimit: cfg.FileSearch.DisplayLimit,
 		},
 		ACP: configACP{
-			MaxLiveConns: cfg.ACP.MaxLiveConns,
+			IdleReclaimThreshold: cfg.ACP.IdleReclaimThreshold,
 		},
 		TLS: configTLS{
 			CertDir: cfg.TLS.CertDir,
@@ -757,8 +757,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	}
 
 	if acpVal, ok := patch["acp"].(map[string]any); ok {
-		if v, ok := acpVal["max_live_conns"].(float64); ok && v < 0 {
-			return fmt.Errorf("acp.max_live_conns must be non-negative")
+		if v, ok := acpVal["idle_reclaim_threshold"].(float64); ok && v < 0 {
+			return fmt.Errorf("acp.idle_reclaim_threshold must be non-negative")
 		}
 	}
 
@@ -1054,8 +1054,8 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if acpVal, ok := patch["acp"].(map[string]any); ok {
-		if v, ok := acpVal["max_live_conns"].(float64); ok {
-			cfg.ACP.MaxLiveConns = int(v)
+		if v, ok := acpVal["idle_reclaim_threshold"].(float64); ok {
+			cfg.ACP.IdleReclaimThreshold = int(v)
 		}
 	}
 
@@ -1312,7 +1312,7 @@ func applyHotReloadGlobals() {
 	model.UploadMaxSizeMB = cfg.Upload.MaxSizeMB
 	model.UploadMaxFiles = cfg.Upload.MaxFiles
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
-	model.ACPMaxLiveConns = cfg.ACP.MaxLiveConns
+	model.ACPIdleReclaimThreshold = cfg.ACP.IdleReclaimThreshold
 	model.DefaultAgentID = cfg.DefaultAgent
 	model.LocalhostAuthExempt = cfg.LocalhostAuthExempt
 

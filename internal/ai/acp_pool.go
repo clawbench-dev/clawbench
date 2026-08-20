@@ -148,10 +148,10 @@ func (m *ACPConnManager) idleSweep() {
 }
 
 // sweepOnce performs a single idle sweep pass.
-// If the number of alive connections is below model.ACPMaxLiveConns, idle
+// If the number of alive connections is below model.ACPIdleReclaimThreshold, idle
 // connections are kept alive (there is room for them). Otherwise, idle
 // connections are killed in order of longest-idle-first until the alive
-// count drops to model.ACPMaxLiveConns.
+// count drops to model.ACPIdleReclaimThreshold.
 func (m *ACPConnManager) sweepOnce() {
 	type idleEntry struct {
 		sid         string
@@ -186,7 +186,7 @@ func (m *ACPConnManager) sweepOnce() {
 	}
 	m.mu.Unlock()
 
-	maxCount := model.ACPMaxLiveConns
+	maxCount := model.ACPIdleReclaimThreshold
 	if maxCount <= 0 || aliveCount <= maxCount {
 		// No limit configured, or alive count is within budget —
 		// keep idle connections alive.

@@ -164,8 +164,8 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- ACP ---
-	if cfg.ACP.MaxLiveConns <= 0 {
-		cfg.ACP.MaxLiveConns = 10
+	if cfg.ACP.IdleReclaimThreshold <= 0 {
+		cfg.ACP.IdleReclaimThreshold = 10
 	}
 
 	// --- Recent Projects ---

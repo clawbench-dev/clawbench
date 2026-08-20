@@ -112,7 +112,7 @@ type FileSearchConfig struct {
 
 // ACPConfig holds configuration for the ACP connection pool.
 type ACPConfig struct {
-	MaxLiveConns int `yaml:"max_live_conns"` // Max concurrent live ACP connections (0=unlimited, default: 10)
+	IdleReclaimThreshold int `yaml:"idle_reclaim_threshold"` // Idle sweep reclaims connections when alive count exceeds this (0=unlimited, default: 10)
 }
 
 // TerminalConfig holds configuration for the interactive web terminal.
@@ -243,7 +243,7 @@ var (
 	TTSMaxCacheFiles int // Default: 100; 0 = unlimited
 
 	// ACP connection pool limits (set from config, with defaults)
-	ACPMaxLiveConns int // Default: 10; 0 = unlimited
+	ACPIdleReclaimThreshold int // Default: 10; 0 = unlimited
 )
 
 // ScopedCookieName returns a port-prefixed cookie name when running on a
