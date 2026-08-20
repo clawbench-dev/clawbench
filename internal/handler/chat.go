@@ -873,20 +873,20 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	}
 
 	return ai.ChatRequest{
-		Prompt:                prompt,
-		SessionID:             effectiveSessionID,
-		WorkDir:               fileDir,
-		SystemPrompt:          systemPrompt,
-		Model:                 agentModel,
-		Command:               agentCommand,
-		AgentID:               agentID,
-		ThinkingEffort:        effectiveThinkingEffort,
-		Mode:                  effectiveMode,
-		Resume:                resume,
-		HasAttachments:        hasAttachments,
-		AssistantMessageCount:   service.GetAssistantMessageCount(sessionID),
-		HasConversationHistory:  service.GetChatMessageCount(sessionID) > 0,
-		ForkContext:           forkContext,
+		Prompt:                 prompt,
+		SessionID:              effectiveSessionID,
+		WorkDir:                fileDir,
+		SystemPrompt:           systemPrompt,
+		Model:                  agentModel,
+		Command:                agentCommand,
+		AgentID:                agentID,
+		ThinkingEffort:         effectiveThinkingEffort,
+		Mode:                   effectiveMode,
+		Resume:                 resume,
+		HasAttachments:         hasAttachments,
+		AssistantMessageCount:  service.GetAssistantMessageCount(sessionID),
+		HasConversationHistory: service.GetChatMessageCount(sessionID) > 0,
+		ForkContext:            forkContext,
 	}
 }
 

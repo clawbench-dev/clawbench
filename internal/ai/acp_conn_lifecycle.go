@@ -131,7 +131,6 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	}
 
 	if acpSID != "" {
-
 		// Always use ResumeSession for automatic recovery after process death.
 		// LoadSession replays the entire conversation history, which is very slow
 		// for long conversations and can exceed the 60s timeout, producing

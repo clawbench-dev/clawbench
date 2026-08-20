@@ -294,6 +294,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 // Category-specific behaviors:
 //   - "mode": validates currentID against available modes (bridge adapter filter)
 //   - "thought_level": conditionally updates cache only on change
+//
 // handleConfigOptionSelect processes a SelectState config option update.
 //
 // DEADLOCK SAFETY: Same rules as mapACPSessionUpdate — runs on the SDK's

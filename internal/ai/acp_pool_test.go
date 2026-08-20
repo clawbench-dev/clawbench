@@ -1127,6 +1127,7 @@ func TestSweepOnce_KillsIdleConnections(t *testing.T) {
 	agent := &model.Agent{ID: "test-sweep-idle", Backend: "acp-stdio", AcpCommand: "echo"}
 
 	// Create 2 alive, idle connections (idle > 5 min)
+	idleSids := make([]string, 0, 2)
 	for _, sid := range []string{"session-sweep-idle-1", "session-sweep-idle-2"} {
 		conn := newACPConn(agent, sid)
 		conn.SetAliveForTest()
@@ -1134,8 +1135,13 @@ func TestSweepOnce_KillsIdleConnections(t *testing.T) {
 		conn.lastUsed = time.Now().Add(-10 * time.Minute)
 		conn.mu.Unlock()
 		mgr.SetConnForTest(sid, conn)
-		defer mgr.CloseConn(sid)
+		idleSids = append(idleSids, sid)
 	}
+	defer func() {
+		for _, sid := range idleSids {
+			mgr.CloseConn(sid)
+		}
+	}()
 
 	// Create 1 alive, recently-used connection (not idle)
 	activeSid := "session-sweep-active"

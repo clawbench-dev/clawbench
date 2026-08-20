@@ -4,6 +4,7 @@ package ai
 
 import (
 	"context"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -11,6 +12,44 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResolveTerminalCwd_RequestCwd(t *testing.T) {
+	client := NewClawBenchACPClient()
+	cwd := "/tmp/test-project"
+	req := acp.CreateTerminalRequest{Command: "ls", Cwd: ptrStr(cwd)}
+	assert.Equal(t, cwd, client.resolveTerminalCwd(req))
+}
+
+func TestResolveTerminalCwd_ConnRefFallback(t *testing.T) {
+	client := NewClawBenchACPClient()
+	client.connRef = &ACPConn{cwd: "/project/dir"}
+	req := acp.CreateTerminalRequest{Command: "ls"}
+	assert.Equal(t, "/project/dir", client.resolveTerminalCwd(req))
+}
+
+func TestResolveTerminalCwd_EmptyFallback(t *testing.T) {
+	client := NewClawBenchACPClient()
+	req := acp.CreateTerminalRequest{Command: "ls"}
+	assert.Equal(t, "", client.resolveTerminalCwd(req))
+}
+
+func TestAppendTerminalEnv(t *testing.T) {
+	cmd := exec.Command("echo")
+	appendTerminalEnv(cmd, []acp.EnvVariable{
+		{Name: "FOO", Value: "bar"},
+		{Name: "BAZ", Value: "qux"},
+	})
+	assert.Contains(t, cmd.Env, "FOO=bar")
+	assert.Contains(t, cmd.Env, "BAZ=qux")
+}
+
+func TestAppendTerminalEnv_Empty(t *testing.T) {
+	cmd := exec.Command("echo")
+	appendTerminalEnv(cmd, nil)
+	assert.Nil(t, cmd.Env)
+}
+
+func ptrStr(s string) *string { return &s }
 
 func TestCreateTerminal_ProcessGroupIsolation(t *testing.T) {
 	// Verify that CreateTerminal calls setProcessGroup, which puts the
