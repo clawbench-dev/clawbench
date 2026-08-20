@@ -341,7 +341,7 @@ async function doCheckout(name: string) {
         const result = await apiPost('/api/git/checkout', { branch: name }) as { success?: boolean; error?: string; errorDetail?: string; untrackedCount?: number }
         if (result.success) {
             await store.loadGitBranch()
-            await store.loadFiles(store.state.currentDir)
+            await store.loadFiles(store.state.currentDir, false, 0, true)
         } else if (result.error === 'dirty_worktree') {
             // Worktree became dirty after the upfront check — surface the modal here.
             dirtyBranch.value = name
@@ -371,7 +371,7 @@ async function doDirtyCheckout(mode: 'stash' | 'force') {
     try {
         await apiPost('/api/git/checkout', { branch: name, stash: mode === 'stash', force: mode === 'force' })
         await store.loadGitBranch()
-        await store.loadFiles(store.state.currentDir)
+        await store.loadFiles(store.state.currentDir, false, 0, true)
     } catch {
         toast?.show(t('appHeader.switchBranchFailed', { error: t('appHeader.switchBranchNetworkError') }), { icon: '⚠️', type: 'error', duration: 3000 })
     }

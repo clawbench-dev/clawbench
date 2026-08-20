@@ -293,7 +293,7 @@ async function doRefreshCurrentFile(options: {
 
   // Refresh directory listing if requested
   if (loadDir && store.state.currentDir !== undefined) {
-    store.loadFiles(store.state.currentDir)
+    store.loadFiles(store.state.currentDir, false, 0, true)
   }
 
   if (!currentFilePath) return

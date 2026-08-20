@@ -645,7 +645,7 @@ function switchTab(tab) {
   // Auto-close all drawers not belonging to the new tab
   onTabSwitch(tab)
   if (tab === 'browse') {
-    store.loadFiles(store.state.currentDir)
+    store.loadFiles(store.state.currentDir, false, 0, true)
   }
   if (tab === 'chat') {
     // Recalculate instead of blindly clearing — if the user switches to chat
@@ -840,7 +840,7 @@ const handleForeground = () => {
     if (!isAuthenticated.value) return
     // Full state pull — refresh everything that may have changed while backgrounded
     loadSessionsOnce()
-    store.loadFiles(store.state.currentDir)
+    store.loadFiles(store.state.currentDir, false, 0, true)
     store.loadGitBranch()
     loadTasks()
     loadTerminalStatus()
@@ -1271,7 +1271,7 @@ watch(() => currentFile.value, (file, prevFile) => {
 function toggleHidden() {
     showHidden.value = !showHidden.value
     setSetting('showHidden', showHidden.value)
-    store.loadFiles(store.state.currentDir)
+    store.loadFiles(store.state.currentDir, false, 0, true)
 }
 
 function handleToggleSort(field) {
@@ -1572,7 +1572,7 @@ watch(isWideScreen, (val) => {
 registerWideScreenCallbacks({
   setActiveTab: (tab) => { activeTab.value = tab },
   sideEffects: (tab) => {
-    if (tab === 'browse') store.loadFiles(store.state.currentDir)
+    if (tab === 'browse') store.loadFiles(store.state.currentDir, false, 0, true)
     if (tab === 'tasks') { store.state.taskUnreadCount = 0; loadTasks() }
   },
 })

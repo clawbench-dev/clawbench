@@ -899,7 +899,7 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
     // Navigate to the containing directory using loadFiles directly
     // (navigateToDir silently no-ops when dirLoading is true, which can race)
     const parentDir = dirName(targetPath)
-    await store.loadFiles(parentDir)
+    await store.loadFiles(parentDir, false, 0, true)
 
     // Brief delay to let DOM settle after loadFiles before highlighting the target
     setTimeout(() => {

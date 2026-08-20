@@ -461,7 +461,7 @@ const stream = useChatStream({
       // File not currently viewed, but still refresh directory listing
       const currentDir = store.state.currentDir
       if (currentDir !== undefined) {
-        store.loadFiles(currentDir)
+        store.loadFiles(currentDir, false, 0, true)
       }
     }
   },

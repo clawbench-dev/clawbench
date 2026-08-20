@@ -185,6 +185,62 @@ describe('loadFiles DirectoryNotFound → parent navigation', () => {
     expect(mockToastShow).toHaveBeenCalledTimes(1)
     expect(mockToastShow.mock.calls[0][1]).toMatchObject({ type: 'info' })
   })
+
+  it('noLoading=true skips loading mask on refresh', async () => {
+    let resolveApi!: (v: unknown) => void
+    vi.mocked(apiGet).mockReturnValue(new Promise(r => { resolveApi = r }))
+    store.state.dirLoading = false
+
+    const p = store.loadFiles('some/dir', false, 0, true)
+    // While in-flight, dirLoading must still be false (no mask)
+    expect(store.state.dirLoading).toBe(false)
+    resolveApi({ items: [{ name: 'file.txt', type: 'file', modified: '', size: 0, supported: true }] })
+    await p
+    expect(store.state.dirLoading).toBe(false)
+    expect(store.state.currentDir).toBe('some/dir')
+  })
+
+  it('noLoading=false (default) shows loading mask during fetch', async () => {
+    let resolveApi!: (v: unknown) => void
+    vi.mocked(apiGet).mockReturnValue(new Promise(r => { resolveApi = r }))
+    store.state.dirLoading = false
+
+    const p = store.loadFiles('some/dir')
+    // While in-flight, dirLoading must be true (mask showing)
+    expect(store.state.dirLoading).toBe(true)
+    resolveApi({ items: [{ name: 'file.txt', type: 'file', modified: '', size: 0, supported: true }] })
+    await p
+    expect(store.state.dirLoading).toBe(false) // cleared after completion
+    expect(store.state.currentDir).toBe('some/dir')
+  })
+
+  it('noLoading call superseding loading call clears dirLoading', async () => {
+    // Scenario: user navigates (loading), then file watch triggers a noLoading
+    // refresh that supersedes the first call — dirLoading must not get stuck.
+    let resolveA!: (v: unknown) => void
+    let resolveB!: (v: unknown) => void
+    vi.mocked(apiGet)
+      .mockReturnValueOnce(new Promise(r => { resolveA = r }))
+      .mockReturnValueOnce(new Promise(r => { resolveB = r }))
+    store.state.dirLoading = false
+
+    const pA = store.loadFiles('dir-a', false, 0, false) // loading call, seq=1
+    expect(store.state.dirLoading).toBe(true)
+    const pB = store.loadFiles('dir-b', false, 0, true)  // noLoading call, seq=2 supersedes
+    // dirLoading is still true (set by call A, not cleared yet)
+
+    // Complete call B first (it's the latest)
+    resolveB({ items: [{ name: 'b.txt', type: 'file', modified: '', size: 0, supported: true }] })
+    await pB
+    // dirLoading must be cleared — B is the latest call and finally runs
+    expect(store.state.dirLoading).toBe(false)
+    expect(store.state.currentDir).toBe('dir-b')
+
+    // Now complete call A — stale, should be ignored
+    resolveA({ items: [{ name: 'a.txt', type: 'file', modified: '', size: 0, supported: true }] })
+    await pA
+    expect(store.state.currentDir).toBe('dir-b') // unchanged by stale call
+  })
 })
 
 describe('saveOpenFile / loadOpenFile / clearStaleOpenFile', () => {

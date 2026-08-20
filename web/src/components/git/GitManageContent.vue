@@ -263,7 +263,7 @@ async function doDirtyCheckout(mode: 'stash' | 'force') {
       force: mode === 'force',
     })
     await store.loadGitBranch()
-    await store.loadFiles(store.state.currentDir)
+    await store.loadFiles(store.state.currentDir, false, 0, true)
     refreshCurrentFile()
     if (pendingReload.value) await pendingReload.value()
   } finally {
@@ -279,7 +279,7 @@ async function onSwitchBranch(branch: GitBranchItem) {
     const result = await apiPost<{ success: boolean; error?: string; untrackedCount?: number; errorDetail?: string }>('/api/git/checkout', { branch: branch.name })
     if (result.success) {
       await store.loadGitBranch()
-      await store.loadFiles(store.state.currentDir)
+      await store.loadFiles(store.state.currentDir, false, 0, true)
       refreshCurrentFile()
       await Promise.all([loadBranches(), loadWorktrees()])
     } else if (result.error === 'dirty_worktree') {
@@ -309,7 +309,7 @@ async function onSwitchTag(tag: GitTag) {
     const result = await apiPost<{ success: boolean; error?: string; untrackedCount?: number; errorDetail?: string }>('/api/git/checkout', { branch: tag.name })
     if (result.success) {
       await store.loadGitBranch()
-      await store.loadFiles(store.state.currentDir)
+      await store.loadFiles(store.state.currentDir, false, 0, true)
       refreshCurrentFile()
       await Promise.all([loadBranches(), loadWorktrees(), loadTags()])
     } else if (result.error === 'dirty_worktree') {

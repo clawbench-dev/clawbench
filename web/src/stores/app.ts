@@ -345,7 +345,7 @@ async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: 
 let loadFilesSeq = 0 // monotonic counter to suppress stale concurrent loads
 let selectFileSeq = 0 // monotonic counter to suppress stale concurrent file loads
 
-async function loadFiles(dir = '', silent = false, _depth = 0): Promise<void> {
+async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false): Promise<void> {
     const seq = ++loadFilesSeq // this call supersedes any earlier in-flight call
     // Defensive: strip leading slashes so currentDir is always a project-relative path.
     // The Go backend treats paths starting with "/" as absolute filesystem paths,
@@ -353,7 +353,9 @@ async function loadFiles(dir = '', silent = false, _depth = 0): Promise<void> {
     dir = dir.replace(/^\/+/, '')
     const prevDir = state.currentDir
     const prevEntries = state.dirEntries.slice()
-    state.dirLoading = true
+    // noLoading: skip the loading mask on refreshes (delete/rename/watch/git ops);
+    // first-open navigation still shows the overlay for visual feedback.
+    if (!noLoading) state.dirLoading = true
     try {
         const url = dir ? `/api/dir?path=${encodeURIComponent(dir)}` : '/api/dir?path='
         const data = await apiGet<{ items: DirEntry[] }>(url)
@@ -372,7 +374,7 @@ async function loadFiles(dir = '', silent = false, _depth = 0): Promise<void> {
         if (msgKey === 'DirectoryNotFound' && prevDir !== '' && _depth < 10) {
             // Directory was deleted — navigate to parent instead of showing stale content
             const parent = dirName(prevDir)
-            await loadFiles(parent, silent, _depth + 1)
+            await loadFiles(parent, silent, _depth + 1, noLoading)
             return
         }
         if (msgKey === 'DirectoryNotFound') {
@@ -389,7 +391,9 @@ async function loadFiles(dir = '', silent = false, _depth = 0): Promise<void> {
         if (silent) throw err // let caller handle the error
         useToast().show(gt('file.toast.dirLoadFailed'), { type: 'error', icon: '⚠️' })
     } finally {
-        // Only clear loading if we are still the latest call
+        // The latest call owns dirLoading — always clear if we're still current,
+        // even if this call was noLoading. A noLoading call that supersedes a
+        // loading call must clear the flag, or dirLoading gets stuck at true.
         if (seq === loadFilesSeq) {
             state.dirLoading = false
         }
@@ -537,7 +541,7 @@ async function deleteFile(filePath: string): Promise<void> {
         closeCurrentFile(filePath)
     }
     appLog.d(TAG, '[deleteFile] refreshing, currentDir:', state.currentDir, 'loadFilesSeq:', loadFilesSeq)
-    await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
+    await Promise.all([loadFiles(state.currentDir, false, 0, true), loadGitBranch()])
     appLog.d(TAG, '[deleteFile] done, dirEntries count:', state.dirEntries.length)
 }
 
@@ -572,7 +576,7 @@ async function deleteFiles(paths: string[]): Promise<void> {
     if (state.currentFile && paths.includes(state.currentFile.path)) {
         closeCurrentFile()
     }
-    await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
+    await Promise.all([loadFiles(state.currentDir, false, 0, true), loadGitBranch()])
     appLog.d(TAG, '[deleteFiles] done, dirEntries count:', state.dirEntries.length)
 }
 
@@ -595,7 +599,7 @@ async function renameFile(path: string, newName: string): Promise<void> {
         const newPath = dir ? `${dir}/${newName}` : newName
         await selectFile(newPath)
     }
-    await loadFiles(state.currentDir)
+    await loadFiles(state.currentDir, false, 0, true)
 }
 
 // =============================================
