@@ -928,7 +928,7 @@ describe('Lightbox', () => {
       container.innerHTML = '<img src="a.png" alt="A"><img src="b.png" alt="B">'
       document.body.appendChild(container)
 
-      const result = vm.collectMdImages(container, container.querySelectorAll('img')[1])
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[1], null)
       expect(result.list).toHaveLength(2)
       expect(result.startIdx).toBe(1)
 
@@ -945,7 +945,7 @@ describe('Lightbox', () => {
         '<img src="/api/file/thumb?path=photo.jpg&w=1200" data-full-src="/api/local-file/photo.jpg" alt="B">'
       document.body.appendChild(container)
 
-      const result = vm.collectMdImages(container, container.querySelectorAll('img')[1])
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[1], null)
       expect(result.list[0].src).toBe('/api/local-file/photo.png')
       expect(result.list[1].src).toBe('/api/local-file/photo.jpg')
       expect(result.list[0].src).not.toContain('/api/file/thumb')
@@ -962,8 +962,147 @@ describe('Lightbox', () => {
       container.innerHTML = '<img src="https://ext.com/a.png" alt="A">'
       document.body.appendChild(container)
 
-      const result = vm.collectMdImages(container, container.querySelectorAll('img')[0])
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[0], null)
       expect(result.list[0].src).toBe('https://ext.com/a.png')
+
+      document.body.removeChild(container)
+    })
+
+    it('collects mermaid SVGs alongside images in document order', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<img src="a.png" alt="Image A">' +
+        '<div class="mermaid"><svg viewBox="0 0 100 50"><rect></rect></svg></div>' +
+        '<img src="b.png" alt="Image B">'
+      document.body.appendChild(container)
+
+      const mermaidDiv = container.querySelector('.mermaid')
+      const result = vm.collectMdImages(container, null, mermaidDiv)
+      expect(result.list).toHaveLength(3)
+      expect(result.list[0].src).toBeTruthy()
+      expect(result.list[0].name).toBe('Image A')
+      expect(result.list[1].svg).toContain('<svg')
+      expect(result.list[1].src).toBe('')
+      expect(result.list[2].src).toBeTruthy()
+      expect(result.list[2].name).toBe('Image B')
+      expect(result.startIdx).toBe(1) // clicked mermaid is index 1
+
+      document.body.removeChild(container)
+    })
+
+    it('sets correct startIdx when clicking an image with mermaid siblings', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<div class="mermaid"><svg viewBox="0 0 100 50"><rect></rect></svg></div>' +
+        '<img src="a.png" alt="A">' +
+        '<img src="b.png" alt="B">'
+      document.body.appendChild(container)
+
+      const clickedImg = container.querySelectorAll('img')[1]
+      const result = vm.collectMdImages(container, clickedImg, null)
+      expect(result.list).toHaveLength(3)
+      expect(result.startIdx).toBe(2) // b.png is index 2 (mermaid=0, a.png=1, b.png=2)
+
+      document.body.removeChild(container)
+    })
+
+    it('skips mermaid divs without SVG child', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<img src="a.png" alt="A">' +
+        '<div class="mermaid"></div>' // no SVG inside
+      document.body.appendChild(container)
+
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[0], null)
+      expect(result.list).toHaveLength(1)
+      expect(result.list[0].src).toBeTruthy()
+
+      document.body.removeChild(container)
+    })
+  })
+
+  // ── deriveMermaidName ──
+
+  describe('deriveMermaidName', () => {
+    it('returns heading text when preceded by H2', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<h2>System Architecture</h2>' +
+        '<div class="mermaid"><svg></svg></div>'
+      document.body.appendChild(container)
+
+      const mermaidDiv = container.querySelector('.mermaid')
+      const name = vm.deriveMermaidName(mermaidDiv)
+      expect(name).toBe('System Architecture')
+
+      document.body.removeChild(container)
+    })
+
+    it('returns heading text when heading is 2 siblings before', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<h3>Data Flow</h3>' +
+        '<p>Some description</p>' +
+        '<div class="mermaid"><svg></svg></div>'
+      document.body.appendChild(container)
+
+      const mermaidDiv = container.querySelector('.mermaid')
+      const name = vm.deriveMermaidName(mermaidDiv)
+      expect(name).toBe('Data Flow')
+
+      document.body.removeChild(container)
+    })
+
+    it('returns diagram.svg when no heading within 3 siblings', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<p>Para 1</p>' +
+        '<p>Para 2</p>' +
+        '<p>Para 3</p>' +
+        '<p>Para 4</p>' +
+        '<div class="mermaid"><svg></svg></div>'
+      document.body.appendChild(container)
+
+      const mermaidDiv = container.querySelector('.mermaid')
+      const name = vm.deriveMermaidName(mermaidDiv)
+      expect(name).toBe('diagram.svg')
+
+      document.body.removeChild(container)
+    })
+
+    it('truncates heading text over 40 chars', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const longTitle = 'A'.repeat(60)
+      const container = document.createElement('div')
+      container.innerHTML =
+        `<h2>${longTitle}</h2>` +
+        '<div class="mermaid"><svg></svg></div>'
+      document.body.appendChild(container)
+
+      const mermaidDiv = container.querySelector('.mermaid')
+      const name = vm.deriveMermaidName(mermaidDiv)
+      expect(name).toHaveLength(40)
+      expect(name).toBe('A'.repeat(40))
 
       document.body.removeChild(container)
     })
@@ -972,27 +1111,11 @@ describe('Lightbox', () => {
   // ── data-full-src (thumbnail inline, full-size in lightbox) ──
 
   describe('data-full-src', () => {
-    it('navigateMdImage opens the data-full-src original when present', async () => {
+    it('navigateMdImage uses pre-resolved src for plain objects', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      const img = document.createElement('img')
-      img.src = '/api/file/thumb?path=photo.png&w=800'
-      img.setAttribute('data-full-src', '/api/local-file/photo.png')
-      vm.mdImages = [img]
-
-      vm.navigateMdImage(0, 'next')
-      await nextTick()
-
-      expect(vm.currentUrl).toContain('/api/local-file/photo.png')
-      expect(vm.currentUrl).not.toContain('/api/file/thumb')
-    })
-
-    it('navigateMdImage falls back to img.src when no data-full-src', async () => {
-      const wrapper = mountLightbox()
-      const vm = wrapper.vm as any
-      const img = document.createElement('img')
-      img.src = '/api/local-file/photo.png'
-      vm.mdImages = [img]
+      // collectMdImages pre-resolves data-full-src into src
+      vm.mdImages = [{ src: '/api/local-file/photo.png', name: 'photo.png' }]
 
       vm.navigateMdImage(0, 'next')
       await nextTick()
@@ -1000,18 +1123,88 @@ describe('Lightbox', () => {
       expect(vm.currentUrl).toContain('/api/local-file/photo.png')
     })
 
-    it('openMdImages uses data-full-src for the first image', async () => {
+    it('openMdImages uses pre-resolved src for plain objects', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
-      const img = document.createElement('img')
-      img.src = '/api/file/thumb?path=photo.jpg&w=800'
-      img.setAttribute('data-full-src', '/api/local-file/photo.jpg')
+      // collectMdImages pre-resolves data-full-src into src
+      const imgs = [{ src: '/api/local-file/photo.jpg', name: 'photo.jpg' }]
 
-      vm.openMdImages([img], 0)
+      vm.openMdImages(imgs, 0)
       await nextTick()
 
       expect(vm.currentUrl).toContain('/api/local-file/photo.jpg')
-      expect(vm.currentUrl).not.toContain('/api/file/thumb')
+    })
+  })
+
+  // ── SVG navigation in md mode ──
+
+  describe('SVG navigation in md mode', () => {
+    it('openMdImages sets currentSvg for SVG items', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const svgContent = '<svg viewBox="0 0 100 50"><rect></rect></svg>'
+      const imgs = [
+        { src: 'http://localhost/a.png', name: 'a.png' },
+        { src: '', name: 'diagram.svg', svg: svgContent },
+      ]
+      vm.openMdImages(imgs, 1)
+      await nextTick()
+
+      expect(vm.currentSvg).toBe(svgContent)
+      expect(vm.currentUrl).toBe('')
+      expect(vm.imageLoading).toBe(false)
+    })
+
+    it('openMdImages sets currentUrl for non-SVG items', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const imgs = [
+        { src: 'http://localhost/a.png', name: 'a.png' },
+        { src: '', name: 'diagram.svg', svg: '<svg></svg>' },
+      ]
+      vm.openMdImages(imgs, 0)
+      await nextTick()
+
+      expect(vm.currentUrl).toContain('http://localhost/a.png')
+      expect(vm.currentSvg).toBe('')
+    })
+
+    it('navigateMdImage switches from image to SVG', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const svgContent = '<svg viewBox="0 0 100 50"><rect></rect></svg>'
+      const imgs = [
+        { src: 'http://localhost/a.png', name: 'a.png' },
+        { src: '', name: 'diagram.svg', svg: svgContent },
+      ]
+      vm.openMdImages(imgs, 0)
+      await nextTick()
+
+      vm.navigateNext()
+      expect(vm.mdCurrentIndex).toBe(1)
+      expect(vm.currentSvg).toBe(svgContent)
+      expect(vm.currentUrl).toBe('')
+    })
+
+    it('navigateMdImage switches from SVG to image', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const svgContent = '<svg viewBox="0 0 100 50"><rect></rect></svg>'
+      const imgs = [
+        { src: 'http://localhost/a.png', name: 'a.png' },
+        { src: '', name: 'diagram.svg', svg: svgContent },
+      ]
+      vm.openMdImages(imgs, 1)
+      await nextTick()
+
+      vm.navigatePrev()
+      expect(vm.mdCurrentIndex).toBe(0)
+      expect(vm.currentUrl).toContain('http://localhost/a.png')
+      expect(vm.currentSvg).toBe('')
     })
   })
 })

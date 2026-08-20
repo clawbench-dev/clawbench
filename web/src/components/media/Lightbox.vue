@@ -48,11 +48,11 @@
       </div>
       <div class="lightbox-bottom-bar">
         <template v-if="showNav">
-          <button class="lb-btn lb-nav-btn" @click="navigatePrev" title="Previous">
+          <button class="lb-btn" @click="navigatePrev" title="Previous">
             <ChevronLeft :size="20" />
           </button>
           <span class="lb-counter">{{ navCurrentIndex + 1 }}/{{ navTotalCount }}</span>
-          <button class="lb-btn lb-nav-btn" @click="navigateNext" title="Next">
+          <button class="lb-btn" @click="navigateNext" title="Next">
             <ChevronRight :size="20" />
           </button>
         </template>
@@ -339,8 +339,9 @@ function normalizeUrl(url) {
 function navigateMdImage(newIdx, direction) {
     const img = mdImages.value[newIdx]
     if (!img) return
-    // Show loading immediately
-    imageLoading.value = true
+    // Show loading immediately (only for URL-based images; SVGs render instantly)
+    const isSvg = !!img.svg
+    imageLoading.value = !isSvg
     slideDirection.value = direction
 
     // Reset transform for new image
@@ -355,8 +356,14 @@ function navigateMdImage(newIdx, direction) {
     lastTy.value = 0
 
     mdCurrentIndex.value = newIdx
-    currentUrl.value = normalizeUrl(fullImgSrc(img)) + '?t=' + Date.now()
-    currentSvg.value = ''
+    if (isSvg) {
+        currentSvg.value = img.svg
+        currentUrl.value = ''
+    } else {
+        // collectMdImages pre-resolves data-full-src into src
+        currentUrl.value = normalizeUrl(img.src) + '?t=' + Date.now()
+        currentSvg.value = ''
+    }
 }
 
 function open(url, svg = '') {
@@ -401,12 +408,19 @@ function openMdImages(imgs, startIndex) {
     mdCurrentIndex.value = startIndex
 
     const img = imgs[startIndex]
-    currentUrl.value = normalizeUrl(fullImgSrc(img)) + '?t=' + Date.now()
-    currentSvg.value = ''
+    if (img.svg) {
+        currentSvg.value = img.svg
+        currentUrl.value = ''
+        imageLoading.value = false
+    } else {
+        // collectMdImages pre-resolves data-full-src into src
+        currentUrl.value = normalizeUrl(img.src) + '?t=' + Date.now()
+        currentSvg.value = ''
+        imageLoading.value = true
+    }
     currentFilePath.value = ''
 
     lightboxVisible.value = true
-    imageLoading.value = true
     fitScale.value = 1
     naturalW.value = 0
     naturalH.value = 0
@@ -630,21 +644,51 @@ function handleTouchEnd(_e) {
     pinchStartDist.value = 0
 }
 
-function collectMdImages(container, clickedImg) {
-    const imgs = container.querySelectorAll('img')
+function deriveMermaidName(mermaidNode) {
+    // Walk back through previous siblings looking for a heading
+    let prev = mermaidNode.previousElementSibling
+    let lookback = 3
+    while (prev && lookback-- > 0) {
+        if (/^H[1-6]$/.test(prev.tagName)) {
+            const text = prev.textContent?.trim()?.slice(0, 40)
+            if (text) return text
+        }
+        prev = prev.previousElementSibling
+    }
+    return 'diagram.svg'
+}
+
+function collectMdImages(container, clickedImg, clickedMermaid) {
     const list = []
     let startIdx = 0
-    imgs.forEach((img) => {
-        // Prefer the original (data-full-src); fall back to the inline src for
-        // images that have no thumbnail variant (external/absolute URLs, or
-        // non-raster formats like SVG/GIF).
-        const src = fullImgSrc(img)
-        if (!src) return
-        const alt = img.alt || ''
-        const name = alt || extractImageName(src)
-        list.push({ src, name })
-        if (img === clickedImg) startIdx = list.length - 1
+
+    // TreeWalker visits IMG and .mermaid elements in document order
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT, {
+        acceptNode(node) {
+            if (node.tagName === 'IMG') return NodeFilter.FILTER_ACCEPT
+            if (node.classList?.contains('mermaid')) return NodeFilter.FILTER_ACCEPT
+            return NodeFilter.FILTER_SKIP
+        }
     })
+
+    let node = walker.nextNode()
+    while (node) {
+        if (node.tagName === 'IMG') {
+            const src = fullImgSrc(node)
+            if (!src) continue
+            const alt = node.alt || ''
+            const name = alt || extractImageName(src)
+            list.push({ src, name })
+            if (node === clickedImg) startIdx = list.length - 1
+        } else if (node.classList.contains('mermaid')) {
+            const svg = node.querySelector('svg')
+            if (!svg) continue
+            const name = deriveMermaidName(node)
+            list.push({ src: '', name, svg: svg.outerHTML })
+            if (node === clickedMermaid) startIdx = list.length - 1
+        }
+        node = walker.nextNode()
+    }
     return { list, startIdx }
 }
 
@@ -695,13 +739,10 @@ function handleLightboxClick(e) {
         // Check if the image is inside a markdown body — collect sibling images for navigation
         const mdContainer = img.closest('.markdown-body, .chat-message')
         if (mdContainer) {
-            const allImgs = mdContainer.querySelectorAll('img')
-            if (allImgs.length > 1) {
-                const { list, startIdx } = collectMdImages(mdContainer, img)
-                if (list.length > 1) {
-                    openMdImages(list, startIdx)
-                    return
-                }
+            const { list, startIdx } = collectMdImages(mdContainer, img, null)
+            if (list.length > 1) {
+                openMdImages(list, startIdx)
+                return
             }
         }
         open(fullImgSrc(img))
@@ -711,7 +752,17 @@ function handleLightboxClick(e) {
     if (mermaidDiv) {
         e.preventDefault()
         const svg = mermaidDiv.querySelector('svg')
-        if (svg) openSvg(svg.outerHTML)
+        if (svg) {
+            const mdContainer = mermaidDiv.closest('.markdown-body, .chat-message')
+            if (mdContainer) {
+                const { list, startIdx } = collectMdImages(mdContainer, null, mermaidDiv)
+                if (list.length > 1) {
+                    openMdImages(list, startIdx)
+                    return
+                }
+            }
+            openSvg(svg.outerHTML)
+        }
     }
 }
 
@@ -785,16 +836,6 @@ onUnmounted(() => {
     flex-shrink: 0;
 }
 
-.lb-nav-btn {
-    background: rgba(0,0,0,0.5) !important;
-    color: rgba(255,255,255,0.9) !important;
-    backdrop-filter: blur(4px);
-}
-
-.lb-nav-btn:hover {
-    background: rgba(255,255,255,0.2) !important;
-}
-
 .lightbox-bottom-bar {
     position: absolute;
     bottom: 16px;
@@ -824,7 +865,7 @@ onUnmounted(() => {
     width: 40px;
     height: 40px;
     border: none;
-    border-radius: 8px;
+    border-radius: 50%;
     background: var(--lb-toolbar-bg, rgba(255,255,255,0.9));
     color: var(--text-primary);
     cursor: pointer;
