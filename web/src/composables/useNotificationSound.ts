@@ -10,6 +10,7 @@
  */
 
 import { appLog } from '@/utils/appLog'
+import { localConfig } from '@/composables/useSettingsConfig'
 
 const TAG = 'NotificationSound'
 
@@ -43,6 +44,9 @@ function vibrateNotification() {
  * Resumes the AudioContext if it was suspended (browser autoplay policy).
  */
 export function playNotificationSound() {
+  // Respect the notification sound setting — skip if user disabled it
+  if (localConfig.notificationSound === false) return
+
   try {
     const ctx = getAudioContext()
     if (ctx.state === 'suspended') {
