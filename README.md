@@ -153,7 +153,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - File upload (all file types supported, configurable size and count)
 - Toggle hidden file visibility
 - **Document search exclusion**: Office documents are excluded from file content search to improve performance (same as PDF)
-- **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
+- **Breadcrumb Drag to Chat**: Drag breadcrumb segments (including Home icon) to chat area to attach directory path as context — consistent with file manager drag behavior
 - **Ctrl+F/Cmd+F Context-Aware Search**: Automatically opens the appropriate search drawer based on current tab — Chat tab: session search (RAG); `view` tab with a file open: in-file content search; `view` tab empty state or `browse` tab: filename search; if already open, focuses the search input
 - **Separate File View Tab**: Directory browsing (`browse`) and file viewing (`view`) are independent tabs — opening a file auto-switches to `view`, closing it stays on `view` showing empty state (recent files list), no auto-return to file manager
 - **File Preview Overlay**: Click a file to open a preview overlay in the `view` tab; supports navigation stack (multi-file switching + back), close to return to empty state
@@ -175,7 +175,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - Toggle between rendered view / source view
 - **Quote & Ask**: Select text, one-click ask AI
 - Smart table of contents drawer (TOC) with tree-sitter code symbol extraction (100+ languages, 17 symbol kind icons), LaTeX math, Mermaid diagrams
-- **Image Lightbox**: Images support zoom, swipe browsing
+- **Image Lightbox**: Images support zoom, swipe browsing; Mermaid SVG diagrams can be navigated alongside images in lightbox
 - **File Path Navigation**: Clickable file paths in Markdown, with line range navigation
 
 ### 🤖 AI Agents
@@ -287,7 +287,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Android Version Mismatch Detection**: WebView startup compares APK version with server version; shows `VersionMismatchOverlay` prompting APK update when mismatched
 
 ### 🔔 Notifications
-- Notification sound + haptic feedback (alerts when AI completes)
+- Notification sound + haptic feedback (alerts when AI completes); sound can be toggled off in settings to prevent Bluetooth headphone interruption
 - Browser push notifications
 - **Task Completion Push**: Scheduled task completion notifications include response preview summary; tap to navigate to execution details
 - **DingTalk/Feishu Bot Push**: Instant push via DingTalk or Feishu bot on AI session completion, permission approval, and scheduled task status changes; view session list and send messages to sessions from IM

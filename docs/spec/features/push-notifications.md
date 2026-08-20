@@ -35,6 +35,7 @@ sequenceDiagram
 ### 功能清单
 
 - **WebSocket 实时事件**：在线时通过 WebSocket 接收实时事件（session_update、task_update 等），延迟更低、信息更丰富
+- **通知音效开关**：`notificationSound` 本地设置（默认开启）控制 `playNotificationSound()` 是否播放——关闭后 Web Audio API 不再初始化，防止打断蓝牙耳机的音乐播放
 - **事件缓冲与回放**：WebSocket 断线期间的事件缓冲在服务端，重连后自动回放。确保不丢失关键通知
 - **任务完成推送预览**：WebSocket 通知包含任务完成的响应摘要预览文本和 `Done:` 前缀，用户不用打开 App 就能判断任务是否成功
 - **权限审批推送**：ACP 后端请求工具调用审批时，WebSocket 通知包含工具名称（如 `execute_command`、`write_file`），用户可以及时审批，避免因未审批而阻塞 AI 执行
