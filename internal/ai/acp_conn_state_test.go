@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -775,6 +777,56 @@ func TestIsPeerDisconnectMsg_OtherMessage(t *testing.T) {
 
 func TestIsPeerDisconnectMsg_BothPatterns(t *testing.T) {
 	assert.True(t, isPeerDisconnectMsg("peer disconnected and broken pipe"))
+}
+
+// ---------------------------------------------------------------------------
+// isACPDeadlineMsg tests
+// ---------------------------------------------------------------------------
+
+func TestIsACPDeadlineMsg_ContextDeadlineExceeded(t *testing.T) {
+	assert.True(t, isACPDeadlineMsg("context deadline exceeded"))
+}
+
+func TestIsACPDeadlineMsg_ContextDeadlineExceededInLongerMessage(t *testing.T) {
+	assert.True(t, isACPDeadlineMsg("Internal error: context deadline exceeded"))
+}
+
+func TestIsACPDeadlineMsg_OtherMessage(t *testing.T) {
+	assert.False(t, isACPDeadlineMsg("timeout exceeded"))
+	assert.False(t, isACPDeadlineMsg("peer disconnected"))
+}
+
+// ---------------------------------------------------------------------------
+// isACPPeerDisconnected tests — deadline exceeded detection
+// ---------------------------------------------------------------------------
+
+func TestIsACPPeerDisconnected_DirectDeadlineExceeded(t *testing.T) {
+	assert.True(t, isACPPeerDisconnected(context.DeadlineExceeded))
+}
+
+func TestIsACPPeerDisconnected_WrappedDeadlineExceeded(t *testing.T) {
+	err := fmt.Errorf("acp: session/load: %w", context.DeadlineExceeded)
+	assert.True(t, isACPPeerDisconnected(err))
+}
+
+func TestIsACPPeerDisconnected_RequestErrorWithDeadlineData(t *testing.T) {
+	reqErr := acp.NewInternalError(map[string]any{"error": "context deadline exceeded"})
+	assert.True(t, isACPPeerDisconnected(reqErr))
+}
+
+func TestIsACPPeerDisconnected_RequestErrorWithPeerDisconnectData(t *testing.T) {
+	reqErr := acp.NewInternalError(map[string]any{"error": "peer disconnected before response"})
+	assert.True(t, isACPPeerDisconnected(reqErr))
+}
+
+func TestIsACPPeerDisconnected_RequestErrorWithOtherData(t *testing.T) {
+	reqErr := acp.NewInternalError(map[string]any{"error": "something else"})
+	assert.False(t, isACPPeerDisconnected(reqErr))
+}
+
+func TestIsACPPeerDisconnected_CancelledContext(t *testing.T) {
+	// context.Canceled should NOT be treated as peer disconnect
+	assert.False(t, isACPPeerDisconnected(context.Canceled))
 }
 
 // ---------------------------------------------------------------------------

@@ -13,8 +13,6 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
-
-	"clawbench/internal/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -120,22 +118,16 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 	if preSpawnAcpSID != "" {
 		acpSID := preSpawnAcpSID
 
-		// Some ACP agents support LoadSession but not ResumeSession (they only
-		// implement session/load, session/list, session/new, and session/delete,
-		// rejecting session/resume with "Method not found"). When the backend
-		// advertises LoadSession support, recover the previous session via
-		// LoadSession so the conversation context is preserved instead of
-		// erroring out on ResumeSession.
-		if c.supportsLoadSession() {
-			slog.Info("acp conn: recovering previous session via LoadSession",
-				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
-			// drainReplay=true: automatic recovery after process death — the
-			// replayed messages are already persisted in ClawBench's DB, so they
-			// must be drained (not routed to the live stream).
-			return c.recoverViaLoadSession(ctx, cwd, acpSID, true)
-		}
-
-		// Otherwise, recover via ResumeSession.
+		// Always use ResumeSession for automatic recovery after process death.
+		// LoadSession replays the entire conversation history, which is very slow
+		// for long conversations and can exceed the 60s timeout, producing
+		// "acp: session/load: context deadline exceeded". ResumeSession only
+		// re-attaches to the existing session state without replaying, so it's
+		// much faster and more reliable.
+		// LoadSession is still used by the explicit acp-load endpoint
+		// (loadTargetSID branch above) where the replay is intentional.
+		slog.Info("acp conn: recovering previous session via ResumeSession",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
 		err := c.recoverViaResumeSession(ctx, cwd, acpSID, prevConfig)
 		if err == nil {
 			return false, nil // recovered successfully
@@ -192,42 +184,17 @@ func (c *ACPConn) snapshotCachedConfig() cachedConfigSnapshot {
 	}
 }
 
-// supportsLoadSession reports whether the backend advertises LoadSession
-// capability (from BackendSpec.ACPLoadSession). Some ACP agents support
-// LoadSession but not ResumeSession, so this drives which recovery path
-// ensureAliveWithSession uses after a process death.
-//
-// NOTE: Must be called with c.mu held (ensureAliveWithSession holds it), so it
-// reads the agent fields directly instead of calling the lock-acquiring
-// accessors (which would deadlock).
-func (c *ACPConn) supportsLoadSession() bool {
-	backend := ""
-	agentID := ""
-	if c.agent != nil {
-		backend = c.agent.Backend
-		agentID = c.agent.ID
-	}
-	if backend != "" {
-		if spec := model.FindSpecByBackend(backend); spec != nil && spec.ACPLoadSession {
-			return true
-		}
-	}
-	if agentID == "" {
-		return false
-	}
-	return GetAgentCapabilityRegistry().GetLoadSession(agentID)
-}
-
 // recoverViaLoadSession recovers a session via LoadSession and returns
 // isNew=true (the session was re-established on a fresh process).
+// Used only by explicit endpoints (acp-load, acp-sync), not automatic recovery.
 //
 // drainReplay controls whether the LoadSession replay buffer is drained:
-//   - true  (automatic recovery after process death): the replayed messages
-//     are already persisted in ClawBench's DB, so they must be drained so they
-//     don't leak into the live stream (which would double-display them).
-//   - false (explicit acp-load endpoint): the caller (ServeACPLoadSession)
-//     reads the buffered SessionUpdate notifications to persist the replay
-//     into the DB, so the buffer must be preserved.
+//   - true  (acp-sync endpoint): the replayed messages are already persisted
+//     in ClawBench's DB, so they must be drained so they don't leak into the
+//     live stream (which would double-display them).
+//   - false (acp-load endpoint): the caller (ServeACPLoadSession) reads the
+//     buffered SessionUpdate notifications to persist the replay into the DB,
+//     so the buffer must be preserved.
 func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string, drainReplay bool) (bool, error) {
 	loadCtx, loadCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer loadCancel()

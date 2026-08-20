@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -268,21 +269,29 @@ func (c *ACPConn) ScheduleCommandsReEmit(ch chan<- StreamEvent, delay time.Durat
 	return func() { timer.Stop() }
 }
 
-// isACPPeerDisconnected checks whether the error is an ACP peer-disconnect error.
+// isACPPeerDisconnected checks whether the error is an ACP peer-disconnect error
+// or a context deadline exceeded error from an ACP SDK timeout context.
+// Deadline-exceeded errors from the ACP SDK are InternalError (-32603) with
+// "context deadline exceeded" in the data — they indicate the agent process
+// is unresponsive and should be treated the same as a disconnect for retry purposes.
 func isACPPeerDisconnected(err error) bool {
+	// Direct context.DeadlineExceeded (not wrapped in RequestError)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
 	var reqErr *acp.RequestError
 	if !errors.As(err, &reqErr) {
-		return isPeerDisconnectMsg(err.Error())
+		return isPeerDisconnectMsg(err.Error()) || isACPDeadlineMsg(err.Error())
 	}
 	if reqErr.Code != -32603 {
 		return false
 	}
 	if dataMap, ok := reqErr.Data.(map[string]any); ok {
-		if errMsg, ok := dataMap["error"].(string); ok && isPeerDisconnectMsg(errMsg) {
+		if errMsg, ok := dataMap["error"].(string); ok && (isPeerDisconnectMsg(errMsg) || isACPDeadlineMsg(errMsg)) {
 			return true
 		}
 	}
-	return isPeerDisconnectMsg(reqErr.Error())
+	return isPeerDisconnectMsg(reqErr.Error()) || isACPDeadlineMsg(reqErr.Error())
 }
 
 // isPeerDisconnectMsg checks whether an error message indicates the peer
@@ -290,6 +299,15 @@ func isACPPeerDisconnected(err error) bool {
 func isPeerDisconnectMsg(msg string) bool {
 	return strings.Contains(msg, "peer disconnected") ||
 		strings.Contains(msg, "broken pipe")
+}
+
+// isACPDeadlineMsg checks whether an error message indicates a context
+// deadline exceeded from an ACP SDK timeout context. This happens when
+// Initialize, LoadSession, ResumeSession, SetSessionConfigOption, or other
+// ACP RPCs time out — the ACP SDK converts context.DeadlineExceeded into
+// InternalError (-32603) with "context deadline exceeded" in the data.
+func isACPDeadlineMsg(msg string) bool {
+	return strings.Contains(msg, "context deadline exceeded")
 }
 
 // isUnknownConfigOption checks whether the error indicates the agent doesn't
