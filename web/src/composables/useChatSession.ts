@@ -878,7 +878,12 @@ export function useChatSession(options: UseChatSessionOptions) {
         // forceNotRunning=true prevents a race where the server's in-memory
         // running state hasn't been updated yet, which would cause loadHistory
         // to re-connect the stream and set loading=true again.
-        loadHistory(false, false, true, true)
+        loadHistory(false, false, true, true).then(() => {
+          // Re-render Mermaid on the final DOM — loadHistory replaced messages
+          // and Vue rebuilt the DOM, destroying any Mermaid SVGs rendered by the
+          // earlier forceCleanupStreamingState onRenderUpdate(true) call.
+          onRenderUpdate(true)
+        })
       }
       // Completed/cancelled current session OR has_new_messages — reload messages.
       // This replaces the old 15s msgCountPolling. skipIfUnchanged=true prevents
@@ -930,7 +935,11 @@ export function useChatSession(options: UseChatSessionOptions) {
     // consistency (AI may have finished, mode may have changed, etc. while
     // the app was backgrounded). skipIfUnchanged=true avoids unnecessary
     // UI updates when nothing changed.
-    loadHistory(false, false, true).catch(() => {
+    loadHistory(false, false, true).then(() => {
+      // Re-render Mermaid on the final DOM — Mermaid may have rendered on
+      // a DOM that was replaced by loadHistory's message sync.
+      onRenderUpdate(true)
+    }).catch(() => {
       // loadHistory failed — if we were streaming, reset loading state
       // so the user isn't stuck with a permanent spinner
       loading.value = false
@@ -955,7 +964,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       loading.value = false
       // forceNotRunning=true prevents loadHistory from re-connecting the stream
       // if the server's in-memory running state hasn't been updated yet.
-      loadHistory(false, false, true, true).catch(() => {
+      loadHistory(false, false, true, true).then(() => {
+        // Re-render Mermaid on the final DOM — same race as onSessionEvent
+        onRenderUpdate(true)
+      }).catch(() => {
         loading.value = false
       })
     }

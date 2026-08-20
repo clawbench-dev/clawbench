@@ -420,6 +420,10 @@ export function useChatStream(options: UseChatStreamOptions) {
             `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
           ).join(' | ')
           appLog.d(TAG, `[done→loadHistory] messages(${messages.value.length}): ${afterSummary}`)
+          // Re-render Mermaid on the final DOM — loadHistory replaced messages
+          // and Vue rebuilt the DOM, destroying any Mermaid SVGs rendered by the
+          // earlier forceCleanupStreamingState onRenderNeeded(true) call.
+          onRenderNeeded(true)
         }).finally(() => {
           loading.value = false
           onMessage()
@@ -451,7 +455,8 @@ export function useChatStream(options: UseChatStreamOptions) {
         onReplayDone?.()
         onLoadHistory().then(() => {
           loading.value = false
-          onRenderNeeded()
+          // Force full render — loadHistory replaced DOM, Mermaid needs re-render
+          onRenderNeeded(true)
           if (isOpen.value) {
             onScrollBottom()
           }
@@ -479,7 +484,10 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         disconnectStream()
         const errorData = payload as unknown as ErrorEventData
-        onLoadHistory().catch(() => {
+        onLoadHistory().then(() => {
+          // Re-render Mermaid on the final DOM — same race as 'done' handler
+          onRenderNeeded(true)
+        }).catch(() => {
           if (sessionChanged()) return
           const sm = findStreamingMsg(messages.value)
           if (sm) {
