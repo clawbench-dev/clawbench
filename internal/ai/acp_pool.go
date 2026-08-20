@@ -1388,9 +1388,17 @@ func (c *ACPConn) ProcessPID() int {
 // but preserves acpSID so ensureAliveWithSession can recover the session via
 // LoadSession/ResumeSession on the next prompt. Used by the stall watchdog
 // which kills a stuck process but must not cause amnesia on recovery.
+// Must NOT be called with c.mu held — use killAndMarkDeadLocked instead.
 func (c *ACPConn) killAndMarkDead() {
 	c.mu.Lock()
+	c.killAndMarkDeadLocked()
+	c.mu.Unlock()
+}
 
+// killAndMarkDeadLocked kills the agent process and marks the connection as dead,
+// preserving acpSID for future ResumeSession recovery.
+// Must be called with c.mu held; temporarily releases c.mu during Wait().
+func (c *ACPConn) killAndMarkDeadLocked() {
 	if c.cmd != nil && c.cmd.Process != nil {
 		if c.stdoutFilter != nil {
 			c.stdoutFilter.Close()
@@ -1413,7 +1421,6 @@ func (c *ACPConn) killAndMarkDead() {
 	// Intentionally preserve c.acpSID — ensureAliveWithSession needs it
 	// to recover the session via LoadSession/ResumeSession after respawn.
 	c.resetLastSetConfig()
-	c.mu.Unlock()
 }
 
 // close kills the agent process and marks the connection as dead.

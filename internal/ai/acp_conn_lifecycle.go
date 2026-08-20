@@ -150,12 +150,12 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 		// Do NOT silently fall back to NewSession (amnesia): the user
 		// would lose all conversation context without any indication.
 		// Surface the error so the user knows the session needs a fresh start.
-		// Use killAndMarkDead (not killProcessLocked) so acpSID is preserved —
+		// Use killAndMarkDeadLocked (not killProcessLocked) so acpSID is preserved —
 		// a future prompt can retry ResumeSession instead of becoming
 		// permanently unrecoverable.
 		slog.Error("acp conn: ResumeSession failed, session is unrecoverable",
 			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
-		c.killAndMarkDead()
+		c.killAndMarkDeadLocked()
 		return false, fmt.Errorf("acp: session %s ResumeSession failed: %w", acpSID, err)
 	}
 
@@ -259,7 +259,7 @@ func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string
 
 // recoverViaResumeSession recovers a session via ResumeSession and re-applies config.
 func (c *ACPConn) recoverViaResumeSession(ctx context.Context, cwd, acpSID string, prevConfig cachedConfigSnapshot) error {
-	resumeCtx, resumeCancel := context.WithTimeout(ctx, 60*time.Second)
+	resumeCtx, resumeCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer resumeCancel()
 
 	resumeStart := time.Now()

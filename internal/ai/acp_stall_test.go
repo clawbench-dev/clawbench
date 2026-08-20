@@ -166,6 +166,42 @@ func TestACPConn_KillAndMarkDead_PreservesAcpSID(t *testing.T) {
 	assert.Nil(t, conn.client, "ACP client should be nil")
 }
 
+func TestACPConn_KillAndMarkDeadLocked_NoDeadlock(t *testing.T) {
+	// Regression test: ensureAliveWithSession holds c.mu and calls
+	// killAndMarkDeadLocked (not killAndMarkDead). The old code called
+	// killAndMarkDead which does c.mu.Lock() internally — causing a
+	// self-deadlock that hung the session goroutine forever.
+	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
+	conn.acpSID = "acp-session-deadlock-test"
+	conn.alive = true
+	conn.conn = nil
+	conn.client = nil
+	conn.cmd = nil // no real subprocess needed for this test
+
+	// Call under c.mu — the exact pattern used by ensureAliveWithSession.
+	// The old killAndMarkDead() would deadlock here.
+	done := make(chan struct{})
+	go func() {
+		conn.mu.Lock()
+		conn.killAndMarkDeadLocked()
+		conn.mu.Unlock()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// No deadlock — good.
+	case <-time.After(5 * time.Second):
+		t.Fatal("killAndMarkDeadLocked deadlocked when called under c.mu")
+	}
+
+	assert.False(t, conn.alive, "connection should be dead after killAndMarkDeadLocked")
+	assert.Equal(t, "acp-session-deadlock-test", conn.acpSID,
+		"acpSID must be preserved for ResumeSession recovery")
+	assert.Nil(t, conn.conn, "ACP connection should be nil")
+	assert.Nil(t, conn.client, "ACP client should be nil")
+}
+
 func TestACPConn_Close_ClearsAcpSID(t *testing.T) {
 	conn := NewACPConnForTest(&model.Agent{ID: "test"}, "sid")
 	conn.acpSID = "acp-session-456"
