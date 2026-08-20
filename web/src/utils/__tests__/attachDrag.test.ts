@@ -79,12 +79,12 @@ describe('attachDrag helpers', () => {
 
   it('computeAttachDragImageSize scales with name and enforces a min width', () => {
     const empty = computeAttachDragImageSize('')
-    expect(empty.w).toBeGreaterThanOrEqual(64)
-    expect(empty.h).toBe(38)
+    expect(empty.w).toBeGreaterThanOrEqual(80)
+    expect(empty.h).toBe(44)
 
     const long = computeAttachDragImageSize('报告文件报告文件报告.txt')
     expect(long.w).toBeGreaterThan(empty.w)
-    expect(long.h).toBe(38)
+    expect(long.h).toBe(44)
   })
 
   it('toRgba converts hex and rgb() to rgba with the requested alpha', () => {

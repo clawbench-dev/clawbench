@@ -58,10 +58,10 @@ export function hasAttachDragData(dt: DataTransfer | null | undefined): boolean 
 // ghost. We instead draw a flat, semi-transparent chip ourselves and hand it
 // to setDragImage — a plain opacity look with no gradient.
 
-export const ATTACH_DRAG_GHOST_FONT = '13px system-ui, sans-serif'
-export const ATTACH_DRAG_GHOST_PAD_X = 12
-export const ATTACH_DRAG_GHOST_ICON_W = 22
-export const ATTACH_DRAG_GHOST_GAP = 7
+export const ATTACH_DRAG_GHOST_FONT = 'bold 13px system-ui, sans-serif'
+export const ATTACH_DRAG_GHOST_PAD_X = 14
+export const ATTACH_DRAG_GHOST_ICON_W = 28
+export const ATTACH_DRAG_GHOST_GAP = 8
 
 export interface AttachDragImageSize {
   w: number
@@ -80,8 +80,8 @@ export function estimateTextWidth(text: string): number {
 /** Ghost chip dimensions for a given file name. */
 export function computeAttachDragImageSize(name: string): AttachDragImageSize {
   const textW = estimateTextWidth(name)
-  const w = Math.max(64, Math.ceil(textW + ATTACH_DRAG_GHOST_ICON_W + ATTACH_DRAG_GHOST_GAP + ATTACH_DRAG_GHOST_PAD_X * 2))
-  return { w, h: 38 }
+  const w = Math.max(80, Math.ceil(textW + ATTACH_DRAG_GHOST_ICON_W + ATTACH_DRAG_GHOST_GAP + ATTACH_DRAG_GHOST_PAD_X * 2))
+  return { w, h: 44 }
 }
 
 /** Convert a hex (#rgb/#rrggbb) or rgb()/rgba() color to an rgba() string with the given alpha. */
@@ -103,12 +103,14 @@ export function toRgba(color: string, alpha: number): string {
 }
 
 /**
- * Draw a flat, semi-transparent drag ghost for an attach drag. Falls back to a
- * blank canvas (and thus the OS ghost) if 2D canvas is unavailable.
+ * Draw a bold, vivid drag ghost for an attach drag. Uses a solid accent-filled
+ * chip with a white icon circle badge on the left and bold text — stands out
+ * clearly over both light and dark content. Falls back to a blank canvas
+ * (and thus the OS ghost) if 2D canvas is unavailable.
  */
 export function buildAttachDragImage(name: string, isDir: boolean): HTMLCanvasElement {
   const { w, h } = computeAttachDragImageSize(name)
-  const pad = 4
+  const pad = 6
   const scale = 2
   const canvas = document.createElement('canvas')
   canvas.width = (w + pad * 2) * scale
@@ -121,18 +123,41 @@ export function buildAttachDragImage(name: string, isDir: boolean): HTMLCanvasEl
   const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim() || '#4a90d9'
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
 
-  ctx.fillStyle = toRgba(accent, 0.28)
-  roundRectPath(ctx, pad, pad, w, h, 8)
-  ctx.fill()
-  ctx.lineWidth = 1.5
-  ctx.strokeStyle = toRgba(accent, 0.6)
-  ctx.stroke()
+  // ── Drop shadow ──
+  ctx.shadowColor = isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.18)'
+  ctx.shadowBlur = 8
+  ctx.shadowOffsetY = 2
 
+  // ── Solid accent background pill ──
+  ctx.fillStyle = accent
+  roundRectPath(ctx, pad, pad, w, h, 10)
+  ctx.fill()
+
+  // ── Clear shadow for subsequent draws ──
+  ctx.shadowColor = 'transparent'
+  ctx.shadowBlur = 0
+  ctx.shadowOffsetY = 0
+
+  // ── Left icon badge (white circle with emoji) ──
+  const badgeR = 12
+  const badgeCx = pad + 16
+  const badgeCy = pad + h / 2
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.25)'
+  ctx.beginPath()
+  ctx.arc(badgeCx, badgeCy, badgeR, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.font = '14px system-ui, sans-serif'
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'center'
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
+  ctx.fillText(isDir ? '📁' : '📄', badgeCx, badgeCy + 1)
+
+  // ── File/dir name (white bold) ──
   ctx.font = ATTACH_DRAG_GHOST_FONT
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
-  ctx.fillStyle = isDark ? 'rgba(255, 255, 255, 0.92)' : 'rgba(0, 0, 0, 0.9)'
-  ctx.fillText(isDir ? '📁' : '📄', pad + 8, pad + h / 2 + 1)
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
   ctx.fillText(name, pad + 8 + ATTACH_DRAG_GHOST_ICON_W + ATTACH_DRAG_GHOST_GAP, pad + h / 2 + 1)
 
   return canvas

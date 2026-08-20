@@ -161,8 +161,8 @@ describe('estimateTextWidth', () => {
 describe('computeAttachDragImageSize', () => {
   it('returns minimum width for short names', () => {
     const { w, h } = computeAttachDragImageSize('a')
-    expect(w).toBeGreaterThanOrEqual(64)
-    expect(h).toBe(38)
+    expect(w).toBeGreaterThanOrEqual(80)
+    expect(h).toBe(44)
   })
 
   it('returns larger width for long names', () => {
@@ -231,11 +231,15 @@ describe('buildAttachDragImage', () => {
       fillStyle: '',
       strokeStyle: '',
       lineWidth: 0,
+      shadowColor: '',
+      shadowBlur: 0,
+      shadowOffsetY: 0,
       font: '',
       textBaseline: '',
       textAlign: '',
       beginPath: () => calls.push('beginPath'),
       moveTo: () => {},
+      arc: () => calls.push('arc'),
       arcTo: () => calls.push('arcTo'),
       closePath: () => calls.push('closePath'),
       fill: () => calls.push('fill'),
@@ -255,7 +259,6 @@ describe('buildAttachDragImage', () => {
     buildAttachDragImage('folder', true)
     expect(calls).toContain('scale')
     expect(calls).toContain('fill')
-    expect(calls).toContain('stroke')
     expect(calls).toContain('fillText')
     vi.restoreAllMocks()
   })
@@ -266,11 +269,15 @@ describe('buildAttachDragImage', () => {
       fillStyle: '',
       strokeStyle: '',
       lineWidth: 0,
+      shadowColor: '',
+      shadowBlur: 0,
+      shadowOffsetY: 0,
       font: '',
       textBaseline: '',
       textAlign: '',
       beginPath: () => {},
       moveTo: () => {},
+      arc: () => {},
       arcTo: () => {},
       closePath: () => {},
       fill: () => {},
