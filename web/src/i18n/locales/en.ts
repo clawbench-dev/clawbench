@@ -1438,8 +1438,6 @@ export default {
       chatSystemPromptIntervalDesc: 'Insert a system prompt every N messages',
       sessionMaxCount: 'Max Sessions',
       sessionMaxCountDesc: 'Maximum number of concurrent chat sessions',
-      acpIdleReclaimThreshold: 'ACP Idle Reclaim Threshold',
-      acpIdleReclaimThresholdDesc: 'Reclaim idle connections when live count exceeds this value (0 = unlimited)',
       archiveRetentionSectionHeader: 'Archive Retention',
       archiveRetentionEnabled: 'Auto-Purge Archived Sessions',
       archiveRetentionEnabledDesc: 'Automatically delete archived sessions after the retention period expires',

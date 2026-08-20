@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -148,23 +147,14 @@ func (m *ACPConnManager) idleSweep() {
 }
 
 // sweepOnce performs a single idle sweep pass.
-// If the number of alive connections is below model.ACPIdleReclaimThreshold, idle
-// connections are kept alive (there is room for them). Otherwise, idle
-// connections are killed in order of longest-idle-first until the alive
-// count drops to model.ACPIdleReclaimThreshold.
+// Connections that have been idle longer than idleConnTimeout are killed
+// (but acpSID is preserved so the session can be recovered via ResumeSession).
+// Connections with actively running sessions are skipped.
 func (m *ACPConnManager) sweepOnce() {
-	type idleEntry struct {
-		sid         string
-		lastActivity int64 // nanoseconds
-	}
+	var toClose []string
 
 	m.mu.Lock()
 	now := time.Now()
-
-	// Count alive connections and collect idle candidates.
-	aliveCount := 0
-	var idle []idleEntry
-
 	for sid, conn := range m.conns {
 		conn.mu.Lock()
 		lastActivity := conn.lastActivityNano()
@@ -172,41 +162,20 @@ func (m *ACPConnManager) sweepOnce() {
 		conn.mu.Unlock()
 
 		if !alive {
-			continue // already dead
+			continue // already dead, will be respawned on next use
 		}
-		aliveCount++
-
 		if now.Sub(time.Unix(0, lastActivity)) < idleConnTimeout {
 			continue // not idle enough yet
 		}
+		// Skip connections with actively running sessions
 		if m.isSessionRunning != nil && m.isSessionRunning(sid) {
 			continue
 		}
-		idle = append(idle, idleEntry{sid: sid, lastActivity: lastActivity})
+		toClose = append(toClose, sid)
 	}
 	m.mu.Unlock()
 
-	maxCount := model.ACPIdleReclaimThreshold
-	if maxCount <= 0 || aliveCount <= maxCount {
-		// No limit configured, or alive count is within budget —
-		// keep idle connections alive.
-		return
-	}
-
-	// Sort idle candidates: longest-idle first (oldest lastActivity).
-	sort.Slice(idle, func(i, j int) bool {
-		return idle[i].lastActivity < idle[j].lastActivity
-	})
-
-	// Kill only as many as needed to reach the limit.
-	toKill := aliveCount - maxCount
-	if toKill > len(idle) {
-		toKill = len(idle)
-	}
-
-	for _, entry := range idle[:toKill] {
-		sid := entry.sid
-
+	for _, sid := range toClose {
 		m.mu.Lock()
 		conn, ok := m.conns[sid]
 		m.mu.Unlock()
@@ -244,8 +213,7 @@ func (m *ACPConnManager) sweepOnce() {
 
 		if ok {
 			slog.Info("acp: idle sweep killing idle connection (preserving acpSID for recovery)",
-				"clawbench_sid", sid, "idle_duration", time.Since(time.Unix(0, lastActivity)),
-				"alive_count", aliveCount, "max_count", maxCount)
+				"clawbench_sid", sid, "idle_duration", time.Since(time.Unix(0, lastActivity)))
 			conn.killAndMarkDead()
 		}
 	}

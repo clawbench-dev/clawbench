@@ -1119,20 +1119,15 @@ func TestWaitForLoadSessionDone(t *testing.T) {
 	assert.Contains(t, err.Error(), "still loading")
 }
 
-// --- sweepOnce: respect SessionMaxCount ---
+// --- sweepOnce: basic idle connection cleanup ---
 
-func TestSweepOnce_BelowMaxCount_DoesNotKillIdle(t *testing.T) {
+func TestSweepOnce_KillsIdleConnections(t *testing.T) {
 	mgr := GetACPConnManager()
 
-	// Save and restore ACPIdleReclaimThreshold
-	origMaxCount := model.ACPIdleReclaimThreshold
-	model.ACPIdleReclaimThreshold = 10
-	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
+	agent := &model.Agent{ID: "test-sweep-idle", Backend: "acp-stdio", AcpCommand: "echo"}
 
-	// Create 3 alive, idle connections (all idle > 5 min)
-	for i := 0; i < 3; i++ {
-		sid := "session-sweep-below-" + string(rune('A'+i))
-		agent := &model.Agent{ID: "test-sweep-below", Backend: "acp-stdio", AcpCommand: "echo"}
+	// Create 2 alive, idle connections (idle > 5 min)
+	for _, sid := range []string{"session-sweep-idle-1", "session-sweep-idle-2"} {
 		conn := newACPConn(agent, sid)
 		conn.SetAliveForTest()
 		conn.mu.Lock()
@@ -1142,48 +1137,20 @@ func TestSweepOnce_BelowMaxCount_DoesNotKillIdle(t *testing.T) {
 		defer mgr.CloseConn(sid)
 	}
 
-	// alive=3 < max=10 → sweep should not kill any
+	// Create 1 alive, recently-used connection (not idle)
+	activeSid := "session-sweep-active"
+	activeConn := newACPConn(agent, activeSid)
+	activeConn.SetAliveForTest()
+	activeConn.mu.Lock()
+	activeConn.lastUsed = time.Now()
+	activeConn.mu.Unlock()
+	mgr.SetConnForTest(activeSid, activeConn)
+	defer mgr.CloseConn(activeSid)
+
 	mgr.sweepOnce()
 
-	// Verify all connections are still alive
-	for i := 0; i < 3; i++ {
-		sid := "session-sweep-below-" + string(rune('A'+i))
-		conn := mgr.GetConn(sid)
-		conn.mu.Lock()
-		alive := conn.alive
-		conn.mu.Unlock()
-		assert.True(t, alive, "connection %s should still be alive when below max count", sid)
-	}
-}
-
-func TestSweepOnce_AboveMaxCount_KillsOnlyNecessary(t *testing.T) {
-	mgr := GetACPConnManager()
-
-	origMaxCount := model.ACPIdleReclaimThreshold
-	model.ACPIdleReclaimThreshold = 2
-	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
-
-	// Create 4 alive, idle connections with different idle durations
-	// A: idle 20min, B: idle 15min, C: idle 10min, D: idle 7min
-	agents := []*model.Agent{{ID: "test-sweep-above", Backend: "acp-stdio", AcpCommand: "echo"}}
-	sids := []string{"session-sweep-A", "session-sweep-B", "session-sweep-C", "session-sweep-D"}
-	idleDurations := []time.Duration{20 * time.Minute, 15 * time.Minute, 10 * time.Minute, 7 * time.Minute}
-
-	for i := range sids {
-		conn := newACPConn(agents[0], sids[i])
-		conn.SetAliveForTest()
-		conn.mu.Lock()
-		conn.lastUsed = time.Now().Add(-idleDurations[i])
-		conn.mu.Unlock()
-		mgr.SetConnForTest(sids[i], conn)
-		defer mgr.CloseConn(sids[i])
-	}
-
-	// alive=4, max=2 → need to kill 2, longest-idle first (A, B)
-	mgr.sweepOnce()
-
-	// A and B should be dead; C and D should still be alive
-	for i, sid := range sids {
+	// Idle connections should be killed
+	for _, sid := range []string{"session-sweep-idle-1", "session-sweep-idle-2"} {
 		conn := mgr.GetConn(sid)
 		if conn == nil {
 			continue
@@ -1191,51 +1158,22 @@ func TestSweepOnce_AboveMaxCount_KillsOnlyNecessary(t *testing.T) {
 		conn.mu.Lock()
 		alive := conn.alive
 		conn.mu.Unlock()
-		if i < 2 {
-			assert.False(t, alive, "connection %s (idle %v) should be killed — longest idle", sid, idleDurations[i])
-		} else {
-			assert.True(t, alive, "connection %s (idle %v) should survive — within max count", sid, idleDurations[i])
-		}
+		assert.False(t, alive, "idle connection %s should be killed", sid)
 	}
-}
 
-func TestSweepOnce_ZeroMaxCount_KeepsAlive(t *testing.T) {
-	mgr := GetACPConnManager()
-
-	origMaxCount := model.ACPIdleReclaimThreshold
-	model.ACPIdleReclaimThreshold = 0 // unlimited → old behavior: kill all idle
-	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
-
-	agent := &model.Agent{ID: "test-sweep-zero", Backend: "acp-stdio", AcpCommand: "echo"}
-	sid := "session-sweep-zero"
-	conn := newACPConn(agent, sid)
-	conn.SetAliveForTest()
-	conn.mu.Lock()
-	conn.lastUsed = time.Now().Add(-10 * time.Minute)
-	conn.mu.Unlock()
-	mgr.SetConnForTest(sid, conn)
-	defer mgr.CloseConn(sid)
-
-	mgr.sweepOnce()
-
-	conn = mgr.GetConn(sid)
-	conn.mu.Lock()
-	alive := conn.alive
-	conn.mu.Unlock()
-	// max=0 means no limit → all idle connections kept alive
-	assert.True(t, alive, "connection should stay alive when max_count=0 (unlimited)")
+	// Recently-used connection should survive
+	activeConn = mgr.GetConn(activeSid)
+	activeConn.mu.Lock()
+	assert.True(t, activeConn.alive, "recently-used connection should survive")
+	activeConn.mu.Unlock()
 }
 
 func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 	mgr := GetACPConnManager()
 
-	origMaxCount := model.ACPIdleReclaimThreshold
-	model.ACPIdleReclaimThreshold = 1
-	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
-
-	// Create 2 alive connections: one running, one idle
 	agent := &model.Agent{ID: "test-sweep-running", Backend: "acp-stdio", AcpCommand: "echo"}
 
+	// Create 2 alive, idle connections: one running, one not running
 	runningSid := "session-sweep-running"
 	runningConn := newACPConn(agent, runningSid)
 	runningConn.SetAliveForTest()
@@ -1245,7 +1183,7 @@ func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 	mgr.SetConnForTest(runningSid, runningConn)
 	defer mgr.CloseConn(runningSid)
 
-	idleSid := "session-sweep-idle"
+	idleSid := "session-sweep-not-running"
 	idleConn := newACPConn(agent, idleSid)
 	idleConn.SetAliveForTest()
 	idleConn.mu.Lock()
@@ -1260,8 +1198,6 @@ func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 	})
 	defer mgr.SetSessionRunningChecker(nil)
 
-	// alive=2, max=1 → need to kill 1. The running one is excluded,
-	// so the idle one should be killed.
 	mgr.sweepOnce()
 
 	runningConn = mgr.GetConn(runningSid)
@@ -1271,44 +1207,6 @@ func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 
 	idleConn = mgr.GetConn(idleSid)
 	idleConn.mu.Lock()
-	assert.False(t, idleConn.alive, "idle session should be killed when over max count")
+	assert.False(t, idleConn.alive, "idle (non-running) session should be killed")
 	idleConn.mu.Unlock()
-}
-
-func TestSweepOnce_DeadConnectionsNotCounted(t *testing.T) {
-	mgr := GetACPConnManager()
-
-	origMaxCount := model.ACPIdleReclaimThreshold
-	model.ACPIdleReclaimThreshold = 2
-	defer func() { model.ACPIdleReclaimThreshold = origMaxCount }()
-
-	agent := &model.Agent{ID: "test-sweep-dead", Backend: "acp-stdio", AcpCommand: "echo"}
-
-	// Create 1 alive idle + 2 dead connections → alive count = 1, max = 2
-	aliveSid := "session-sweep-alive"
-	aliveConn := newACPConn(agent, aliveSid)
-	aliveConn.SetAliveForTest()
-	aliveConn.mu.Lock()
-	aliveConn.lastUsed = time.Now().Add(-10 * time.Minute)
-	aliveConn.mu.Unlock()
-	mgr.SetConnForTest(aliveSid, aliveConn)
-	defer mgr.CloseConn(aliveSid)
-
-	for _, sid := range []string{"session-sweep-dead1", "session-sweep-dead2"} {
-		deadConn := newACPConn(agent, sid)
-		// alive=false by default (never spawned)
-		deadConn.mu.Lock()
-		deadConn.lastUsed = time.Now().Add(-10 * time.Minute)
-		deadConn.mu.Unlock()
-		mgr.SetConnForTest(sid, deadConn)
-		defer mgr.CloseConn(sid)
-	}
-
-	// alive=1 < max=2 → no killing needed
-	mgr.sweepOnce()
-
-	aliveConn = mgr.GetConn(aliveSid)
-	aliveConn.mu.Lock()
-	assert.True(t, aliveConn.alive, "idle connection should survive when alive count < max")
-	aliveConn.mu.Unlock()
 }

@@ -262,6 +262,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   uiScale: 1,
   recentFilesCount: 10,
   headerShortcutTips: true,
+  notificationSound: true,
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -314,7 +315,6 @@ const serverDefaults: Record<string, unknown> = {
   'session.max_count': 10,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,
-  'acp.idle_reclaim_threshold': 10,
   'recent_projects.max_count': 10,
   'upload.max_size_mb': 100,
   'upload.max_files': 20,

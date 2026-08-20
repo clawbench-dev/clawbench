@@ -91,7 +91,6 @@ type Config struct {
 	Feishu      FeishuConfig      `yaml:"feishu"`       // Feishu (飞书) enterprise bot push notifications
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
-	ACP         ACPConfig         `yaml:"acp"`          // ACP (Agent Client Protocol) connection pool configuration
 }
 
 // STTConfig holds configuration for speech-to-text (voice input).
@@ -108,11 +107,6 @@ type STTConfig struct {
 // FileSearchConfig holds configuration for the file search feature.
 type FileSearchConfig struct {
 	DisplayLimit int `yaml:"display_limit"` // Max search results to display (default: 100); request limit is display_limit+1 to detect truncation
-}
-
-// ACPConfig holds configuration for the ACP connection pool.
-type ACPConfig struct {
-	IdleReclaimThreshold int `yaml:"idle_reclaim_threshold"` // Idle sweep reclaims connections when alive count exceeds this (0=unlimited, default: 10)
 }
 
 // TerminalConfig holds configuration for the interactive web terminal.
@@ -241,9 +235,6 @@ var (
 
 	// TTS cache limits (set from config, with defaults)
 	TTSMaxCacheFiles int // Default: 100; 0 = unlimited
-
-	// ACP connection pool limits (set from config, with defaults)
-	ACPIdleReclaimThreshold int // Default: 10; 0 = unlimited
 )
 
 // ScopedCookieName returns a port-prefixed cookie name when running on a

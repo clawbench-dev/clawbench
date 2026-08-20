@@ -524,7 +524,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatSessionPageSize = cfg.Chat.SessionPageSize
 	model.ChatSystemPromptInterval = cfg.Chat.SystemPromptInterval
 	model.SessionMaxCount = cfg.Session.MaxCount
-	model.ACPIdleReclaimThreshold = cfg.ACP.IdleReclaimThreshold
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
 	model.LocalhostAuthExempt = cfg.LocalhostAuthExempt
