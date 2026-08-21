@@ -171,10 +171,12 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **文件浏览独立 Tab**：目录浏览（`browse`）和文件查看（`view`）各自独立，打开文件自动切换到 `view` Tab，关闭文件后停留在 `view` 显示空状态（最近文件列表），不自动跳回文件管理器
 - **文件预览覆盖层**：点击文件直接在 `view` Tab 中弹出预览覆盖层，支持导航栈（多文件切换 + 返回），关闭即回到空状态
 - **二进制文件预览**：二进制文件显示占位界面，支持"以文本方式打开"；大文件自动截断（64KB 二进制 / 512KB 文本），截断时显示提示横幅
+- **OpenAPI/Swagger 预览**：OpenAPI 规范文件（YAML/JSON）渲染为交互式 Swagger UI，支持"Try it out"在线测试；CORS 代理（`/api/openapi-proxy`）使预览内可直接调用 API
 
 ### 🎨 代码预览与编辑
 - 基于 CodeMirror 的代码浏览/编辑双模式，只读模式默认，一键切换编辑模式
 - 语法高亮，粘性行号，自动换行切换，30+ 语言扩展（高频语言静态导入，低频语言懒加载）
+- **代码自动补全**：编辑模式下为 11 种语言提供语言感知的自动补全（JS/TS/HTML/CSS/Python/SQL/Go/Less/Sass/Liquid/Markdown），基于 CodeMirror 内置补全源
 - **Sticky Scroll**：VS Code 风格的粘性滚动，基于后端 tree-sitter 符号数据，滚动时自动显示当前所在的作用域上下文（函数/类/结构体等）
 - 双击复制代码行内容（闪烁动画反馈）
 - **文件改动闪烁高亮**：文件被外部修改时，删除字符红色脉冲闪烁，新增字符蓝色脉冲闪烁，快速定位改动

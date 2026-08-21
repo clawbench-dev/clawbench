@@ -42,6 +42,7 @@ flowchart TD
 - **特权端口自动映射**：目标端口 < 1024 时自动映射到 1024+ 范围，兼容 Android 和非 root 环境——这些环境无法绑定特权端口
 - **健康检查**：定期检查转发端口的可用性，不可用的端口自动标记。前端只展示可用的端口，避免用户点击后才发现服务不可达
 - **端口自动检测**：`/api/proxy/detect` 端点扫描常用端口，发现可用的开发服务。用户不需要记住端口号
+- **CORS 代理**：`/api/openapi-proxy` 端点为 Swagger UI 的"Try it out"功能转发 API 请求，绕过浏览器 CORS 限制。仅转发 HTTP/HTTPS 请求，过滤 hop-by-hop 头部。生产环境可设置 `AllowLocalProxy=false` 阻止对私有 IP 的请求（防 SSRF），DNS 重绑定攻击在 TCP dial 阶段二次校验
 - **FRP 状态接口**：FRP 客户端由独立的 `internal/frp` 模块管理。`GET /api/frp/info` 返回包含公网地址的完整状态并要求认证；`GET /api/frp/status` 仅返回 enabled/running 等最小状态，供无需认证的本地或原生状态检查使用
 
 ### 设计要点
@@ -50,3 +51,4 @@ flowchart TD
 - **特权端口映射对 Android 必要**：Android 没有 root 权限，无法绑定 1024 以下端口。自动映射到高端口号后，SSH 隧道在 Android 上也能转发 80/443 端口的服务
 - **默认端口剥离**：重写 Host 时按 HTTP 规范剥离默认端口号（80 for HTTP, 443 for HTTPS），避免 `backend:80` 这样的非规范 Host 导致后端匹配失败
 - **支持自签名证书**：HTTPS 目标跳过证书验证——开发环境常用自签名证书，严格验证会阻断转发
+- **CORS 代理是开发便利工具**：Swagger UI 的"Try it out"从浏览器直接请求后端 API，但本地开发服务通常没有 CORS 头。CORS 代理在服务端转发请求，让用户在预览界面内直接测试 API。默认允许本地地址（`AllowLocalProxy=true`），生产环境应关闭

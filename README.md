@@ -159,10 +159,12 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Separate File View Tab**: Directory browsing (`browse`) and file viewing (`view`) are independent tabs — opening a file auto-switches to `view`, closing it stays on `view` showing empty state (recent files list), no auto-return to file manager
 - **File Preview Overlay**: Click a file to open a preview overlay in the `view` tab; supports navigation stack (multi-file switching + back), close to return to empty state
 - **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
+- **OpenAPI/Swagger Preview**: OpenAPI spec files (YAML/JSON) rendered as interactive Swagger UI with "Try it out" support; CORS proxy (`/api/openapi-proxy`) enables direct API testing from the preview
 
 ### 🎨 Code Preview & Editing
 - CodeMirror-based code browsing and editing dual mode, read-only by default, one-click switch to edit mode
 - Syntax highlighting, sticky line numbers, word wrap toggle, 30+ language extensions (high-frequency static imports, low-frequency lazy loading)
+- **Code Autocompletion**: Language-aware autocompletion for 11 languages (JS/TS/HTML/CSS/Python/SQL/Go/Less/Sass/Liquid/Markdown) in edit mode, leveraging CodeMirror's built-in completion sources
 - **Sticky Scroll**: VS Code-style sticky scroll based on backend tree-sitter symbol data, showing enclosing scope context (functions, classes, structs, etc.) as you scroll
 - Double-click to copy code line content (flash animation feedback)
 - **File Change Flash Highlight**: When files are modified externally, deleted characters flash red and new characters flash blue for quick change identification
