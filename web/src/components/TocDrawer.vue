@@ -39,7 +39,7 @@
 
 <script setup>
 import { List, Braces, Box, Boxes, FileCode2, SquareAsterisk, ListOrdered, Variable, Hash, Package, FolderTree, CircleDot, Settings2, Hammer, Layers, Puzzle, Zap, Code2, Heading } from 'lucide-vue-next'
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
@@ -50,8 +50,10 @@ import { useListKeys } from '@/composables/useListKeys'
 import { extractToc, slugify } from '@/utils/toc.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
+import { useFileEditor } from '@/composables/useFileEditor'
 
 const { t } = useI18n()
+const { isEditorDirty } = useFileEditor()
 
 /** Map symbol kind → { icon component, CSS class } */
 const KIND_ICON_MAP = {
@@ -91,7 +93,10 @@ const searchQuery = ref('')
 const filteredToc = ref([])
 const loading = ref(false)
 
-watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
+watch([() => props.file, () => props.file?.content, () => props.pdfOutline], ([file, content, pdfOut], _, onCleanup) => {
+    let cancelled = false
+    onCleanup(() => { cancelled = true })
+
     // PDF outline
     if (file && pdfOut && pdfOut.length > 0) {
         isPdfOutline.value = true
@@ -106,7 +111,7 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
     isPdfOutline.value = false
 
     // Text-based TOC
-    if (!file?.content) {
+    if (!content) {
         toc.value = []
         filteredToc.value = []
         isCode.value = false
@@ -116,10 +121,15 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
     const lang = getFileType(file.name)?.lang || 'plaintext'
     isCode.value = lang !== 'markdown'
 
+    // When editor has unsaved changes, fetchCodeSymbols reads from disk (stale),
+    // so use client-side regex extraction with the live content instead.
+    const editorDirty = isEditorDirty()
+
     // For code files and markdown, try backend tree-sitter API first, then fallback to regex
-    if (file?.path) {
+    if (file?.path && !editorDirty) {
         loading.value = true
         fetchCodeSymbols(file.path).then(result => {
+            if (cancelled) return
             if (result && result.symbols.length > 0) {
                 // Convert backend symbols to TocItem format
                 // Deduplicate heading IDs to match markedConfig.ts logic
@@ -144,15 +154,16 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
                 })
             } else {
                 // Fallback to regex-based extraction
-                toc.value = extractToc(file.content, lang)
+                toc.value = extractToc(content, lang)
             }
             activeId.value = toc.value[0]?.id || ''
             searchQuery.value = ''
             filteredToc.value = toc.value
             loading.value = false
         }).catch(() => {
+            if (cancelled) return
             // Fallback to regex-based extraction on error
-            toc.value = extractToc(file.content, lang)
+            toc.value = extractToc(content, lang)
             activeId.value = toc.value[0]?.id || ''
             searchQuery.value = ''
             filteredToc.value = toc.value
@@ -160,7 +171,7 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
         })
     } else {
         loading.value = false
-        toc.value = extractToc(file.content, lang)
+        toc.value = extractToc(content, lang)
         activeId.value = toc.value[0]?.id || ''
         searchQuery.value = ''
         filteredToc.value = toc.value
@@ -233,16 +244,18 @@ function scrollTo(item) {
 }
 
 let observer = null
-watch(() => props.open, (val) => {
-    if (!val) {
-        observer?.disconnect()
-        return
-    }
-    // No IntersectionObserver for PDF outline (pages are in PdfPreview's scroll container)
-    if (isPdfOutline.value) return
+
+/** Set up IntersectionObserver to track the currently visible TOC item */
+function setupObserver() {
+    const prevObserver = observer
+    observer = null
+    prevObserver?.disconnect()
+    if (!props.open || isPdfOutline.value) return
 
     nextTick(() => {
-        observer?.disconnect()
+        // If another setupObserver() was called before this nextTick fired,
+        // observer will be non-null — skip creating a duplicate.
+        if (observer) return
         if (isCode.value) {
             observer = new IntersectionObserver((entries) => {
                 for (const entry of entries) {
@@ -273,6 +286,24 @@ watch(() => props.open, (val) => {
             })
         }
     })
+}
+
+watch(() => props.open, (val) => {
+    if (!val) {
+        observer?.disconnect()
+        return
+    }
+    setupObserver()
+})
+
+// Re-setup observer when TOC items change (e.g., after content update)
+watch(toc, () => {
+    if (props.open) setupObserver()
+})
+
+onBeforeUnmount(() => {
+    observer?.disconnect()
+    observer = null
 })
 </script>
 
