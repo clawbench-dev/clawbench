@@ -945,6 +945,60 @@ describe('ChatInputBar', () => {
     expect(true).toBe(true)
   })
 
+  it('Enter confirms the pre-selected first @ item when menu opens', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    // First item is pre-selected at index 0; Enter should confirm it
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('@chatsearch ')
+    expect(wrapper.vm.showAtMenu).toBe(false)
+  })
+
+  it('Tab confirms the pre-selected first @ item when menu opens', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    // First item is pre-selected at index 0; Tab should confirm it
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Tab' })
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('@chatsearch ')
+    expect(wrapper.vm.showAtMenu).toBe(false)
+  })
+
+  it('Enter confirms the pre-selected first slash item when menu opens', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    // First item is pre-selected at index 0; Enter should confirm it
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('/help ')
+    expect(wrapper.vm.showSlashMenu).toBe(false)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  it('ArrowUp from pre-selected first @ item wraps to last item', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    // First item pre-selected at index 0; ArrowUp wraps to last
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowUp' })
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    // atCommands has 2 items: @chatsearch (0), @task (1); ArrowUp wraps to index 1
+    expect(wrapper.vm.atMenuIndex).toBe(1)
+  })
+
   it('keyboard nav scrolls highlighted @ item into view even when menu is teleported', async () => {
     // Production PopupMenu Teleports the slot to <body>, so menu items are NOT
     // descendants of the component root — the scroll watcher must query from
@@ -953,10 +1007,11 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '@'
     await wrapper.vm.$nextTick()
+    // First item is pre-selected at index 0; ArrowDown moves to index 1
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowDown' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    expect(qs).toHaveBeenCalledWith('[data-at-idx="0"]')
+    expect(qs).toHaveBeenCalledWith('[data-at-idx="1"]')
     qs.mockRestore()
     wrapper.unmount()
   })
@@ -969,10 +1024,11 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
+    // First item is pre-selected at index 0; ArrowDown moves to index 1
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowDown' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    expect(qs).toHaveBeenCalledWith('[data-slash-idx="0"]')
+    expect(qs).toHaveBeenCalledWith('[data-slash-idx="1"]')
     qs.mockRestore()
     wrapper.unmount()
     mockAvailableCommands.value = []
