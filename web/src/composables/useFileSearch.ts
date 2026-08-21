@@ -35,8 +35,8 @@ export function useFileSearch() {
 
   const state = reactive<FileSearchState>({
     query: '',
-    recursive: false,
-    scope: 'current',
+    recursive: true,
+    scope: 'global',
     exact: false,
     results: [],
     searching: false,

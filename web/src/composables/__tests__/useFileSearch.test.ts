@@ -52,8 +52,8 @@ describe('useFileSearch', () => {
   it('initializes with default state', () => {
     const { state } = useFileSearch()
     expect(state.query).toBe('')
-    expect(state.recursive).toBe(false)
-    expect(state.scope).toBe('current')
+    expect(state.recursive).toBe(true)
+    expect(state.scope).toBe('global')
     expect(state.results).toEqual([])
     expect(state.searching).toBe(false)
     expect(state.total).toBe(0)
@@ -73,6 +73,7 @@ describe('useFileSearch', () => {
   it('startSearch sets searching and searchBasePath, then opens SSE after debounce', () => {
     const { state, startSearch } = useFileSearch()
     state.query = 'main'
+    state.scope = 'current'
     startSearch('src')
     expect(state.searchBasePath).toBe('src')
     expect(state.searching).toBe(true)
@@ -87,7 +88,7 @@ describe('useFileSearch', () => {
     expect(MockEventSource.instances[0].url).toContain('/api/dir/search')
     expect(MockEventSource.instances[0].url).toContain('q=main')
     expect(MockEventSource.instances[0].url).toContain('path=src')
-    expect(MockEventSource.instances[0].url).toContain('recursive=false')
+    expect(MockEventSource.instances[0].url).toContain('recursive=true')
   })
 
   it('startSearch cancels previous search before starting new one', () => {
@@ -166,7 +167,7 @@ describe('useFileSearch', () => {
     expect(state.searchBasePath).toBe('')
   })
 
-  it('uses recursive=false in URL when state.recursive is false', () => {
+  it('sends recursive=false in URL when state.recursive is false', () => {
     const { state, startSearch } = useFileSearch()
     state.query = 'test'
     state.recursive = false
@@ -174,6 +175,15 @@ describe('useFileSearch', () => {
     vi.advanceTimersByTime(300)
 
     expect(MockEventSource.instances[0].url).toContain('recursive=false')
+  })
+
+  it('sends recursive=true in URL by default', () => {
+    const { state, startSearch } = useFileSearch()
+    state.query = 'test'
+    startSearch('')
+    vi.advanceTimersByTime(300)
+
+    expect(MockEventSource.instances[0].url).toContain('recursive=true')
   })
 
   it('sends exact=false in URL by default and exact=true when enabled', () => {
