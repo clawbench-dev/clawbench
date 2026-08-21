@@ -29,7 +29,7 @@ import { EditorView, lineNumbers, Decoration, gutter, GutterMarker, keymap } fro
 import { defaultKeymap, historyKeymap, history, undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
-import { buildLangExtension } from '@/utils/codeEditorLang'
+import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
 import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import { useQuoteQuestion, isPointerPressed } from '@/composables/useQuoteQuestion.ts'
@@ -147,6 +147,7 @@ const lineNumbersCompartment = new Compartment()
 const wrapCompartment = new Compartment()
 const overlayCompartment = new Compartment()
 const jumpFlashCompartment = new Compartment()
+const completionCompartment = new Compartment()
 
 // Gutter markers for diff markers (M/D/+), clickable to open the diff drawer.
 class DiffGutterMarker extends GutterMarker {
@@ -382,6 +383,7 @@ function buildAllExtensions() {
     return [
         readonlyCompartment.of(props.editable ? [] : [EditorState.readOnly.of(true)]),
         langCompartment.of([]), // placeholder; loaded async in mountLang()
+        completionCompartment.of([]), // placeholder; loaded async in mountCompletion()
         lineNumbersCompartment.of(props.showLineNumbers ? [lineNumbers()] : []),
         wrapCompartment.of(props.wordWrap ? [EditorView.lineWrapping] : []),
         codeMirrorTheme,
@@ -402,6 +404,22 @@ async function mountLang() {
     const ext = await buildLangExtension(props.language)
     if (view.value) {
         view.value.dispatch({ effects: langCompartment.reconfigure(ext) })
+    }
+}
+
+/** Load the completion extension asynchronously for languages that provide one.
+ *  Only active in editable mode — read-only browsing has no completion. */
+async function mountCompletion() {
+    if (!props.editable) {
+        // Clear any previous completion extension when switching to read-only
+        if (view.value) {
+            view.value.dispatch({ effects: completionCompartment.reconfigure([]) })
+        }
+        return
+    }
+    const ext = await buildCompletionExtension(props.language)
+    if (view.value) {
+        view.value.dispatch({ effects: completionCompartment.reconfigure(ext) })
     }
 }
 
@@ -430,6 +448,7 @@ onMounted(() => {
     savedSnapshot = props.content || ''
     recomputeOverlay()
     mountLang()
+    mountCompletion()
     sticky.init(view.value, props.file?.path, stickyScrollEnabled())
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
     document.addEventListener('pointerup', onDocPointerUp)
@@ -458,6 +477,7 @@ watch([() => props.editable], () => {
     canRedo.value = false
     dirty.value = false
     savedSnapshot = props.content || ''
+    mountCompletion()
 })
 watch([() => props.showLineNumbers], () => {
     reconfigure(lineNumbersCompartment, props.showLineNumbers ? [lineNumbers()] : [])
@@ -468,7 +488,7 @@ watch([() => props.wordWrap], () => {
     reconfigure(wrapCompartment, props.wordWrap ? [EditorView.lineWrapping] : [])
     sticky.refresh()
 })
-watch([() => props.language], () => mountLang())
+watch([() => props.language], () => { mountLang(); mountCompletion() })
 
 // Sticky scroll: enable/disable when browse/edit mode or the toggle changes.
 // Re-init on enabling so definition lines are re-fetched against the current doc.
@@ -500,6 +520,7 @@ watch(() => props.content, (c) => {
         // survives an in-place content refresh (e.g. after a quote-driven edit
         // deletes lines and the file reloads with the same language prop).
         mountLang()
+        mountCompletion()
     }
     savedSnapshot = next
     // Recompute dirty even when the doc already equals the new content (the
