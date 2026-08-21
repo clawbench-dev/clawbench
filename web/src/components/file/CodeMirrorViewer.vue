@@ -782,4 +782,41 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     word-break: break-all;
     overflow-wrap: break-word;
 }
+
+/* Autocomplete tooltip */
+.cm-viewer .cm-tooltip-autocomplete {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+  max-height: 200px;
+}
+.cm-viewer .cm-tooltip-autocomplete ul li {
+  padding: 2px 8px 2px 4px;
+}
+.cm-viewer .cm-completionIcon {
+  width: 16px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+.cm-viewer .cm-completionIcon::after {
+  content: '';
+}
+.cm-viewer .cm-completionLabel {
+  color: var(--text-primary);
+}
+.cm-viewer .cm-completionDetail {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.cm-viewer .cm-activeCompletion {
+  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+  color: var(--text-primary);
+}
+.cm-viewer .cm-completionMatchedText {
+  color: var(--accent-color);
+  font-weight: 600;
+}
 </style>
