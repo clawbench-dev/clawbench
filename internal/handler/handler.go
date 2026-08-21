@@ -16,6 +16,7 @@ import (
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/proxy"
 	"clawbench/internal/ws"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 )
@@ -336,6 +337,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/proxy/ports", middleware.Auth(ServeProxyPortAction))
 	register("/api/proxy/ports/enabled", middleware.Auth(ServeProxySetPortEnabled))
 	register("/api/proxy/detect", middleware.Auth(ServeProxyDetect))
+	// CORS proxy for Swagger UI "Try it out" — forwards API requests to avoid CORS issues
+	register("/api/openapi-proxy", middleware.Auth(proxy.ServeCORSProxy))
 
 	// SSH tunnel info — intentionally unauthenticated:
 	// 1. Android BackgroundService.fetchSSHPort() calls this from native Java

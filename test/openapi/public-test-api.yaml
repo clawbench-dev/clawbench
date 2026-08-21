@@ -1,0 +1,186 @@
+openapi: "3.0.3"
+info:
+  title: Public API Test
+  description: |
+    公共开放 API 测试集，用于验证 Swagger UI "Try it out" 功能。
+    所有接口均为真实可调用的公共服务，无需认证。
+  version: "1.0.0"
+  contact:
+    name: ClawBench Test
+
+servers:
+  - url: https://httpbin.org
+    description: httpbin (HTTP 测试服务)
+  - url: https://jsonplaceholder.typicode.com
+    description: JSONPlaceholder (模拟 REST API)
+
+paths:
+  /get:
+    get:
+      operationId: httpbinGet
+      summary: GET 请求测试
+      description: 返回请求的详细信息（headers, origin, url, args 等）
+      tags: [httpbin]
+      parameters:
+        - name: foo
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 测试查询参数
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /post:
+    post:
+      operationId: httpbinPost
+      summary: POST 请求测试
+      description: 返回提交的 JSON 数据
+      tags: [httpbin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: clawbench
+                version:
+                  type: string
+                  example: "1.0"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /status/{code}:
+    get:
+      operationId: httpbinStatus
+      summary: 指定状态码测试
+      description: 返回指定的 HTTP 状态码
+      tags: [httpbin]
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: integer
+            enum: [200, 201, 400, 401, 403, 404, 500]
+          description: HTTP 状态码
+      responses:
+        "200":
+          description: 当 code=200
+        "4XX":
+          description: 客户端错误
+        "5XX":
+          description: 服务端错误
+
+  /delay/{seconds}:
+    get:
+      operationId: httpbinDelay
+      summary: 延迟响应测试
+      description: 延迟指定秒数后返回 200
+      tags: [httpbin]
+      parameters:
+        - name: seconds
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+          description: 延迟秒数 (1-5)
+      responses:
+        "200":
+          description: 成功（延迟后）
+
+  /headers:
+    get:
+      operationId: httpbinHeaders
+      summary: 请求头回显
+      description: 返回请求中发送的所有 headers
+      tags: [httpbin]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /posts:
+    get:
+      operationId: jsonplaceholderListPosts
+      summary: 获取文章列表
+      description: JSONPlaceholder 模拟数据
+      tags: [JSONPlaceholder]
+      parameters:
+        - name: _limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 5
+          description: 返回数量限制
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /posts/{id}:
+    get:
+      operationId: jsonplaceholderGetPost
+      summary: 获取单篇文章
+      description: JSONPlaceholder 模拟数据
+      tags: [JSONPlaceholder]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: 文章 ID
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /users:
+    get:
+      operationId: jsonplaceholderListUsers
+      summary: 获取用户列表
+      description: JSONPlaceholder 模拟数据
+      tags: [JSONPlaceholder]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+tags:
+  - name: httpbin
+    description: HTTP 请求测试工具
+  - name: JSONPlaceholder
+    description: 模拟 REST API 数据

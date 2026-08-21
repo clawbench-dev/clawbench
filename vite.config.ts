@@ -218,7 +218,7 @@ export default defineConfig({
           'vendor-pdf': ['pdfjs-dist', 'pdfjs-dist/legacy/build/pdf.mjs'],
           'vendor-diff': ['diff'],
           'vendor-purify': ['dompurify'],
-          'vendor-redoc': ['redoc'],
+          'vendor-swagger-ui': ['swagger-ui-dist'],
         },
       },
     },

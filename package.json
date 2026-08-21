@@ -69,7 +69,7 @@
     "material-icon-theme": "^5.36.1",
     "mermaid": "^11.14.0",
     "pdfjs-dist": "^5.7.284",
-    "redoc": "^2.5.3",
+    "swagger-ui-dist": "^5.32.14",
     "vue": "^3.5.35",
     "vue-demi": "^0.14.10",
     "vue-draggable-plus": "^0.6.1",

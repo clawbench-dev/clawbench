@@ -18,11 +18,8 @@ export function resetHeadingIds(): void {
 /**
  * Configure marked's custom renderer for code blocks and headings.
  *
- * CRITICAL: marked v4 passes positional args (code, lang) / (text, depth)
- * to renderer hooks, while marked v18+ passes a single token object
- * ({ text, lang }) / ({ text, depth }). The web/ sub-project may resolve
- * a different marked version than root (due to redoc's transitive dep),
- * so the renderer must handle both APIs.
+ * marked v18+ passes a single token object ({ text, lang }) / ({ text, depth })
+ * to renderer hooks.
  *
  * Call once at app startup (from main.ts).
  */

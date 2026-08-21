@@ -24,7 +24,7 @@
     "@vitejs/plugin-vue": "^6.0.7",
     "diff": "^9.0.0",
     "qrcode": "^1.5.4",
-    "redoc": "^2.5.3",
+    "swagger-ui-dist": "^5.21.0",
     "vite": "^6.0.0",
     "vue-draggable-plus": "^0.6.1"
   }

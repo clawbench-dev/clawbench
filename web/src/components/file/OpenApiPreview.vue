@@ -7,8 +7,8 @@
       v-show="!loading"
       ref="iframeRef"
       class="openapi-iframe"
-      :srcdoc="redocSrcdoc"
-      sandbox="allow-scripts"
+      :srcdoc="swaggerSrcdoc"
+      sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
       @load="onIframeLoad"
     />
   </div>
@@ -17,7 +17,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { buildRedocSrcdoc } from '@/utils/redocHtml.ts'
+import { buildSwaggerSrcdoc } from '@/utils/swaggerHtml.ts'
 
 const props = defineProps({
   file: Object,
@@ -27,7 +27,7 @@ const props = defineProps({
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const loading = ref(true)
 
-// Determine the spec data for ReDoc:
+// Determine the spec data for Swagger UI:
 // - YAML files: backend returns specJson (YAML→JSON conversion)
 // - JSON files: use content directly
 const specData = computed(() => {
@@ -35,11 +35,14 @@ const specData = computed(() => {
   return props.file?.content || ''
 })
 
+// Detect dark theme from ClawBench's data-theme attribute (same as mermaid, terminal, etc.)
+const isDark = computed(() => document.documentElement.getAttribute('data-theme') === 'dark')
+
 // Read scrollbar colors from CSS variables (same as project-wide scrollbar style)
 const scrollbarThumb = getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-thumb').trim() || '#c1c1c1'
 const scrollbarTrack = getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-track').trim() || 'transparent'
 
-const redocSrcdoc = computed(() => buildRedocSrcdoc(specData.value, scrollbarThumb, scrollbarTrack))
+const swaggerSrcdoc = computed(() => buildSwaggerSrcdoc(specData.value, isDark.value, scrollbarThumb, scrollbarTrack))
 
 // Reset loading when spec changes
 watch(() => [props.file?.content, props.file?.specJson], () => {
@@ -73,6 +76,6 @@ function onIframeLoad() {
   width: 100%;
   height: 100%;
   border: none;
-  background: #fff;
+  background: var(--bg-primary, #fff);
 }
 </style>
