@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildLangExtension, buildCompletionExtension, COMPLETION_LANGS } from '@/utils/codeEditorLang'
+import { buildLangExtension, buildCompletionExtension, COMPLETION_LANGS, LANG_EXT } from '@/utils/codeEditorLang'
 
 describe('buildLangExtension', () => {
   it('returns a truthy extension for static (high-frequency) languages', async () => {
@@ -77,6 +77,30 @@ describe('buildCompletionExtension', () => {
     const ext = await buildCompletionExtension('markdown')
     expect(Array.isArray(ext)).toBe(true)
     expect(ext.length).toBeGreaterThan(0)
+  })
+
+  it('returns completion extension for SQL (keywordCompletionSource with dialect)', async () => {
+    const ext = await buildCompletionExtension('sql')
+    expect(Array.isArray(ext)).toBe(true)
+    expect(ext.length).toBeGreaterThan(0)
+  })
+
+  it('returns completion extension for liquid (curried factory)', async () => {
+    const ext = await buildCompletionExtension('liquid')
+    expect(Array.isArray(ext)).toBe(true)
+    expect(ext.length).toBeGreaterThan(0)
+  })
+
+  it('returns completion extension for TypeScript (shared JS source)', async () => {
+    const ext = await buildCompletionExtension('typescript')
+    expect(Array.isArray(ext)).toBe(true)
+    expect(ext.length).toBeGreaterThan(0)
+  })
+
+  it('every COMPLETION_LANGS key has a corresponding LANG_EXT entry', () => {
+    for (const lang of Object.keys(COMPLETION_LANGS)) {
+      expect(lang in LANG_EXT).toBe(true)
+    }
   })
 })
 

@@ -2,20 +2,20 @@ import type { Extension } from '@codemirror/state'
 import type { Language } from '@codemirror/language'
 import type { CompletionSource } from '@codemirror/autocomplete'
 // High-frequency languages: static imports (always needed)
-import { javascript } from '@codemirror/lang-javascript'
+import { javascript, localCompletionSource as jsCompletion } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
 import { yaml } from '@codemirror/lang-yaml'
 import { xml } from '@codemirror/lang-xml'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
+import { html, htmlCompletionSource } from '@codemirror/lang-html'
+import { css, cssCompletionSource } from '@codemirror/lang-css'
 import { markdown } from '@codemirror/lang-markdown'
-import { go } from '@codemirror/lang-go'
-import { python } from '@codemirror/lang-python'
+import { go, localCompletionSource as goCompletion } from '@codemirror/lang-go'
+import { python, localCompletionSource as pyCompletion } from '@codemirror/lang-python'
 
 /** Lazy-loaded language factory: returns a Promise of Extension. */
 type LangFactory = () => Extension | Promise<Extension>
 
-const LANG_EXT: Record<string, LangFactory> = {
+export const LANG_EXT: Record<string, LangFactory> = {
     // Static imports (high-frequency)
     javascript: () => javascript(),
     typescript: () => javascript({ typescript: true }),
@@ -63,13 +63,13 @@ const LANG_EXT: Record<string, LangFactory> = {
  * the `autocompletion()` extension enabled, no override source.
  */
 export const COMPLETION_LANGS: Record<string, (() => CompletionSource | Promise<CompletionSource>) | null> = {
-    javascript: () => import('@codemirror/lang-javascript').then(m => m.localCompletionSource),
-    typescript: () => import('@codemirror/lang-javascript').then(m => m.localCompletionSource),
-    html: () => import('@codemirror/lang-html').then(m => m.htmlCompletionSource),
-    css: () => import('@codemirror/lang-css').then(m => m.cssCompletionSource),
-    python: () => import('@codemirror/lang-python').then(m => m.localCompletionSource),
+    javascript: () => jsCompletion,
+    typescript: () => jsCompletion,
+    html: () => htmlCompletionSource,
+    css: () => cssCompletionSource,
+    python: () => pyCompletion,
     sql: () => import('@codemirror/lang-sql').then(m => m.keywordCompletionSource(m.StandardSQL)),
-    go: () => import('@codemirror/lang-go').then(m => m.localCompletionSource),
+    go: () => goCompletion,
     less: () => import('@codemirror/lang-less').then(m => m.lessCompletionSource),
     sass: () => import('@codemirror/lang-sass').then(m => m.sassCompletionSource),
     liquid: () => import('@codemirror/lang-liquid').then(m => m.liquidCompletionSource()),
@@ -127,7 +127,7 @@ export async function buildLangExtension(fileLang: string): Promise<Extension> {
  * Returns an empty array for languages without a built-in completion source.
  */
 export async function buildCompletionExtension(fileLang: string): Promise<Extension[]> {
-    if (!(fileLang in COMPLETION_LANGS)) return []
+    if (!Object.hasOwn(COMPLETION_LANGS, fileLang)) return []
     const { autocompletion } = await import('@codemirror/autocomplete')
     const factory = COMPLETION_LANGS[fileLang]
     if (factory) {
