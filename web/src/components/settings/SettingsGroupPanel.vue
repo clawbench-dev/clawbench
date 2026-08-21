@@ -1,8 +1,7 @@
 <template>
   <div class="group-panel">
-    <!-- Panel title separator -->
     <div class="group-panel__card">
-    <!-- Panel title as header row inside the card -->
+    <!-- Panel title inside the card, distinct from card body and page background -->
     <div v-if="showTitle && config.titleKey" class="group-panel__header">
       {{ t(config.titleKey) }}
     </div>
@@ -514,15 +513,16 @@ watch(localValues, () => {
   background: transparent;
 }
 
-/* Panel title as a header row inside the card */
+/* Panel title inside the card, distinct from card body and page background */
 .group-panel__header {
   font-size: 12px;
   color: var(--text-muted);
-  padding: 8px 16px;
+  padding: 5px 16px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 500;
   position: relative;
+  background: var(--bg-tertiary);
 }
 .group-panel__header::after {
   content: '';
@@ -536,7 +536,7 @@ watch(localValues, () => {
 
 /* Compact iOS-style card container */
 .group-panel__card {
-  border-radius: 8px;
+  border-radius: 0;
   overflow: hidden;
   background: var(--bg-primary);
   margin-bottom: 8px;
@@ -622,7 +622,7 @@ watch(localValues, () => {
 }
 
 .group-panel__switch-input:checked + .group-panel__switch-track {
-  background: var(--color-green);
+  background: var(--accent-color);
 }
 
 .group-panel__switch-input:checked + .group-panel__switch-track::after {
@@ -701,10 +701,11 @@ watch(localValues, () => {
 .group-panel__section-header {
   font-size: 12px;
   color: var(--text-muted);
-  padding: 8px 16px 4px;
+  padding: 5px 16px 3px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 500;
+  background: var(--bg-tertiary);
 }
 
 /* Sticky save bar (I3 fix) */

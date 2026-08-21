@@ -616,7 +616,7 @@ function confirmEdit() {
 }
 
 .settings-item__switch-input:checked + .settings-item__switch-track {
-  background: var(--color-green);
+  background: var(--accent-color);
 }
 
 .settings-item__switch-input:checked + .settings-item__switch-track::after {

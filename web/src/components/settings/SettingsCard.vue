@@ -20,29 +20,21 @@ defineProps<{
 
 /* Compact iOS-style card: white rounded body on the grey page background */
 .settings-card__body {
-  border-radius: 8px;
+  border-radius: 0;
   overflow: hidden;
   background: var(--bg-primary);
 }
 
-/* Group title as a header row inside the card */
+/* Group title inside the card, distinct from card body and page background */
 .settings-card__header {
   font-size: 12px;
   color: var(--text-muted);
-  padding: 8px 16px;
+  padding: 5px 16px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 500;
   position: relative;
-}
-.settings-card__header::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 16px;
-  right: 0;
-  height: 0.5px;
-  background: var(--border-color);
+  background: var(--bg-tertiary);
 }
 
 /* Inside the card, items become transparent rows with an inset divider */

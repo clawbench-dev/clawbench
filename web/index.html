@@ -18,6 +18,11 @@
           t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         }
         document.documentElement.setAttribute('data-theme', t);
+
+        // Resolve accent color BEFORE CSS loads to prevent flash of default blue.
+        var a = null;
+        try { var as = localStorage.getItem('clawbench-settings-accentColor'); if (as) a = JSON.parse(as); } catch {}
+        document.documentElement.setAttribute('data-accent', a || 'blue');
       })();
     </script>
 

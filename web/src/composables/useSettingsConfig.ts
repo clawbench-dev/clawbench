@@ -66,6 +66,13 @@ const legacyKeys: Record<string, {
       window.dispatchEvent(new CustomEvent('clawbench-theme-change', { detail: resolved }))
     },
   },
+  accentColor: {
+    key: '',
+    format: 'raw',
+    sideEffect(value: string) {
+      document.documentElement.setAttribute('data-accent', value || 'blue')
+    },
+  },
   locale: {
     key: LOCALE_KEY,  // 'clawbench-locale'
     format: 'raw',
@@ -244,6 +251,7 @@ export function getZoomedViewport(): { width: number; height: number } {
 
 const localDefaults: Record<string, string | boolean | number | null> = {
   theme: 'auto',
+  accentColor: 'blue',
   terminalTheme: 'auto',
   locale: 'zh',
   autoSpeech: false,

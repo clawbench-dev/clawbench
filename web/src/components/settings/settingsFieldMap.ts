@@ -114,6 +114,15 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.themeLight', value: 'light' },
       { labelKey: 'settings.items.themeDark', value: 'dark' },
     ]}},
+    { type: 'item', spec: { labelKey: 'settings.items.accentColor', descriptionKey: 'settings.items.accentColorDesc', key: 'accentColor', type: 'select', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection', options: [
+      { labelKey: 'settings.items.accentBlue', value: 'blue' },
+      { labelKey: 'settings.items.accentPurple', value: 'purple' },
+      { labelKey: 'settings.items.accentGreen', value: 'green' },
+      { labelKey: 'settings.items.accentOrange', value: 'orange' },
+      { labelKey: 'settings.items.accentRed', value: 'red' },
+      { labelKey: 'settings.items.accentCyan', value: 'cyan' },
+      { labelKey: 'settings.items.accentPink', value: 'pink' },
+    ]}},
     { type: 'item', spec: { labelKey: 'settings.items.locale', descriptionKey: 'settings.items.localeDesc', key: 'locale', type: 'select', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection', options: [
       { labelKey: 'settings.items.localeZh', value: 'zh' },
       { labelKey: 'settings.items.localeEn', value: 'en' },

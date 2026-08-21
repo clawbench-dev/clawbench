@@ -64,6 +64,70 @@
     --code-syntax-link: #005cc5;
 }
 
+/* ── Accent color overrides ──────────────────────────────── */
+/* blue is the default — already defined in :root / [data-theme="dark"] above */
+
+[data-accent="purple"][data-theme="light"] {
+    --accent-color: #7c3aed;
+    --accent-hover: #6d28d9;
+    --user-msg-color: #8b7bbf;
+}
+[data-accent="purple"][data-theme="dark"] {
+    --accent-color: #a78bfa;
+    --accent-hover: #c4b5fd;
+    --user-msg-color: #6d5a99;
+}
+[data-accent="green"][data-theme="light"] {
+    --accent-color: #16a34a;
+    --accent-hover: #15803d;
+    --user-msg-color: #5b9f7b;
+}
+[data-accent="green"][data-theme="dark"] {
+    --accent-color: #3fb950;
+    --accent-hover: #56d364;
+    --user-msg-color: #2d6a4f;
+}
+[data-accent="orange"][data-theme="light"] {
+    --accent-color: #ea580c;
+    --accent-hover: #c2410c;
+    --user-msg-color: #bf8a5b;
+}
+[data-accent="orange"][data-theme="dark"] {
+    --accent-color: #f97316;
+    --accent-hover: #fb923c;
+    --user-msg-color: #8b5e3c;
+}
+[data-accent="red"][data-theme="light"] {
+    --accent-color: #dc2626;
+    --accent-hover: #b91c1c;
+    --user-msg-color: #bf5b5b;
+}
+[data-accent="red"][data-theme="dark"] {
+    --accent-color: #f85149;
+    --accent-hover: #ff7b72;
+    --user-msg-color: #8b3a3a;
+}
+[data-accent="cyan"][data-theme="light"] {
+    --accent-color: #0891b2;
+    --accent-hover: #0e7490;
+    --user-msg-color: #6ba3b5;
+}
+[data-accent="cyan"][data-theme="dark"] {
+    --accent-color: #22d3ee;
+    --accent-hover: #67e8f9;
+    --user-msg-color: #2a7a8a;
+}
+[data-accent="pink"][data-theme="light"] {
+    --accent-color: #db2777;
+    --accent-hover: #be185d;
+    --user-msg-color: #bf6b8f;
+}
+[data-accent="pink"][data-theme="dark"] {
+    --accent-color: #f472b6;
+    --accent-hover: #f9a8d4;
+    --user-msg-color: #8b4a6a;
+}
+
 [data-theme="dark"] {
     --bg-primary: #0d1117;
     --bg-secondary: #161b22;
