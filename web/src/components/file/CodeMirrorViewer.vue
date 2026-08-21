@@ -407,9 +407,14 @@ async function mountLang() {
     }
 }
 
+let completionGeneration = 0
+
 /** Load the completion extension asynchronously for languages that provide one.
- *  Only active in editable mode — read-only browsing has no completion. */
+ *  Only active in editable mode — read-only browsing has no completion.
+ *  Uses a generation counter to discard stale results when the language prop
+ *  changes while a previous mountCompletion is still in-flight. */
 async function mountCompletion() {
+    const gen = ++completionGeneration
     if (!props.editable) {
         // Clear any previous completion extension when switching to read-only
         if (view.value) {
@@ -418,9 +423,8 @@ async function mountCompletion() {
         return
     }
     const ext = await buildCompletionExtension(props.language)
-    if (view.value) {
-        view.value.dispatch({ effects: completionCompartment.reconfigure(ext) })
-    }
+    if (gen !== completionGeneration || !view.value) return
+    view.value.dispatch({ effects: completionCompartment.reconfigure(ext) })
 }
 
 function reconfigure(compartment, ext) {
@@ -784,11 +788,13 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 }
 
 /* Autocomplete tooltip */
-.cm-viewer .cm-tooltip-autocomplete {
+.cm-viewer .cm-tooltip {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+.cm-viewer .cm-tooltip-autocomplete {
   font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
   font-size: 13px;
   max-height: 200px;
@@ -801,11 +807,24 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
   font-size: 11px;
   opacity: 0.7;
 }
-.cm-viewer .cm-completionIcon::after {
-  content: '';
-}
+.cm-viewer .cm-completionIcon-class::after { color: var(--code-syntax-type); }
+.cm-viewer .cm-completionIcon-constant::after { color: var(--code-syntax-number); }
+.cm-viewer .cm-completionIcon-enum::after { color: var(--code-syntax-type); }
+.cm-viewer .cm-completionIcon-function::after { color: var(--code-syntax-function); }
+.cm-viewer .cm-completionIcon-interface::after { color: var(--code-syntax-type); }
+.cm-viewer .cm-completionIcon-keyword::after { color: var(--code-syntax-keyword); }
+.cm-viewer .cm-completionIcon-method::after { color: var(--code-syntax-function); }
+.cm-viewer .cm-completionIcon-namespace::after { color: var(--code-syntax-type); }
+.cm-viewer .cm-completionIcon-property::after { color: var(--code-syntax-property); }
+.cm-viewer .cm-completionIcon-text::after { color: var(--text-muted); }
+.cm-viewer .cm-completionIcon-type::after { color: var(--code-syntax-type); }
+.cm-viewer .cm-completionIcon-variable::after { color: var(--code-syntax-variable); }
 .cm-viewer .cm-completionLabel {
   color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
 }
 .cm-viewer .cm-completionDetail {
   color: var(--text-muted);
