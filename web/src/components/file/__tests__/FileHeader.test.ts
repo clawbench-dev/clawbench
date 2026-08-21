@@ -372,4 +372,32 @@ describe('FileHeader', () => {
       expect(activeBtn).toBeTruthy()
     })
   })
+
+  describe('effectiveViewMode', () => {
+    it('returns raw for source view on non-markdown file', () => {
+      const wrapper = mountHeader({ viewMode: 'source' })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.effectiveViewMode).toBe('raw')
+    })
+
+    it('returns rendered for markdown in rendered view without editing', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.effectiveViewMode).toBe('rendered')
+    })
+
+    it('returns raw when editing from rendered markdown preview', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: true })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.effectiveViewMode).toBe('raw')
+    })
+
+    it('hides export HTML button when editing from rendered markdown', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: true })
+      const vm = wrapper.vm as any
+      // When editing from rendered, effectiveViewMode is 'raw', so exportHtml should not be in toolbar
+      const ids = vm.$.setupState.toolbarInlineIds
+      expect(ids).not.toContain('exportHtml')
+    })
+  })
 })

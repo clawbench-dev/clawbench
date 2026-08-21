@@ -121,15 +121,15 @@ func TestCheckSSRF(t *testing.T) {
 		wantErr bool
 	}{
 		// These use raw IPs where possible to avoid DNS resolution issues in CI
-		{"8.8.8.8:443", false},         // Public IP with port
-		{"8.8.8.8", false},             // Public IP without port
-		{"127.0.0.1:8080", true},       // Loopback
-		{"127.0.0.1", true},            // Loopback without port
-		{"10.0.0.1:80", true},          // Private A
-		{"192.168.1.1:443", true},      // Private C
-		{"172.16.0.1:80", true},        // Private B
-		{"169.254.1.1:80", true},       // Link-local
-		{"0.0.0.0:80", true},           // Unspecified
+		{"8.8.8.8:443", false},    // Public IP with port
+		{"8.8.8.8", false},        // Public IP without port
+		{"127.0.0.1:8080", true},  // Loopback
+		{"127.0.0.1", true},       // Loopback without port
+		{"10.0.0.1:80", true},     // Private A
+		{"192.168.1.1:443", true}, // Private C
+		{"172.16.0.1:80", true},   // Private B
+		{"169.254.1.1:80", true},  // Link-local
+		{"0.0.0.0:80", true},      // Unspecified
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
@@ -142,7 +142,7 @@ func TestCheckSSRF(t *testing.T) {
 }
 
 func TestServeCORSProxy_MissingURL(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy", http.NoBody)
 	w := httptest.NewRecorder()
 	ServeCORSProxy(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -155,7 +155,7 @@ func TestServeCORSProxy_MissingURL(t *testing.T) {
 }
 
 func TestServeCORSProxy_InvalidScheme(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url=ftp://example.com/api", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url=ftp://example.com/api", http.NoBody)
 	w := httptest.NewRecorder()
 	ServeCORSProxy(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -168,7 +168,7 @@ func TestServeCORSProxy_InvalidScheme(t *testing.T) {
 }
 
 func TestServeCORSProxy_OptionsPreflight(t *testing.T) {
-	req := httptest.NewRequest(http.MethodOptions, "/api/openapi-proxy?url=http://example.com/api", nil)
+	req := httptest.NewRequest(http.MethodOptions, "/api/openapi-proxy?url=http://example.com/api", http.NoBody)
 	req.Header.Set("Origin", "http://localhost:20001")
 	w := httptest.NewRecorder()
 	ServeCORSProxy(w, req)
@@ -229,7 +229,7 @@ func TestServeCORSProxy_AllowLocal(t *testing.T) {
 	defer func() { AllowLocalProxy = orig }()
 
 	targetURL := upstream.URL + "/test?query=1"
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url="+url.QueryEscape(targetURL), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url="+url.QueryEscape(targetURL), http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	req.Header.Set("Origin", "http://localhost:20001")
 	w := httptest.NewRecorder()
@@ -256,7 +256,7 @@ func TestServeCORSProxy_SSRFBlock(t *testing.T) {
 	AllowLocalProxy = false
 	defer func() { AllowLocalProxy = orig }()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url=http://127.0.0.1:8080/api", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url=http://127.0.0.1:8080/api", http.NoBody)
 	w := httptest.NewRecorder()
 	ServeCORSProxy(w, req)
 	if w.Code != http.StatusForbidden {
@@ -313,7 +313,7 @@ func TestServeCORSProxy_InvalidTargetURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			req := httptest.NewRequest(http.MethodGet, tt.url, http.NoBody)
 			w := httptest.NewRecorder()
 			ServeCORSProxy(w, req)
 			if w.Code != tt.expected {
@@ -324,4 +324,119 @@ func TestServeCORSProxy_InvalidTargetURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateTargetURL(t *testing.T) {
+	tests := []struct {
+		name       string
+		reqURL     string
+		allowLocal bool
+		wantOk     bool
+		wantStatus int
+		wantMsg    string
+	}{
+		{"missing url param", "/api/openapi-proxy", true, false, http.StatusBadRequest, "missing required query parameter"},
+		{"ftp scheme", "/api/openapi-proxy?url=ftp://example.com/api", true, false, http.StatusBadRequest, "must use http or https"},
+		{"javascript scheme", "/api/openapi-proxy?url=javascript:alert(1)", true, false, http.StatusBadRequest, "must use http or https"},
+		{"no scheme", "/api/openapi-proxy?url=example.com/api", true, false, http.StatusBadRequest, "must use http or https"},
+		{"valid http", "/api/openapi-proxy?url=http://example.com/api", true, true, 0, ""},
+		{"valid https", "/api/openapi-proxy?url=https://example.com/api", true, true, 0, ""},
+		{"ssrf blocked when local disabled", "/api/openapi-proxy?url=http://127.0.0.1:8080/api", false, false, http.StatusForbidden, "not accessible"},
+		{"ssrf allowed when local enabled", "/api/openapi-proxy?url=http://127.0.0.1:8080/api", true, true, 0, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := AllowLocalProxy
+			AllowLocalProxy = tt.allowLocal
+			defer func() { AllowLocalProxy = orig }()
+
+			req := httptest.NewRequest(http.MethodGet, tt.reqURL, http.NoBody)
+			w := httptest.NewRecorder()
+			_, _, ok := validateTargetURL(w, req)
+
+			if ok != tt.wantOk {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOk)
+			}
+			if !ok {
+				if w.Code != tt.wantStatus {
+					t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+				}
+				if !strings.Contains(w.Body.String(), tt.wantMsg) {
+					t.Errorf("body %q should contain %q", w.Body.String(), tt.wantMsg)
+				}
+			}
+		})
+	}
+}
+
+func TestCopyHeaders(t *testing.T) {
+	t.Run("copies regular headers", func(t *testing.T) {
+		dst := http.Header{}
+		src := http.Header{}
+		src.Set("Content-Type", "application/json")
+		src.Set("Authorization", "Bearer test")
+		copyHeaders(dst, src)
+		if dst.Get("Content-Type") != "application/json" {
+			t.Errorf("expected Content-Type, got %q", dst.Get("Content-Type"))
+		}
+		if dst.Get("Authorization") != "Bearer test" {
+			t.Errorf("expected Authorization, got %q", dst.Get("Authorization"))
+		}
+	})
+
+	t.Run("skips hop-by-hop headers", func(t *testing.T) {
+		dst := http.Header{}
+		src := http.Header{}
+		src.Set("Content-Type", "text/plain")
+		src.Set("Connection", "keep-alive")
+		src.Set("Keep-Alive", "timeout=5")
+		src.Set("Transfer-Encoding", "chunked")
+		copyHeaders(dst, src)
+		if dst.Get("Content-Type") != "text/plain" {
+			t.Errorf("expected Content-Type, got %q", dst.Get("Content-Type"))
+		}
+		if dst.Get("Connection") != "" {
+			t.Error("Connection should be skipped")
+		}
+		if dst.Get("Keep-Alive") != "" {
+			t.Error("Keep-Alive should be skipped")
+		}
+		if dst.Get("Transfer-Encoding") != "" {
+			t.Error("Transfer-Encoding should be skipped")
+		}
+	})
+
+	t.Run("skips Host header", func(t *testing.T) {
+		dst := http.Header{}
+		src := http.Header{}
+		src.Set("Host", "example.com")
+		src.Set("Content-Type", "text/plain")
+		copyHeaders(dst, src)
+		if dst.Get("Host") != "" {
+			t.Error("Host should be skipped")
+		}
+		if dst.Get("Content-Type") != "text/plain" {
+			t.Errorf("expected Content-Type, got %q", dst.Get("Content-Type"))
+		}
+	})
+
+	t.Run("preserves multi-value headers", func(t *testing.T) {
+		dst := http.Header{}
+		src := http.Header{}
+		src.Add("Accept", "text/html")
+		src.Add("Accept", "application/json")
+		copyHeaders(dst, src)
+		if len(dst.Values("Accept")) != 2 {
+			t.Errorf("expected 2 Accept values, got %d", len(dst.Values("Accept")))
+		}
+	})
+
+	t.Run("empty source produces empty destination", func(t *testing.T) {
+		dst := http.Header{}
+		src := http.Header{}
+		copyHeaders(dst, src)
+		if len(dst) != 0 {
+			t.Errorf("expected empty dst, got %d keys", len(dst))
+		}
+	})
 }

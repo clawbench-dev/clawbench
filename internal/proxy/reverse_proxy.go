@@ -23,7 +23,7 @@ type ReverseProxy struct {
 	transport  *http.Transport
 	targetAddr string // host:port of the backend
 	targetURL  *url.URL
-	protocol   string // "http" or "https"
+	protocol   string // schemeHTTP or schemeHTTPS
 }
 
 // NewReverseProxy creates a new HTTP reverse proxy.
@@ -32,7 +32,7 @@ type ReverseProxy struct {
 // protocol is "http" or "https" (for the connection to the backend).
 func NewReverseProxy(listenHost string, listenPort int, targetAddr string, protocol string) (*ReverseProxy, error) {
 	if protocol == "" {
-		protocol = "http"
+		protocol = schemeHTTP
 	}
 
 	// Build the target URL for httputil.ReverseProxy

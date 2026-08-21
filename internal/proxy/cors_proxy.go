@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
 // AllowLocalProxy controls whether the CORS proxy permits requests to
 // loopback and private IP addresses (e.g. localhost:3000). Defaults to true
 // because the primary use case is testing locally-running dev APIs.
@@ -85,6 +90,51 @@ var corsProxyClient = &http.Client{
 // It receives a request with a ?url= query parameter pointing to the target API,
 // forwards the request to that URL, and returns the response with CORS headers
 // so the browser doesn't block it.
+// validateTargetURL parses and validates the target URL from the request query.
+// Returns the parsed URL, the raw URL string, or an error response written to w.
+func validateTargetURL(w http.ResponseWriter, r *http.Request) (*url.URL, string, bool) {
+	targetURLStr := r.URL.Query().Get("url")
+	if targetURLStr == "" {
+		http.Error(w, "missing required query parameter: url", http.StatusBadRequest)
+		return nil, "", false
+	}
+
+	targetURL, err := url.Parse(targetURLStr)
+	if err != nil {
+		http.Error(w, "invalid target URL: "+err.Error(), http.StatusBadRequest)
+		return nil, "", false
+	}
+
+	if targetURL.Scheme != schemeHTTP && targetURL.Scheme != schemeHTTPS {
+		http.Error(w, "target URL must use http or https scheme", http.StatusBadRequest)
+		return nil, "", false
+	}
+
+	// SSRF protection: resolve hostname and block private/reserved IPs.
+	// Skipped when AllowLocalProxy is true (default) for dev API testing.
+	if !AllowLocalProxy {
+		if ssrfErr := checkSSRF(targetURL.Host); ssrfErr != nil {
+			slog.Warn("CORS proxy: blocked SSRF attempt", slog.String("host", targetURL.Host), slog.String("err", ssrfErr.Error()))
+			http.Error(w, "target host is not accessible: "+ssrfErr.Error(), http.StatusForbidden)
+			return nil, "", false
+		}
+	}
+
+	return targetURL, targetURLStr, true
+}
+
+// copyHeaders copies headers from src to dst, skipping hop-by-hop headers and Host.
+func copyHeaders(dst http.Header, src http.Header) {
+	for k, vv := range src {
+		if isHopByHop(k) || strings.EqualFold(k, "Host") {
+			continue
+		}
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
+}
+
 func ServeCORSProxy(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
 
@@ -96,70 +146,35 @@ func ServeCORSProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read and validate the target URL
-	targetURLStr := r.URL.Query().Get("url")
-	if targetURLStr == "" {
-		http.Error(w, "missing required query parameter: url", http.StatusBadRequest)
+	targetURL, targetURLStr, ok := validateTargetURL(w, r)
+	if !ok {
 		return
-	}
-
-	targetURL, err := url.Parse(targetURLStr)
-	if err != nil {
-		http.Error(w, "invalid target URL: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if targetURL.Scheme != "http" && targetURL.Scheme != "https" {
-		http.Error(w, "target URL must use http or https scheme", http.StatusBadRequest)
-		return
-	}
-
-	// SSRF protection: resolve hostname and block private/reserved IPs.
-	// Skipped when AllowLocalProxy is true (default) for dev API testing.
-	if !AllowLocalProxy {
-		if err := checkSSRF(targetURL.Host); err != nil {
-			slog.Warn("CORS proxy: blocked SSRF attempt", slog.String("host", targetURL.Host), slog.String("err", err.Error()))
-			http.Error(w, "target host is not accessible: "+err.Error(), http.StatusForbidden)
-			return
-		}
 	}
 
 	// Build the outgoing request
+	//nolint:gosec // targetURLStr is validated above (scheme + SSRF check)
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURLStr, r.Body)
 	if err != nil {
 		http.Error(w, "failed to create outgoing request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Copy headers, skipping hop-by-hop and Host (which will be set by the transport)
-	for k, vv := range r.Header {
-		if isHopByHop(k) || strings.EqualFold(k, "Host") {
-			continue
-		}
-		for _, v := range vv {
-			outReq.Header.Add(k, v)
-		}
-	}
+	copyHeaders(outReq.Header, r.Header)
 	// Set the Host header to the target host
 	outReq.Host = targetURL.Host
 
 	// Send the request
+	//nolint:gosec // outReq target was validated above (SSRF + scheme check)
 	resp, err := corsProxyClient.Do(outReq)
 	if err != nil {
 		slog.Debug("CORS proxy: upstream request failed", slog.String("url", targetURLStr), slog.String("err", err.Error()))
 		http.Error(w, "upstream request failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Write response headers, skipping hop-by-hop
-	for k, vv := range resp.Header {
-		if isHopByHop(k) {
-			continue
-		}
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
+	copyHeaders(w.Header(), resp.Header)
 
 	// Add CORS headers
 	setCORSHeaders(w, origin)

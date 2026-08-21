@@ -1829,7 +1829,7 @@ describe('openFilePath', () => {
     await vi.advanceTimersByTimeAsync(400)
 
     expect(result).toBe(true)
-    expect(mockLoadFiles).toHaveBeenCalledWith('src')
+    expect(mockLoadFiles).toHaveBeenCalledWith('src', false, 0, true)
     const eventTypes = mockDispatchEvent.mock.calls.map((call: any[]) => call[0].type)
     expect(eventTypes).toContain('close-file-overlay')
     expect(eventTypes).toContain('open-file-manager')
@@ -1855,7 +1855,7 @@ describe('openFilePath', () => {
     await vi.advanceTimersByTimeAsync(400)
 
     expect(result).toBe(true)
-    expect(mockLoadFiles).toHaveBeenCalledWith('internal')
+    expect(mockLoadFiles).toHaveBeenCalledWith('internal', false, 0, true)
     const eventTypes = mockDispatchEvent.mock.calls.map((call: any[]) => call[0].type)
     expect(eventTypes).toContain('highlight-file-item')
 

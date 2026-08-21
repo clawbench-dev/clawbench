@@ -141,7 +141,8 @@ describe('settingsFieldMap', () => {
     expect(isPanelOnlyCategory('rag')).toBe(true)
     expect(isPanelOnlyCategory('portForward')).toBe(true)
     expect(isPanelOnlyCategory('frp')).toBe(true)
-    expect(isPanelOnlyCategory('notification')).toBe(true)
+    // notification has both an item (notificationSound) and a panel (push)
+    expect(isPanelOnlyCategory('notification')).toBe(false)
     expect(isPanelOnlyCategory('appearance')).toBe(false)
   })
 

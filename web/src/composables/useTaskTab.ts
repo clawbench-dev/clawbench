@@ -168,7 +168,13 @@ async function loadTasks() {
             }
         }
 
-        store.state.tasks = newTasks as unknown as Array<Record<string, unknown>>
+        // Skip store update if tasks are identical (same reference avoids unnecessary reactivity)
+        const currentTasks = store.state.tasks as unknown as TaskItem[]
+        const tasksUnchanged = currentTasks.length === newTasks.length &&
+            currentTasks.every((t, i) => t.id === newTasks[i].id && t.status === newTasks[i].status && t.runCount === newTasks[i].runCount && t.unreadCount === newTasks[i].unreadCount && t.runningCount === newTasks[i].runningCount)
+        if (!tasksUnchanged) {
+            store.state.tasks = newTasks as unknown as Array<Record<string, unknown>>
+        }
     } catch (e: unknown) {
         // AbortError is expected when a newer request supersedes this one
         if (e instanceof Error && e.name === 'AbortError') return

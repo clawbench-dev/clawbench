@@ -92,7 +92,7 @@ describe('GitWorktreeList', () => {
 
   it('shows loading spinner when loading is true', () => {
     const wrapper = mountList({ loading: true })
-    expect(wrapper.find('.spinner').exists()).toBe(true)
+    expect(wrapper.find('.section-loading').exists()).toBe(true)
     expect(wrapper.find('.section-empty').exists()).toBe(false)
   })
 
