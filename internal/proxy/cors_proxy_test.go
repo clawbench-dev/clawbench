@@ -141,6 +141,24 @@ func TestCheckSSRF(t *testing.T) {
 	}
 }
 
+func TestCheckSSRF_HostnameResolution(t *testing.T) {
+	orig := AllowLocalProxy
+	AllowLocalProxy = false
+	defer func() { AllowLocalProxy = orig }()
+
+	// Public hostname should resolve and pass
+	err := checkSSRF("dns.google:443")
+	if err != nil {
+		t.Errorf("checkSSRF(public hostname) should pass, got error: %v", err)
+	}
+
+	// Unresolvable hostname should return DNS error
+	err = checkSSRF("this-host-definitely-does-not-exist.invalid:80")
+	if err == nil {
+		t.Error("checkSSRF(unresolvable hostname) should return error")
+	}
+}
+
 func TestServeCORSProxy_MissingURL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy", http.NoBody)
 	w := httptest.NewRecorder()
@@ -323,6 +341,61 @@ func TestServeCORSProxy_InvalidTargetURL(t *testing.T) {
 				t.Errorf("body %q should contain %q", w.Body.String(), tt.expectedMsg)
 			}
 		})
+	}
+}
+
+func TestValidateTargetURL_InvalidParse(t *testing.T) {
+	// url.Parse should fail for completely invalid URLs like "://"
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url=://invalid", http.NoBody)
+	w := httptest.NewRecorder()
+	_, _, ok := validateTargetURL(w, req)
+	if ok {
+		t.Error("expected ok=false for unparseable URL")
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "invalid target URL") {
+		t.Errorf("body should contain 'invalid target URL', got %q", body)
+	}
+}
+
+func TestServeCORSProxy_UpstreamFailure(t *testing.T) {
+	orig := AllowLocalProxy
+	AllowLocalProxy = true
+	defer func() { AllowLocalProxy = orig }()
+
+	// Target a host that will refuse connections
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url=http://127.0.0.1:1/impossible-port", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeCORSProxy(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 for upstream failure, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "upstream request failed") {
+		t.Errorf("body should contain 'upstream request failed', got %q", body)
+	}
+}
+
+func TestServeCORSProxy_NewRequestError(t *testing.T) {
+	orig := AllowLocalProxy
+	AllowLocalProxy = true
+	defer func() { AllowLocalProxy = orig }()
+
+	// A URL with a control character causes http.NewRequestWithContext to fail
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url=http://example.com/api", http.NoBody)
+	// Manually override the method to something invalid that passes httptest but fails NewRequestWithContext
+	req.Method = "INVALID METHOD"
+	w := httptest.NewRecorder()
+	ServeCORSProxy(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for new request error, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "failed to create outgoing request") {
+		t.Errorf("body should contain 'failed to create outgoing request', got %q", body)
 	}
 }
 
