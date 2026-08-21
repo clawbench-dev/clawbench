@@ -150,7 +150,7 @@
         </button>
         <div class="quick-send-divider" />
         <button class="quick-send-item" @click="showQuickMenu = false; quickSendDrawer.open()">
-          ⚙️ {{ t('chat.quickSend.edit') }}
+          <Settings :size="14" /> {{ t('chat.quickSend.edit') }}
         </button>
       </PopupMenu>
       <!-- Session settings drawer -->
@@ -267,7 +267,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft } from 'lucide-vue-next'
+import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -2131,7 +2131,9 @@ defineExpose({
 }
 
 .quick-send-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   padding: 8px 14px;
   border: none;

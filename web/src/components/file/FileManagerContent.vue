@@ -68,7 +68,7 @@
             <Eye v-else :size="16" />
           </button>
           <button v-if="toolbarInlineIds.includes('jump')" class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
-            <LocateFixed :size="16" />
+            <FolderSearch :size="16" />
           </button>
           <template v-if="showMoreDropdown">
           <div ref="moreDropdownWrapRef" class="toolbar-dropdown-wrap">
@@ -129,7 +129,7 @@
               </template>
               <template v-if="toolbarCollapsedIds.includes('jump')">
                 <button class="toolbar-dropdown-item" @click="jumpOpen = true; moreMenuOpen = false">
-                  <LocateFixed :size="14" />
+                  <FolderSearch :size="14" />
                   <span>{{ t('jump.button') }}</span>
                 </button>
               </template>
@@ -419,7 +419,7 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search, FolderDown, LocateFixed, Link2 } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search, FolderDown, FolderSearch, Link2 } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,

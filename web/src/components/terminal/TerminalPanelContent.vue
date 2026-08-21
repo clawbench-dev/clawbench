@@ -170,7 +170,7 @@
       </button>
       <div class="quick-send-divider" />
       <button class="quick-send-item" @click="openEditDialog">
-        ⚙️ {{ t('terminal.editCommands') }}
+        <SettingsIcon :size="14" /> {{ t('terminal.editCommands') }}
       </button>
     </PopupMenu>
 
@@ -301,7 +301,7 @@ import {
   lightTheme,
 } from '@/utils/terminalThemes'
 
-import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon, CircleHelp as CircleHelpIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon, CircleHelp as CircleHelpIcon, Settings as SettingsIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
