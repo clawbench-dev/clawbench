@@ -33,8 +33,8 @@
       </button>
 
       <!-- Toggle view button (source/rendered) -->
-      <button v-if="toolbarInlineIds.includes('toggleView')" class="file-header-btn" @click.stop="handleToggleView" :title="viewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
-        <Code2 v-if="viewMode === 'rendered'" :size="14" />
+      <button v-if="toolbarInlineIds.includes('toggleView')" class="file-header-btn" @click.stop="handleToggleView" :title="effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
+        <Code2 v-if="effectiveViewMode === 'rendered'" :size="14" />
         <Eye v-else :size="14" />
       </button>
 
@@ -74,7 +74,7 @@
       </button>
 
       <!-- Export HTML button (markdown rendered only) -->
-      <button v-if="isMarkdown && viewMode === 'rendered' && toolbarInlineIds.includes('exportHtml')" class="file-header-btn" @click.stop="handleExportHtml" :title="t('file.header.exportHtml')">
+      <button v-if="isMarkdown && effectiveViewMode === 'rendered' && toolbarInlineIds.includes('exportHtml')" class="file-header-btn" @click.stop="handleExportHtml" :title="t('file.header.exportHtml')">
         <FileOutput :size="14" />
       </button>
 
@@ -122,9 +122,9 @@
               {{ t('nav.refresh') }}
             </button>
             <button v-if="toolbarCollapsedIds.includes('toggleView')" class="dropdown-item" @click="handleToggleView">
-              <Code2 v-if="viewMode === 'rendered'" :size="14" />
+              <Code2 v-if="effectiveViewMode === 'rendered'" :size="14" />
               <Eye v-else :size="14" />
-              {{ viewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}
+              {{ effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}
             </button>
             <button v-if="toolbarCollapsedIds.includes('wordWrap')" class="dropdown-item" @click="handleToggleWordWrap">
               <TextWrap :size="14" />
@@ -162,7 +162,7 @@
               <Download :size="14" />
               {{ t('common.download') }}
             </button>
-            <button v-if="isMarkdown && viewMode === 'rendered' && toolbarCollapsedIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml(); menuOpen = false">
+            <button v-if="isMarkdown && effectiveViewMode === 'rendered' && toolbarCollapsedIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml(); menuOpen = false">
               <FileOutput :size="14" />
               {{ t('file.header.exportHtml') }}
             </button>
@@ -253,7 +253,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (props.file?.isBinary) ids.push('openAsText')
     if (isAppMode.value) ids.push('shareExternal')
     ids.push('download')
-    if (isMarkdown.value && props.viewMode === 'rendered') ids.push('exportHtml')
+    if (isMarkdown.value && effectiveViewMode.value === 'rendered') ids.push('exportHtml')
     ids.push('openDirectory')
     ids.push('gitHistory')
     ids.push('delete')
@@ -285,7 +285,9 @@ const fileType = computed(() => props.file ? getFileType(props.file.name) : null
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
 const isHtml = computed(() => fileType.value?.isHtml || false)
 const isOpenapi = computed(() => props.file?.subtype === 'openapi')
-const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value || isOpenapi.value) && props.viewMode === 'rendered')
+const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value || isOpenapi.value) && props.viewMode === 'rendered' && !props.editing)
+// Effective view: when editing from rendered preview, the user sees source code
+const effectiveViewMode = computed(() => (isMarkdownRendered.value) ? 'rendered' : 'raw')
 const isMediaFile = computed(() => {
     const ft = fileType.value
     return ft?.isImage || ft?.isAudio || ft?.isVideo || ft?.isPdf || false
@@ -312,7 +314,7 @@ const hasToc = computed(() => {
     if (!props.file.content) return false
     if (ft.isImage || ft.isAudio || ft.isVideo) return false
     // OpenAPI rendered mode: ReDoc has its own sidebar, TOC/Search would operate on raw text
-    if (isOpenapi.value && props.viewMode === 'rendered') return false
+    if (isOpenapi.value && effectiveViewMode.value === 'rendered') return false
     return true
 })
 
