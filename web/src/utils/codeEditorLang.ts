@@ -1,5 +1,6 @@
 import type { Extension } from '@codemirror/state'
 import type { Language } from '@codemirror/language'
+import type { CompletionSource } from '@codemirror/autocomplete'
 // High-frequency languages: static imports (always needed)
 import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
@@ -55,6 +56,29 @@ const LANG_EXT: Record<string, LangFactory> = {
 }
 
 /**
+ * Languages that provide built-in completion sources in their @codemirror/lang-* packages.
+ * Each entry maps to a lazy factory that returns the completion source function.
+ * Languages whose completion is embedded in the language extension itself (e.g. markdown
+ * auto-completes HTML tags via `completeHTMLTags`) use a `null` factory — they only need
+ * the `autocompletion()` extension enabled, no override source.
+ */
+export const COMPLETION_LANGS: Record<string, (() => CompletionSource | Promise<CompletionSource>) | null> = {
+    javascript: () => import('@codemirror/lang-javascript').then(m => m.localCompletionSource),
+    typescript: () => import('@codemirror/lang-javascript').then(m => m.localCompletionSource),
+    html: () => import('@codemirror/lang-html').then(m => m.htmlCompletionSource),
+    css: () => import('@codemirror/lang-css').then(m => m.cssCompletionSource),
+    python: () => import('@codemirror/lang-python').then(m => m.localCompletionSource),
+    sql: () => import('@codemirror/lang-sql').then(m => m.keywordCompletionSource(m.StandardSQL)),
+    go: () => import('@codemirror/lang-go').then(m => m.localCompletionSource),
+    less: () => import('@codemirror/lang-less').then(m => m.lessCompletionSource),
+    sass: () => import('@codemirror/lang-sass').then(m => m.sassCompletionSource),
+    liquid: () => import('@codemirror/lang-liquid').then(m => m.liquidCompletionSource()),
+    // Markdown auto-completes HTML tags when typing `<` — built into the markdown()
+    // extension (completeHTMLTags, default true). Only needs autocompletion() enabled.
+    markdown: null,
+}
+
+/**
  * Markdown with nested syntax highlighting inside fenced code blocks.
  * Mirrors the browse mode where hljs highlights code fences inside markdown.
  * Only uses static imports for code-fence languages (available immediately).
@@ -96,4 +120,20 @@ export async function buildLangExtension(fileLang: string): Promise<Extension> {
     const factory = LANG_EXT[fileLang]
     if (!factory) return []
     return factory()
+}
+
+/**
+ * Build a completion extension for a given language.
+ * Returns an empty array for languages without a built-in completion source.
+ */
+export async function buildCompletionExtension(fileLang: string): Promise<Extension[]> {
+    if (!(fileLang in COMPLETION_LANGS)) return []
+    const { autocompletion } = await import('@codemirror/autocomplete')
+    const factory = COMPLETION_LANGS[fileLang]
+    if (factory) {
+        const source = await factory()
+        return [autocompletion({ override: [source] })]
+    }
+    // null factory (e.g. markdown): just enable autocompletion with defaults
+    return [autocompletion()]
 }

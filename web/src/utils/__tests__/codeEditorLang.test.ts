@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildLangExtension } from '@/utils/codeEditorLang'
+import { buildLangExtension, buildCompletionExtension, COMPLETION_LANGS } from '@/utils/codeEditorLang'
 
 describe('buildLangExtension', () => {
   it('returns a truthy extension for static (high-frequency) languages', async () => {
@@ -53,5 +53,39 @@ describe('buildLangExtension', () => {
 
   it('returns empty array for empty string', async () => {
     expect(await buildLangExtension('')).toEqual([])
+  })
+})
+
+describe('buildCompletionExtension', () => {
+  it('returns a non-empty extension array for languages with built-in sources', async () => {
+    const ext = await buildCompletionExtension('javascript')
+    expect(Array.isArray(ext)).toBe(true)
+    expect(ext.length).toBeGreaterThan(0)
+  })
+
+  it('returns empty array for languages without completion sources', async () => {
+    const ext = await buildCompletionExtension('yaml')
+    expect(ext).toEqual([])
+  })
+
+  it('returns empty array for unknown languages', async () => {
+    const ext = await buildCompletionExtension('brainfuck')
+    expect(ext).toEqual([])
+  })
+
+  it('returns extension for markdown (null factory, built-in HTML tag completion)', async () => {
+    const ext = await buildCompletionExtension('markdown')
+    expect(Array.isArray(ext)).toBe(true)
+    expect(ext.length).toBeGreaterThan(0)
+  })
+})
+
+describe('COMPLETION_LANGS', () => {
+  it('covers the major languages that have completion sources', () => {
+    const expected = ['javascript', 'typescript', 'html', 'css', 'python', 'sql', 'go', 'less', 'sass', 'liquid', 'markdown']
+    for (const lang of expected) {
+      expect(lang in COMPLETION_LANGS).toBe(true)
+    }
+    expect(COMPLETION_LANGS['markdown']).toBeNull()
   })
 })
