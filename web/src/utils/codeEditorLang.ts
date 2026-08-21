@@ -1,16 +1,15 @@
 import type { Extension } from '@codemirror/state'
 import type { Language } from '@codemirror/language'
-import type { CompletionSource } from '@codemirror/autocomplete'
 // High-frequency languages: static imports (always needed)
-import { javascript, localCompletionSource as jsCompletion } from '@codemirror/lang-javascript'
+import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
 import { yaml } from '@codemirror/lang-yaml'
 import { xml } from '@codemirror/lang-xml'
-import { html, htmlCompletionSource } from '@codemirror/lang-html'
-import { css, cssCompletionSource } from '@codemirror/lang-css'
+import { html } from '@codemirror/lang-html'
+import { css } from '@codemirror/lang-css'
 import { markdown } from '@codemirror/lang-markdown'
-import { go, localCompletionSource as goCompletion } from '@codemirror/lang-go'
-import { python, localCompletionSource as pyCompletion } from '@codemirror/lang-python'
+import { go } from '@codemirror/lang-go'
+import { python } from '@codemirror/lang-python'
 
 /** Lazy-loaded language factory: returns a Promise of Extension. */
 type LangFactory = () => Extension | Promise<Extension>
@@ -56,27 +55,14 @@ export const LANG_EXT: Record<string, LangFactory> = {
 }
 
 /**
- * Languages that provide built-in completion sources in their @codemirror/lang-* packages.
- * Each entry maps to a lazy factory that returns the completion source function.
- * Languages whose completion is embedded in the language extension itself (e.g. markdown
- * auto-completes HTML tags via `completeHTMLTags`) use a `null` factory — they only need
- * the `autocompletion()` extension enabled, no override source.
+ * Languages that register completion sources in their language data
+ * (via `language.data.of({ autocomplete: source })`). When `autocompletion()`
+ * is enabled for these languages, it reads those sources automatically.
  */
-export const COMPLETION_LANGS: Record<string, (() => CompletionSource | Promise<CompletionSource>) | null> = {
-    javascript: () => jsCompletion,
-    typescript: () => jsCompletion,
-    html: () => htmlCompletionSource,
-    css: () => cssCompletionSource,
-    python: () => pyCompletion,
-    sql: () => import('@codemirror/lang-sql').then(m => m.keywordCompletionSource(m.StandardSQL)),
-    go: () => goCompletion,
-    less: () => import('@codemirror/lang-less').then(m => m.lessCompletionSource),
-    sass: () => import('@codemirror/lang-sass').then(m => m.sassCompletionSource),
-    liquid: () => import('@codemirror/lang-liquid').then(m => m.liquidCompletionSource()),
-    // Markdown auto-completes HTML tags when typing `<` — built into the markdown()
-    // extension (completeHTMLTags, default true). Only needs autocompletion() enabled.
-    markdown: null,
-}
+const COMPLETION_LANGS: Set<string> = new Set([
+    'javascript', 'typescript', 'html', 'css', 'python', 'sql', 'go',
+    'less', 'sass', 'liquid', 'markdown',
+])
 
 /**
  * Markdown with nested syntax highlighting inside fenced code blocks.
@@ -125,15 +111,14 @@ export async function buildLangExtension(fileLang: string): Promise<Extension> {
 /**
  * Build a completion extension for a given language.
  * Returns an empty array for languages without a built-in completion source.
+ *
+ * Note: We do NOT use `override` here. Language packages register their completion
+ * sources via `language.data.of({ autocomplete: source })`, and `autocompletion()`
+ * reads those by default. Using `override` would replace the default source
+ * collection and lose keyword completions (e.g. JS `const`/`continue`).
  */
 export async function buildCompletionExtension(fileLang: string): Promise<Extension[]> {
-    if (!Object.hasOwn(COMPLETION_LANGS, fileLang)) return []
+    if (!COMPLETION_LANGS.has(fileLang)) return []
     const { autocompletion } = await import('@codemirror/autocomplete')
-    const factory = COMPLETION_LANGS[fileLang]
-    if (factory) {
-        const source = await factory()
-        return [autocompletion({ override: [source] })]
-    }
-    // null factory (e.g. markdown): just enable autocompletion with defaults
     return [autocompletion()]
 }
