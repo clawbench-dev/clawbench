@@ -36,7 +36,7 @@
     </div>
 
     <!-- Field list with section headers -->
-    <template v-for="entry in renderList" :key="entry.key">
+    <template v-for="(entry, idx) in renderList" :key="entry.key">
       <div v-if="entry.type === 'header'" class="group-panel__section-header">{{ entry.label }}</div>
       <SettingsItem
         v-else
@@ -60,7 +60,7 @@
         :rebuildable="isRagRebuildField(entry.field)"
         :rebuilding="isVectorRebuildField(entry.field) ? ragVectorRebuilding : ragFtsRebuilding"
         :rebuild-title="getRebuildTitle(entry.field)"
-        :no-divider="false"
+        :no-divider="isLastInSection(idx)"
         @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
         @desc-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
@@ -327,6 +327,12 @@ const renderList = computed((): RenderEntry[] => {
 
   return result
 })
+
+/** A field is the last in its section if the next entry is a section header or it's the last entry. */
+function isLastInSection(idx: number): boolean {
+  const next = renderList.value[idx + 1]
+  return !next || next.type === 'header'
+}
 
 // ── Settings config for getLocalValue fallback ──
 
