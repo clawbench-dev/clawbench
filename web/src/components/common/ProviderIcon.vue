@@ -1,11 +1,11 @@
 <template>
-    <svg v-if="svgHtml" class="provider-icon-svg" :class="[iconData?.needsBg ? 'provider-icon-bg' : '', iconData?.monoCssClass]" :style="svgStyle" :viewBox="viewBox" role="img" :aria-label="name || modelName" v-html="svgHtml" />
+    <span v-if="fullSvg" class="provider-icon-wrap" v-html="fullSvg" />
     <span v-else class="provider-icon-initial" :style="initialStyle">{{ initial }}</span>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { getModelProvider, getProviderIcon, getProviderSvgHtml, getProviderViewBox } from '@/utils/providerIcons'
+import { getModelProvider, getProviderFullSvg } from '@/utils/providerIcons'
 
 const props = withDefaults(defineProps<{
     /** Model name to detect provider from */
@@ -19,22 +19,14 @@ const props = withDefaults(defineProps<{
 })
 
 const providerId = computed(() => getModelProvider(props.modelName))
-const iconData = computed(() => providerId.value ? getProviderIcon(providerId.value) : null)
 
-const svgHtml = computed(() => {
+/** Full SVG string rendered via v-html on a <span>.
+ *  Avoids SVG-namespace issues with v-html on <svg> elements
+ *  that cause blank rendering in some mobile WebViews. */
+const fullSvg = computed(() => {
     if (!providerId.value) return null
-    return getProviderSvgHtml(providerId.value)
+    return getProviderFullSvg(providerId.value, props.size, [], props.name || props.modelName)
 })
-
-const viewBox = computed(() => {
-    if (!providerId.value) return '0 0 24 24'
-    return getProviderViewBox(providerId.value)
-})
-
-const svgStyle = computed(() => ({
-    width: `${props.size}px`,
-    height: `${props.size}px`,
-}))
 
 const initial = computed(() => {
     if (props.name) return props.name.charAt(0).toUpperCase()
@@ -49,7 +41,7 @@ const initialStyle = computed(() => ({
 </script>
 
 <style scoped>
-.provider-icon-svg {
+.provider-icon-wrap {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -57,10 +49,14 @@ const initialStyle = computed(() => ({
     line-height: 1;
 }
 
-/* Contrasting background for monochrome icons that would be
-   invisible on same-colored backgrounds. Uses --bg-tertiary which
-   automatically adapts: light=#e9ecef, dark=#21262d */
-.provider-icon-bg {
+/* v-html rendered SVG inherits display from .provider-icon-wrap span.
+   These :deep selectors style the inner SVG element. */
+.provider-icon-wrap :deep(.provider-icon-svg) {
+    display: block;
+    flex-shrink: 0;
+}
+
+.provider-icon-wrap :deep(.provider-icon-bg) {
     border-radius: 20%;
     background: var(--bg-tertiary);
 }

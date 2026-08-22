@@ -297,6 +297,57 @@ export function getProviderSvgHtml(providerId: string): string | null {
 }
 
 /**
+ * Build a complete SVG string for a provider, with injected attributes.
+ * Returns the full <svg>...</svg> tag ready for v-html on a <span>.
+ * This avoids SVG-namespace issues with v-html on an <svg> element
+ * (some mobile WebViews fail to render innerHTML inside SVG).
+ */
+export function getProviderFullSvg(providerId: string, size: number, cssClasses: string[] = [], ariaLabel?: string): string | null {
+    const data = getProviderIcon(providerId)
+    if (!data) return null
+    const raw = data.raw
+
+    // Build class list
+    const classList = ['provider-icon-svg']
+    if (data.needsBg) classList.push('provider-icon-bg')
+    if (data.monoCssClass) classList.push(data.monoCssClass)
+    classList.push(...cssClasses)
+
+    // Remove existing style attribute (has flex:none;line-height:1 from lobe-icons)
+    // and replace with our own. Also remove width/height attributes.
+    const svgTag = raw.match(/<svg[^>]*>/)?.[0] ?? ''
+    const innerMatch = raw.match(/<svg[^>]*>([\s\S]*)<\/svg>/)
+    if (!innerMatch) return null
+
+    let inner = innerMatch[1]
+
+    // Propagate fill="currentColor" if needed (same as extractSvgInner)
+    const svgHasCurrentColorFill = /fill="currentColor"/.test(svgTag)
+    if (svgHasCurrentColorFill) {
+        inner = inner.replace(/<(path|circle|rect|ellipse|polygon|polyline|g|defs)([^>]*)>/g, (match, tag, attrs) => {
+            if (/fill="/.test(attrs)) return match
+            return `<${tag} fill="currentColor"${attrs}>`
+        })
+    }
+
+    // Remove <title> elements
+    inner = inner.replace(/<title>[^<]*<\/title>/g, '')
+
+    // Extract viewBox from original SVG
+    const viewBoxMatch = svgTag.match(/viewBox="([^"]+)"/)
+    const viewBox = viewBoxMatch ? viewBoxMatch[1] : '0 0 24 24'
+
+    // Build the final SVG tag with our attributes
+    const classAttr = classList.length > 0 ? ` class="${classList.join(' ')}"` : ''
+    const styleAttr = ` style="width:${size}px;height:${size}px"`
+    const viewBoxAttr = ` viewBox="${viewBox}"`
+    const roleAttr = ' role="img"'
+    const ariaAttr = ariaLabel ? ` aria-label="${ariaLabel}"` : ''
+
+    return `<svg${classAttr}${styleAttr}${viewBoxAttr}${roleAttr}${ariaAttr} xmlns="http://www.w3.org/2000/svg">${inner}</svg>`
+}
+
+/**
  * Convenience: get viewBox for a provider icon.
  * Returns default viewBox if provider not found.
  */

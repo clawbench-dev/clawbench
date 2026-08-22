@@ -763,7 +763,7 @@ function confirmEdit() {
 .settings-item__option {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   padding: 12px 16px;
   cursor: pointer;
   min-height: 44px;
@@ -801,11 +801,15 @@ function confirmEdit() {
 .settings-item__option-label {
   font-size: 15px;
   color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
 }
 
 .settings-item__option-check {
   font-size: 15px;
   color: var(--accent-color);
   font-weight: 600;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 </style>

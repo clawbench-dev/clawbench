@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getModelProvider, getProviderIcon, extractSvgInner, extractViewBox, getProviderSvgHtml, getProviderViewBox } from '@/utils/providerIcons'
+import { getModelProvider, getProviderIcon, extractSvgInner, extractViewBox, getProviderSvgHtml, getProviderViewBox, getProviderFullSvg } from '@/utils/providerIcons'
 
 describe('providerIcons', () => {
     describe('getModelProvider', () => {
@@ -252,6 +252,61 @@ describe('providerIcons', () => {
 
         it('returns default viewBox for unknown provider', () => {
             expect(getProviderViewBox('unknown')).toBe('0 0 24 24')
+        })
+    })
+
+    describe('getProviderFullSvg', () => {
+        it('returns complete SVG tag for known provider', () => {
+            const svg = getProviderFullSvg('claude', 16, [], 'claude')
+            expect(svg).not.toBeNull()
+            expect(svg!).toContain('<svg')
+            expect(svg!).toContain('</svg>')
+            expect(svg!).toContain('width:16px')
+            expect(svg!).toContain('height:16px')
+            expect(svg!).toContain('viewBox=')
+            expect(svg!).toContain('role="img"')
+            expect(svg!).toContain('aria-label="claude"')
+            expect(svg!).toContain('provider-icon-svg')
+        })
+
+        it('returns null for unknown provider', () => {
+            expect(getProviderFullSvg('unknown', 16)).toBeNull()
+        })
+
+        it('includes needsBg class for monochrome icons that need background', () => {
+            const svg = getProviderFullSvg('openai', 16)
+            expect(svg).not.toBeNull()
+            expect(svg!).toContain('provider-icon-bg')
+        })
+
+        it('includes monoCssClass for monochrome icons', () => {
+            const svg = getProviderFullSvg('openai', 16)
+            expect(svg).not.toBeNull()
+            expect(svg!).toContain('mono-openai')
+        })
+
+        it('preserves currentColor propagation for monochrome providers', () => {
+            const svg = getProviderFullSvg('openai', 16)
+            expect(svg).not.toBeNull()
+            expect(svg!).toContain('fill="currentColor"')
+        })
+
+        it('removes <title> elements', () => {
+            const svg = getProviderFullSvg('claude', 16)
+            expect(svg).not.toBeNull()
+            expect(svg!).not.toContain('<title>')
+        })
+
+        it('supports custom aria-label', () => {
+            const svg = getProviderFullSvg('claude', 14, [], 'Claude Sonnet 4')
+            expect(svg).not.toBeNull()
+            expect(svg!).toContain('aria-label="Claude Sonnet 4"')
+        })
+
+        it('supports custom CSS classes', () => {
+            const svg = getProviderFullSvg('claude', 16, ['custom-class'])
+            expect(svg).not.toBeNull()
+            expect(svg!).toContain('custom-class')
         })
     })
 })
