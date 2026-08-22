@@ -17,7 +17,7 @@ win:
   signAndEditExecutable: false
 mac:
   target: dir
-  icon: build/icon.png
+  icon: build/icon.icns
 linux:
   target: dir
   icon: build/icon.png
