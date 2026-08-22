@@ -1000,10 +1000,13 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   /**
-   * Handle WS reconnection: if the AI finished during the disconnection,
-   * the frontend's loading state is stale. After loadSessionsOnce refreshes
-   * runningSessions, check whether the current session is still running.
-   * If not, clean up the stuck streaming state and reload history.
+   * Handle WS reconnection: resync the current session to reflect changes that
+   * occurred while disconnected. After loadSessionsOnce refreshes
+   * runningSessions:
+   * - if the session is still running, let the stream re-subscribe (no-op);
+   * - if it was streaming but finished while disconnected, clean up the stuck
+   *   loading state and reload history;
+   * - if it was idle, reload history (skipIfUnchanged) to reflect any changes.
    */
   async function handleWsReconnect() {
     if (!currentSessionId.value) return
