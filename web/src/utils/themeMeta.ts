@@ -15,6 +15,10 @@ export const THEME_IDS = [
   'solarized-dark', 'solarized-light',
   'gruvbox-dark', 'gruvbox-light',
   'high-contrast-dark', 'high-contrast-light',
+  'night-owl',
+  'ayu-dark',
+  'shades-of-purple',
+  'vitesse-dark',
 ] as const
 
 export type ThemeId = typeof THEME_IDS[number]
@@ -25,6 +29,7 @@ const DARK_THEME_IDS = new Set<string>([
   'github-dark', 'one-dark-pro', 'catppuccin-mocha', 'dracula',
   'nord', 'tokyo-night', 'solarized-dark', 'gruvbox-dark',
   'high-contrast-dark',
+  'night-owl', 'ayu-dark', 'shades-of-purple', 'vitesse-dark',
 ])
 
 /** Returns `true` if the given theme ID is a dark-color-scheme theme. */
@@ -66,6 +71,10 @@ const STATUS_BAR_COLORS: Record<string, string> = {
   'gruvbox-light':      '#f2e5bc',
   'high-contrast-dark': '#0a0a0a',
   'high-contrast-light':'#f5f5f5',
+  'night-owl':          '#001122',
+  'ayu-dark':           '#0d1017',
+  'shades-of-purple':   '#2d2b55',
+  'vitesse-dark':       '#181818',
 }
 
 /** Returns the status bar / navigation bar background color for a theme ID. */

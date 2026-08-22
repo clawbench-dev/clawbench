@@ -387,6 +387,22 @@ public class MainActivity extends AppCompatActivity {
                 bgPrimary = 0xFFFFFFFF; bgSecondary = 0xFFF5F5F5;
                 textPrimary = 0xFF000000; textMuted = 0xFF444444; textHint = 0xFF444444;
                 isLight = true; break;
+            case "night-owl":
+                bgPrimary = 0xFF011627; bgSecondary = 0xFF001122;
+                textPrimary = 0xFFD6DEEB; textMuted = 0xFF5F7E97; textHint = 0xFF5F7E97;
+                isLight = false; break;
+            case "ayu-dark":
+                bgPrimary = 0xFF0A0E14; bgSecondary = 0xFF0D1017;
+                textPrimary = 0xFFB3B1AD; textMuted = 0xFF626A73; textHint = 0xFF626A73;
+                isLight = false; break;
+            case "shades-of-purple":
+                bgPrimary = 0xFF1E1E3F; bgSecondary = 0xFF2D2B55;
+                textPrimary = 0xFFA599E9; textMuted = 0xFF7E78C7; textHint = 0xFF7E78C7;
+                isLight = false; break;
+            case "vitesse-dark":
+                bgPrimary = 0xFF121212; bgSecondary = 0xFF181818;
+                textPrimary = 0xFFDBD7CA; textMuted = 0xFF758575; textHint = 0xFF758575;
+                isLight = false; break;
             default:
                 bgPrimary = 0xFF0D1117; bgSecondary = 0xFF161B22;
                 textPrimary = 0xFFC9D1D9; textMuted = 0xFF6E7681; textHint = 0xFF6E7681;

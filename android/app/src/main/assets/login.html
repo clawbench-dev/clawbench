@@ -64,7 +64,7 @@
   try {
     var THEME = (ClawBenchNative.getTheme && ClawBenchNative.getTheme()) || 'github-dark';
     document.documentElement.setAttribute('data-theme', THEME);
-    var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','gruvbox-dark','high-contrast-dark'];
+    var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','gruvbox-dark','high-contrast-dark','night-owl','ayu-dark','shades-of-purple','vitesse-dark'];
     var BASE = DARK_IDS.indexOf(THEME) >= 0 ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme-base', BASE);
     // Sync resolved theme back to native on first launch when native has no saved value
@@ -314,6 +314,74 @@
     --accent-rgb: 0, 85, 204;
     --grid-color: rgba(0, 0, 0, 0.1);
     --gradient-color: rgba(0, 85, 204, 0.06);
+  }
+
+  /* ── Night Owl ──────────────────────────────────── */
+  [data-theme="night-owl"] {
+    --bg-primary: #011627;
+    --bg-secondary: #001122;
+    --bg-tertiary: #0b253a;
+    --text-primary: #d6deeb;
+    --text-muted: #5f7e97;
+    --text-hint: #5f7e97;
+    --accent-color: #82aaff;
+    --accent-hover: #addbff;
+    --border-color: #1b3b5b;
+    --color-red: #ef5350;
+    --accent-rgb: 130, 170, 255;
+    --grid-color: rgba(27, 59, 91, 0.3);
+    --gradient-color: rgba(130, 170, 255, 0.06);
+  }
+
+  /* ── Ayu Dark ──────────────────────────────────── */
+  [data-theme="ayu-dark"] {
+    --bg-primary: #0a0e14;
+    --bg-secondary: #0d1017;
+    --bg-tertiary: #131721;
+    --text-primary: #b3b1ad;
+    --text-muted: #626a73;
+    --text-hint: #626a73;
+    --accent-color: #e6b450;
+    --accent-hover: #f0c674;
+    --border-color: #1a1f29;
+    --color-red: #f07178;
+    --accent-rgb: 230, 180, 80;
+    --grid-color: rgba(26, 31, 41, 0.3);
+    --gradient-color: rgba(230, 180, 80, 0.06);
+  }
+
+  /* ── Shades of Purple ──────────────────────────────────── */
+  [data-theme="shades-of-purple"] {
+    --bg-primary: #1e1e3f;
+    --bg-secondary: #2d2b55;
+    --bg-tertiary: #3b396b;
+    --text-primary: #a599e9;
+    --text-muted: #7e78c7;
+    --text-hint: #7e78c7;
+    --accent-color: #fad000;
+    --accent-hover: #ffee80;
+    --border-color: #4d21fc;
+    --color-red: #ff628c;
+    --accent-rgb: 250, 208, 0;
+    --grid-color: rgba(77, 33, 252, 0.3);
+    --gradient-color: rgba(250, 208, 0, 0.06);
+  }
+
+  /* ── Vitesse Dark ──────────────────────────────────── */
+  [data-theme="vitesse-dark"] {
+    --bg-primary: #121212;
+    --bg-secondary: #181818;
+    --bg-tertiary: #222222;
+    --text-primary: #dbd7ca;
+    --text-muted: #758575;
+    --text-hint: #758575;
+    --accent-color: #4d9375;
+    --accent-hover: #6aa88a;
+    --border-color: #2e2e2e;
+    --color-red: #cb7676;
+    --accent-rgb: 77, 147, 117;
+    --grid-color: rgba(46, 46, 46, 0.3);
+    --gradient-color: rgba(77, 147, 117, 0.06);
   }
 
   body {
