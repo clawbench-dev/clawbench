@@ -311,7 +311,10 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 
 
 ### 🎨 主题
-- 亮色 / 暗色模式，跟随系统偏好
+- **17 个命名主题**：VSCode 风格自包含配色方案——GitHub Light/Dark、One Dark Pro、Catppuccin Mocha/Latte、Dracula、Nord、Tokyo Night、Solarized Dark/Light、Gruvbox Dark/Light、High Contrast Dark/Light、Night Owl、Ayu Dark、Vitesse Dark
+- **跟随系统**：`auto` 模式下根据系统深浅色自动选择默认 GitHub Light/Dark
+- **快捷主题选择器**：Header 上的调色板按钮可即时切换主题，并带实时配色预览
+- **持久化与状态栏适配**：选择本地保存、刷新后恢复；Android 状态栏颜色跟随当前主题
 
 ### 📱 PWA 支持
 - 可安装到主屏幕，独立窗口运行
