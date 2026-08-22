@@ -834,34 +834,24 @@ const removeTaskHandler = onEvent((event, data) => {
     }
 })
 
-const handleForeground = () => {
-    // Only refresh after initialization is complete — during cold start
-    // the onMounted handler loads fresh data; refreshing here with stale
-    // state (e.g. old currentDir from WebView cache) would show wrong dir.
-    if (!isAuthenticated.value) return
-    // Full state pull — refresh everything that may have changed while backgrounded
-    loadSessionsOnce()
-    store.loadFiles(store.state.currentDir, false, 0, true)
-    store.loadGitBranch()
-    loadTasks()
-    loadTerminalStatus()
-    if (store.state.currentFile?.path) {
-        refreshCurrentFile()
-    }
-}
-
-// WS reconnect: refresh WS-push state that may have changed while disconnected.
-// Lighter than handleForeground — skips file/dir refresh (SSE reconnects independently)
-// and terminal status (not WS-push state).
+// WS reconnect: refresh all state that may have changed while disconnected.
+// WS reconnect is the sole state-sync trigger — foreground no longer pulls data
+// (in browser mode WS stays alive and state is already live; only a real
+// disconnect→reconnect can make state stale).
 const handleReconnect = () => {
     if (!isAuthenticated.value) return
     // Re-establish project cookie — server restart invalidates the session
     // cookie, and without it all /api/dir, /api/file, /api/ai/chat calls
     // return 403 (requireProject: "project cookie is empty").
     store.loadProject().catch(() => {})
+    store.loadFiles(store.state.currentDir, false, 0, true)
+    store.loadGitBranch()
     loadSessionsOnce()
     loadTasks()
-    store.loadGitBranch()
+    loadTerminalStatus()
+    if (store.state.currentFile?.path) {
+        refreshCurrentFile()
+    }
 }
 
 // Edge swipe back gesture detection (right-edge-left-swipe → go back)
@@ -908,7 +898,6 @@ window.addEventListener('clawbench-back-press', () => {
         }
     }
 })
-window.addEventListener('clawbench-foreground', handleForeground)
 window.addEventListener('clawbench-reconnect', handleReconnect)
 const terminalRequestedCwd = ref(null)
 
@@ -2219,7 +2208,6 @@ onUnmounted(() => {
     activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()
-    window.removeEventListener('clawbench-foreground', handleForeground)
     window.removeEventListener('clawbench-reconnect', handleReconnect)
     destroyGlobalEvents()
     window.removeEventListener('open-file-manager', handleOpenFileManager)
