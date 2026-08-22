@@ -1,7 +1,8 @@
-import { BrowserWindow, Menu, MenuItem, clipboard, shell } from 'electron'
+import { app, BrowserWindow, Menu, MenuItem, clipboard, shell } from 'electron'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
+import { contextMenuLabels } from './contextMenu'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -13,6 +14,10 @@ function loginPagePath(): string {
 
 /** Register native context menu handlers for text selection, editable fields, links, and images. */
 function registerContextMenu(webContents: Electron.WebContents): void {
+  // cut/copy/paste use Electron roles (auto-localized by the OS); only the
+  // custom items are translated from the current app locale.
+  const labels = contextMenuLabels(app.getLocale())
+
   webContents.on('context-menu', (_e, params) => {
     const menu = new Menu()
 
@@ -20,26 +25,26 @@ function registerContextMenu(webContents: Electron.WebContents): void {
     if (params.isEditable) {
       const hasSelection = params.selectionText.trim().length > 0
       if (hasSelection) {
-        menu.append(new MenuItem({ role: 'cut', label: '剪切', enabled: params.editFlags.canCut }))
-        menu.append(new MenuItem({ role: 'copy', label: '复制', enabled: params.editFlags.canCopy }))
+        menu.append(new MenuItem({ role: 'cut', enabled: params.editFlags.canCut }))
+        menu.append(new MenuItem({ role: 'copy', enabled: params.editFlags.canCopy }))
       }
-      menu.append(new MenuItem({ role: 'paste', label: '粘贴', enabled: params.editFlags.canPaste }))
+      menu.append(new MenuItem({ role: 'paste', enabled: params.editFlags.canPaste }))
       if (params.linkURL) {
         menu.append(new MenuItem({
-          label: '复制链接',
+          label: labels.copyLink,
           click: () => { clipboard.writeText(params.linkURL) },
         }))
       }
     } else {
       // 2. Normal text selection outside editable inputs
       if (params.selectionText.trim().length > 0) {
-        menu.append(new MenuItem({ role: 'copy', label: '复制', enabled: params.editFlags.canCopy }))
+        menu.append(new MenuItem({ role: 'copy', enabled: params.editFlags.canCopy }))
       }
 
       // 3. Link (supports both web URLs and in-app file/anchor links)
       if (params.linkURL) {
         menu.append(new MenuItem({
-          label: '复制链接',
+          label: labels.copyLink,
           click: () => { clipboard.writeText(params.linkURL) },
         }))
       }
@@ -47,7 +52,7 @@ function registerContextMenu(webContents: Electron.WebContents): void {
       // 4. Image copying
       if ((params.mediaType === 'image' || params.hasImageContents) && !params.selectionText.trim()) {
         menu.append(new MenuItem({
-          label: '复制图片',
+          label: labels.copyImage,
           click: () => { webContents.copyImageAt(params.x, params.y) },
         }))
       }
