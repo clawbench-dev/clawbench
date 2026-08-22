@@ -114,12 +114,12 @@
 
       <!-- Main toolbar row -->
       <div class="main-toolbar-row">
-        <button class="toolbar-btn modifier gesture-toggle" :class="{ active: gestures.mode.value === 'gesture', 'mode-selection': gestures.mode.value === 'selection' }" @click="handleModeCycle" @contextmenu.prevent :title="t('terminal.modes')">
+        <button class="toolbar-btn modifier gesture-toggle btn-func" :class="{ active: gestures.mode.value === 'gesture', 'mode-selection': gestures.mode.value === 'selection' }" @click="handleModeCycle" @contextmenu.prevent :title="t('terminal.modes')">
           <EyeIcon v-if="gestures.mode.value === 'browse'" :size="14" />
           <HandIcon v-else-if="gestures.mode.value === 'gesture'" :size="14" />
           <TextCursorInputIcon v-else :size="14" />
         </button>
-        <button class="toolbar-btn modifier gesture-toggle" :class="{ active: showSymbolBar }" @click="toggleSymbolBar()" @contextmenu.prevent :title="t('terminal.symbols')">
+        <button class="toolbar-btn modifier gesture-toggle btn-func" :class="{ active: showSymbolBar }" @click="toggleSymbolBar()" @contextmenu.prevent :title="t('terminal.symbols')">
           <OmegaIcon :size="14" />
         </button>
         <div class="scroll-wrapper" :class="{ 'scroll-fade-left': toolbarScrollFade.left, 'scroll-fade-right': toolbarScrollFade.right }">
@@ -137,22 +137,22 @@
             <template v-else>{{ def.label }}</template>
           </button>
           <!-- Quick commands / theme / settings buttons -->
-          <div class="key-group">
-            <button ref="clipboardBtnRef" class="toolbar-btn btn-action" @click="openInput" :title="t('terminal.input')">
+          <div class="key-group btn-func-group">
+            <button ref="clipboardBtnRef" class="toolbar-btn btn-action btn-func" @click="openInput" :title="t('terminal.input')">
               <PenLineIcon :size="14" />
             </button>
-            <button ref="cmdBtnRef" class="toolbar-btn btn-action" @click="openCommands" :title="t('terminal.quickCommands')">
+            <button ref="cmdBtnRef" class="toolbar-btn btn-action btn-func" @click="openCommands" :title="t('terminal.quickCommands')">
               <ZapIcon :size="14" />
             </button>
-            <button class="toolbar-btn btn-action" @click="openThemeMenu" :title="t('terminal.theme')">
+            <button class="toolbar-btn btn-action btn-func" @click="openThemeMenu" :title="t('terminal.theme')">
               <PaletteIcon :size="14" />
             </button>
             <!-- Settings button (always present) -->
-            <button class="toolbar-btn btn-action" @click="keyConfigDrawer.open()" :title="t('terminal.keyConfigTitle')">
+            <button class="toolbar-btn btn-action btn-func" @click="keyConfigDrawer.open()" :title="t('terminal.keyConfigTitle')">
               <KeyboardIcon :size="14" />
             </button>
             <!-- Help button -->
-            <button class="toolbar-btn btn-action" @click="helpDrawer.open()" :title="t('terminal.helpTitle')">
+            <button class="toolbar-btn btn-action btn-func" @click="helpDrawer.open()" :title="t('terminal.helpTitle')">
               <CircleHelpIcon :size="14" />
             </button>
           </div>
@@ -1605,7 +1605,29 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   .toolbar-btn:hover { background: transparent; }
   .toolbar-btn.shortcut:hover { background: transparent; }
   .toolbar-btn.modifier.active:hover, .toolbar-btn.modifier.locked:hover { background: var(--toolbar-key-selected-bg); }
+  .toolbar-btn.btn-func:hover { background: transparent; }
+  .toolbar-btn.btn-func.modifier.active:hover, .toolbar-btn.btn-func.modifier.locked:hover { background: color-mix(in srgb, var(--accent-color) 14%, transparent); }
   .toolbar-btn:active { background: var(--toolbar-key-active); }
+  .toolbar-btn.btn-func:active { background: color-mix(in srgb, var(--accent-color) 18%, transparent); }
+}
+
+.toolbar-btn.btn-func {
+  color: var(--accent-color);
+  border-radius: 6px;
+}
+.toolbar-btn.btn-func:hover { background: color-mix(in srgb, var(--accent-color) 10%, transparent); }
+.toolbar-btn.btn-func:active { background: color-mix(in srgb, var(--accent-color) 18%, transparent); }
+.toolbar-btn.btn-func.modifier.active { background: color-mix(in srgb, var(--accent-color) 14%, transparent); color: var(--accent-color); box-shadow: none; }
+.toolbar-btn.btn-func.modifier.locked { background: color-mix(in srgb, var(--accent-color) 14%, transparent); color: var(--accent-color); box-shadow: none; }
+.btn-func-group + .key-group { position: relative; margin-left: 6px; }
+.btn-func-group + .key-group::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  width: 1px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--toolbar-divider);
 }
 
 .toolbar-btn.btn-modifier, .toolbar-btn.btn-nav, .toolbar-btn.btn-arrow, .toolbar-btn.btn-symbol, .toolbar-btn.btn-action { background: transparent; }
