@@ -675,6 +675,15 @@ type ACPConn struct {
 	cmdWaitOnce  sync.Once
 	cmdWaitState *os.ProcessState
 
+	// procMu serializes every process kill+reap operation (spawnLocked's old
+	// process teardown, killAndMarkDeadLocked, close, killProcessLocked).
+	// exec.Cmd.Wait() / Process.Wait() are NOT safe for concurrent invocation,
+	// and the ACP idle sweep can race a new prompt for the same connection,
+	// both trying to reap the same agent process. Only one goroutine may wait
+	// on a given process at a time; otherwise the concurrent Wait can deadlock
+	// and permanently hang the session (see the idle-sweep vs. new-prompt race).
+	procMu sync.Mutex
+
 	// cached state — populated from NewSession/ResumeSession responses
 	currentModeID           string
 	currentThinkingEffortID string
@@ -1413,6 +1422,34 @@ func (c *ACPConn) ProcessPID() int {
 	return 0
 }
 
+// reapProcess kills the given agent process group and reaps it exactly once,
+// bounded by crashDiagWaitTimeout. procMu serializes every kill+reap so only
+// one goroutine ever waits on a given process at a time — concurrent
+// exec.Cmd.Wait() on the same Cmd is unsafe and can deadlock (idle sweep vs.
+// new prompt). It deliberately uses Process.Wait (via waitProcessExitOnce),
+// NOT exec.Cmd.Wait, so it never blocks on the stderr-copy goroutine that a
+// surviving descendant (e.g. an MCP server) can keep alive indefinitely.
+//
+// Must NOT be called with c.mu held (it blocks up to crashDiagWaitTimeout).
+func (c *ACPConn) reapProcess(oldCmd *exec.Cmd) {
+	if oldCmd == nil || oldCmd.Process == nil {
+		return
+	}
+	c.procMu.Lock()
+	defer c.procMu.Unlock()
+
+	// Close the stdout filter first to unblock pending reads on the pipe so
+	// the reaped process's I/O goroutines can settle.
+	if c.stdoutFilter != nil {
+		c.stdoutFilter.Close()
+		c.stdoutFilter = nil
+	}
+	// Kill the entire process group (npx + child processes) so the pipes are
+	// closed once every descendant exits.
+	killProcessGroup(oldCmd.Process)
+	c.waitProcessExitOnce(oldCmd)
+}
+
 // killAndMarkDead kills the agent process and marks the connection as dead,
 // but preserves acpSID so ensureAliveWithSession can recover the session via
 // LoadSession/ResumeSession on the next prompt. Used by the stall watchdog
@@ -1429,14 +1466,9 @@ func (c *ACPConn) killAndMarkDead() {
 // Must be called with c.mu held; temporarily releases c.mu during Wait().
 func (c *ACPConn) killAndMarkDeadLocked() {
 	if c.cmd != nil && c.cmd.Process != nil {
-		if c.stdoutFilter != nil {
-			c.stdoutFilter.Close()
-			c.stdoutFilter = nil
-		}
-		killProcessGroup(c.cmd.Process)
 		oldCmd := c.cmd
 		c.mu.Unlock()
-		_ = oldCmd.Wait()
+		c.reapProcess(oldCmd)
 		c.mu.Lock()
 		if c.cmd == oldCmd {
 			c.cmd = nil
@@ -1459,23 +1491,9 @@ func (c *ACPConn) close() {
 	c.mu.Lock()
 
 	if c.cmd != nil && c.cmd.Process != nil {
-		// Close the stdout filter first to unblock pending reads on the pipe.
-		// Without this, cmd.Wait() hangs when the process is killed but
-		// stdout hasn't been closed yet (same pattern as killProcessLocked).
-		if c.stdoutFilter != nil {
-			c.stdoutFilter.Close()
-			c.stdoutFilter = nil
-		}
-
-		// Kill the entire process group (not just the parent process).
-		// ACP agents like Claude are spawned via npx, which creates a child
-		// process (claude). Killing only npx leaves the child alive, which
-		// holds the stderr pipe open and causes cmd.Wait() to hang.
-		killProcessGroup(c.cmd.Process)
-
 		oldCmd := c.cmd
 		c.mu.Unlock()
-		_ = oldCmd.Wait()
+		c.reapProcess(oldCmd)
 		c.mu.Lock()
 		if c.cmd == oldCmd {
 			c.cmd = nil

@@ -346,19 +346,9 @@ func (c *ACPConn) killProcessLocked() {
 		return
 	}
 
-	// Close the stdout filter first to unblock pending reads on the pipe.
-	// This prevents cmd.Wait() from hanging when the process is killed but
-	// stdout hasn't been closed yet.
-	if c.stdoutFilter != nil {
-		c.stdoutFilter.Close()
-		c.stdoutFilter = nil
-	}
-
-	// Kill the entire process group (see killProcessGroup for rationale).
-	killProcessGroup(c.cmd.Process)
 	oldCmd := c.cmd
 	c.mu.Unlock()
-	_ = oldCmd.Wait()
+	c.reapProcess(oldCmd)
 	c.mu.Lock()
 	if c.cmd == oldCmd {
 		c.cmd = nil
@@ -381,16 +371,9 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 			_ = c.conn.Cancel(cancelCtx, acp.CancelNotification{SessionId: acp.SessionId(c.acpSID)})
 			cancelCancel()
 		}
-		// Close the old stdout filter to unblock pending reads before killing
-		if c.stdoutFilter != nil {
-			c.stdoutFilter.Close()
-			c.stdoutFilter = nil
-		}
-		// Kill the entire process group (npx + child processes).
-		killProcessGroup(c.cmd.Process)
 		oldCmd := c.cmd
 		c.mu.Unlock()
-		_ = oldCmd.Wait()
+		c.reapProcess(oldCmd)
 		c.mu.Lock()
 		slog.Info("acp perf: spawnLocked.kill_old_process", "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(killStart))
 		if c.cmd == oldCmd {
