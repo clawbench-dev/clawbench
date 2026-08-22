@@ -175,13 +175,14 @@
           role="menuitem"
           tabindex="-1"
           :class="{ active: currentThemeValue === opt.value }"
+          :style="getThemePreviewStyle(opt.value)"
           @click="selectTheme(opt.value)"
           @keydown.enter="selectTheme(opt.value)"
           @keydown.space.prevent="selectTheme(opt.value)"
         >
           <span class="theme-picker-check">{{ currentThemeValue === opt.value ? '✓' : '' }}</span>
           <span class="theme-picker-label">{{ opt.label }}</span>
-          <component v-if="opt.value !== 'auto'" :is="isDarkTheme(opt.value) ? Moon : Sun" :size="12" class="theme-picker-base-icon" />
+          <component :is="getThemeBaseIcon(opt.value)" :size="12" class="theme-picker-base-icon" />
         </div>
       </div>
     </PopupMenu>
@@ -223,7 +224,7 @@ import { useSystemResources } from '@/composables/useSystemResources'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
-import { isDarkTheme, THEME_IDS } from '@/utils/themeMeta'
+import { isDarkTheme, resolveThemeId, THEME_IDS, THEME_PREVIEW_COLORS } from '@/utils/themeMeta'
 import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
 import type { ShortcutContext } from '@/config/shortcutTips'
 import { resolveShortcutContext } from '@/config/shortcutTips'
@@ -250,6 +251,10 @@ const shortcutTipsOpen = ref(false)
 const themeBtnRef = ref<HTMLElement | null>(null)
 const themeMenuOpen = ref(false)
 const currentThemeValue = computed(() => localConfig.theme || 'auto')
+const autoPreviewColors = computed(() => {
+  const resolved = resolveThemeId('auto')
+  return THEME_PREVIEW_COLORS[resolved] ?? null
+})
 
 const themeOptions = computed(() => [
   { label: t('settings.items.themeAuto'), value: 'auto' },
@@ -277,6 +282,22 @@ function toggleThemeMenu() {
 function selectTheme(value: string) {
   themeMenuOpen.value = false
   setLocalConfig('theme', value)
+}
+
+function getThemePreviewStyle(value: string) {
+  if (value === 'auto') {
+    const c = autoPreviewColors.value
+    if (!c) return undefined
+    return { '--theme-preview-bg': c.bg, '--theme-preview-fg': c.text, '--theme-preview-accent': c.accent }
+  }
+  const c = THEME_PREVIEW_COLORS[value]
+  if (!c) return undefined
+  return { '--theme-preview-bg': c.bg, '--theme-preview-fg': c.text, '--theme-preview-accent': c.accent }
+}
+
+function getThemeBaseIcon(value: string) {
+  const resolved = value === 'auto' ? resolveThemeId('auto') : value
+  return isDarkTheme(resolved) ? Moon : Sun
 }
 
 const props = defineProps({
@@ -760,6 +781,7 @@ function onClickOutside(e: MouseEvent) {
     if (currentFileBadge && currentFileBadge.contains(target)) return
     const branchBadge = document.querySelector('.branch-badge')
     if (branchBadge && branchBadge.contains(target)) return
+    if (themeBtnRef.value && themeBtnRef.value.contains(target)) return
     dropdownOpen.value = false
     fileDropdownOpen.value = false
     branchDropdownOpen.value = false
@@ -1393,6 +1415,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     transition: background 0.1s;
     font-size: 12px;
     color: var(--text-primary);
+    background: var(--theme-preview-bg, transparent);
+    color: var(--theme-preview-fg, var(--text-primary));
 }
 
 .theme-picker-item:hover {
@@ -1412,7 +1436,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .theme-picker-item.active .theme-picker-check {
-    color: #fff;
+    color: rgba(255,255,255,0.7);
 }
 
 .theme-picker-label {
@@ -1426,7 +1450,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 .theme-picker-base-icon {
     flex-shrink: 0;
-    color: var(--text-muted);
+    color: var(--theme-preview-accent, var(--text-muted));
 }
 
 .theme-picker-item.active .theme-picker-base-icon {
