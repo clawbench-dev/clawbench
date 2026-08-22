@@ -1767,15 +1767,15 @@ defineExpose({
   margin: 0 0 6px;
   padding: 6px 10px;
   border-radius: 10px;
-  background: var(--color-accent-soft, rgba(88, 120, 255, 0.12));
-  border: 1px solid rgba(88, 120, 255, 0.35);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   font-size: 12px;
   color: var(--color-text-primary);
 }
 
 .recommendation-icon {
   flex-shrink: 0;
-  color: var(--color-accent, #5878ff);
+  color: var(--accent-color, #0066cc);
 }
 
 .recommendation-text {
@@ -1795,7 +1795,7 @@ defineExpose({
 .recommendation-accept {
   flex-shrink: 0;
   border: none;
-  background: var(--color-accent, #5878ff);
+  background: var(--accent-color, #0066cc);
   color: #fff;
   border-radius: 8px;
   padding: 3px 10px;
