@@ -20,8 +20,9 @@ export function buildSwaggerSrcdoc(specJson: string, isDark: boolean = false, sc
   if (!specJson) return ''
 
   // Swagger UI's dark-mode CSS uses the "dark-mode" class on <html>.
-  // ClawBench uses data-theme="dark", so we bridge the two.
   const htmlClass = isDark ? ' class="dark-mode"' : ''
+  // Use "agate" syntax highlight for dark, default for light
+  const syntaxTheme = isDark ? '"agate"' : '""'
 
   return `<!DOCTYPE html>
 <html${htmlClass}><head>
@@ -64,7 +65,7 @@ try {
     deepLinking: true,
     showExtensions: true,
     showCommonExtensions: true,
-    syntaxHighlight: { activate: true, theme: "agate" },
+    syntaxHighlight: { activate: true, theme: ${syntaxTheme} },
     requestInterceptor: (req) => {
       // Route http/https requests through the CORS proxy so "Try it out"
       // works even when the target API doesn't return CORS headers.

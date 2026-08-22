@@ -15,9 +15,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, inject } from 'vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { buildSwaggerSrcdoc } from '@/utils/swaggerHtml.ts'
+import { isDarkTheme } from '@/utils/themeMeta'
 
 const props = defineProps({
   file: Object,
@@ -35,14 +36,23 @@ const specData = computed(() => {
   return props.file?.content || ''
 })
 
-// Detect dark theme from ClawBench's data-theme-base attribute
-const isDark = computed(() => document.documentElement.getAttribute('data-theme-base') === 'dark')
+// Reactively track theme via App.vue provide('theme', theme)
+const theme = inject('theme', ref('github-dark'))
+const isDark = computed(() => isDarkTheme(theme.value))
 
-// Read scrollbar colors from CSS variables (same as project-wide scrollbar style)
-const scrollbarThumb = getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-thumb').trim() || '#c1c1c1'
-const scrollbarTrack = getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-track').trim() || 'transparent'
+// Fixed scrollbar colors — one for light, one for dark.
+// No per-theme customization needed; Swagger UI has its own color scheme.
+const scrollbarColors = computed(() => isDark.value
+  ? { thumb: '#585858', track: '#1e1e1e' }
+  : { thumb: '#c1c1c1', track: '#f5f5f5' }
+)
 
-const swaggerSrcdoc = computed(() => buildSwaggerSrcdoc(specData.value, isDark.value, scrollbarThumb, scrollbarTrack))
+const swaggerSrcdoc = computed(() => buildSwaggerSrcdoc(
+  specData.value,
+  isDark.value,
+  scrollbarColors.value.thumb,
+  scrollbarColors.value.track,
+))
 
 // Reset loading when spec changes
 watch(() => [props.file?.content, props.file?.specJson], () => {
