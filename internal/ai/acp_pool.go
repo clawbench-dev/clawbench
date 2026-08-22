@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -90,6 +92,10 @@ const (
 	// idleConnTimeout is the maximum duration a connection can be idle
 	// before it is closed and removed from the pool.
 	idleConnTimeout = 5 * time.Minute
+	// minAliveConns is the minimum number of alive connections to keep
+	// regardless of idle timeout. Even if more connections are idle,
+	// the sweep will not kill them if only minAliveConns remain alive.
+	minAliveConns = 3
 	// defaultACPStallTimeout is the default no-progress watchdog window for a
 	// running ACP prompt. The idle sweep skips actively-running sessions, and
 	// conn.Prompt has no hard timeout, so without this a hung agent process
@@ -146,13 +152,53 @@ func (m *ACPConnManager) idleSweep() {
 	}
 }
 
+// idleEntry records an idle ACP connection candidate for the sweep to kill.
+type idleEntry struct {
+	sid          string
+	lastActivity int64 // nano timestamp
+}
+
 // sweepOnce performs a single idle sweep pass.
 // Connections that have been idle longer than idleConnTimeout are killed
 // (but acpSID is preserved so the session can be recovered via ResumeSession).
 // Connections with actively running sessions are skipped.
+// At least minAliveConns alive connections are always preserved, even if idle.
+// When more idle connections exist than can be killed, the least recently used
+// ones are killed first (LRU eviction order).
 func (m *ACPConnManager) sweepOnce() {
-	var toClose []string
+	toClose, aliveCount := m.collectIdleConns()
 
+	// Sort oldest-first so that the least recently used connections are
+	// killed first when the list must be truncated to maxKill.
+	slices.SortFunc(toClose, func(a, b idleEntry) int {
+		return cmp.Compare(a.lastActivity, b.lastActivity)
+	})
+
+	// Preserve at least minAliveConns alive connections.
+	// maxKill may exceed len(toClose) when some alive connections are
+	// recently-used or running (not in toClose); the cap only matters
+	// when all idle candidates exceed the minimum.
+	//
+	// Note: aliveCount is based on the alive flag at scan time, but a
+	// connection can become dead between the scan and the kill loop
+	// (e.g., CloseConn). The kill loop re-checks conn.alive and skips
+	// already-dead connections, so the actual number killed may be
+	// fewer than maxKill. This is conservative: we end up preserving
+	// more connections than the minimum, which is always safe.
+	maxKill := aliveCount - minAliveConns
+	if maxKill <= 0 {
+		return // cannot kill any without dropping below minimum
+	}
+	if len(toClose) > maxKill {
+		toClose = toClose[:maxKill]
+	}
+
+	m.killIdleConns(toClose)
+}
+
+// collectIdleConns scans the pool and returns idle connection candidates
+// along with the total number of alive connections.
+func (m *ACPConnManager) collectIdleConns() (toClose []idleEntry, aliveCount int) {
 	m.mu.Lock()
 	now := time.Now()
 	for sid, conn := range m.conns {
@@ -167,6 +213,7 @@ func (m *ACPConnManager) sweepOnce() {
 		if !alive {
 			continue // already dead, will be respawned on next use
 		}
+		aliveCount++
 		if now.Sub(time.Unix(0, lastActivity)) < idleConnTimeout {
 			continue // not idle enough yet
 		}
@@ -174,11 +221,19 @@ func (m *ACPConnManager) sweepOnce() {
 		if m.isSessionRunning != nil && m.isSessionRunning(sid) {
 			continue
 		}
-		toClose = append(toClose, sid)
+		toClose = append(toClose, idleEntry{sid: sid, lastActivity: lastActivity})
 	}
 	m.mu.Unlock()
+	return
+}
 
-	for _, sid := range toClose {
+// killIdleConns re-checks and kills the given idle connection candidates.
+// Each connection is re-checked under conn.mu to handle TOCTOU races:
+// if the connection was used or started running between the scan and now,
+// it is skipped.
+func (m *ACPConnManager) killIdleConns(toClose []idleEntry) {
+	for _, entry := range toClose {
+		sid := entry.sid
 		m.mu.Lock()
 		conn, ok := m.conns[sid]
 		m.mu.Unlock()

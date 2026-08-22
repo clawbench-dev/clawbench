@@ -1126,9 +1126,10 @@ func TestSweepOnce_KillsIdleConnections(t *testing.T) {
 
 	agent := &model.Agent{ID: "test-sweep-idle", Backend: "acp-stdio", AcpCommand: "echo"}
 
-	// Create 2 alive, idle connections (idle > 5 min)
-	idleSids := make([]string, 0, 2)
-	for _, sid := range []string{"session-sweep-idle-1", "session-sweep-idle-2"} {
+	// Create 4 alive, idle connections (idle > 5 min)
+	// Total alive = 4 idle + 1 active = 5, so sweep can kill up to 5-3=2 idle ones.
+	idleSids := make([]string, 0, 4)
+	for _, sid := range []string{"session-sweep-idle-1", "session-sweep-idle-2", "session-sweep-idle-3", "session-sweep-idle-4"} {
 		conn := newACPConn(agent, sid)
 		conn.SetAliveForTest()
 		conn.mu.Lock()
@@ -1155,17 +1156,25 @@ func TestSweepOnce_KillsIdleConnections(t *testing.T) {
 
 	mgr.sweepOnce()
 
-	// Idle connections should be killed
-	for _, sid := range []string{"session-sweep-idle-1", "session-sweep-idle-2"} {
+	// 5 alive total, minAliveConns=3 → at most 2 idle connections can be killed.
+	// Count how many idle connections survived.
+	survivedCount := 0
+	for _, sid := range idleSids {
 		conn := mgr.GetConn(sid)
 		if conn == nil {
 			continue
 		}
 		conn.mu.Lock()
-		alive := conn.alive
+		if conn.alive {
+			survivedCount++
+		}
 		conn.mu.Unlock()
-		assert.False(t, alive, "idle connection %s should be killed", sid)
 	}
+	// At least minAliveConns-1 idle connections must survive (the active one
+	// counts toward minAliveConns too, so at least minAliveConns-1 of the idle
+	// ones plus the active one = minAliveConns total).
+	assert.GreaterOrEqual(t, survivedCount, minAliveConns-1,
+		"at least minAliveConns-1 idle connections should survive alongside the active one")
 
 	// Recently-used connection should survive
 	activeConn = mgr.GetConn(activeSid)
@@ -1179,7 +1188,8 @@ func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 
 	agent := &model.Agent{ID: "test-sweep-running", Backend: "acp-stdio", AcpCommand: "echo"}
 
-	// Create 2 alive, idle connections: one running, one not running
+	// Create 1 running (idle but active prompt) + 3 non-running idle connections.
+	// Total alive = 4, minAliveConns=3 → sweep can kill up to 1.
 	runningSid := "session-sweep-running"
 	runningConn := newACPConn(agent, runningSid)
 	runningConn.SetAliveForTest()
@@ -1189,14 +1199,20 @@ func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 	mgr.SetConnForTest(runningSid, runningConn)
 	defer mgr.CloseConn(runningSid)
 
-	idleSid := "session-sweep-not-running"
-	idleConn := newACPConn(agent, idleSid)
-	idleConn.SetAliveForTest()
-	idleConn.mu.Lock()
-	idleConn.lastUsed = time.Now().Add(-10 * time.Minute)
-	idleConn.mu.Unlock()
-	mgr.SetConnForTest(idleSid, idleConn)
-	defer mgr.CloseConn(idleSid)
+	idleSids := []string{"session-sweep-not-running-1", "session-sweep-not-running-2", "session-sweep-not-running-3"}
+	for _, sid := range idleSids {
+		conn := newACPConn(agent, sid)
+		conn.SetAliveForTest()
+		conn.mu.Lock()
+		conn.lastUsed = time.Now().Add(-10 * time.Minute)
+		conn.mu.Unlock()
+		mgr.SetConnForTest(sid, conn)
+	}
+	defer func() {
+		for _, sid := range idleSids {
+			mgr.CloseConn(sid)
+		}
+	}()
 
 	// Mark the "running" session as actively running
 	mgr.SetSessionRunningChecker(func(sid string) bool {
@@ -1211,10 +1227,21 @@ func TestSweepOnce_SkipsRunningSessions(t *testing.T) {
 	assert.True(t, runningConn.alive, "running session should not be killed")
 	runningConn.mu.Unlock()
 
-	idleConn = mgr.GetConn(idleSid)
-	idleConn.mu.Lock()
-	assert.False(t, idleConn.alive, "idle (non-running) session should be killed")
-	idleConn.mu.Unlock()
+	// 4 alive, running session is skipped by isSessionRunning.
+	// Among the 3 idle non-running, sweep can kill at most 4-3=1.
+	killedCount := 0
+	for _, sid := range idleSids {
+		conn := mgr.GetConn(sid)
+		if conn == nil {
+			continue
+		}
+		conn.mu.Lock()
+		if !conn.alive {
+			killedCount++
+		}
+		conn.mu.Unlock()
+	}
+	assert.LessOrEqual(t, killedCount, 1, "at most 1 idle connection should be killed (minAliveConns)")
 }
 
 func TestSweepOnce_NilConnInMap(t *testing.T) {
@@ -1234,4 +1261,93 @@ func TestSweepOnce_NilConnInMap(t *testing.T) {
 	mgr.mu.Lock()
 	delete(mgr.conns, "nil-slot")
 	mgr.mu.Unlock()
+}
+
+func TestSweepOnce_PreservesMinAliveConns(t *testing.T) {
+	// When the number of alive connections is at or below minAliveConns (3),
+	// idle sweep must not kill any of them, even if they exceed idleConnTimeout.
+	mgr := GetACPConnManager()
+	agent := &model.Agent{ID: "test-sweep-min", Backend: "acp-stdio", AcpCommand: "echo"}
+
+	sids := []string{
+		"session-min-alive-1",
+		"session-min-alive-2",
+		"session-min-alive-3",
+	}
+	for _, sid := range sids {
+		conn := newACPConn(agent, sid)
+		conn.SetAliveForTest()
+		conn.mu.Lock()
+		conn.lastUsed = time.Now().Add(-10 * time.Minute) // idle for 10 min
+		conn.mu.Unlock()
+		mgr.SetConnForTest(sid, conn)
+	}
+	defer func() {
+		for _, sid := range sids {
+			mgr.CloseConn(sid)
+		}
+	}()
+
+	mgr.sweepOnce()
+
+	// All 3 idle connections must survive because minAliveConns = 3
+	for _, sid := range sids {
+		conn := mgr.GetConn(sid)
+		conn.mu.Lock()
+		assert.True(t, conn.alive, "connection %s should survive (minAliveConns)", sid)
+		conn.mu.Unlock()
+	}
+}
+
+func TestSweepOnce_KillsExcessBeyondMinAliveConns(t *testing.T) {
+	// When alive connections > minAliveConns, sweep kills the excess idle ones
+	// but preserves exactly minAliveConns. Least recently used are killed first.
+	mgr := GetACPConnManager()
+	agent := &model.Agent{ID: "test-sweep-min-excess", Backend: "acp-stdio", AcpCommand: "echo"}
+
+	// 5 connections with increasing lastUsed (1=oldest, 5=newest).
+	// After sweep, connections 4 and 5 (most recently used) should survive,
+	// connections 1, 2, 3 (oldest) should be killed — wait, that's wrong.
+	// Actually minAliveConns=3 and 5 alive → maxKill=2, so the 2 oldest
+	// (1 and 2) are killed, leaving 3, 4, 5 alive.
+	type entry struct {
+		sid      string
+		idleAgo  time.Duration
+	}
+	entries := []entry{
+		{"session-min-excess-1", 30 * time.Minute}, // oldest → killed
+		{"session-min-excess-2", 20 * time.Minute}, // 2nd oldest → killed
+		{"session-min-excess-3", 10 * time.Minute}, // survives
+		{"session-min-excess-4", 8 * time.Minute},  // survives
+		{"session-min-excess-5", 6 * time.Minute},  // survives
+	}
+	for _, e := range entries {
+		conn := newACPConn(agent, e.sid)
+		conn.SetAliveForTest()
+		conn.mu.Lock()
+		conn.lastUsed = time.Now().Add(-e.idleAgo)
+		conn.mu.Unlock()
+		mgr.SetConnForTest(e.sid, conn)
+	}
+	defer func() {
+		for _, e := range entries {
+			mgr.CloseConn(e.sid)
+		}
+	}()
+
+	mgr.sweepOnce()
+
+	// The 2 oldest (1, 2) should be killed; 3, 4, 5 should survive.
+	for _, idx := range []int{0, 1} {
+		conn := mgr.GetConn(entries[idx].sid)
+		conn.mu.Lock()
+		assert.False(t, conn.alive, "oldest connection %s should be killed (LRU)", entries[idx].sid)
+		conn.mu.Unlock()
+	}
+	for _, idx := range []int{2, 3, 4} {
+		conn := mgr.GetConn(entries[idx].sid)
+		conn.mu.Lock()
+		assert.True(t, conn.alive, "more recent connection %s should survive (LRU)", entries[idx].sid)
+		conn.mu.Unlock()
+	}
 }
