@@ -1508,6 +1508,8 @@ export default {
       uploadMaxSizeDesc: '单个文件上传的大小上限',
       uploadMaxFiles: '上传文件数限制',
       uploadMaxFilesDesc: '单次上传允许的最大文件数量',
+      terminalTheme: '配色主题',
+      terminalThemeDesc: '终端配色方案，"跟随 App" 自动匹配当前应用主题',
       terminalFontSize: '字体大小',
       terminalFontSizeDesc: '终端显示的字体大小',
       terminalEnabled: '启用终端',

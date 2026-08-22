@@ -168,6 +168,7 @@ import { useFrp } from '@/composables/useFrp'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
 import { apiPost } from '@/utils/api'
+import { THEME_IDS as TERMINAL_THEME_IDS, formatThemeName } from '@/utils/terminalThemes'
 
 // ── Props & Emits ──
 
@@ -394,6 +395,13 @@ function resolveFieldOptions(field: ItemSpec): { label: string; value: unknown }
     if (voiceOpts.length > 0) {
       return voiceOpts.map(o => ({ label: t(o.labelKey), value: o.value }))
     }
+  }
+  // Dynamic terminal theme options
+  if (field.key === 'terminalTheme') {
+    return [
+      { label: t('terminal.themeFollowApp'), value: 'auto' },
+      ...TERMINAL_THEME_IDS.map(id => ({ label: formatThemeName(id), value: id })),
+    ]
   }
   // Static options from field spec
   if (field.options) {

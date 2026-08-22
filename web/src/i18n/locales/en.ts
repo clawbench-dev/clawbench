@@ -1507,6 +1507,8 @@ export default {
       uploadMaxSizeDesc: 'Maximum size for a single file upload',
       uploadMaxFiles: 'Upload File Limit',
       uploadMaxFilesDesc: 'Maximum number of files allowed per upload',
+      terminalTheme: 'Color Theme',
+      terminalThemeDesc: 'Terminal color scheme. "Follow App" matches the current app theme automatically',
       terminalFontSize: 'Font Size',
       terminalFontSizeDesc: 'Font size for terminal display',
       terminalEnabled: 'Enable Terminal',

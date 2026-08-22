@@ -231,20 +231,24 @@
           <button
             class="theme-item"
             :class="{ active: themeSelection === TERMINAL_THEME_AUTO }"
+            :style="autoThemePreviewStyle"
             @click="selectTheme(TERMINAL_THEME_AUTO)"
           >
+            <span class="theme-item-check">{{ themeSelection === TERMINAL_THEME_AUTO ? '✓' : '' }}</span>
             <span class="theme-item-name">{{ t('terminal.themeFollowApp') }}</span>
-            <span v-if="themeSelection === TERMINAL_THEME_AUTO" class="theme-item-check">✓</span>
+            <component :is="autoThemeIsDark ? Moon : Sun" :size="12" class="theme-item-base-icon" />
           </button>
           <button
             v-for="id in filteredThemes"
             :key="id"
             class="theme-item"
             :class="{ active: themeSelection === id }"
+            :style="getTerminalThemePreviewStyle(id)"
             @click="selectTheme(id)"
           >
+            <span class="theme-item-check">{{ themeSelection === id ? '✓' : '' }}</span>
             <span class="theme-item-name">{{ formatThemeName(id) }}</span>
-            <span v-if="themeSelection === id" class="theme-item-check">✓</span>
+            <component :is="isTerminalThemeDark(id) ? Moon : Sun" :size="12" class="theme-item-base-icon" />
           </button>
         </div>
       </div>
@@ -301,7 +305,7 @@ import {
   lightTheme,
 } from '@/utils/terminalThemes'
 
-import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon, CircleHelp as CircleHelpIcon, Settings as SettingsIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Omega as OmegaIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Keyboard as KeyboardIcon, PenLine as PenLineIcon, Eye as EyeIcon, TextCursorInput as TextCursorInputIcon, Palette as PaletteIcon, CircleHelp as CircleHelpIcon, Settings as SettingsIcon, Sun, Moon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -509,6 +513,44 @@ function selectTheme(selection: string) {
   themeMenuOpen.value = false
   themeSearch.value = ''
   applyTheme(selection)
+}
+
+// Theme preview helpers
+const autoThemeIsDark = computed(() => isAppDarkTheme())
+
+const autoThemePreviewStyle = computed(() => {
+  const t = autoThemeIsDark.value ? darkTheme : lightTheme
+  return {
+    '--tterm-preview-bg': t.background,
+    '--tterm-preview-fg': t.foreground,
+    '--tterm-preview-accent': t.cursor || t.foreground,
+  }
+})
+
+function isTerminalThemeDark(id: string): boolean {
+  if (!allThemes.value) return true
+  const t = allThemes.value[id]
+  if (!t || !t.background) return true
+  const bg = t.background as string
+  // Parse hex color luminance
+  const hex = bg.replace('#', '')
+  if (hex.length !== 6) return true
+  const r = parseInt(hex.substring(0, 2), 16)
+  const g = parseInt(hex.substring(2, 4), 16)
+  const b = parseInt(hex.substring(4, 6), 16)
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance < 0.5
+}
+
+function getTerminalThemePreviewStyle(id: string): Record<string, string> | undefined {
+  if (!allThemes.value) return undefined
+  const t = allThemes.value[id] as { background?: string; foreground?: string; cursor?: string } | undefined
+  if (!t || !t.background) return undefined
+  return {
+    '--tterm-preview-bg': t.background,
+    '--tterm-preview-fg': t.foreground || (isTerminalThemeDark(id) ? '#e6edf3' : '#1f2328'),
+    '--tterm-preview-accent': t.cursor || t.foreground || (isTerminalThemeDark(id) ? '#89b4fa' : '#1e66f5'),
+  }
 }
 
 // Tab manager
@@ -1617,6 +1659,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 .toolbar-btn.btn-func:hover { background: color-mix(in srgb, var(--accent-color) 10%, transparent); }
 .toolbar-btn.btn-func:active { background: color-mix(in srgb, var(--accent-color) 18%, transparent); }
+/* Mode-selection keeps its outline, override the gesture-toggle active style for btn-func */
 .toolbar-btn.btn-func.modifier.active { background: color-mix(in srgb, var(--accent-color) 14%, transparent); color: var(--accent-color); box-shadow: none; }
 .toolbar-btn.btn-func.modifier.locked { background: color-mix(in srgb, var(--accent-color) 14%, transparent); color: var(--accent-color); box-shadow: none; }
 .btn-func-group + .key-group { position: relative; margin-left: 6px; }
@@ -1698,24 +1741,31 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 /* Terminal theme picker (unscoped because PopupMenu teleports to body) */
-.theme-picker { padding: 6px; }
-.theme-picker-title { font-size: 12px; font-weight: 600; color: var(--text-muted); padding: 2px 6px 6px; }
+.theme-picker { padding: 3px 0; min-width: 160px; }
+.theme-picker-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 5px 10px 4px; border-bottom: 1px solid var(--border-color); }
 .theme-search-input {
-  width: 100%; box-sizing: border-box; padding: 6px 8px; margin-bottom: 6px;
-  border: 1px solid var(--border-color); border-radius: 6px;
-  background: var(--bg-secondary); color: var(--text-primary); font-size: 13px; outline: none;
+  width: 100%; box-sizing: border-box; padding: 5px 10px; margin: 3px 0;
+  border: none; border-bottom: 1px solid var(--border-color); border-radius: 0;
+  background: var(--bg-primary); color: var(--text-primary); font-size: 12px; outline: none;
 }
-.theme-search-input:focus { border-color: var(--accent-color); }
-.theme-picker-status { padding: 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.theme-search-input:focus { border-bottom-color: var(--accent-color); }
+.theme-picker-status { padding: 10px 12px; text-align: center; color: var(--text-muted); font-size: 12px; }
 .theme-picker-error { display: flex; flex-direction: column; gap: 8px; align-items: center; }
-.theme-retry-btn { padding: 4px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 13px; }
+.theme-retry-btn { padding: 4px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 12px; }
 .theme-picker-list { max-height: 220px; overflow-y: auto; }
 .theme-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  width: 100%; padding: 6px 8px; border: none; border-radius: 6px;
-  background: transparent; color: var(--text-primary); font-size: 13px; text-align: left; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 5px 10px; border: none; border-radius: 0;
+  background: var(--tterm-preview-bg, transparent);
+  color: var(--tterm-preview-fg, var(--text-primary));
+  font-size: 12px; text-align: left; cursor: pointer;
+  transition: background 0.1s;
 }
-.theme-item:hover { background: var(--bg-hover, rgba(128,128,128,0.1)); }
-.theme-item.active { background: color-mix(in srgb, var(--accent-color) 12%, transparent); color: var(--accent-color); }
-.theme-item-check { color: var(--accent-color); font-weight: 700; }
+.theme-item:hover { background: var(--bg-tertiary); }
+.theme-item.active { background: var(--accent-color); color: #fff; }
+.theme-item-check { flex-shrink: 0; width: 14px; text-align: center; font-size: 12px; }
+.theme-item.active .theme-item-check { color: rgba(255,255,255,0.7); }
+.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }
+.theme-item.active .theme-item-base-icon { color: rgba(255,255,255,0.7); }
 </style>
