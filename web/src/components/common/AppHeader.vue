@@ -1424,19 +1424,24 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .theme-picker-item.active {
-    background: var(--accent-color);
-    color: #fff;
+    background: var(--theme-preview-bg, transparent);
+    color: var(--theme-preview-fg, var(--text-primary));
 }
 
 .theme-picker-check {
     flex-shrink: 0;
-    width: 14px;
-    text-align: center;
-    font-size: 12px;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    border-radius: 50%;
 }
 
 .theme-picker-item.active .theme-picker-check {
-    color: rgba(255,255,255,0.7);
+    background: var(--accent-color);
+    color: #fff;
 }
 
 .theme-picker-label {
@@ -1454,6 +1459,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .theme-picker-item.active .theme-picker-base-icon {
-    color: rgba(255,255,255,0.7);
+    color: var(--theme-preview-accent, var(--text-muted));
 }
 </style>

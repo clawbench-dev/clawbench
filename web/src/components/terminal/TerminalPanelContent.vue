@@ -1742,10 +1742,10 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   transition: background 0.1s;
 }
 .theme-item:hover { background: var(--bg-tertiary); }
-.theme-item.active { background: var(--accent-color); color: #fff; }
-.theme-item-check { flex-shrink: 0; width: 14px; text-align: center; font-size: 12px; }
-.theme-item.active .theme-item-check { color: rgba(255,255,255,0.7); }
+.theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
+.theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: 10px; border-radius: 50%; }
+.theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }
 .theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }
-.theme-item.active .theme-item-base-icon { color: rgba(255,255,255,0.7); }
+.theme-item.active .theme-item-base-icon { color: var(--tterm-preview-accent, var(--text-muted)); }
 </style>
