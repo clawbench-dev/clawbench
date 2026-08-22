@@ -31,6 +31,10 @@ var (
 var (
 	sessionCancels       sync.Map // map[string]context.CancelFunc
 	sessionCancelReasons sync.Map // map[string]string — "user", "disconnect"
+	// terminalPushDone tracks whether a terminal push notification has already been
+	// claimed for a session. Guarded via LoadOrStore so only one of the done/cancel
+	// race paths can send a push; cleared when a new run starts (TrySetSessionRunning).
+	terminalPushDone sync.Map // map[string]struct{}
 )
 
 // responsePreviewMaxRunes is an alias for model.ResponsePreviewMaxRunes for local use.
@@ -89,14 +93,75 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolNameAnd
 	}
 	mgr.BroadcastEvent(msg)
 
-	// DingTalk push notification for session events.
-	// Pass raw (untruncated) preview — DingTalk package applies its own limit.
+	// DingTalk/Feishu push notification for session events.
+	// Pass raw (untruncated) preview — DingTalk/Feishu packages apply their own limit.
 	// If push succeeds, remove from pending_events to avoid duplicate
 	// Android notification when the app comes back online.
 	if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath, data.ToolName, data.ToolInput) {
 		_ = DeletePendingEvent(msg.ID)
 	} else if feishu.IsStarted() && feishu.PushSessionEvent(sessionID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath, data.ToolName, data.ToolInput) {
 		_ = DeletePendingEvent(msg.ID)
+	}
+}
+
+// EmitSessionPushNotification sends DingTalk/Feishu push for a session terminal event.
+// Extracted from EmitSessionEvent so markDoneAndSendFinal can also trigger push
+// without going through the full EmitSessionEvent path (which broadcasts WS events).
+// Also stores a pending_event for Android offline replay (like EmitSessionEvent does),
+// and deletes it if push succeeds.
+// markTerminalPushDone atomically claims the single terminal push slot for a session.
+// Returns true if this call is the first to claim it (caller should send the push),
+// false if a push was already claimed. Prevents the done/cancel race from sending two
+// contradictory terminal notifications.
+func markTerminalPushDone(sessionID string) bool {
+	_, loaded := terminalPushDone.LoadOrStore(sessionID, struct{}{})
+	return !loaded
+}
+
+func EmitSessionPushNotification(sessionID, status string) {
+	// Only the first terminal state to arrive sends a push. Guards against the
+	// race where CancelSession already pushed "cancelled" but the goroutine then
+	// completes and would otherwise push "completed".
+	if !markTerminalPushDone(sessionID) {
+		return
+	}
+	title, err := GetSessionTitle(sessionID)
+	if err != nil {
+		title = ""
+	}
+	projectPath := GetSessionProjectPath(sessionID)
+	var responsePreviewRaw string
+	if status == statusCompleted {
+		responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
+	}
+
+	// Store pending event for Android offline replay (mirrors EmitSessionEvent's
+	// write-ahead logic). Skip when push_mode is "disabled".
+	if model.ConfigInstance.PushMode != "disabled" {
+		data := &ws.SessionUpdateData{
+			SessionID:       sessionID,
+			Status:          status,
+			HasNewMessages:  true,
+			SessionTitle:    title,
+			ProjectPath:     projectPath,
+			ResponsePreview: truncatePreview(responsePreviewRaw),
+		}
+		if responsePreviewRaw != "" {
+			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
+		}
+		msg := ws.ServerMessage{
+			Type:  ws.MessageTypeEvent,
+			ID:    ws.GenerateEventID(),
+			Event: "session_update",
+			Data:  data,
+		}
+		StoreNotifiableEvent(msg)
+
+		if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, title, responsePreviewRaw, projectPath, "", "") {
+			_ = DeletePendingEvent(msg.ID)
+		} else if feishu.IsStarted() && feishu.PushSessionEvent(sessionID, status, title, responsePreviewRaw, projectPath, "", "") {
+			_ = DeletePendingEvent(msg.ID)
+		}
 	}
 }
 
@@ -298,6 +363,9 @@ func TrySetSessionRunning(sessionID string) bool {
 	activeSessions[sessionID] = true
 	activeMu.Unlock()
 
+	// Reset the terminal-push guard so a new run of the same session can push again.
+	terminalPushDone.Delete(sessionID)
+
 	// Emit event so frontends know the session started running
 	EmitSessionEvent(sessionID, "running", false)
 
@@ -390,6 +458,10 @@ func CancelSession(sessionID string) bool {
 	ai.GetACPConnManager().CancelTurn(sessionID)
 
 	EmitSessionEvent(sessionID, "cancelled", false)
+
+	// Claim the terminal push slot so the goroutine's eventual done/cancelled
+	// path (via EmitSessionPushNotification) won't send a second push.
+	markTerminalPushDone(sessionID)
 
 	// Mark session as not running (skip completed event — we already sent "cancelled")
 	SetSessionRunning(sessionID, false, true)

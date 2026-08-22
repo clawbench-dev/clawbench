@@ -226,6 +226,13 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 		markDoneAndSendFinal := func(event ai.StreamEvent) {
 			SetSessionRunning(sessionID, false, true) // skip event — we emit directly
 			emitDrainEvent(sessionID, event)
+			// DingTalk/Feishu push — EmitSessionEvent is skipped above, so push
+			// must be triggered here for normal completion.
+			// Skip for cancelled: CancelSession already calls EmitSessionEvent("cancelled")
+			// which handles push. Skip for error: no meaningful push content.
+			if event.Type == "done" {
+				EmitSessionPushNotification(sessionID, statusCompleted)
+			}
 		}
 
 		result := executeStreamRunShared(ctx, cfg)
@@ -271,6 +278,8 @@ func handleSessionPanic(cfg LaunchConfig, sessionID string, cancel context.Cance
 		UnregisterSessionCancel(sessionID)
 		cancel()
 		emitDrainEvent(sessionID, ai.StreamEvent{Type: eventTypeError, Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
+		// Push cancelled notification — panic is a terminal state
+		EmitSessionPushNotification(sessionID, statusCancelled)
 		errMsg := "AI internal error, please retry"
 		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: blockTypeWarning, contentKeyText: errMsg, contentKeyReason: ai.ReasonPanic}}})
 		_, _ = FinalizeStreamingMessage(cfg.ProjectPath, cfg.BackendName, sessionID, string(errContent))

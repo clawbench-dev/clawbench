@@ -2460,6 +2460,119 @@ func TestEmitSessionEvent_Completed_DingTalkStarted(t *testing.T) {
 	EmitSessionEvent("session-dt-1", "completed", true)
 }
 
+// --- EmitSessionPushNotification ---
+
+// setupPushNotificationTest prepares DB tables + a WS manager with a disconnected
+// client so StoreNotifiableEvent persists pending_events (matching real usage).
+func setupPushNotificationTest(t *testing.T, sessionID string) *sql.DB {
+	t.Helper()
+	// Isolate the global terminal-push guard across tests.
+	terminalPushDone.Delete(sessionID)
+	t.Cleanup(func() { terminalPushDone.Delete(sessionID) })
+
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	t.Cleanup(cleanup)
+
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS pending_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_id TEXT NOT NULL UNIQUE,
+			event_type TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_event_id ON pending_events(event_id);
+		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
+	`)
+	require.NoError(t, err)
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+		sessionID, "/home/user/project", "codebuddy", "Push Test")
+	require.NoError(t, err)
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(nil) })
+	var writeMu sync.Mutex
+	_ = mgr.Subscribe(nil, &writeMu, "test-client-push", "")
+	mgr.DisconnectClient("test-client-push")
+
+	origMgr := dingtalk.GetManager()
+	dtMgr := dingtalk.NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1})
+	dtMgr.SetStartedForTest(true)
+	dingtalk.SetManager(dtMgr)
+	t.Cleanup(func() {
+		dtMgr.SetStartedForTest(false)
+		dingtalk.SetManager(origMgr)
+	})
+
+	return db
+}
+
+func pendingEventCount(t *testing.T, db *sql.DB) int {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM pending_events").Scan(&n))
+	return n
+}
+
+func TestEmitSessionPushNotification_Completed(t *testing.T) {
+	db := setupPushNotificationTest(t, "session-push-1")
+
+	content := model.ContentBlock{Type: "text", Text: "AI response for push"}
+	blocks := map[string]any{"blocks": []model.ContentBlock{content}}
+	contentJSON, _ := json.Marshal(blocks)
+	insertTestMessage(t, db, "session-push-1", "user", "question")
+	insertTestMessage(t, db, "session-push-1", "assistant", string(contentJSON))
+
+	// First call: terminal push claimed → one pending_event stored.
+	EmitSessionPushNotification("session-push-1", "completed")
+	assert.Equal(t, 1, pendingEventCount(t, db))
+
+	// Second call on the same run: guard suppresses duplicate push.
+	EmitSessionPushNotification("session-push-1", "completed")
+	assert.Equal(t, 1, pendingEventCount(t, db))
+}
+
+func TestEmitSessionPushNotification_GuardResetsOnNewRun(t *testing.T) {
+	db := setupPushNotificationTest(t, "session-push-2")
+
+	content := model.ContentBlock{Type: "text", Text: "AI response"}
+	blocks := map[string]any{"blocks": []model.ContentBlock{content}}
+	contentJSON, _ := json.Marshal(blocks)
+	insertTestMessage(t, db, "session-push-2", "user", "q")
+	insertTestMessage(t, db, "session-push-2", "assistant", string(contentJSON))
+
+	EmitSessionPushNotification("session-push-2", "completed")
+	assert.Equal(t, 1, pendingEventCount(t, db))
+
+	// A new run resets the terminal-push guard, allowing the next push.
+	require.True(t, TrySetSessionRunning("session-push-2"))
+	t.Cleanup(func() { SetSessionRunning("session-push-2", false, true) })
+	EmitSessionPushNotification("session-push-2", "completed")
+	assert.Equal(t, 2, pendingEventCount(t, db))
+}
+
+func TestEmitSessionPushNotification_Cancelled(t *testing.T) {
+	db := setupPushNotificationTest(t, "session-push-3")
+
+	EmitSessionPushNotification("session-push-3", "cancelled")
+
+	// Cancelled is a terminal state → stored as a pending event, no response preview.
+	assert.Equal(t, 1, pendingEventCount(t, db))
+	var payload string
+	require.NoError(t, db.QueryRow("SELECT payload FROM pending_events").Scan(&payload))
+	var msg ws.ServerMessage
+	require.NoError(t, json.Unmarshal([]byte(payload), &msg))
+	data, ok := msg.Data.(map[string]any)
+	require.True(t, ok, "session_update payload should unmarshal to a map")
+	assert.Equal(t, "cancelled", data["status"])
+	assert.Empty(t, data["response_preview"])
+}
+
 // --- getSessionResponsePreview: query error path (lines 93-96) ---
 
 func TestGetSessionResponsePreview_QueryError(t *testing.T) {
