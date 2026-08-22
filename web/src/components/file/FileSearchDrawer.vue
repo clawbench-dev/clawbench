@@ -531,7 +531,7 @@ defineExpose({ focusSearchInput })
 
 <style>
 /* Dark theme for search highlights - non-scoped for [data-theme] */
-[data-theme="dark"] .fs-result-name mark {
+[data-theme-base="dark"] .fs-result-name mark {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
   color: inherit;
 }

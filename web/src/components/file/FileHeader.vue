@@ -566,7 +566,7 @@ onBeforeUnmount(() => {
     background: #fef2f2;
     color: #dc2626;
 }
-[data-theme="dark"] .file-header-btn.danger:hover {
+[data-theme-base="dark"] .file-header-btn.danger:hover {
     background: #2d1b1b;
 }
 
@@ -648,7 +648,7 @@ onBeforeUnmount(() => {
     background: #fef2f2;
     color: #dc2626;
 }
-[data-theme="dark"] .file-header-dropdown-menu .dropdown-item.danger:hover {
+[data-theme-base="dark"] .file-header-dropdown-menu .dropdown-item.danger:hover {
     background: #2d1b1b;
 }
 .file-header-dropdown-menu .wrap-check {

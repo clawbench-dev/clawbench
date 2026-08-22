@@ -255,22 +255,22 @@ onBeforeUnmount(() => {
   border-color: #d32f2f;
 }
 
-[data-theme="dark"] .dlg-extra {
+[data-theme-base="dark"] .dlg-extra {
   border-color: #ef4444;
   color: #ef4444;
 }
 
-[data-theme="dark"] .dlg-extra-primed {
+[data-theme-base="dark"] .dlg-extra-primed {
   background: #ef4444;
   color: #fff;
   border-color: #ef4444;
 }
 
-[data-theme="dark"] .dlg-box {
+[data-theme-base="dark"] .dlg-box {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
-[data-theme="dark"] .dlg-cancel {
+[data-theme-base="dark"] .dlg-cancel {
   background: #333;
   color: #ccc;
 }

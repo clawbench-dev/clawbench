@@ -394,6 +394,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent } from 'vue'
 import { appLog, startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
+import { resolveThemeId, isDarkTheme } from '@/utils/themeMeta'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
@@ -1105,6 +1106,9 @@ function registerAppEventListeners() {
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e) => {
       const resolved = e.detail
+      const base = isDarkTheme(resolved) ? 'dark' : 'light'
+      document.documentElement.setAttribute('data-theme-base', base)
+      document.documentElement.setAttribute('data-hljs-theme', base)
       theme.value = resolved
       const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
       await initMermaid()
@@ -1224,9 +1228,8 @@ function handleOpenProjectDialog() {
     projectDialogOpen.value = true
 }
 
-const theme = ref(localConfig.theme === 'auto'
-    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-    : (localConfig.theme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')))
+const _rawTheme = String(localConfig.theme || 'auto')
+const theme = ref(resolveThemeId(_rawTheme))
 
 const dirEntries = computed(() => store.state.dirEntries)
 const currentDir = computed(() => store.state.currentDir)
@@ -1899,10 +1902,13 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path) {
 
 
 async function applyTheme(t) {
-    document.documentElement.setAttribute('data-theme', t)
+    const resolved = resolveThemeId(t)
+    const base = isDarkTheme(resolved) ? 'dark' : 'light'
+    document.documentElement.setAttribute('data-theme', resolved)
+    document.documentElement.setAttribute('data-theme-base', base)
+    document.documentElement.setAttribute('data-hljs-theme', base)
     setSetting('theme', t)
-    document.documentElement.setAttribute('data-hljs-theme', t)
-    getNative()?.setTheme?.(t === 'light' ? 'light' : 'dark')
+    getNative()?.setTheme?.(base)
     const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
     await initMermaid()
     await reRenderMermaid()

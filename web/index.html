@@ -6,23 +6,29 @@
     <meta name="theme-color" content="#0d1117">
     <meta name="description" content="一款专为移动端设计的轻量级代码和文档工作台">
 
-    <!-- Resolve theme BEFORE CSS loads to prevent white flash on dark mode.
+    <!-- Resolve theme BEFORE CSS loads to prevent flash of default colors.
          Reads from localStorage (clawbench-settings-theme or legacy 'theme' key).
+         Migrates old 'light'/'dark' values to new named theme IDs.
+         Sets data-theme (theme ID), data-theme-base (light|dark), data-hljs-theme.
          Must run synchronously before any rendering to avoid a single white frame. -->
     <script>
       (function() {
+        var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','gruvbox-dark','high-contrast-dark'];
         var t = null;
         try { var s = localStorage.getItem('clawbench-settings-theme'); if (s) t = JSON.parse(s); } catch {}
         if (t === null) { try { t = localStorage.getItem('theme'); } catch {} }
-        if (t === null || t === 'auto') {
-          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        // Migration: old 'light'/'dark' → named theme IDs
+        if (t === 'light') { t = 'github-light'; try { localStorage.setItem('clawbench-settings-theme', JSON.stringify('github-light')); } catch {} }
+        else if (t === 'dark') { t = 'github-dark'; try { localStorage.setItem('clawbench-settings-theme', JSON.stringify('github-dark')); } catch {} }
+        // Remove stale accent color key
+        try { localStorage.removeItem('clawbench-settings-accentColor'); } catch {}
+        if (!t || t === 'auto') {
+          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'github-dark' : 'github-light';
         }
+        var base = DARK_IDS.indexOf(t) >= 0 ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
-
-        // Resolve accent color BEFORE CSS loads to prevent flash of default blue.
-        var a = null;
-        try { var as = localStorage.getItem('clawbench-settings-accentColor'); if (as) a = JSON.parse(as); } catch {}
-        document.documentElement.setAttribute('data-accent', a || 'blue');
+        document.documentElement.setAttribute('data-theme-base', base);
+        document.documentElement.setAttribute('data-hljs-theme', base);
       })();
     </script>
 

@@ -1085,7 +1085,7 @@ onMounted(async () => {
   })
   themeObserver.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['data-theme'],
+    attributeFilter: ['data-theme', 'data-theme-base'],
   })
 
   // Mount and connect the active tab (only if terminal panel is active)
@@ -1352,11 +1352,11 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   border-radius: 999px !important;
 }
 
-[data-theme="dark"] .terminal-container {
+[data-theme-base="dark"] .terminal-container {
   background: var(--terminal-bg, #1e1e2e);
 }
 
-:root:not([data-theme="dark"]) .terminal-container {
+:root:not([data-theme-base="dark"]) .terminal-container {
   background: var(--terminal-bg, #eff1f5);
 }
 
@@ -1453,7 +1453,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   --toolbar-divider: color-mix(in srgb, var(--border-color) 48%, transparent);
 }
 
-[data-theme="dark"] .terminal-toolbar {
+[data-theme-base="dark"] .terminal-toolbar {
   background: var(--bg-secondary);
   --toolbar-key-hover: color-mix(in srgb, var(--text-primary) 9%, transparent);
   --toolbar-key-active: color-mix(in srgb, var(--text-primary) 16%, transparent);

@@ -585,16 +585,16 @@ defineExpose({
 }
 
 /* Dark theme */
-:global([data-theme="dark"]) .pdf-pages-scroll {
+:global([data-theme-base="dark"]) .pdf-pages-scroll {
   background: #2a2d30;
 }
 
-:global([data-theme="dark"]) .pdf-page-wrapper {
+:global([data-theme-base="dark"]) .pdf-page-wrapper {
   background: #1a1a1a;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 
-:global([data-theme="dark"]) .pdf-loading-overlay {
+:global([data-theme-base="dark"]) .pdf-loading-overlay {
   background: #2a2d30;
 }
 </style>

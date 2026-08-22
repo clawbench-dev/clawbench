@@ -3,6 +3,7 @@ import { apiGet, apiPatch, apiPost } from '@/utils/api'
 import i18n, { STORAGE_KEY as LOCALE_KEY, setLocaleCookie } from '@/i18n'
 import { useAgents } from '@/composables/useAgents'
 import { getNative } from '@/utils/clawbenchNative'
+import { resolveThemeId, isDarkTheme } from '@/utils/themeMeta'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
 
@@ -56,21 +57,13 @@ const legacyKeys: Record<string, {
     key: 'theme',
     format: 'raw',
     sideEffect(value: string) {
-      // Resolve 'auto' to actual theme
-      const resolved = value === 'auto'
-        ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-        : value
+      const resolved = resolveThemeId(value)
+      const base = isDarkTheme(resolved) ? 'dark' : 'light'
       document.documentElement.setAttribute('data-theme', resolved)
-      document.documentElement.setAttribute('data-hljs-theme', resolved)
+      document.documentElement.setAttribute('data-theme-base', base)
+      document.documentElement.setAttribute('data-hljs-theme', base)
       // Notify App.vue to sync its `theme` ref (used by provide/inject for chat rendering)
       window.dispatchEvent(new CustomEvent('clawbench-theme-change', { detail: resolved }))
-    },
-  },
-  accentColor: {
-    key: '',
-    format: 'raw',
-    sideEffect(value: string) {
-      document.documentElement.setAttribute('data-accent', value || 'blue')
     },
   },
   locale: {
@@ -251,7 +244,6 @@ export function getZoomedViewport(): { width: number; height: number } {
 
 const localDefaults: Record<string, string | boolean | number | null> = {
   theme: 'auto',
-  accentColor: 'blue',
   terminalTheme: 'auto',
   locale: 'zh',
   autoSpeech: false,

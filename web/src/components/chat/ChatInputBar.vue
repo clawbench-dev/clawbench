@@ -231,6 +231,12 @@
             <span class="usage-popup-label">{{ t('chat.sessionInfo.contextCost') }}</span>
             <span class="usage-popup-value">${{ contextCost.toFixed(2) }} {{ contextCurrency || 'USD' }}</span>
           </div>
+          <div class="usage-popup-compact">
+            <button class="usage-popup-compact-btn" :disabled="inputDisabled || !hasCompactCommand" @click.stop="handleCompact(); showUsagePopup = false" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
+              <Minimize2 :size="13" />
+              {{ t('chat.sessionInfo.compact') }}
+            </button>
+          </div>
         </div>
       </PopupMenu>
     </div>
@@ -250,13 +256,7 @@
           </span>
         </span>
       </template>
-      <template v-if="showCompactBtn">
-        <span class="session-info-divider"></span>
-        <button class="session-info-compact" :disabled="inputDisabled" @click.stop="handleCompact" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
-          <Minimize2 :size="11" />
-          {{ t('chat.sessionInfo.compact') }}
-        </button>
-      </template>
+
     </div>
   </div>
 </template>
@@ -370,7 +370,7 @@ const usageColor = computed(() => {
   return '#22c55e'
 })
 const hasCompactCommand = computed(() => availableCommands.value.some(cmd => cmd.name === '/compact' || cmd.name === 'compact'))
-const showCompactBtn = computed(() => usagePct.value >= 75 && hasCompactCommand.value && isACPTransport.value)
+
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
@@ -1416,38 +1416,7 @@ defineExpose({
   cursor: pointer;
 }
 
-.session-info-compact {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  border-radius: 4px;
-  color: var(--text-muted, #999);
-  font-size: 11px;
-  line-height: 1.4;
-  transition: color 0.15s;
-  user-select: none;
-  -webkit-user-select: none;
-}
 
-.session-info-compact:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.session-info-compact:active:not(:disabled) {
-  color: var(--accent-color, #0066cc);
-}
-
-@media (hover: hover) {
-  .session-info-compact:hover:not(:disabled) {
-    color: var(--accent-color, #0066cc);
-  }
-}
 
 .usage-bar {
   position: relative;
@@ -2002,7 +1971,7 @@ defineExpose({
 .chat-stop-btn:active { opacity: 0.75; }
 
 /* Light theme: boost stop button default visibility */
-:not([data-theme="dark"]) .chat-stop-btn:not(.primed):not(.cancelling) {
+:not([data-theme-base="dark"]) .chat-stop-btn:not(.primed):not(.cancelling) {
   background: color-mix(in srgb, var(--danger-color, #dc3545) 55%, transparent);
   color: color-mix(in srgb, #fff 75%, var(--danger-color, #dc3545));
 }
@@ -2189,7 +2158,7 @@ defineExpose({
   white-space: nowrap;
 }
 
-:root[data-theme="dark"] .at-menu-label {
+:root[data-theme-base="dark"] .at-menu-label {
   color: #a78bfa;
 }
 
@@ -2197,7 +2166,7 @@ defineExpose({
   color: #0ea5e9;
 }
 
-:root[data-theme="dark"] .at-menu-label.slash-label {
+:root[data-theme-base="dark"] .at-menu-label.slash-label {
   color: #38bdf8;
 }
 
@@ -2208,7 +2177,7 @@ defineExpose({
   font-weight: 700;
 }
 
-:root[data-theme="dark"] .at-menu-label mark {
+:root[data-theme-base="dark"] .at-menu-label mark {
   background: rgba(255, 230, 0, 0.35);
 }
 
@@ -2281,5 +2250,47 @@ defineExpose({
   color: var(--text-primary);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+.usage-popup-compact {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  display: flex;
+  justify-content: center;
+}
+
+.usage-popup-compact-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 5px 12px;
+  color: var(--text-secondary, #6c757d);
+  font-size: 12px;
+  line-height: 1.4;
+  transition: color 0.15s, border-color 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.usage-popup-compact-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.usage-popup-compact-btn:active:not(:disabled) {
+  color: var(--accent-color, #0066cc);
+  border-color: var(--accent-color, #0066cc);
+}
+
+@media (hover: hover) {
+  .usage-popup-compact-btn:hover:not(:disabled) {
+    color: var(--accent-color, #0066cc);
+    border-color: var(--accent-color, #0066cc);
+  }
 }
 </style>

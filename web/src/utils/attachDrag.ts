@@ -99,8 +99,7 @@ export function resolveAccentColor(): string {
     const v = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim()
     if (v) return v
   } catch { /* ignore */ }
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
-  return isDark ? '#5b9bd5' : '#4a90d9'
+  return '#4a90d9'
 }
 
 /**

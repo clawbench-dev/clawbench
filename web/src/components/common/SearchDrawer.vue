@@ -449,33 +449,33 @@ defineExpose({
 
 <style>
 /* Dark theme for search result syntax - must be non-scoped for [data-theme] selector */
-[data-theme="dark"] .search-result-text .hljs-keyword,
-[data-theme="dark"] .search-result-text .hljs-selector-tag,
-[data-theme="dark"] .search-result-text .hljs-built_in { color: #c678dd; }
-[data-theme="dark"] .search-result-text .hljs-type,
-[data-theme="dark"] .search-result-text .hljs-class { color: #e5c07b; }
-[data-theme="dark"] .search-result-text .hljs-string,
-[data-theme="dark"] .search-result-text .hljs-addition { color: #98c379; }
-[data-theme="dark"] .search-result-text .hljs-number,
-[data-theme="dark"] .search-result-text .hljs-literal { color: #d19a66; }
-[data-theme="dark"] .search-result-text .hljs-comment,
-[data-theme="dark"] .search-result-text .hljs-quote { color: #5c6370; }
-[data-theme="dark"] .search-result-text .hljs-function,
-[data-theme="dark"] .search-result-text .hljs-title { color: #61afef; }
-[data-theme="dark"] .search-result-text .hljs-variable,
-[data-theme="dark"] .search-result-text .hljs-attr { color: #e06c75; }
-[data-theme="dark"] .search-result-text .hljs-symbol,
-[data-theme="dark"] .search-result-text .hljs-bullet { color: #56b6c2; }
-[data-theme="dark"] .search-result-text .hljs-meta { color: #abb2bf; }
-[data-theme="dark"] .search-result-text .hljs-regexp { color: #98c379; }
-[data-theme="dark"] .search-result-text .hljs-property { color: #e06c75; }
-[data-theme="dark"] .search-result-text .hljs-params { color: #abb2bf; }
-[data-theme="dark"] .search-result-text .hljs-tag { color: #e06c75; }
-[data-theme="dark"] .search-result-text .hljs-name { color: #c678dd; }
-[data-theme="dark"] .search-result-text .hljs-attribute { color: #98c379; }
-[data-theme="dark"] .search-result-text .hljs-selector-class { color: #e5c07b; }
-[data-theme="dark"] .search-result-text .hljs-selector-id { color: #61afef; }
-[data-theme="dark"] .search-result-text mark {
+[data-theme-base="dark"] .search-result-text .hljs-keyword,
+[data-theme-base="dark"] .search-result-text .hljs-selector-tag,
+[data-theme-base="dark"] .search-result-text .hljs-built_in { color: #c678dd; }
+[data-theme-base="dark"] .search-result-text .hljs-type,
+[data-theme-base="dark"] .search-result-text .hljs-class { color: #e5c07b; }
+[data-theme-base="dark"] .search-result-text .hljs-string,
+[data-theme-base="dark"] .search-result-text .hljs-addition { color: #98c379; }
+[data-theme-base="dark"] .search-result-text .hljs-number,
+[data-theme-base="dark"] .search-result-text .hljs-literal { color: #d19a66; }
+[data-theme-base="dark"] .search-result-text .hljs-comment,
+[data-theme-base="dark"] .search-result-text .hljs-quote { color: #5c6370; }
+[data-theme-base="dark"] .search-result-text .hljs-function,
+[data-theme-base="dark"] .search-result-text .hljs-title { color: #61afef; }
+[data-theme-base="dark"] .search-result-text .hljs-variable,
+[data-theme-base="dark"] .search-result-text .hljs-attr { color: #e06c75; }
+[data-theme-base="dark"] .search-result-text .hljs-symbol,
+[data-theme-base="dark"] .search-result-text .hljs-bullet { color: #56b6c2; }
+[data-theme-base="dark"] .search-result-text .hljs-meta { color: #abb2bf; }
+[data-theme-base="dark"] .search-result-text .hljs-regexp { color: #98c379; }
+[data-theme-base="dark"] .search-result-text .hljs-property { color: #e06c75; }
+[data-theme-base="dark"] .search-result-text .hljs-params { color: #abb2bf; }
+[data-theme-base="dark"] .search-result-text .hljs-tag { color: #e06c75; }
+[data-theme-base="dark"] .search-result-text .hljs-name { color: #c678dd; }
+[data-theme-base="dark"] .search-result-text .hljs-attribute { color: #98c379; }
+[data-theme-base="dark"] .search-result-text .hljs-selector-class { color: #e5c07b; }
+[data-theme-base="dark"] .search-result-text .hljs-selector-id { color: #61afef; }
+[data-theme-base="dark"] .search-result-text mark {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
   color: inherit;
 }

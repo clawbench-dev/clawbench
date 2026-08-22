@@ -90,5 +90,5 @@ export async function resolveTheme(selection: string, isAppDark: boolean): Promi
 
 /** 当前 App 是否为深色主题（同步判定）。 */
 export function isAppDarkTheme(): boolean {
-  return document.documentElement.getAttribute('data-theme') === 'dark'
+  return document.documentElement.getAttribute('data-theme-base') === 'dark'
 }

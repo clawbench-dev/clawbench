@@ -1,9 +1,23 @@
 /* ==========================================================================
-   CSS Custom Properties (Variables)
+   CSS Custom Properties — VSCode-style named themes
+   Each theme is self-contained, defining all color variables independently.
+   Theme is selected via data-theme="<id>" on <html>.
+   data-theme-base="light|dark" is set alongside for CSS selector convenience.
    ========================================================================== */
 
 :root {
-    /* Light theme */
+    /* ── Static layout values (never change with theme) ──────────── */
+    --header-height: 36px;
+    --header-safe-area-top: env(safe-area-inset-top, 0px);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --dock-height: calc(47px + env(safe-area-inset-bottom, 0));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   1. GitHub Light
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="github-light"] {
     --bg-primary: #ffffff;
     --bg-secondary: #f8f9fa;
     --bg-tertiary: #e9ecef;
@@ -14,12 +28,8 @@
     --accent-color: #4a90d9;
     --accent-hover: #3a7bc8;
     --user-msg-color: #5b8fbf;
-    --header-height: 36px;
-    --header-safe-area-top: env(safe-area-inset-top, 0px);
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
-    --radius-sm: 6px;
-    --radius-md: 10px;
     --code-bg: #f6f8fa;
     --blockquote-border: #d0d7de;
     --table-border: #d0d7de;
@@ -27,27 +37,16 @@
     --scrollbar-track: #f1f1f1;
     --dock-bg: rgba(248, 249, 250, 0.75);
     --dock-border: rgba(0, 0, 0, 0.08);
-    --dock-height: calc(47px + env(safe-area-inset-bottom, 0));
-
-    /* Lightbox */
     --lb-bg: rgba(0,0,0,0.92);
     --lb-toolbar-bg: rgba(255,255,255,0.9);
-
-    /* Vkey buttons */
     --bg-key: #f0f0f0;
     --text-color: #212529;
     --bg-key-active: #e0e0e0;
-
-    /* Git status badge colors */
     --color-green: #16a34a;
     --color-yellow: #a16207;
     --color-red: #dc2626;
     --color-purple: #7c3aed;
-
-    /* Bold text — slightly more saturated than --text-primary for visual distinction */
     --text-bold: #0d1117;
-
-    /* CodeMirror editor syntax colors (GitHub light) — kept in sync with browse mode */
     --code-syntax-comment: #6a737d;
     --code-syntax-keyword: #d73a49;
     --code-syntax-string: #032f62;
@@ -64,61 +63,10 @@
     --code-syntax-link: #005cc5;
 }
 
-/* ── Accent color overrides ──────────────────────────────── */
-/* blue is the default — already defined in :root / [data-theme="dark"] above */
-
-[data-accent="purple"][data-theme="light"] {
-    --accent-color: #7c3aed;
-    --accent-hover: #6d28d9;
-    --user-msg-color: #8b7bbf;
-}
-[data-accent="purple"][data-theme="dark"] {
-    --accent-color: #a78bfa;
-    --accent-hover: #c4b5fd;
-    --user-msg-color: #6d5a99;
-}
-[data-accent="green"][data-theme="light"] {
-    --accent-color: #16a34a;
-    --accent-hover: #15803d;
-    --user-msg-color: #5b9f7b;
-}
-[data-accent="green"][data-theme="dark"] {
-    --accent-color: #3fb950;
-    --accent-hover: #56d364;
-    --user-msg-color: #2d6a4f;
-}
-[data-accent="orange"][data-theme="light"] {
-    --accent-color: #ea580c;
-    --accent-hover: #c2410c;
-    --user-msg-color: #bf8a5b;
-}
-[data-accent="orange"][data-theme="dark"] {
-    --accent-color: #f97316;
-    --accent-hover: #fb923c;
-    --user-msg-color: #8b5e3c;
-}
-[data-accent="cyan"][data-theme="light"] {
-    --accent-color: #0891b2;
-    --accent-hover: #0e7490;
-    --user-msg-color: #6ba3b5;
-}
-[data-accent="cyan"][data-theme="dark"] {
-    --accent-color: #22d3ee;
-    --accent-hover: #67e8f9;
-    --user-msg-color: #2a7a8a;
-}
-[data-accent="pink"][data-theme="light"] {
-    --accent-color: #db2777;
-    --accent-hover: #be185d;
-    --user-msg-color: #bf6b8f;
-}
-[data-accent="pink"][data-theme="dark"] {
-    --accent-color: #f472b6;
-    --accent-hover: #f9a8d4;
-    --user-msg-color: #8b4a6a;
-}
-
-[data-theme="dark"] {
+/* ══════════════════════════════════════════════════════════════════════════════
+   2. GitHub Dark
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="github-dark"] {
     --bg-primary: #0d1117;
     --bg-secondary: #161b22;
     --bg-tertiary: #21262d;
@@ -138,26 +86,16 @@
     --scrollbar-track: #21262d;
     --dock-bg: rgba(22, 27, 34, 0.75);
     --dock-border: rgba(255, 255, 255, 0.06);
-
-    /* Lightbox */
     --lb-bg: rgba(0,0,0,0.92);
     --lb-toolbar-bg: rgba(30,35,42,0.95);
-
-    /* Vkey buttons */
     --bg-key: #2d2d2d;
     --text-color: #e0e0e0;
     --bg-key-active: #3d3d3d;
-
-    /* Git status badge colors */
     --color-green: #3fb950;
     --color-yellow: #e3b341;
     --color-red: #f85149;
     --color-purple: #a371f7;
-
-    /* Bold text — pure white stands out against dimmed --text-primary */
     --text-bold: #e6edf3;
-
-    /* CodeMirror editor syntax colors (GitHub dark) — kept in sync with browse mode */
     --code-syntax-comment: #8b949e;
     --code-syntax-keyword: #ff7b72;
     --code-syntax-string: #a5d6ff;
@@ -172,4 +110,592 @@
     --code-syntax-meta: #e6edf3;
     --code-syntax-heading: #79c0ff;
     --code-syntax-link: #79c0ff;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   3. One Dark Pro
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="one-dark-pro"] {
+    --bg-primary: #282c34;
+    --bg-secondary: #21252b;
+    --bg-tertiary: #2c313a;
+    --text-primary: #abb2bf;
+    --text-secondary: #7f848e;
+    --text-muted: #5c6370;
+    --border-color: #3e4451;
+    --accent-color: #61afef;
+    --accent-hover: #82c4f4;
+    --user-msg-color: #3e6a96;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --code-bg: #21252b;
+    --blockquote-border: #3e4451;
+    --table-border: #3e4451;
+    --scrollbar-thumb: #4b5263;
+    --scrollbar-track: #2c313a;
+    --dock-bg: rgba(33, 37, 43, 0.75);
+    --dock-border: rgba(255, 255, 255, 0.06);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(40, 44, 52, 0.95);
+    --bg-key: #2c313a;
+    --text-color: #abb2bf;
+    --bg-key-active: #3e4451;
+    --color-green: #98c379;
+    --color-yellow: #e5c07b;
+    --color-red: #e06c75;
+    --color-purple: #c678dd;
+    --text-bold: #d7dae0;
+    --code-syntax-comment: #5c6370;
+    --code-syntax-keyword: #c678dd;
+    --code-syntax-string: #98c379;
+    --code-syntax-number: #d19a66;
+    --code-syntax-function: #61afef;
+    --code-syntax-type: #e5c07b;
+    --code-syntax-variable: #e06c75;
+    --code-syntax-property: #e06c75;
+    --code-syntax-operator: #56b6c2;
+    --code-syntax-tag: #e06c75;
+    --code-syntax-attribute: #d19a66;
+    --code-syntax-meta: #abb2bf;
+    --code-syntax-heading: #61afef;
+    --code-syntax-link: #61afef;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   4. Catppuccin Mocha
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="catppuccin-mocha"] {
+    --bg-primary: #1e1e2e;
+    --bg-secondary: #181825;
+    --bg-tertiary: #313244;
+    --text-primary: #cdd6f4;
+    --text-secondary: #bac2de;
+    --text-muted: #6c7086;
+    --border-color: #45475a;
+    --accent-color: #89b4fa;
+    --accent-hover: #b4befe;
+    --user-msg-color: #3a5a8a;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --code-bg: #181825;
+    --blockquote-border: #45475a;
+    --table-border: #45475a;
+    --scrollbar-thumb: #585b70;
+    --scrollbar-track: #313244;
+    --dock-bg: rgba(24, 24, 37, 0.75);
+    --dock-border: rgba(255, 255, 255, 0.06);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(30, 30, 46, 0.95);
+    --bg-key: #313244;
+    --text-color: #cdd6f4;
+    --bg-key-active: #45475a;
+    --color-green: #a6e3a1;
+    --color-yellow: #f9e2af;
+    --color-red: #f38ba8;
+    --color-purple: #cba6f7;
+    --text-bold: #cdd6f4;
+    --code-syntax-comment: #6c7086;
+    --code-syntax-keyword: #cba6f7;
+    --code-syntax-string: #a6e3a1;
+    --code-syntax-number: #fab387;
+    --code-syntax-function: #89b4fa;
+    --code-syntax-type: #f9e2af;
+    --code-syntax-variable: #f38ba8;
+    --code-syntax-property: #89dceb;
+    --code-syntax-operator: #94e2d5;
+    --code-syntax-tag: #f38ba8;
+    --code-syntax-attribute: #fab387;
+    --code-syntax-meta: #cdd6f4;
+    --code-syntax-heading: #89b4fa;
+    --code-syntax-link: #89b4fa;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   5. Catppuccin Latte
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="catppuccin-latte"] {
+    --bg-primary: #eff1f5;
+    --bg-secondary: #e6e9ef;
+    --bg-tertiary: #ccd0da;
+    --text-primary: #4c4f69;
+    --text-secondary: #5c5f77;
+    --text-muted: #8c8fa1;
+    --border-color: #bcc0cc;
+    --accent-color: #1e66f5;
+    --accent-hover: #2a7de6;
+    --user-msg-color: #6b7fbf;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --code-bg: #e6e9ef;
+    --blockquote-border: #bcc0cc;
+    --table-border: #bcc0cc;
+    --scrollbar-thumb: #9ca0b0;
+    --scrollbar-track: #ccd0da;
+    --dock-bg: rgba(230, 233, 239, 0.75);
+    --dock-border: rgba(0, 0, 0, 0.08);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(239, 241, 245, 0.9);
+    --bg-key: #ccd0da;
+    --text-color: #4c4f69;
+    --bg-key-active: #bcc0cc;
+    --color-green: #40a02b;
+    --color-yellow: #df8e1d;
+    --color-red: #d20f39;
+    --color-purple: #8839ef;
+    --text-bold: #4c4f69;
+    --code-syntax-comment: #8c8fa1;
+    --code-syntax-keyword: #8839ef;
+    --code-syntax-string: #40a02b;
+    --code-syntax-number: #fe640b;
+    --code-syntax-function: #1e66f5;
+    --code-syntax-type: #df8e1d;
+    --code-syntax-variable: #d20f39;
+    --code-syntax-property: #04a5e5;
+    --code-syntax-operator: #179299;
+    --code-syntax-tag: #d20f39;
+    --code-syntax-attribute: #fe640b;
+    --code-syntax-meta: #4c4f69;
+    --code-syntax-heading: #1e66f5;
+    --code-syntax-link: #1e66f5;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   6. Dracula
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="dracula"] {
+    --bg-primary: #282a36;
+    --bg-secondary: #21222c;
+    --bg-tertiary: #343746;
+    --text-primary: #f8f8f2;
+    --text-secondary: #bd93f9;
+    --text-muted: #6272a4;
+    --border-color: #44475a;
+    --accent-color: #bd93f9;
+    --accent-hover: #caa8fb;
+    --user-msg-color: #6d5a99;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --code-bg: #21222c;
+    --blockquote-border: #44475a;
+    --table-border: #44475a;
+    --scrollbar-thumb: #44475a;
+    --scrollbar-track: #282a36;
+    --dock-bg: rgba(33, 34, 44, 0.75);
+    --dock-border: rgba(255, 255, 255, 0.06);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(40, 42, 54, 0.95);
+    --bg-key: #343746;
+    --text-color: #f8f8f2;
+    --bg-key-active: #44475a;
+    --color-green: #50fa7b;
+    --color-yellow: #f1fa8c;
+    --color-red: #ff5555;
+    --color-purple: #bd93f9;
+    --text-bold: #f8f8f2;
+    --code-syntax-comment: #6272a4;
+    --code-syntax-keyword: #ff79c6;
+    --code-syntax-string: #f1fa8c;
+    --code-syntax-number: #bd93f9;
+    --code-syntax-function: #50fa7b;
+    --code-syntax-type: #8be9fd;
+    --code-syntax-variable: #f8f8f2;
+    --code-syntax-property: #8be9fd;
+    --code-syntax-operator: #ff79c6;
+    --code-syntax-tag: #ff79c6;
+    --code-syntax-attribute: #50fa7b;
+    --code-syntax-meta: #f8f8f2;
+    --code-syntax-heading: #bd93f9;
+    --code-syntax-link: #8be9fd;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   7. Nord
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="nord"] {
+    --bg-primary: #2e3440;
+    --bg-secondary: #3b4252;
+    --bg-tertiary: #434c5e;
+    --text-primary: #d8dee9;
+    --text-secondary: #e5e9f0;
+    --text-muted: #4c566a;
+    --border-color: #4c566a;
+    --accent-color: #88c0d0;
+    --accent-hover: #8fbcbb;
+    --user-msg-color: #4c7a8a;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --code-bg: #3b4252;
+    --blockquote-border: #4c566a;
+    --table-border: #4c566a;
+    --scrollbar-thumb: #4c566a;
+    --scrollbar-track: #3b4252;
+    --dock-bg: rgba(59, 66, 82, 0.75);
+    --dock-border: rgba(255, 255, 255, 0.06);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(46, 52, 64, 0.95);
+    --bg-key: #434c5e;
+    --text-color: #d8dee9;
+    --bg-key-active: #4c566a;
+    --color-green: #a3be8c;
+    --color-yellow: #ebcb8b;
+    --color-red: #bf616a;
+    --color-purple: #b48ead;
+    --text-bold: #eceff4;
+    --code-syntax-comment: #616e88;
+    --code-syntax-keyword: #81a1c1;
+    --code-syntax-string: #a3be8c;
+    --code-syntax-number: #b48ead;
+    --code-syntax-function: #88c0d0;
+    --code-syntax-type: #8fbcbb;
+    --code-syntax-variable: #d8dee9;
+    --code-syntax-property: #88c0d0;
+    --code-syntax-operator: #81a1c1;
+    --code-syntax-tag: #81a1c1;
+    --code-syntax-attribute: #8fbcbb;
+    --code-syntax-meta: #d8dee9;
+    --code-syntax-heading: #88c0d0;
+    --code-syntax-link: #88c0d0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   8. Tokyo Night
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="tokyo-night"] {
+    --bg-primary: #1a1b26;
+    --bg-secondary: #16161e;
+    --bg-tertiary: #292e42;
+    --text-primary: #c0caf5;
+    --text-secondary: #a9b1d6;
+    --text-muted: #565f89;
+    --border-color: #292e42;
+    --accent-color: #7aa2f7;
+    --accent-hover: #89b4fa;
+    --user-msg-color: #3a5a8a;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --code-bg: #16161e;
+    --blockquote-border: #292e42;
+    --table-border: #292e42;
+    --scrollbar-thumb: #3b4261;
+    --scrollbar-track: #1a1b26;
+    --dock-bg: rgba(22, 22, 30, 0.75);
+    --dock-border: rgba(255, 255, 255, 0.06);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(26, 27, 38, 0.95);
+    --bg-key: #292e42;
+    --text-color: #c0caf5;
+    --bg-key-active: #3b4261;
+    --color-green: #9ece6a;
+    --color-yellow: #e0af68;
+    --color-red: #f7768e;
+    --color-purple: #bb9af7;
+    --text-bold: #c0caf5;
+    --code-syntax-comment: #565f89;
+    --code-syntax-keyword: #bb9af7;
+    --code-syntax-string: #9ece6a;
+    --code-syntax-number: #ff9e64;
+    --code-syntax-function: #7aa2f7;
+    --code-syntax-type: #2ac3de;
+    --code-syntax-variable: #c0caf5;
+    --code-syntax-property: #7dcfff;
+    --code-syntax-operator: #89ddff;
+    --code-syntax-tag: #f7768e;
+    --code-syntax-attribute: #ff9e64;
+    --code-syntax-meta: #c0caf5;
+    --code-syntax-heading: #7aa2f7;
+    --code-syntax-link: #7aa2f7;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   9. Solarized Dark
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="solarized-dark"] {
+    --bg-primary: #002b36;
+    --bg-secondary: #073642;
+    --bg-tertiary: #0a3f4e;
+    --text-primary: #839496;
+    --text-secondary: #93a1a1;
+    --text-muted: #586e75;
+    --border-color: #073642;
+    --accent-color: #268bd2;
+    --accent-hover: #2aa198;
+    --user-msg-color: #2a5a7a;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --code-bg: #073642;
+    --blockquote-border: #586e75;
+    --table-border: #073642;
+    --scrollbar-thumb: #586e75;
+    --scrollbar-track: #073642;
+    --dock-bg: rgba(7, 54, 66, 0.75);
+    --dock-border: rgba(255, 255, 255, 0.06);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(0, 43, 54, 0.95);
+    --bg-key: #073642;
+    --text-color: #839496;
+    --bg-key-active: #0a3f4e;
+    --color-green: #859900;
+    --color-yellow: #b58900;
+    --color-red: #dc322f;
+    --color-purple: #6c71c4;
+    --text-bold: #93a1a1;
+    --code-syntax-comment: #586e75;
+    --code-syntax-keyword: #859900;
+    --code-syntax-string: #2aa198;
+    --code-syntax-number: #d33682;
+    --code-syntax-function: #268bd2;
+    --code-syntax-type: #b58900;
+    --code-syntax-variable: #cb4b16;
+    --code-syntax-property: #268bd2;
+    --code-syntax-operator: #859900;
+    --code-syntax-tag: #268bd2;
+    --code-syntax-attribute: #2aa198;
+    --code-syntax-meta: #839496;
+    --code-syntax-heading: #268bd2;
+    --code-syntax-link: #268bd2;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   10. Solarized Light
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="solarized-light"] {
+    --bg-primary: #fdf6e3;
+    --bg-secondary: #eee8d5;
+    --bg-tertiary: #e0dcc8;
+    --text-primary: #657b83;
+    --text-secondary: #586e75;
+    --text-muted: #93a1a1;
+    --border-color: #eee8d5;
+    --accent-color: #268bd2;
+    --accent-hover: #2aa198;
+    --user-msg-color: #6b8fb5;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --code-bg: #eee8d5;
+    --blockquote-border: #93a1a1;
+    --table-border: #eee8d5;
+    --scrollbar-thumb: #93a1a1;
+    --scrollbar-track: #eee8d5;
+    --dock-bg: rgba(238, 232, 213, 0.75);
+    --dock-border: rgba(0, 0, 0, 0.08);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(253, 246, 227, 0.9);
+    --bg-key: #eee8d5;
+    --text-color: #657b83;
+    --bg-key-active: #e0dcc8;
+    --color-green: #859900;
+    --color-yellow: #b58900;
+    --color-red: #dc322f;
+    --color-purple: #6c71c4;
+    --text-bold: #586e75;
+    --code-syntax-comment: #93a1a1;
+    --code-syntax-keyword: #859900;
+    --code-syntax-string: #2aa198;
+    --code-syntax-number: #d33682;
+    --code-syntax-function: #268bd2;
+    --code-syntax-type: #b58900;
+    --code-syntax-variable: #cb4b16;
+    --code-syntax-property: #268bd2;
+    --code-syntax-operator: #859900;
+    --code-syntax-tag: #268bd2;
+    --code-syntax-attribute: #2aa198;
+    --code-syntax-meta: #657b83;
+    --code-syntax-heading: #268bd2;
+    --code-syntax-link: #268bd2;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   11. Gruvbox Dark
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="gruvbox-dark"] {
+    --bg-primary: #282828;
+    --bg-secondary: #1d2021;
+    --bg-tertiary: #3c3836;
+    --text-primary: #ebdbb2;
+    --text-secondary: #d5c4a1;
+    --text-muted: #665c54;
+    --border-color: #3c3836;
+    --accent-color: #fe8019;
+    --accent-hover: #fabd2f;
+    --user-msg-color: #8b6a3c;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --code-bg: #1d2021;
+    --blockquote-border: #504945;
+    --table-border: #3c3836;
+    --scrollbar-thumb: #504945;
+    --scrollbar-track: #3c3836;
+    --dock-bg: rgba(29, 32, 33, 0.75);
+    --dock-border: rgba(255, 255, 255, 0.06);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(40, 40, 40, 0.95);
+    --bg-key: #3c3836;
+    --text-color: #ebdbb2;
+    --bg-key-active: #504945;
+    --color-green: #b8bb26;
+    --color-yellow: #fabd2f;
+    --color-red: #fb4934;
+    --color-purple: #d3869b;
+    --text-bold: #fbf1c7;
+    --code-syntax-comment: #665c54;
+    --code-syntax-keyword: #fb4934;
+    --code-syntax-string: #b8bb26;
+    --code-syntax-number: #d3869b;
+    --code-syntax-function: #fabd2f;
+    --code-syntax-type: #8ec07c;
+    --code-syntax-variable: #ebdbb2;
+    --code-syntax-property: #83a598;
+    --code-syntax-operator: #fe8019;
+    --code-syntax-tag: #fe8019;
+    --code-syntax-attribute: #b8bb26;
+    --code-syntax-meta: #ebdbb2;
+    --code-syntax-heading: #fe8019;
+    --code-syntax-link: #83a598;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   12. Gruvbox Light
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="gruvbox-light"] {
+    --bg-primary: #fbf1c7;
+    --bg-secondary: #f2e5bc;
+    --bg-tertiary: #ebdbb2;
+    --text-primary: #3c3836;
+    --text-secondary: #504945;
+    --text-muted: #928374;
+    --border-color: #d5c4a1;
+    --accent-color: #af3a03;
+    --accent-hover: #d65d0e;
+    --user-msg-color: #8b6a3c;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --code-bg: #f2e5bc;
+    --blockquote-border: #928374;
+    --table-border: #d5c4a1;
+    --scrollbar-thumb: #928374;
+    --scrollbar-track: #ebdbb2;
+    --dock-bg: rgba(242, 229, 188, 0.75);
+    --dock-border: rgba(0, 0, 0, 0.08);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(251, 241, 199, 0.9);
+    --bg-key: #ebdbb2;
+    --text-color: #3c3836;
+    --bg-key-active: #d5c4a1;
+    --color-green: #79740e;
+    --color-yellow: #b57614;
+    --color-red: #9d0006;
+    --color-purple: #8f3f71;
+    --text-bold: #282828;
+    --code-syntax-comment: #928374;
+    --code-syntax-keyword: #9d0006;
+    --code-syntax-string: #79740e;
+    --code-syntax-number: #8f3f71;
+    --code-syntax-function: #b57614;
+    --code-syntax-type: #427b58;
+    --code-syntax-variable: #3c3836;
+    --code-syntax-property: #076678;
+    --code-syntax-operator: #af3a03;
+    --code-syntax-tag: #af3a03;
+    --code-syntax-attribute: #79740e;
+    --code-syntax-meta: #3c3836;
+    --code-syntax-heading: #af3a03;
+    --code-syntax-link: #076678;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   13. High Contrast Dark
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="high-contrast-dark"] {
+    --bg-primary: #000000;
+    --bg-secondary: #0a0a0a;
+    --bg-tertiary: #1a1a1a;
+    --text-primary: #ffffff;
+    --text-secondary: #e0e0e0;
+    --text-muted: #a0a0a0;
+    --border-color: #555555;
+    --accent-color: #00ccff;
+    --accent-hover: #33ddff;
+    --user-msg-color: #007aa0;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.6);
+    --code-bg: #0a0a0a;
+    --blockquote-border: #555555;
+    --table-border: #555555;
+    --scrollbar-thumb: #666666;
+    --scrollbar-track: #1a1a1a;
+    --dock-bg: rgba(10, 10, 10, 0.75);
+    --dock-border: rgba(255, 255, 255, 0.12);
+    --lb-bg: rgba(0,0,0,0.95);
+    --lb-toolbar-bg: rgba(26, 26, 26, 0.95);
+    --bg-key: #1a1a1a;
+    --text-color: #ffffff;
+    --bg-key-active: #333333;
+    --color-green: #00ff66;
+    --color-yellow: #ffff00;
+    --color-red: #ff3333;
+    --color-purple: #cc66ff;
+    --text-bold: #ffffff;
+    --code-syntax-comment: #999999;
+    --code-syntax-keyword: #ff6699;
+    --code-syntax-string: #66ff66;
+    --code-syntax-number: #ffcc00;
+    --code-syntax-function: #00ccff;
+    --code-syntax-type: #00ffcc;
+    --code-syntax-variable: #ffffff;
+    --code-syntax-property: #00ccff;
+    --code-syntax-operator: #ff9900;
+    --code-syntax-tag: #ff6699;
+    --code-syntax-attribute: #ffcc00;
+    --code-syntax-meta: #ffffff;
+    --code-syntax-heading: #00ccff;
+    --code-syntax-link: #00ccff;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   14. High Contrast Light
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="high-contrast-light"] {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f5;
+    --bg-tertiary: #e0e0e0;
+    --text-primary: #000000;
+    --text-secondary: #1a1a1a;
+    --text-muted: #444444;
+    --border-color: #000000;
+    --accent-color: #0055cc;
+    --accent-hover: #0044aa;
+    --user-msg-color: #003377;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.15);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.2);
+    --code-bg: #f5f5f5;
+    --blockquote-border: #000000;
+    --table-border: #000000;
+    --scrollbar-thumb: #333333;
+    --scrollbar-track: #e0e0e0;
+    --dock-bg: rgba(245, 245, 245, 0.9);
+    --dock-border: rgba(0, 0, 0, 0.2);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(255, 255, 255, 0.95);
+    --bg-key: #e0e0e0;
+    --text-color: #000000;
+    --bg-key-active: #cccccc;
+    --color-green: #007700;
+    --color-yellow: #886600;
+    --color-red: #cc0000;
+    --color-purple: #6600aa;
+    --text-bold: #000000;
+    --code-syntax-comment: #666666;
+    --code-syntax-keyword: #990055;
+    --code-syntax-string: #007700;
+    --code-syntax-number: #886600;
+    --code-syntax-function: #0055cc;
+    --code-syntax-type: #007788;
+    --code-syntax-variable: #000000;
+    --code-syntax-property: #0055cc;
+    --code-syntax-operator: #cc5500;
+    --code-syntax-tag: #990055;
+    --code-syntax-attribute: #886600;
+    --code-syntax-meta: #000000;
+    --code-syntax-heading: #0055cc;
+    --code-syntax-link: #0055cc;
 }

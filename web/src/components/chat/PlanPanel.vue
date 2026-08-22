@@ -90,7 +90,7 @@ const chipText = computed(() => {
   animation: plan-chip-glow 0.5s ease-out;
 }
 
-:root[data-theme="dark"] .plan-chip--updated {
+:root[data-theme-base="dark"] .plan-chip--updated {
   border-color: #22d3ee;
 }
 
@@ -103,7 +103,7 @@ const chipText = computed(() => {
   flex-shrink: 0;
 }
 
-:root[data-theme="dark"] .plan-chip__pulse {
+:root[data-theme-base="dark"] .plan-chip__pulse {
   background: #22d3ee;
 }
 
@@ -187,7 +187,7 @@ const chipText = computed(() => {
   animation: pulse-line 1.5s ease-in-out infinite;
 }
 
-:root[data-theme="dark"] .plan-entry__line--pulsing {
+:root[data-theme-base="dark"] .plan-entry__line--pulsing {
   border-left-color: #22d3ee;
 }
 
@@ -213,7 +213,7 @@ const chipText = computed(() => {
   animation: check-in 0.3s ease-out;
 }
 
-:root[data-theme="dark"] .plan-entry--completed .plan-entry__node {
+:root[data-theme-base="dark"] .plan-entry--completed .plan-entry__node {
   background: var(--color-green, #3fb950);
   border-color: var(--color-green, #3fb950);
 }
@@ -222,7 +222,7 @@ const chipText = computed(() => {
   border-color: var(--color-cyan, #06b6d4);
 }
 
-:root[data-theme="dark"] .plan-entry--in_progress .plan-entry__node {
+:root[data-theme-base="dark"] .plan-entry--in_progress .plan-entry__node {
   border-color: #22d3ee;
 }
 
@@ -240,7 +240,7 @@ const chipText = computed(() => {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
-:root[data-theme="dark"] .plan-entry__dot {
+:root[data-theme-base="dark"] .plan-entry__dot {
   background: #22d3ee;
 }
 
@@ -309,7 +309,7 @@ const chipText = computed(() => {
   100% { border-color: var(--border-color, #dee2e6); box-shadow: none; }
 }
 
-:root[data-theme="dark"] .plan-chip-glow {
+:root[data-theme-base="dark"] .plan-chip-glow {
   0% { border-color: #22d3ee; box-shadow: 0 0 6px rgba(34, 211, 238, 0.5); }
   100% { border-color: var(--border-color, #30363d); box-shadow: none; }
 }

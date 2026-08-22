@@ -1876,11 +1876,11 @@ function scrollSelectedIntoView(path) {
     background: #fef2f2;
 }
 
-[data-theme="dark"] .ms-action-btn.ms-danger {
+[data-theme-base="dark"] .ms-action-btn.ms-danger {
     border-color: #7f1d1d;
 }
 
-[data-theme="dark"] .ms-action-btn.ms-danger:hover {
+[data-theme-base="dark"] .ms-action-btn.ms-danger:hover {
     background: #2d1b1b;
 }
 
@@ -2303,25 +2303,25 @@ function scrollSelectedIntoView(path) {
 }
 
 /* Grid multi-select check */
-[data-theme="dark"] .grid-thumb {
+[data-theme-base="dark"] .grid-thumb {
     background: var(--bg-secondary, #2a2a2a);
 }
 
-[data-theme="dark"] .grid-item.grid-dir .grid-thumb {
+[data-theme-base="dark"] .grid-item.grid-dir .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, var(--bg-secondary, #2a2a2a));
 }
 
-[data-theme="dark"] .grid-item.grid-active .grid-thumb,
-[data-theme="dark"] .grid-item.ctx-highlight .grid-thumb {
+[data-theme-base="dark"] .grid-item.grid-active .grid-thumb,
+[data-theme-base="dark"] .grid-item.ctx-highlight .grid-thumb {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, var(--bg-secondary, #2a2a2a));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #4a90d9) 50%, transparent);
 }
 
-[data-theme="dark"] .file-item.active .file-icon-wrap {
+[data-theme-base="dark"] .file-item.active .file-icon-wrap {
     background: color-mix(in srgb, white 30%, var(--accent-color, #4a90d9));
 }
 
-[data-theme="dark"] .file-item.ctx-highlight .file-icon-wrap {
+[data-theme-base="dark"] .file-item.ctx-highlight .file-icon-wrap {
     background: color-mix(in srgb, white 30%, var(--accent-color, #4a90d9));
 }
 
@@ -2395,7 +2395,7 @@ function scrollSelectedIntoView(path) {
     border-radius: 4px;
 }
 
-[data-theme="dark"] .drop-overlay {
+[data-theme-base="dark"] .drop-overlay {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, var(--bg-primary, #1a1a1a));
 }
 
@@ -2416,7 +2416,7 @@ function scrollSelectedIntoView(path) {
     border-radius: 4px;
 }
 
-[data-theme="dark"] .paste-overlay {
+[data-theme-base="dark"] .paste-overlay {
     background: color-mix(in srgb, var(--success-color, #22c55e) 12%, var(--bg-primary, #1a1a1a));
 }
 

@@ -35,8 +35,8 @@ const specData = computed(() => {
   return props.file?.content || ''
 })
 
-// Detect dark theme from ClawBench's data-theme attribute (same as mermaid, terminal, etc.)
-const isDark = computed(() => document.documentElement.getAttribute('data-theme') === 'dark')
+// Detect dark theme from ClawBench's data-theme-base attribute
+const isDark = computed(() => document.documentElement.getAttribute('data-theme-base') === 'dark')
 
 // Read scrollbar colors from CSS variables (same as project-wide scrollbar style)
 const scrollbarThumb = getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-thumb').trim() || '#c1c1c1'

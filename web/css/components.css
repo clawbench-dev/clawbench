@@ -65,7 +65,7 @@
     background: #fef2f2;
 }
 
-[data-theme="dark"] .context-menu-item.danger:hover {
+[data-theme-base="dark"] .context-menu-item.danger:hover {
     background: #2d1b1b;
 }
 

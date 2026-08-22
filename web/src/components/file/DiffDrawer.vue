@@ -343,29 +343,29 @@ const segments = computed<Segment[]>(() => {
 
 <style>
 /* Dark theme adjustments */
-[data-theme="dark"] .diff-line-del .diff-content {
+[data-theme-base="dark"] .diff-line-del .diff-content {
   color: #f87171;
 }
-[data-theme="dark"] .diff-line-del {
+[data-theme-base="dark"] .diff-line-del {
   background: rgba(239, 68, 68, 0.40);
 }
-[data-theme="dark"] .diff-line-add .diff-content {
+[data-theme-base="dark"] .diff-line-add .diff-content {
   color: #4ade80;
 }
-[data-theme="dark"] .diff-line-add {
+[data-theme-base="dark"] .diff-line-add {
   border-left-color: #4ade80;
   background: rgba(34, 197, 94, 0.40);
 }
-[data-theme="dark"] .diff-char-del {
+[data-theme-base="dark"] .diff-char-del {
   background: rgba(239, 68, 68, 0.40);
 }
-[data-theme="dark"] .diff-char-add {
+[data-theme-base="dark"] .diff-char-add {
   background: rgba(34, 197, 94, 0.40);
 }
-[data-theme="dark"] .diff-seg-del {
+[data-theme-base="dark"] .diff-seg-del {
   background: rgba(255, 80, 80, 0.25);
 }
-[data-theme="dark"] .diff-seg-add {
+[data-theme-base="dark"] .diff-seg-add {
   background: rgba(100, 200, 255, 0.25);
 }
 </style>

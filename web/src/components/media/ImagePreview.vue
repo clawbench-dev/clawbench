@@ -208,7 +208,7 @@ watch(() => props.file, () => {
     will-change: transform;
 }
 
-:global([data-theme="dark"]) .image-preview-img {
+:global([data-theme-base="dark"]) .image-preview-img {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
 }
 

@@ -150,12 +150,12 @@ function handleBodyInput(event) {
 .tool-detail-header[data-category="ask"]      { --tool-accent: #f97316; }
 .tool-detail-header[data-category="fallback"] { --tool-accent: var(--text-muted); }
 
-:root[data-theme="dark"] .tool-detail-header[data-category="bash"]   { --tool-accent: #34d399; }
-:root[data-theme="dark"] .tool-detail-header[data-category="search"] { --tool-accent: #a78bfa; }
-:root[data-theme="dark"] .tool-detail-header[data-category="task"]   { --tool-accent: #fbbf24; }
-:root[data-theme="dark"] .tool-detail-header[data-category="agent"]  { --tool-accent: #f472b6; }
-:root[data-theme="dark"] .tool-detail-header[data-category="skill"]  { --tool-accent: #22d3ee; }
-:root[data-theme="dark"] .tool-detail-header[data-category="ask"]    { --tool-accent: #fb923c; }
+:root[data-theme-base="dark"] .tool-detail-header[data-category="bash"]   { --tool-accent: #34d399; }
+:root[data-theme-base="dark"] .tool-detail-header[data-category="search"] { --tool-accent: #a78bfa; }
+:root[data-theme-base="dark"] .tool-detail-header[data-category="task"]   { --tool-accent: #fbbf24; }
+:root[data-theme-base="dark"] .tool-detail-header[data-category="agent"]  { --tool-accent: #f472b6; }
+:root[data-theme-base="dark"] .tool-detail-header[data-category="skill"]  { --tool-accent: #22d3ee; }
+:root[data-theme-base="dark"] .tool-detail-header[data-category="ask"]    { --tool-accent: #fb923c; }
 
 .tool-detail-header-icon {
   flex-shrink: 0;
@@ -253,7 +253,7 @@ function handleBodyInput(event) {
   font-weight: 600;
 }
 
-:root[data-theme="dark"] .tool-detail-body .tool-output-label {
+:root[data-theme-base="dark"] .tool-detail-body .tool-output-label {
   background: rgba(74, 222, 128, 0.15);
   color: #4ade80;
 }
@@ -270,7 +270,7 @@ function handleBodyInput(event) {
   color: #16a34a;
 }
 
-:root[data-theme="dark"] .tool-detail-body .tool-output-success {
+:root[data-theme-base="dark"] .tool-detail-body .tool-output-success {
   background: rgba(74, 222, 128, 0.15);
   color: #4ade80;
 }
@@ -280,7 +280,7 @@ function handleBodyInput(event) {
   color: #dc2626;
 }
 
-:root[data-theme="dark"] .tool-detail-body .tool-output-error {
+:root[data-theme-base="dark"] .tool-detail-body .tool-output-error {
   background: rgba(248, 113, 113, 0.15);
   color: #fca5a5;
 }
@@ -447,7 +447,7 @@ function handleBodyInput(event) {
   white-space: nowrap;
 }
 
-:root[data-theme="dark"] .tool-detail-body .tool-content-copied-text {
+:root[data-theme-base="dark"] .tool-detail-body .tool-content-copied-text {
   color: #4ade80;
 }
 
@@ -504,17 +504,17 @@ function handleBodyInput(event) {
   white-space: pre;
 }
 
-:root[data-theme="dark"] .tool-detail-body .edit-diff-del {
+:root[data-theme-base="dark"] .tool-detail-body .edit-diff-del {
   background: rgba(248, 113, 113, 0.1);
   color: #fca5a5;
 }
 
-:root[data-theme="dark"] .tool-detail-body .edit-diff-add {
+:root[data-theme-base="dark"] .tool-detail-body .edit-diff-add {
   background: rgba(74, 222, 128, 0.1);
   color: #86efac;
 }
 
-:root[data-theme="dark"] .tool-detail-body .edit-diff-replace-all {
+:root[data-theme-base="dark"] .tool-detail-body .edit-diff-replace-all {
   background: rgba(251, 191, 36, 0.15);
   color: #fbbf24;
 }
@@ -559,7 +559,7 @@ function handleBodyInput(event) {
   white-space: nowrap;
 }
 
-:root[data-theme="dark"] .tool-detail-body .file-write-badge {
+:root[data-theme-base="dark"] .tool-detail-body .file-write-badge {
   background: rgba(96, 165, 250, 0.15);
   color: #93c5fd;
 }
@@ -628,7 +628,7 @@ function handleBodyInput(event) {
   margin-right: 4px;
 }
 
-:root[data-theme="dark"] .tool-detail-body .bash-prompt {
+:root[data-theme-base="dark"] .tool-detail-body .bash-prompt {
   color: #4ade80;
 }
 
@@ -672,7 +672,7 @@ function handleBodyInput(event) {
   line-height: 1.5;
 }
 
-:root[data-theme="dark"] .tool-detail-body .grep-label {
+:root[data-theme-base="dark"] .tool-detail-body .grep-label {
   background: rgba(167, 139, 250, 0.15);
   color: #a78bfa;
 }
@@ -706,7 +706,7 @@ function handleBodyInput(event) {
   font-weight: 500;
 }
 
-:root[data-theme="dark"] .tool-detail-body .grep-mode-tag {
+:root[data-theme-base="dark"] .tool-detail-body .grep-mode-tag {
   background: rgba(167, 139, 250, 0.12);
   color: #a78bfa;
 }
@@ -739,7 +739,7 @@ function handleBodyInput(event) {
   line-height: 1.5;
 }
 
-:root[data-theme="dark"] .tool-detail-body .glob-label {
+:root[data-theme-base="dark"] .tool-detail-body .glob-label {
   background: rgba(167, 139, 250, 0.15);
   color: #a78bfa;
 }
@@ -804,7 +804,7 @@ function handleBodyInput(event) {
   line-height: 1.5;
 }
 
-:root[data-theme="dark"] .tool-detail-body .web-fetch-label {
+:root[data-theme-base="dark"] .tool-detail-body .web-fetch-label {
   background: rgba(167, 139, 250, 0.15);
   color: #a78bfa;
 }
@@ -862,7 +862,7 @@ function handleBodyInput(event) {
   white-space: nowrap;
 }
 
-:root[data-theme="dark"] .tool-detail-body .agent-type-badge {
+:root[data-theme-base="dark"] .tool-detail-body .agent-type-badge {
   background: rgba(244, 114, 182, 0.15);
   color: #f472b6;
 }
@@ -962,7 +962,7 @@ function handleBodyInput(event) {
   font-size: 12px;
 }
 
-:root[data-theme="dark"] .tool-detail-body .skill-call-name {
+:root[data-theme-base="dark"] .tool-detail-body .skill-call-name {
   color: #22d3ee;
 }
 
@@ -1092,7 +1092,7 @@ function handleBodyInput(event) {
   flex-shrink: 0;
   line-height: 1.5;
 }
-:root[data-theme="dark"] .tool-detail-body .task-field-label {
+:root[data-theme-base="dark"] .tool-detail-body .task-field-label {
   background: rgba(251, 191, 36, 0.15);
   color: #fbbf24;
 }
@@ -1251,7 +1251,7 @@ function handleBodyInput(event) {
   font-size: 12px;
   color: #0891b2;
 }
-:root[data-theme="dark"] .tool-detail-body .save-memory-key {
+:root[data-theme-base="dark"] .tool-detail-body .save-memory-key {
   color: #22d3ee;
 }
 .tool-detail-body .save-memory-value {
@@ -1310,7 +1310,7 @@ function handleBodyInput(event) {
   color: #0891b2;
   font-weight: 600;
 }
-:root[data-theme="dark"] .tool-detail-body .skill-manage-action {
+:root[data-theme-base="dark"] .tool-detail-body .skill-manage-action {
   background: rgba(34, 211, 238, 0.15);
   color: #22d3ee;
 }
@@ -1320,7 +1320,7 @@ function handleBodyInput(event) {
   font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
   font-size: 12px;
 }
-:root[data-theme="dark"] .tool-detail-body .skill-manage-name {
+:root[data-theme-base="dark"] .tool-detail-body .skill-manage-name {
   color: #22d3ee;
 }
 
@@ -1370,7 +1370,7 @@ function handleBodyInput(event) {
   color: #0891b2;
   font-weight: 600;
 }
-:root[data-theme="dark"] .tool-detail-body .image-gen-size {
+:root[data-theme-base="dark"] .tool-detail-body .image-gen-size {
   background: rgba(34, 211, 238, 0.15);
   color: #22d3ee;
 }
@@ -1390,7 +1390,7 @@ function handleBodyInput(event) {
   font-size: 12px;
   color: #0891b2;
 }
-:root[data-theme="dark"] .tool-detail-body .lsp-method {
+:root[data-theme-base="dark"] .tool-detail-body .lsp-method {
   color: #22d3ee;
 }
 .tool-detail-body .lsp-file-path {
@@ -1601,7 +1601,7 @@ function handleBodyInput(event) {
   font-weight: 600;
   color: #dc2626;
 }
-:root[data-theme="dark"] .tool-detail-body .permission-title {
+:root[data-theme-base="dark"] .tool-detail-body .permission-title {
   color: #fca5a5;
 }
 .tool-detail-body .permission-tool-name {
@@ -1629,7 +1629,7 @@ function handleBodyInput(event) {
   flex-shrink: 0;
   line-height: 1.5;
 }
-:root[data-theme="dark"] .tool-detail-body .permission-detail-label {
+:root[data-theme-base="dark"] .tool-detail-body .permission-detail-label {
   background: rgba(248, 113, 113, 0.12);
   color: #fca5a5;
 }
@@ -1667,7 +1667,7 @@ function handleBodyInput(event) {
   border-color: rgba(34, 197, 94, 0.3);
   color: #16a34a;
 }
-:root[data-theme="dark"] .tool-detail-body .permission-btn-allow {
+:root[data-theme-base="dark"] .tool-detail-body .permission-btn-allow {
   background: rgba(74, 222, 128, 0.12);
   border-color: rgba(74, 222, 128, 0.25);
   color: #4ade80;
@@ -1677,7 +1677,7 @@ function handleBodyInput(event) {
   border-color: rgba(239, 68, 68, 0.2);
   color: #dc2626;
 }
-:root[data-theme="dark"] .tool-detail-body .permission-btn-reject {
+:root[data-theme-base="dark"] .tool-detail-body .permission-btn-reject {
   background: rgba(248, 113, 113, 0.1);
   border-color: rgba(248, 113, 113, 0.2);
   color: #fca5a5;
@@ -1685,7 +1685,7 @@ function handleBodyInput(event) {
 
 /* Permission/ask question categories for overlay header */
 .tool-detail-header[data-category="permission"] { --tool-accent: #ef4444; }
-:root[data-theme="dark"] .tool-detail-header[data-category="permission"] { --tool-accent: #f87171; }
+:root[data-theme-base="dark"] .tool-detail-header[data-category="permission"] { --tool-accent: #f87171; }
 
 .tool-detail-body .permission-result {
   display: inline-block;
@@ -1706,12 +1706,12 @@ function handleBodyInput(event) {
   color: #991b1b;
 }
 
-:root[data-theme="dark"] .tool-detail-body .permission-result-approved {
+:root[data-theme-base="dark"] .tool-detail-body .permission-result-approved {
   background: #166534;
   color: #dcfce7;
 }
 
-:root[data-theme="dark"] .tool-detail-body .permission-result-denied {
+:root[data-theme-base="dark"] .tool-detail-body .permission-result-denied {
   background: #991b1b;
   color: #fee2e2;
 }
@@ -1731,7 +1731,7 @@ function handleBodyInput(event) {
   border: 1px solid #bbf7d0;
 }
 
-:root[data-theme="dark"] .tool-detail-body .permission-result-auto-approved {
+:root[data-theme-base="dark"] .tool-detail-body .permission-result-auto-approved {
   background: #166534;
   color: #dcfce7;
   border-color: #15803d;
@@ -1750,7 +1750,7 @@ function handleBodyInput(event) {
   background: rgba(34, 197, 94, 0.12);
   color: #16a34a;
 }
-:root[data-theme="dark"] .tool-detail-body .tool-output-ok-badge {
+:root[data-theme-base="dark"] .tool-detail-body .tool-output-ok-badge {
   background: rgba(74, 222, 128, 0.15);
   color: #4ade80;
 }

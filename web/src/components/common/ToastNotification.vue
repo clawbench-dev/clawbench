@@ -52,7 +52,7 @@ defineProps({
     background: color-mix(in srgb, #ef4444 78%, var(--bg-tertiary));
 }
 
-[data-theme="dark"] .toast-error {
+[data-theme-base="dark"] .toast-error {
     background: color-mix(in srgb, #ef4444 55%, var(--bg-tertiary));
 }
 
@@ -60,7 +60,7 @@ defineProps({
     background: color-mix(in srgb, #22c55e 78%, var(--bg-tertiary));
 }
 
-[data-theme="dark"] .toast-success {
+[data-theme-base="dark"] .toast-success {
     background: color-mix(in srgb, #22c55e 55%, var(--bg-tertiary));
 }
 
@@ -68,11 +68,11 @@ defineProps({
     background: color-mix(in srgb, var(--accent-color) 78%, var(--bg-tertiary));
 }
 
-[data-theme="dark"] .toast-info {
+[data-theme-base="dark"] .toast-info {
     background: color-mix(in srgb, var(--accent-color) 55%, var(--bg-tertiary));
 }
 
-[data-theme="dark"] .toast {
+[data-theme-base="dark"] .toast {
     background: color-mix(in srgb, var(--accent-color) 40%, var(--bg-tertiary));
     color: var(--text-primary);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);

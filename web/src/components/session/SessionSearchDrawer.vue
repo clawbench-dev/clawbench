@@ -739,39 +739,39 @@ defineExpose({ focusSearchInput })
 
 <style>
 /* Dark theme overrides — non-scoped for [data-theme] selector */
-[data-theme="dark"] .session-search-item-preview mark {
+[data-theme-base="dark"] .session-search-item-preview mark {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
   color: inherit;
 }
 
-[data-theme="dark"] .detail-chunk-text mark.search-hl {
+[data-theme-base="dark"] .detail-chunk-text mark.search-hl {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
   color: inherit;
 }
 
-[data-theme="dark"] .detail-chunk {
+[data-theme-base="dark"] .detail-chunk {
   border-color: rgba(255, 255, 255, 0.06);
 }
 
-[data-theme="dark"] .mode-selector {
+[data-theme-base="dark"] .mode-selector {
   border-color: rgba(255, 255, 255, 0.12);
 }
 
-[data-theme="dark"] .mode-btn {
+[data-theme-base="dark"] .mode-btn {
   background: transparent;
   color: var(--text-muted, #999);
 }
 
-[data-theme="dark"] .mode-btn:not(:last-child) {
+[data-theme-base="dark"] .mode-btn:not(:last-child) {
   border-right-color: rgba(255, 255, 255, 0.12);
 }
 
-[data-theme="dark"] .mode-btn.active {
+[data-theme-base="dark"] .mode-btn.active {
   background: var(--accent-color, #4a90d9);
   color: #fff;
 }
 
-[data-theme="dark"] .mode-btn:not(.active):hover {
+[data-theme-base="dark"] .mode-btn:not(.active):hover {
   background: rgba(255, 255, 255, 0.06);
 }
 </style>

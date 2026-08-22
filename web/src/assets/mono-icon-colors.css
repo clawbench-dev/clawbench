@@ -9,15 +9,15 @@
 
 /* ---- OpenCode: dark gray — invisible on dark bg ---- */
 .mono-opencode { color: #4A4A4A; }
-[data-theme="dark"] .mono-opencode { color: #c9d1d9; }
+[data-theme-base="dark"] .mono-opencode { color: #c9d1d9; }
 
 /* ---- Pi: very dark gray — invisible on dark bg ---- */
 .mono-pi { color: #2D2D2D; }
-[data-theme="dark"] .mono-pi { color: #e6edf3; }
+[data-theme-base="dark"] .mono-pi { color: #e6edf3; }
 
 /* ---- MiMo/Xiaomi: dark navy — invisible on dark bg ---- */
 .mono-mimo { color: #1A1A2E; }
-[data-theme="dark"] .mono-mimo { color: #e6edf3; }
+[data-theme-base="dark"] .mono-mimo { color: #e6edf3; }
 
 /* ---- OpenAI: purple — visible on both themes ---- */
 .mono-openai { color: #412991; }
@@ -30,8 +30,8 @@
 
 /* ---- xAI: pure black — invisible on dark bg ---- */
 .mono-xai { color: #000000; }
-[data-theme="dark"] .mono-xai { color: #c9d1d9; }
+[data-theme-base="dark"] .mono-xai { color: #c9d1d9; }
 
 /* ---- Grok: dark gray logo — invisible on dark bg ---- */
 .mono-grok { color: #1A1A1A; }
-[data-theme="dark"] .mono-grok { color: #e6edf3; }
+[data-theme-base="dark"] .mono-grok { color: #e6edf3; }

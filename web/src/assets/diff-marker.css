@@ -67,14 +67,14 @@
 
 /* ─── Dark theme adjustments ─── */
 
-[data-theme="dark"] .diff-marker-modified {
+[data-theme-base="dark"] .diff-marker-modified {
   background: rgba(255, 165, 0, 0.6);
 }
 
-[data-theme="dark"] .diff-marker-deleted {
+[data-theme-base="dark"] .diff-marker-deleted {
   background: rgba(255, 80, 80, 0.6);
 }
 
-[data-theme="dark"] .diff-marker-added {
+[data-theme-base="dark"] .diff-marker-added {
   background: rgba(80, 200, 80, 0.6);
 }

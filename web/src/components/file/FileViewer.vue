@@ -993,12 +993,12 @@ defineExpose({
 </style>
 
 <style>
-[data-theme="dark"] .error-bubble {
+[data-theme-base="dark"] .error-bubble {
     background: rgba(239, 68, 68, 0.15);
     color: #fca5a5;
 }
 
-[data-theme="dark"] .truncated-notice {
+[data-theme-base="dark"] .truncated-notice {
     background: rgba(245, 158, 11, 0.15);
     color: #fbbf24;
     border-bottom-color: rgba(245, 158, 11, 0.3);

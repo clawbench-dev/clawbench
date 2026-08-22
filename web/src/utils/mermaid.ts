@@ -1,6 +1,7 @@
 // Mermaid diagram utilities
 import { getMermaid } from './lazyMermaid.ts'
 import { appLog } from '@/utils/appLog'
+import { isDarkTheme } from './themeMeta'
 
 type MermaidModule = Awaited<ReturnType<typeof getMermaid>>
 
@@ -17,7 +18,8 @@ let _initPromise: Promise<void> | null = null
 
 /** Build mermaid initialize config for current theme */
 function mermaidConfig() {
-    const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' as const : 'default' as const
+    const currentThemeId = document.documentElement.getAttribute('data-theme') || 'github-light'
+    const theme = isDarkTheme(currentThemeId) ? 'dark' as const : 'default' as const
     return {
         startOnLoad: false,
         theme,
