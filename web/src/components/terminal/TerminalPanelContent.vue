@@ -216,12 +216,6 @@
     >
       <div class="theme-picker" @click.stop>
         <div class="theme-picker-title">{{ t('terminal.theme') }}</div>
-        <input
-          v-model="themeSearch"
-          class="theme-search-input"
-          type="text"
-          :placeholder="t('terminal.themeSearchPlaceholder')"
-        />
         <div v-if="themeLoading" class="theme-picker-status">{{ t('terminal.themeLoading') }}</div>
         <div v-else-if="themeLoadError" class="theme-picker-status theme-picker-error">
           <span>{{ t('terminal.themeLoadFailed') }}</span>
@@ -239,7 +233,7 @@
             <component :is="autoThemeIsDark ? Moon : Sun" :size="12" class="theme-item-base-icon" />
           </button>
           <button
-            v-for="id in filteredThemes"
+            v-for="id in THEME_IDS"
             :key="id"
             class="theme-item"
             :class="{ active: themeSelection === id }"
@@ -471,16 +465,9 @@ function getXtermTheme(): Record<string, unknown> {
 const themeSelection = ref<string>((localConfig.terminalTheme as string) || TERMINAL_THEME_AUTO)
 const themeMenuOpen = ref(false)
 const themeMenuTarget = ref<HTMLElement | null>(null)
-const themeSearch = ref('')
 const themeLoading = ref(false)
 const themeLoadError = ref(false)
 const allThemes = ref<Record<string, unknown> | null>(null)
-
-const filteredThemes = computed(() => {
-  const q = themeSearch.value.trim().toLowerCase()
-  if (!q) return THEME_IDS
-  return THEME_IDS.filter((id) => id.toLowerCase().includes(q) || formatThemeName(id).toLowerCase().includes(q))
-})
 
 async function ensureThemesLoaded() {
   if (allThemes.value || themeLoading.value) return
@@ -511,7 +498,6 @@ function openThemeMenu(e: Event) {
 
 function selectTheme(selection: string) {
   themeMenuOpen.value = false
-  themeSearch.value = ''
   applyTheme(selection)
 }
 
@@ -1741,14 +1727,8 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 /* Terminal theme picker (unscoped because PopupMenu teleports to body) */
-.theme-picker { padding: 3px 0; min-width: 160px; }
+.theme-picker { padding: 0; min-width: 160px; }
 .theme-picker-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 5px 10px 4px; border-bottom: 1px solid var(--border-color); }
-.theme-search-input {
-  width: 100%; box-sizing: border-box; padding: 5px 10px; margin: 3px 0;
-  border: none; border-bottom: 1px solid var(--border-color); border-radius: 0;
-  background: var(--bg-primary); color: var(--text-primary); font-size: 12px; outline: none;
-}
-.theme-search-input:focus { border-bottom-color: var(--accent-color); }
 .theme-picker-status { padding: 10px 12px; text-align: center; color: var(--text-muted); font-size: 12px; }
 .theme-picker-error { display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .theme-retry-btn { padding: 4px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 12px; }

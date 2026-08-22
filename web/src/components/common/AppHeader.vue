@@ -1402,7 +1402,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 /* ─── Theme picker popup ─────────────────────────────────────────────── */
 
 .theme-picker-menu {
-    padding: 3px 0;
+    padding: 0;
     min-width: 160px;
 }
 
