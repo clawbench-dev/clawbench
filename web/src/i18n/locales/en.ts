@@ -348,6 +348,7 @@ export default {
       discoveryNotSupported: 'This agent does not support model discovery',
       defaultBadge: 'Default',
       setAsDefault: 'Set as default',
+      setDefaultSuccess: '{name} set as default',
       noModels: 'No models available',
       notAvailable: 'Not available in current mode',
       noSearchResults: 'No matching models',

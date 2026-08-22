@@ -426,7 +426,7 @@ describe('SessionDrawer', () => {
     expect(vi.mocked(apiPost).mock.calls.length).toBe(callCountBefore)
   })
 
-  // ── Set default model via star button ──
+  // ── Set default model via set-as-default button ──
 
   it('setDefaultModel calls patchAgentPref and updates agent field', async () => {
     const wrapper = mountDrawer()
@@ -436,7 +436,15 @@ describe('SessionDrawer', () => {
     expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredModel', 'claude-opus-4-5')
   })
 
-  // ── Set default thinking effort via star button ──
+  it('setDefaultModel also selects the model as current (emits switch-model)', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultModel({ id: 'claude-opus-4-5', name: 'Claude Opus 4.5' })
+
+    expect(wrapper.emitted('switch-model')).toBeTruthy()
+    expect(wrapper.emitted('switch-model')![0][0]).toEqual({ id: 'claude-opus-4-5', name: 'Claude Opus 4.5' })
+  })
+
+  // ── Set default thinking effort via set-as-default button ──
 
   it('setDefaultThinkingEffort calls patchAgentPref and updates agent field', async () => {
     const wrapper = mountDrawer()
@@ -444,6 +452,14 @@ describe('SessionDrawer', () => {
 
     expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_thinking_effort', 'medium')
     expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredThinkingEffort', 'medium')
+  })
+
+  it('setDefaultThinkingEffort also selects the effort as current (emits switch-thinking-effort)', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultThinkingEffort('medium')
+
+    expect(wrapper.emitted('switch-thinking-effort')).toBeTruthy()
+    expect(wrapper.emitted('switch-thinking-effort')![0][0]).toBe('medium')
   })
 
   // ── Select thinking effort ──
@@ -601,6 +617,14 @@ describe('SessionDrawer', () => {
     expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredMode', 'ask')
   })
 
+  it('setDefaultMode also selects the mode as current (emits switch-mode)', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.vm.setDefaultMode({ id: 'ask', name: 'Ask' })
+
+    expect(wrapper.emitted('switch-mode')).toBeTruthy()
+    expect(wrapper.emitted('switch-mode')![0][0]).toEqual({ id: 'ask', name: 'Ask' })
+  })
+
   it('setDefaultMode shows error toast when patchAgentPref rejects', async () => {
     mockAgents.updateAgentField.mockClear()
     vi.mocked(patchAgentPref).mockRejectedValue(new Error('fail'))
@@ -623,6 +647,19 @@ describe('SessionDrawer', () => {
     expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_thinking_effort', '')
     expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredThinkingEffort', '')
     claude.preferredThinkingEffort = originalPref
+  })
+
+  it('setDefaultTransport also selects the transport as current (emits switch-transport)', async () => {
+    const { restoreOriginalModels, invalidateACPStateCache } = await import('@/composables/useAgents')
+    const wrapper = mountDrawer()
+
+    await wrapper.vm.setDefaultTransport('cli')
+
+    expect(wrapper.emitted('switch-transport')).toBeTruthy()
+    expect(wrapper.emitted('switch-transport')![0][0]).toBe('cli')
+    expect(mockIdentity.currentTransport.value).toBe('cli')
+    expect(restoreOriginalModels).toHaveBeenCalledWith('claude')
+    expect(invalidateACPStateCache).toHaveBeenCalledWith('claude')
   })
 
   it('setDefaultTransport keeps preferred thinking effort when valid for CLI', async () => {
@@ -860,9 +897,9 @@ describe('SessionDrawer', () => {
     expect(names).toContain('chat.transportSwitcher.cli')
   })
 
-  // ── Model star set-as-default button ──
+  // ── Model set-as-default button ──
 
-  it('sets a model as default via the star button', async () => {
+  it('sets a model as default via the set-as-default button', async () => {
     const wrapper = mountDrawer()
     const nonDefaultStar = wrapper.findAll('.set-default-btn')[0] // opus is non-default
     await nonDefaultStar.trigger('click')

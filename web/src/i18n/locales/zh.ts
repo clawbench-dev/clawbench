@@ -348,6 +348,7 @@ export default {
       discoveryNotSupported: '该智能体不支持模型自动发现',
       defaultBadge: '默认',
       setAsDefault: '设为默认',
+      setDefaultSuccess: '已将 {name} 设为默认',
       noModels: '暂无可用模型',
       notAvailable: '当前模式下不可用',
       noSearchResults: '未找到匹配的模型',
