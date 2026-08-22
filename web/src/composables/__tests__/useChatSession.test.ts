@@ -3661,9 +3661,10 @@ describe('handleWsReconnect', () => {
     vi.restoreAllMocks()
   })
 
-  it('when loading=false: does nothing', async () => {
+  it('when loading=false: reloads history (skipIfUnchanged)', async () => {
     const loading = ref(false)
     const onDisconnectStream = vi.fn()
+    const onRenderUpdate = vi.fn()
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
@@ -3674,7 +3675,7 @@ describe('handleWsReconnect', () => {
       expandedTools: ref({}),
       onParseAssistantContent: vi.fn(),
       onExtractScheduledTasks: vi.fn(),
-      onRenderUpdate: vi.fn(),
+      onRenderUpdate,
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
       onDisconnectStream,
@@ -3682,9 +3683,30 @@ describe('handleWsReconnect', () => {
     }
     const session = useChatSession(options)
 
+    // First call: loadSessionsOnce. Second call: loadHistory.
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ id: 's1', running: false }], totalCount: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: false }),
+      })
+
     await session.handleWsReconnect()
 
     expect(onDisconnectStream).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=s1'),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
+    await vi.waitFor(() => {
+      const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
+      expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
+    })
 
     vi.restoreAllMocks()
   })

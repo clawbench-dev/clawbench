@@ -1006,22 +1006,37 @@ export function useChatSession(options: UseChatSessionOptions) {
    * If not, clean up the stuck streaming state and reload history.
    */
   async function handleWsReconnect() {
-    if (!loading.value || !currentSessionId.value) return
-    // Wait for loadSessionsOnce (called by App.vue handleReconnect) to
-    // refresh runningSessions from the backend.
+    if (!currentSessionId.value) return
+    // Refresh runningSessions from the backend so the current-session decision
+    // below reflects any change that happened while disconnected.
     await loadSessionsOnceInner()
-    if (!runningSessions.value.has(currentSessionId.value)) {
+    if (loading.value) {
+      if (runningSessions.value.has(currentSessionId.value)) {
+        // Session still running — the live stream re-subscribes on reconnect
+        // (useChatStream watch on `connected`). Nothing to sync here.
+        return
+      }
+      // AI finished during the disconnection — clean up the stuck loading state
+      // and reload history. forceNotRunning=true prevents loadHistory from
+      // re-connecting the stream if the server's in-memory running state
+      // hasn't been updated yet.
       appLog.w(TAG, `WS reconnect: session ${currentSessionId.value} no longer running — cleaning up stuck loading state`)
       onDisconnectStream()
       forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
       loading.value = false
-      // forceNotRunning=true prevents loadHistory from re-connecting the stream
-      // if the server's in-memory running state hasn't been updated yet.
       loadHistory(false, false, true, true).then(() => {
-        // Re-render Mermaid on the final DOM — same race as onSessionEvent
         onRenderUpdate(true)
       }).catch(() => {
         loading.value = false
+      })
+    } else {
+      // Session idle — reload history to reflect changes that occurred while
+      // disconnected (AI finished a task, mode changed, etc.). skipIfUnchanged
+      // avoids UI churn when nothing changed.
+      loadHistory(false, false, true).then(() => {
+        onRenderUpdate(true)
+      }).catch(() => {
+        // Non-critical — keep current view on failure.
       })
     }
   }
