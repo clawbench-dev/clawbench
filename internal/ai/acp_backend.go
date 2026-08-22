@@ -149,6 +149,14 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 				slog.Warn("acp: connection lost during prompt, retrying after respawn",
 					"session_id", req.SessionID, "acp_sid", acpSessionID, "error", err)
 
+				// The first Prompt may have already streamed partial content events
+				// into ch, which SessionExecutor has accumulated into blocks. The
+				// retry Prompt will re-emit the full response from scratch, so those
+				// stale blocks would be duplicated by AccumulateBlock. Send a
+				// content_reset event so SessionExecutor clears its state before
+				// processing the retry's output.
+				forwardACPEvent(ch, StreamEvent{Type: "content_reset"})
+
 				// If a config option killed the connection, skip that config on retry
 				// to avoid crashing the respawned process with the same value.
 				var configKilled *configKilledConnectionError

@@ -225,7 +225,16 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
 
-
+      case 'content_reset': {
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (!sm) return
+        sm.blocks = []
+        sm.streamingText = ''
+        sm.metadata = undefined
+        onRenderNeeded()
+        break
+      }
 
       case 'content': {
         if (sessionChanged()) return
