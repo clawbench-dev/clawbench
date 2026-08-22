@@ -1091,7 +1091,6 @@ onMounted(() => {
     })
 
     session.loadSessionsOnce()
-    document.addEventListener('visibilitychange', session.handleVisibilityChange)
     window.addEventListener('clawbench-reconnect', session.handleWsReconnect)
     window.addEventListener('clawbench-summary-update', handleSummaryUpdate)
     document.addEventListener('keydown', handleCtrlArrowSessionSwitch)
@@ -1108,7 +1107,6 @@ onUnmounted(() => {
     // Clear tool update debounce timers
     for (const timer of toolUpdateFetchDebounce.values()) clearTimeout(timer)
     toolUpdateFetchDebounce.clear()
-    document.removeEventListener('visibilitychange', session.handleVisibilityChange)
     window.removeEventListener('clawbench-reconnect', session.handleWsReconnect)
     window.removeEventListener('clawbench-summary-update', handleSummaryUpdate)
     document.removeEventListener('keydown', handleCtrlArrowSessionSwitch)
