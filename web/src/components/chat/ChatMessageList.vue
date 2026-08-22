@@ -185,17 +185,25 @@ const remainingCount = computed(() => {
   return computeRemainingCount(props.hasMore, props.totalMessages, props.messages.length)
 })
 
-// "All loaded" brief hint: shown for 2s after last load completes with no more
+// "All loaded" brief hint: shown for 2s after a user-initiated load-more completes with no more.
+// Only triggers when loadingMore was recently true (i.e. user explicitly loaded more),
+// not when hasMore changes during initial session load.
 const showAllLoaded = ref(false)
 let allLoadedTimer = null
+let hadRecentLoadMore = false
+
+watch(() => props.loadingMore, (loading) => {
+  if (loading) hadRecentLoadMore = true
+})
 
 watch(() => props.hasMore, (hasMore, prevHasMore) => {
-  // When transitioning from hasMore=true to hasMore=false (just finished loading all)
-  if (!hasMore && prevHasMore && props.messages.length > 0) {
+  if (!hasMore && prevHasMore && props.messages.length > 0 && hadRecentLoadMore) {
     showAllLoaded.value = true
     clearTimeout(allLoadedTimer)
     allLoadedTimer = setTimeout(() => { showAllLoaded.value = false }, 2000)
   }
+  // Reset when hasMore becomes false (session fully loaded or switched)
+  if (!hasMore) hadRecentLoadMore = false
 })
 
 // Note: isAtBottom reset on session switch is handled by the currentSessionId watcher below.
@@ -651,6 +659,10 @@ watch(() => props.currentSessionId, () => {
   scrollTick.value = 0
   userMsgIndexDrawer.close()
   userMsgIndexList.value = []
+  // Reset "all loaded" hint and load-more tracking on session switch
+  showAllLoaded.value = false
+  hadRecentLoadMore = false
+  clearTimeout(allLoadedTimer)
 })
 
 defineExpose({
