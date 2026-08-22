@@ -69,9 +69,9 @@ export interface ClawBenchNative {
 
   /** Optional (Electron): show a native OS notification. Click dispatches session/task navigation. */
   nativeNotify?(title: string, body: string, nav?: NotificationNav): Promise<void>
-  /** Optional (Electron): sync native title bar / dialogs with the app theme. */
-  setTheme?(theme: 'dark' | 'light'): void
-  /** Optional (Electron): get the persisted app theme ('dark' | 'light'). */
+  /** Optional (Electron/Android): sync native UI (status bar, splash) with the app theme. */
+  setTheme?(themeId: string): void
+  /** Optional (Android): get the persisted app theme ID. */
   getTheme?(): string
 }
 

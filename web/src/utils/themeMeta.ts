@@ -48,3 +48,27 @@ export function resolveThemeId(value: string): string {
   }
   return value
 }
+
+// ── Status bar color (for Android meta theme-color + native bridge) ──────────
+
+const STATUS_BAR_COLORS: Record<string, string> = {
+  'github-light':       '#f8f9fa',
+  'github-dark':        '#161b22',
+  'one-dark-pro':       '#21252b',
+  'catppuccin-mocha':   '#181825',
+  'catppuccin-latte':   '#e6e9ef',
+  'dracula':            '#21222c',
+  'nord':               '#3b4252',
+  'tokyo-night':        '#16161e',
+  'solarized-dark':     '#073642',
+  'solarized-light':    '#eee8d5',
+  'gruvbox-dark':       '#1d2021',
+  'gruvbox-light':      '#f2e5bc',
+  'high-contrast-dark': '#0a0a0a',
+  'high-contrast-light':'#f5f5f5',
+}
+
+/** Returns the status bar / navigation bar background color for a theme ID. */
+export function getThemeStatusBarColor(themeId: string): string {
+  return STATUS_BAR_COLORS[themeId] ?? '#161b22'
+}

@@ -3,7 +3,7 @@ import { apiGet, apiPatch, apiPost } from '@/utils/api'
 import i18n, { STORAGE_KEY as LOCALE_KEY, setLocaleCookie } from '@/i18n'
 import { useAgents } from '@/composables/useAgents'
 import { getNative } from '@/utils/clawbenchNative'
-import { resolveThemeId, isDarkTheme } from '@/utils/themeMeta'
+import { resolveThemeId, isDarkTheme, getThemeStatusBarColor } from '@/utils/themeMeta'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
 
@@ -62,6 +62,9 @@ const legacyKeys: Record<string, {
       document.documentElement.setAttribute('data-theme', resolved)
       document.documentElement.setAttribute('data-theme-base', base)
       document.documentElement.setAttribute('data-hljs-theme', base)
+      // Update meta theme-color for Android WebView status bar
+      const metaTC = document.querySelector('meta[name="theme-color"]')
+      if (metaTC) metaTC.setAttribute('content', getThemeStatusBarColor(resolved))
       // Notify App.vue to sync its `theme` ref (used by provide/inject for chat rendering)
       window.dispatchEvent(new CustomEvent('clawbench-theme-change', { detail: resolved }))
     },

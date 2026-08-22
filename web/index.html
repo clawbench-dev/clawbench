@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#0d1117">
+    <meta name="theme-color" content="#161b22">
     <meta name="description" content="一款专为移动端设计的轻量级代码和文档工作台">
 
     <!-- Resolve theme BEFORE CSS loads to prevent flash of default colors.
@@ -29,6 +29,10 @@
         document.documentElement.setAttribute('data-theme', t);
         document.documentElement.setAttribute('data-theme-base', base);
         document.documentElement.setAttribute('data-hljs-theme', base);
+        // Update meta theme-color for Android WebView status bar
+        var SB_COLORS = {'github-light':'#f8f9fa','github-dark':'#161b22','one-dark-pro':'#21252b','catppuccin-mocha':'#181825','catppuccin-latte':'#e6e9ef','dracula':'#21222c','nord':'#3b4252','tokyo-night':'#16161e','solarized-dark':'#073642','solarized-light':'#eee8d5','gruvbox-dark':'#1d2021','gruvbox-light':'#f2e5bc','high-contrast-dark':'#0a0a0a','high-contrast-light':'#f5f5f5'};
+        var metaTC = document.querySelector('meta[name="theme-color"]');
+        if (metaTC) metaTC.setAttribute('content', SB_COLORS[t] || '#161b22');
       })();
     </script>
 

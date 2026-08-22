@@ -104,6 +104,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_SSH_PASSWORD = "ssh_password";
     private static final String KEY_SERVER_LIST = "server_list";
+    private static final String KEY_THEME = "theme_base";
     private static final String TAG = "ClawBench";
     private static final String LOGIN_HTML_URL = "file:///android_asset/login.html";
 
@@ -271,6 +272,9 @@ public class MainActivity extends AppCompatActivity {
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
+        // Apply theme-based colors to native UI (status bar, nav bar, splash)
+        applyThemeColors();
+
         // Clean up legacy native version mismatch skip preference (now handled in WebView)
         if (prefs.contains("skip_version_mismatch")) {
             prefs.edit().remove("skip_version_mismatch").apply();
@@ -311,6 +315,145 @@ public class MainActivity extends AppCompatActivity {
             }
         } else {
             webView.loadUrl(LOGIN_HTML_URL);
+        }
+    }
+
+    /**
+     * Apply theme-based colors to native UI elements: status bar, navigation bar,
+     * and the splash overlay. Reads the persisted theme ID and maps it to native
+     * colors. Called on create and whenever setTheme() is invoked from the WebView.
+     */
+    private void applyThemeColors() {
+        String theme = prefs.getString(KEY_THEME, "github-dark");
+
+        // Map theme ID to native colors (bg-primary, bg-secondary, text-primary, text-muted, text-hint)
+        // Values extracted from variables.css — each theme's --bg-primary, --bg-secondary, --text-primary, etc.
+        int bgPrimary, bgSecondary, textPrimary, textMuted, textHint;
+        boolean isLight;
+        switch (theme) {
+            case "github-light":
+                bgPrimary = 0xFFFFFFFF; bgSecondary = 0xFFF8F9FA;
+                textPrimary = 0xFF212529; textMuted = 0xFF6C757D; textHint = 0xFF6C757D;
+                isLight = true; break;
+            case "github-dark":
+                bgPrimary = 0xFF0D1117; bgSecondary = 0xFF161B22;
+                textPrimary = 0xFFC9D1D9; textMuted = 0xFF6E7681; textHint = 0xFF6E7681;
+                isLight = false; break;
+            case "one-dark-pro":
+                bgPrimary = 0xFF282C34; bgSecondary = 0xFF21252B;
+                textPrimary = 0xFFABB2BF; textMuted = 0xFF5C6370; textHint = 0xFF5C6370;
+                isLight = false; break;
+            case "catppuccin-mocha":
+                bgPrimary = 0xFF1E1E2E; bgSecondary = 0xFF181825;
+                textPrimary = 0xFFCDD6F4; textMuted = 0xFF6C7086; textHint = 0xFF6C7086;
+                isLight = false; break;
+            case "catppuccin-latte":
+                bgPrimary = 0xFFEFF1F5; bgSecondary = 0xFFE6E9EF;
+                textPrimary = 0xFF4C4F69; textMuted = 0xFF8C8FA1; textHint = 0xFF8C8FA1;
+                isLight = true; break;
+            case "dracula":
+                bgPrimary = 0xFF282A36; bgSecondary = 0xFF21222C;
+                textPrimary = 0xFFF8F8F2; textMuted = 0xFF6272A4; textHint = 0xFF6272A4;
+                isLight = false; break;
+            case "nord":
+                bgPrimary = 0xFF2E3440; bgSecondary = 0xFF3B4252;
+                textPrimary = 0xFFD8DEE9; textMuted = 0xFF4C566A; textHint = 0xFF4C566A;
+                isLight = false; break;
+            case "tokyo-night":
+                bgPrimary = 0xFF1A1B26; bgSecondary = 0xFF16161E;
+                textPrimary = 0xFFC0CAF5; textMuted = 0xFF565F89; textHint = 0xFF565F89;
+                isLight = false; break;
+            case "solarized-dark":
+                bgPrimary = 0xFF002B36; bgSecondary = 0xFF073642;
+                textPrimary = 0xFF839496; textMuted = 0xFF586E75; textHint = 0xFF586E75;
+                isLight = false; break;
+            case "solarized-light":
+                bgPrimary = 0xFFFDF6E3; bgSecondary = 0xFFEEE8D5;
+                textPrimary = 0xFF657B83; textMuted = 0xFF93A1A1; textHint = 0xFF93A1A1;
+                isLight = true; break;
+            case "gruvbox-dark":
+                bgPrimary = 0xFF282828; bgSecondary = 0xFF1D2021;
+                textPrimary = 0xFFEBDBB2; textMuted = 0xFF665C54; textHint = 0xFF665C54;
+                isLight = false; break;
+            case "gruvbox-light":
+                bgPrimary = 0xFFFBF1C7; bgSecondary = 0xFFF2E5BC;
+                textPrimary = 0xFF3C3836; textMuted = 0xFF928374; textHint = 0xFF928374;
+                isLight = true; break;
+            case "high-contrast-dark":
+                bgPrimary = 0xFF000000; bgSecondary = 0xFF0A0A0A;
+                textPrimary = 0xFFFFFFFF; textMuted = 0xFFA0A0A0; textHint = 0xFFA0A0A0;
+                isLight = false; break;
+            case "high-contrast-light":
+                bgPrimary = 0xFFFFFFFF; bgSecondary = 0xFFF5F5F5;
+                textPrimary = 0xFF000000; textMuted = 0xFF444444; textHint = 0xFF444444;
+                isLight = true; break;
+            default:
+                bgPrimary = 0xFF0D1117; bgSecondary = 0xFF161B22;
+                textPrimary = 0xFFC9D1D9; textMuted = 0xFF6E7681; textHint = 0xFF6E7681;
+                isLight = false; break;
+        }
+
+        // Status bar and navigation bar colors
+        getWindow().setStatusBarColor(bgSecondary);
+        getWindow().setNavigationBarColor(bgPrimary);
+
+        // Light/dark system bar icons (time, battery, nav buttons)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // API 30+: WindowInsetsController replaces deprecated SYSTEM_UI_FLAG_LIGHT_*
+            android.view.WindowInsetsController controller =
+                getWindow().getDecorView().getWindowInsetsController();
+            if (controller != null) {
+                if (isLight) {
+                    controller.setSystemBarsAppearance(
+                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+                } else {
+                    controller.setSystemBarsAppearance(0,
+                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+                }
+            }
+        } else if (isLight) {
+            // API 23-29: legacy flags (only set for light theme; dark is the default)
+            int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            }
+            getWindow().getDecorView().setSystemUiVisibility(
+                getWindow().getDecorView().getSystemUiVisibility() | flags);
+        } else {
+            // API 23-29 dark: only clear flags that exist on the current API level
+            int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            }
+            getWindow().getDecorView().setSystemUiVisibility(
+                getWindow().getDecorView().getSystemUiVisibility() & ~flags);
+        }
+
+        // Splash overlay colors
+        if (splashScreen != null) {
+            splashScreen.setBackgroundColor(bgPrimary);
+            View inner = ((android.view.ViewGroup) splashScreen).getChildAt(0);
+            if (inner instanceof android.view.ViewGroup) {
+                android.view.ViewGroup layout = (android.view.ViewGroup) inner;
+                for (int i = 0; i < layout.getChildCount(); i++) {
+                    View child = layout.getChildAt(i);
+                    if (child instanceof TextView
+                        && child.getId() != R.id.splashProgress
+                        && child.getId() != R.id.splashCancelButton) {
+                        ((TextView) child).setTextColor(textPrimary);
+                    }
+                }
+            }
+        }
+        if (splashProgress != null) {
+            splashProgress.setTextColor(textMuted);
+        }
+        if (splashCancelButton instanceof TextView) {
+            ((TextView) splashCancelButton).setTextColor(textHint);
         }
     }
 
@@ -3010,6 +3153,29 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public boolean isNativePushEnabled() {
             return BackgroundService.isNativePushEnabled(activity);
+        }
+
+        /**
+         * Get the persisted theme ID (e.g. 'github-dark', 'one-dark-pro').
+         * Used by the static login page to match the main app's color scheme.
+         * Returns 'github-dark' when no theme has been saved yet.
+         */
+        @JavascriptInterface
+        public String getTheme() {
+            return activity.prefs.getString(KEY_THEME, "github-dark");
+        }
+
+        /**
+         * Persist the full theme ID set from the WebView (e.g. 'github-light', 'nord').
+         * The login page reads this via getTheme() on next launch to match
+         * the main interface's color scheme.
+         */
+        @JavascriptInterface
+        public void setTheme(String theme) {
+            String id = (theme != null && !theme.isEmpty()) ? theme : "github-dark";
+            activity.prefs.edit().putString(KEY_THEME, id).apply();
+            // Apply theme to native views (splash overlay, status/nav bar)
+            activity.runOnUiThread(() -> activity.applyThemeColors());
         }
     }
 
