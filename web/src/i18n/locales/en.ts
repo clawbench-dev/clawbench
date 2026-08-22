@@ -1384,7 +1384,6 @@ export default {
       themeHighContrastLight: 'High Contrast Light',
       themeNightOwl: 'Night Owl',
       themeAyuDark: 'Ayu Dark',
-      themeShadesOfPurple: 'Shades of Purple',
       themeVitesseDark: 'Vitesse Dark',
       locale: 'Language',
       localeDesc: 'Switch the display language',

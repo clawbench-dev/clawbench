@@ -127,7 +127,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.themeHighContrastLight', value: 'high-contrast-light' },
       { labelKey: 'settings.items.themeNightOwl', value: 'night-owl' },
       { labelKey: 'settings.items.themeAyuDark', value: 'ayu-dark' },
-      { labelKey: 'settings.items.themeShadesOfPurple', value: 'shades-of-purple' },
       { labelKey: 'settings.items.themeVitesseDark', value: 'vitesse-dark' },
     ]}},
     { type: 'item', spec: { labelKey: 'settings.items.locale', descriptionKey: 'settings.items.localeDesc', key: 'locale', type: 'select', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection', options: [

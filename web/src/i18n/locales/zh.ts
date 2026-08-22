@@ -1385,7 +1385,6 @@ export default {
       themeHighContrastLight: '高对比度 浅色',
       themeNightOwl: '夜猫',
       themeAyuDark: 'Ayu 暗色',
-      themeShadesOfPurple: '紫色渐变',
       themeVitesseDark: 'Vitesse 暗色',
       locale: '语言',
       localeDesc: '切换界面显示语言',

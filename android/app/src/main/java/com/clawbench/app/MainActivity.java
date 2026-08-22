@@ -395,10 +395,6 @@ public class MainActivity extends AppCompatActivity {
                 bgPrimary = 0xFF0A0E14; bgSecondary = 0xFF0D1017;
                 textPrimary = 0xFFB3B1AD; textMuted = 0xFF626A73; textHint = 0xFF626A73;
                 isLight = false; break;
-            case "shades-of-purple":
-                bgPrimary = 0xFF1E1E3F; bgSecondary = 0xFF2D2B55;
-                textPrimary = 0xFFA599E9; textMuted = 0xFF7E78C7; textHint = 0xFF7E78C7;
-                isLight = false; break;
             case "vitesse-dark":
                 bgPrimary = 0xFF121212; bgSecondary = 0xFF181818;
                 textPrimary = 0xFFDBD7CA; textMuted = 0xFF758575; textHint = 0xFF758575;

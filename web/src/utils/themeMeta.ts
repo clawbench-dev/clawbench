@@ -73,7 +73,6 @@ const STATUS_BAR_COLORS: Record<string, string> = {
   'high-contrast-light':'#f5f5f5',
   'night-owl':          '#001122',
   'ayu-dark':           '#0d1017',
-  'shades-of-purple':   '#2d2b55',
   'vitesse-dark':       '#181818',
 }
 

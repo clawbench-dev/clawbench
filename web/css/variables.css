@@ -799,56 +799,7 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
-   17. Shades of Purple
-   ══════════════════════════════════════════════════════════════════════════════ */
-[data-theme="shades-of-purple"] {
-    --bg-primary: #1e1e3f;
-    --bg-secondary: #2d2b55;
-    --bg-tertiary: #3b396b;
-    --text-primary: #a599e9;
-    --text-secondary: #c4b5fd;
-    --text-muted: #7e78c7;
-    --border-color: #4d21fc;
-    --accent-color: #fad000;
-    --accent-hover: #ffee80;
-    --user-msg-color: #5a4f9a;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
-    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
-    --code-bg: #2d2b55;
-    --blockquote-border: #4d21fc;
-    --table-border: #4d21fc;
-    --scrollbar-thumb: #5a4f9a;
-    --scrollbar-track: #1e1e3f;
-    --dock-bg: rgba(45, 43, 85, 0.75);
-    --dock-border: rgba(255, 255, 255, 0.08);
-    --lb-bg: rgba(0,0,0,0.92);
-    --lb-toolbar-bg: rgba(30, 30, 63, 0.95);
-    --bg-key: #3b396b;
-    --text-color: #a599e9;
-    --bg-key-active: #4d4a82;
-    --color-green: #a5ff90;
-    --color-yellow: #fad000;
-    --color-red: #ff628c;
-    --color-purple: #b362ff;
-    --text-bold: #c4b5fd;
-    --code-syntax-comment: #b362ff;
-    --code-syntax-keyword: #ff9d00;
-    --code-syntax-string: #a5ff90;
-    --code-syntax-number: #ff628c;
-    --code-syntax-function: #9effff;
-    --code-syntax-type: #3ad900;
-    --code-syntax-variable: #a599e9;
-    --code-syntax-property: #fad000;
-    --code-syntax-operator: #ff7200;
-    --code-syntax-tag: #9effff;
-    --code-syntax-attribute: #ffee80;
-    --code-syntax-meta: #a599e9;
-    --code-syntax-heading: #fad000;
-    --code-syntax-link: #9effff;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════════
-   18. Vitesse Dark
+   17. Vitesse Dark
    ══════════════════════════════════════════════════════════════════════════════ */
 [data-theme="vitesse-dark"] {
     --bg-primary: #121212;
