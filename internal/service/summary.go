@@ -8,39 +8,28 @@ import (
 	"clawbench/internal/ws"
 )
 
-// summarizeTarget is the single shared entry point for generating a reading
-// summary for a chat message or task execution. Both interactive chat
-// (triggerChatSummarization) and scheduled tasks (executeTask) route through
-// this function so they follow the exact same strategy: always extract the
-// last answer text and save it directly (no AI call, no threshold). Cards
-// (AskUserQuestion, permission approval tools) are extracted unchanged.
-func summarizeTarget(targetType string, targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) { //nolint:unparam // targetType always "chat_message"; kept generic to mirror the previous AsyncSummarize signature
-	// Async caller (triggerChatSummarization): discard the save error and rely on
-	// summarizeSimple's internal logging, matching the pre-refactor behavior.
-	_ = summarizeSimple(targetType, targetID, blocks, projectPath, sessionID)
-}
-
-// summarizeSimple extracts the last answer text and saves it as a summary
-// without any AI call or length threshold. Shared by interactive chat and
-// scheduled tasks via summarizeTarget. Returns an error when the summary could
-// not be saved so on-demand callers can surface a real failure to the user;
-// async callers (triggerChatSummarization) discard it and only log.
-func summarizeSimple(targetType string, targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) error {
+// summarizeMessage extracts the last answer text and saves it as a reading
+// summary for a chat message, without any AI call or length threshold.
+// Cards (AskUserQuestion, permission approval tools) are extracted unchanged.
+// Both interactive chat (triggerChatSummarization, backfillMissingSummaries)
+// and scheduled tasks (executeTask) route through this function.
+// Returns an error when the summary could not be saved; async callers discard
+// it and rely on the internal logging.
+func summarizeMessage(targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) error {
 	text := summarize.ExtractLastAnswerFromBlocks(blocks)
 	if text == "" {
 		return nil
 	}
 	cards := extractSummaryCards(blocks)
-	if err := SaveSummaryWithCards(targetType, targetID, text, cards); err != nil {
+	if err := SaveSummaryWithCards("chat_message", targetID, text, cards); err != nil {
 		slog.Warn(
-			"failed to save simple summary",
-			slog.String("target_type", targetType),
+			"failed to save summary",
 			slog.Int64("target_id", targetID),
 			slog.String("err", err.Error()),
 		)
 		return err
 	}
-	broadcastSummaryUpdate(targetType, targetID, text, cards, projectPath, sessionID)
+	broadcastSummaryUpdate("chat_message", targetID, text, cards, projectPath, sessionID)
 	return nil
 }
 
@@ -72,7 +61,7 @@ func GenerateMessageSummaryOnDemand(messageID int64) (summary string, cards *mod
 	}
 	// Save errors must propagate so the caller can surface a real failure
 	// instead of silently reporting "no summary" to the user.
-	if err := summarizeSimple("chat_message", messageID, blocks, msg.ProjectPath, msg.SessionID); err != nil {
+	if err := summarizeMessage(messageID, blocks, msg.ProjectPath, msg.SessionID); err != nil {
 		return "", nil, false, err
 	}
 	if existing, found := GetSummary("chat_message", messageID); found {

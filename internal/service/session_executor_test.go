@@ -115,6 +115,59 @@ func TestSessionExecutor_Finalize_TransportFromSessionOverride(t *testing.T) {
 	}
 }
 
+func TestSessionExecutor_Finalize_TriggerChatSummarization(t *testing.T) {
+	// Finalize should trigger triggerChatSummarization after FinalizeStreamingMessage
+	// succeeds (msgID > 0), so that assistant messages get reading summaries.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+
+	// Look up the streaming message ID created by setupExecutorSession
+	streamMsgID := GetStreamingMessageID(sid)
+	if streamMsgID == 0 {
+		t.Fatal("expected streaming message placeholder to exist")
+	}
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamMsgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+	// Simulate blocks accumulated during the event loop (Finalize reads e.blocks)
+	executor.blocks = []model.ContentBlock{{Type: "text", Text: "The answer is 42."}}
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           executor.blocks,
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.MsgID == 0 {
+		t.Fatal("expected non-zero MsgID after Finalize")
+	}
+
+	// After Finalize, triggerChatSummarization should have been called,
+	// so the message should have a summary in the DB.
+	summary, found := GetSummary("chat_message", finalized.MsgID)
+	if !found {
+		t.Fatalf("expected summary to be generated for msgID=%d after Finalize", finalized.MsgID)
+	}
+	if summary == "" {
+		t.Fatal("expected non-empty summary after Finalize")
+	}
+}
+
 func TestSessionExecutor_Finalize_ModelFromSession(t *testing.T) {
 	// Cover line 360-362: model from session model.
 	setupExecutorDB(t)
@@ -2118,6 +2171,263 @@ func setupStreamingMessage(t *testing.T, sessionID string) int64 {
 		t.Fatalf("failed to create streaming message: %v", err)
 	}
 	return msgID
+}
+
+func TestSessionExecutor_ContentReset(t *testing.T) {
+	// Verify that a content_reset event clears accumulated blocks, rawOutput,
+	// and responseMetadata — this is the mechanism that prevents content
+	// duplication when ACPBackend retries a Prompt after a peer disconnect.
+	// Without content_reset, the first Prompt's partial events would remain
+	// in the executor's blocks, and the retry Prompt's full output would be
+	// appended, producing duplicated text.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "stale partial from first prompt"},
+		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 999}},
+		{Type: "raw_output", RawOutput: "stale raw"},
+		{Type: "content_reset"}, // simulates the retry boundary
+		{Type: "content", Content: "fresh content from retry"},
+		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 100, OutputTokens: 50}},
+		{Type: "raw_output", RawOutput: "fresh raw"},
+		{Type: "done"},
+	}
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// Only the retry's content should survive
+	if len(result.Blocks) != 1 {
+		t.Fatalf("expected 1 text block after content_reset, got %d: %+v", len(result.Blocks), result.Blocks)
+	}
+	if result.Blocks[0].Text != "fresh content from retry" {
+		t.Fatalf("expected 'fresh content from retry', got %q", result.Blocks[0].Text)
+	}
+
+	// Only the retry's metadata should survive
+	if result.Metadata == nil {
+		t.Fatal("expected Metadata to be set")
+	}
+	if result.Metadata.InputTokens != 100 {
+		t.Fatalf("expected InputTokens=100 from retry metadata, got %d", result.Metadata.InputTokens)
+	}
+
+	// Only the retry's raw output should survive
+	if result.RawOutput != "fresh raw" {
+		t.Fatalf("expected RawOutput='fresh raw', got %q", result.RawOutput)
+	}
+}
+
+func TestSessionExecutor_ContentReset_DBReset(t *testing.T) {
+	// Verify that content_reset also resets the streaming message in DB to empty,
+	// and deletes stale tool call rows, so stale data doesn't persist if the
+	// retry fails.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+
+	// Find the streaming message ID created by setupExecutorSession
+	var streamingMsgID int64
+	err := dbRead.QueryRow(
+		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
+		sid,
+	).Scan(&streamingMsgID)
+	if err != nil {
+		t.Fatalf("failed to find streaming message: %v", err)
+	}
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamingMsgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// First, accumulate some blocks and insert a tool call row, then flush to DB
+	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "stale"})
+	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Read", ID: "stale-tool-1", Done: true},
+	})
+	executor.upsertToolCallToDB(ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Read", ID: "stale-tool-1", Done: true},
+	})
+	executor.flushStreamingMessage()
+
+	// Verify stale content in DB
+	var content string
+	err = dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
+		sid,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("failed to query streaming message: %v", err)
+	}
+	if !contains(content, "stale") {
+		t.Fatalf("expected stale content in DB before reset, got: %q", content)
+	}
+
+	// Verify stale tool call row exists
+	var toolCount int
+	err = dbRead.QueryRow(
+		"SELECT COUNT(*) FROM chat_tool_calls WHERE message_id = ?",
+		streamingMsgID,
+	).Scan(&toolCount)
+	if err != nil {
+		t.Fatalf("failed to query tool calls: %v", err)
+	}
+	if toolCount != 1 {
+		t.Fatalf("expected 1 tool call row before reset, got %d", toolCount)
+	}
+
+	// Now simulate content_reset
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "content_reset"})
+
+	// Verify blocks were cleared
+	if len(executor.blocks) != 0 {
+		t.Fatalf("expected empty blocks after content_reset, got %d", len(executor.blocks))
+	}
+
+	// Verify DB was reset to empty blocks
+	err = dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
+		sid,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("failed to query streaming message after reset: %v", err)
+	}
+	if contains(content, "stale") {
+		t.Fatalf("expected stale content to be cleared from DB after reset, got: %q", content)
+	}
+	if !contains(content, `"blocks":[]`) {
+		t.Fatalf("expected empty blocks in DB after reset, got: %q", content)
+	}
+
+	// Verify stale tool call rows were deleted
+	err = dbRead.QueryRow(
+		"SELECT COUNT(*) FROM chat_tool_calls WHERE message_id = ?",
+		streamingMsgID,
+	).Scan(&toolCount)
+	if err != nil {
+		t.Fatalf("failed to query tool calls after reset: %v", err)
+	}
+	if toolCount != 0 {
+		t.Fatalf("expected 0 tool call rows after content_reset, got %d", toolCount)
+	}
+}
+
+func TestSessionExecutor_ContentReset_WithToolAndThinking(t *testing.T) {
+	// Verify content_reset clears tool_use and thinking blocks too, and
+	// that toolStarts is properly reset so stale duration entries don't
+	// affect the retry's tool duration calculations.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+
+	events := []ai.StreamEvent{
+		{Type: "thinking", Content: "stale thinking"},
+		{Type: "tool_use", Tool: &ai.ToolCall{Name: "Read", ID: "tool-1", Done: false}},
+		{Type: "content", Content: "stale text"},
+		{Type: "content_reset"},
+		// Retry output
+		{Type: "thinking", Content: "fresh thinking"},
+		{Type: "thinking_done"},
+		{Type: "content", Content: "fresh text"},
+		{Type: "tool_use", Tool: &ai.ToolCall{Name: "Bash", ID: "tool-2", Done: true, DurationMs: 100}},
+		{Type: "tool_result", Tool: &ai.ToolCall{ID: "tool-2", Output: "ok", Status: "success", Done: true}},
+		{Type: "done"},
+	}
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// Should only have retry's blocks: 1 thinking + 1 text + 1 tool_use
+	// (MergeConsecutiveThinkingBlocks + thinking_done in buildResult)
+	toolCount := 0
+	textCount := 0
+	thinkingCount := 0
+	for _, b := range result.Blocks {
+		switch b.Type {
+		case "tool_use":
+			toolCount++
+		case "text":
+			textCount++
+		case "thinking":
+			thinkingCount++
+		}
+	}
+	if toolCount != 1 {
+		t.Fatalf("expected 1 tool_use block after content_reset, got %d", toolCount)
+	}
+	if textCount != 1 {
+		t.Fatalf("expected 1 text block after content_reset, got %d", textCount)
+	}
+	if thinkingCount != 1 {
+		t.Fatalf("expected 1 thinking block after content_reset, got %d", thinkingCount)
+	}
+
+	// Verify stale tool IDs are gone from toolStarts
+	if _, exists := executor.toolStarts["tool-1"]; exists {
+		t.Fatal("stale toolStarts entry 'tool-1' should have been cleared by content_reset")
+	}
 }
 
 func TestSessionExecutor_Finalize_SlimsThinkingToDB(t *testing.T) {

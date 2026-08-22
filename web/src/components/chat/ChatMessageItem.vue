@@ -226,7 +226,7 @@ const msgText = computed(() => {
 const showSummary = computed(() => (props.msg ? isShowingSummary(props.msg, displayMode.value) : false))
 
 // In global original mode, a summarized message whose content was stripped by
-// view=summary has nothing to render in original view — request the full text
+// Backend stripped content has nothing to render in original view — request the full text
 // once. Guarded by _loadingOriginal, blocks-present, and _loadAttempted (latch
 // set after the first fetch completes) to fire exactly once even on failure.
 const needsLazyOriginal = computed(() =>

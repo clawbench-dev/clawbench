@@ -35,6 +35,8 @@ const (
 	cancelReasonUser = "user"
 	// blockTypeWarning is the content block type for warning messages.
 	blockTypeWarning = "warning"
+	// eventTypeContentReset clears accumulated blocks from a failed Prompt before retry.
+	eventTypeContentReset = "content_reset"
 
 	// transportACPStdio is the ACP stdio transport type.
 	transportACPStdio = "acp-stdio"
@@ -150,6 +152,42 @@ func NewSessionExecutor(ctx context.Context, cfg RunConfig) *SessionExecutor {
 
 // handleNonTerminalEvent processes a single non-terminal stream event.
 func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
+	// content_reset: clear accumulated blocks from a failed Prompt before retry.
+	// Sent by ACPBackend.ExecuteStream when the first Prompt fails due to peer
+	// disconnect and the retry Prompt will re-emit the full response. Without
+	// this, AccumulateBlock would append the retry's content onto the stale
+	// partial content from the first attempt, producing duplicated text.
+	if event.Type == eventTypeContentReset {
+		slog.Warn("session executor: content_reset, clearing accumulated blocks",
+			slog.String("session", e.cfg.SessionID),
+			slog.Int("blocks_before", len(e.blocks)))
+		e.blocks = nil
+		e.rawOutput = ""
+		e.responseMetadata = nil
+		e.eventCount = 0
+		e.toolStarts = make(map[string]time.Time)
+		// Reset the streaming message in DB to empty so stale partial content
+		// doesn't persist if the retry Prompt fails or the server crashes.
+		emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}}) // safe: known structure
+		if err := UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, string(emptyContent)); err != nil {
+			slog.Error("failed to reset streaming message after content_reset",
+				slog.String("session", e.cfg.SessionID),
+				slog.String("err", err.Error()))
+		}
+		// Delete stale tool call rows from the first (failed) Prompt.
+		// The retry will re-insert them as fresh entries via upsertToolCallToDB.
+		if e.cfg.StreamingMessageID > 0 {
+			if _, err := WriteExec("DELETE FROM chat_tool_calls WHERE message_id = ?", e.cfg.StreamingMessageID); err != nil {
+				slog.Error("failed to delete stale tool calls after content_reset",
+					slog.Int64("message_id", e.cfg.StreamingMessageID),
+					slog.String("err", err.Error()))
+			}
+		}
+		// Forward to WS clients so the frontend clears its rendered partial content.
+		e.forwardEvent(event)
+		return
+	}
+
 	// raw_output: accumulate but don't forward or count
 	if event.Type == "raw_output" {
 		if e.rawOutput != "" {
@@ -578,6 +616,15 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 		slog.Error("failed to finalize streaming message",
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
+	}
+
+	// Trigger summarization for all assistant messages in this session that
+	// don't yet have a summary. SetSessionRunning(false) uses skipEvent=true
+	// (the caller emits its own terminal event), so triggerChatSummarization
+	// would never be reached via that path. Call it here instead, right after
+	// the message is finalized and streaming=0 is persisted.
+	if msgID > 0 {
+		triggerChatSummarization(e.cfg.SessionID)
 	}
 
 	// Save metadata to dedicated table for analytical queries

@@ -192,26 +192,26 @@ func TestTriggerChatSummarization_Success(t *testing.T) {
 
 // --- summarizeTarget (shared entry point for chat + scheduled tasks) ---
 
-func TestSummarizeTarget_ShortTextGetsSummary(t *testing.T) {
+func TestSummarizeMessage_ShortTextGetsSummary(t *testing.T) {
 	_, teardown := setupTestDBForTriggerSummary(t)
 	defer teardown()
 
 	// Always-extract has no threshold — even a short answer is saved.
 	blocks := []model.ContentBlock{{Type: "text", Text: "Short answer"}}
 
-	summarizeTarget("chat_message", 1001, blocks, "/test", "sess-sum")
+	_ = summarizeMessage(1001, blocks, "/test", "sess-sum")
 
 	summary, found := GetSummary("chat_message", 1001)
 	assert.True(t, found, "always-extract should save a summary even for short text")
 	assert.Equal(t, "Short answer", summary)
 }
 
-func TestSummarizeTarget_EmptyTextSkips(t *testing.T) {
+func TestSummarizeMessage_EmptyTextSkips(t *testing.T) {
 	_, teardown := setupTestDBForTriggerSummary(t)
 	defer teardown()
 
 	// No text blocks → no summary saved
-	summarizeTarget("chat_message", 1002, []model.ContentBlock{{Type: "tool_use", Text: "read_file"}}, "/test", "sess-sum2")
+	_ = summarizeMessage(1002, []model.ContentBlock{{Type: "tool_use", Text: "read_file"}}, "/test", "sess-sum2")
 
 	_, found := GetSummary("chat_message", 1002)
 	assert.False(t, found, "no text block should produce no summary")
@@ -273,7 +273,7 @@ func TestTriggerChatSummarization_MultipleAssistantMessages(t *testing.T) {
 	assert.Equal(t, text2, s2)
 }
 
-func TestSummarizeTarget_ExtractsConclusion(t *testing.T) {
+func TestSummarizeMessage_ExtractsConclusion(t *testing.T) {
 	_, teardown := setupTestDBForTriggerSummary(t)
 	defer teardown()
 
@@ -284,7 +284,7 @@ func TestSummarizeTarget_ExtractsConclusion(t *testing.T) {
 		{Type: "text", Text: conclusion},
 	}
 
-	summarizeTarget("chat_message", 1003, blocks, "/test", "sess-sum3")
+	_ = summarizeMessage(1003, blocks, "/test", "sess-sum3")
 
 	summary, found := GetSummary("chat_message", 1003)
 	assert.True(t, found, "always-extract should save the conclusion")

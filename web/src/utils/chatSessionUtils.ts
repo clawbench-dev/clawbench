@@ -60,7 +60,7 @@ export function parseMessages(
       // across loadHistory refreshes. It is undefined until the user toggles.
       // The actual render decision is computed by shouldShowSummary(msg), which
       // accounts for whether a summary exists and whether content was stripped
-      // by view=summary. We must NOT derive a default boolean here, otherwise
+      // by the backend. We must NOT derive a default boolean here, otherwise
       // the raw field would conflate "user chose original" with "no choice yet".
       const existingState = existingSummaryState?.get(msg.id)
       if (existingState === true || existingState === false) {
@@ -96,7 +96,7 @@ export type MessageDisplayMode = 'summary' | 'original'
  * stale relative to message state:
  *
  *  - A message with no summary can never show one.
- *  - When content was stripped by view=summary (blocks empty), there is nothing
+ *  - When the backend stripped content (blocks empty), there is nothing
  *    to show in original view — we must fall back to the summary even if the
  *    user previously toggled to original. This happens after a stream is
  *    interrupted: the summary is generated asynchronously AFTER the message
@@ -113,13 +113,13 @@ export function shouldShowSummary(
   const hasSummary = msg.summary != null && msg.summary !== ''
   if (!hasSummary) return false
   const blocksArr = msg.blocks as unknown as Array<unknown> | undefined
-  const blocksEmpty = !blocksArr || blocksArr.length === 0
+  const contentStripped = !blocksArr || blocksArr.length === 0
   // Explicit per-message preference wins whenever content is available. When
-  // content was stripped (view=summary) the summary is the only thing we can
+  // content was stripped by the backend, the summary is the only thing we can
   // render, so fall back to it regardless of preference (stream-interruption
   // regression, see comment above the function).
   if (msg.showingSummary !== undefined) {
-    if (blocksEmpty) return true
+    if (contentStripped) return true
     return msg.showingSummary !== false
   }
   // No explicit preference: use the global default. In original mode with
@@ -146,8 +146,8 @@ export function isShowingSummary(
   const hasSummary = msg.summary != null && msg.summary !== ''
   if (!hasSummary) return false
   const blocksArr = msg.blocks as unknown as Array<unknown> | undefined
-  const blocksEmpty = !blocksArr || blocksArr.length === 0
-  if (blocksEmpty && hasSummary && (msg._loadingOriginal === true || msg._loadAttempted === true)) return true
+  const contentStripped = !blocksArr || blocksArr.length === 0
+  if (contentStripped && hasSummary && (msg._loadingOriginal === true || msg._loadAttempted === true)) return true
   return shouldShowSummary(msg, defaultMode)
 }
 

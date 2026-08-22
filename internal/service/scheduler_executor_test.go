@@ -128,6 +128,23 @@ CREATE TABLE IF NOT EXISTS chat_thinking (
 	UNIQUE(think_id, message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_thinking_message ON chat_thinking(message_id);
+CREATE TABLE IF NOT EXISTS summaries (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	target_type TEXT NOT NULL,
+	target_id   INTEGER NOT NULL,
+	summary     TEXT NOT NULL,
+	summary_cards TEXT NOT NULL DEFAULT '',
+	created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(target_type, target_id)
+);
+CREATE TABLE IF NOT EXISTS chat_recommendations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id TEXT NOT NULL,
+	project_path TEXT NOT NULL DEFAULT '',
+	message_id INTEGER NOT NULL DEFAULT 0,
+	recommendation TEXT NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 func setupSchedulerExecDB(t *testing.T) {

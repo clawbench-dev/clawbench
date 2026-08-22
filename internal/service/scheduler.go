@@ -908,7 +908,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// This unifies the summary storage model so ContinueFromExecution no longer
 	// needs to convert between target_types.
 	if runResult.MsgID > 0 {
-		summarizeTarget("chat_message", runResult.MsgID, runResult.Blocks, task.ProjectPath, sessionID)
+		_ = summarizeMessage(runResult.MsgID, runResult.Blocks, task.ProjectPath, sessionID)
 	}
 }
 

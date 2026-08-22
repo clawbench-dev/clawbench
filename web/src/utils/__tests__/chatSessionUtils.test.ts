@@ -359,6 +359,20 @@ describe('parseMessages', () => {
     expect(shouldShowSummary({ summary: 'late sum', blocks: [], showingSummary: false })).toBe(true)
   })
 
+  it('shouldShowSummary respects global mode after showingSummary is cleared', () => {
+    // When the global display mode changes (e.g. from original to summary),
+    // the ChatPanelContent watch clears all per-message showingSummary
+    // preferences. After clearing, the global defaultMode must take effect.
+    const msg: Record<string, unknown> = { summary: 'sum', blocks: [{ type: 'text', text: 'x' }], showingSummary: false }
+    // Before clearing: explicit preference overrides global
+    expect(shouldShowSummary(msg, 'summary')).toBe(false)
+    // Simulate the watch clearing the preference
+    delete msg.showingSummary
+    // After clearing: global default takes effect
+    expect(shouldShowSummary(msg, 'summary')).toBe(true)
+    expect(shouldShowSummary(msg, 'original')).toBe(false)
+  })
+
   // ── sessionRunning parameter: strip stale streaming for completed sessions ──
 
   it('strips streaming from assistant message when sessionRunning=false', () => {

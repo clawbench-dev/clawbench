@@ -87,7 +87,14 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
         break
       }
 
-
+      case 'content_reset': {
+        const sm = streamingMsg.value
+        if (!sm) return
+        sm.blocks = []
+        sm.streamingText = ''
+        sm.metadata = undefined
+        break
+      }
 
       case 'content': {
         const msg = streamingMsg.value

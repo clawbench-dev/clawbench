@@ -20,9 +20,34 @@ import (
 )
 
 // GetChatHistory retrieves all chat messages for a given project path, backend, and session.
+// Returns full content (no stripping). Used by non-chat-panel callers (fork, RAG, etc.).
 func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage, error) {
-	msgs, _, err := GetChatHistoryPaged(projectPath, backend, sessionID, 0, 0, false)
-	return msgs, err
+	rows, err := dbRead.Query(
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC",
+		projectPath, sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	messages := []model.ChatMessage{}
+	for rows.Next() {
+		var msg model.ChatMessage
+		var filesJSON sql.NullString
+		var streaming int
+		var indexed int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
+			return nil, err
+		}
+		msg.Streaming = streaming != 0
+		msg.Indexed = indexed != 0
+		if filesJSON.Valid && filesJSON.String != "" {
+			msg.Files = unmarshalFilesJSON(filesJSON.String)
+		}
+		msg.SessionID = sessionID
+		messages = append(messages, msg)
+	}
+	return messages, rows.Err()
 }
 
 // GetChatHistoryPaged retrieves chat messages with pagination.
@@ -31,7 +56,7 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 // When beforeID == 0 and limit > 0, returns the most recent (limit) messages.
 // Returns messages in chronological (ASC) order.
 // Also returns the total message count for the session to avoid a separate COUNT query.
-func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int, summaryView bool) ([]model.ChatMessage, int, error) {
+func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int) ([]model.ChatMessage, int, error) {
 	messages := []model.ChatMessage{}
 	totalCount := GetChatMessageCount(sessionID)
 
@@ -47,7 +72,7 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 			return messages, totalCount, err
 		}
 		defer rows.Close()
-		msgs, err := scanMessagesView(rows, sessionID, summaryView)
+		msgs, err := scanMessages(rows, sessionID)
 		return msgs, totalCount, err
 	}
 
@@ -63,7 +88,7 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 			return messages, totalCount, err
 		}
 		defer rows.Close()
-		msgs, err := scanMessagesView(rows, sessionID, summaryView)
+		msgs, err := scanMessages(rows, sessionID)
 		return msgs, totalCount, err
 	}
 
@@ -74,18 +99,13 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 		return messages, totalCount, err
 	}
 	defer rows.Close()
-	msgs, err := scanMessagesView(rows, sessionID, summaryView)
+	msgs, err := scanMessages(rows, sessionID)
 	return msgs, totalCount, err
 }
 
-// scanMessages scans rows into ChatMessage slice.
+// scanMessages scans rows into ChatMessage slice, enriches with summaries,
+// and strips heavy content from summarized non-streaming assistant messages.
 func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error) {
-	return scanMessagesView(rows, sessionID, false)
-}
-
-// scanMessagesView scans rows and, when summaryView is true, strips the heavy
-// content from messages that have a reading summary and are not streaming.
-func scanMessagesView(rows *sql.Rows, sessionID string, summaryView bool) ([]model.ChatMessage, error) {
 	messages := []model.ChatMessage{}
 	for rows.Next() {
 		var msg model.ChatMessage
@@ -106,7 +126,7 @@ func scanMessagesView(rows *sql.Rows, sessionID string, summaryView bool) ([]mod
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	enrichMessagesWithSummaries(messages, summaryView)
+	enrichMessagesWithSummaries(messages)
 	return messages, nil
 }
 
@@ -1766,9 +1786,9 @@ func summarizeContentForView(content string) string {
 
 // enrichMessagesWithSummaries populates the Summary and SummaryCards fields for
 // assistant messages by batch-querying the summaries table. Only messages with
-// role "assistant" are queried. When summaryView is true, the heavy content of
-// messages that have a reading summary and are not streaming is stripped.
-func enrichMessagesWithSummaries(messages []model.ChatMessage, summaryView bool) {
+// role "assistant" are queried. The heavy content of messages that have a
+// reading summary and are not streaming is stripped to save bandwidth.
+func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 	// Collect IDs of assistant messages
 	assistantIDs := make([]int64, 0, len(messages))
 	for _, msg := range messages {
@@ -1826,9 +1846,54 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage, summaryView bool)
 			if cards, ok := cardMap[messages[i].ID]; ok {
 				messages[i].SummaryCards = cards
 			}
-			if summaryView && messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
+			if messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
 				messages[i].Content = summarizeContentForView(messages[i].Content)
 			}
 		}
+	}
+
+	// Backfill: for non-streaming assistant messages that have no summary,
+	// trigger async summarization so the next loadHistory returns summaries.
+	go backfillMissingSummaries(assistantIDs, summaryMap)
+}
+
+// backfillMissingSummaries triggers async summarization for assistant messages
+// that lack a reading summary. This heals historical data from the period when
+// triggerChatSummarization was never called (skipEvent=true in all
+// SetSessionRunning(false) callers).
+//
+// This function reads message content from DB (not from the messages slice) to
+// avoid a data race: the caller's enrichMessagesWithSummaries may have already
+// replaced msg.Content with the stripped summary-view version, and the HTTP
+// handler may be concurrently serializing the messages slice as JSON.
+func backfillMissingSummaries(assistantIDs []int64, summaryMap map[int64]string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn("backfillMissingSummaries panic", slog.Any("err", r))
+		}
+	}()
+	if dbRead == nil {
+		return
+	}
+	for _, id := range assistantIDs {
+		if _, found := summaryMap[id]; found {
+			continue // already has a summary
+		}
+		// Read original content from DB to avoid data race with enrichMessagesWithSummaries
+		// (which may have stripped content for summary view) and the HTTP handler
+		// (which may be concurrently reading the messages slice).
+		var content, sessionID string
+		if err := dbRead.QueryRow(
+			"SELECT content, session_id FROM chat_history WHERE id = ? AND streaming = 0",
+			id,
+		).Scan(&content, &sessionID); err != nil {
+			continue
+		}
+		blocks, err := parseMessageBlocks(content)
+		if err != nil || len(blocks) == 0 {
+			continue
+		}
+		projectPath := GetSessionProjectPath(sessionID)
+		_ = summarizeMessage(id, blocks, projectPath, sessionID)
 	}
 }

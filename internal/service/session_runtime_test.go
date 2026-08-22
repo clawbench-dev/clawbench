@@ -2167,7 +2167,7 @@ func TestParseMessageBlocks_ValidBlocks(t *testing.T) {
 
 // --- summarizeChatSimple with nil ws manager ---
 
-func TestSummarizeChatSimple_NilWSManager(t *testing.T) {
+func TestSummarizeSimple_NilWSManager(t *testing.T) {
 	db, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
 
@@ -2175,72 +2175,34 @@ func TestSummarizeChatSimple_NilWSManager(t *testing.T) {
 	ws.SetManagerForTest(nil)
 	defer ws.SetManagerForTest(origMgr)
 
-	// Insert session + messages
 	sessionID := "test-simple-nil-ws"
 	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
-	assistantContent := `{"blocks":[{"type":"text","text":"The answer."}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (800, '/test', 'user', 'hello', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (801, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
-	messages, err := GetMessagesBySessionID(sessionID)
-	require.NoError(t, err)
-
-	var lastAssistant *model.ChatMessage
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "assistant" {
-			lastAssistant = &messages[i]
-			break
-		}
-	}
-	require.NotNil(t, lastAssistant)
-
-	var content struct {
-		Blocks []model.ContentBlock `json:"blocks"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(lastAssistant.Content), &content))
+	blocks := []model.ContentBlock{{Type: "text", Text: "The answer."}}
 
 	// Should not panic with nil ws manager
-	summarizeChatSimple(lastAssistant, content.Blocks, "/test", sessionID)
+	err := summarizeMessage(801, blocks, "/test", sessionID)
+	assert.NoError(t, err)
 
 	// Summary should still be saved even without WS broadcast
-	summary, found := GetSummary("chat_message", lastAssistant.ID)
+	summary, found := GetSummary("chat_message", 801)
 	assert.True(t, found)
 	assert.Equal(t, "The answer.", summary)
 }
 
-// --- summarizeChatSimple with empty extracted text ---
+// --- summarizeSimple with empty extracted text ---
 
-func TestSummarizeChatSimple_EmptyExtractedText(t *testing.T) {
-	db, teardown := setupTestDBForChatSummary(t)
+func TestSummarizeSimple_EmptyExtractedText(t *testing.T) {
+	_, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
 
-	// Assistant message with only tool_use blocks (no text)
-	toolOnlyContent := `{"blocks":[{"type":"tool_use","name":"Bash","id":"t1"}]}`
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", "test-simple-empty")
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (802, '/test', 'assistant', ?, ?, 0)", toolOnlyContent, "test-simple-empty")
+	// Tool-use only blocks (no text) → no summary saved
+	blocks := []model.ContentBlock{{Type: "tool_use", Text: "read_file", ID: "t1"}}
 
-	messages, err := GetMessagesBySessionID("test-simple-empty")
-	require.NoError(t, err)
+	err := summarizeMessage(802, blocks, "/test", "test-simple-empty")
+	assert.NoError(t, err)
 
-	var lastAssistant *model.ChatMessage
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "assistant" {
-			lastAssistant = &messages[i]
-			break
-		}
-	}
-	require.NotNil(t, lastAssistant)
-
-	var content struct {
-		Blocks []model.ContentBlock `json:"blocks"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(lastAssistant.Content), &content))
-
-	// ExtractLastAnswerFromBlocks returns "" for tool_use only blocks
-	summarizeChatSimple(lastAssistant, content.Blocks, "/test", "test-simple-empty")
-
-	// No summary should be saved
-	_, found := GetSummary("chat_message", lastAssistant.ID)
+	_, found := GetSummary("chat_message", 802)
 	assert.False(t, found, "no summary should be created for empty extracted text")
 }
 

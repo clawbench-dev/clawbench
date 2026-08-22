@@ -856,7 +856,7 @@ describe('ContentBlocks', () => {
   })
 })
 
-describe('summary mode with empty blocks (view=summary stripped content)', () => {
+describe('summary mode with empty blocks (backend stripped content)', () => {
   it('renders summary text even when blocks are empty', () => {
     const wrapper = mountBlocks({
       blocks: [],

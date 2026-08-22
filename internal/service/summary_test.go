@@ -114,7 +114,7 @@ func TestGenerateMessageSummaryOnDemand_SkipsUserAndStreaming(t *testing.T) {
 	assert.False(t, found)
 }
 
-// --- summarizeSimple / summarizeTarget tests ---
+// --- summarizeMessage tests ---
 
 // setupTestDBForAsyncSummary creates an in-memory DB with summaries table
 func setupTestDBForAsyncSummary(t *testing.T) func() {
@@ -151,7 +151,7 @@ func setupTestDBForAsyncSummary(t *testing.T) func() {
 	return teardown
 }
 
-func TestSummarizeSimple_ExtractsConclusion(t *testing.T) {
+func TestSummarizeMessage_MultiBlockExtractsConclusion(t *testing.T) {
 	dbTeardown := setupTestDBForAsyncSummary(t)
 	defer dbTeardown()
 
@@ -164,32 +164,32 @@ func TestSummarizeSimple_ExtractsConclusion(t *testing.T) {
 		{Type: "text", Text: conclusion},
 	}
 
-	summarizeSimple("chat_message", 1, blocks, "/test", "session-1")
+	err := summarizeMessage(1, blocks, "/test", "session-1")
+	assert.NoError(t, err)
 
 	summary, found := GetSummary("chat_message", 1)
 	assert.True(t, found)
 	assert.Equal(t, conclusion, summary)
 }
 
-func TestSummarizeSimple_NoTextSavesNothing(t *testing.T) {
+func TestSummarizeMessage_NoTextSavesNothing(t *testing.T) {
 	dbTeardown := setupTestDBForAsyncSummary(t)
 	defer dbTeardown()
 
 	// No text block (only tool_use) → nothing to extract, no summary saved.
 	blocks := []model.ContentBlock{{Type: "tool_use", Text: "read_file"}}
 
-	summarizeSimple("chat_message", 2, blocks, "/test", "session-2")
+	err := summarizeMessage(2, blocks, "/test", "session-2")
+	assert.NoError(t, err)
 
 	_, found := GetSummary("chat_message", 2)
 	assert.False(t, found)
 }
 
-func TestSummarizeTarget_AlwaysExtractsConclusion(t *testing.T) {
+func TestSummarizeMessage_AlwaysExtractsConclusion(t *testing.T) {
 	dbTeardown := setupTestDBForAsyncSummary(t)
 	defer dbTeardown()
 
-	// summarizeTarget is the shared entry point and must behave exactly like
-	// summarizeSimple: always extract the last answer, no AI call, no threshold.
 	conclusion := "答案就是 42。"
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: "先看看..."},
@@ -197,21 +197,21 @@ func TestSummarizeTarget_AlwaysExtractsConclusion(t *testing.T) {
 		{Type: "text", Text: conclusion},
 	}
 
-	summarizeTarget("chat_message", 3, blocks, "/test", "session-3")
+	_ = summarizeMessage(3, blocks, "/test", "session-3")
 
 	summary, found := GetSummary("chat_message", 3)
 	assert.True(t, found)
 	assert.Equal(t, conclusion, summary)
 }
 
-func TestSummarizeTarget_SingleShortTextStillExtracted(t *testing.T) {
+func TestSummarizeMessage_SingleShortTextStillExtracted(t *testing.T) {
 	dbTeardown := setupTestDBForAsyncSummary(t)
 	defer dbTeardown()
 
 	// Short text: no threshold — always-extract saves the conclusion directly.
 	blocks := []model.ContentBlock{{Type: "text", Text: "Short answer"}}
 
-	summarizeTarget("chat_message", 4, blocks, "/test", "session-4")
+	_ = summarizeMessage(4, blocks, "/test", "session-4")
 
 	summary, found := GetSummary("chat_message", 4)
 	assert.True(t, found)

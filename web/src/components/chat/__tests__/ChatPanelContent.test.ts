@@ -42,7 +42,7 @@ describe('isShowingSummary', () => {
   })
 
   it('falls back to summary when blocks empty and showingSummary=false (stripped content)', () => {
-    // When content was stripped by view=summary, summary is the only renderable
+    // When content was stripped by the backend, summary is the only renderable
     // content, so we must show it regardless of user preference.
     expect(isShowingSummary({
       summary: 'A summary',

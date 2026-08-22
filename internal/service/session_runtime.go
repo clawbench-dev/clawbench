@@ -197,10 +197,6 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 	if len(skipEvent) == 0 || !skipEvent[0] {
 		if !running {
 			EmitSessionEvent(sessionID, "completed", true)
-
-			// Trigger async summarization for chat messages on normal completion
-			// (cancel/disconnect uses skipEvent=true, so this only runs on "completed")
-			triggerChatSummarization(sessionID)
 		} else {
 			EmitSessionEvent(sessionID, "running", false)
 		}
@@ -440,6 +436,9 @@ func ForceCancelSession(sessionID string) {
 // used to get a summary and every intermediate reply was skipped. Summarizing
 // each missing message closes that gap.
 func triggerChatSummarization(sessionID string) {
+	if dbRead == nil {
+		return
+	}
 	projectPath := GetSessionProjectPath(sessionID)
 	messages, err := GetMessagesBySessionID(sessionID)
 	if err != nil || len(messages) == 0 {
@@ -459,7 +458,7 @@ func triggerChatSummarization(sessionID string) {
 		if _, found := GetSummary("chat_message", messages[i].ID); found {
 			continue
 		}
-		summarizeTarget("chat_message", messages[i].ID, blocks, projectPath, sessionID)
+		_ = summarizeMessage(messages[i].ID, blocks, projectPath, sessionID)
 	}
 
 	// 推荐回复: only for the last assistant message. If enabled, generate a
@@ -742,13 +741,6 @@ func readContextFile(projectPath, name string) string {
 		return ""
 	}
 	return text
-}
-
-// summarizeChatSimple extracts the last answer text and saves it as a summary.
-// Kept as a thin wrapper over the shared summarizeSimple for the existing simple-mode
-// tests; new callers should use summarizeTarget directly.
-func summarizeChatSimple(msg *model.ChatMessage, blocks []model.ContentBlock, projectPath, sessionID string) {
-	_ = summarizeSimple("chat_message", msg.ID, blocks, projectPath, sessionID)
 }
 
 // RespondPermission delivers a user's approval/rejection response to a pending

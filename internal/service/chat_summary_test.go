@@ -84,7 +84,7 @@ func TestEnrichMessagesWithSummaries_NoAssistantMessages(t *testing.T) {
 		{ID: 1, Role: "user", Content: "hello"},
 		{ID: 2, Role: "user", Content: "world"},
 	}
-	enrichMessagesWithSummaries(messages, false)
+	enrichMessagesWithSummaries(messages)
 	assert.Nil(t, messages[0].Summary)
 	assert.Nil(t, messages[1].Summary)
 }
@@ -101,7 +101,7 @@ func TestEnrichMessagesWithSummaries_WithSummary(t *testing.T) {
 		{ID: 5, Role: "user", Content: "question"},
 		{ID: 10, Role: "assistant", Content: "long answer"},
 	}
-	enrichMessagesWithSummaries(messages, false)
+	enrichMessagesWithSummaries(messages)
 	assert.Nil(t, messages[0].Summary)
 	assert.NotNil(t, messages[1].Summary)
 	assert.Equal(t, "这是摘要", *messages[1].Summary)
@@ -115,7 +115,7 @@ func TestEnrichMessagesWithSummaries_NoSummarySaved(t *testing.T) {
 	messages := []model.ChatMessage{
 		{ID: 20, Role: "assistant", Content: "answer without summary"},
 	}
-	enrichMessagesWithSummaries(messages, false)
+	enrichMessagesWithSummaries(messages)
 	assert.Nil(t, messages[0].Summary)
 }
 
@@ -130,7 +130,7 @@ func TestEnrichMessagesWithSummaries_EmptySummary(t *testing.T) {
 	messages := []model.ChatMessage{
 		{ID: 30, Role: "assistant", Content: "short"},
 	}
-	enrichMessagesWithSummaries(messages, false)
+	enrichMessagesWithSummaries(messages)
 	assert.NotNil(t, messages[0].Summary)
 	assert.Equal(t, "", *messages[0].Summary)
 }
@@ -151,7 +151,7 @@ func TestEnrichMessagesWithSummaries_MultipleAssistantMessages(t *testing.T) {
 		{ID: 41, Role: "user", Content: "q2"},
 		{ID: 42, Role: "assistant", Content: "a2"},
 	}
-	enrichMessagesWithSummaries(messages, false)
+	enrichMessagesWithSummaries(messages)
 	assert.Nil(t, messages[0].Summary)
 	assert.NotNil(t, messages[1].Summary)
 	assert.Equal(t, "摘要一", *messages[1].Summary)
@@ -171,7 +171,7 @@ func TestEnrichMessagesWithSummaries_DifferentTargetType(t *testing.T) {
 	messages := []model.ChatMessage{
 		{ID: 50, Role: "assistant", Content: "answer"},
 	}
-	enrichMessagesWithSummaries(messages, false)
+	enrichMessagesWithSummaries(messages)
 	assert.Nil(t, messages[0].Summary) // Different target_type, should not match
 }
 
@@ -211,4 +211,54 @@ func TestTriggerChatSummarization_NoTextAfterToolUse(t *testing.T) {
 	// No text block at all → no summary saved
 	_, found := GetSummary("chat_message", 111)
 	assert.False(t, found)
+}
+
+func TestBackfillMissingSummaries_GeneratesMissingSummaries(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "test-backfill"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+
+	// Message with existing summary — should be skipped
+	contentWithSummary := `{"blocks":[{"type":"text","text":"already summarized"}]}`
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (200, '/test', 'assistant', ?, ?, 0)", contentWithSummary, sessionID)
+	_ = SaveSummary("chat_message", 200, "existing summary")
+
+	// Message without summary — should be backfilled
+	contentNoSummary := `{"blocks":[{"type":"text","text":"needs summary"}]}`
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (201, '/test', 'assistant', ?, ?, 0)", contentNoSummary, sessionID)
+
+	// Streaming message — should be skipped
+	contentStreaming := `{"blocks":[{"type":"text","text":"still running"}]}`
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (202, '/test', 'assistant', ?, ?, 1)", contentStreaming, sessionID)
+
+	// Simulate what enrichMessagesWithSummaries does: build messages, query summaries, call backfill
+	messages, _ := GetMessagesBySessionID(sessionID)
+	assistantIDs := []int64{}
+	summaryMap := map[int64]string{}
+	for _, m := range messages {
+		if m.Role == "assistant" {
+			assistantIDs = append(assistantIDs, m.ID)
+		}
+	}
+	// Mark 200 as already having a summary
+	summaryMap[200] = "existing summary"
+
+	// Call backfill synchronously (not via goroutine) for test determinism
+	backfillMissingSummaries(assistantIDs, summaryMap)
+
+	// Message 200: already had a summary — unchanged
+	s200, found200 := GetSummary("chat_message", 200)
+	assert.True(t, found200)
+	assert.Equal(t, "existing summary", s200)
+
+	// Message 201: was missing — now has a summary
+	s201, found201 := GetSummary("chat_message", 201)
+	assert.True(t, found201)
+	assert.Equal(t, "needs summary", s201)
+
+	// Message 202: streaming — should NOT be summarized
+	_, found202 := GetSummary("chat_message", 202)
+	assert.False(t, found202)
 }
