@@ -17,7 +17,6 @@ export const THEME_IDS = [
   'high-contrast-dark', 'high-contrast-light',
   'night-owl',
   'ayu-dark',
-  'shades-of-purple',
   'vitesse-dark',
 ] as const
 
@@ -29,7 +28,7 @@ const DARK_THEME_IDS = new Set<string>([
   'github-dark', 'one-dark-pro', 'catppuccin-mocha', 'dracula',
   'nord', 'tokyo-night', 'solarized-dark', 'gruvbox-dark',
   'high-contrast-dark',
-  'night-owl', 'ayu-dark', 'shades-of-purple', 'vitesse-dark',
+  'night-owl', 'ayu-dark', 'vitesse-dark',
 ])
 
 /** Returns `true` if the given theme ID is a dark-color-scheme theme. */

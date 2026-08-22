@@ -64,7 +64,7 @@
   try {
     var THEME = (ClawBenchNative.getTheme && ClawBenchNative.getTheme()) || 'github-dark';
     document.documentElement.setAttribute('data-theme', THEME);
-    var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','gruvbox-dark','high-contrast-dark','night-owl','ayu-dark','shades-of-purple','vitesse-dark'];
+    var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','gruvbox-dark','high-contrast-dark','night-owl','ayu-dark','vitesse-dark'];
     var BASE = DARK_IDS.indexOf(THEME) >= 0 ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme-base', BASE);
   } catch(e) {}
