@@ -341,7 +341,7 @@ public class MainActivity extends AppCompatActivity {
                 isLight = false; break;
             case "one-dark-pro":
                 bgPrimary = 0xFF282C34; bgSecondary = 0xFF21252B;
-                textPrimary = 0xFFABB2BF; textMuted = 0xFF5C6370; textHint = 0xFF5C6370;
+                textPrimary = 0xFFABB2BF; textMuted = 0xFF8C93A1; textHint = 0xFF8C93A1;
                 isLight = false; break;
             case "catppuccin-mocha":
                 bgPrimary = 0xFF1E1E2E; bgSecondary = 0xFF181825;
@@ -357,15 +357,15 @@ public class MainActivity extends AppCompatActivity {
                 isLight = false; break;
             case "nord":
                 bgPrimary = 0xFF2E3440; bgSecondary = 0xFF3B4252;
-                textPrimary = 0xFFD8DEE9; textMuted = 0xFF4C566A; textHint = 0xFF4C566A;
+                textPrimary = 0xFFD8DEE9; textMuted = 0xFF81A1C1; textHint = 0xFF81A1C1;
                 isLight = false; break;
             case "tokyo-night":
                 bgPrimary = 0xFF1A1B26; bgSecondary = 0xFF16161E;
-                textPrimary = 0xFFC0CAF5; textMuted = 0xFF565F89; textHint = 0xFF565F89;
+                textPrimary = 0xFFC0CAF5; textMuted = 0xFF7F87AF; textHint = 0xFF7F87AF;
                 isLight = false; break;
             case "solarized-dark":
                 bgPrimary = 0xFF002B36; bgSecondary = 0xFF073642;
-                textPrimary = 0xFF839496; textMuted = 0xFF586E75; textHint = 0xFF586E75;
+                textPrimary = 0xFF839496; textMuted = 0xFF859093; textHint = 0xFF859093;
                 isLight = false; break;
             case "solarized-light":
                 bgPrimary = 0xFFFDF6E3; bgSecondary = 0xFFEEE8D5;
@@ -373,7 +373,7 @@ public class MainActivity extends AppCompatActivity {
                 isLight = true; break;
             case "gruvbox-dark":
                 bgPrimary = 0xFF282828; bgSecondary = 0xFF1D2021;
-                textPrimary = 0xFFEBDBB2; textMuted = 0xFF665C54; textHint = 0xFF665C54;
+                textPrimary = 0xFFEBDBB2; textMuted = 0xFF9D9188; textHint = 0xFF9D9188;
                 isLight = false; break;
             case "gruvbox-light":
                 bgPrimary = 0xFFFBF1C7; bgSecondary = 0xFFF2E5BC;
