@@ -109,17 +109,16 @@ export type CategoryEntry =
  */
 export const categoryItems: Record<string, CategoryEntry[]> = {
   appearance: [
-    { type: 'item', spec: { labelKey: 'settings.items.theme', descriptionKey: 'settings.items.themeDesc', key: 'theme', type: 'select', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection', options: [
+    { type: 'item', spec: { labelKey: 'settings.items.theme', descriptionKey: 'settings.items.themeDesc', key: 'theme', type: 'select', source: 'local', sectionHeader: 'settings.items.themeSection', options: [
       { labelKey: 'settings.items.themeAuto', value: 'auto' },
       { labelKey: 'settings.items.themeLight', value: 'light' },
       { labelKey: 'settings.items.themeDark', value: 'dark' },
     ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.accentColor', descriptionKey: 'settings.items.accentColorDesc', key: 'accentColor', type: 'select', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection', options: [
+    { type: 'item', spec: { labelKey: 'settings.items.accentColor', descriptionKey: 'settings.items.accentColorDesc', key: 'accentColor', type: 'select', source: 'local', sectionHeader: 'settings.items.themeSection', options: [
       { labelKey: 'settings.items.accentBlue', value: 'blue' },
       { labelKey: 'settings.items.accentPurple', value: 'purple' },
       { labelKey: 'settings.items.accentGreen', value: 'green' },
       { labelKey: 'settings.items.accentOrange', value: 'orange' },
-      { labelKey: 'settings.items.accentRed', value: 'red' },
       { labelKey: 'settings.items.accentCyan', value: 'cyan' },
       { labelKey: 'settings.items.accentPink', value: 'pink' },
     ]}},
@@ -127,8 +126,8 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.localeZh', value: 'zh' },
       { labelKey: 'settings.items.localeEn', value: 'en' },
     ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: 0.05, defaultValue: 1, displayFormat: 'percent' } },
-    { type: 'item', spec: { labelKey: 'settings.items.headerShortcutTips', descriptionKey: 'settings.items.headerShortcutTipsDesc', key: 'headerShortcutTips', type: 'switch', source: 'local', sectionHeader: 'settings.items.appearanceHeaderSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: 0.05, defaultValue: 1, displayFormat: 'percent', sectionHeader: 'settings.items.appearanceDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.headerShortcutTips', descriptionKey: 'settings.items.headerShortcutTipsDesc', key: 'headerShortcutTips', type: 'switch', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection' } },
   ],
   agents: [],
   chat: [

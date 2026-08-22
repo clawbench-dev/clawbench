@@ -97,16 +97,6 @@
     --accent-hover: #fb923c;
     --user-msg-color: #8b5e3c;
 }
-[data-accent="red"][data-theme="light"] {
-    --accent-color: #dc2626;
-    --accent-hover: #b91c1c;
-    --user-msg-color: #bf5b5b;
-}
-[data-accent="red"][data-theme="dark"] {
-    --accent-color: #f85149;
-    --accent-hover: #ff7b72;
-    --user-msg-color: #8b3a3a;
-}
 [data-accent="cyan"][data-theme="light"] {
     --accent-color: #0891b2;
     --accent-hover: #0e7490;
