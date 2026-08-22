@@ -161,7 +161,60 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
     const prevMessages = messages.value
-    messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, isRunning)
+    const parsed = parseMessages(rawMsgs, onParseAssistantContent, messages.value, isRunning)
+
+    // Adopt DB data into recently-finalized streaming messages (drain-* IDs).
+    // When a stream ends, _forceCleanupStreamingState removes the streaming flag
+    // but the message still has its ephemeral drain-* id. loadHistory returns the
+    // same message with a numeric DB id. Replacing the object changes the v-for
+    // key from 'db-drain-*' to 'db-{number}', causing Vue to destroy and
+    // recreate the entire ChatMessageItem component tree — a costly DOM rebuild
+    // that creates the multi-second lag the user sees between content appearing
+    // and the meta bar / file-changes banner showing up.
+    //
+    // Instead, merge the DB fields into the existing object and reuse it.
+    // This keeps the v-for key stable and avoids the DOM rebuild.
+    // Match by: same role + createdAt within 5s + the drain-* id pattern.
+    // Only match non-streaming assistant messages (streaming=true means the
+    // session is still running and loadHistory is reconnecting, not finalizing).
+    const drainPrefix = 'drain-'
+    const recentlyFinalized = new Map<number, Record<string, unknown>>()
+    for (let i = prevMessages.length - 1; i >= 0; i--) {
+      const prev = prevMessages[i]
+      if (prev.role !== 'assistant') continue
+      if (prev.streaming) continue  // still streaming — don't adopt
+      const prevId = prev.id
+      if (typeof prevId !== 'string' || !prevId.startsWith(drainPrefix)) continue
+      recentlyFinalized.set(i, prev)
+    }
+
+    for (let pi = 0; pi < parsed.length; pi++) {
+      const newMsg = parsed[pi]
+      if (newMsg.role !== 'assistant') continue
+      if (typeof newMsg.id !== 'number') continue
+      const newCreatedAt = newMsg.createdAt as string | undefined
+      if (!newCreatedAt) continue
+      // Find a matching recently-finalized message
+      for (const [prevIdx, prevMsg] of recentlyFinalized) {
+        const prevCreatedAt = prevMsg.createdAt as string | undefined
+        if (!prevCreatedAt) continue
+        // Match by createdAt within 5 seconds tolerance
+        const prevTime = new Date(prevCreatedAt).getTime()
+        const newTime = new Date(newCreatedAt).getTime()
+        if (Math.abs(prevTime - newTime) > 5000) continue
+        // Merge DB fields into the existing object to preserve Vue component identity
+        prevMsg.id = newMsg.id
+        if (newMsg.summary) prevMsg.summary = newMsg.summary
+        if (newMsg.summaryCards) prevMsg.summaryCards = newMsg.summaryCards
+        if (newMsg.metadata && !prevMsg.metadata) prevMsg.metadata = newMsg.metadata
+        // Replace the parsed message with the reused existing object
+        parsed[pi] = prevMsg
+        recentlyFinalized.delete(prevIdx)
+        break
+      }
+    }
+
+    messages.value = parsed
     appendQueueItems(sessionData.queue as Array<Record<string, unknown>> | undefined)
     // Preserve in-flight queued user messages across the reload. parseMessages
     // only rebuilds DB-backed messages; appendQueueItems covers the backend
