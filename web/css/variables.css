@@ -416,7 +416,7 @@
     --text-primary: #839496;
     --text-secondary: #93a1a1;
     --text-muted: #859093;
-    --border-color: #073642;
+    --border-color: #1a4a5a;
     --accent-color: #268bd2;
     --accent-hover: #2aa198;
     --user-msg-color: #2a5a7a;
@@ -424,7 +424,7 @@
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
     --code-bg: #073642;
     --blockquote-border: #586e75;
-    --table-border: #073642;
+    --table-border: #1a4a5a;
     --scrollbar-thumb: #586e75;
     --scrollbar-track: #073642;
     --dock-bg: rgba(7, 54, 66, 0.75);
@@ -465,7 +465,7 @@
     --text-primary: #657b83;
     --text-secondary: #586e75;
     --text-muted: #93a1a1;
-    --border-color: #eee8d5;
+    --border-color: #d6ccb6;
     --accent-color: #268bd2;
     --accent-hover: #2aa198;
     --user-msg-color: #6b8fb5;
@@ -473,7 +473,7 @@
     --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
     --code-bg: #eee8d5;
     --blockquote-border: #93a1a1;
-    --table-border: #eee8d5;
+    --table-border: #d6ccb6;
     --scrollbar-thumb: #93a1a1;
     --scrollbar-track: #eee8d5;
     --dock-bg: rgba(238, 232, 213, 0.75);
