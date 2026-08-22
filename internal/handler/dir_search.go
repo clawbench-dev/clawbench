@@ -26,7 +26,6 @@ var ignoredSearchDirs = map[string]bool{
 	".svn":         true,
 	".hg":          true,
 	"dist":         true,
-	"build":        true,
 	".cache":       true,
 	".next":        true,
 	"target":       true,
