@@ -468,7 +468,17 @@ func triggerChatSummarization(sessionID string) {
 		return
 	}
 	if blocks, err := parseMessageBlocks(lastAssistant.Content); err == nil && len(blocks) > 0 {
-		triggerChatRecommendation(sessionID, projectPath, lastAssistant.ID, blocks)
+		// Run the recommendation in a background goroutine: RecommendNextStep makes
+		// a blocking LLM call (up to the 60s internal timeout) that would otherwise
+		// stall Finalize() and delay the terminal 'done' WS event by seconds. The
+		// frontend keys the message meta bar AND the completion sound to that 'done'
+		// event, so an inline call here makes the whole reply feel laggy after the
+		// content stops streaming. It also leaves the session reporting running=true
+		// and the DB message streaming=1 for the duration, which surfaces a phantom
+		// "loading" placeholder when the user switches to the session meanwhile. The
+		// recommendation chip is a nice-to-have and can arrive whenever the LLM
+		// responds. blocks is a fresh slice parsed above — safe to hand to the goroutine.
+		go triggerChatRecommendation(sessionID, projectPath, lastAssistant.ID, blocks)
 	}
 }
 

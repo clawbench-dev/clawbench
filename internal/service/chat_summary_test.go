@@ -1,10 +1,15 @@
 package service
 
 import (
+	"context"
 	"database/sql"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -261,4 +266,70 @@ func TestBackfillMissingSummaries_GeneratesMissingSummaries(t *testing.T) {
 	// Message 202: streaming — should NOT be summarized
 	_, found202 := GetSummary("chat_message", 202)
 	assert.False(t, found202)
+}
+
+// The chat recommendation's blocking LLM call must NOT delay stream finalization.
+// Previously triggerChatSummarization ran it inline, stalling Finalize() and the
+// terminal 'done' WS event for seconds (post-reply meta bar / completion sound lag,
+// plus a phantom "loading" message when switching to the session meanwhile).
+func TestTriggerChatSummarization_DoesNotBlockOnRecommendation(t *testing.T) {
+	// AISummary server that sleeps 800ms before responding — any inline call would
+	// block triggerChatSummarization (and thus the 'done' event) by that much.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(800 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Continue the work."}}]}`))
+	}))
+	defer srv.Close()
+
+	sub, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Chat.RecommendEnabled = true
+	model.ConfigInstance.AISummary.API.BaseURL = srv.URL
+	model.ConfigInstance.AISummary.Format = "openai"
+
+	sessionID := "sess-summary-async-rec"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (500, '/test', 'user', 'hello', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (501, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"The answer is 42.\"}]}', ?, 0)", sessionID)
+
+	start := time.Now()
+	triggerChatSummarization(sessionID)
+	elapsed := time.Since(start)
+
+	// Must return well before the 800ms server sleep — the recommendation runs async.
+	assert.Less(t, elapsed, 300*time.Millisecond,
+		"triggerChatSummarization must not block on the recommendation LLM call")
+
+	// The async recommendation goroutine must still complete. Wait until its final
+	// DB write (SaveChatRecommendation) is visible so we never tear down the DB
+	// while the goroutine is still in flight.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	for {
+		if rec := LatestChatRecommendation(ctx, sessionID, 501); rec != "" {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatal("expected the async recommendation goroutine to persist its result")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// And it must have broadcast its WS event too.
+	var eventSeen bool
+	for _, evt := range sub.GetBufferedEvents() {
+		if evt.Event == "chat_recommendation" {
+			eventSeen = true
+			data, ok := evt.Data.(ws.ChatRecommendationData)
+			if !ok {
+				t.Fatalf("unexpected data type: %T", evt.Data)
+			}
+			assert.Equal(t, int64(501), data.MessageID)
+			assert.Equal(t, "Continue the work.", data.Recommendation)
+		}
+	}
+	assert.True(t, eventSeen, "expected a chat_recommendation WS event from the async goroutine")
 }
