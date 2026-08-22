@@ -69,6 +69,7 @@ flowchart LR
 - **统一 Markdown 渲染器**：`useMarkdownRenderer` 为所有 Markdown 渲染场景（聊天、文件预览等）提供统一管线：数学块提取（保护 LaTeX 的 `_`/`*` 不被 marked 误解析为强调）→ `marked.parse` → KaTeX 字符级渲染（`renderToString`，避免与 Vue `v-html` 冲突）→ 代码块还原 → DOMPurify → 图片路径修正 → 视频链接转换（内联播放器）→ 表格包装 → 代码块/表格标注头 → 文件路径/commit hash/localhost URL/worktree 路径标注。`skipEnhancements=true` 用于流式期间（跳过路径标注、媒体转换等，不影响 KaTeX）；`skipKatex=true` 用于流式期间公式可能不完整时单独跳过 KaTeX。返回 `RenderResult { html, detectedPaths[], detectedSHAs[] }` 供异步验证
 - **代码编辑器**：CodeMirrorViewer 统一代码浏览与编辑，通过 `editable` prop 切换模式。`codeEditorLang` 工具支持 30+ 语言扩展（高频语言静态导入，低频语言懒加载），含 Markdown 代码围栏嵌套语法高亮。编辑模式使用 `shallowRef` 管理 EditorView 防止 Vue reactive proxy 破坏 undo/redo。编辑模式下为 11 种语言启用语言感知的自动补全（`buildCompletionExtension`，基于 CodeMirror `autocompletion()`）
 - **终端选择模式**：`useTerminalGestures` 实现三模式手势系统（浏览/手势/选择），选择模式下触摸坐标映射到 xterm 单元格进行文本选取，浮动复制栏提供一键复制。`terminalBlurUtils` 处理 Android WebView 键盘焦点稳定性
+- **App 命名主题系统**：VSCode 风格的命名主题体系，17 个自包含配色方案（GitHub Light/Dark、One Dark Pro、Catppuccin Mocha/Latte、Dracula、Nord、Tokyo Night、Solarized Dark/Light、Gruvbox Dark/Light、High Contrast Dark/Light、Night Owl、Ayu Dark、Vitesse Dark）。每个主题独立定义全部 CSS 变量（约 40 个，无继承关系），通过 `<html data-theme="<id>">` 生效，`data-theme-base="light|dark"` 供 CSS 选择器便捷引用。`themeMeta.ts` 提供 `isDarkTheme()`/`resolveThemeId()`/状态栏颜色等工具函数。AppHeader 提供调色板快捷主题选择器（带实时配色预览和 Sun/Moon 明暗标识），Settings → 外观页也可选择。`auto` 模式跟随系统 `prefers-color-scheme` 解析为默认明暗主题（GitHub Light/Dark）。主题选择持久化到 localStorage，刷新后恢复
 - **终端主题切换**：`terminalThemes` 提供 157 个 xterm-theme 主题选择（懒加载），`auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage
 - **终端帮助抽屉**：`TerminalHelpDrawer` 展示手势操作、快捷键和符号输入的完整说明，按分类组织（手势、快捷键、修饰键、符号），触摸设备仅显示手势相关条目
 - **语音输入**：`useVoiceInput` 实现麦克风录音→ASR 识别→文字填入输入框的状态机（idle → recording → transcribing → done），支持流式（WebSocket 增量识别）和非流式（POST 完整识别）双模式
@@ -108,4 +109,7 @@ flowchart LR
   3. **覆盖层导航区**：`flex-shrink: 0`——固定宽度不收缩，关闭按钮始终可见
   工具栏不设固定宽度，而是由 flex:1 自适应——剩余空间全归工具栏，空间不足时按钮逐个折叠进下拉菜单
 - **HeaderMarquee 手动滚动**：标题栏文字溢出时支持手动拖拽和滚轮水平滚动（而非自动跑马灯），ResizeObserver 动态检测溢出状态。自动跑马灯干扰注意力且不便于按需阅读，手动滚动让用户自主控制阅读时机
+- **主题自包含而非继承**：每个命名主题独立定义全部约 40 个 CSS 变量，不依赖基础主题继承——避免调整一个主题时意外影响其他主题，也让主题选择器能直接展示各主题的真实预览色。`data-theme-base` 辅助属性保留明暗分类，供需要按明暗区分的选择器使用（如 hljs 代码高亮主题）
+- **主题在 CSS 加载前解析**：`index.html` 内联脚本在 CSS 加载前读取 localStorage 并设置 `data-theme`，防止首屏闪白（FOUC）。旧版 `light`/`dark` 值自动迁移到命名主题 ID，已移除的强调色设置键自动清理——迁移逻辑保证升级用户无感知
+- **主题是纯前端本地设置**：主题选择只存 localStorage，不进入服务端配置——同一服务器多设备访问可以各自选择偏好，互不干扰
 - **Session 信息栏精简**：移除思考深度和传输协议（CLI/ACP）显示，将后端图标和 Agent 名称合并为单个 Tag，空间留给紧凑上下文按钮。减少信息噪音，突出与操作相关的状态
