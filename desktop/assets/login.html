@@ -88,6 +88,7 @@
     --accent-hover: #3a7bc8;
     --border-color: #dee2e6;
     --color-red: #dc2626;
+    --accent-rgb: 74, 144, 217;
     --grid-color: rgba(0, 0, 0, 0.06);
     --gradient-color: rgba(74, 144, 217, 0.06);
   }
@@ -105,6 +106,7 @@
     --border-color: #30363d;
     --color-red: #f85149;
     --grid-color: rgba(48, 54, 61, 0.3);
+    --accent-rgb: 88, 166, 255;
     --gradient-color: rgba(88, 166, 255, 0.08);
   }
 
@@ -122,6 +124,7 @@
     --color-red: #e06c75;
     --grid-color: rgba(62, 68, 81, 0.3);
     --gradient-color: rgba(97, 175, 239, 0.06);
+    --accent-rgb: 97, 175, 239;
   }
 
   /* ── Catppuccin Mocha ─────────────────────────────────────── */
@@ -139,6 +142,7 @@
     --grid-color: rgba(69, 71, 90, 0.3);
     --gradient-color: rgba(137, 180, 250, 0.06);
   }
+    --accent-rgb: 137, 180, 250;
 
   /* ── Catppuccin Latte ─────────────────────────────────────── */
   [data-theme="catppuccin-latte"] {
@@ -156,6 +160,7 @@
     --gradient-color: rgba(30, 102, 245, 0.06);
   }
 
+    --accent-rgb: 30, 102, 245;
   /* ── Dracula ──────────────────────────────────────────────── */
   [data-theme="dracula"] {
     --bg-primary: #282a36;
@@ -173,6 +178,7 @@
   }
 
   /* ── Nord ─────────────────────────────────────────────────── */
+    --accent-rgb: 189, 147, 249;
   [data-theme="nord"] {
     --bg-primary: #2e3440;
     --bg-secondary: #3b4252;
@@ -190,6 +196,7 @@
 
   /* ── Tokyo Night ──────────────────────────────────────────── */
   [data-theme="tokyo-night"] {
+    --accent-rgb: 136, 192, 208;
     --bg-primary: #1a1b26;
     --bg-secondary: #16161e;
     --bg-tertiary: #292e42;
@@ -207,6 +214,7 @@
   /* ── Solarized Dark ───────────────────────────────────────── */
   [data-theme="solarized-dark"] {
     --bg-primary: #002b36;
+    --accent-rgb: 122, 162, 247;
     --bg-secondary: #073642;
     --bg-tertiary: #0a3f4e;
     --text-primary: #839496;
@@ -224,6 +232,7 @@
   [data-theme="solarized-light"] {
     --bg-primary: #fdf6e3;
     --bg-secondary: #eee8d5;
+    --accent-rgb: 38, 139, 210;
     --bg-tertiary: #e0dcc8;
     --text-primary: #657b83;
     --text-muted: #93a1a1;
@@ -242,6 +251,7 @@
     --bg-secondary: #1d2021;
     --bg-tertiary: #3c3836;
     --text-primary: #ebdbb2;
+    --accent-rgb: 38, 139, 210;
     --text-muted: #9d9188;
     --text-hint: #9d9188;
     --accent-color: #fe8019;
@@ -259,6 +269,7 @@
     --bg-tertiary: #ebdbb2;
     --text-primary: #3c3836;
     --text-muted: #928374;
+    --accent-rgb: 254, 128, 25;
     --text-hint: #928374;
     --accent-color: #af3a03;
     --accent-hover: #d65d0e;
@@ -276,6 +287,7 @@
     --text-primary: #ffffff;
     --text-muted: #a0a0a0;
     --text-hint: #a0a0a0;
+    --accent-rgb: 175, 58, 3;
     --accent-color: #00ccff;
     --accent-hover: #33ddff;
     --border-color: #555555;
@@ -293,6 +305,7 @@
     --text-muted: #444444;
     --text-hint: #444444;
     --accent-color: #0055cc;
+    --accent-rgb: 0, 204, 255;
     --accent-hover: #0044aa;
     --border-color: #000000;
     --color-red: #cc0000;
@@ -310,6 +323,7 @@
     align-items: center;
     justify-content: center;
     position: relative;
+    --accent-rgb: 0, 85, 204;
     overflow: hidden;
     -webkit-tap-highlight-color: transparent;
   }
@@ -379,7 +393,7 @@
     position: absolute;
     inset: -4px;
     border-radius: 50%;
-    border: 2px solid rgba(88, 166, 255, 0.3);
+    border: 2px solid rgba(var(--accent-rgb), 0.3);
     animation: ring-pulse 3s ease-in-out infinite;
   }
 
@@ -468,7 +482,7 @@
   }
 
   .server-item.active {
-    background: rgba(88, 166, 255, 0.06);
+    background: rgba(var(--accent-rgb), 0.06);
     border: 1.5px solid var(--accent-color);
     color: var(--text-primary);
   }
@@ -670,7 +684,7 @@
 
   input:focus {
     border-color: var(--accent-color);
-    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
   }
 
   /* Connect button — matches LoginView.vue .login-btn */
@@ -696,7 +710,7 @@
 
   .connect-btn:hover:not(:disabled) {
     background: var(--accent-hover);
-    box-shadow: 0 4px 14px rgba(88, 166, 255, 0.3);
+    box-shadow: 0 4px 14px rgba(var(--accent-rgb), 0.3);
   }
 
   .connect-btn:active:not(:disabled) {
@@ -774,14 +788,14 @@
     border: 1px dashed var(--border-color);
     border-radius: 10px;
     background: transparent;
-    color: rgba(88, 166, 255, 0.7);
+    color: rgba(var(--accent-rgb), 0.7);
     font-size: 13px;
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
 
   .add-server-btn:hover {
-    background: rgba(88, 166, 255, 0.06);
+    background: rgba(var(--accent-rgb), 0.06);
     color: var(--accent-color);
     border-color: var(--accent-color);
   }

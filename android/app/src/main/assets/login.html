@@ -90,6 +90,7 @@
     --accent-hover: #3a7bc8;
     --border-color: #dee2e6;
     --color-red: #dc2626;
+    --accent-rgb: 74, 144, 217;
     --grid-color: rgba(0, 0, 0, 0.06);
     --gradient-color: rgba(74, 144, 217, 0.06);
   }
@@ -106,6 +107,7 @@
     --accent-hover: #79b8ff;
     --border-color: #30363d;
     --color-red: #f85149;
+    --accent-rgb: 88, 166, 255;
     --grid-color: rgba(48, 54, 61, 0.3);
     --gradient-color: rgba(88, 166, 255, 0.08);
   }
@@ -122,6 +124,7 @@
     --accent-hover: #82c4f4;
     --border-color: #3e4451;
     --color-red: #e06c75;
+    --accent-rgb: 97, 175, 239;
     --grid-color: rgba(62, 68, 81, 0.3);
     --gradient-color: rgba(97, 175, 239, 0.06);
   }
@@ -138,6 +141,7 @@
     --accent-hover: #b4befe;
     --border-color: #45475a;
     --color-red: #f38ba8;
+    --accent-rgb: 137, 180, 250;
     --grid-color: rgba(69, 71, 90, 0.3);
     --gradient-color: rgba(137, 180, 250, 0.06);
   }
@@ -154,6 +158,7 @@
     --accent-hover: #2a7de6;
     --border-color: #bcc0cc;
     --color-red: #d20f39;
+    --accent-rgb: 30, 102, 245;
     --grid-color: rgba(0, 0, 0, 0.06);
     --gradient-color: rgba(30, 102, 245, 0.06);
   }
@@ -170,6 +175,7 @@
     --accent-hover: #caa8fb;
     --border-color: #44475a;
     --color-red: #ff5555;
+    --accent-rgb: 189, 147, 249;
     --grid-color: rgba(68, 71, 90, 0.3);
     --gradient-color: rgba(189, 147, 249, 0.06);
   }
@@ -186,6 +192,7 @@
     --accent-hover: #8fbcbb;
     --border-color: #4c566a;
     --color-red: #bf616a;
+    --accent-rgb: 136, 192, 208;
     --grid-color: rgba(76, 86, 106, 0.3);
     --gradient-color: rgba(136, 192, 208, 0.06);
   }
@@ -202,6 +209,7 @@
     --accent-hover: #89b4fa;
     --border-color: #292e42;
     --color-red: #f7768e;
+    --accent-rgb: 122, 162, 247;
     --grid-color: rgba(41, 46, 66, 0.3);
     --gradient-color: rgba(122, 162, 247, 0.06);
   }
@@ -218,6 +226,7 @@
     --accent-hover: #2aa198;
     --border-color: #073642;
     --color-red: #dc322f;
+    --accent-rgb: 38, 139, 210;
     --grid-color: rgba(7, 54, 66, 0.4);
     --gradient-color: rgba(38, 139, 210, 0.06);
   }
@@ -234,6 +243,7 @@
     --accent-hover: #2aa198;
     --border-color: #eee8d5;
     --color-red: #dc322f;
+    --accent-rgb: 38, 139, 210;
     --grid-color: rgba(0, 0, 0, 0.06);
     --gradient-color: rgba(38, 139, 210, 0.06);
   }
@@ -250,6 +260,7 @@
     --accent-hover: #fabd2f;
     --border-color: #3c3836;
     --color-red: #fb4934;
+    --accent-rgb: 254, 128, 25;
     --grid-color: rgba(60, 56, 54, 0.4);
     --gradient-color: rgba(254, 128, 25, 0.06);
   }
@@ -266,6 +277,7 @@
     --accent-hover: #d65d0e;
     --border-color: #d5c4a1;
     --color-red: #9d0006;
+    --accent-rgb: 175, 58, 3;
     --grid-color: rgba(0, 0, 0, 0.06);
     --gradient-color: rgba(175, 58, 3, 0.06);
   }
@@ -282,6 +294,7 @@
     --accent-hover: #33ddff;
     --border-color: #555555;
     --color-red: #ff3333;
+    --accent-rgb: 0, 204, 255;
     --grid-color: rgba(85, 85, 85, 0.3);
     --gradient-color: rgba(0, 204, 255, 0.06);
   }
@@ -298,6 +311,7 @@
     --accent-hover: #0044aa;
     --border-color: #000000;
     --color-red: #cc0000;
+    --accent-rgb: 0, 85, 204;
     --grid-color: rgba(0, 0, 0, 0.1);
     --gradient-color: rgba(0, 85, 204, 0.06);
   }
@@ -381,7 +395,7 @@
     position: absolute;
     inset: -4px;
     border-radius: 50%;
-    border: 2px solid rgba(88, 166, 255, 0.3);
+    border: 2px solid rgba(var(--accent-rgb), 0.3);
     animation: ring-pulse 3s ease-in-out infinite;
   }
 
@@ -470,7 +484,7 @@
   }
 
   .server-item.active {
-    background: rgba(88, 166, 255, 0.06);
+    background: rgba(var(--accent-rgb), 0.06);
     border: 1.5px solid var(--accent-color);
     color: var(--text-primary);
   }
@@ -672,7 +686,7 @@
 
   input:focus {
     border-color: var(--accent-color);
-    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.12);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
   }
 
   /* Connect button — matches LoginView.vue .login-btn */
@@ -698,7 +712,7 @@
 
   .connect-btn:hover:not(:disabled) {
     background: var(--accent-hover);
-    box-shadow: 0 4px 14px rgba(88, 166, 255, 0.3);
+    box-shadow: 0 4px 14px rgba(var(--accent-rgb), 0.3);
   }
 
   .connect-btn:active:not(:disabled) {
@@ -776,14 +790,14 @@
     border: 1px dashed var(--border-color);
     border-radius: 10px;
     background: transparent;
-    color: rgba(88, 166, 255, 0.7);
+    color: rgba(var(--accent-rgb), 0.7);
     font-size: 13px;
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
 
   .add-server-btn:hover {
-    background: rgba(88, 166, 255, 0.06);
+    background: rgba(var(--accent-rgb), 0.06);
     color: var(--accent-color);
     border-color: var(--accent-color);
   }
