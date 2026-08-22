@@ -1741,6 +1741,167 @@ describe('switchSession', () => {
     expect(contents).not.toContain('cancelled msg')
   })
 
+  it('keeps a genuinely queued repeat turn when the same content was already drained', async () => {
+    // Edge case: user sends "hi" twice. The first drained into the DB (id=1),
+    // the second is still genuinely queued (queueId=pending-2, same text). The
+    // drained-in-DB guard must skip ONLY the drained one — the queued repeat
+    // must survive the reload or it would vanish from the UI mid-flight.
+    const queuedMessages = [
+      { queueId: 'pending-2', text: 'hi', filePaths: [], files: [], createdAt: '2026-01-01T00:00:00Z' },
+    ]
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 2, role: 'assistant', content: 'first reply', blocks: [{ type: 'text', text: 'first reply' }], createdAt: '2026-01-01T00:00:00Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: 'hi' }, { id: 2, role: 'assistant', content: 'first reply' }],
+        total: 2,
+        running: true,
+        queue: queuedMessages,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+
+    await session.loadHistory(true, false, false)
+
+    const userMsgs = lastSessionOptions!.messages.value.filter((m: any) => m.role === 'user')
+    // Both the persisted first turn and the queued repeat turn are present.
+    const pendingRepeat = userMsgs.filter((m: any) => m.pending && m.id === 'pending-2')
+    expect(pendingRepeat).toHaveLength(1)
+    expect(pendingRepeat[0].content).toBe('hi')
+  })
+
+  it('drops a ghost pending message whose content is already persisted in DB (drain missed while offline)', async () => {
+    // Regression: 切回前台 loadHistory 时后端 queue 已为空（消息已 drain），但
+    // prevMessages 里还残留旧的 pending 乐观消息。syncSessionState 的 merge 逻辑
+    // 若只按 id 去重就会把它加回来——它是幽灵（DB 已有同 content 正式消息），
+    // 且 queue_drain 不会再到达，残留到手动刷新。
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'queued during background', blocks: [{ type: 'text', text: 'queued during background' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 2, role: 'assistant', content: 'reply finished while offline', blocks: [{ type: 'text', text: 'reply finished while offline' }], createdAt: '2026-01-01T00:00:00Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [
+          { id: 1, role: 'user', content: 'queued during background' },
+          { id: 2, role: 'assistant', content: 'reply finished while offline' },
+        ],
+        total: 2,
+        running: false,
+        // queue is empty — the message drained while the client was disconnected
+      }),
+    })
+
+    const session = createSession()
+    // Simulate the stale optimistic pending message still present in the array
+    // from before the background transition.
+    lastSessionOptions!.messages.value = [{
+      role: 'user', id: 'pending-ghost1', content: 'queued during background', pending: true, seq: 1,
+    }]
+
+    await session.loadHistory(true, false, false)
+
+    const userMsgs = lastSessionOptions!.messages.value.filter((m: any) => m.role === 'user')
+    expect(userMsgs).toHaveLength(1)
+    expect(userMsgs[0].id).toBe(1)
+    expect(userMsgs[0].pending).toBeUndefined()
+    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
+    expect(pending).toHaveLength(0)
+  })
+
+  it('drops the ghost but keeps the genuinely queued repeat when same content was sent twice', async () => {
+    // Composite scenario: user sends "hi" twice. pending-A drained into the DB
+    // (id=1) while the client was offline; pending-B is still genuinely queued
+    // (the backend queue field lists it). The authoritative queue-based guard
+    // must drop pending-A (its queueId is absent from the queue) while keeping
+    // pending-B (appendQueueItems restored it).
+    const queuedMessages = [
+      { queueId: 'pending-B', text: 'hi', filePaths: [], files: [], createdAt: '2026-01-01T00:00:00Z' },
+    ]
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 2, role: 'assistant', content: 'first reply', blocks: [{ type: 'text', text: 'first reply' }], createdAt: '2026-01-01T00:00:00Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: 'hi' }, { id: 2, role: 'assistant', content: 'first reply' }],
+        total: 2,
+        running: true,
+        queue: queuedMessages,
+      }),
+    })
+
+    const session = createSession()
+    // Both stale optimistic pending messages from before the background transition.
+    lastSessionOptions!.messages.value = [
+      { role: 'user', id: 'pending-A', content: 'hi', pending: true, seq: 1 },
+      { role: 'user', id: 'pending-B', content: 'hi', pending: true, seq: 2 },
+    ]
+
+    await session.loadHistory(true, false, false)
+
+    const userMsgs = lastSessionOptions!.messages.value.filter((m: any) => m.role === 'user')
+    // Exactly two user turns: the persisted id=1 and the queued pending-B.
+    expect(userMsgs).toHaveLength(2)
+    expect(userMsgs.some((m: any) => m.id === 1 && !m.pending)).toBe(true)
+    expect(userMsgs.some((m: any) => m.id === 'pending-B' && m.pending)).toBe(true)
+    // The drained ghost pending-A must NOT reappear.
+    expect(userMsgs.some((m: any) => m.id === 'pending-A')).toBe(false)
+  })
+
+  it('drops a file-only ghost pending whose files are already persisted in DB', async () => {
+    // Regression: a file-only message (empty content, image attachment without a
+    // prompt) drained while the client was offline. The stale pending still sits
+    // in prevMessages. Content matching can't identify it (empty text), so the
+    // guard must fall back to matching its attached file paths against the
+    // persisted DB message.
+    mockUtilsFns.parseMessages.mockReturnValue([
+      {
+        id: 1, role: 'user', content: '', files: [{ path: '/tmp/photo.png', isDir: false }],
+        blocks: [], createdAt: '2026-01-01T00:00:00Z',
+      },
+      { id: 2, role: 'assistant', content: 'here is the image analysis', blocks: [{ type: 'text', text: 'here is the image analysis' }], createdAt: '2026-01-01T00:00:00Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [
+          { id: 1, role: 'user', content: '', files: [{ path: '/tmp/photo.png' }] },
+          { id: 2, role: 'assistant', content: 'here is the image analysis' },
+        ],
+        total: 2,
+        running: false,
+        // queue is empty — the message drained while the client was disconnected
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = [{
+      role: 'user', id: 'pending-file-ghost', content: '',
+      files: [{ path: '/tmp/photo.png', isDir: false }],
+      pending: true, seq: 1,
+    }]
+
+    await session.loadHistory(true, false, false)
+
+    const userMsgs = lastSessionOptions!.messages.value.filter((m: any) => m.role === 'user')
+    expect(userMsgs).toHaveLength(1)
+    expect(userMsgs[0].id).toBe(1)
+    expect(userMsgs[0].pending).toBeUndefined()
+    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
+    expect(pending).toHaveLength(0)
+  })
+
   it('restores usage state from API response after switch', async () => {
     resetAdditionalMocks() // Ensure mock call records are clean
     mockClearUsageState.mockClear()

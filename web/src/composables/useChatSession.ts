@@ -223,10 +223,41 @@ export function useChatSession(options: UseChatSessionOptions) {
     // still-pending messages with a string (queue) id are merged back, and the
     // final array is deduplicated by id (syncSessionState may run in both the
     // recovery and main paths, so this must be idempotent).
+    //
+    // A pending message that survived appendQueueItems but is NOT in the new
+    // array (its queueId is absent from the backend queue) has already been
+    // drained (dequeue removes it before queue_drain/done fire). If the DB also
+    // holds a persisted message with the same identity, this pending is a ghost
+    // — its queue_drain was missed while the client was offline/backgrounded,
+    // and no future event can clear it. Merging it back would re-create a stale
+    // "queued" bubble until a manual refresh.
+    //
+    // Identity = text content when present, otherwise attached file paths
+    // (file-only messages have empty content, e.g. image attachments).
+    const filePathsOf = (m: Record<string, unknown>): string[] =>
+      ((m.files as FileEntry[] | undefined) || []).map((f) => typeof f === 'string' ? f : f.path)
+    const sameIdentity = (a: Record<string, unknown>, b: Record<string, unknown>): boolean => {
+      const aContent = (a.content || '') as string
+      const bContent = (b.content || '') as string
+      if (aContent || bContent) return aContent === bContent && aContent.length > 0
+      // Both empty content — compare by attached file paths (order-insensitive).
+      const aPaths = filePathsOf(a).slice().sort().join('|')
+      const bPaths = filePathsOf(b).slice().sort().join('|')
+      return aPaths.length > 0 && aPaths === bPaths
+    }
     for (const prev of prevMessages) {
       if (prev.role !== 'user' || !prev.pending) continue
       if (typeof prev.id !== 'string') continue
       if (messages.value.some((m) => m.role === 'user' && m.id === prev.id)) continue
+      // Gone from the queue (no longer in the new array). Drop only if the DB
+      // already persisted this identity — otherwise keep it conservatively.
+      const persistedSameIdentity = messages.value.some(
+        (m) => m.role === 'user' && !m.pending && !m._remote && !m._drain && sameIdentity(prev, m)
+      )
+      if (persistedSameIdentity) {
+        appLog.d(TAG, `syncSessionState: dropping drained ghost pending queueId=${String(prev.id).slice(0, 20)} text="${((prev.content || '') as string).slice(0, 40)}" files=${filePathsOf(prev).length}`)
+        continue
+      }
       messages.value.push(prev)
     }
     const seenPending = new Set<string | number>()
