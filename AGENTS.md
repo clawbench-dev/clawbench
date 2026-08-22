@@ -75,6 +75,21 @@ Composable 按域分组：Chat、Session、Terminal、File、Navigation/Gesture�
 
 组件按域分组：Chat、File、Terminal、Git、Session/Agent、Task、Settings、Common。
 
+### 桌面端（Electron）
+
+源码根：`desktop/src/main/`。桌面端是纯"壳"，复用服务器 + Web 前端全部业务逻辑，仅提供 Web 环境之外的桌面能力。主进程模块通过 IPC（`native:*`）暴露给 Web 前端：
+
+| 模块 | 职责 |
+|------|------|
+| `window.ts` | 主窗口创建、原生上下文菜单（cut/copy/paste 走 OS role，copy-link/copy-image 按语言翻译）、外部链接拦截交给默认浏览器 |
+| `bridge.ts` | IPC 桥：服务器列表/凭据、SSH 端口映射、文件下载、分享、系统通知、主题、日志捕获、屏幕常亮 |
+| `tunnel.ts` | ssh2 客户端，读取 `/api/ssh/info` 建立 SSH 端口映射 |
+| `download.ts` | 文件下载（保存对话框 + 下载后定位）、URL/Blob 下载 |
+| `notification.ts` | 原生系统通知，点击导航到会话/任务（冷启动挂起派发） |
+| `updater.ts` | 桌面端升级检查（npm registry，国内时区换镜像源） |
+| `secrets.ts` / `store.ts` | safeStorage 加密存密码、electron-store 持久化服务器列表/主题 |
+| `powersave.ts` | 屏幕常亮（powerSaveBlocker） |
+
 ## 开发规则
 
 - **前端必须使用 appLog**：所有前端代码使用 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`（测试文件除外）。Tag 约定：短 PascalCase 模块名。

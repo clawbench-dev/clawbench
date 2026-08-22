@@ -289,6 +289,15 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Desktop App Upgrade**: `GET /api/desktop/latest` checks npm registry for the latest ClawBench desktop (Electron) version and per-platform download links
 - **Android Version Mismatch Detection**: WebView startup compares APK version with server version; shows `VersionMismatchOverlay` prompting APK update when mismatched
 
+### 🖥️ Desktop App
+- **Cross-platform Electron client**: Windows / macOS / Linux desktop window wrapping the same Web UI — a full native experience without a browser
+- **Native Context Menu**: Right-click in editable fields (cut/copy/paste), text selection (copy), links (copy link), and images (copy image). Cut/copy/paste use OS-localized roles; custom items follow the app language
+- **External Links in Default Browser**: Links outside the configured server origin (third-party URLs, `mailto:`) open in your system browser instead of hijacking the app window
+- **SSH Port Forwarding**: Built-in ssh2 client maps server ports to `localhost`, so AI-started web services are reachable directly from the desktop shell
+- **System Notifications**: Native OS notifications with click-through navigation to the session/task; pending navigation is deferred on cold start
+- **Hard Refresh**: Ctrl+F5 (macOS: Cmd+Shift+R) clears session cache and hard-reloads the window
+- **Server Management**: Save multiple server URLs with credentials, switch via the built-in login page, passwords encrypted via OS keychain (safeStorage)
+
 ### 🔔 Notifications
 - Notification sound + haptic feedback (alerts when AI completes); sound can be toggled off in settings to prevent Bluetooth headphone interruption
 - Browser push notifications

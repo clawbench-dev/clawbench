@@ -302,6 +302,15 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **桌面端升级检查**：`GET /api/desktop/latest` 查询 npm registry 获取桌面端（Electron）最新版本和各平台下载链接
 - **Android 版本不匹配检测**：WebView 启动时对比 APK 版本与服务器版本，不匹配时展示 `VersionMismatchOverlay` 提示下载新版 APK
 
+### 🖥️ 桌面端 App
+- **跨平台 Electron 客户端**：Windows / macOS / Linux 桌面窗口承载同一套 Web UI，无需浏览器即可获得原生桌面体验
+- **原生上下文菜单**：可编辑输入框（剪切/复制/粘贴）、文本选择（复制）、链接（复制链接）、图片（复制图片）。剪切/复制/粘贴走系统自动本地化 role，自定义项按应用语言显示中文/英文
+- **外部链接默认浏览器打开**：服务器 Origin 之外的链接（第三方 URL、`mailto:`）交给系统默认浏览器打开，不会劫持应用窗口
+- **SSH 端口映射**：内置 ssh2 客户端将服务器端口映射到 localhost，AI 启动的 Web 服务可直接在桌面壳内访问
+- **系统通知**：原生 OS 通知，点击通知跳转到对应会话/任务；冷启动时挂起导航等待页面加载完成再派发
+- **硬刷新**：Ctrl+F5（macOS：Cmd+Shift+R）清空会话缓存并硬刷新窗口
+- **服务器管理**：保存多个服务器地址与凭据，通过内置登录页切换；密码经系统密钥链（safeStorage）加密存储
+
 ### 🔔 通知
 - 通知音效 + 触觉反馈（AI 完成时提醒）；可在设置中关闭音效，避免打断蓝牙耳机播放
 - 浏览器推送通知
