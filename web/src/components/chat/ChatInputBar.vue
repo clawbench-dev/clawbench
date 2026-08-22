@@ -232,7 +232,7 @@
             <span class="usage-popup-value">${{ contextCost.toFixed(2) }} {{ contextCurrency || 'USD' }}</span>
           </div>
           <div class="usage-popup-compact">
-            <button class="usage-popup-compact-btn" :disabled="inputDisabled || !hasCompactCommand" @click.stop="handleCompact(); showUsagePopup = false" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
+            <button class="usage-popup-compact-btn" :disabled="inputDisabled || !hasCompactCommand || !isACPTransport" @click.stop="handleCompact(); showUsagePopup = false" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
               <Minimize2 :size="13" />
               {{ t('chat.sessionInfo.compact') }}
             </button>
