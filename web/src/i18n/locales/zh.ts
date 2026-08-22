@@ -113,6 +113,7 @@ export default {
     projectRemoved: '项目已移除',
     removeProjectFailed: '移除项目失败',
     removeRecentFile: '从最近文件移除',
+    themePicker: '切换主题',
     settings: '设置',
     reconfigureServer: '重新配置服务器',
     debugLog: '调试日志',

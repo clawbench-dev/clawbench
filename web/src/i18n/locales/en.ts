@@ -113,6 +113,7 @@ export default {
     projectRemoved: 'Project removed',
     removeProjectFailed: 'Failed to remove project',
     removeRecentFile: 'Remove from recent files',
+    themePicker: 'Switch theme',
     settings: 'Settings',
     reconfigureServer: 'Reconfigure Server',
     debugLog: 'Debug Log',

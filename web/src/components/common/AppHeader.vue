@@ -162,6 +162,30 @@
       </div>
     </Teleport>
 
+    <!-- Quick theme picker -->
+    <button ref="themeBtnRef" class="theme-quick-toggle" :title="t('appHeader.themePicker')" :aria-label="t('appHeader.themePicker')" @click="toggleThemeMenu">
+      <Palette :size="14" />
+    </button>
+    <PopupMenu v-model:show="themeMenuOpen" :target-element="themeBtnRef" :max-width="200" :max-height="440" :menu-items-count="1 + THEME_IDS.length" anchor="right">
+      <div class="theme-picker-menu">
+        <div
+          v-for="opt in themeOptions"
+          :key="opt.value"
+          class="theme-picker-item"
+          role="menuitem"
+          tabindex="-1"
+          :class="{ active: currentThemeValue === opt.value }"
+          @click="selectTheme(opt.value)"
+          @keydown.enter="selectTheme(opt.value)"
+          @keydown.space.prevent="selectTheme(opt.value)"
+        >
+          <span class="theme-picker-check">{{ currentThemeValue === opt.value ? '✓' : '' }}</span>
+          <span class="theme-picker-label">{{ opt.label }}</span>
+          <component v-if="opt.value !== 'auto'" :is="isDarkTheme(opt.value) ? Moon : Sun" :size="12" class="theme-picker-base-icon" />
+        </div>
+      </div>
+    </PopupMenu>
+
     <!-- Server button: merged gauge + status dot. Icon color reflects connection status -->
     <button ref="serverBtnRef" class="server-toggle" :class="[statusDotClass, { 'pressure-alert': isUnderPressure && showMetricIcon }]" @click="toggleResourcesMenu" :title="t('systemResources.title')">
       <Server v-if="!isUnderPressure || !showMetricIcon" :size="15" />
@@ -177,7 +201,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, FolderOpen, Cpu, Activity, MemoryStick, Database, X } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, FolderOpen, Cpu, Activity, MemoryStick, Database, X, Palette, Sun, Moon } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -194,11 +218,12 @@ import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { toFixedCSS } from '@/composables/useSettingsConfig'
-import { localConfig } from '@/composables/useSettingsConfig'
+import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import { isDarkTheme, THEME_IDS } from '@/utils/themeMeta'
 import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
 import type { ShortcutContext } from '@/config/shortcutTips'
 import { resolveShortcutContext } from '@/config/shortcutTips'
@@ -220,6 +245,39 @@ const shortcutContext = computed<ShortcutContext>(() =>
   }),
 )
 const shortcutTipsOpen = ref(false)
+
+// Quick theme picker
+const themeBtnRef = ref<HTMLElement | null>(null)
+const themeMenuOpen = ref(false)
+const currentThemeValue = computed(() => localConfig.theme || 'auto')
+
+const themeOptions = computed(() => [
+  { label: t('settings.items.themeAuto'), value: 'auto' },
+  ...THEME_IDS.map(id => {
+    // Map theme ID to its i18n label key, e.g. 'github-light' -> 'settings.items.themeGithubLight'
+    const key = 'settings.items.theme' + id
+      .split('-')
+      .map(s => s.charAt(0).toUpperCase() + s.slice(1))
+      .join('')
+    return { label: t(key), value: id }
+  }),
+])
+
+function toggleThemeMenu() {
+  if (themeMenuOpen.value) {
+    themeMenuOpen.value = false
+    return
+  }
+  dropdownOpen.value = false
+  fileDropdownOpen.value = false
+  branchDropdownOpen.value = false
+  themeMenuOpen.value = true
+}
+
+function selectTheme(value: string) {
+  themeMenuOpen.value = false
+  setLocalConfig('theme', value)
+}
 
 const props = defineProps({
     projectRoot: String,
@@ -244,6 +302,7 @@ function toggleFileDropdown() {
     }
     branchDropdownOpen.value = false
     dropdownOpen.value = false
+    themeMenuOpen.value = false
     fileDropdownOpen.value = true
     // Position synchronously (estimated width) so the panel never flashes at the
     // default far-left position; refine to the real width after it renders.
@@ -286,6 +345,7 @@ function toggleBranchDropdown() {
     }
     fileDropdownOpen.value = false
     dropdownOpen.value = false
+    themeMenuOpen.value = false
     branchDropdownOpen.value = true
     loadBranches()
     updateBranchDropdownPosition(true)
@@ -581,6 +641,7 @@ function toggleDropdown() {
     } else {
         fileDropdownOpen.value = false
         branchDropdownOpen.value = false
+        themeMenuOpen.value = false
         loadRecentProjects()
         dropdownOpen.value = true
         updateDropdownPosition(true)
@@ -702,6 +763,7 @@ function onClickOutside(e: MouseEvent) {
     dropdownOpen.value = false
     fileDropdownOpen.value = false
     branchDropdownOpen.value = false
+    themeMenuOpen.value = false
 }
 
 // Track whether the path element was dragged, so click can decide to bubble or not
@@ -982,6 +1044,29 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     line-height: 1.4;
 }
 
+/* Quick theme picker */
+.theme-quick-toggle {
+    padding: 6px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: background 0.15s, color 0.3s;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-color);
+    margin-left: auto;
+}
+
+@media (hover: hover) {
+    .theme-quick-toggle:hover {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+    }
+}
+
 /* Server icon button — merged gauge + status dot */
 .server-toggle {
     padding: 6px;
@@ -994,7 +1079,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-left: auto;
 }
 
 /* Shortcut tips fill the empty middle of the header (PC/web only) */
@@ -1291,5 +1375,61 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .ht-dirty-cancel {
     border-color: var(--border-color, #dee2e6);
     color: var(--text-secondary, #666);
+}
+
+/* ─── Theme picker popup ─────────────────────────────────────────────── */
+
+.theme-picker-menu {
+    padding: 3px 0;
+    min-width: 160px;
+}
+
+.theme-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: background 0.1s;
+    font-size: 12px;
+    color: var(--text-primary);
+}
+
+.theme-picker-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.theme-picker-item.active {
+    background: var(--accent-color);
+    color: #fff;
+}
+
+.theme-picker-check {
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+    font-size: 12px;
+}
+
+.theme-picker-item.active .theme-picker-check {
+    color: #fff;
+}
+
+.theme-picker-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.theme-picker-base-icon {
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.theme-picker-item.active .theme-picker-base-icon {
+    color: rgba(255,255,255,0.7);
 }
 </style>
