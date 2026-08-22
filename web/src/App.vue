@@ -705,7 +705,7 @@ function handleOpenTask(e) {
 
   const navigateToTask = () => {
     switchTab('tasks')
-    navigateToTaskHistory(Number(taskId))
+    navigateToTaskSettings(Number(taskId))
     if (executionId) {
       // openExecDetail without execData will auto-fetch from API via refreshExecDetail
       openExecDetail(executionId)
@@ -823,7 +823,7 @@ watch(isTerminalDisabled, (disabled) => {
     switchTab(isWideScreen.value ? 'browse' : 'chat')
   }
 })
-const { navigateToTaskSettings, navigateToTaskHistory, openExecDetail, loadTasks } = useTaskTab()
+const { navigateToTaskSettings, openExecDetail, loadTasks } = useTaskTab()
 registerSwitchTab(switchTab)
 
 // Wire up WS global events
@@ -2058,7 +2058,7 @@ onMounted(async () => {
         // Proceed anyway — the task list may already be populated
       }
       switchTab('tasks')
-      navigateToTaskHistory(Number(navTaskId))
+      navigateToTaskSettings(Number(navTaskId))
       if (navExecutionId) {
         // openExecDetail without execData will auto-fetch from API via refreshExecDetail
         openExecDetail(navExecutionId)

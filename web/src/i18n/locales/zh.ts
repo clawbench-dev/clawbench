@@ -680,12 +680,15 @@ export default {
     pause: '禁用',
     resume: '启用',
     run: '执行',
-    history: '记录',
     viewLatest: '查看最新执行',
     delete: '删除',
     clearUnread: '清除未读',
     actionFailed: '操作失败',
     actionFailedDetail: '操作失败: {error}',
+    overview: {
+      showPrompt: '展开提示词',
+      hidePrompt: '收起提示词',
+    },
     status: {
       active: '已启用',
       paused: '已禁用',

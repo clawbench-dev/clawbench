@@ -1,8 +1,7 @@
 <template>
   <div class="task-tab" v-show="active">
     <TaskListPage v-if="currentView === 'list' && !formViewOpen" ref="listPageRef" @create="onCreate" @select="onTaskSelect" @latest-exec="onTaskLatestExec" />
-    <TaskDetailPage v-else-if="currentView === 'settings' && !execDetailOpen && !formViewOpen && selectedTaskData" :task="selectedTaskData" @edit="onEdit" @deleted="onTaskDeleted" @history="onTaskHistory" />
-    <TaskHistoryTab v-else-if="currentView === 'history' && !execDetailOpen && !formViewOpen" :task="selectedTaskData" @open-file="onOpenFile" />
+    <TaskDetailPage v-else-if="currentView === 'settings' && !execDetailOpen && !formViewOpen && selectedTaskData" :task="selectedTaskData" @edit="onEdit" @deleted="onTaskDeleted" />
     <TaskExecDetail v-else-if="execDetailOpen && !formViewOpen" :execDetail="selectedExecData" :taskName="selectedTaskData?.name" :taskId="selectedTaskId" @close="closeExecDetail" @open-file="onOpenFile" />
     <TaskFormPage v-else-if="formViewOpen" :mode="formMode" :task="(formMode === 'edit' ? selectedTaskData : null) as Record<string, unknown> | null" @close="closeForm" @saved="onFormSaved" />
   </div>
@@ -12,7 +11,6 @@
 import { ref, computed } from 'vue'
 import TaskListPage from '@/components/task/TaskListPage.vue'
 import TaskDetailPage from '@/components/task/TaskDetailPage.vue'
-import TaskHistoryTab from '@/components/task/TaskHistoryTab.vue'
 import TaskExecDetail from '@/components/task/TaskExecDetail.vue'
 import TaskFormPage from '@/components/task/TaskFormPage.vue'
 import { useTaskTab } from '@/composables/useTaskTab'
@@ -27,7 +25,7 @@ const emit = defineEmits<{
   'open-file': [filePath: string, lineStart?: number]
 }>()
 
-const { currentView, selectedTaskId, selectedExecData, execDetailOpen, formViewOpen, formMode, goBack, navigateToTaskSettings, navigateToTaskHistory, navigateToList, closeExecDetail, openLatestExecDetail, openCreateForm, openEditForm, closeForm, loadTasks } = useTaskTab()
+const { currentView, selectedTaskId, selectedExecData, execDetailOpen, formViewOpen, formMode, goBack, navigateToTaskSettings, navigateToList, closeExecDetail, openLatestExecDetail, openCreateForm, openEditForm, closeForm, loadTasks } = useTaskTab()
 
 // Register back handler for task drill-down navigation
 // canGoBack checks: only when this tab is active AND has a drill-down view
@@ -73,10 +71,6 @@ function onOpenFile(filePath: string, lineStart?: number) {
 
 function onTaskSelect(taskId: number) {
   navigateToTaskSettings(taskId)
-}
-
-function onTaskHistory() {
-  navigateToTaskHistory(selectedTaskId.value!)
 }
 
 function onTaskLatestExec(taskId: number) {

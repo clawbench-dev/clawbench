@@ -18,17 +18,6 @@
       >{{ taskName }}</span>
     </template>
 
-    <template v-if="showHistoryCrumb">
-      <span class="crumb-sep">›</span>
-
-      <!-- History crumb -->
-      <span
-        class="crumb"
-        :class="{ current: isHistory, clickable: !isHistory }"
-        @click="!isHistory && navigate('history')"
-      >{{ t('task.exec.title') }}</span>
-    </template>
-
     <template v-if="execDetailOpen">
       <span class="crumb-sep">›</span>
 
@@ -52,7 +41,7 @@ import { useTaskTab } from '@/composables/useTaskTab'
 import { store } from '@/stores/app'
 
 const { t } = useI18n()
-const { currentView, selectedTaskId, execDetailOpen, formViewOpen, formMode, navigateToList, navigateToTaskSettings, navigateToTaskHistory } = useTaskTab()
+const { currentView, selectedTaskId, execDetailOpen, formViewOpen, formMode, navigateToList, navigateToTaskSettings } = useTaskTab()
 
 // Derive task name from store (same pattern as TaskTab)
 const taskName = computed(() => {
@@ -63,12 +52,6 @@ const taskName = computed(() => {
 // Derived state
 const isList = computed(() => currentView.value === 'list' && !formViewOpen.value)
 const isSettings = computed(() => currentView.value === 'settings' && !execDetailOpen.value && !formViewOpen.value)
-const isHistory = computed(() => currentView.value === 'history' && !execDetailOpen.value && !formViewOpen.value)
-
-const showHistoryCrumb = computed(() => {
-  if (formViewOpen.value) return false
-  return currentView.value === 'history'
-})
 
 // Centralized navigation
 function navigate(target) {
@@ -77,9 +60,6 @@ function navigate(target) {
   } else if (target === 'settings') {
     const tid = selectedTaskId.value
     if (tid) navigateToTaskSettings(tid)
-  } else if (target === 'history') {
-    const tid = selectedTaskId.value
-    if (tid) navigateToTaskHistory(tid)
   }
 }
 </script>

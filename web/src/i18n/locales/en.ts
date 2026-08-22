@@ -680,11 +680,14 @@ export default {
     pause: 'Disable',
     resume: 'Enable',
     run: 'Run',
-    history: 'History',
     delete: 'Delete',
     clearUnread: 'Mark all read',
     actionFailed: 'Action failed',
     actionFailedDetail: 'Action failed: {error}',
+    overview: {
+      showPrompt: 'Show prompt',
+      hidePrompt: 'Collapse prompt',
+    },
     status: {
       active: 'Enabled',
       paused: 'Disabled',

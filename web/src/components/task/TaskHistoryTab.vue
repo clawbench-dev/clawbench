@@ -1,14 +1,5 @@
 <template>
-  <div class="task-history-page">
-    <!-- Header with breadcrumb + refresh -->
-    <div class="history-header">
-      <TaskBreadcrumb />
-      <button class="header-btn refresh-btn" :class="{ spinning: refreshing }" :disabled="refreshing || loading" @click="onRefresh" :title="t('common.refresh')">
-        <RefreshCw :size="14" />
-      </button>
-    </div>
-    <!-- History content -->
-    <div ref="listRef" class="task-history-tab">
+  <div ref="listRef" class="task-history-tab">
     <div v-if="loading && allExecutions.length === 0" class="history-empty">
       <Loader2 class="spin-icon" :size="20" />
       <span>{{ t('common.loading') }}</span>
@@ -18,9 +9,6 @@
       <span>{{ t('task.exec.noExecutions') }}</span>
     </div>
     <div v-else class="history-list">
-      <div v-if="executions.length > 0" class="clear-all-row">
-        <button class="clear-all-btn" @click="deleteAllExecutions">{{ t('task.exec.clearAll') }}</button>
-      </div>
       <div v-for="exec in allExecutions" :key="exec.id" class="execution-item" :class="{ running: isRunning(exec), unread: !isRunning(exec) && isUnreadDisplay(exec), 'just-completed': isJustCompleted(exec) }" @click="openDetail(exec)">
         <div class="execution-row">
           <div class="execution-info">
@@ -37,6 +25,7 @@
               <template v-if="!isRunning(exec)">
                 <span v-if="exec.status === 'cancelled'" class="exec-status-badge cancelled">{{ t('task.exec.statusCancelled') }}</span>
                 <span v-else-if="exec.status === 'failed'" class="exec-status-badge failed">{{ t('task.exec.statusFailed') }}</span>
+                <span v-if="exec.metadata?.wallMs" class="exec-duration">{{ formatDuration(exec.metadata.wallMs) }}</span>
               </template>
             </div>
             <template v-if="!isRunning(exec)">
@@ -44,8 +33,7 @@
                 <div v-if="exec.preview" class="exec-summary">{{ exec.preview }}</div>
                 <div v-else class="exec-summary empty">{{ t('task.exec.noTextOutput') }}</div>
               </div>
-              <div v-if="exec.metadata" class="exec-meta-row">
-                <span v-if="exec.metadata.wallMs" class="exec-meta-tag exec-meta-duration">{{ formatDuration(exec.metadata.wallMs) }}</span>
+              <div v-if="exec.metadata && (exec.metadata.model || exec.metadata.inputTokens || exec.metadata.outputTokens)" class="exec-meta-row">
                 <span v-if="exec.metadata.model" class="exec-meta-tag">{{ exec.metadata.model }}</span>
                 <span v-if="exec.metadata.inputTokens || exec.metadata.outputTokens" class="exec-meta-tag">{{ formatTokens(exec.metadata) }}</span>
               </div>
@@ -70,41 +58,28 @@
         <span>{{ t('common.loading') }}</span>
       </div>
     </div>
-    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, watch, onUnmounted, computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Square, Loader2, History, Trash2, RefreshCw } from 'lucide-vue-next'
-import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
+import { Square, Loader2, History, Trash2 } from 'lucide-vue-next'
 import { useTaskHistory } from '@/composables/useTaskHistory.ts'
 import { formatDuration } from '@/utils/format.ts'
 
 const props = defineProps({
   task: Object,
+  /** External scroll container ref (provided by parent when merged into a single scroll view) */
+  scrollRoot: Object,
 })
 
-defineEmits(['open-file'])
-
 const { t } = useI18n()
-
-const refreshing = ref(false)
 
 // Scroll container and sentinel refs for IntersectionObserver
 const listRef = ref(null)
 const sentinelRef = ref(null)
 let observer = null
-
-async function onRefresh() {
-  refreshing.value = true
-  try {
-    await Promise.all([loadExecutions(), loadRunningStatus()])
-  } finally {
-    refreshing.value = false
-  }
-}
 
 // Task history composable (ISS-011 + ISS-015 + ISS-016)
 const {
@@ -112,7 +87,6 @@ const {
   loadingMore,
   hasMore,
   allExecutions,
-  executions,
   isRunning,
   isJustCompleted,
   loadExecutions,
@@ -133,18 +107,22 @@ function formatTokens(meta) {
   return parts.join(' ')
 }
 
-/** Set up IntersectionObserver for infinite scroll */
+/** Set up IntersectionObserver for infinite scroll.
+ *  Uses the parent scroll container as root when provided (merged view),
+ *  otherwise falls back to the nearest scrollable ancestor. */
 function setupObserver() {
   if (observer) {
     observer.disconnect()
     observer = null
   }
-  if (!sentinelRef.value || !listRef.value) return
+  if (!sentinelRef.value) return
+  const root = props.scrollRoot?.value || listRef.value
+  if (!root) return
   observer = new IntersectionObserver((entries) => {
     if (entries[0].isIntersecting && hasMore.value && !loadingMore.value) {
       loadMoreExecutions()
     }
-  }, { threshold: 0.1, rootMargin: '100px', root: listRef.value })
+  }, { threshold: 0.1, rootMargin: '100px', root })
   observer.observe(sentinelRef.value)
 }
 
@@ -173,6 +151,16 @@ watch(() => props.task?.id, (newId) => {
   startPolling()
 }, { immediate: true })
 
+// Re-setup observer when the external scroll root becomes available.
+// Note: this relies on the scroll root (TaskDetailPage.detail-scroll) staying
+// mounted while the task detail view is active. If a future refactor unmounts
+// that container, the observer would need re-wiring here.
+watch(() => props.scrollRoot?.value, () => {
+  if (props.task?.id) {
+    nextTick(setupObserver)
+  }
+})
+
 onUnmounted(() => {
   stopPolling()
   onTaskChange() // Abort in-flight requests (ISS-016)
@@ -181,66 +169,21 @@ onUnmounted(() => {
     observer = null
   }
 })
+
+// Expose clear-all and history-state to the parent (TaskDetailPage) so the
+// "Clear all" button can live in the history section header bar.
+// hasExecutions is a computed ref so the parent's v-if stays reactive.
+const hasExecutions = computed(() => allExecutions.value.length > 0)
+defineExpose({
+  deleteAllExecutions,
+  hasExecutions,
+})
 </script>
 
 <style scoped>
-.task-history-page {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  background: var(--bg-primary, #ffffff);
-}
-
-.history-header {
-  display: flex;
-  align-items: center;
-  padding: 4px 8px;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
-  gap: 6px;
-}
-
-.header-btn {
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 14px;
-  background: var(--bg-secondary, #f1f3f5);
-  color: var(--text-secondary, #666);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: all 0.2s ease;
-}
-
-.header-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-@media (hover: hover) {
-  .header-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary, #eef1f4);
-    color: var(--accent-color, #0066cc);
-  }
-}
-
-.header-btn:active:not(:disabled) {
-  transform: scale(0.9);
-}
-
-.header-btn.spinning svg {
-  animation: spin 1s linear infinite;
-}
-
+/* Merged view: content flows into the parent scroll container, no own scrolling */
 .task-history-tab {
-  flex: 1;
-  overflow-y: auto;
   min-height: 0;
-  padding: 8px;
 }
 
 /* ── Empty state ── */
@@ -250,7 +193,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  height: 100%;
+  padding: 24px 0;
   color: var(--text-muted, #999);
   font-size: 14px;
 }
@@ -373,9 +316,9 @@ onUnmounted(() => {
   padding: 2px 6px;
   border-radius: 4px;
   font-weight: 600;
-  margin-left: auto;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+  flex-shrink: 0;
 }
 .exec-status-badge.cancelled {
   background: var(--bg-tertiary, #e5e7eb);
@@ -384,6 +327,20 @@ onUnmounted(() => {
 .exec-status-badge.failed {
   background: rgba(239, 68, 68, 0.12);
   color: #dc2626;
+}
+
+/* ── Duration (top row, right-aligned next to trigger type) ── */
+.exec-duration {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary, #111827);
+  background: rgba(0, 102, 204, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 /* ── Summary ── */
@@ -428,13 +385,6 @@ onUnmounted(() => {
   font-variant-numeric: tabular-nums;
   display: inline-flex;
   align-items: center;
-}
-
-.exec-meta-duration {
-  font-weight: 600;
-  color: var(--text-primary, #111827);
-  background: rgba(0, 102, 204, 0.05);
-  border-color: rgba(0, 102, 204, 0.1);
 }
 
 /* ── Running execution indicator ── */
@@ -531,35 +481,6 @@ onUnmounted(() => {
 
 .delete-exec-btn:active {
   transform: scale(0.9);
-}
-
-/* ── Clear all row ── */
-.clear-all-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 2px;
-}
-
-.clear-all-btn {
-  border: none;
-  background: transparent;
-  color: var(--text-muted, #9ca3af);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: all 0.2s;
-}
-
-@media (hover: hover) {
-  .clear-all-btn:hover {
-    color: #ef4444;
-    background: rgba(239, 68, 68, 0.06);
-  }
-}
-
-.clear-all-btn:active {
-  transform: scale(0.95);
 }
 
 /* ── Infinite scroll sentinel ── */

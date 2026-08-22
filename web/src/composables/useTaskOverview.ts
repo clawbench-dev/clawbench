@@ -10,7 +10,6 @@ interface UseTaskOverviewOptions {
   emit: {
     deleted: () => void
     edit: () => void
-    history: () => void
   }
 }
 

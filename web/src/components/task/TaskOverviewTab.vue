@@ -43,70 +43,25 @@
         </div>
       </div>
 
-      <!-- Prompt preview card -->
+      <!-- Prompt preview card (collapsible) -->
       <div class="overview-card">
-        <h3 class="card-title">
+        <h3 class="card-title prompt-card-title" @click="promptCollapsed = !promptCollapsed">
           <MessageSquare class="card-icon" :size="14" />
-          {{ t('task.form.prompt') }}
+          <span class="prompt-title-text">{{ t('task.form.prompt') }}</span>
+          <button class="prompt-toggle-btn" :title="promptCollapsed ? t('task.overview.showPrompt') : t('task.overview.hidePrompt')">
+            <ChevronDown :size="14" :class="{ 'prompt-chevron-collapsed': promptCollapsed }" class="prompt-chevron" />
+          </button>
         </h3>
-        <div class="prompt-body markdown-body" ref="promptBodyRef" @click="handlePromptClick" v-html="renderedPrompt"></div>
+        <div v-show="!promptCollapsed" class="prompt-body markdown-body" ref="promptBodyRef" @click="handlePromptClick" v-html="renderedPrompt"></div>
       </div>
-    </div>
-
-    <!-- Fixed bottom action bar -->
-    <div class="overview-actions">
-      <button class="action-btn" @click="$emit('edit')" :title="t('common.edit')">
-        <Pencil :size="14" />
-        <span class="action-text">{{ t('common.edit') }}</span>
-      </button>
-      <button v-if="taskRunCount > 0 || taskRunningCount > 0" class="action-btn" :class="{ 'has-unread-flash': taskUnreadCount > 0 }" @click="$emit('history')" :title="t('task.history')">
-        <History :size="14" />
-        <span class="action-text">{{ t('task.history') }}</span>
-      </button>
-
-      <template v-if="taskStatus === 'active'">
-        <button class="action-btn accent" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
-          <Zap :size="14" />
-          <span class="action-text">{{ t('task.run') }}</span>
-        </button>
-        <button class="action-btn warn" :disabled="actionLoading" @click="pauseTask" :title="t('task.pause')">
-          <Pause :size="14" />
-          <span class="action-text">{{ t('task.pause') }}</span>
-        </button>
-        <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
-          <Trash2 :size="14" />
-          <span class="action-text">{{ t('task.delete') }}</span>
-        </button>
-      </template>
-      <template v-else-if="taskStatus === 'paused'">
-        <button class="action-btn accent" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
-          <Zap :size="14" />
-          <span class="action-text">{{ t('task.run') }}</span>
-        </button>
-        <button class="action-btn success" :disabled="actionLoading" @click="resumeTask" :title="t('task.resume')">
-          <Play :size="14" />
-          <span class="action-text">{{ t('task.resume') }}</span>
-        </button>
-        <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
-          <Trash2 :size="14" />
-          <span class="action-text">{{ t('task.delete') }}</span>
-        </button>
-      </template>
-      <template v-else-if="taskStatus === 'completed'">
-        <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
-          <Trash2 :size="14" />
-          <span class="action-text">{{ t('task.delete') }}</span>
-        </button>
-      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { Pencil, Pause, Play, Zap, Trash2, History, Clock, MessageSquare } from 'lucide-vue-next'
+import { ChevronDown, Clock, MessageSquare } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import { useTaskOverview } from '@/composables/useTaskOverview.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer'
 import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -138,25 +93,10 @@ const taskRepeatMode = computed(() => task.value.repeatMode as string)
 const taskMaxRuns = computed(() => task.value.maxRuns as number)
 const taskRunCount = computed(() => task.value.runCount as number)
 const taskRunningCount = computed(() => task.value.runningCount as number)
-const taskUnreadCount = computed(() => task.value.unreadCount as number)
 const taskNextRunAt = computed(() => task.value.nextRunAt as string | undefined)
 const taskPrompt = computed(() => task.value.prompt as string)
 
-const emit = defineEmits<{
-  (e: 'deleted'): void
-  (e: 'edit'): void
-  (e: 'history'): void
-}>()
-
-// Task overview composable (ISS-011 + ISS-014)
-const { actionLoading, triggerTask, pauseTask, resumeTask, deleteTask } = useTaskOverview({
-  task: computed(() => props.task),
-  emit: {
-    deleted: () => emit('deleted'),
-    edit: () => emit('edit'),
-    history: () => emit('history'),
-  },
-})
+const promptCollapsed = ref(false)
 
 const promptBodyRef = ref<HTMLElement | null>(null)
 const renderedPrompt = ref('')
@@ -271,14 +211,12 @@ function handlePromptClick(event: MouseEvent) {
 .task-overview {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  overflow: hidden;
   background: var(--bg-primary, #ffffff);
 }
 
+/* Flows as a plain block inside the parent scroll container (TaskDetailPage.detail-scroll).
+   No own scrolling — otherwise we'd get nested scroll containers. */
 .overview-scroll {
-  flex: 1;
-  overflow-y: auto;
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -405,6 +343,52 @@ function handlePromptClick(event: MouseEvent) {
   margin: 0;
 }
 
+/* Collapsible prompt card title */
+.prompt-card-title {
+  cursor: pointer;
+  user-select: none;
+}
+
+.prompt-title-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.prompt-toggle-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.2s, color 0.2s;
+}
+
+@media (hover: hover) {
+  .prompt-toggle-btn:hover {
+    background: var(--bg-tertiary, #eef1f4);
+    color: var(--text-primary, #1a1a1a);
+  }
+}
+
+.prompt-toggle-btn:active {
+  transform: scale(0.92);
+}
+
+.prompt-chevron {
+  transition: transform 0.2s ease;
+}
+
+.prompt-chevron-collapsed {
+  transform: rotate(-90deg);
+}
+
 .card-icon {
   color: var(--text-muted, #999);
 }
@@ -472,111 +456,6 @@ function handlePromptClick(event: MouseEvent) {
   font-size: 12px;
 }
 
-/* Fixed bottom action bar */
-.overview-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  background: var(--bg-primary, #ffffff);
-  border-top: 1px solid var(--border-color, #e5e5e5);
-  flex-shrink: 0;
-  overflow-x: auto;
-}
-
-
-
-.action-btn {
-  height: 28px;
-  border: none;
-  border-radius: 14px;
-  background: var(--bg-secondary, #f1f3f5);
-  color: var(--text-primary, #1a1a1a);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 10px;
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-
-
-.action-text {
-  line-height: 1;
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-@media (hover: hover) {
-  .action-btn:hover:not(:disabled) {
-    background: var(--border-color, #e5e5e5);
-    transform: translateY(-1px);
-  }
-}
-
-.action-btn:active:not(:disabled) {
-  transform: scale(0.96);
-}
-
-.action-btn.accent {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 20%, var(--bg-secondary, #f1f3f5));
-  color: var(--accent-color, #0066cc);
-}
-
-@media (hover: hover) {
-  .action-btn.accent:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 35%, var(--bg-secondary, #f1f3f5));
-    color: #fff;
-  }
-}
-
-.action-btn.warn {
-  background: color-mix(in srgb, #ca8a04 15%, var(--bg-secondary, #f1f3f5));
-  color: #ca8a04;
-}
-
-@media (hover: hover) {
-  .action-btn.warn:hover:not(:disabled) {
-    background: color-mix(in srgb, #ca8a04 30%, var(--bg-secondary, #f1f3f5));
-  }
-}
-
-.action-btn.success {
-  background: color-mix(in srgb, #16a34a 15%, var(--bg-secondary, #f1f3f5));
-  color: #16a34a;
-}
-
-@media (hover: hover) {
-  .action-btn.success:hover:not(:disabled) {
-    background: color-mix(in srgb, #16a34a 30%, var(--bg-secondary, #f1f3f5));
-  }
-}
-
-.action-btn.danger {
-  background: color-mix(in srgb, #ef4444 10%, var(--bg-secondary, #f1f3f5));
-  color: #b91c1c;
-}
-
-@media (hover: hover) {
-  .action-btn.danger:hover:not(:disabled) {
-    background: color-mix(in srgb, #ef4444 25%, var(--bg-secondary, #f1f3f5));
-  }
-}
-
-/* Static indicator for history button when task has unread messages */
-.action-btn.has-unread-flash {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-secondary, #f1f3f5));
-}
 </style>
 
 <style>
