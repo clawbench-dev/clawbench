@@ -54,7 +54,10 @@
             <span class="model-item-indicator" :class="{ active: m.id === currentModelId }"></span>
             <ProviderIcon :model-name="m.name || m.id" :size="16" />
             <span class="model-item-name">{{ m.name }}</span>
-            <span v-if="m.id === defaultModelId" class="default-badge"><Star :size="12" fill="currentColor" /></span>
+            <span v-if="m.id === defaultModelId" class="default-label">
+              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
+            </span>
             <button v-if="m.id !== defaultModelId" class="set-default-btn" @click.stop="setDefaultModel(m)" :title="t('chat.sessionSetting.setAsDefault')">
               <Star :size="12" />
             </button>
@@ -89,7 +92,10 @@
           >
             <span class="model-item-indicator" :class="{ active: level.id === currentThinkingEffort }"></span>
             <span class="model-item-name">{{ level.name }}</span>
-            <span v-if="level.id === defaultThinkingEffort" class="default-badge"><Star :size="12" fill="currentColor" /></span>
+            <span v-if="level.id === defaultThinkingEffort" class="default-label">
+              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
+            </span>
             <button v-if="level.id !== defaultThinkingEffort" class="set-default-btn" @click.stop="setDefaultThinkingEffort(level.id)" :title="t('chat.sessionSetting.setAsDefault')">
               <Star :size="12" />
             </button>
@@ -111,7 +117,10 @@
           >
             <span class="model-item-indicator" :class="{ active: isACP }"></span>
             <span class="model-item-name">{{ t('chat.transportSwitcher.acp') }}</span>
-            <span v-if="defaultTransport === 'acp-stdio'" class="default-badge"><Star :size="12" fill="currentColor" /></span>
+            <span v-if="defaultTransport === 'acp-stdio'" class="default-label">
+              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
+            </span>
             <button v-if="defaultTransport !== 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('acp-stdio')" :title="t('chat.sessionSetting.setAsDefault')">
               <Star :size="12" />
             </button>
@@ -127,7 +136,10 @@
           >
             <span class="model-item-indicator" :class="{ active: !isACP }"></span>
             <span class="model-item-name">{{ t('chat.transportSwitcher.cli') }}</span>
-            <span v-if="defaultTransport !== 'acp-stdio'" class="default-badge"><Star :size="12" fill="currentColor" /></span>
+            <span v-if="defaultTransport !== 'acp-stdio'" class="default-label">
+              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
+            </span>
             <button v-if="defaultTransport === 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('cli')" :title="t('chat.sessionSetting.setAsDefault')">
               <Star :size="12" />
             </button>
@@ -159,7 +171,10 @@
           >
             <span class="model-item-indicator" :class="{ active: mode.id === currentModeId }"></span>
             <span class="model-item-name">{{ mode.name || mode.id }}</span>
-            <span v-if="mode.id === defaultModeId" class="default-badge"><Star :size="12" fill="currentColor" /></span>
+            <span v-if="mode.id === defaultModeId" class="default-label">
+              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
+            </span>
             <button v-if="mode.id !== defaultModeId" class="set-default-btn" @click.stop="setDefaultMode(mode)" :title="t('chat.sessionSetting.setAsDefault')">
               <Star :size="12" />
             </button>
@@ -779,14 +794,29 @@ defineExpose({
   font-weight: 600;
 }
 
-.default-badge {
+.default-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--accent-color, #0066cc);
+}
+
+.default-text {
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Fixed 22×22 slot so the default star stays aligned with the
+   set-default star on non-default rows. */
+.default-star {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 22px;
   height: 22px;
   flex-shrink: 0;
-  color: var(--accent-color, #0066cc);
 }
 
 .set-default-btn {
