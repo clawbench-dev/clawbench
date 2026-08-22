@@ -347,8 +347,10 @@ func (c *ACPConn) killProcessLocked() {
 	}
 
 	oldCmd := c.cmd
+	oldFilter := c.stdoutFilter
+	c.stdoutFilter = nil
 	c.mu.Unlock()
-	c.reapProcess(oldCmd)
+	c.reapProcess(oldCmd, oldFilter)
 	c.mu.Lock()
 	if c.cmd == oldCmd {
 		c.cmd = nil
@@ -372,8 +374,10 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 			cancelCancel()
 		}
 		oldCmd := c.cmd
+		oldFilter := c.stdoutFilter
+		c.stdoutFilter = nil
 		c.mu.Unlock()
-		c.reapProcess(oldCmd)
+		c.reapProcess(oldCmd, oldFilter)
 		c.mu.Lock()
 		slog.Info("acp perf: spawnLocked.kill_old_process", "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(killStart))
 		if c.cmd == oldCmd {

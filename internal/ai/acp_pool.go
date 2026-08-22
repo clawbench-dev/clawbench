@@ -1430,19 +1430,24 @@ func (c *ACPConn) ProcessPID() int {
 // NOT exec.Cmd.Wait, so it never blocks on the stderr-copy goroutine that a
 // surviving descendant (e.g. an MCP server) can keep alive indefinitely.
 //
+// oldFilter must be the stdout filter belonging to oldCmd (not the connection's
+// current c.stdoutFilter). The caller captures it while holding c.mu so the
+// reap never closes the freshly respawned process's filter during the
+// idle-sweep vs. new-prompt race.
+//
 // Must NOT be called with c.mu held (it blocks up to crashDiagWaitTimeout).
-func (c *ACPConn) reapProcess(oldCmd *exec.Cmd) {
+func (c *ACPConn) reapProcess(oldCmd *exec.Cmd, oldFilter *acpStdoutFilter) {
 	if oldCmd == nil || oldCmd.Process == nil {
 		return
 	}
 	c.procMu.Lock()
 	defer c.procMu.Unlock()
 
-	// Close the stdout filter first to unblock pending reads on the pipe so
-	// the reaped process's I/O goroutines can settle.
-	if c.stdoutFilter != nil {
-		c.stdoutFilter.Close()
-		c.stdoutFilter = nil
+	// Close the old process's stdout filter (already disowned from the
+	// connection by the caller) to unblock pending reads on its pipe so the
+	// reaped process's I/O goroutines can settle.
+	if oldFilter != nil {
+		oldFilter.Close()
 	}
 	// Kill the entire process group (npx + child processes) so the pipes are
 	// closed once every descendant exits.
@@ -1467,8 +1472,10 @@ func (c *ACPConn) killAndMarkDead() {
 func (c *ACPConn) killAndMarkDeadLocked() {
 	if c.cmd != nil && c.cmd.Process != nil {
 		oldCmd := c.cmd
+		oldFilter := c.stdoutFilter
+		c.stdoutFilter = nil
 		c.mu.Unlock()
-		c.reapProcess(oldCmd)
+		c.reapProcess(oldCmd, oldFilter)
 		c.mu.Lock()
 		if c.cmd == oldCmd {
 			c.cmd = nil
@@ -1492,8 +1499,10 @@ func (c *ACPConn) close() {
 
 	if c.cmd != nil && c.cmd.Process != nil {
 		oldCmd := c.cmd
+		oldFilter := c.stdoutFilter
+		c.stdoutFilter = nil
 		c.mu.Unlock()
-		c.reapProcess(oldCmd)
+		c.reapProcess(oldCmd, oldFilter)
 		c.mu.Lock()
 		if c.cmd == oldCmd {
 			c.cmd = nil
