@@ -536,6 +536,24 @@ describe('exportRenderedHtml', () => {
     expect(result.html).toContain('mermaid-error')
   })
 
+  it('replaces data-mermaid-error containers with static error div (strips retry button)', async () => {
+    const el = createElement('<div class="mermaid" data-mermaid="graph TD; A-->B" data-mermaid-error="1" data-mermaid-init-error="1"><pre class="mermaid-error-pre">Mermaid Error: Failed to fetch</pre><button class="mermaid-retry-btn" type="button">Retry</button></div>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+
+    // Should replace with a static .mermaid-error div
+    expect(result.html).toContain('mermaid-error')
+    expect(result.html).toContain('Diagram failed to render')
+    // Should NOT contain the retry button (meaningless in export)
+    expect(result.html).not.toContain('mermaid-retry-btn')
+    // Should NOT contain the original error pre
+    expect(result.html).not.toContain('mermaid-error-pre')
+  })
+
   it('builds TOC from headings with IDs', async () => {
     const el = createElement('<h1 id="intro">Introduction</h1><h2 id="setup">Setup</h2><p>content</p>')
     const result = await exportRenderedHtml({

@@ -1,0 +1,61 @@
+/* ── Mermaid diagram: loading spinner, error, retry button ── */
+
+/* Loading spinner — shown while mermaid chunk is loading and rendering */
+.mermaid .mermaid-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.mermaid .mermaid-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: mermaid-spin 0.6s linear infinite;
+}
+
+/* Error pre — replaces inline styles for consistency */
+.mermaid .mermaid-error-pre {
+  padding: 12px;
+  background: var(--code-bg);
+  border-radius: 6px;
+  font-size: 13px;
+  overflow-x: auto;
+  margin: 0;
+}
+
+/* Error container — remove default pre margin */
+.mermaid[data-mermaid-error] .mermaid-error-pre {
+  margin: 0;
+}
+
+/* Retry button */
+.mermaid .mermaid-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.mermaid .mermaid-retry-btn:hover {
+  background: var(--accent-color);
+  color: #fff;
+  border-color: var(--accent-color);
+}
+.mermaid .mermaid-retry-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+@keyframes mermaid-spin {
+  to { transform: rotate(360deg); }
+}

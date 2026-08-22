@@ -271,13 +271,27 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
 
 /**
  * Replace unrendered Mermaid blocks (pre.mermaid without SVG child)
- * with error indicators.
+ * with error indicators. Also handles data-mermaid-error containers
+ * (from retry-enabled error fallbacks) by replacing them with static
+ * error divs (stripping the retry button which is meaningless in export).
  */
 function handleFailedMermaid(clone: HTMLElement): void {
     const mermaidBlocks = clone.querySelectorAll('pre.mermaid, div.mermaid, code.mermaid')
     for (const block of Array.from(mermaidBlocks)) {
         // If it contains an SVG, Mermaid rendered successfully
         if (block.querySelector('svg')) continue
+
+        // Already an error container with data-mermaid-error — replace with
+        // a static error div (strip retry button, avoid double-nesting)
+        if ((block as HTMLElement).dataset.mermaidError) {
+            const errorDiv = document.createElement('div')
+            errorDiv.className = 'mermaid-error'
+            const em = document.createElement('em')
+            em.textContent = 'Diagram failed to render'
+            errorDiv.appendChild(em)
+            block.parentNode?.replaceChild(errorDiv, block)
+            continue
+        }
 
         // Mermaid failed — wrap in error div
         const errorDiv = document.createElement('div')
@@ -345,7 +359,7 @@ async function renderDualThemeMermaid(clone: HTMLElement): Promise<void> {
                 // Current theme SVG — insert directly (content is from trusted
                 // Mermaid renderer; we already stripped <script>/<iframe> from clone)
                 const currentDiv = clone.ownerDocument.createElement('div')
-                currentDiv.className = currentTheme === 'dark' ? 'mermaid-dark' : 'mermaid-light'
+                currentDiv.className = currentThemeBase === 'dark' ? 'mermaid-dark' : 'mermaid-light'
                 currentDiv.innerHTML = existingSvg.outerHTML
 
                 // Opposite theme SVG — also insert directly, then strip
@@ -380,7 +394,7 @@ async function renderDualThemeMermaid(clone: HTMLElement): Promise<void> {
         // Always restore mermaid to the current app theme
         mermaid.initialize({
             startOnLoad: false,
-            theme: currentTheme === 'dark' ? 'dark' : 'default',
+            theme: currentThemeBase === 'dark' ? 'dark' : 'default',
             securityLevel: 'loose',
             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
         })
