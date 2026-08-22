@@ -658,19 +658,15 @@ function getBlockHtml(bi: number, block: any) {
     if (props.staticBlockCache) {
       const cached = props.staticBlockCache.get(props.msgId, bi, block.text)
       if (cached !== undefined) {
-        // If this entry was deferred (skipEnhancements=true), schedule an upgrade
-        // but return the fast-rendered version immediately for instant display
-        if (props.staticBlockCache.isDeferred(props.msgId, bi, block.text)) {
-          props.staticBlockCache.scheduleUpgrade()
-        }
         return cached
       }
-      // First render: use fast path (skipEnhancements=true) for instant display,
-      // then schedule upgrade to full pipeline (KaTeX, annotations, etc.)
-      const fastHtml = props.renderTextBlock(block.text, props.msgId, bi, false, true)
-      props.staticBlockCache.set(props.msgId, bi, block.text, fastHtml, true)
-      props.staticBlockCache.scheduleUpgrade()
-      return fastHtml
+      // First render: use full pipeline directly — no deferred rendering.
+      // Deferred rendering (skipEnhancements=true → scheduleUpgrade) causes
+      // scrollHeight to change after initial paint, creating a visible "snap"
+      // when scrollToBottom corrects for the height difference.
+      const fullHtml = props.renderTextBlock(block.text, props.msgId, bi, false, false)
+      props.staticBlockCache.set(props.msgId, bi, block.text, fullHtml, false)
+      return fullHtml
     }
     return props.renderTextBlock(block.text, props.msgId, bi, false)
   }
