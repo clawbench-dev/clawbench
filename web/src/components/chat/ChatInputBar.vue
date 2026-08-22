@@ -54,7 +54,7 @@
       </button>
     </div>
     <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space -->
-    <Transition name="paste-fade">
+    <Transition name="recommend-slide">
       <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
         <Sparkles :size="14" :stroke-width="1.5" class="recommendation-icon" />
         <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('chat.recommendationCollapse') : t('chat.recommendationExpand')">{{ recommendation }}</span>
@@ -1726,6 +1726,30 @@ defineExpose({
    quote and file cards sit on the same horizontal line. */
 .chat-attachment-tags :deep(.chat-attachment-tags) {
   padding: 0;
+}
+
+/* Conversation recommendation banner slide transition — animates height + opacity so the message area isn't jolted */
+.recommend-slide-enter-active {
+  transition: max-height 0.25s ease-out, opacity 0.25s ease-out, margin 0.25s ease-out, padding-top 0.25s ease-out, padding-bottom 0.25s ease-out, border-width 0.25s ease-out;
+  overflow: hidden;
+}
+.recommend-slide-leave-active {
+  transition: max-height 0.25s ease-in, opacity 0.25s ease-in, margin 0.25s ease-in, padding-top 0.25s ease-in, padding-bottom 0.25s ease-in, border-width 0.25s ease-in;
+  overflow: hidden;
+}
+.recommend-slide-enter-from,
+.recommend-slide-leave-to {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-width: 0;
+}
+.recommend-slide-enter-to,
+.recommend-slide-leave-from {
+  max-height: 150px;
 }
 
 /* Conversation recommendation banner (推荐回复) — rendered above the input box */
