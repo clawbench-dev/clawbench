@@ -98,6 +98,7 @@ flowchart LR
 | `downloadBlob(name, base64)` | 保存 Blob 到本地 |
 | `getServerList()` / `saveServer()` / `removeServer()` | 持久化多服务器列表与凭据 |
 | `setKeepScreenOn(boolean)` | 配合 Web Wake Lock 控制原生屏幕常亮 |
+| `getTheme()` / `setTheme(themeId)` | 读取/设置完整主题 ID（如 `nord`、`github-dark`），持久化到 SharedPreferences；`applyThemeColors()` 将各主题映射到原生状态栏、导航栏和 splash 覆盖层颜色 |
 
 ### Java 端关键模块
 

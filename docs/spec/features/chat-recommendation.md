@@ -15,7 +15,7 @@ sequenceDiagram
     participant 前端
 
     AI->>SE: 流式完成
-    SE->>SE: summarizeTarget (提取结论)
+    SE->>SE: summarizeMessage (提取结论)
     SE->>Sum: RecommendNextStep(结论 + 对话 + 快捷指令 + 项目上下文)
     Sum->>Sum: stable = 项目上下文 + 快捷指令 (可缓存)
     Sum->>Sum: rolling = 对话 + 结论 (不可缓存)
@@ -26,7 +26,7 @@ sequenceDiagram
     前端->>前端: 显示推荐横幅
 ```
 
-会话完成后，`summarizeTarget` 在提取结论的同时触发推荐生成。推荐 payload 分为可缓存前缀（项目上下文 + 快捷指令）和滚动尾部（对话 + 结论），支持 Anthropic cache_control 和 OpenAI 风格的自动前缀缓存，避免每轮重复处理稳定内容。
+会话完成后，`summarizeMessage` 在提取结论的同时触发推荐生成。推荐 payload 分为可缓存前缀（项目上下文 + 快捷指令）和滚动尾部（对话 + 结论），支持 Anthropic cache_control 和 OpenAI 风格的自动前缀缓存，避免每轮重复处理稳定内容。
 
 ### 推荐消费流程
 
@@ -57,3 +57,4 @@ flowchart TD
 - **stable/rolling 分离**：推荐 payload 分为可缓存前缀（项目上下文 + 快捷指令，跨轮次稳定）和滚动尾部（对话 + 结论，每轮变化），LLM 提供商的 prompt caching 机制可复用前缀，避免重复处理
 - **AISummaryConfig 共享**：推荐和语音摘要共享 `ai_summary` 配置（模型、API 端点），避免重复配置。用户只需配置一次 LLM 端点，两种功能自动可用
 - **generation 守卫**：前端使用 generation 计数器防止异步拉取竞态——会话被 invalidate（新消息开始流式）时 generation 递增，正在进行的 fetch 返回后检查 generation 是否匹配，不匹配则丢弃结果
+- **推荐异步生成**：推荐在 goroutine 中异步执行，不阻塞 `Finalize()` 与终端 `done` 事件——推荐的 LLM 调用（最长 60s）若内联执行会让回复完成后的 UI 更新和完成提示延迟数秒。前端以 `chat_recommendation` 事件到达为准展示，无需等待

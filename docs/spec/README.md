@@ -12,7 +12,7 @@ ClawBench 是移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy�
 | [AI 后端抽象](core/ai-backend.md) | 双传输后端（CLI shell-out + ACP stdio）、流式事件累加（AccumulateBlock + 回放检测 + 连续 thinking 合并 + AskQuestion 转换）、ACP 状态提取（mode/thinking/model）、ACP 崩溃诊断、acpStdoutFilter 协议修复（含 SessionModelState 提取）、ACP context_state 持久化、ACP 会话恢复重试与 NewSessionFallback、raw_output 累积缓冲、thinking 惰性加载、CodeWhale 字段重映射、Grok Build 双传输（ACP + streaming-json CLI）、共享规则模板、连接管理（AgentID/BackendID 无锁防死锁、用户取消保护存活连接、ensureAliveWithSession 使用 ResumeSession）、LoadSession 异步回放、ListSessions 磁盘扫描回退、EnsureAlive、CodeBuddy MCP 配置注入、CodeBuddy Plugin Skills 竞态修复 |
 | [流式传输体系](core/streaming.md) | 单一 WebSocket StreamHub（含断线 ≤10s 缓冲重放、≤50 条上限、>120s 清理订阅）+ 旁注小 SSE/WS 通道；含前端重连状态同步、subscribeOnly 模式、replay_done 事件 |
 | [会话生命周期](core/session-lifecycle.md) | 聊天会话的创建、执行、排队、取消、归档（软删除）、物理删除（Destroy）、续接对话、分叉（含 beforeMessageId、可选 Agent）、设置即时持久化、过期归档自动清理 |
-| [摘要管线](core/summarization.md) | 双管线（TTS vs 阅读摘要）、summarizeTarget 统一调度、SummaryCards 结构化卡片、多 pass 压缩、Block 提取算法、降级链（AI 失败使用结论文本）、热重载、推荐回复（stable/rolling 分离 + prompt caching） |
+| [摘要管线](core/summarization.md) | 双管线（TTS vs 阅读摘要）、summarizeMessage 统一调度、SummaryCards 结构化卡片、多 pass 压缩、Block 提取算法、降级链（AI 失败使用结论文本）、热重载、推荐回复（stable/rolling 分离 + prompt caching） |
 
 ### features/ — 功能特性
 

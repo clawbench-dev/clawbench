@@ -44,6 +44,7 @@ sequenceDiagram
 
 - **推送是 WS 的后备而非替代**：推送通知有延迟、有字数限制、无法交互——在线时始终优先使用 WebSocket
 - **断线缓冲窗口有限（10s）**：WebSocket 断线后只缓冲 10s 内的事件，超过的事件进入离线持久化
+- **终态推送去重守卫**：服务端用 `terminalPushDone` 标记（`sync.Map`，按 sessionID）保证同一会话只发送一次终态推送——防止 done/cancel 并发竞态导致"完成"与"取消"双重矛盾通知。终态事件统一由 `markDoneAndSendFinal` 触发，新会话开始时重置标记
 
 ## 离线事件持久化
 
