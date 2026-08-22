@@ -881,7 +881,7 @@ function handleCopyMessage() {
 .chat-message.user .table-wrap {
     overflow-x: auto;
     border: none;
-    border-radius: 6px;
+    border-radius: 6px 6px 0 0;
     margin: 0.75em 0;
 }
 
@@ -1025,7 +1025,7 @@ function handleCopyMessage() {
 .chat-message.assistant .table-wrap {
     overflow-x: auto;
     border: none;
-    border-radius: 6px;
+    border-radius: 6px 6px 0 0;
     margin: 0.75em 0;
 }
 
