@@ -1662,6 +1662,17 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .toolbar-btn.btn-modifier, .toolbar-btn.btn-nav, .toolbar-btn.btn-arrow, .toolbar-btn.btn-symbol, .toolbar-btn.btn-action { background: transparent; }
 .toolbar-btn.btn-symbol { color: var(--toolbar-key-text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; font-weight: 700; }
 
+/* WebView bold compensation — same mechanism as chat markdown bold
+ * (markdown-common.css): font-weight alone renders lighter/softer in Android
+ * WebView (bold synthesized by fattening outlines), so thicken glyphs with a
+ * thin uniform -webkit-text-stroke under [data-app-mode] only. Applies to all
+ * virtual keys and symbol buttons; shift-tab labels inherit it from .toolbar-btn. */
+[data-app-mode] .toolbar-btn {
+  -webkit-text-stroke: 0.12px currentColor;
+}
+[data-app-mode] .toolbar-btn.shortcut {
+  -webkit-text-stroke: 0.1px currentColor;
+}
 
 .selection-copy-bar {
   position: absolute;
