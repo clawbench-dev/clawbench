@@ -424,6 +424,35 @@ export function useChatStream(options: UseChatStreamOptions) {
         appLog.d(TAG, `[done] pending msgs: ${pendingCount}; messages: ${doneSummary}`)
 
         disconnectStream()
+
+        // Unlock input bar and fire stream-end callbacks immediately so the user
+        // sees the final state (meta bar, file-changes banner, summary toggle)
+        // without waiting for the loadHistory REST round-trip. Previously these
+        // were in the .finally() of onLoadHistory(), which meant the UI stayed
+        // in a limbo state (streaming indicator gone but meta bar not yet shown)
+        // for 50-500ms+ while the REST call completed and the message array was
+        // replaced. Moving them here eliminates that perceived lag.
+        loading.value = false
+        onMessage()
+        if (isOpen.value) {
+          onScrollBottom()
+        }
+        onStreamEnd?.('done')
+        if (!isOpen.value) {
+          const lastMsg = messages.value[messages.value.length - 1]
+          if (lastMsg?.role === 'assistant') {
+            onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
+            onNotification(gt('chat.stream.aiReplied'), {
+              body: gt('chat.stream.clickToViewReply'),
+              onClick: () => onOpen()
+            })
+          }
+        }
+
+        // Sync messages from DB in the background. loadHistory replaces the
+        // entire messages array (DB IDs replace drain-* keys, summary is
+        // populated, etc.) but this is a non-urgent consistency refresh — the
+        // user already sees the correct final state from forceCleanupStreamingState.
         onLoadHistory().then(() => {
           const afterSummary = messages.value.map((m, i: number) =>
             `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
@@ -433,23 +462,9 @@ export function useChatStream(options: UseChatStreamOptions) {
           // and Vue rebuilt the DOM, destroying any Mermaid SVGs rendered by the
           // earlier forceCleanupStreamingState onRenderNeeded(true) call.
           onRenderNeeded(true)
-        }).finally(() => {
-          loading.value = false
-          onMessage()
-          if (isOpen.value) {
-            onScrollBottom()
-          }
-          onStreamEnd?.('done')
-          if (!isOpen.value) {
-            const lastMsg = messages.value[messages.value.length - 1]
-            if (lastMsg?.role === 'assistant') {
-              onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
-              onNotification(gt('chat.stream.aiReplied'), {
-                body: gt('chat.stream.clickToViewReply'),
-                onClick: () => onOpen()
-              })
-            }
-          }
+        }).catch(() => {
+          // Non-critical: loadHistory has its own error handling (toast).
+          // UI already finalized by forceCleanupStreamingState above.
         })
         break
       }
@@ -462,15 +477,17 @@ export function useChatStream(options: UseChatStreamOptions) {
         thinkingBlockCounter = 0
         disconnectStream()
         onReplayDone?.()
+        // Unlock input immediately — don't wait for loadHistory REST round-trip.
+        loading.value = false
+        if (isOpen.value) {
+          onScrollBottom()
+        }
+        // Sync from DB in the background.
         onLoadHistory().then(() => {
-          loading.value = false
           // Force full render — loadHistory replaced DOM, Mermaid needs re-render
           onRenderNeeded(true)
-          if (isOpen.value) {
-            onScrollBottom()
-          }
         }).catch(() => {
-          loading.value = false
+          // Non-critical: UI already finalized.
         })
         break
       }
@@ -493,21 +510,23 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         disconnectStream()
         const errorData = payload as unknown as ErrorEventData
+        // Set error block on streaming message immediately so user sees the
+        // error without waiting for loadHistory REST round-trip.
+        const sm = findStreamingMsg(messages.value)
+        if (sm) {
+          const errorBlock: ContentBlock = { type: 'error', text: errorData?.error || 'Unknown error' }
+          if (errorData?.reason) errorBlock.reason = errorData.reason
+          sm.blocks = [errorBlock]
+        }
+        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+        loading.value = false
+        onStreamEnd?.('error')
+        // Sync from DB in the background (same pattern as 'done' handler).
         onLoadHistory().then(() => {
-          // Re-render Mermaid on the final DOM — same race as 'done' handler
           onRenderNeeded(true)
         }).catch(() => {
-          if (sessionChanged()) return
-          const sm = findStreamingMsg(messages.value)
-          if (sm) {
-            const errorBlock: ContentBlock = { type: 'error', text: errorData?.error || 'Unknown error' }
-            if (errorData?.reason) errorBlock.reason = errorData.reason
-            sm.blocks = [errorBlock]
-          }
-          _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
-          loading.value = false
+          // Non-critical: error block already displayed.
         })
-        onStreamEnd?.('error')
         break
       }
 
