@@ -973,10 +973,6 @@ export function useChatSession(options: UseChatSessionOptions) {
     await loadSessionsOnce()
   }
 
-  // Track which sessions have already had their completion notification fired.
-  // Prevents repeated sound/notification if an exception in the callback
-  // prevents runningSessions from being updated.
-
   /**
    * Handle WS reconnection: resync the current session to reflect changes that
    * occurred while disconnected. After loadSessionsOnce refreshes
