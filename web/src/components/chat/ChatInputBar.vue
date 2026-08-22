@@ -240,8 +240,9 @@
         </div>
       </PopupMenu>
     </div>
-    <!-- Session info bar (model + mode) -->
-    <div class="chat-session-info" v-if="currentModelName || showModeInfo || showUsageInfo">
+    <!-- Session info bar (model + mode) — always rendered to reserve vertical space,
+         preventing layout shift when async model/mode data loads after messages -->
+    <div class="chat-session-info">
       <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName }}</span>
       <template v-if="showModeInfo">
         <span class="session-info-divider"></span>
