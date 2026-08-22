@@ -977,28 +977,6 @@ export function useChatSession(options: UseChatSessionOptions) {
   // Prevents repeated sound/notification if an exception in the callback
   // prevents runningSessions from being updated.
 
-  function handleVisibilityChange() {
-    if (document.visibilityState !== 'visible') return
-    if (loading.value) {
-      // Page became visible while streaming - disconnect stale stream first
-      // Don't force scroll to bottom — user may have scrolled up to read history
-      onDisconnectStream()
-    }
-    // Always reload history when returning to foreground to ensure state
-    // consistency (AI may have finished, mode may have changed, etc. while
-    // the app was backgrounded). skipIfUnchanged=true avoids unnecessary
-    // UI updates when nothing changed.
-    loadHistory(false, false, true).then(() => {
-      // Re-render Mermaid on the final DOM — Mermaid may have rendered on
-      // a DOM that was replaced by loadHistory's message sync.
-      onRenderUpdate(true)
-    }).catch(() => {
-      // loadHistory failed — if we were streaming, reset loading state
-      // so the user isn't stuck with a permanent spinner
-      loading.value = false
-    })
-  }
-
   /**
    * Handle WS reconnection: resync the current session to reflect changes that
    * occurred while disconnected. After loadSessionsOnce refreshes
@@ -1185,7 +1163,6 @@ export function useChatSession(options: UseChatSessionOptions) {
     destroySession,
     onSessionEvent,
     loadSessionsOnce: loadSessionsOnceInner,
-    handleVisibilityChange,
     handleWsReconnect,
     continueFromExecution,
     forkSession,
