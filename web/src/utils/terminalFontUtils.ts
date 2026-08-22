@@ -68,7 +68,9 @@ export function errorDisplayMessage(
 
 /**
  * Check if the error overlay should be shown.
+ * Only the 'error' state triggers the overlay — 'disconnected' is a neutral
+ * state (initial, post-exit, replaced) and should not flash the error UI.
  */
 export function showErrorOverlay(connectionState: string): boolean {
-  return connectionState === 'error' || connectionState === 'disconnected'
+  return connectionState === 'error'
 }

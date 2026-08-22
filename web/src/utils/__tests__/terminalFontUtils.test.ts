@@ -196,8 +196,8 @@ describe('showErrorOverlay', () => {
     expect(showErrorOverlay('error')).toBe(true)
   })
 
-  it('returns true for disconnected state', () => {
-    expect(showErrorOverlay('disconnected')).toBe(true)
+  it('returns false for disconnected state', () => {
+    expect(showErrorOverlay('disconnected')).toBe(false)
   })
 
   it('returns false for connected state', () => {
@@ -210,6 +210,10 @@ describe('showErrorOverlay', () => {
 
   it('returns false for reconnecting state', () => {
     expect(showErrorOverlay('reconnecting')).toBe(false)
+  })
+
+  it('returns false for unknown state', () => {
+    expect(showErrorOverlay('unknown')).toBe(false)
   })
 })
 
