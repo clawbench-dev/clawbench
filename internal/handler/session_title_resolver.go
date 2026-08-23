@@ -300,35 +300,7 @@ func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
 	for {
 		line, readErr := r.ReadBytes('\n')
 		if len(line) > 0 {
-			var d struct {
-				Type        string `json:"type"`
-				CustomTitle string `json:"customTitle"`
-				Message     *struct {
-					Content json.RawMessage `json:"content"`
-				} `json:"message"`
-			}
-			if err := json.Unmarshal(line, &d); err != nil {
-				// Non-JSON / malformed line — skip it and keep scanning.
-			} else {
-				// Extract custom-title (keep the newest).
-				if d.Type == "custom-title" {
-					if s := strings.TrimSpace(d.CustomTitle); s != "" {
-						lastCustom = s
-					}
-				} else if !foundFirst && d.Type == strUser && d.Message != nil {
-					raw := transcriptContentText(d.Message.Content)
-					// Claude transcript first-question extraction strips with the
-					// claude rule set (universal + claude-native) — the transcript
-					// is always claude's own format.
-					text, ok := stripMachineText(raw, stripRulesFor(claudeTranscriptResolver{}))
-					if ok {
-						if t := strings.TrimSpace(text); t != "" {
-							firstQuestion = t
-							foundFirst = true
-						}
-					}
-				}
-			}
+			lastCustom, foundFirst, firstQuestion = scanTranscriptLine(line, lastCustom, foundFirst, firstQuestion)
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
@@ -348,6 +320,41 @@ func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
 		ModTime:       modTime,
 	})
 	return lastCustom, firstQuestion
+}
+
+// scanTranscriptLine parses a single JSONL line from a Claude transcript. It
+// returns the updated (lastCustomTitle, foundFirst, firstQuestion) state. A
+// "custom-title" line updates the newest custom title; the first real user
+// question (per the claude strip ruleset — the transcript is always claude's
+// own format) becomes the firstQuestion, captured once. Malformed/non-JSON
+// lines are skipped.
+func scanTranscriptLine(line []byte, lastCustom string, foundFirst bool, firstQuestion string) (string, bool, string) {
+	var d struct {
+		Type        string `json:"type"`
+		CustomTitle string `json:"customTitle"`
+		Message     *struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(line, &d); err != nil {
+		return lastCustom, foundFirst, firstQuestion
+	}
+	if d.Type == "custom-title" {
+		if s := strings.TrimSpace(d.CustomTitle); s != "" {
+			lastCustom = s
+		}
+		return lastCustom, foundFirst, firstQuestion
+	}
+	if !foundFirst && d.Type == strUser && d.Message != nil {
+		raw := transcriptContentText(d.Message.Content)
+		text, ok := stripMachineText(raw, stripRulesFor(claudeTranscriptResolver{}))
+		if ok {
+			if t := strings.TrimSpace(text); t != "" {
+				return lastCustom, true, t
+			}
+		}
+	}
+	return lastCustom, foundFirst, firstQuestion
 }
 
 // resolveTranscriptPath locates the CLI transcript for a session: first the

@@ -49,8 +49,8 @@ func isStrictlyBelowBuild(relPath string) bool {
 // subtree (e.g. app/build/outputs/apk/release/app-debug.apk).
 func isWithinAndroidOutputs(relPath string) bool {
 	segs := strings.Split(relPath, "/")
-	for i := 0; i < len(segs)-1; i++ {
-		if segs[i] == "build" && segs[i+1] == "outputs" {
+	for i := range segs {
+		if i+1 < len(segs) && segs[i] == "build" && segs[i+1] == "outputs" {
 			return true
 		}
 	}
