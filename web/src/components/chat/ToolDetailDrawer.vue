@@ -293,6 +293,70 @@ function handleBodyInput(event) {
   min-width: 0;
 }
 
+/* Markdown output in tool output body — reuse agent-call-prompt styling */
+.tool-detail-body .tool-output-body .agent-call-prompt {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: normal;
+  word-break: break-word;
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  font-family: inherit;
+  line-height: 1.6;
+}
+.tool-detail-body .tool-output-body .agent-call-prompt p:first-child {
+  margin-top: 0;
+}
+.tool-detail-body .tool-output-body .agent-call-prompt p:last-child {
+  margin-bottom: 0;
+}
+.tool-detail-body .tool-output-body .agent-call-prompt h1,
+.tool-detail-body .tool-output-body .agent-call-prompt h2,
+.tool-detail-body .tool-output-body .agent-call-prompt h3,
+.tool-detail-body .tool-output-body .agent-call-prompt h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 8px 0 4px;
+  color: var(--text-primary);
+}
+.tool-detail-body .tool-output-body .agent-call-prompt ul,
+.tool-detail-body .tool-output-body .agent-call-prompt ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.tool-detail-body .tool-output-body .agent-call-prompt li {
+  margin: 2px 0;
+}
+.tool-detail-body .tool-output-body .agent-call-prompt code {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.tool-detail-body .tool-output-body .agent-call-prompt pre {
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  overflow-x: auto;
+}
+.tool-detail-body .tool-output-body .agent-call-prompt pre code {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+}
+.tool-detail-body .tool-output-body .agent-call-prompt strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tool-detail-body .tool-output-body .agent-call-prompt hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 6px 0;
+}
+
 .tool-detail-body .tool-output-section.tool-content-wrap:not(.word-wrap) .tool-output-body {
   overflow-x: auto;
 }
