@@ -50,8 +50,8 @@
         @click="$emit('toggle-auto-speech')"
         :title="t('chat.actions.autoSpeech')">
         <Volume2 :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.autoSpeech') }}</span>
       </button>
+      <RefreshButton v-if="currentSessionId" data-action="refresh-session" class="chat-action-btn" :loading="refreshingSession" :title="t('chat.actions.reloadSession')" @click="$emit('refresh-session')" />
     </div>
     <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space -->
     <Transition name="recommend-slide">
@@ -271,6 +271,7 @@ import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -436,6 +437,7 @@ const props = defineProps({
   quoteData: Object,
   messages: Array,
   autoSpeechEnabled: Boolean,
+  refreshingSession: Boolean,
   currentSessionId: String,
   chatUnreadCount: Number,
   chatRunning: Boolean,
@@ -466,6 +468,7 @@ const emit = defineEmits([
   'archive-session',
   'destroy-session',
   'open-user-msg-index',
+  'refresh-session',
   'switch-model',
   'switch-thinking-effort',
   'switch-mode',
@@ -2091,11 +2094,6 @@ defineExpose({
 @keyframes voice-wave {
   0%, 100% { height: 4px; }
   50% { height: 13px; }
-}
-
-.chat-action-label {
-  font-size: 11px;
-  line-height: 1.3;
 }
 
 

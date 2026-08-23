@@ -284,6 +284,7 @@ export default {
       sessionSettings: '会话设置',
       switchThinkingEffort: '切换思考档位',
       forkSession: '分叉会话',
+      reloadSession: '重新打开会话',
       userMsgIndex: '消息索引',
       sessionSearch: '搜索会话',
       attachment: '附件',

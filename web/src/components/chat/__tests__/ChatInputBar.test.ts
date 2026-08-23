@@ -23,6 +23,7 @@ const i18n = createI18n({
           archiveCurrentSession: 'Archive',
           noSessionToArchive: 'No session',
           autoSpeech: 'Read aloud',
+          reloadSession: 'Reopen session',
           attachment: 'Attach',
         },
         create: { selectAgentOrLongPress: 'New' },
@@ -672,6 +673,29 @@ describe('ChatInputBar', () => {
     const autoSpeechBtn = wrapper.find('.auto-speech-btn')
     await autoSpeechBtn.trigger('click')
     expect(wrapper.emitted('toggle-auto-speech')).toBeTruthy()
+  })
+
+  it('refresh-session button renders next to auto-speech when a session exists', () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    const btn = wrapper.find('[data-action="refresh-session"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('title')).toBe('Reopen session')
+    const autoSpeechBtn = wrapper.find('.auto-speech-btn')
+    // Refresh button sits after the auto-speech button in DOM order
+    const doc = wrapper.element.ownerDocument
+    const rel = btn.element.compareDocumentPosition(autoSpeechBtn.element)
+    expect(rel & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+  })
+
+  it('refresh-session button is hidden when no session is active', () => {
+    const wrapper = mountBar({ currentSessionId: '' })
+    expect(wrapper.find('[data-action="refresh-session"]').exists()).toBe(false)
+  })
+
+  it('refresh-session button emits refresh-session on click', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    await wrapper.find('[data-action="refresh-session"]').trigger('click')
+    expect(wrapper.emitted('refresh-session')).toBeTruthy()
   })
 
   it('archive button does nothing when no currentSessionId', async () => {

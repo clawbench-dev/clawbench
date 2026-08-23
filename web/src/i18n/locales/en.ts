@@ -284,6 +284,7 @@ export default {
       sessionSettings: 'Session settings',
       switchThinkingEffort: 'Switch thinking effort',
       forkSession: 'Fork session',
+      reloadSession: 'Reopen session',
       userMsgIndex: 'Message index',
       sessionSearch: 'Search sessions',
       attachment: 'Attach',

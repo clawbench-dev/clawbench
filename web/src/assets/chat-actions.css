@@ -19,8 +19,10 @@
   font-size: 11px;
 }
 
-.chat-action-btn:hover {
-  background: var(--bg-tertiary);
+@media (hover: hover) {
+  .chat-action-btn:hover {
+    background: var(--bg-tertiary);
+  }
 }
 
 .chat-action-btn svg {

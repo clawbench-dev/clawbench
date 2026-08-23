@@ -77,6 +77,7 @@
       :quotes="stagedQuotes"
       :messages="renderedMessages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
+      :refreshingSession="refreshingSession"
       :currentSessionId="identity.currentSessionId.value"
       :chatUnreadCount="store.state.chatUnreadCount"
       :chatRunning="identity.runningSessions.value.size > 0"
@@ -104,6 +105,7 @@
       @archive-session="() => manager.archiveCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @destroy-session="() => manager.destroyCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @open-user-msg-index="handleOpenUserMsgIndex"
+      @refresh-session="handleRefreshSession"
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
@@ -1008,6 +1010,23 @@ async function ensureMessageContent(msg) {
     }
 }
 
+
+// Reload/reopen the current session from the ActionBar refresh button.
+// Delegates to session.loadHistory with immediate=true so the reload skips the
+// in-flight queue and re-fetches history + reconnects the stream (the same
+// code path switchSession uses), showing the switching overlay while loading.
+const refreshingSession = ref(false)
+async function handleRefreshSession() {
+  if (refreshingSession.value || !identity.currentSessionId.value) return
+  refreshingSession.value = true
+  try {
+    await session.loadHistory(true, true, false, false, true)
+  } catch (err) {
+    appLog.w(TAG, 'failed to refresh session', err)
+  } finally {
+    refreshingSession.value = false
+  }
+}
 
 // Resume a session from RAG search results (direct event, no detail drawer)
 async function handleResumeSession({ sessionId, sessionTitle }) {
