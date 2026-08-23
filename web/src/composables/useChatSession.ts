@@ -1053,8 +1053,16 @@ export function useChatSession(options: UseChatSessionOptions) {
     await loadSessionsOnceInner()
     if (loading.value) {
       if (runningSessions.value.has(currentSessionId.value)) {
-        // Session still running — the live stream re-subscribes on reconnect
-        // (useChatStream watch on `connected`). Nothing to sync here.
+        // Session still running — the live stream re-subscribes on reconnect.
+        // The useChatStream watch on `connected` only re-subscribes when its
+        // internal isStreaming is still true. If a stream watchdog timeout (or
+        // an explicit disconnectStream()) already set isStreaming=false while
+        // loading stayed true, that watch never fires and the session is left
+        // stuck on the loading spinner with no live stream and no history
+        // reload. Explicitly re-subscribe (subscribeOnly, so the existing
+        // streaming message is preserved) to guarantee the stream is resumed
+        // regardless of isStreaming.
+        onConnectStream(currentSessionId.value, { subscribeOnly: true })
         return
       }
       // AI finished during the disconnection — clean up the stuck loading state

@@ -68,9 +68,16 @@ export function errorDisplayMessage(
 
 /**
  * Check if the error overlay should be shown.
- * Only the 'error' state triggers the overlay — 'disconnected' is a neutral
- * state (initial, post-exit, replaced) and should not flash the error UI.
+ * The 'error' state always triggers it. A 'disconnected'/'reconnecting' state
+ * only triggers it when the session had previously connected — that is a
+ * genuine mid-session unexpected disconnect that needs the error/reconnect
+ * entry point. A never-connected session (first open) must NOT flash the error
+ * UI, so hasConnectedOnce=false keeps it hidden.
  */
-export function showErrorOverlay(connectionState: string): boolean {
-  return connectionState === 'error'
+export function showErrorOverlay(connectionState: string, hasConnectedOnce = false): boolean {
+  if (connectionState === 'error') return true
+  if (connectionState === 'disconnected' || connectionState === 'reconnecting') {
+    return hasConnectedOnce
+  }
+  return false
 }

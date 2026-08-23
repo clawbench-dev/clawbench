@@ -35,6 +35,11 @@ export function useTerminalSession(
   const currentCwd = ref('')
   const sessionId = ref('')
   const ws: Ref<WebSocket | null> = ref(null)
+  // Whether this session has ever successfully connected. Distinguishes the
+  // neutral first-open 'disconnected' state (which must not flash the error
+  // overlay) from a genuine mid-session unexpected disconnect (which must show
+  // the error/reconnect entry point).
+  const hasConnectedOnce = ref(false)
   // Track whether the current error is fatal (should not auto-reconnect)
   let fatalError = false
 
@@ -61,6 +66,7 @@ export function useTerminalSession(
 
       socket.onopen = () => {
         connectionState.value = 'connected'
+        hasConnectedOnce.value = true
         reconnect.reset()
         ws.value = socket
         resolve()
@@ -121,6 +127,7 @@ export function useTerminalSession(
   function disconnect() {
     reconnect.reset()
     fatalError = false
+    hasConnectedOnce.value = false
     // sessionId intentionally NOT cleared — allows reattach to existing PTY on next connect()
     if (ws.value) {
       ws.value.close()
@@ -133,6 +140,7 @@ export function useTerminalSession(
   function reset() {
     reconnect.reset()
     fatalError = false
+    hasConnectedOnce.value = false
     errorMessage.value = ''
     errorCode.value = ''
     sessionId.value = '' // rebuild = new session
@@ -177,6 +185,12 @@ export function useTerminalSession(
       connectionState: connectionState.value,
       fatalError,
     }, { onOutput, onReplay, onStatus, onExit, onError })
+
+    // A normal process exit is neutral (not an unexpected disconnect) — reset
+    // hasConnectedOnce so the error overlay stays hidden for the exited state.
+    if (msg.type === 'exit') {
+      hasConnectedOnce.value = false
+    }
 
     if (updates.sessionId !== undefined) sessionId.value = updates.sessionId
     if (updates.currentCwd !== undefined) currentCwd.value = updates.currentCwd
@@ -223,6 +237,7 @@ export function useTerminalSession(
     currentCwd,
     sessionId,
     wsOpen,
+    hasConnectedOnce,
     connect,
     disconnect,
     reset,

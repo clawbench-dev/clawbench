@@ -164,6 +164,7 @@ describe('useGlobalEvents', () => {
     describe('heartbeat', () => {
         const CHECK = 15000
         const STALE = 90000
+        const EVENT_STALE = 60000
 
         it('reconnects when no ping received within the stale window', () => {
             vi.useFakeTimers()
@@ -187,18 +188,43 @@ describe('useGlobalEvents', () => {
             vi.useRealTimers()
         })
 
-        it('resets staleness on each ping (a single delayed ping does not trip it)', () => {
+        it('resets staleness on each message (a single delayed message does not trip it)', () => {
             vi.useFakeTimers()
             const ws = connectAndGetWs()
-            // Advance near the stale threshold then deliver a ping — the timer restarts.
-            vi.advanceTimersByTime(STALE - 1000)
+            // Advance near the event-stale threshold then deliver a ping — the timer restarts.
+            vi.advanceTimersByTime(EVENT_STALE - 1000)
             ws.receive({ type: 'ping' })
             // Advancing past the original threshold must NOT disconnect now.
             vi.advanceTimersByTime(2000)
             expect(ws.readyState).toBe(MockWebSocket.OPEN)
-            // But without further pings it eventually reconnects.
-            vi.advanceTimersByTime(STALE + CHECK)
+            // But without further messages it eventually reconnects.
+            vi.advanceTimersByTime(EVENT_STALE + CHECK)
             expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+            vi.useRealTimers()
+        })
+
+        it('reconnects when the socket is silently dead (no ping OR event) before the 90s ping window', () => {
+            vi.useFakeTimers()
+            const ws = connectAndGetWs()
+            // No messages at all. The event-stale window (60s) must trigger a
+            // reconnect BEFORE the ping-only window (90s) — closing the
+            // "socket alive but events silently dropped" stale-state gap.
+            // 60s + one 15s check interval puts us past EVENT_STALE but under STALE.
+            vi.advanceTimersByTime(EVENT_STALE + CHECK)
+            expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+            vi.useRealTimers()
+        })
+
+        it('does not disconnect when real events keep arriving within the event-stale window', () => {
+            vi.useFakeTimers()
+            const ws = connectAndGetWs()
+            // Deliver real events every 15s (below the 60s event-stale window) —
+            // even without pings the connection is treated as alive.
+            for (let i = 0; i < 5; i++) {
+                vi.advanceTimersByTime(CHECK)
+                ws.receive({ type: 'event', id: nextId(), event: 'session_update', data: { status: 'running' } })
+            }
+            expect(ws.readyState).toBe(MockWebSocket.OPEN)
             vi.useRealTimers()
         })
     })

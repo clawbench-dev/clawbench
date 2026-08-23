@@ -7,6 +7,7 @@ import { gt } from './useLocale'
 import { serverConfig } from './useSettingsConfig'
 import { stripMarkdownPreview } from '@/utils/format'
 import { getNative } from '@/utils/clawbenchNative'
+import { appLog } from '@/utils/appLog'
 
 // Event types from server
 interface ServerEvent {
@@ -55,7 +56,16 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 // single delayed ping under load/network jitter.
 const HEARTBEAT_CHECK_INTERVAL_MS = 15000   // how often we re-check staleness
 const HEARTBEAT_STALE_MS = 90000            // no ping for 90s (3 missed pings) => dead
+// Fallback stale-detection for the "socket alive but events silently dropped"
+// case (e.g. a mobile WebView/Electron pauseTimers() freezes the event loop yet
+// keeps the TCP socket open). The server pings every 30s, so 60s with NO WS
+// message at all (ping or event) means the connection is effectively dead —
+// much earlier than the 90s ping-only window. This forces a reconnect which
+// re-runs the full state sync (clawbench-reconnect on open), correcting stale
+// state even though the socket looked alive.
+const EVENT_STALE_MS = 60000                // no message (ping or event) for 60s => silently dead
 let lastPingAt = 0
+let lastEventAt = 0
 
 // Persistent client ID — identifies this browser/device across sessions.
 // Stored in localStorage so the server can track multiple tabs/devices independently.
@@ -189,6 +199,7 @@ function connect() {
         const isReconnect = hasConnectedOnce.value
         hasConnectedOnce.value = true
         lastPingAt = Date.now()
+        lastEventAt = Date.now()
         reconnect.reset()
 
         // Fetch missed events that occurred while offline
@@ -208,6 +219,7 @@ function connect() {
     ws.onmessage = (event) => {
         try {
             const msg: ServerEvent = JSON.parse(event.data)
+            lastEventAt = Date.now()
 
             if (msg.type === 'ping') {
                 send({ type: 'pong' })
@@ -301,8 +313,25 @@ function send(msg: ClientMessage) {
 function startHeartbeat() {
     stopHeartbeat()
     lastPingAt = Date.now()
+    lastEventAt = Date.now()
     heartbeatTimer = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
+            // If no message at all (ping or event) was received within the
+            // event-stale window, the connection is silently dead even though
+            // the socket looks alive (half-open socket / frozen event loop that
+            // kept the TCP socket open). Force a reconnect so the UI reflects
+            // the real state, the client re-subscribes, and the onopen handler
+            // re-runs the full state sync (clawbench-reconnect). This closes
+            // the "WS alive but state stale" window earlier than the ping-only
+            // check below.
+            if (Date.now() - lastEventAt > EVENT_STALE_MS) {
+                appLog.w('GlobalEvents', `No WS message for ${EVENT_STALE_MS}ms — connection silently dead, forcing reconnect`)
+                disconnect()
+                if (reconnect.shouldReconnect()) {
+                    reconnect.scheduleReconnect()
+                }
+                return
+            }
             // If the server hasn't pinged within the stale window, the
             // connection is effectively dead (half-open socket / server closed
             // without a close frame). Force a reconnect so the UI reflects the
@@ -513,6 +542,7 @@ export function useGlobalEvents() {
         handlers.length = 0
         processedEventIds.clear()
         lastPingAt = 0
+        lastEventAt = 0
         hasConnectedOnce.value = false
         initialized = false
     }

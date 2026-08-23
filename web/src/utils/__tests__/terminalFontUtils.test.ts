@@ -196,8 +196,21 @@ describe('showErrorOverlay', () => {
     expect(showErrorOverlay('error')).toBe(true)
   })
 
-  it('returns false for disconnected state', () => {
+  it('returns false for disconnected state on first open (never connected)', () => {
     expect(showErrorOverlay('disconnected')).toBe(false)
+    expect(showErrorOverlay('disconnected', false)).toBe(false)
+  })
+
+  it('returns true for disconnected state after a genuine mid-session disconnect', () => {
+    expect(showErrorOverlay('disconnected', true)).toBe(true)
+  })
+
+  it('returns true for reconnecting state after a genuine mid-session disconnect', () => {
+    expect(showErrorOverlay('reconnecting', true)).toBe(true)
+  })
+
+  it('returns false for reconnecting state on first open', () => {
+    expect(showErrorOverlay('reconnecting')).toBe(false)
   })
 
   it('returns false for connected state', () => {
@@ -206,10 +219,6 @@ describe('showErrorOverlay', () => {
 
   it('returns false for connecting state', () => {
     expect(showErrorOverlay('connecting')).toBe(false)
-  })
-
-  it('returns false for reconnecting state', () => {
-    expect(showErrorOverlay('reconnecting')).toBe(false)
   })
 
   it('returns false for unknown state', () => {

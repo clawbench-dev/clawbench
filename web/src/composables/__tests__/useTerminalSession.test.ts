@@ -479,6 +479,68 @@ describe('useTerminalSession', () => {
     })
   })
 
+  describe('hasConnectedOnce', () => {
+    it('is false before any connection (first open must not flash error overlay)', () => {
+      const session = createSession()
+      expect(session.hasConnectedOnce.value).toBe(false)
+    })
+
+    it('becomes true after a successful connection', async () => {
+      const session = createSession()
+      const connectPromise = session.connect()
+      mockWebSocketInstance!.simulateOpen()
+      await connectPromise
+      expect(session.hasConnectedOnce.value).toBe(true)
+    })
+
+    it('remains true across an unexpected mid-session disconnect (genuine drop shows overlay)', async () => {
+      const session = createSession()
+      const connectPromise = session.connect()
+      mockWebSocketInstance!.simulateOpen()
+      await connectPromise
+      expect(session.hasConnectedOnce.value).toBe(true)
+
+      // Unexpected close — onclose path, hasConnectedOnce is preserved so the
+      // error overlay + reconnect entry point can be shown.
+      mockWebSocketInstance!.simulateClose(1000)
+      expect(session.hasConnectedOnce.value).toBe(true)
+    })
+
+    it('resets to false on reset() (rebuild = new session)', async () => {
+      const session = createSession()
+      const connectPromise = session.connect()
+      mockWebSocketInstance!.simulateOpen()
+      await connectPromise
+      expect(session.hasConnectedOnce.value).toBe(true)
+
+      session.reset()
+      expect(session.hasConnectedOnce.value).toBe(false)
+    })
+
+    it('resets to false on explicit disconnect()', async () => {
+      const session = createSession()
+      const connectPromise = session.connect()
+      mockWebSocketInstance!.simulateOpen()
+      await connectPromise
+      expect(session.hasConnectedOnce.value).toBe(true)
+
+      session.disconnect()
+      expect(session.hasConnectedOnce.value).toBe(false)
+    })
+
+    it('resets to false on a normal process exit (neutral, no error overlay)', async () => {
+      const session = createSession()
+      const connectPromise = session.connect()
+      mockWebSocketInstance!.simulateOpen()
+      await connectPromise
+      expect(session.hasConnectedOnce.value).toBe(true)
+
+      mockWebSocketInstance!.simulateMessage({ type: 'exit', code: 0 })
+      expect(session.hasConnectedOnce.value).toBe(false)
+      expect(session.connectionState.value).toBe('disconnected')
+    })
+  })
+
   describe('onclose — reconnection logic', () => {
     it('attempts reconnect on unexpected disconnect from connected state', async () => {
       vi.useFakeTimers()

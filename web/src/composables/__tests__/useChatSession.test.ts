@@ -3631,9 +3631,10 @@ describe('handleWsReconnect', () => {
     vi.restoreAllMocks()
   })
 
-  it('when loading=true and session still running: does nothing', async () => {
+  it('when loading=true and session still running: re-subscribes the stream (subscribeOnly) so loading cannot deadlock', async () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
+    const onConnectStream = vi.fn()
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
@@ -3646,7 +3647,7 @@ describe('handleWsReconnect', () => {
       onExtractScheduledTasks: vi.fn(),
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
-      onConnectStream: vi.fn(),
+      onConnectStream,
       onDisconnectStream,
       onOpen: vi.fn(),
     }
@@ -3663,6 +3664,11 @@ describe('handleWsReconnect', () => {
 
     await session.handleWsReconnect()
 
+    // The still-running branch must NOT rely solely on the useChatStream
+    // connected-watch (which requires isStreaming === true). It explicitly
+    // re-subscribes with subscribeOnly so a watchdog-disconnected stream is
+    // guaranteed to resume and the loading spinner can never stay stuck.
+    expect(onConnectStream).toHaveBeenCalledWith('s1', { subscribeOnly: true })
     expect(onDisconnectStream).not.toHaveBeenCalled()
     expect(loading.value).toBe(true)
 

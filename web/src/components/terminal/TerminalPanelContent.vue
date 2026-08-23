@@ -743,7 +743,10 @@ watch(() => tabs.value.length, (count) => {
 // doesn't model reactive() auto-unwrapping, but using .value would
 // read the .value property of the already-unwrapped string (undefined).
 function isTabError(tab: TerminalTab): boolean {
-  return showErrorOverlayUtil(tab.session.connectionState as unknown as string)
+  return showErrorOverlayUtil(
+    tab.session.connectionState as unknown as string,
+    tab.session.hasConnectedOnce as unknown as boolean,
+  )
 }
 
 function isTabCanReconnect(tab: TerminalTab): boolean {
