@@ -81,7 +81,7 @@
         <!-- Attached file reference cards (shared component, includes pending uploads with local Blob preview) -->
         <AttachmentTags :files="attachedFiles" :pending-files="pendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
       </div>
-      <!-- Input row: attach + textarea + stop + send -->
+      <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
         <div class="attach-menu-wrapper" ref="attachMenuRef">
           <button v-if="voiceState === 'recording' || voiceState === 'transcribing'" class="chat-attach-btn voice-rec-btn" :class="{ recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }" disabled :title="voiceState === 'recording' ? t('chat.voice.recording') : t('chat.voice.transcribing')">
@@ -1697,9 +1697,11 @@ defineExpose({
   transition: color 0.15s, background 0.15s;
 }
 
-.chat-attach-btn:hover:not(:disabled) {
-  color: var(--accent-color, #0066cc);
-  background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+  .chat-attach-btn:hover:not(:disabled) {
+    color: var(--accent-color, #0066cc);
+    background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 
 .chat-attach-btn:disabled {
@@ -1879,8 +1881,10 @@ defineExpose({
   z-index: 1;
 }
 
-.attachment-close-btn:hover {
-  background: var(--danger-color, #dc3545);
+@media (hover: hover) {
+  .attachment-close-btn:hover {
+    background: var(--danger-color, #dc3545);
+  }
 }
 
 /* Input area attachment card style */
@@ -1894,8 +1898,14 @@ defineExpose({
   color: var(--accent-color, #0066cc);
 }
 
-.chat-attachment-tags .attachment-ref:hover {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
+@media (hover: hover) {
+  .chat-attachment-tags .attachment-ref:hover {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
+  }
+
+  .chat-attachment-tags .attachment-quote:hover {
+    background: color-mix(in srgb, var(--accent-color, #4f9cf7) 15%, transparent);
+  }
 }
 
 /* Quote card — accent-colored, same size as file cards */
@@ -1908,10 +1918,6 @@ defineExpose({
 
 .chat-attachment-tags .attachment-quote .attachment-filename {
   color: var(--accent-color, #4f9cf7);
-}
-
-.chat-attachment-tags .attachment-quote:hover {
-  background: color-mix(in srgb, var(--accent-color, #4f9cf7) 15%, transparent);
 }
 
 /* Input row */
@@ -1961,7 +1967,9 @@ defineExpose({
   transition: background 0.15s, opacity 0.15s, transform 0.15s;
   flex-shrink: 0;
 }
-.chat-send-btn:hover { background: #0055aa; }
+@media (hover: hover) {
+  .chat-send-btn:hover { background: #0055aa; }
+}
 .chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .chat-send-btn.disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -1969,13 +1977,17 @@ defineExpose({
 .chat-send-btn.queued {
   background: #e67e22;
 }
-.chat-send-btn.queued:hover { background: #d35400; }
+@media (hover: hover) {
+  .chat-send-btn.queued:hover { background: #d35400; }
+}
 
 /* Send button when input is empty: green lightning (quick-menu shortcut) */
 .chat-send-btn.shortcut {
   background: #27ae60;
 }
-.chat-send-btn.shortcut:hover { background: #219a52; }
+@media (hover: hover) {
+  .chat-send-btn.shortcut:hover { background: #219a52; }
+}
 
 /* Stop button — default: dim red solid */
 .chat-stop-btn {
@@ -2117,9 +2129,11 @@ defineExpose({
   overflow: hidden;
 }
 
-.quick-send-item:hover {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
+@media (hover: hover) {
+  .quick-send-item:hover {
+    background: var(--accent-color, #0066cc);
+    color: #fff;
+  }
 }
 
 /* Quick-send: pressing state → subtle accent tint hints at long-press (fills input) */
@@ -2171,9 +2185,13 @@ defineExpose({
   transition: background 0.1s;
 }
 
-.at-menu-item:hover,
 .at-menu-item.at-menu-selected {
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+@media (hover: hover) {
+  .at-menu-item:hover {
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  }
 }
 
 .at-menu-label {

@@ -238,8 +238,10 @@ async function saveCommand() {
   transition: background 0.12s;
 }
 
-.modal-btn:hover {
-  background: var(--bg-tertiary, #f5f5f5);
+@media (hover: hover) {
+  .modal-btn:hover {
+    background: var(--bg-tertiary, #f5f5f5);
+  }
 }
 
 .modal-btn.primary {
@@ -248,8 +250,10 @@ async function saveCommand() {
   border-color: var(--accent-color, #0066cc);
 }
 
-.modal-btn.primary:hover {
-  opacity: 0.9;
+@media (hover: hover) {
+  .modal-btn.primary:hover {
+    opacity: 0.9;
+  }
 }
 
 .modal-btn:disabled {

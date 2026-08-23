@@ -890,9 +890,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     transition: background 0.15s, border-color 0.15s;
 }
 
-.badge-capsule:hover {
+@media (hover: hover) {
+  .badge-capsule:hover {
     background: var(--bg-primary);
     border-color: var(--text-muted);
+  }
 }
 
 /* Divider between project and branch inside capsule */
@@ -929,9 +931,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     line-height: 1;
 }
 
-.project-switch-btn:hover {
+@media (hover: hover) {
+  .project-switch-btn:hover {
     background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border-color: transparent;
+  }
 }
 
 .project-switch-btn svg:first-child {
@@ -970,9 +974,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     line-height: 1;
 }
 
-.branch-badge:hover {
+@media (hover: hover) {
+  .branch-badge:hover {
     background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border-color: transparent;
+  }
 }
 
 /* Current file capsule — third segment of the badge capsule */
@@ -997,9 +1003,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     line-height: 1;
 }
 
-.current-file-badge:hover {
+@media (hover: hover) {
+  .current-file-badge:hover {
     background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border-color: transparent;
+  }
 }
 
 .current-file-badge:disabled {
@@ -1201,8 +1209,10 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     font-size: 12px;
 }
 
-.app-menu-item:hover {
+@media (hover: hover) {
+  .app-menu-item:hover {
     background: var(--bg-tertiary);
+  }
 }
 
 /* Keyboard highlight (↑/↓ navigation) — mirrors the hover state so the
@@ -1273,18 +1283,20 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     cursor: pointer;
 }
 
-.app-menu-item .item-remove-btn:hover {
+@media (hover: hover) {
+  .app-menu-item .item-remove-btn:hover {
     color: var(--color-red, #ef4444);
     background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
+  }
+
+  .app-menu-item.active .item-remove-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.18);
+  }
 }
 
 .app-menu-item.active .item-remove-btn {
     color: rgba(255, 255, 255, 0.75);
-}
-
-.app-menu-item.active .item-remove-btn:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.18);
 }
 
 .app-menu-item.other-item .item-icon {
@@ -1419,8 +1431,10 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     color: var(--theme-preview-fg, var(--text-primary));
 }
 
-.theme-picker-item:hover {
+@media (hover: hover) {
+  .theme-picker-item:hover {
     background: var(--bg-tertiary);
+  }
 }
 
 .theme-picker-item.active {

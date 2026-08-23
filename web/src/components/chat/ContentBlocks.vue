@@ -846,8 +846,10 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.thinking-retry-btn:hover {
-  background: rgba(239, 68, 68, 0.08);
+@media (hover: hover) {
+  .thinking-retry-btn:hover {
+    background: rgba(239, 68, 68, 0.08);
+  }
 }
 
 /* Inline cancelled marker inside thinking header — always visible even when thinking is collapsed */
@@ -948,8 +950,10 @@ onUnmounted(() => {
   transition: background 0.2s;
 }
 
-.chat-warning-card .warning-continue-btn:hover {
-  background: #d97706;
+@media (hover: hover) {
+  .chat-warning-card .warning-continue-btn:hover {
+    background: #d97706;
+  }
 }
 
 /* Thinking block — callout style distinct from tool calls */
@@ -980,9 +984,11 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.chat-thinking.thinking-collapsed:hover {
-  background: color-mix(in srgb, var(--thinking-accent) 12%, var(--bg-secondary));
-  border-color: color-mix(in srgb, var(--thinking-accent) 35%, var(--border-color));
+@media (hover: hover) {
+  .chat-thinking.thinking-collapsed:hover {
+    background: color-mix(in srgb, var(--thinking-accent) 12%, var(--bg-secondary));
+    border-color: color-mix(in srgb, var(--thinking-accent) 35%, var(--border-color));
+  }
 }
 
 /* Expanded-done state: callout style, header is clickable to collapse */
@@ -990,9 +996,11 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.chat-thinking.thinking-expanded-done:hover {
-  background: color-mix(in srgb, var(--thinking-accent) 7%, transparent);
-  border-left-color: color-mix(in srgb, var(--thinking-accent) 65%, transparent);
+@media (hover: hover) {
+  .chat-thinking.thinking-expanded-done:hover {
+    background: color-mix(in srgb, var(--thinking-accent) 7%, transparent);
+    border-left-color: color-mix(in srgb, var(--thinking-accent) 65%, transparent);
+  }
 }
 
 /* Streaming state: callout style */
@@ -1079,9 +1087,11 @@ onUnmounted(() => {
   transition: color 0.15s;
 }
 
-.chat-thinking.thinking-expanded-done:hover .thinking-chevron,
-.chat-thinking.thinking-collapsed:hover .thinking-chevron {
-  color: var(--thinking-accent);
+@media (hover: hover) {
+  .chat-thinking.thinking-expanded-done:hover .thinking-chevron,
+  .chat-thinking.thinking-collapsed:hover .thinking-chevron {
+    color: var(--thinking-accent);
+  }
 }
 
 /* Markdown styles inside thinking inline content */
@@ -1178,8 +1188,10 @@ onUnmounted(() => {
 .chat-tool-call[data-category="permission"] { --tool-accent: #eab308; }
 .chat-tool-call[data-category="fallback"] { --tool-accent: var(--text-muted); }
 
-.chat-tool-call:hover {
-  background: color-mix(in srgb, var(--tool-accent) 12%, var(--bg-secondary));
+@media (hover: hover) {
+  .chat-tool-call:hover {
+    background: color-mix(in srgb, var(--tool-accent) 12%, var(--bg-secondary));
+  }
 }
 
 .chat-tool-call .tool-icon {
@@ -1257,9 +1269,11 @@ onUnmounted(() => {
   transition: box-shadow 0.15s, border-color 0.15s;
 }
 
-.scheduled-task-card:hover {
-  border-color: color-mix(in srgb, var(--accent-color, #4a90d9) 50%, var(--border-color, #dee2e6));
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-color, #4a90d9) 15%, transparent);
+@media (hover: hover) {
+  .scheduled-task-card:hover {
+    border-color: color-mix(in srgb, var(--accent-color, #4a90d9) 50%, var(--border-color, #dee2e6));
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-color, #4a90d9) 15%, transparent);
+  }
 }
 
 .scheduled-task-card.deleted {
@@ -1747,9 +1761,11 @@ onUnmounted(() => {
   transition: background 0.15s, border-color 0.15s;
 }
 
-.content-blocks .tool-detail .ask-question-option:hover {
-  background: color-mix(in srgb, #f97316 6%, var(--bg-secondary));
-  border-color: color-mix(in srgb, #f97316 30%, var(--border-color));
+@media (hover: hover) {
+  .content-blocks .tool-detail .ask-question-option:hover {
+    background: color-mix(in srgb, #f97316 6%, var(--bg-secondary));
+    border-color: color-mix(in srgb, #f97316 30%, var(--border-color));
+  }
 }
 
 .content-blocks .tool-detail .ask-question-option.selected {
@@ -1821,8 +1837,10 @@ onUnmounted(() => {
   transition: background 0.15s, border-color 0.15s;
 }
 
-.content-blocks .tool-detail .ask-question-recommend:hover {
-  background: color-mix(in srgb, #8b5cf6 10%, var(--bg-secondary));
+@media (hover: hover) {
+  .content-blocks .tool-detail .ask-question-recommend:hover {
+    background: color-mix(in srgb, #8b5cf6 10%, var(--bg-secondary));
+  }
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .ask-question-recommend {
@@ -1830,8 +1848,10 @@ onUnmounted(() => {
   color: #a78bfa;
 }
 
-:root[data-theme-base="dark"] .content-blocks .tool-detail .ask-question-recommend:hover {
-  background: color-mix(in srgb, #a78bfa 12%, var(--bg-secondary));
+@media (hover: hover) {
+  :root[data-theme-base="dark"] .content-blocks .tool-detail .ask-question-recommend:hover {
+    background: color-mix(in srgb, #a78bfa 12%, var(--bg-secondary));
+  }
 }
 
 .content-blocks .tool-detail .ask-question-view.ask-submitted .ask-question-recommend {
@@ -1860,8 +1880,10 @@ onUnmounted(() => {
   transition: opacity 0.15s, background 0.15s;
 }
 
-.content-blocks .tool-detail .ask-question-submit:hover:not(:disabled) {
-  background: #ea580c;
+@media (hover: hover) {
+  .content-blocks .tool-detail .ask-question-submit:hover:not(:disabled) {
+    background: #ea580c;
+  }
 }
 
 .content-blocks .tool-detail .ask-question-submit:disabled {
@@ -1881,8 +1903,10 @@ onUnmounted(() => {
   border-color: #fb923c;
 }
 
-:root[data-theme-base="dark"] .content-blocks .tool-detail .ask-question-submit:hover:not(:disabled) {
-  background: #f97316;
+@media (hover: hover) {
+  :root[data-theme-base="dark"] .content-blocks .tool-detail .ask-question-submit:hover:not(:disabled) {
+    background: #f97316;
+  }
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .ask-question-view.ask-submitted .ask-question-submit {
@@ -2355,8 +2379,10 @@ onUnmounted(() => {
   color: white;
 }
 
-.content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
-  background: #16a34a;
+@media (hover: hover) {
+  .content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
+    background: #16a34a;
+  }
 }
 
 .content-blocks .tool-detail .permission-btn-reject {
@@ -2364,8 +2390,10 @@ onUnmounted(() => {
   color: white;
 }
 
-.content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
-  background: #dc2626;
+@media (hover: hover) {
+  .content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
+    background: #dc2626;
+  }
 }
 
 .content-blocks .tool-detail .permission-btn:disabled {
@@ -2378,8 +2406,10 @@ onUnmounted(() => {
   color: #1a1a1a;
 }
 
-:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
-  background: #22c55e;
+@media (hover: hover) {
+  :root[data-theme-base="dark"] .content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
+    background: #22c55e;
+  }
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .permission-btn-reject {
@@ -2387,8 +2417,10 @@ onUnmounted(() => {
   color: #1a1a1a;
 }
 
-:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
-  background: #ef4444;
+@media (hover: hover) {
+  :root[data-theme-base="dark"] .content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
+    background: #ef4444;
+  }
 }
 
 .content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-allow {

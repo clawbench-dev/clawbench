@@ -1322,8 +1322,10 @@ onUnmounted(() => {
   cursor: pointer;
   transition: all 0.15s;
 }
-.tool-call-retry-btn:hover {
-  background: var(--bg-tertiary, #e5e7eb);
-  color: var(--text-primary, #111827);
+@media (hover: hover) {
+  .tool-call-retry-btn:hover {
+    background: var(--bg-tertiary, #e5e7eb);
+    color: var(--text-primary, #111827);
+  }
 }
 </style>

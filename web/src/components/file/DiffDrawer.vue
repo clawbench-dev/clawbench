@@ -235,8 +235,10 @@ const segments = computed<Segment[]>(() => {
   transition: color 0.15s;
 }
 
-.diff-action-btn:hover:not(:disabled) {
-  color: var(--text-primary);
+@media (hover: hover) {
+  .diff-action-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+  }
 }
 
 .diff-action-btn:disabled {

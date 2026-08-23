@@ -314,8 +314,10 @@ function handlePromptClick(event: MouseEvent) {
   transition: background 0.2s;
 }
 
-.task-id-value:hover {
-  background: var(--border-color, #e5e5e5);
+@media (hover: hover) {
+  .task-id-value:hover {
+    background: var(--border-color, #e5e5e5);
+  }
 }
 
 .task-id-value:active {

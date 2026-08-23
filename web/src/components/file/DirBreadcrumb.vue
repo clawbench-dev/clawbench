@@ -126,9 +126,11 @@ const parts = computed(() => {
   align-items: center;
 }
 
-.crumb:hover {
-  background: var(--bg-secondary, #e0e0e0);
-  color: var(--accent-color, #4a90d9);
+@media (hover: hover) {
+  .crumb:hover {
+    background: var(--bg-secondary, #e0e0e0);
+    color: var(--accent-color, #4a90d9);
+  }
 }
 
 .crumb.current {
@@ -137,9 +139,11 @@ const parts = computed(() => {
   cursor: default;
 }
 
-.crumb.current:hover {
-  background: none;
-  color: var(--text-primary, #1a1a1a);
+@media (hover: hover) {
+  .crumb.current:hover {
+    background: none;
+    color: var(--text-primary, #1a1a1a);
+  }
 }
 
 .crumb-sep {
@@ -160,9 +164,11 @@ const parts = computed(() => {
   flex-shrink: 0;
   transition: background 0.15s, color 0.15s;
 }
-.crumb-copy-btn:hover {
-  background: var(--bg-secondary, #e0e0e0);
-  color: var(--accent-color, #4a90d9);
+@media (hover: hover) {
+  .crumb-copy-btn:hover {
+    background: var(--bg-secondary, #e0e0e0);
+    color: var(--accent-color, #4a90d9);
+  }
 }
 .crumb-copy-btn.copied {
   color: #22c55e;

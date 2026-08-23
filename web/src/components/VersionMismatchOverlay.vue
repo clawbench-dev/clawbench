@@ -181,8 +181,10 @@ function downloadApk() {
   transition: background 0.2s;
 }
 
-.vm-close:hover {
-  background: var(--border-color);
+@media (hover: hover) {
+  .vm-close:hover {
+    background: var(--border-color);
+  }
 }
 
 .vm-body {
@@ -212,8 +214,10 @@ function downloadApk() {
   transition: opacity 0.2s;
 }
 
-.vm-download:hover {
-  opacity: 0.9;
+@media (hover: hover) {
+  .vm-download:hover {
+    opacity: 0.9;
+  }
 }
 
 .vm-skip {
@@ -228,9 +232,11 @@ function downloadApk() {
   transition: all 0.2s;
 }
 
-.vm-skip:hover {
-  border-color: var(--accent-color);
-  color: var(--accent-color);
+@media (hover: hover) {
+  .vm-skip:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
 }
 
 /* Transition */

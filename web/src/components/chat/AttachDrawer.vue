@@ -555,10 +555,15 @@ defineExpose({ activeTab, handleFileDrop })
   opacity: 0.5;
   transition: opacity 0.15s, color 0.15s;
 }
-.ad-file-row:hover .ad-file-open,
 .ad-file-row:active .ad-file-open {
   opacity: 1;
   color: var(--accent-color);
+}
+@media (hover: hover) {
+  .ad-file-row:hover .ad-file-open {
+    opacity: 1;
+    color: var(--accent-color);
+  }
 }
 
 /* Attachment check badge: sits on the bottom-right corner of the icon */
@@ -585,10 +590,15 @@ defineExpose({ activeTab, handleFileDrop })
   cursor: pointer;
   transition: opacity 0.15s, color 0.15s;
 }
-.ad-file-row:hover .ad-file-delete,
 .ad-file-row:active .ad-file-delete {
   opacity: 1;
   color: var(--danger-color, #dc3545);
+}
+@media (hover: hover) {
+  .ad-file-row:hover .ad-file-delete {
+    opacity: 1;
+    color: var(--danger-color, #dc3545);
+  }
 }
 
 /* Current item label */

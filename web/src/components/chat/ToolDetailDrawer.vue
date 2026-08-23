@@ -412,11 +412,13 @@ function handleBodyInput(event) {
   box-shadow: none;
 }
 
-.tool-detail-body .tool-content-copy-btn:hover,
-.tool-detail-body .tool-content-wrap-btn:hover {
-  opacity: 1;
-  color: var(--text-secondary, #555);
-  background: var(--bg-secondary, #e9ecef);
+@media (hover: hover) {
+  .tool-detail-body .tool-content-copy-btn:hover,
+  .tool-detail-body .tool-content-wrap-btn:hover {
+    opacity: 1;
+    color: var(--text-secondary, #555);
+    background: var(--bg-secondary, #e9ecef);
+  }
 }
 
 .tool-detail-body .tool-content-copy-btn:active,
@@ -436,8 +438,10 @@ function handleBodyInput(event) {
   color: var(--accent-color, #4a90d9);
 }
 
-.tool-detail-body .tool-content-wrap-btn.is-wrapped:hover {
-  opacity: 1;
+@media (hover: hover) {
+  .tool-detail-body .tool-content-wrap-btn.is-wrapped:hover {
+    opacity: 1;
+  }
 }
 
 .tool-detail-body .tool-content-copied-text {
@@ -1467,9 +1471,11 @@ function handleBodyInput(event) {
   border: 1px solid var(--border-color);
   transition: background 0.15s, border-color 0.15s;
 }
-.tool-detail-body .ask-question-option:hover {
-  background: color-mix(in srgb, var(--accent-color) 5%, transparent);
-  border-color: color-mix(in srgb, var(--accent-color) 30%, var(--border-color));
+@media (hover: hover) {
+  .tool-detail-body .ask-question-option:hover {
+    background: color-mix(in srgb, var(--accent-color) 5%, transparent);
+    border-color: color-mix(in srgb, var(--accent-color) 30%, var(--border-color));
+  }
 }
 .tool-detail-body .ask-question-option.selected {
   background: color-mix(in srgb, var(--accent-color) 8%, transparent);
@@ -1548,8 +1554,10 @@ function handleBodyInput(event) {
   transition: opacity 0.15s, background 0.15s;
 }
 
-.tool-detail-body .ask-question-recommend:hover {
-  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+@media (hover: hover) {
+  .tool-detail-body .ask-question-recommend:hover {
+    background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+  }
 }
 
 .tool-detail-body .ask-question-view.ask-submitted .ask-question-recommend {
@@ -1576,8 +1584,10 @@ function handleBodyInput(event) {
   opacity: 0.4;
   cursor: not-allowed;
 }
-.tool-detail-body .ask-question-submit:not(:disabled):hover {
-  opacity: 0.9;
+@media (hover: hover) {
+  .tool-detail-body .ask-question-submit:not(:disabled):hover {
+    opacity: 0.9;
+  }
 }
 
 /* PermissionApproval */
@@ -1655,8 +1665,10 @@ function handleBodyInput(event) {
   background: var(--bg-secondary);
   color: var(--text-primary);
 }
-.tool-detail-body .permission-btn:hover {
-  opacity: 0.85;
+@media (hover: hover) {
+  .tool-detail-body .permission-btn:hover {
+    opacity: 0.85;
+  }
 }
 .tool-detail-body .permission-btn:disabled {
   cursor: not-allowed;

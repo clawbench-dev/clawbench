@@ -159,7 +159,9 @@ watch(visible, (v) => {
   transition: opacity 0.2s;
 }
 
-.up-upgrade:hover { opacity: 0.9; }
+@media (hover: hover) {
+  .up-upgrade:hover { opacity: 0.9; }
+}
 
 .up-skip {
   padding: 8px 12px;
@@ -173,9 +175,11 @@ watch(visible, (v) => {
   transition: all 0.2s;
 }
 
-.up-skip:hover {
-  border-color: var(--accent-color);
-  color: var(--accent-color);
+@media (hover: hover) {
+  .up-skip:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
 }
 
 .up-later {

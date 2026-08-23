@@ -163,8 +163,10 @@ function copyCmd() {
   transition: all 0.15s;
 }
 
-.btn-copy:hover {
-  color: var(--accent-color);
+@media (hover: hover) {
+  .btn-copy:hover {
+    color: var(--accent-color);
+  }
 }
 
 .install-actions {

@@ -330,9 +330,11 @@ defineExpose({ observeList, unobserveList, commitSearch })
   transition: background 0.15s, color 0.15s, transform 0.3s;
 }
 
-.drilldown-refresh-btn:hover:not(:disabled) {
-  background: var(--accent-color, #4a90d9);
-  color: #fff;
+@media (hover: hover) {
+  .drilldown-refresh-btn:hover:not(:disabled) {
+    background: var(--accent-color, #4a90d9);
+    color: #fff;
+  }
 }
 
 .drilldown-refresh-btn:active:not(:disabled) {
@@ -391,8 +393,10 @@ defineExpose({ observeList, unobserveList, commitSearch })
   overflow: hidden;
 }
 
-.drilldown-item:hover {
-  background: var(--bg-secondary, #f8f9fa);
+@media (hover: hover) {
+  .drilldown-item:hover {
+    background: var(--bg-secondary, #f8f9fa);
+  }
 }
 
 .drilldown-item:active {

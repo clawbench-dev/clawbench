@@ -656,9 +656,11 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     font-weight: 500;
     cursor: pointer;
 }
-.editor-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
+@media (hover: hover) {
+  .editor-btn:hover { border-color: var(--accent-color); color: var(--accent-color); }
+  .editor-btn.primary:hover { filter: brightness(1.1); }
+}
 .editor-btn.primary { background: var(--accent-color); border-color: var(--accent-color); color: #fff; }
-.editor-btn.primary:hover { filter: brightness(1.1); }
 .editor-btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 </style>
 
@@ -713,8 +715,10 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     border-radius: 3px;
     padding: 0 2px;
 }
-.cm-diff-gutter-marker:hover {
-    background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+@media (hover: hover) {
+    .cm-diff-gutter-marker:hover {
+        background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+    }
 }
 .cm-diff-gutter-M { color: var(--color-yellow); }
 .cm-diff-gutter-D { color: var(--color-red); }
@@ -767,9 +771,11 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     line-height: 20.8px;
     pointer-events: auto;
 }
-.cm-viewer .sticky-line:hover {
-    opacity: 1;
-    background: var(--bg-tertiary);
+@media (hover: hover) {
+    .cm-viewer .sticky-line:hover {
+        opacity: 1;
+        background: var(--bg-tertiary);
+    }
 }
 /* Code text starts after the line-number gutter (--sticky-left), so it aligns with
    the content text and doesn't overlap the fixed line numbers. */

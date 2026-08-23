@@ -93,18 +93,20 @@ const commitTarget = computed(() => {
   white-space: nowrap;
   transition: background 0.15s;
 }
-.git-crumb:hover {
-  background: var(--bg-secondary, #e0e0e0);
-  color: var(--accent-color, #4a90d9);
-}
 .git-crumb.current {
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   cursor: default;
 }
-.git-crumb.current:hover {
-  background: none;
-  color: var(--text-primary, #1a1a1a);
+@media (hover: hover) {
+  .git-crumb:hover {
+    background: var(--bg-secondary, #e0e0e0);
+    color: var(--accent-color, #4a90d9);
+  }
+  .git-crumb.current:hover {
+    background: none;
+    color: var(--text-primary, #1a1a1a);
+  }
 }
 .git-crumb-sep {
   color: var(--text-muted, #999);
@@ -128,10 +130,12 @@ const commitTarget = computed(() => {
   outline: none;
   flex-shrink: 0;
 }
-.git-file-open-btn:hover {
-  opacity: 1;
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-secondary, #e0e0e0);
+@media (hover: hover) {
+  .git-file-open-btn:hover {
+    opacity: 1;
+    color: var(--accent-color, #4a90d9);
+    background: var(--bg-secondary, #e0e0e0);
+  }
 }
 .git-file-open-btn svg {
   display: block;

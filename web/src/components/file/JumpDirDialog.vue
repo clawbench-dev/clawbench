@@ -75,7 +75,9 @@ function doConfirm() {
   cursor: pointer;
   flex-shrink: 0;
 }
-.jump-cancel-btn:hover { background: var(--bg-secondary); }
+@media (hover: hover) {
+  .jump-cancel-btn:hover { background: var(--bg-secondary); }
+}
 .jump-confirm-btn {
   padding: 7px 14px;
   background: var(--accent-color, #0066cc);
@@ -87,5 +89,7 @@ function doConfirm() {
   cursor: pointer;
   flex-shrink: 0;
 }
-.jump-confirm-btn:hover { background: #0055aa; }
+@media (hover: hover) {
+  .jump-confirm-btn:hover { background: #0055aa; }
+}
 </style>

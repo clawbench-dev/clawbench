@@ -530,9 +530,14 @@ function confirmEdit() {
   transition: color 0.15s ease;
 }
 
-.settings-item__refresh:hover,
 .settings-item__refresh.refresh-spin--active {
   color: var(--accent-color);
+}
+
+@media (hover: hover) {
+  .settings-item__refresh:hover {
+    color: var(--accent-color);
+  }
 }
 
 /* Rebuild icon beside progress bar */
@@ -548,13 +553,14 @@ function confirmEdit() {
   transition: color 0.15s ease;
 }
 
-.settings-item__rebuild:hover,
 .settings-item__rebuild.refresh-spin--active {
   color: var(--accent-color);
 }
 
-.settings-item__rebuild:hover {
-  color: var(--accent-color);
+@media (hover: hover) {
+  .settings-item__rebuild:hover {
+    color: var(--accent-color);
+  }
 }
 
 /* Section header */

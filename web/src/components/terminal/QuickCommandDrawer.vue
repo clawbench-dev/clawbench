@@ -166,8 +166,10 @@ async function onDragEnd() {
   opacity: 0.55;
 }
 
-.qc-row:hover {
-  background: var(--bg-tertiary, #f5f5f5);
+@media (hover: hover) {
+  .qc-row:hover {
+    background: var(--bg-tertiary, #f5f5f5);
+  }
 }
 
 .drag-handle {
@@ -228,13 +230,15 @@ async function onDragEnd() {
   transition: background 0.12s, color 0.12s;
 }
 
-.qc-action:hover {
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-primary);
-}
+@media (hover: hover) {
+  .qc-action:hover {
+    background: var(--bg-tertiary, #f0f0f0);
+    color: var(--text-primary);
+  }
 
-.qc-action.danger:hover {
-  color: #e53e3e;
+  .qc-action.danger:hover {
+    color: #e53e3e;
+  }
 }
 
 .qc-delete-confirm {
@@ -282,8 +286,10 @@ async function onDragEnd() {
   transition: background 0.15s;
 }
 
-.create-btn:hover {
-  background: rgba(0, 102, 204, 0.1);
+@media (hover: hover) {
+  .create-btn:hover {
+    background: rgba(0, 102, 204, 0.1);
+  }
 }
 
 .qc-empty {

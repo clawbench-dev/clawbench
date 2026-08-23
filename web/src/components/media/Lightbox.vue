@@ -882,18 +882,20 @@ onUnmounted(() => {
     flex-shrink: 0;
 }
 
-.lb-btn:hover {
-    background: var(--accent-color);
-    transform: scale(1.05);
+@media (hover: hover) {
+    .lb-btn:hover {
+        background: var(--accent-color);
+        transform: scale(1.05);
+    }
+
+    .lb-btn.lb-close:hover {
+        background: #ef4444;
+    }
 }
 
 .lb-btn svg {
     width: 20px;
     height: 20px;
-}
-
-.lb-btn.lb-close:hover {
-    background: #ef4444;
 }
 
 .lightbox-content {

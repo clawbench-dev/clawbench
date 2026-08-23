@@ -572,8 +572,10 @@ onMounted(() => {
   outline: none;
 }
 
-.agent-display:hover {
-  border-color: var(--accent-color, #0066cc);
+@media (hover: hover) {
+  .agent-display:hover {
+    border-color: var(--accent-color, #0066cc);
+  }
 }
 
 .agent-display-detail {
@@ -682,9 +684,11 @@ onMounted(() => {
   transition: all 0.2s ease;
 }
 
-.preset-btn:hover {
-  border-color: var(--accent-color, #0066cc);
-  color: var(--accent-color, #0066cc);
+@media (hover: hover) {
+  .preset-btn:hover {
+    border-color: var(--accent-color, #0066cc);
+    color: var(--accent-color, #0066cc);
+  }
 }
 
 .preset-btn.active {
@@ -752,9 +756,11 @@ onMounted(() => {
   transition: all 0.2s ease;
 }
 
-.weekday-btn:hover {
-  border-color: var(--accent-color, #0066cc);
-  color: var(--accent-color, #0066cc);
+@media (hover: hover) {
+  .weekday-btn:hover {
+    border-color: var(--accent-color, #0066cc);
+    color: var(--accent-color, #0066cc);
+  }
 }
 
 .weekday-btn.active {

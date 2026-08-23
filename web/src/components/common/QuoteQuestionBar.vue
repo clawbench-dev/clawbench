@@ -219,8 +219,10 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
 }
 
-.quote-bar-add:hover {
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+@media (hover: hover) {
+  .quote-bar-add:hover {
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  }
 }
 
 /* ===== Expanded panel ===== */
@@ -329,9 +331,11 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   align-self: flex-end;
 }
 
-.qq-clear-btn:hover {
-  color: var(--danger-color);
-  background: color-mix(in srgb, var(--danger-color) 8%, transparent);
+@media (hover: hover) {
+  .qq-clear-btn:hover {
+    color: var(--danger-color);
+    background: color-mix(in srgb, var(--danger-color) 8%, transparent);
+  }
 }
 
 .qq-add-btn,
@@ -357,12 +361,14 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
 }
 
-.qq-add-btn:hover {
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
-}
+@media (hover: hover) {
+  .qq-add-btn:hover {
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  }
 
-.qq-send-btn:hover {
-  background: var(--accent-hover);
+  .qq-send-btn:hover {
+    background: var(--accent-hover);
+  }
 }
 
 .qq-send-btn:active {

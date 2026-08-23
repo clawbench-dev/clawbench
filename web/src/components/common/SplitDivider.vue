@@ -94,11 +94,17 @@ onBeforeUnmount(() => {
   left: -6px;
   right: -6px;
 }
-.split-view__divider:hover,
 .split-view__divider:active {
   width: 12px;
   margin: 0 -5.5px;
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+}
+@media (hover: hover) {
+  .split-view__divider:hover {
+    width: 12px;
+    margin: 0 -5.5px;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  }
 }
 .split-view__gutter-line {
   position: absolute;
@@ -110,9 +116,13 @@ onBeforeUnmount(() => {
   background: var(--border-color, rgba(0, 0, 0, 0.12));
   transition: background 0.15s ease;
 }
-.split-view__divider:hover .split-view__gutter-line,
 .split-view__divider:active .split-view__gutter-line {
   background: var(--accent-color, #0066cc);
+}
+@media (hover: hover) {
+  .split-view__divider:hover .split-view__gutter-line {
+    background: var(--accent-color, #0066cc);
+  }
 }
 :global(body.split-view-dragging) {
   user-select: none;

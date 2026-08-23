@@ -40,8 +40,10 @@ const message = computed(() => props.label || '组件加载失败，请点击重
   cursor: pointer;
 }
 
-.async-component-error .li-retry:hover {
-  border-color: var(--accent-color);
-  color: var(--accent-color);
+@media (hover: hover) {
+  .async-component-error .li-retry:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
 }
 </style>

@@ -481,9 +481,11 @@ onMounted(() => {
     background: transparent;
 }
 
-.server-item:hover {
+@media (hover: hover) {
+  .server-item:hover {
     background: var(--bg-tertiary);
     border-color: #484f58;
+  }
 }
 
 .server-item.active {
@@ -500,9 +502,11 @@ onMounted(() => {
     color: var(--text-secondary);
 }
 
-.server-item.active .server-delete:hover {
+@media (hover: hover) {
+  .server-item.active .server-delete:hover {
     color: var(--color-red, #ef4444);
     background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
+  }
 }
 
 .server-info {
@@ -555,9 +559,11 @@ onMounted(() => {
     transition: background 0.1s, color 0.1s;
 }
 
-.server-delete:hover {
+@media (hover: hover) {
+  .server-delete:hover {
     background: color-mix(in srgb, var(--color-red, #ef4444) 10%, transparent);
     color: var(--color-red, #ef4444);
+  }
 }
 
 .input-group {
@@ -613,9 +619,11 @@ input:focus {
     gap: 8px;
 }
 
-.login-btn:hover:not(:disabled) {
+@media (hover: hover) {
+  .login-btn:hover:not(:disabled) {
     background: var(--accent-hover);
     box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-color) 30%, transparent);
+  }
 }
 
 .login-btn:active:not(:disabled) {
@@ -653,8 +661,20 @@ input:focus {
     transition: background 0.15s;
 }
 
-.cancel-btn:hover {
+@media (hover: hover) {
+  .cancel-btn:hover {
     background: var(--bg-tertiary);
+  }
+
+  .reconfigure-link:hover {
+    background: color-mix(in srgb, var(--color-red, #dc2626) 20%, transparent);
+  }
+
+  .add-server-btn:hover {
+    background: color-mix(in srgb, var(--accent-color) 6%, transparent);
+    color: var(--accent-color);
+    border-color: var(--accent-color);
+  }
 }
 
 .error {
@@ -689,10 +709,6 @@ input:focus {
     transition: background 0.15s;
 }
 
-.reconfigure-link:hover {
-    background: color-mix(in srgb, var(--color-red, #dc2626) 20%, transparent);
-}
-
 /* Add server button */
 .add-server-btn {
     display: flex;
@@ -709,12 +725,6 @@ input:focus {
     font-size: 13px;
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.add-server-btn:hover {
-    background: color-mix(in srgb, var(--accent-color) 6%, transparent);
-    color: var(--accent-color);
-    border-color: var(--accent-color);
 }
 
 /* Install banner */
@@ -737,9 +747,11 @@ input:focus {
     transition: background 0.15s, border-color 0.15s;
 }
 
-.install-row:hover {
+@media (hover: hover) {
+  .install-row:hover {
     background: var(--bg-tertiary);
     border-color: var(--accent-color);
+  }
 }
 
 .install-icon {

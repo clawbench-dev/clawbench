@@ -345,8 +345,10 @@ function handleClose() {
   padding: 2px;
 }
 
-.password-dialog__eye:hover {
-  color: var(--text-secondary);
+@media (hover: hover) {
+  .password-dialog__eye:hover {
+    color: var(--text-secondary);
+  }
 }
 
 .password-dialog__hints {

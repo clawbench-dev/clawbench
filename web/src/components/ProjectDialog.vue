@@ -330,9 +330,11 @@ onBeforeUnmount(() => {
   height: 16px;
   flex-shrink: 0;
 }
-.toolbar-btn:hover {
-  background: var(--bg-secondary, #e0e0e0);
-  color: var(--accent-color, #0066cc);
+@media (hover: hover) {
+  .toolbar-btn:hover {
+    background: var(--bg-secondary, #e0e0e0);
+    color: var(--accent-color, #0066cc);
+  }
 }
 .toolbar-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
@@ -356,7 +358,9 @@ onBeforeUnmount(() => {
 .dialog-item + .dialog-item {
   border-top: 1px solid var(--border-color, #e5e5e5);
 }
-.dialog-item:hover { background: var(--bg-tertiary, #f0f0f0); }
+@media (hover: hover) {
+  .dialog-item:hover { background: var(--bg-tertiary, #f0f0f0); }
+}
 .dialog-item.selected { background: var(--accent-color, #0066cc); color: #fff; }
 .dialog-item.selected .item-name { color: #fff; }
 
@@ -379,19 +383,23 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   transition: background 0.15s, color 0.15s;
 }
-.item-action-btn:hover {
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-primary, #1a1a1a);
-}
-.item-action-btn.danger:hover {
-  color: #dc2626;
+@media (hover: hover) {
+  .item-action-btn:hover {
+    background: var(--bg-tertiary, #f0f0f0);
+    color: var(--text-primary, #1a1a1a);
+  }
+  .item-action-btn.danger:hover {
+    color: #dc2626;
+  }
 }
 .dialog-item.selected .item-action-btn {
   color: rgba(255,255,255,0.7);
 }
-.dialog-item.selected .item-action-btn:hover {
-  background: rgba(255,255,255,0.15);
-  color: #fff;
+@media (hover: hover) {
+  .dialog-item.selected .item-action-btn:hover {
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+  }
 }
 
 .dialog-empty {
@@ -413,7 +421,9 @@ onBeforeUnmount(() => {
   transition: background 0.15s;
   flex-shrink: 0;
 }
-.cancel-btn:hover { background: var(--bg-secondary); }
+@media (hover: hover) {
+  .cancel-btn:hover { background: var(--bg-secondary); }
+}
 
 .confirm-btn {
   display: flex;
@@ -430,6 +440,8 @@ onBeforeUnmount(() => {
   transition: background 0.15s, opacity 0.15s;
   flex-shrink: 0;
 }
-.confirm-btn:hover { background: #0055aa; }
+@media (hover: hover) {
+  .confirm-btn:hover { background: #0055aa; }
+}
 .confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

@@ -829,9 +829,11 @@ defineExpose({
     pointer-events: none;
 }
 
-.file-nav-float:hover,
-.file-nav-float:focus-within {
-    opacity: 1;
+@media (hover: hover) {
+  .file-nav-float:hover,
+  .file-nav-float:focus-within {
+      opacity: 1;
+  }
 }
 
 .file-nav-float .file-nav-btn {
@@ -919,9 +921,11 @@ defineExpose({
     flex-shrink: 0;
 }
 
-.open-as-text-btn:hover {
-    border-color: var(--accent-color);
-    color: var(--accent-color);
+@media (hover: hover) {
+  .open-as-text-btn:hover {
+      border-color: var(--accent-color);
+      color: var(--accent-color);
+  }
 }
 
 .download-btn {
@@ -945,8 +949,10 @@ defineExpose({
     flex-shrink: 0;
 }
 
-.download-btn:hover {
-    filter: brightness(1.15);
+@media (hover: hover) {
+  .download-btn:hover {
+      filter: brightness(1.15);
+  }
 }
 
 .loading {

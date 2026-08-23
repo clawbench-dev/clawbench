@@ -22,3 +22,14 @@ export function buildFileHistoryCommits(histCommits: GitCommitLite[], hasUncommi
   }
   return histCommits
 }
+
+/**
+ * Whether a full history reload should show the full-screen loading spinner.
+ *
+ * Background refreshes keep the existing commit list visible (and the refresh
+ * button mounted so its spin feedback is visible); the full-screen spinner is
+ * only shown when there is nothing to render yet — first load or after an error.
+ */
+export function shouldShowFullLoading(commits: unknown[], error: unknown): boolean {
+  return commits.length === 0 && !error
+}

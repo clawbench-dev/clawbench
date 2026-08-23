@@ -580,8 +580,10 @@ defineExpose({
   transition: filter 0.15s;
 }
 
-.pdf-download-link:hover {
-  filter: brightness(1.15);
+@media (hover: hover) {
+  .pdf-download-link:hover {
+    filter: brightness(1.15);
+  }
 }
 
 /* Dark theme */

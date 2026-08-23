@@ -202,9 +202,11 @@ defineExpose({ startPolling, stopPolling })
   flex-shrink: 0;
 }
 
-.logout-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+@media (hover: hover) {
+  .logout-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
 }
 
 .header-divider {

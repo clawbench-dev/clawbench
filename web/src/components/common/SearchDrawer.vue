@@ -387,8 +387,10 @@ defineExpose({
   transition: background 0.1s;
 }
 
-.search-result-item:hover {
-  background: var(--bg-secondary, #f8f9fa);
+@media (hover: hover) {
+  .search-result-item:hover {
+    background: var(--bg-secondary, #f8f9fa);
+  }
 }
 
 .search-result-item-active {

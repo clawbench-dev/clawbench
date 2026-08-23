@@ -181,9 +181,11 @@ const detailItems = computed(() => {
   border-radius: 3px;
   transition: color 0.15s, background 0.15s;
 }
-.details-copy-btn:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+  .details-copy-btn:hover {
+    color: var(--accent-color, #4a90d9);
+    background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 .details-copy-btn.copied {
   color: #22c55e;
@@ -192,11 +194,13 @@ const detailItems = computed(() => {
 .details-row-copyable {
   user-select: none;
 }
-.details-row-copyable:hover {
-  background: var(--bg-tertiary, #f5f5f5);
-}
-.details-value-copyable:hover {
-  color: var(--accent-color, #4a90d9);
+@media (hover: hover) {
+  .details-row-copyable:hover {
+    background: var(--bg-tertiary, #f5f5f5);
+  }
+  .details-value-copyable:hover {
+    color: var(--accent-color, #4a90d9);
+  }
 }
 .details-value-copyable.copied {
   color: #22c55e;

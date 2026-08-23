@@ -82,18 +82,22 @@ function onShowChange(val: boolean) {
   opacity: 0.7;
 }
 
-.tab-menu-item:hover {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
+@media (hover: hover) {
+  .tab-menu-item:hover {
+    background: var(--accent-color, #0066cc);
+    color: #fff;
+  }
 }
 
 .tab-menu-item.danger {
   color: var(--color-red, #dc3545);
 }
 
-.tab-menu-item.danger:hover {
-  background: var(--color-red, #dc3545);
-  color: #fff;
+@media (hover: hover) {
+  .tab-menu-item.danger:hover {
+    background: var(--color-red, #dc3545);
+    color: #fff;
+  }
 }
 
 </style>

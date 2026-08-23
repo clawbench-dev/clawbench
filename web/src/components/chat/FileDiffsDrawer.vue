@@ -276,9 +276,11 @@ function handleBodyInput(event) {
   transition: background 0.15s, color 0.15s;
 }
 
-.fd-file-info-open:hover {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+@media (hover: hover) {
+  .fd-file-info-open:hover {
+    color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  }
 }
 
 .fd-file-info .fd-header-count {
@@ -317,8 +319,10 @@ function handleBodyInput(event) {
   cursor: pointer;
 }
 
-.fd-retry-btn:hover {
-  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+@media (hover: hover) {
+  .fd-retry-btn:hover {
+    background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+  }
 }
 
 .fd-back-btn {
@@ -338,9 +342,11 @@ function handleBodyInput(event) {
   transition: background 0.15s, color 0.15s;
 }
 
-.fd-back-btn:hover {
-  color: var(--text-primary, #1a1a1a);
-  background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+  .fd-back-btn:hover {
+    color: var(--text-primary, #1a1a1a);
+    background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 
 .fd-back-btn:active {

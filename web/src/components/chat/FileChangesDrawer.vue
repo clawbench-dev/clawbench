@@ -91,8 +91,10 @@ function baseName(path) {
   transition: background 0.15s;
 }
 
-.fc-file-item:hover {
-  background: var(--bg-tertiary);
+@media (hover: hover) {
+  .fc-file-item:hover {
+    background: var(--bg-tertiary);
+  }
 }
 
 .fc-file-item:active {
@@ -145,8 +147,10 @@ function baseName(path) {
   transition: background 0.15s, color 0.15s;
 }
 
-.fc-file-jump:hover {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
+@media (hover: hover) {
+  .fc-file-jump:hover {
+    color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
+  }
 }
 </style>

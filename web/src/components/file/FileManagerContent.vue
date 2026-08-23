@@ -1740,8 +1740,10 @@ function scrollSelectedIntoView(path) {
     color: var(--text-muted, #999);
     transition: color 0.15s;
 }
-.fm-copy-icon:hover {
-    color: var(--accent-color, #4a90d9);
+@media (hover: hover) {
+    .fm-copy-icon:hover {
+        color: var(--accent-color, #4a90d9);
+    }
 }
 
 .dir-nav {
@@ -1808,9 +1810,11 @@ function scrollSelectedIntoView(path) {
     padding: 0;
 }
 
-.ms-info-btn:hover {
-    background: var(--bg-secondary, #e0e0e0);
-    color: var(--accent-color, #4a90d9);
+@media (hover: hover) {
+    .ms-info-btn:hover {
+        background: var(--bg-secondary, #e0e0e0);
+        color: var(--accent-color, #4a90d9);
+    }
 }
 
 .ms-select-all-btn {
@@ -1873,8 +1877,10 @@ function scrollSelectedIntoView(path) {
     flex-shrink: 0;
 }
 
-.ms-action-btn:hover {
-    background: var(--bg-secondary, #e0e0e0);
+@media (hover: hover) {
+    .ms-action-btn:hover {
+        background: var(--bg-secondary, #e0e0e0);
+    }
 }
 
 .ms-action-btn.ms-danger {
@@ -1882,16 +1888,20 @@ function scrollSelectedIntoView(path) {
     border-color: #fecaca;
 }
 
-.ms-action-btn.ms-danger:hover {
-    background: #fef2f2;
+@media (hover: hover) {
+    .ms-action-btn.ms-danger:hover {
+        background: #fef2f2;
+    }
 }
 
 [data-theme-base="dark"] .ms-action-btn.ms-danger {
     border-color: #7f1d1d;
 }
 
-[data-theme-base="dark"] .ms-action-btn.ms-danger:hover {
-    background: #2d1b1b;
+@media (hover: hover) {
+    [data-theme-base="dark"] .ms-action-btn.ms-danger:hover {
+        background: #2d1b1b;
+    }
 }
 
 /* ── File list area ── */
@@ -1933,11 +1943,12 @@ function scrollSelectedIntoView(path) {
     flex-shrink: 0;
 }
 
-.toolbar-btn:hover {
-    background: var(--bg-secondary, #e0e0e0);
-    color: var(--accent-color, #4a90d9);
+@media (hover: hover) {
+    .toolbar-btn:hover {
+        background: var(--bg-secondary, #e0e0e0);
+        color: var(--accent-color, #4a90d9);
+    }
 }
-
 .toolbar-btn.active {
     background: var(--accent-color, #4a90d9);
     color: #fff;
@@ -1957,10 +1968,11 @@ function scrollSelectedIntoView(path) {
     opacity: 0.35;
     cursor: not-allowed;
 }
-
-.toolbar-btn:disabled:hover {
-    background: transparent;
-    color: var(--text-secondary, #666);
+@media (hover: hover) {
+    .toolbar-btn:disabled:hover {
+        background: transparent;
+        color: var(--text-secondary, #666);
+    }
 }
 
 .toolbar-btn svg {
@@ -1996,8 +2008,10 @@ function scrollSelectedIntoView(path) {
     -webkit-user-select: none;
 }
 
-.file-item:hover {
-    background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+    .file-item:hover {
+        background: var(--bg-tertiary, #f0f0f0);
+    }
 }
 
 .file-item.active {
@@ -2013,8 +2027,10 @@ function scrollSelectedIntoView(path) {
     color: var(--accent-color, #4a90d9);
 }
 
-.file-item.dir-item:hover {
-    background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+    .file-item.dir-item:hover {
+        background: var(--bg-tertiary, #f0f0f0);
+    }
 }
 
 .file-item.dir-item.drag-target {
@@ -2030,8 +2046,10 @@ function scrollSelectedIntoView(path) {
     color: white;
 }
 
-.file-item.dir-item.active:hover {
-    background: var(--accent-color, #4a90d9);
+@media (hover: hover) {
+    .file-item.dir-item.active:hover {
+        background: var(--accent-color, #4a90d9);
+    }
 }
 
 .file-item.dir-item .file-meta {
@@ -2104,9 +2122,11 @@ function scrollSelectedIntoView(path) {
     transition: transform 0.15s, background 0.15s;
 }
 
-.attach-badge:hover {
-    transform: scale(1.2);
-    background: #ef4444;
+@media (hover: hover) {
+    .attach-badge:hover {
+        transform: scale(1.2);
+        background: #ef4444;
+    }
 }
 
 .symlink-badge {
@@ -2212,8 +2232,10 @@ function scrollSelectedIntoView(path) {
     -webkit-user-select: none;
 }
 
-.grid-item:hover {
-    background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+    .grid-item:hover {
+        background: var(--bg-tertiary, #f0f0f0);
+    }
 }
 
 .grid-item.grid-active {
@@ -2268,9 +2290,11 @@ function scrollSelectedIntoView(path) {
     transition: transform 0.15s, background 0.15s;
 }
 
-.grid-thumb .attach-badge:hover {
-    transform: scale(1.2);
-    background: #ef4444;
+@media (hover: hover) {
+    .grid-thumb .attach-badge:hover {
+        transform: scale(1.2);
+        background: #ef4444;
+    }
 }
 
 .grid-thumb img {
@@ -2376,9 +2400,11 @@ function scrollSelectedIntoView(path) {
     transition: all 0.15s;
 }
 
-.dir-upload-cancel:hover {
-    background: var(--danger-color, #ef4444);
-    color: #fff;
+@media (hover: hover) {
+    .dir-upload-cancel:hover {
+        background: var(--danger-color, #ef4444);
+        color: #fff;
+    }
 }
 
 .dir-upload-progress-count {
@@ -2470,8 +2496,10 @@ function scrollSelectedIntoView(path) {
     white-space: nowrap;
 }
 
-.toolbar-dropdown .toolbar-dropdown-item:hover {
-    background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+    .toolbar-dropdown .toolbar-dropdown-item:hover {
+        background: var(--bg-tertiary, #f0f0f0);
+    }
 }
 
 .toolbar-dropdown .toolbar-dropdown-item.active {

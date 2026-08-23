@@ -687,8 +687,10 @@ async function handleRetryTunnel() {
   user-select: none;
 }
 
-.tunnel-guide-header:hover {
-  background: var(--bg-tertiary, #f5f5f5);
+@media (hover: hover) {
+  .tunnel-guide-header:hover {
+    background: var(--bg-tertiary, #f5f5f5);
+  }
 }
 
 .tunnel-guide-header:active {
@@ -765,9 +767,11 @@ async function handleRetryTunnel() {
   align-self: flex-end;
 }
 
-.tunnel-guide-copy:hover {
-  border-color: var(--accent-color, #0066cc);
-  color: var(--accent-color, #0066cc);
+@media (hover: hover) {
+  .tunnel-guide-copy:hover {
+    border-color: var(--accent-color, #0066cc);
+    color: var(--accent-color, #0066cc);
+  }
 }
 
 .tunnel-guide-fingerprint {
@@ -831,9 +835,11 @@ async function handleRetryTunnel() {
   transition: all 0.15s;
 }
 
-.port-scan-rescan-icon:hover:not(:disabled) {
-  color: var(--accent-color, #0066cc);
-  background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+  .port-scan-rescan-icon:hover:not(:disabled) {
+    color: var(--accent-color, #0066cc);
+    background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 
 .port-scan-rescan-icon:disabled {
@@ -874,10 +880,12 @@ async function handleRetryTunnel() {
   min-width: 0;
 }
 
-.port-scan-item:hover {
-  border-color: var(--accent-color, #0066cc);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .port-scan-item:hover {
+    border-color: var(--accent-color, #0066cc);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    transform: translateY(-1px);
+  }
 }
 
 .port-scan-item.https {
@@ -925,8 +933,10 @@ async function handleRetryTunnel() {
   margin-left: auto;
 }
 
-.port-scan-item:hover .port-scan-item-add {
-  color: var(--accent-color, #0066cc);
+@media (hover: hover) {
+  .port-scan-item:hover .port-scan-item-add {
+    color: var(--accent-color, #0066cc);
+  }
 }
 
 .port-scan-empty {

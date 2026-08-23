@@ -353,7 +353,9 @@ onBeforeUnmount(() => {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.toc-item:hover { background: var(--bg-tertiary); color: var(--accent-color); }
+@media (hover: hover) {
+  .toc-item:hover { background: var(--bg-tertiary); color: var(--accent-color); }
+}
 .toc-item.active { color: var(--accent-color); border-left-color: var(--accent-color); background: var(--bg-tertiary); border-radius: 0; }
 .toc-item-active { color: var(--accent-color); background: var(--bg-tertiary); border-radius: 0; }
 .toc-item[data-level="2"] { padding-left: 20px; }

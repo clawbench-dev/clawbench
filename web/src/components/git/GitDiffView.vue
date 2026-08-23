@@ -174,11 +174,13 @@ function onDiffClick(event: MouseEvent) {
   box-shadow: none;
 }
 
-.git-diff-scroll :deep(.diff-hunk-wrap-btn:hover),
-.git-diff-scroll :deep(.diff-hunk-linum-btn:hover) {
-  opacity: 1;
-  color: var(--text-secondary, #555);
-  background: var(--bg-secondary, #e9ecef);
+@media (hover: hover) {
+  .git-diff-scroll :deep(.diff-hunk-wrap-btn:hover),
+  .git-diff-scroll :deep(.diff-hunk-linum-btn:hover) {
+    opacity: 1;
+    color: var(--text-secondary, #555);
+    background: var(--bg-secondary, #e9ecef);
+  }
 }
 
 .git-diff-scroll :deep(.diff-hunk-wrap-btn:active),
@@ -191,8 +193,10 @@ function onDiffClick(event: MouseEvent) {
   color: var(--accent-color, #4a90d9);
 }
 
-.git-diff-scroll :deep(.diff-hunk-wrap-btn.is-wrapped:hover) {
-  opacity: 1;
+@media (hover: hover) {
+  .git-diff-scroll :deep(.diff-hunk-wrap-btn.is-wrapped:hover) {
+    opacity: 1;
+  }
 }
 
 .git-diff-scroll :deep(.diff-hunk-linum-btn.is-on) {
@@ -200,8 +204,10 @@ function onDiffClick(event: MouseEvent) {
   color: var(--accent-color, #4a90d9);
 }
 
-.git-diff-scroll :deep(.diff-hunk-linum-btn.is-on:hover) {
-  opacity: 1;
+@media (hover: hover) {
+  .git-diff-scroll :deep(.diff-hunk-linum-btn.is-on:hover) {
+    opacity: 1;
+  }
 }
 
 .git-diff-scroll :deep(.diff-hunk-body) {
@@ -251,9 +257,11 @@ function onDiffClick(event: MouseEvent) {
   cursor: pointer;
 }
 
-.git-diff-scroll :deep(.diff-linum-new[data-line]:hover) {
-  color: var(--accent-color, #4a90d9);
-  text-decoration: underline;
+@media (hover: hover) {
+  .git-diff-scroll :deep(.diff-linum-new[data-line]:hover) {
+    color: var(--accent-color, #4a90d9);
+    text-decoration: underline;
+  }
 }
 
 .git-diff-scroll :deep(.diff-content) {

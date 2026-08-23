@@ -120,8 +120,10 @@ function doInput() {
   transition: color 0.15s;
 }
 
-.ti-btn:hover {
-  color: var(--text-primary, #1a1a1a);
+@media (hover: hover) {
+  .ti-btn:hover {
+    color: var(--text-primary, #1a1a1a);
+  }
 }
 
 .ti-btn:disabled {
@@ -135,7 +137,9 @@ function doInput() {
   color: var(--accent-color, #0066cc);
 }
 
-.ti-btn-send:hover {
-  color: var(--accent-color, #0066cc);
+@media (hover: hover) {
+  .ti-btn-send:hover {
+    color: var(--accent-color, #0066cc);
+  }
 }
 </style>

@@ -236,9 +236,11 @@ watch(() => props.file, () => {
     height: 18px;
 }
 
-.img-nav-hint:hover {
-    background: rgba(0, 0, 0, 0.6);
-    transform: translateY(-50%) scale(1.1);
+@media (hover: hover) {
+    .img-nav-hint:hover {
+        background: rgba(0, 0, 0, 0.6);
+        transform: translateY(-50%) scale(1.1);
+    }
 }
 
 .img-nav-prev {

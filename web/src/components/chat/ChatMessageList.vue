@@ -963,10 +963,15 @@ defineExpose({
   -webkit-tap-highlight-color: transparent;
 }
 
-.scroll-fab-round:hover,
 .scroll-fab-round:focus-visible {
   opacity: 1;
   background: var(--bg-tertiary);
+}
+@media (hover: hover) {
+  .scroll-fab-round:hover {
+    opacity: 1;
+    background: var(--bg-tertiary);
+  }
 }
 
 .scroll-fab-round:not(:disabled):active {

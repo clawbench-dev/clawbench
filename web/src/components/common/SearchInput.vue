@@ -115,8 +115,10 @@ defineExpose({ focus, inputRef, focused })
   transition: background 0.15s, color 0.15s;
 }
 
-.search-pill-clear:hover {
-  background: var(--accent-color);
-  color: #fff;
+@media (hover: hover) {
+  .search-pill-clear:hover {
+    background: var(--accent-color);
+    color: #fff;
+  }
 }
 </style>

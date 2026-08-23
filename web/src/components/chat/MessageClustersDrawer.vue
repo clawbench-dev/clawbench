@@ -326,8 +326,10 @@ defineExpose({ open })
   border-bottom: none;
 }
 
-.mc-cluster-item:hover {
-  background: var(--bg-tertiary, rgba(0,0,0,0.04));
+@media (hover: hover) {
+  .mc-cluster-item:hover {
+    background: var(--bg-tertiary, rgba(0,0,0,0.04));
+  }
 }
 
 .mc-cluster-representative {
@@ -362,8 +364,10 @@ defineExpose({ open })
   gap: 4px;
 }
 
-.mc-btn:hover {
-  background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+  .mc-btn:hover {
+    background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 
 .mc-btn.primary {
@@ -372,8 +376,10 @@ defineExpose({ open })
   border-color: var(--accent-color, #0066cc);
 }
 
-.mc-btn.primary:hover {
-  opacity: 0.9;
+@media (hover: hover) {
+  .mc-btn.primary:hover {
+    opacity: 0.9;
+  }
 }
 
 .mc-btn.add {
@@ -387,8 +393,10 @@ defineExpose({ open })
   font-size: 11px;
 }
 
-.mc-btn.add:hover {
-  background: rgba(0, 102, 204, 0.1);
+@media (hover: hover) {
+  .mc-btn.add:hover {
+    background: rgba(0, 102, 204, 0.1);
+  }
 }
 
 .mc-variants-dialog-content {
@@ -436,7 +444,9 @@ defineExpose({ open })
   transition: background 0.15s;
 }
 
-.mc-header-btn:hover {
-  background: rgba(0, 102, 204, 0.1);
+@media (hover: hover) {
+  .mc-header-btn:hover {
+    background: rgba(0, 102, 204, 0.1);
+  }
 }
 </style>

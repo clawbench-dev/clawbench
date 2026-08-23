@@ -88,7 +88,9 @@ function close() {
   cursor: pointer;
 }
 
-.ios-got-it-btn:hover {
-  opacity: 0.9;
+@media (hover: hover) {
+  .ios-got-it-btn:hover {
+    opacity: 0.9;
+  }
 }
 </style>

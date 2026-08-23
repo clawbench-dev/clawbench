@@ -164,25 +164,27 @@ watch(() => props.open, async (val) => {
   border-bottom: none;
 }
 
-.agent-option:hover {
-  background: var(--bg-secondary, #f8f9fa);
+@media (hover: hover) {
+  .agent-option:hover {
+    background: var(--bg-secondary, #f8f9fa);
+  }
+
+  .agent-option:hover .agent-option-name {
+    color: var(--accent-color, #0066cc);
+  }
+
+  .agent-option:hover .agent-option-specialty {
+    color: var(--text-secondary, #666);
+  }
+
+  .agent-option:hover .agent-tag {
+    opacity: 1;
+  }
 }
 
 .agent-option-active {
   background: var(--bg-secondary, #f8f9fa);
   border-radius: 0;
-}
-
-.agent-option:hover .agent-option-name {
-  color: var(--accent-color, #0066cc);
-}
-
-.agent-option:hover .agent-option-specialty {
-  color: var(--text-secondary, #666);
-}
-
-.agent-option:hover .agent-tag {
-  opacity: 1;
 }
 
 .agent-option:active {
@@ -238,13 +240,15 @@ watch(() => props.open, async (val) => {
   white-space: nowrap;
 }
 
-.agent-set-default-btn:hover {
-  opacity: 1;
-  background: var(--hover-bg, rgba(0,0,0,0.06));
-}
+@media (hover: hover) {
+  .agent-set-default-btn:hover {
+    opacity: 1;
+    background: var(--hover-bg, rgba(0,0,0,0.06));
+  }
 
-.agent-option:hover .agent-set-default-btn {
-  opacity: 0.7;
+  .agent-option:hover .agent-set-default-btn {
+    opacity: 0.7;
+  }
 }
 
 .agent-option-specialty {

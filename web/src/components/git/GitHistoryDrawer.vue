@@ -155,7 +155,7 @@ import GitCommitMeta from './GitCommitMeta.vue'
 import GitDiffView from './GitDiffView.vue'
 import GitBreadcrumb from './GitBreadcrumb.vue'
 import { renderDiff } from '@/utils/diff.ts'
-import { buildFileHistoryCommits } from '@/utils/gitFileHistory.ts'
+import { buildFileHistoryCommits, shouldShowFullLoading } from '@/utils/gitFileHistory.ts'
 import { store } from '@/stores/app.ts'
 import { useCommitNavigation, consumePendingCommitNavigation } from '@/composables/useCommitNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_OVERLAY } from '@/composables/useEdgeSwipeBack'
@@ -189,6 +189,10 @@ function onOpenFile(path) {
 // ─── Unified state ─────────────────────────────────────────────────────────
 
 const loading = ref(false)
+// True while a full reload is in flight WITHOUT the full-screen spinner (i.e.
+// a background refresh that keeps the existing list). loadMore must not run
+// concurrently with it — it would paginate the old commits with stale counts.
+const fullReloading = ref(false)
 const error = ref('')
 const commits = ref([])
 const hasMore = ref(false)
@@ -276,9 +280,14 @@ const commitSearch = ref('')
 
 async function loadProjectHistory() {
   const seq = historySeq.token()
-  loading.value = true
+  // Keep the existing list visible during background refreshes — only show the
+  // full-screen spinner when there is nothing to render yet (first load/empty),
+  // so the refresh button stays mounted and its spin feedback is visible.
+  const isFirstLoad = shouldShowFullLoading(commits.value, error.value)
+  loading.value = isFirstLoad
+  fullReloading.value = !isFirstLoad
   error.value = ''
-  commits.value = []
+  if (isFirstLoad) commits.value = []
   hasMore.value = false
   selectedSHA.value = null
   files.value = []
@@ -292,12 +301,14 @@ async function loadProjectHistory() {
     if (!historySeq.isCurrent(seq)) return // superseded by a newer load
     if (!resp.ok) {
       const data = await resp.json()
+      commits.value = []
       error.value = data.error || t('git.history.loadError')
       return
     }
     const data = await resp.json()
 
     if (!data.isGit) {
+      commits.value = []
       isGit.value = false
       return
     }
@@ -327,6 +338,7 @@ async function loadProjectHistory() {
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return
     if (!historySeq.isCurrent(seq)) return
+    commits.value = []
     if (err instanceof GitTimeoutError) {
       appLog.w('GitHistory', err.message)
       error.value = t('git.history.loadTimeout')
@@ -334,15 +346,22 @@ async function loadProjectHistory() {
     }
     error.value = t('git.history.loadError')
   } finally {
-    if (historySeq.isCurrent(seq)) loading.value = false
+    if (historySeq.isCurrent(seq)) {
+      loading.value = false
+      fullReloading.value = false
+    }
   }
 }
 
 async function loadFileHistory(filePath) {
   const seq = historySeq.token()
-  loading.value = true
+  // Keep the existing list visible during background refreshes (see
+  // loadProjectHistory) so the refresh button's spin stays visible.
+  const isFirstLoad = shouldShowFullLoading(commits.value, error.value)
+  loading.value = isFirstLoad
+  fullReloading.value = !isFirstLoad
   error.value = ''
-  commits.value = []
+  if (isFirstLoad) commits.value = []
   selectedSHA.value = null
   isGit.value = true
   untracked.value = false
@@ -352,12 +371,14 @@ async function loadFileHistory(filePath) {
     if (!historySeq.isCurrent(seq)) return
     if (!resp.ok) {
       const data = await resp.json()
+      commits.value = []
       error.value = data.error || t('git.history.loadError')
       return
     }
     const hist = await resp.json()
     if (!historySeq.isCurrent(seq)) return
     if (!hist.isGit) {
+      commits.value = []
       isGit.value = false
       return
     }
@@ -380,6 +401,7 @@ async function loadFileHistory(filePath) {
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return
     if (!historySeq.isCurrent(seq)) return
+    commits.value = []
     if (err instanceof GitTimeoutError) {
       appLog.w('GitHistory', err.message)
       error.value = t('git.history.loadTimeout')
@@ -387,14 +409,17 @@ async function loadFileHistory(filePath) {
     }
     error.value = t('git.history.loadError')
   } finally {
-    if (historySeq.isCurrent(seq)) loading.value = false
+    if (historySeq.isCurrent(seq)) {
+      loading.value = false
+      fullReloading.value = false
+    }
   }
 }
 
 async function loadMoreCommits() {
   // Skip while a full reload is in flight: loading replaces the commit list
   // and loadMore would paginate the OLD commits with stale skip counts.
-  if (loading.value || loadingMore.value || !hasMore.value || !isGit.value) return
+  if (loading.value || fullReloading.value || loadingMore.value || !hasMore.value || !isGit.value) return
   loadingMore.value = true
   try {
     // Count only git commits (exclude WT node) for the skip parameter,
@@ -615,7 +640,7 @@ watch(() => props.open, async (val) => {
   }
 
   // Only load data if we have no commits loaded
-  if (commits.value.length === 0 && !error.value) {
+  if (shouldShowFullLoading(commits.value, error.value)) {
     if (props.mode === 'file' && props.file?.path) {
       await loadFileHistory(props.file.path)
     } else {
@@ -695,8 +720,10 @@ watch(() => props.open, async (val) => {
   border-bottom: 1px solid var(--border-color, #dee2e6);
 }
 
-.drilldown-item:hover {
-  background: var(--bg-secondary, #f8f9fa);
+@media (hover: hover) {
+  .drilldown-item:hover {
+    background: var(--bg-secondary, #f8f9fa);
+  }
 }
 
 .drilldown-item:active {

@@ -293,8 +293,10 @@ onUnmounted(() => {
   transition: background 0.2s;
 }
 
-.welcome-close:hover {
-  background: var(--border-color);
+@media (hover: hover) {
+  .welcome-close:hover {
+    background: var(--border-color);
+  }
 }
 
 .welcome-desc {
@@ -397,8 +399,10 @@ onUnmounted(() => {
   transition: opacity 0.2s;
 }
 
-.btn-install:hover {
-  opacity: 0.85;
+@media (hover: hover) {
+  .btn-install:hover {
+    opacity: 0.85;
+  }
 }
 
 .backend-status-spinner {
@@ -429,8 +433,23 @@ onUnmounted(() => {
   transition: background 0.15s;
 }
 
-.welcome-install-row:hover {
-  background: color-mix(in srgb, var(--accent-color) 15%, var(--bg-primary));
+@media (hover: hover) {
+  .welcome-install-row:hover {
+    background: color-mix(in srgb, var(--accent-color) 15%, var(--bg-primary));
+  }
+
+  .btn-ok:hover {
+    opacity: 0.9;
+  }
+
+  .btn-rescan:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
+
+  .btn-dont-show:hover {
+    color: var(--text-secondary);
+  }
 }
 
 .welcome-footer {
@@ -460,10 +479,6 @@ onUnmounted(() => {
   transition: opacity 0.2s;
 }
 
-.btn-ok:hover {
-  opacity: 0.9;
-}
-
 .btn-rescan {
   display: inline-flex;
   align-items: center;
@@ -477,11 +492,6 @@ onUnmounted(() => {
   padding: 4px 10px;
   border-radius: 6px;
   transition: all 0.2s;
-}
-
-.btn-rescan:hover {
-  border-color: var(--accent-color);
-  color: var(--accent-color);
 }
 
 .btn-rescan:disabled {
@@ -499,10 +509,6 @@ onUnmounted(() => {
   cursor: pointer;
   padding: 4px 8px;
   transition: color 0.2s;
-}
-
-.btn-dont-show:hover {
-  color: var(--text-secondary);
 }
 
 /* ── Transition ── */

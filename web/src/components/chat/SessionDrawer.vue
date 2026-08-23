@@ -707,9 +707,11 @@ defineExpose({
   transition: background 0.15s, color 0.15s;
 }
 
-.refresh-btn:hover:not(:disabled) {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
+@media (hover: hover) {
+  .refresh-btn:hover:not(:disabled) {
+    background: var(--accent-color, #0066cc);
+    color: #fff;
+  }
 }
 
 .refresh-btn:disabled {
@@ -749,9 +751,11 @@ defineExpose({
   -webkit-tap-highlight-color: transparent;
 }
 
-.model-item:hover,
-.thinking-item:hover {
-  background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+  .model-item:hover,
+  .thinking-item:hover {
+    background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 
 .model-item.nav-active,
@@ -832,15 +836,17 @@ defineExpose({
   transition: opacity 0.15s, color 0.15s, background 0.15s;
 }
 
-.model-item:hover .set-default-btn,
-.thinking-item:hover .set-default-btn {
-  opacity: 0.9;
-}
+@media (hover: hover) {
+  .model-item:hover .set-default-btn,
+  .thinking-item:hover .set-default-btn {
+    opacity: 0.9;
+  }
 
-.set-default-btn:hover {
-  opacity: 1 !important;
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  .set-default-btn:hover {
+    opacity: 1 !important;
+    color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  }
 }
 
 .model-empty {
@@ -952,8 +958,10 @@ defineExpose({
   white-space: nowrap;
 }
 
-.popup-set-default:hover {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
+@media (hover: hover) {
+  .popup-set-default:hover {
+    background: var(--accent-color, #0066cc);
+    color: #fff;
+  }
 }
 </style>

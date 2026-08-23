@@ -190,7 +190,9 @@ watch(visible, (v) => {
   transition: background 0.2s;
 }
 
-.ug-close:hover { background: var(--border-color); }
+@media (hover: hover) {
+  .ug-close:hover { background: var(--border-color); }
+}
 
 .ug-versions {
   display: flex;
@@ -305,7 +307,9 @@ watch(visible, (v) => {
   transition: opacity 0.2s;
 }
 
-.ug-start:hover { opacity: 0.9; }
+@media (hover: hover) {
+  .ug-start:hover { opacity: 0.9; }
+}
 
 .ug-cancel {
   padding: 8px 16px;
@@ -319,9 +323,11 @@ watch(visible, (v) => {
   transition: all 0.2s;
 }
 
-.ug-cancel:hover {
-  border-color: var(--accent-color);
-  color: var(--accent-color);
+@media (hover: hover) {
+  .ug-cancel:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
 }
 
 .ug-fade-enter-active { transition: opacity 0.2s ease; }

@@ -1249,8 +1249,10 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   max-width: 120px;
 }
 
-.terminal-tab:hover {
-  background: var(--bg-tertiary);
+@media (hover: hover) {
+  .terminal-tab:hover {
+    background: var(--bg-tertiary);
+  }
 }
 
 .terminal-tab.active {
@@ -1290,14 +1292,21 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   transition: opacity 0.1s ease, background 0.1s ease;
 }
 
-.terminal-tab:hover .terminal-tab-menu-btn,
 .terminal-tab.active .terminal-tab-menu-btn {
   opacity: 1;
 }
 
-.terminal-tab-menu-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+@media (hover: hover) {
+  .terminal-tab:hover .terminal-tab-menu-btn {
+    opacity: 1;
+  }
+}
+
+@media (hover: hover) {
+  .terminal-tab-menu-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
 }
 
 .terminal-tab-add {
@@ -1316,9 +1325,11 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   transition: background 0.1s ease, color 0.1s ease;
 }
 
-.terminal-tab-add:hover:not(.disabled) {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+@media (hover: hover) {
+  .terminal-tab-add:hover:not(.disabled) {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
 }
 
 .terminal-tab-add:active:not(.disabled) {
@@ -1461,8 +1472,10 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   font-size: 13px;
 }
 
-.terminal-reconnect-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+@media (hover: hover) {
+  .terminal-reconnect-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
 }
 
 /* Toolbar styles (unchanged) */
@@ -1605,7 +1618,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   touch-action: manipulation;
   transition: background 100ms ease, color 100ms ease;
 }
-.toolbar-btn:hover { background: var(--toolbar-key-hover); }
+@media (hover: hover) {
+  .toolbar-btn:hover { background: var(--toolbar-key-hover); }
+}
 .toolbar-btn:active { background: var(--toolbar-key-active); }
 .toolbar-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--text-primary) 36%, transparent); outline-offset: 2px; }
 .toolbar-btn.modifier.active { background: var(--toolbar-key-selected-bg); color: var(--accent-color); box-shadow: inset 0 -2px 0 var(--accent-color); }
@@ -1613,7 +1628,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .toolbar-btn.shortcut { background: transparent; color: var(--toolbar-key-text); font-weight: 800; font-size: 11px; }
 .toolbar-btn.shortcut:active { background: var(--toolbar-key-active); }
 .toolbar-btn.danger { color: var(--toolbar-key-text); opacity: 0.78; }
-.toolbar-btn.danger:hover { opacity: 1; background: var(--toolbar-key-hover); }
+@media (hover: hover) {
+  .toolbar-btn.danger:hover { opacity: 1; background: var(--toolbar-key-hover); }
+}
 .toolbar-btn.gesture-toggle { min-width: 32px; border-radius: 0; }
 
 .btn-shift-tab {
@@ -1643,7 +1660,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   color: var(--accent-color);
   border-radius: 6px;
 }
-.toolbar-btn.btn-func:hover { background: color-mix(in srgb, var(--accent-color) 10%, transparent); }
+@media (hover: hover) {
+  .toolbar-btn.btn-func:hover { background: color-mix(in srgb, var(--accent-color) 10%, transparent); }
+}
 .toolbar-btn.btn-func:active { background: color-mix(in srgb, var(--accent-color) 18%, transparent); }
 /* Mode-selection keeps its outline, override the gesture-toggle active style for btn-func */
 .toolbar-btn.btn-func.modifier.active { background: color-mix(in srgb, var(--accent-color) 14%, transparent); color: var(--accent-color); box-shadow: none; }
@@ -1752,7 +1771,9 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   font-size: 12px; text-align: left; cursor: pointer;
   transition: background 0.1s;
 }
-.theme-item:hover { background: var(--bg-tertiary); }
+@media (hover: hover) {
+  .theme-item:hover { background: var(--bg-tertiary); }
+}
 .theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
 .theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: 10px; border-radius: 50%; }
 .theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }

@@ -99,8 +99,10 @@ function formatDate(dateStr) {
   transition: background 0.15s;
 }
 
-.diff-meta-sha:hover {
-  background: var(--bg-tertiary, #f0f0f0);
+@media (hover: hover) {
+  .diff-meta-sha:hover {
+    background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 
 .sha-copied-text {

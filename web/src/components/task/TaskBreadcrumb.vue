@@ -95,9 +95,11 @@ function navigate(target) {
   color: var(--text-secondary, #495057);
 }
 
-.crumb.clickable:hover {
-  background: var(--bg-secondary, #f8f9fa);
-  color: var(--accent-color, #4a90d9);
+@media (hover: hover) {
+  .crumb.clickable:hover {
+    background: var(--bg-secondary, #f8f9fa);
+    color: var(--accent-color, #4a90d9);
+  }
 }
 
 .crumb.clickable:active {
@@ -111,9 +113,11 @@ function navigate(target) {
   cursor: default;
 }
 
-.crumb.current:hover {
-  background: none;
-  color: var(--text-primary, #212529);
+@media (hover: hover) {
+  .crumb.current:hover {
+    background: none;
+    color: var(--text-primary, #212529);
+  }
 }
 
 /* ── Separator ── */

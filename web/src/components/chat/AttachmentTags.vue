@@ -160,8 +160,10 @@ watch(() => props.files, (files) => {
   z-index: 1;
 }
 
-.attachment-close-btn:hover {
-  background: var(--danger-color, #dc3545);
+@media (hover: hover) {
+  .attachment-close-btn:hover {
+    background: var(--danger-color, #dc3545);
+  }
 }
 
 .chat-attachment-tags .attachment-ref {
@@ -174,8 +176,10 @@ watch(() => props.files, (files) => {
   color: var(--accent-color, #0066cc);
 }
 
-.chat-attachment-tags .attachment-ref:hover {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
+@media (hover: hover) {
+  .chat-attachment-tags .attachment-ref:hover {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
+  }
 }
 
 .chat-attachment-tags .attachment-pending {

@@ -362,9 +362,11 @@ defineExpose({
   transition: all 0.15s;
 }
 
-.office-retry-btn:hover {
-  border-color: var(--accent-color);
-  color: var(--accent-color);
+@media (hover: hover) {
+  .office-retry-btn:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
 }
 
 .office-download-btn {
@@ -384,7 +386,9 @@ defineExpose({
   transition: filter 0.15s;
 }
 
-.office-download-btn:hover {
-  filter: brightness(1.15);
+@media (hover: hover) {
+  .office-download-btn:hover {
+    filter: brightness(1.15);
+  }
 }
 </style>

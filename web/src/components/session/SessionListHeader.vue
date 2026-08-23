@@ -136,7 +136,9 @@ const sessionBarColor = computed(() => {
   border-radius: 4px;
   transition: background 0.15s;
 }
-.header-action-btn:hover {
-  background: rgba(0, 102, 204, 0.1);
+@media (hover: hover) {
+  .header-action-btn:hover {
+    background: rgba(0, 102, 204, 0.1);
+  }
 }
 </style>

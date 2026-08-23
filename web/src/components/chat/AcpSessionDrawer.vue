@@ -300,9 +300,11 @@ function formatTime(iso: string): string {
   transition: color 0.15s, background 0.15s;
 }
 
-.acp-session-resume-btn:hover {
-  background: rgba(0, 102, 204, 0.08);
-  color: var(--accent-color, #0066cc);
+@media (hover: hover) {
+  .acp-session-resume-btn:hover {
+    background: rgba(0, 102, 204, 0.08);
+    color: var(--accent-color, #0066cc);
+  }
 }
 
 .acp-session-resume-btn:active {

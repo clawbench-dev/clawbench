@@ -213,12 +213,14 @@ function copyValue(value, event) {
     user-select: none;
 }
 
-.metadata-copyable:hover {
+@media (hover: hover) {
+  .metadata-copyable:hover {
     background: var(--bg-tertiary, #f5f5f5);
-}
+  }
 
-.metadata-value-copyable:hover {
+  .metadata-value-copyable:hover {
     color: var(--accent-color, #4a90d9);
+  }
 }
 
 .metadata-value-copyable.copied {
@@ -243,9 +245,11 @@ function copyValue(value, event) {
     transition: color 0.15s, background 0.15s;
 }
 
-.metadata-copy-btn:hover {
+@media (hover: hover) {
+  .metadata-copy-btn:hover {
     color: var(--accent-color, #4a90d9);
     background: var(--bg-tertiary, #f0f0f0);
+  }
 }
 
 .metadata-copy-btn.copied {
