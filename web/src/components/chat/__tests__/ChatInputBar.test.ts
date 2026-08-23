@@ -1353,7 +1353,9 @@ describe('ChatInputBar', () => {
       const textarea = wrapper.find('.chat-textarea')
       const preventDefault = vi.fn()
       const imageFile = new File(['dummy content'], 'test.png', { type: 'image/png' })
-      const dupImageFile = new File(['dummy content'], 'test.png', { type: 'image/png' })
+      // Use the exact same File reference so dedup key (name+size+type+lastModified)
+      // collides and only one entry reaches uploadAndAttach.
+      const dupImageFile = imageFile
 
       const clipboardData = {
         items: [
