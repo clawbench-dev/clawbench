@@ -51,6 +51,7 @@ vi.mock('@/composables/useTaskHistory.ts', async () => {
 
 vi.mock('@/utils/format.ts', () => ({
   formatDuration: (ms: number) => `${Math.round(ms / 1000)}s`,
+  formatDateTime: (date: string) => `T:${date}`,
 }))
 
 describe('TaskHistoryTab running execution elapsed time', () => {

@@ -23,11 +23,13 @@
                   <span class="exec-running-dot"></span>
                   <span>{{ t('task.exec.running') }}</span>
                 </span>
+                <span class="exec-start-time">{{ formatDateTime(exec.startedAt) }}</span>
                 <span class="exec-duration" :title="formatDuration(elapsedMs(exec.startedAt))">{{ formatElapsed(exec.startedAt) }}</span>
               </template>
               <template v-else>
                 <span v-if="exec.status === 'cancelled'" class="exec-status-badge cancelled">{{ t('task.exec.statusCancelled') }}</span>
                 <span v-else-if="exec.status === 'failed'" class="exec-status-badge failed">{{ t('task.exec.statusFailed') }}</span>
+                <span class="exec-start-time">{{ formatDateTime(exec.createdAt) }}</span>
                 <span v-if="exec.metadata?.wallMs" class="exec-duration">{{ formatDuration(exec.metadata.wallMs) }}</span>
               </template>
             </div>
@@ -69,7 +71,7 @@ import { ref, watch, onUnmounted, computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Square, Loader2, History, Trash2 } from 'lucide-vue-next'
 import { useTaskHistory } from '@/composables/useTaskHistory.ts'
-import { formatDuration } from '@/utils/format.ts'
+import { formatDuration, formatDateTime } from '@/utils/format.ts'
 
 const props = defineProps({
   task: Object,
@@ -384,6 +386,15 @@ defineExpose({
 .exec-status-badge.failed {
   background: rgba(239, 68, 68, 0.12);
   color: #dc2626;
+}
+
+/* ── Start time (top row, before the right-aligned duration) ── */
+.exec-start-time {
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 /* ── Duration (top row, right-aligned next to trigger type) ── */
