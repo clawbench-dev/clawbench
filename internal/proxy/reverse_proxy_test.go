@@ -468,6 +468,57 @@ func TestReverseProxy_PreservesRelativeLocation(t *testing.T) {
 	assert.Equal(t, "/login", loc, "Relative Location should NOT be rewritten")
 }
 
+func TestReverseProxy_NewReverseProxy_InvalidTargetURL(t *testing.T) {
+	// A target with an invalid URL escape fails url.Parse in NewReverseProxy.
+	_, err := NewReverseProxy("127.0.0.1", 0, "%zz://x", "")
+	assert.Error(t, err, "should fail with invalid target URL")
+}
+
+func TestReverseProxy_Serve_ListenerClosed(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	rp, err := NewReverseProxy("127.0.0.1", 0, backend.Listener.Addr().String(), "http")
+	assert.NoError(t, err)
+
+	// Closing the listener directly makes Serve return a non-ErrServerClosed error.
+	rp.listener.Close()
+	done := make(chan struct{})
+	go func() {
+		rp.Serve()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve should return after listener is closed")
+	}
+}
+
+func TestRewriteLocation_Unparseable(t *testing.T) {
+	targetURL, _ := url.Parse("http://192.168.1.1:8080")
+	listenAddr, _ := net.ResolveTCPAddr("tcp", "127.0.0.1:54321")
+
+	// Location with an invalid URL escape should be returned unchanged.
+	got := rewriteLocation("http://%zz/path", targetURL, listenAddr)
+	assert.Equal(t, "http://%zz/path", got)
+}
+
+func TestDefaultPort_UnknownScheme(t *testing.T) {
+	assert.Equal(t, "", defaultPort("ftp"))
+	assert.Equal(t, "", defaultPort("gopher"))
+}
+
+func TestSameBareHost_NoPortOnB(t *testing.T) {
+	// b has no port, exercising the SplitHostPort error branch for b.
+	assert.True(t, sameBareHost("192.168.1.1:8080", "192.168.1.1"))
+	assert.True(t, sameBareHost("192.168.1.1", "192.168.1.1"))
+	assert.False(t, sameBareHost("192.168.1.1:8080", "10.0.0.1"))
+}
+
 func TestHostMatches(t *testing.T) {
 	tests := []struct {
 		locHost      string

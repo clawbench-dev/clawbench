@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -121,15 +122,17 @@ func TestCheckSSRF(t *testing.T) {
 		wantErr bool
 	}{
 		// These use raw IPs where possible to avoid DNS resolution issues in CI
-		{"8.8.8.8:443", false},    // Public IP with port
-		{"8.8.8.8", false},        // Public IP without port
-		{"127.0.0.1:8080", true},  // Loopback
-		{"127.0.0.1", true},       // Loopback without port
-		{"10.0.0.1:80", true},     // Private A
-		{"192.168.1.1:443", true}, // Private C
-		{"172.16.0.1:80", true},   // Private B
-		{"169.254.1.1:80", true},  // Link-local
-		{"0.0.0.0:80", true},      // Unspecified
+		{"8.8.8.8:443", false},       // Public IP with port
+		{"8.8.8.8", false},           // Public IP without port
+		{"127.0.0.1:8080", true},     // Loopback
+		{"127.0.0.1", true},          // Loopback without port
+		{"10.0.0.1:80", true},        // Private A
+		{"192.168.1.1:443", true},    // Private C
+		{"172.16.0.1:80", true},      // Private B
+		{"169.254.1.1:80", true},     // Link-local
+		{"0.0.0.0:80", true},         // Unspecified
+		{"::ffff:192.168.1.1", true}, // IPv4-mapped private
+		{"::ffff:8.8.8.8", false},    // IPv4-mapped public
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
@@ -439,6 +442,122 @@ func TestValidateTargetURL(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestIsPrivateIP_IPv4Mapped(t *testing.T) {
+	tests := []struct {
+		ip   string
+		want bool
+	}{
+		{"::ffff:8.8.8.8", false},    // IPv4-mapped public address
+		{"::ffff:192.168.1.1", true}, // IPv4-mapped private address
+	}
+	for _, tt := range tests {
+		t.Run(tt.ip, func(t *testing.T) {
+			ip := net.ParseIP(tt.ip)
+			if ip == nil {
+				t.Fatalf("failed to parse IP %s", tt.ip)
+			}
+			if got := isPrivateIP(ip); got != tt.want {
+				t.Errorf("isPrivateIP(%s) = %v, want %v", tt.ip, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCORSProxyDialer_SplitHostPortError(t *testing.T) {
+	tr := corsProxyClient.Transport.(*http.Transport)
+	conn, err := tr.DialContext(context.Background(), "tcp", "no-port")
+	if conn != nil {
+		conn.Close()
+	}
+	if err == nil {
+		t.Fatal("expected error dialing an address without a port")
+	}
+}
+
+func TestCORSProxyDialer_SSRFBlock(t *testing.T) {
+	orig := AllowLocalProxy
+	AllowLocalProxy = false
+	defer func() { AllowLocalProxy = orig }()
+
+	// Use corsProxyClient directly against a private address to exercise the
+	// DialContext SSRF re-check (DNS rebinding defense).
+	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:1/", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := corsProxyClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("expected error dialing a private IP with AllowLocalProxy=false")
+	}
+	if !strings.Contains(err.Error(), "blocked IP") {
+		t.Errorf("expected blocked IP error, got %v", err)
+	}
+}
+
+func TestCORSProxyDialer_LookupFailure(t *testing.T) {
+	orig := AllowLocalProxy
+	AllowLocalProxy = true
+	defer func() { AllowLocalProxy = orig }()
+
+	// A hostname that will not resolve exercises the LookupIP error path in DialContext.
+	req, err := http.NewRequest(http.MethodGet, "http://nonexistent.invalid:1/", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = corsProxyClient.Do(req)
+	if err == nil {
+		t.Fatal("expected error dialing an unresolvable hostname")
+	}
+}
+
+func TestServeCORSProxy_RedirectLoop(t *testing.T) {
+	orig := AllowLocalProxy
+	AllowLocalProxy = true
+	defer func() { AllowLocalProxy = orig }()
+
+	// Upstream that redirects forever; CheckRedirect should bail after 10 hops.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/loop")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer upstream.Close()
+
+	targetURL := upstream.URL + "/loop"
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url="+url.QueryEscape(targetURL), http.NoBody)
+	w := httptest.NewRecorder()
+	ServeCORSProxy(w, req)
+	if w.Code != http.StatusFound {
+		t.Errorf("expected 302 from redirect loop, got %d", w.Code)
+	}
+}
+
+type failingWriter struct {
+	http.ResponseWriter
+}
+
+func (f *failingWriter) Write(p []byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestServeCORSProxy_WriteFailure(t *testing.T) {
+	orig := AllowLocalProxy
+	AllowLocalProxy = true
+	defer func() { AllowLocalProxy = orig }()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("some-body"))
+	}))
+	defer upstream.Close()
+
+	targetURL := upstream.URL + "/data"
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi-proxy?url="+url.QueryEscape(targetURL), http.NoBody)
+	w := httptest.NewRecorder()
+	ServeCORSProxy(&failingWriter{ResponseWriter: w}, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
 	}
 }
 
