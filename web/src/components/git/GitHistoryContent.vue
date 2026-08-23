@@ -332,7 +332,7 @@ async function loadProjectHistory() {
   isGit.value = true
 
   try {
-    const resp = await gitFetch('/api/git/project-history')
+    const resp = await gitFetch('/api/git/project-history', { signal: seq.signal })
     if (!historySeq.isCurrent(seq)) return // superseded by a newer load
     if (!resp.ok) {
       const data = await resp.json()
@@ -351,7 +351,7 @@ async function loadProjectHistory() {
     isGit.value = true
 
     // Check working tree changes
-    const wtResp = await gitFetch('/api/git/working-tree')
+    const wtResp = await gitFetch('/api/git/working-tree', { signal: seq.signal })
     let loadedWtFiles = []
     if (wtResp.ok) {
       const wt = await wtResp.json()
@@ -409,7 +409,7 @@ async function loadFileHistory(filePath) {
   untracked.value = false
 
   try {
-    const resp = await gitFetch(`/api/git/history?path=${encodeURIComponent(filePath)}`)
+    const resp = await gitFetch(`/api/git/history?path=${encodeURIComponent(filePath)}`, { signal: seq.signal })
     if (!historySeq.isCurrent(seq)) return
     if (!resp.ok) {
       const data = await resp.json()
@@ -477,7 +477,7 @@ async function onSearch(q) {
     while (hasMore.value) {
       if (!historySeq.isCurrent(seq)) return // superseded by a refresh/load
       const gitCount = commits.value.filter(c => !c.isWT).length
-      const resp = await gitFetch(`/api/git/project-history?skip=${gitCount}`)
+const resp = await gitFetch(`/api/git/project-history?skip=${gitCount}`, { signal: seq.signal })
       if (!resp.ok) break
       const data = await resp.json()
       commits.value.push(...(data.commits || []))

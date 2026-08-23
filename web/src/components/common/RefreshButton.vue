@@ -78,6 +78,7 @@ const btnEl = ref<HTMLButtonElement | null>(null)
 const svgStyle = computed(() => ({ animation: 'none' }))
 
 let spinAnim: Animation | null = null
+let spinAnimEl: SVGSVGElement | null = null
 let finishTimer: ReturnType<typeof setTimeout> | null = null
 
 // Success confirmation: after the spin completes a whole revolution, the icon
@@ -105,13 +106,22 @@ function startSpin() {
   clearFinishTimer()
   const svg = svgEl()
   if (!svg || typeof svg.animate !== 'function') return
-  // If an animation is already running (e.g. rapid re-toggle), keep it going —
+  // If the animation is bound to a DIFFERENT element than the currently-visible
+  // svg (the `:is` swapped to/from the Check icon, or the caller changed the
+  // `icon` prop while spinning), the old animation targets a detached node and
+  // would never spin what the user sees. Cancel it and re-target the live icon.
+  if (spinAnim && spinAnimEl !== svg) {
+    spinAnim.cancel()
+    spinAnim = null
+  }
+  // If an animation is already running on this same element, keep it going —
   // cancel & restart would jump the angle back to 0.
   if (spinAnim) return
   spinAnim = svg.animate(
     [{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }],
     { duration: ROTATION_MS, iterations: Infinity, easing: 'linear' },
   )
+  spinAnimEl = svg
 }
 
 /**
@@ -147,6 +157,7 @@ function stopSpin() {
       spinAnim.cancel()
       spinAnim = null
     }
+    spinAnimEl = null
     playConfirm()
   }, remain)
 }
@@ -181,6 +192,15 @@ watch(() => props.loading, async (v) => {
   }
 })
 
+// If the caller swaps the icon while spinning, re-target the animation onto
+// the newly-rendered svg (startSpin aborts the stale detached-element spin).
+watch(() => props.icon, async () => {
+  if (!props.loading) return
+  showConfirm.value = false
+  await nextTick()
+  if (props.loading) startSpin()
+})
+
 onMounted(() => {
   // Component may mount already-loading (e.g. a file refresh is in flight when
   // the panel opens) — the watch above only fires on changes.
@@ -197,6 +217,7 @@ onBeforeUnmount(() => {
     spinAnim.cancel()
     spinAnim = null
   }
+  spinAnimEl = null
 })
 
 function handleClick(e: MouseEvent) {

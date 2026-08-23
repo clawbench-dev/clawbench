@@ -10,6 +10,15 @@ interface CancelExecutionOptions {
   onSuccess?: () => void
 }
 
+export interface TerminateExecutionOptions {
+  taskId: number
+  executionId: string
+  /** Stop the live preview stream (the execution is no longer running) */
+  onStopPreview?: () => void
+  /** Refresh the execution detail after a successful cancel */
+  onRefresh: () => void
+}
+
 /**
  * Cancel a running task execution (shared by the history list and the exec
  * detail toolbar). Shows a confirmation dialog, calls the backend, and reports
@@ -44,4 +53,26 @@ export async function cancelExecution(options: CancelExecutionOptions): Promise<
     }
     return false
   }
+}
+
+/**
+ * Cancel a running execution and coordinate the post-cancel UI updates.
+ *
+ * Wraps `cancelExecution` and guarantees the detail refresh runs exactly once
+ * on the success path (via cancelExecution's onSuccess). Callers must NOT also
+ * refresh off the returned boolean — doing so would trigger a redundant second
+ * refresh (the success path fires onSuccess and returns true).
+ *
+ * @returns true if the execution was successfully cancelled, false otherwise.
+ */
+export async function terminateExecution(options: TerminateExecutionOptions): Promise<boolean> {
+  const { taskId, executionId, onStopPreview, onRefresh } = options
+  return cancelExecution({
+    taskId,
+    executionId,
+    onSuccess: () => {
+      onStopPreview?.()
+      onRefresh()
+    },
+  })
 }

@@ -247,4 +247,28 @@ describe('RefreshButton', () => {
     expect(wrapper.emitted('click')).toHaveLength(1) // blocked while loading
     expect((wrapper.find('button').element as HTMLButtonElement).disabled).toBe(true)
   })
+
+  it('re-targets the spin animation when the icon prop swaps mid-load', async () => {
+    const wrapper = mountBtn()
+    await wrapper.setProps({ loading: true })
+    await nextTick()
+    expect(animateMock).toHaveBeenCalledTimes(1)
+    // The animation is running on the original RefreshCw svg.
+    const firstAnimSvg = animatedEls[0]
+    expect(firstAnimSvg).toBe(wrapper.find('svg').element)
+
+    // Swap the icon while still loading: the old animation targets a detached
+    // node, so a fresh spin must start on the newly-rendered RotateCcw svg.
+    await wrapper.setProps({ icon: 'RotateCcw' })
+    await nextTick()
+    await nextTick()
+
+    expect(animateMock).toHaveBeenCalledTimes(2)
+    // The new animation is bound to the currently-rendered (RotateCcw) svg.
+    const secondAnimSvg = animatedEls[1]
+    const renderedSvg = wrapper.find('svg').element
+    expect(secondAnimSvg).toBe(renderedSvg)
+    // The superseded animation was cancelled.
+    expect(animations[0].cancel).toHaveBeenCalledTimes(1)
+  })
 })

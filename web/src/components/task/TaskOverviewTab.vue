@@ -39,7 +39,7 @@
         </div>
         <div v-if="taskNextRunAt" class="overview-row highlight">
           <span class="overview-label">{{ t('chat.contentBlocks.nextRun') }}</span>
-          <span class="overview-value">{{ formatDateTime(taskNextRunAt) }}</span>
+          <span class="overview-value">{{ formatDateTimeWithYear(taskNextRunAt) }}</span>
         </div>
       </div>
 
@@ -70,7 +70,7 @@ import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store } from '@/stores/app.ts'
-import { humanizeCron, repeatLabel, formatDateTime } from '@/utils/format'
+import { humanizeCron, repeatLabel, formatDateTimeWithYear } from '@/utils/format'
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()

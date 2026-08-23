@@ -31,7 +31,7 @@ vi.mock('@/composables/useLocale', () => ({
   },
 }))
 
-import { cancelExecution } from '@/utils/taskExecUtils'
+import { cancelExecution, terminateExecution } from '@/utils/taskExecUtils'
 
 describe('cancelExecution (shared util)', () => {
   beforeEach(() => {
@@ -78,5 +78,56 @@ describe('cancelExecution (shared util)', () => {
       expect.stringContaining('boom'),
       expect.objectContaining({ type: 'error' }),
     )
+  })
+})
+
+describe('terminateExecution (shared util)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockDialogConfirm.mockResolvedValue(true)
+    mockApiPut.mockResolvedValue({ ok: true })
+  })
+
+  it('refreshes exactly once and stops the preview on a successful cancel', async () => {
+    const onRefresh = vi.fn()
+    const onStopPreview = vi.fn()
+    const ok = await terminateExecution({ taskId: 7, executionId: 'session-123', onRefresh, onStopPreview })
+    expect(ok).toBe(true)
+    // The refresh must fire exactly once — no double-refresh from the caller
+    // re-reading the returned boolean after onSuccess already refreshed.
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+    expect(onStopPreview).toHaveBeenCalledTimes(1)
+    // Preview is stopped before the refresh happens
+    expect(onStopPreview.mock.invocationCallOrder[0]).toBeLessThan(onRefresh.mock.invocationCallOrder[0])
+  })
+
+  it('does not refresh or stop the preview when the user dismisses the dialog', async () => {
+    mockDialogConfirm.mockResolvedValue(false)
+    const onRefresh = vi.fn()
+    const onStopPreview = vi.fn()
+    const ok = await terminateExecution({ taskId: 7, executionId: 'session-123', onRefresh, onStopPreview })
+    expect(ok).toBe(false)
+    expect(onRefresh).not.toHaveBeenCalled()
+    expect(onStopPreview).not.toHaveBeenCalled()
+  })
+
+  it('does not refresh when the cancel fails (404 already-finished)', async () => {
+    mockApiPut.mockRejectedValue(new Error('TaskExecutionNotFound'))
+    const onRefresh = vi.fn()
+    const onStopPreview = vi.fn()
+    const ok = await terminateExecution({ taskId: 7, executionId: 'session-123', onRefresh, onStopPreview })
+    expect(ok).toBe(false)
+    expect(onRefresh).not.toHaveBeenCalled()
+    expect(onStopPreview).not.toHaveBeenCalled()
+  })
+
+  it('refreshes only once even when the caller inspects the return value', async () => {
+    // Reproduces the original double-refresh bug: the caller refreshing again
+    // when the returned boolean is true must NOT be needed — onRefresh already
+    // fired once on the success path.
+    const onRefresh = vi.fn()
+    const ok = await terminateExecution({ taskId: 7, executionId: 'session-123', onRefresh })
+    expect(ok).toBe(true)
+    expect(onRefresh).toHaveBeenCalledTimes(1)
   })
 })

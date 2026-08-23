@@ -48,7 +48,7 @@
             </div>
             <div class="task-item-next">
               <Clock class="meta-icon" :size="12" />
-              <span v-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTime(task.nextRunAt) }) }}</span>
+              <span v-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTimeWithYear(task.nextRunAt) }) }}</span>
               <span v-else>{{ t('task.nextRunNone') }}</span>
             </div>
           </div>
@@ -67,7 +67,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useAgents } from '@/composables/useAgents'
-import { humanizeCron, repeatLabel, statusLabel, formatDateTime } from '@/utils/format'
+import { humanizeCron, repeatLabel, statusLabel, formatDateTimeWithYear } from '@/utils/format'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'

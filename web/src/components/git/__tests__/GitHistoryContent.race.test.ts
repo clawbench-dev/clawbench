@@ -52,4 +52,44 @@ describe('createSeqGuard — git history race guard', () => {
         const guard = createSeqGuard()
         expect(guard.isCurrent({ __seqToken: true })).toBe(false)
     })
+
+    it('each token carries a distinct, live AbortSignal', () => {
+        const guard = createSeqGuard()
+        const t1 = guard.token()
+        expect(t1.signal).toBeInstanceOf(AbortSignal)
+        expect(t1.signal.aborted).toBe(false)
+        const t2 = guard.token()
+        expect(t2.signal).toBeInstanceOf(AbortSignal)
+        expect(t1.signal).not.toBe(t2.signal)
+        // t1 was superseded (aborted) when t2 was issued; t2 is the live one.
+        expect(t1.signal.aborted).toBe(true)
+        expect(t2.signal.aborted).toBe(false)
+    })
+
+    it('issuing a new token aborts the superseded token\u2019s signal', () => {
+        const guard = createSeqGuard()
+        const t1 = guard.token()
+        expect(t1.signal.aborted).toBe(false)
+        const t2 = guard.token()
+        // The first (superseded) request's signal is aborted so its in-flight
+        // fetch is actually terminated, not merely discarded late.
+        expect(t1.signal.aborted).toBe(true)
+        expect(t2.signal.aborted).toBe(false)
+        // A further load aborts the previous one too.
+        const t3 = guard.token()
+        expect(t2.signal.aborted).toBe(true)
+        expect(t3.signal.aborted).toBe(false)
+    })
+
+    it('aborting a superseded token does not affect a later token', () => {
+        const guard = createSeqGuard()
+        const t1 = guard.token()
+        const t2 = guard.token()
+        const t3 = guard.token()
+        // t1 was aborted when t2 was issued; t2 when t3 was issued.
+        expect(t1.signal.aborted).toBe(true)
+        expect(t2.signal.aborted).toBe(true)
+        // The latest token stays usable for its request.
+        expect(t3.signal.aborted).toBe(false)
+    })
 })

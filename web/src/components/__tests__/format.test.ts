@@ -45,6 +45,7 @@ import {
   repeatLabel,
   formatRelativeTime,
   formatDateTime,
+  formatDateTimeWithYear,
   stripMarkdownPreview,
 } from '@/utils/format.ts'
 
@@ -187,6 +188,35 @@ describe('formatDateTime', () => {
     const result = formatDateTime('2025-03-20T09:15:00')
     // toLocaleString output should contain colon-separated time
     expect(result).toMatch(/\d+:\d+/)
+  })
+})
+
+describe('formatDateTimeWithYear', () => {
+  it('returns empty string for falsy input', () => {
+    expect(formatDateTimeWithYear('')).toBe('')
+    expect(formatDateTimeWithYear(null as any)).toBe('')
+  })
+
+  it('omits the year for a current-year datetime (matches formatDateTime)', () => {
+    const now = new Date()
+    const d = new Date(now.getFullYear(), 0, 15, 8, 30) // Jan 15 this year
+    expect(formatDateTimeWithYear(d)).toBe(formatDateTime(d))
+  })
+
+  it('includes the year for a cross-year (future) datetime', () => {
+    const nextYear = new Date().getFullYear() + 1
+    const d = new Date(nextYear, 11, 31, 8, 0) // Dec 31 next year
+    const out = formatDateTimeWithYear(d)
+    // A year-less format is ambiguous for a Dec 31 across the year boundary —
+    // the 2-digit year must appear somewhere in the output.
+    expect(out).toContain(String(nextYear).slice(-2))
+    expect(out.length).toBeGreaterThan(formatDateTime(d).length)
+  })
+
+  it('handles string input', () => {
+    const nextYear = new Date().getFullYear() + 1
+    const out = formatDateTimeWithYear(`${nextYear}-12-31T08:00:00`)
+    expect(out).toContain(String(nextYear).slice(-2))
   })
 })
 

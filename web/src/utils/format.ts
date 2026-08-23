@@ -32,6 +32,32 @@ export function formatDateTime(date: string | Date): string {
     })
 }
 
+/**
+ * Format a date as a localized datetime including the year.
+ *
+ * Used for key scheduling info (e.g. a task's next run time) that can span
+ * years — `formatDateTime` omits the year, so a Dec 31 next-run would be
+ * ambiguous. The year is shown only when it differs from the current year to
+ * avoid clutter for same-year times.
+ */
+export function formatDateTimeWithYear(date: string | Date): string {
+    if (!date) return ''
+    const d = new Date(date)
+    const locale = i18n.global.locale.value === 'zh' ? 'zh-CN' : 'en-US'
+    const opts: Intl.DateTimeFormatOptions = {
+        year: '2-digit',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    }
+    // Omit the year for same-year times to reduce clutter.
+    if (d.getFullYear() === new Date().getFullYear()) {
+        delete opts.year
+    }
+    return d.toLocaleString(locale, opts)
+}
+
 /** Humanize a cron expression into localized description */
 export function humanizeCron(expr: string): string {
     const parts = expr.split(' ')

@@ -61,6 +61,7 @@ vi.mock('@/utils/format', () => ({
   humanizeCron: (cron: string) => `cron:${cron}`,
   repeatLabel: () => 'repeat',
   formatDateTime: (t: string) => `time:${t}`,
+  formatDateTimeWithYear: (t: string) => `year:${t}`,
 }))
 
 const baseTask = {

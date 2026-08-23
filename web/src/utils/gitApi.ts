@@ -89,15 +89,28 @@ export function gitFetch(url: string, opts: GitFetchOptions = {}): Promise<Respo
  * by THIS guard, so stale responses can be discarded safely. Tokens are
  * opaque object references compared by identity, so tokens from different
  * guards can never collide.
+ *
+ * Each token carries an AbortSignal for the request it guards. Issuing a new
+ * token ABORTS the previous token's signal, so a superseded request is
+ * actually terminated (its fetch rejects with AbortError and frees network
+ * resources) rather than merely having its late response discarded.
  */
-export interface SeqToken { __seqToken: true }
+export interface SeqToken {
+  __seqToken: true
+  /** Signal to pass to the request guarded by this token */
+  signal: AbortSignal
+}
 export function createSeqGuard(): { token: () => SeqToken; isCurrent: (t: SeqToken) => boolean } {
-    let current: SeqToken | null = null
-    return {
-        token: () => {
-            current = { __seqToken: true }
-            return current
-        },
-        isCurrent: (t: SeqToken) => t === current,
-    }
+  let current: SeqToken | null = null
+  let controller: AbortController | null = null
+  return {
+    token: () => {
+      // Terminate the superseded request before handing out a fresh token.
+      controller?.abort()
+      controller = new AbortController()
+      current = { __seqToken: true, signal: controller.signal }
+      return current
+    },
+    isCurrent: (t: SeqToken) => t === current,
+  }
 }

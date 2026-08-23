@@ -104,7 +104,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
-import { cancelExecution as cancelExecutionAction } from '@/utils/taskExecUtils.ts'
+import { terminateExecution } from '@/utils/taskExecUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 
@@ -158,15 +158,14 @@ async function onTerminate() {
     // Backend runningExecutions map is keyed by session ID, not the DB id.
     // Prefer sessionId for running executions; fall back to DB id.
     const executionId = props.execDetail?.sessionId || String(props.execDetail.id)
-    const cancelled = await cancelExecutionAction({
+    // terminateExecution refreshes exactly once on the success path — do NOT
+    // also refresh off its return value (that would double-refresh).
+    await terminateExecution({
       taskId: props.taskId,
       executionId,
-      onSuccess: () => {
-        execStream.stopPreview()
-        refreshExecDetail()
-      },
+      onStopPreview: () => execStream.stopPreview(),
+      onRefresh: () => refreshExecDetail(),
     })
-    if (cancelled) refreshExecDetail()
   } finally {
     cancelling.value = false
   }
