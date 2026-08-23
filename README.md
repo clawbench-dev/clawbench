@@ -307,7 +307,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 
 
 ### 🎨 Themes
-- **17 Named Themes**: VSCode-style self-contained color schemes — GitHub Light/Dark, One Dark Pro, Catppuccin Mocha/Latte, Dracula, Nord, Tokyo Night, Solarized Dark/Light, Gruvbox Dark/Light, High Contrast Dark/Light, Night Owl, Ayu Dark, Vitesse Dark
+- **18 Named Themes**: VSCode-style self-contained color schemes — GitHub Light/Dark, One Dark Pro, Catppuccin Mocha/Latte, Dracula, Nord, Tokyo Night, Solarized Dark/Light/Deep, Gruvbox Dark/Light, High Contrast Dark/Light, Night Owl, Ayu Dark, Vitesse Dark
 - **Follow System**: `auto` mode picks the default GitHub Light/Dark based on the system color scheme
 - **Quick Theme Picker**: Palette button in the header switches themes on the fly with live color previews
 - **Persistent & Status Bar Aware**: Selection is saved locally and restored on reload; Android status bar color follows the active theme

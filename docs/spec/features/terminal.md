@@ -64,7 +64,7 @@ sequenceDiagram
 - **键盘避让**：`useTerminalKeyboard` 跟踪 Android 软键盘高度，键盘关闭时自动复位为 0；`useTerminalViewport` 检测 adjustResize 模式（`innerHeight` 缩小时 `fullScreenHeight - currentInnerHeight` 为正），此模式下浏览器自动调整 `position:fixed` 容器，无需额外 CSS 补偿。视口调整使用 `visualViewport` 高度，PC 端跳过键盘检测避免将窗口缩放误判为键盘弹出。焦点切换时通过 `shouldAutoRefocusTerminal` 判断是否重新聚焦 xterm，避免 Android WebView 键盘闪烁
 - **键位与符号配置**：自定义虚拟键盘的按键和符号布局，配置持久化到数据库。用户可以添加常用的特殊符号，调整修饰键的排列
 - **快捷指令**：预设常用命令一键发送（如 `git status`、`docker ps`），通过 `useCrudList` 管理 CRUD。与聊天快捷发送共享基础设施
-- **终端主题切换**：内置 157 个 xterm-theme 主题（如 Dracula、Solarized、Catppuccin 等），支持 `auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage，懒加载 xterm-theme 模块避免首屏体积膨胀。选择入口有两个：终端工具栏的主题按钮（带各主题 bg/fg/accent 实时配色预览）和 Settings → 终端面板的"配色主题"下拉
+- **终端主题切换**：内置 157 个 xterm-theme 主题（如 Dracula、Solarized、Catppuccin 等），支持 `auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage，懒加载 xterm-theme 模块避免首屏体积膨胀。选择入口有两个：终端工具栏的主题按钮（带各主题 bg/fg/accent 实时配色预览）和 Settings → 终端面板的"配色主题"下拉。该计数与 `node_modules/xterm-theme` 具名导出数保持一致，升级 xterm-theme 时需同步
 - **终端输入抽屉**：移动端多行文本输入的 BottomSheet，支持从剪贴板粘贴填充、清空和发送。解决移动端虚拟键盘在 xterm 中输入长命令的体验问题
 - **终端帮助抽屉**：`TerminalHelpDrawer` 展示手势操作、快捷键和符号输入的完整说明，按分类组织（手势、快捷键、修饰键、符号），触摸设备仅显示手势相关条目。帮助入口嵌入终端工具栏，一键查看无需记忆
 

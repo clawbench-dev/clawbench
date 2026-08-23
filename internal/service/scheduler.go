@@ -909,7 +909,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		slog.String("status", newStatus),
 	)
 
-	// Generate summary asynchronously — use the shared summarizeTarget so that
+	// Generate summary asynchronously — use the shared summarizeMessage so that
 	// scheduled tasks follow the exact same strategy as interactive chat
 	// (respecting chatSummaryMode, AI with simple fallback). Keyed by the
 	// assistant message ID (runResult.MsgID), same as interactive chat sessions.
