@@ -196,7 +196,7 @@ describe('SessionDrawer', () => {
   it('shows default badge on preferred model', () => {
     const wrapper = mountDrawer()
     const items = wrapper.findAll('.model-item')
-    expect(items[0].find('.default-badge').exists() || items[0].text().includes('默认')).toBe(true)
+    expect(items[0].find('.default-label').exists()).toBe(true)
   })
 
   // --- Search ---

@@ -1235,30 +1235,38 @@ describe('ChatInputBar', () => {
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
       mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
-      const btn = wrapper.find('.session-info-compact')
+      const btn = wrapper.find('.usage-popup-compact-btn')
       expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeUndefined()
       expect(btn.text()).toContain('Compact context')
     })
 
-    it('hides compact button when usage < 75%', async () => {
+    it('shows compact button even when usage < 75%', async () => {
       mockContextUsed.value = 50000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
       mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.session-info-compact').exists()).toBe(false)
+      const btn = wrapper.find('.usage-popup-compact-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeUndefined()
     })
 
-    it('hides compact button when /compact command not available', async () => {
+    it('disables compact button when /compact command not available', async () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/help', description: 'Show help' }]
       mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.session-info-compact').exists()).toBe(false)
+      const btn = wrapper.find('.usage-popup-compact-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeDefined()
     })
 
     it('shows compact button with command name without slash prefix', async () => {
@@ -1267,18 +1275,24 @@ describe('ChatInputBar', () => {
       mockAvailableCommands.value = [{ name: 'compact', description: 'Compact conversation' }]
       mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.session-info-compact').exists()).toBe(true)
+      const btn = wrapper.find('.usage-popup-compact-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeUndefined()
     })
 
-    it('hides compact button when not ACP transport', async () => {
+    it('disables compact button when not ACP transport', async () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
       mockSessionTransport.value = 'cli'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.session-info-compact').exists()).toBe(false)
+      const btn = wrapper.find('.usage-popup-compact-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeDefined()
     })
 
     it('clicking compact button emits send with /compact', async () => {
@@ -1287,8 +1301,9 @@ describe('ChatInputBar', () => {
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
       mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
-      const compactBtn = wrapper.find('.session-info-compact')
+      const compactBtn = wrapper.find('.usage-popup-compact-btn')
       await compactBtn.trigger('click')
       expect(wrapper.emitted('send')).toBeTruthy()
       expect(wrapper.emitted('send')![0]).toEqual(['/compact'])
