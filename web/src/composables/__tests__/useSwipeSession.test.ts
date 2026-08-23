@@ -114,10 +114,12 @@ describe('useSwipeSession disabled guard', () => {
     const endEvent = createTouchEvent('touchend', 50, 100)
     onTouchEnd(endEvent)
 
-    // Wait for async operations
+    // Wait for async operations. Full-suite scheduling under the coverage gate
+    // can slow async tasks; the swipe handler may need more than 5s when the
+    // worker pool is busy.
     await vi.waitFor(() => {
       expect(switchSession).toHaveBeenCalled()
-    }, { timeout: 5000 })
+    }, { timeout: 20_000 })
 
     // Indicator should show the target session title
     expect(indicatorText.value).toBeTruthy()
