@@ -45,10 +45,10 @@ const labelOriginal = computed(() => t(`${props.i18nPrefix}.${props.mode === 'ta
 /* ── Tab mode ── */
 .summary-toggle-bar {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   margin-bottom: 12px;
   background: var(--bg-secondary, #f1f5f9);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 3px;
 }
 
@@ -60,7 +60,7 @@ const labelOriginal = computed(() => t(`${props.i18nPrefix}.${props.mode === 'ta
   font-size: 13px;
   font-weight: 500;
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: 0;
   cursor: pointer;
   transition: all 0.2s ease;
   text-align: center;

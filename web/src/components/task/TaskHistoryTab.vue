@@ -13,16 +13,19 @@
         <div class="execution-row">
           <div class="execution-info">
             <div class="execution-time-row">
-              <template v-if="isRunning(exec)">
-                <span class="exec-running-dot"></span>
-                <span class="exec-running-label">{{ t('task.exec.running') }}</span>
-              </template>
-              <template v-else>
-                <span v-if="isUnreadDisplay(exec)" class="exec-unread-dot"></span>
+              <template v-if="!isRunning(exec) && isUnreadDisplay(exec)">
+                <span class="exec-unread-dot"></span>
               </template>
               <span v-if="exec.triggerType === 'manual'" class="exec-trigger-type manual">{{ t('task.exec.manual') }}</span>
               <span v-else class="exec-trigger-type auto">{{ t('task.exec.auto') }}</span>
-              <template v-if="!isRunning(exec)">
+              <template v-if="isRunning(exec)">
+                <span class="exec-status-badge running">
+                  <span class="exec-running-dot"></span>
+                  <span>{{ t('task.exec.running') }}</span>
+                </span>
+                <span class="exec-duration" :title="formatDuration(elapsedMs(exec.startedAt))">{{ formatElapsed(exec.startedAt) }}</span>
+              </template>
+              <template v-else>
                 <span v-if="exec.status === 'cancelled'" class="exec-status-badge cancelled">{{ t('task.exec.statusCancelled') }}</span>
                 <span v-else-if="exec.status === 'failed'" class="exec-status-badge failed">{{ t('task.exec.statusFailed') }}</span>
                 <span v-if="exec.metadata?.wallMs" class="exec-duration">{{ formatDuration(exec.metadata.wallMs) }}</span>
@@ -140,9 +143,54 @@ function stopPolling() {
   }
 }
 
+// ── Live elapsed-time display for running executions ──
+// Ticks every second so running entries show a live "time elapsed" counter.
+const elapsedNow = ref(0)
+let elapsedTimer = null
+
+function elapsedMs(startedAt) {
+  if (!startedAt) return 0
+  // Reference the live ticker so this re-evaluates every second
+  void elapsedNow.value
+  const start = new Date(startedAt).getTime()
+  if (Number.isNaN(start)) return 0
+  return Math.max(0, Date.now() - start)
+}
+
+function formatElapsed(startedAt) {
+  return formatDuration(elapsedMs(startedAt))
+}
+
+function startElapsedTicker() {
+  if (elapsedTimer) return
+  elapsedTimer = setInterval(() => {
+    elapsedNow.value = Date.now()
+  }, 1000)
+}
+
+function stopElapsedTicker() {
+  if (elapsedTimer !== null) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
+
+// Start/stop the ticker based on whether any execution is running.
+// Uses flush: 'sync' so the computed re-evaluates as soon as runningExecutions changes.
+// immediate: true covers the case where runningExecutions is already populated on mount.
+watch(
+  () => allExecutions.value.some(isRunning),
+  (hasRunning) => {
+    if (hasRunning) startElapsedTicker()
+    else stopElapsedTicker()
+  },
+  { flush: 'sync', immediate: true },
+)
+
 watch(() => props.task?.id, (newId) => {
   if (!newId) {
     stopPolling()
+    stopElapsedTicker()
     return
   }
   onTaskChange()
@@ -163,6 +211,7 @@ watch(() => props.scrollRoot?.value, () => {
 
 onUnmounted(() => {
   stopPolling()
+  stopElapsedTicker()
   onTaskChange() // Abort in-flight requests (ISS-016)
   if (observer) {
     observer.disconnect()
@@ -319,6 +368,14 @@ defineExpose({
   text-transform: uppercase;
   letter-spacing: 0.02em;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.exec-status-badge.running {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
 }
 .exec-status-badge.cancelled {
   background: var(--bg-tertiary, #e5e7eb);
@@ -387,10 +444,10 @@ defineExpose({
   align-items: center;
 }
 
-/* ── Running execution indicator ── */
+/* ── Running execution indicator (inside status badge) ── */
 .exec-running-dot {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: #16a34a;
   flex-shrink: 0;
@@ -399,7 +456,7 @@ defineExpose({
 
 @keyframes exec-running-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5); }
-  50% { opacity: 0.7; box-shadow: 0 0 10px 4px rgba(22, 163, 74, 0.3); }
+  50% { opacity: 0.7; box-shadow: 0 0 6px 3px rgba(22, 163, 74, 0.3); }
 }
 
 /* ── Just-completed execution flash ── */
@@ -410,12 +467,6 @@ defineExpose({
 @keyframes exec-just-completed {
   0% { background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, var(--bg-secondary, #f8f9fa)); transform: translateX(8px); opacity: 0.7; }
   100% { background: var(--bg-secondary, #f8f9fa); transform: translateX(0); opacity: 1; }
-}
-
-.exec-running-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #16a34a;
 }
 
 /* ── Cancel button ── */

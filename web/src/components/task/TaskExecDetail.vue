@@ -6,7 +6,7 @@
     </div>
 
     <!-- Scrollable message content -->
-    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onContentTouchStart" @touchend="onContentTouchEnd" @touchcancel="onContentTouchEnd" @scroll="handleScroll">
       <!-- Summary / Original tab bar (hidden during live streaming) -->
       <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value && !isRunning" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
@@ -409,6 +409,51 @@ function showMetadata() {
 // ── Delegated click handler for .chat-file-open-btn ──
 const contentRef = ref(null)
 
+// ── Auto-follow scroll (mirrors chat streaming UX) ──
+// When live streaming output, keep pinned to the bottom unless the user
+// manually scrolls elsewhere. Scrolling back to the bottom resumes following.
+const isAtBottom = ref(true)
+const NEAR_BOTTOM_THRESHOLD = 100
+let userTouching = false
+
+function handleScroll() {
+  if (!contentRef.value) return
+  const el = contentRef.value
+  const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  isAtBottom.value = distFromBottom < NEAR_BOTTOM_THRESHOLD
+}
+
+function onContentTouchStart(e) {
+  userTouching = true
+  onTableTouchStart(e)
+}
+
+function onContentTouchEnd() {
+  // Short delay so the final scroll event from the user's gesture lands
+  // before auto-scroll re-engages (prevents snap-back fighting the touch).
+  setTimeout(() => { userTouching = false }, 150)
+}
+
+function scrollToBottom() {
+  if (!contentRef.value || !isAtBottom.value) return
+  const el = contentRef.value
+  el.scrollTop = el.scrollHeight
+  // Re-check after layout — content may grow during streaming.
+  // Only correct if the user hasn't scrolled up since (sticky-jitter guard).
+  requestAnimationFrame(() => {
+    if (!contentRef.value || !isAtBottom.value) return
+    const c = contentRef.value
+    const gap = c.scrollHeight - c.scrollTop - c.clientHeight
+    if (gap > 0) c.scrollTop = c.scrollHeight
+  })
+}
+
+// Follow streaming updates while at the bottom
+watch(activeMsgData, () => {
+  if (userTouching) return
+  nextTick(scrollToBottom)
+})
+
 function handleContentClick(event) {
   // 0. Code block header buttons (copy/wrap)
   if (handleCodeBlockClick(event)) return
@@ -466,6 +511,7 @@ watch(() => props.execDetail, (newVal, oldVal) => {
   closeOverlay()
   metadataModal.value.show = false
   activeTab.value = hasSummary.value ? 'summary' : 'original'
+  isAtBottom.value = true
 
   // Start live preview when execution becomes running
   if (newVal?.status === 'running' && newVal?.sessionId) {

@@ -49,7 +49,6 @@ export default {
     fileManager: 'File Manager',
     fileView: 'File',
     history: 'History',
-    viewLatest: 'View latest run',
     tasks: 'Tasks',
     portForward: 'Port Mapping',
     frp: 'NAT Traversal (frp)',

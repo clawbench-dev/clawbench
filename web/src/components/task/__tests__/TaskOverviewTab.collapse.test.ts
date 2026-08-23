@@ -88,22 +88,22 @@ describe('TaskOverviewTab prompt collapse', () => {
   const bodyStyle = (wrapper: ReturnType<typeof mount>) =>
     wrapper.find('.prompt-body').attributes('style') || ''
 
-  it('renders prompt body by default', () => {
+  it('renders prompt collapsed by default', () => {
     const wrapper = mount(TaskOverviewTab, {
       props: { task: { ...baseTask } },
     })
     expect(wrapper.find('.prompt-body').exists()).toBe(true)
-    expect(bodyStyle(wrapper)).not.toContain('display: none')
-    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(false)
+    expect(bodyStyle(wrapper)).toContain('display: none')
+    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(true)
   })
 
-  it('collapses prompt body when title is clicked', async () => {
+  it('expands prompt body when title is clicked', async () => {
     const wrapper = mount(TaskOverviewTab, {
       props: { task: { ...baseTask } },
     })
     await wrapper.find('.prompt-card-title').trigger('click')
-    expect(bodyStyle(wrapper)).toContain('display: none')
-    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(true)
+    expect(bodyStyle(wrapper)).not.toContain('display: none')
+    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(false)
   })
 
   it('toggles prompt collapse on subsequent clicks', async () => {
@@ -111,10 +111,10 @@ describe('TaskOverviewTab prompt collapse', () => {
       props: { task: { ...baseTask } },
     })
     const title = wrapper.find('.prompt-card-title')
-    await title.trigger('click') // collapse
-    expect(bodyStyle(wrapper)).toContain('display: none')
     await title.trigger('click') // expand
     expect(bodyStyle(wrapper)).not.toContain('display: none')
+    await title.trigger('click') // collapse
+    expect(bodyStyle(wrapper)).toContain('display: none')
   })
 
   it('no longer renders the action bar (moved to TaskDetailPage bottom bar)', () => {

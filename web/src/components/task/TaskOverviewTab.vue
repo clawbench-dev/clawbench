@@ -96,7 +96,7 @@ const taskRunningCount = computed(() => task.value.runningCount as number)
 const taskNextRunAt = computed(() => task.value.nextRunAt as string | undefined)
 const taskPrompt = computed(() => task.value.prompt as string)
 
-const promptCollapsed = ref(false)
+const promptCollapsed = ref(true)
 
 const promptBodyRef = ref<HTMLElement | null>(null)
 const renderedPrompt = ref('')
