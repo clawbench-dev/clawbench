@@ -161,6 +161,13 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+// Mock useFileRefresh: the refresh button spin is driven by the shared
+// isRefreshing ref (which tracks the real refresh duration in the app).
+const { mockIsRefreshing } = vi.hoisted(() => ({ mockIsRefreshing: { value: false } }))
+vi.mock('@/composables/useFileRefresh', () => ({
+  isRefreshing: mockIsRefreshing,
+}))
+
 vi.mock('@/utils/fileManager', () => ({
   buildThumbUrl: (dir: string, name: string) => `/api/file/thumb?path=${dir}/${name}`,
   isImage: (e: any) => /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(e.name || ''),
@@ -306,6 +313,7 @@ beforeEach(() => {
   mockHandleFolderSelect.mockResolvedValue(undefined)
   mockIsPC.value = false
   mockIsAppMode.value = false
+  mockIsRefreshing.value = false
   mockToolbarCollapsedIds.length = 0
   mockDirUploading.value = false
   mockDirUploadProgress.value = 0
@@ -548,6 +556,33 @@ describe('FileManagerContent — toolbar', () => {
     await refreshBtn!.trigger('click')
 
     expect(wrapper.emitted('refresh')).toBeTruthy()
+  })
+
+  it('reflects the shared refresh-in-flight state on the refresh button', async () => {
+    mockIsRefreshing.value = false
+    let wrapper = mountContent()
+    const btns = wrapper.findAll('.toolbar-btn')
+    let refreshBtn = btns.find(b => b.attributes('title') === '刷新')
+    expect(refreshBtn).toBeTruthy()
+    expect(refreshBtn!.classes()).not.toContain('refresh-spin--active')
+
+    // Click emits refresh
+    await refreshBtn!.trigger('click')
+    expect(wrapper.emitted('refresh')).toHaveLength(1)
+
+    // Shared isRefreshing true → spin visible
+    mockIsRefreshing.value = true
+    wrapper.unmount()
+    wrapper = mountContent()
+    refreshBtn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '刷新')
+    expect(refreshBtn!.classes()).toContain('refresh-spin--active')
+
+    // Shared isRefreshing false → spin ends
+    mockIsRefreshing.value = false
+    wrapper.unmount()
+    wrapper = mountContent()
+    refreshBtn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '刷新')
+    expect(refreshBtn!.classes()).not.toContain('refresh-spin--active')
   })
 })
 

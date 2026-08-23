@@ -4,9 +4,7 @@
       <SparklesIcon :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('chat.messageClusters.title') }}</span>
       <span class="bs-header-actions">
-        <button v-if="loaded && clusters.length > 0 && !computing && progress.status !== 'error'" class="mc-header-btn" @click.stop="handleStartCompute" :title="t('chat.messageClusters.reanalyze')">
-          <RefreshCwIcon :size="16" />
-        </button>
+        <RefreshButton v-if="loaded && clusters.length > 0 && !computing && progress.status !== 'error'" :size="16" class="mc-header-btn" :loading="starting" :disabled="starting" :title="t('chat.messageClusters.reanalyze')" @click.stop="handleStartCompute" />
       </span>
     </template>
 
@@ -82,7 +80,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Sparkles as SparklesIcon, Plus as PlusIcon, List as ListIcon, Play as PlayIcon, RefreshCw as RefreshCwIcon } from 'lucide-vue-next'
+import { Sparkles as SparklesIcon, Plus as PlusIcon, List as ListIcon, Play as PlayIcon } from 'lucide-vue-next'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import QuickSendEditModal from '@/components/chat/QuickSendEditModal.vue'
@@ -99,6 +98,9 @@ const { clusters, loaded, loading, computing, progress, mode, updatedAt, fetchCl
 // ── QuickSend edit modal ──
 const quickSendEditOpen = ref(false)
 const quickSendInitialValues = ref<{ label: string; command: string } | undefined>(undefined)
+
+// Reanalyze-button spin feedback while the compute request is in flight
+const starting = ref(false)
 
 // ── Variants detail dialog ──
 const variantsDialogOpen = ref(false)
@@ -180,11 +182,19 @@ async function open() {
 }
 
 async function handleStartCompute() {
-  const result = await rawStartCompute()
-  if (result === 'already_running') {
-    toast.show(t('chat.messageClusters.computing'), { type: 'info' })
-  } else if (result === 'error') {
-    toast.show(t('chat.messageClusters.error'), { type: 'error' })
+  if (starting.value) return
+  starting.value = true
+  try {
+    const result = await rawStartCompute()
+    if (result === 'already_running') {
+      toast.show(t('chat.messageClusters.computing'), { type: 'info' })
+    } else if (result === 'error') {
+      toast.show(t('chat.messageClusters.error'), { type: 'error' })
+    }
+  } finally {
+    // The button is hidden by `v-if="!computing"` once compute kicks in, so the
+    // spin only covers the request-in-flight window (real duration, no fixed min).
+    starting.value = false
   }
 }
 

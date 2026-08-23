@@ -63,4 +63,25 @@ describe('SessionListHeader', () => {
     await wrapper.find('.header-action-btn[data-action="refresh"]').trigger('click')
     expect(wrapper.emitted('refresh')).toBeTruthy()
   })
+
+  it('shows the spinning feedback driven by the refreshing prop', async () => {
+    const wrapper = mountHeader({ pinned: true })
+    const btn = wrapper.find('.header-action-btn[data-action="refresh"]')
+    expect(btn.classes()).not.toContain('refresh-spin--active')
+
+    await btn.trigger('click')
+    expect(wrapper.emitted('refresh')).toHaveLength(1)
+
+    // Parent sets refreshing=true while its loadSessions() is in flight
+    await wrapper.setProps({ refreshing: true })
+    expect(btn.classes()).toContain('refresh-spin--active')
+
+    // Double-click while refreshing is ignored
+    await btn.trigger('click')
+    expect(wrapper.emitted('refresh')).toHaveLength(1)
+
+    // Refresh completes → spin ends
+    await wrapper.setProps({ refreshing: false })
+    expect(btn.classes()).not.toContain('refresh-spin--active')
+  })
 })

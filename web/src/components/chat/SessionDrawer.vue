@@ -30,10 +30,7 @@
           :placeholder="t('chat.sessionSetting.searchPlaceholder')"
           v-model="searchQuery"
         />
-        <button v-if="canRefresh" class="refresh-btn" :class="{ loading: refreshing }" @click="handleRefresh" :disabled="refreshing" :title="t('chat.sessionSetting.refresh')">
-          <LoadingIndicator v-if="refreshing" size="sm" inline />
-          <RefreshCw v-else :size="14" />
-        </button>
+        <RefreshButton v-if="canRefresh" class="refresh-btn" :loading="refreshing" :disabled="refreshing" :title="t('chat.sessionSetting.refresh')" @click="handleRefresh" />
       </div>
       <!-- Model list -->
       <div class="model-list">
@@ -211,10 +208,10 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RefreshCw, Star, Cpu, Brain, Compass, Cable } from 'lucide-vue-next'
+import { Star, Cpu, Brain, Compass, Cable } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'

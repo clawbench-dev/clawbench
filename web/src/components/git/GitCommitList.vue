@@ -15,16 +15,15 @@
         <span v-else-if="!untracked" class="drilldown-count">{{ t('git.commitList.loading') }}</span>
       </div>
       <SearchInput v-if="commits.length > 0" v-model="commitSearch" :placeholder="searchPlaceholder" class="commit-search-input" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
-      <button
+      <RefreshButton
         v-if="commits.length > 0"
         class="drilldown-refresh-btn"
-        :class="{ spinning: loading, 'refresh-pulse': refreshHint }"
-        :disabled="loading"
+        :class="{ 'refresh-pulse': refreshHint }"
+        :loading="refreshing"
+        :disabled="refreshing"
         :title="t('git.commitList.refresh')"
-        @click.stop="$emit('refresh')"
-      >
-        <RefreshCw :size="14" />
-      </button>
+        @click.stop="handleRefresh"
+      />
       <button
         v-if="isGit && mode !== 'file'"
         class="drilldown-refresh-btn"
@@ -106,12 +105,13 @@
 </template>
 
 <script setup>
-import { FileText, Info, RefreshCw, GitBranch } from 'lucide-vue-next'
+import { FileText, Info, GitBranch } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { refLabelText } from '@/utils/gitGraph'
@@ -142,6 +142,20 @@ const contentRef = ref(null)
 const bodyRef = ref(null)
 const observer = ref(null)
 const graphCollapsed = ref(false)
+
+// Refresh-button spin feedback. The actual load is delegated to the parent
+// (onRefresh → loadProjectHistory/loadFileHistory) and the `loading` prop is
+// hard-coded false there, so drive the spin locally for a consistent 600ms
+// minimum-visible window and dedup clicks.
+const refreshing = ref(false)
+let refreshTimer = null
+function handleRefresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(() => { refreshing.value = false }, 600)
+  emit('refresh')
+}
 
 // Touch swipe handling for graph toggle
 const SWIPE_THRESHOLD = 50
@@ -246,6 +260,7 @@ onMounted(() => {
 onUnmounted(() => {
   unobserveList()
   clearTimeout(searchTimer)
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
 })
 
 defineExpose({ observeList, unobserveList, commitSearch })
@@ -329,10 +344,6 @@ defineExpose({ observeList, unobserveList, commitSearch })
   cursor: not-allowed;
 }
 
-.drilldown-refresh-btn.spinning svg {
-  animation: spin 0.8s linear infinite;
-}
-
 /* Stale data indicator — pulsing glow on refresh button */
 .drilldown-refresh-btn.refresh-pulse {
   animation: refresh-pulse-glow 1.5s ease-in-out infinite;
@@ -342,11 +353,6 @@ defineExpose({ observeList, unobserveList, commitSearch })
 @keyframes refresh-pulse-glow {
   0%, 100% { box-shadow: 0 0 0 0 rgba(74, 144, 217, 0); }
   50% { box-shadow: 0 0 6px 2px rgba(74, 144, 217, 0.4); }
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 .drilldown-body {

@@ -7,6 +7,7 @@
           :session-count="sessionCount"
           :session-max-count="sessionMaxCount"
           :pinned="true"
+          :refreshing="sessionRefreshing"
           @refresh="handleRefresh"
           @open-search="$emit('open-session-search')"
           @create="handleCreateClick"
@@ -56,6 +57,10 @@ const { agents, loadAgents } = useAgents()
 
 const listRef = ref(null)
 const rootRef = ref(null)
+// Tracks a manual refresh so the sidebar refresh button can spin for the real
+// load duration (SessionList keeps its list visible during background reloads,
+// so `loading` alone can't drive the button).
+const sessionRefreshing = ref(false)
 
 const sessionCount = computed(() => store.state.sessionCount)
 const sessionMaxCount = computed(() => store.state.sessionMaxCount)
@@ -84,8 +89,13 @@ async function handleCreateClick() {
 }
 
 // Manual refresh in the pinned sidebar: reload the session list from the API.
-function handleRefresh() {
-  listRef.value?.loadSessions()
+async function handleRefresh() {
+  sessionRefreshing.value = true
+  try {
+    await listRef.value?.loadSessions()
+  } finally {
+    sessionRefreshing.value = false
+  }
 }
 
 function handleSelect(sessionId, backend) {

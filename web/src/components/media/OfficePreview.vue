@@ -24,7 +24,7 @@
       <div class="office-error-title">{{ t('file.viewer.loadFailed') }}</div>
       <div class="office-error-desc">{{ error }}</div>
       <div class="office-error-actions">
-        <button class="office-retry-btn" @click="reload">
+        <button class="office-retry-btn refresh-spin" :class="{ 'refresh-spin--active': loading }" :disabled="loading" @click="reload">
           <RefreshCw :size="14" />
           {{ t('common.retry') }}
         </button>

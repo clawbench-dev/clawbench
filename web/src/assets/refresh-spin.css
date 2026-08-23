@@ -1,0 +1,58 @@
+/*
+ * Unified refresh-button spin feedback.
+ *
+ * Every refresh/rescan button in the app uses this single class so the
+ * animation, timing and disabled behaviour stay consistent across all
+ * surfaces (file manager, task list, git history, settings, proxy, ...).
+ *
+ * Usage:
+ *   <button class="... refresh-spin" :class="{ 'refresh-spin--active': loading }" :disabled="loading">
+ *     <RefreshCw :size="14" />
+ *   </button>
+ *
+ * The class is intentionally global (not scoped) so it works for buttons
+ * rendered via <Teleport to="body"> (dropdowns, menus).
+ */
+.refresh-spin {
+    transition: opacity 0.15s;
+}
+
+.refresh-spin svg {
+    transition: transform 0.2s ease;
+}
+
+/* Active spinning state — applied while a refresh is in-flight.
+   NOTE: the RefreshButton component takes over rotation via the Web Animations
+   API (guaranteeing whole revolutions on stop) and disables this CSS animation
+   on its own icon via inline `animation: none`. This rule only drives native
+   buttons that use the utility class directly (overflow menus, span triggers,
+   full-row triggers, ...). */
+.refresh-spin--active svg {
+    animation: refresh-spin 0.8s linear infinite;
+}
+
+/* Disabled state (visual only; the component owns the actual :disabled attr) */
+.refresh-spin--active,
+.refresh-spin[disabled] {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* While active, block further clicks (covers span/div triggers without a
+   native :disabled attribute, e.g. SettingsItem's refresh icon) */
+.refresh-spin--active {
+    pointer-events: none;
+}
+
+@keyframes refresh-spin {
+    100% { transform: rotate(360deg); }
+}
+
+/* Success-confirmation bounce for RefreshButton: after the spin finishes a
+   whole revolution the icon briefly swaps to a green Check with this bounce-in,
+   applied via inline `animation: check-in 0.4s ease-out` on the Check icon. */
+@keyframes check-in {
+    0% { transform: scale(0); opacity: 0; }
+    50% { transform: scale(1.3); }
+    100% { transform: scale(1); opacity: 1; }
+}

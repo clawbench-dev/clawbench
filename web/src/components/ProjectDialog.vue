@@ -14,9 +14,7 @@
           <EyeOff v-if="!showHidden" :size="16" />
           <Eye v-else :size="16" />
         </button>
-        <button class="toolbar-btn" @click="loadBrowse" :title="t('nav.refresh')">
-          <RotateCw :size="16" />
-        </button>
+        <RefreshButton icon="RotateCw" :size="16" class="toolbar-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click="doRefresh" />
         <SearchInput v-model="searchQuery" :placeholder="t('projectDialog.search')" />
         <button class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
           <LocateFixed :size="16" />
@@ -62,12 +60,13 @@
 </template>
 
 <script setup>
-import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, RotateCw, LocateFixed } from 'lucide-vue-next'
-import { ref, computed, watch, inject } from 'vue'
+import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, LocateFixed } from 'lucide-vue-next'
+import { ref, computed, watch, inject, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from './common/ModalDialog.vue'
 import LoadingIndicator from './common/LoadingIndicator.vue'
 import SearchInput from './common/SearchInput.vue'
+import RefreshButton from './common/RefreshButton.vue'
 import DirBreadcrumb from './file/DirBreadcrumb.vue'
 import FileIcon from './common/FileIcon.vue'
 import JumpDirDialog from './file/JumpDirDialog.vue'
@@ -94,6 +93,20 @@ const loading = ref(false)
 const selectedPath = ref('')
 const searchQuery = ref('')
 const showHidden = ref(false)
+
+// Refresh-button spin feedback with a 600ms minimum-visible window
+const refreshing = ref(false)
+let refreshTimer = null
+async function doRefresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  clearTimeout(refreshTimer)
+  try {
+    await loadBrowse()
+  } finally {
+    refreshTimer = setTimeout(() => { refreshing.value = false }, 600)
+  }
+}
 
 // Browse state
 // Default to homeDir on non-Windows; on Windows (multi-root) stay at root level
@@ -266,6 +279,10 @@ async function confirm() {
         await dialog.alert(t('projectDialog.setProjectFailedDetail', { error: err.message }))
     }
 }
+
+onBeforeUnmount(() => {
+    if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
+})
 </script>
 
 <style scoped>

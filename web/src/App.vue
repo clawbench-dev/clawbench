@@ -490,6 +490,7 @@ import './assets/hljs-light-override.css'
 import './assets/annotation-buttons.css'
 import './assets/code-viewer.css'
 import './assets/mono-icon-colors.css'
+import './assets/refresh-spin.css'
 import './assets/chat-actions.css'
 
 const isAuthenticated = ref(null)

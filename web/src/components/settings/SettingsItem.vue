@@ -57,10 +57,10 @@
     <!-- Info-type: detail line with action icons (quantity on left, icons on right) -->
     <div v-if="type === 'info' && displayValue" class="settings-item__info-row">
       <span class="settings-item__info-detail">{{ displayValue }}</span>
-      <span v-if="refreshable" class="settings-item__refresh" :class="{ 'settings-item__refresh--active': refreshing }" @click.stop="emit('refresh')">
+      <span v-if="refreshable" class="settings-item__refresh refresh-spin" :class="{ 'refresh-spin--active': refreshing }" @click.stop="emit('refresh')">
         <RefreshCw :size="12" />
       </span>
-      <span v-if="rebuildable" class="settings-item__rebuild" :class="{ 'settings-item__rebuild--active': rebuilding }" :title="rebuildTitle" @click.stop="emit('rebuild')">
+      <span v-if="rebuildable" class="settings-item__rebuild refresh-spin" :class="{ 'refresh-spin--active': rebuilding }" :title="rebuildTitle" @click.stop="emit('rebuild')">
         <RotateCcw :size="12" />
       </span>
     </div>
@@ -534,12 +534,6 @@ function confirmEdit() {
   color: var(--accent-color);
 }
 
-.settings-item__refresh--active {
-  animation: spin 0.8s linear infinite;
-  pointer-events: none;
-  color: var(--accent-color);
-}
-
 /* Rebuild icon beside progress bar */
 .settings-item__rebuild {
   display: flex;
@@ -555,17 +549,6 @@ function confirmEdit() {
 
 .settings-item__rebuild:hover {
   color: var(--accent-color);
-}
-
-.settings-item__rebuild--active {
-  animation: spin 0.8s linear infinite;
-  pointer-events: none;
-  color: var(--accent-color);
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 /* Section header */

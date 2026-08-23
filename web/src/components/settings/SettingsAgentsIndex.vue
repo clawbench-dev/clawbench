@@ -1,9 +1,9 @@
 <template>
   <div class="settings-agents-index">
     <!-- Rescan row -->
-    <div class="settings-agents-index__rescan-row" :class="{ 'settings-agents-index__rescan-row--disabled': rescanning }" @click="handleRescan">
+    <div class="settings-agents-index__rescan-row refresh-spin" :class="{ 'settings-agents-index__rescan-row--disabled': rescanning, 'refresh-spin--active': rescanning }" @click="handleRescan">
       <span class="settings-agents-index__rescan-label">{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
-      <RefreshCw :size="16" :class="{ 'spin': rescanning }" class="settings-agents-index__rescan-icon" />
+      <RefreshCw :size="16" class="settings-agents-index__rescan-icon" />
     </div>
     <div
       v-for="agent in agentList"
@@ -120,15 +120,6 @@ async function handleRescan() {
   opacity: 0.6;
   cursor: not-allowed;
   pointer-events: none;
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 .settings-agents-index__row {

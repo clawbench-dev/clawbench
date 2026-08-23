@@ -31,6 +31,8 @@ vi.mock('lucide-vue-next', () => ({
   FileText: { template: '<svg />' },
   Info: { template: '<svg />' },
   RefreshCw: { template: '<svg />' },
+  RotateCw: { template: '<svg />' },
+  RotateCcw: { template: '<svg />' },
   GitBranch: { template: '<svg />' },
 }))
 
@@ -236,10 +238,56 @@ describe('GitCommitList', () => {
       expect(wrapper.findAll('.drilldown-refresh-btn')).toHaveLength(1)
     })
 
-    it('disables refresh button while loading', () => {
+    it('keeps the refresh button enabled during a background load', () => {
+      // `loading` only drives the list overlay; the button's disabled state is
+      // owned by the local `refreshing` spin state.
       const wrapper = mountList({ loading: true })
       const btn = wrapper.findAll('.drilldown-refresh-btn')[0]
-      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.attributes('disabled')).toBeUndefined()
+    })
+
+    it('disables the refresh button while a refresh is spinning', async () => {
+      vi.useFakeTimers()
+      try {
+        const wrapper = mountList()
+        const btn = wrapper.findAll('.drilldown-refresh-btn')[0]
+        expect(btn.attributes('disabled')).toBeUndefined()
+
+        await btn.trigger('click')
+        expect(btn.attributes('disabled')).toBeDefined()
+
+        vi.advanceTimersByTime(600)
+        await nextTick()
+        expect(btn.attributes('disabled')).toBeUndefined()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('gives the refresh button a spinning feedback class on click', async () => {
+      vi.useFakeTimers()
+      try {
+        const wrapper = mountList()
+        const btn = wrapper.findAll('.drilldown-refresh-btn')[0]
+        expect(btn.classes()).not.toContain('refresh-spin--active')
+
+        await btn.trigger('click')
+
+        // Immediately after click the icon spins and refresh is emitted
+        expect(btn.classes()).toContain('refresh-spin--active')
+        expect(wrapper.emitted('refresh')).toHaveLength(1)
+
+        // Double-click while spinning is ignored
+        await btn.trigger('click')
+        expect(wrapper.emitted('refresh')).toHaveLength(1)
+
+        // After the minimum feedback window the spin ends
+        vi.advanceTimersByTime(600)
+        await nextTick()
+        expect(btn.classes()).not.toContain('refresh-spin--active')
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 

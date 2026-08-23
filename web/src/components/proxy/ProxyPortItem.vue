@@ -35,9 +35,7 @@
       <button class="port-action-btn open" :disabled="!enabled" @click.stop="$emit('openExternal', localPort, protocol, host)" :title="t('proxy.openInBrowser')">
         <ExternalLink :size="14" />
       </button>
-      <button class="port-action-btn reconnect" :class="{ spinning: reconnecting }" :disabled="reconnecting || !enabled" @click.stop="$emit('reconnect', localPort)" :title="t('proxy.reconnectPort')">
-        <RotateCcw :size="14" />
-      </button>
+      <RefreshButton icon="RotateCcw" class="port-action-btn reconnect" :loading="reconnecting" :disabled="reconnecting || !enabled" :title="t('proxy.reconnectPort')" @click.stop="$emit('reconnect', localPort)" />
       <span class="port-actions-spacer" />
       <button class="port-action-btn edit" @click.stop="$emit('edit', localPort)" :title="t('common.edit')">
         <Pencil :size="14" />
@@ -50,9 +48,10 @@
 </template>
 
 <script setup>
-import { Box, ExternalLink, RotateCcw, Pencil, Trash2 } from 'lucide-vue-next'
+import { Box, ExternalLink, Pencil, Trash2 } from 'lucide-vue-next'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 
 const { t } = useI18n()
 
@@ -344,10 +343,6 @@ const statusTitle = computed(() => {
   background: var(--bg-tertiary, #f0f0f0);
 }
 
-.port-action-btn.reconnect.spinning svg {
-  animation: spin 1s linear infinite;
-}
-
 .port-action-btn.edit:hover:not(:disabled) {
   color: #f59e0b;
   background: var(--bg-tertiary, #f0f0f0);
@@ -356,10 +351,5 @@ const statusTitle = computed(() => {
 .port-action-btn.delete:hover:not(:disabled) {
   color: #dc3545;
   background: var(--bg-tertiary, #f0f0f0);
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 </style>

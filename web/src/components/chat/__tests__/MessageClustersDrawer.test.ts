@@ -10,6 +10,8 @@ vi.mock('lucide-vue-next', () => ({
   List: { name: 'ListIcon', render: () => null },
   Play: { name: 'PlayIcon', render: () => null },
   RefreshCw: { name: 'RefreshCwIcon', render: () => null },
+  RotateCw: { name: 'RotateCw', render: () => null },
+  RotateCcw: { name: 'RotateCcw', render: () => null },
 }))
 
 // Mock BottomSheet

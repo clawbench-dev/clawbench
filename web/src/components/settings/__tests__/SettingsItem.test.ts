@@ -163,7 +163,7 @@ describe('SettingsItem', () => {
 
     it('renders refresh with active class when refreshing is true', () => {
       const wrapper = mountItem({ type: 'info', modelValue: 'val', refreshable: true, refreshing: true })
-      expect(wrapper.find('.settings-item__refresh--active').exists()).toBe(true)
+      expect(wrapper.find('.settings-item__refresh.refresh-spin--active').exists()).toBe(true)
     })
 
     it('renders rebuild icon when rebuildable is true', () => {
@@ -179,7 +179,7 @@ describe('SettingsItem', () => {
 
     it('renders rebuild with active class when rebuilding is true', () => {
       const wrapper = mountItem({ type: 'info', modelValue: 'val', rebuildable: true, rebuilding: true })
-      expect(wrapper.find('.settings-item__rebuild--active').exists()).toBe(true)
+      expect(wrapper.find('.settings-item__rebuild.refresh-spin--active').exists()).toBe(true)
     })
 
     it('renders info type value in info-detail instead of value span', () => {

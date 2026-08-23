@@ -28,9 +28,7 @@
       </button>
 
       <!-- Refresh button -->
-      <button v-if="toolbarInlineIds.includes('refresh')" class="file-header-btn" @click.stop="handleRefresh" :title="t('nav.refresh')">
-        <RotateCw :size="14" />
-      </button>
+      <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
 
       <!-- Toggle view button (source/rendered) -->
       <button v-if="toolbarInlineIds.includes('toggleView')" class="file-header-btn" @click.stop="handleToggleView" :title="effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
@@ -117,7 +115,7 @@
               <Paperclip :size="14" />
               {{ isAttached ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat') }}
             </button>
-            <button v-if="toolbarCollapsedIds.includes('refresh')" class="dropdown-item" @click="handleRefresh">
+            <button v-if="toolbarCollapsedIds.includes('refresh')" class="dropdown-item refresh-spin" :class="{ 'refresh-spin--active': refreshing }" :disabled="refreshing" @click="handleRefresh">
               <RotateCw :size="14" />
               {{ t('nav.refresh') }}
             </button>
@@ -194,6 +192,8 @@
 
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { isRefreshing } from '@/composables/useFileRefresh'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useI18n } from 'vue-i18n'
 import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
@@ -232,6 +232,15 @@ const menuRef = ref(null)
 const menuStyle = ref({})
 const attachBtnRef = ref(null)
 const headerActionsRef = ref(null)
+
+// Refresh-button spin feedback. The refresh is delegated to the parent
+// (App.vue handleRefresh → refreshCurrentFile). Drive the spin from the shared
+// isRefreshing ref so it tracks the real load duration.
+const refreshing = computed(() => isRefreshing.value)
+function triggerRefresh() {
+  if (refreshing.value) return
+  emit('refresh')
+}
 
 // Responsive toolbar overflow — only the "More" dropdown is always-inline (1)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
@@ -421,7 +430,7 @@ async function handleOpenDirectory() {
 
 function handleRefresh() {
     menuOpen.value = false
-    emit('refresh')
+    triggerRefresh()
 }
 
 function handleAttachToChat() {

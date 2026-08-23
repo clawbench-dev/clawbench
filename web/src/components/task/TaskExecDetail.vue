@@ -3,9 +3,7 @@
     <!-- Header: breadcrumb + refresh button -->
     <div class="exec-detail-header">
       <TaskBreadcrumb />
-      <button class="header-btn refresh-btn" :class="{ spinning: refreshing }" :disabled="refreshing" @click="onRefresh" :title="t('common.refresh')">
-        <RefreshCw :size="14" />
-      </button>
+      <RefreshButton class="header-btn refresh-btn" :loading="refreshing" :disabled="refreshing" :title="t('common.refresh')" @click="onRefresh" />
     </div>
 
     <!-- Scrollable message content -->
@@ -87,8 +85,9 @@
 <script setup>
 import { ref, computed, watch, nextTick, provide, onUnmounted, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RefreshCw, MessageSquare, Square } from 'lucide-vue-next'
+import { MessageSquare, Square } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
@@ -632,10 +631,6 @@ onUnmounted(() => {
   transform: scale(0.9);
 }
 
-.header-btn.spinning svg {
-  animation: exec-spin 1s linear infinite;
-}
-
 .exec-detail-content {
   flex: 1;
   overflow-y: auto;
@@ -713,16 +708,8 @@ onUnmounted(() => {
   }
 }
 
-.action-btn.spinning svg {
-  animation: exec-spin 1s linear infinite;
-}
-
 .action-text {
   white-space: nowrap;
-}
-
-@keyframes exec-spin {
-  100% { transform: rotate(360deg); }
 }
 
 .exec-detail-empty {

@@ -17,9 +17,7 @@
         <Plus :size="16" />
       </button>
       <template v-if="pinned">
-        <button class="header-action-btn" data-action="refresh" @click.stop="$emit('refresh')" :title="t('session.refresh')">
-          <RefreshCw :size="16" />
-        </button>
+        <RefreshButton :size="16" class="header-action-btn" data-action="refresh" :loading="refreshing" :disabled="refreshing" :title="t('session.refresh')" @click.stop="triggerRefresh" />
       </template>
     </div>
   </div>
@@ -28,16 +26,25 @@
 <script setup>
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, Plus, RefreshCw } from 'lucide-vue-next'
+import { List, Search, Plus } from 'lucide-vue-next'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 
 const props = defineProps({
   sessionCount: { type: Number, default: 0 },
   sessionMaxCount: { type: Number, default: 0 },
   // When pinned (fixed sidebar), additionally show a manual refresh button.
   pinned: { type: Boolean, default: false },
+  // Drives the refresh-button spin for the real load duration; the parent
+  // (SessionSidebar) tracks this while its loadSessions() is in flight.
+  refreshing: { type: Boolean, default: false },
 })
 
-defineEmits(['open-search', 'create', 'refresh'])
+const emit = defineEmits(['open-search', 'create', 'refresh'])
+
+function triggerRefresh() {
+  if (props.refreshing) return
+  emit('refresh')
+}
 
 const { t } = useI18n()
 

@@ -41,9 +41,7 @@
             </div>
             </Teleport>
           </div>
-          <button v-if="toolbarInlineIds.includes('refresh')" class="toolbar-btn" @click="$emit('refresh')" :title="t('nav.refresh')">
-            <RotateCw :size="16" />
-          </button>
+          <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" :size="16" class="toolbar-btn" :loading="dirRefreshing" :disabled="dirRefreshing" :title="t('nav.refresh')" @click="triggerRefresh()" />
           <button v-if="toolbarInlineIds.includes('newFile')" class="toolbar-btn" @click="doNewFile()" :title="t('file.context.newFile')">
             <FilePlus :size="16" />
           </button>
@@ -78,7 +76,7 @@
             <Teleport to="body">
               <div v-if="moreMenuOpen" class="toolbar-dropdown" :style="moreMenuStyle" @click.stop>
               <template v-if="toolbarCollapsedIds.includes('refresh')">
-                <button class="toolbar-dropdown-item" @click="$emit('refresh'); moreMenuOpen = false">
+                <button class="toolbar-dropdown-item refresh-spin" :class="{ 'refresh-spin--active': dirRefreshing }" :disabled="dirRefreshing" @click="triggerRefresh(); moreMenuOpen = false">
                   <RotateCw :size="14" />
                   <span>{{ t('nav.refresh') }}</span>
                 </button>
@@ -414,7 +412,9 @@
 
 <script setup>
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { isRefreshing } from '@/composables/useFileRefresh'
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
@@ -454,6 +454,16 @@ const TAG = 'FileManager'
 const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, cancelDirUpload, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded, downloadDirAsTree } = useFileUpload()
 const uploadInputRef = ref(null)
 const folderInputRef = ref(null)
+
+// Refresh button spin feedback. The refresh request is delegated to the parent
+// (App.vue handleRefresh → refreshCurrentFile) which deliberately runs with
+// noLoading=true to avoid flicker, so dirLoading never lights up. Drive the
+// button from the shared isRefreshing ref so the spin tracks the real load.
+const dirRefreshing = computed(() => isRefreshing.value)
+function triggerRefresh() {
+  if (dirRefreshing.value) return
+  emit('refresh')
+}
 
 // Drag-and-drop state (shared between file-list and file-grid)
 const isDragOver = ref(false)
@@ -1567,7 +1577,7 @@ async function handleKeydown(e) {
     // Ctrl+R / F5 — refresh
     if ((isCtrl && e.key === 'r') || e.key === 'F5') {
         e.preventDefault()
-        emit('refresh')
+        triggerRefresh()
         return
     }
 

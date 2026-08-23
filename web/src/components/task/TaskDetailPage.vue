@@ -3,9 +3,7 @@
     <!-- Compact header: breadcrumb + refresh button -->
     <div class="detail-header">
       <TaskBreadcrumb />
-      <button class="header-btn refresh-btn" :class="{ spinning: refreshing }" :disabled="refreshing" @click="onRefresh" :title="t('common.refresh')">
-        <RefreshCw :size="14" />
-      </button>
+      <RefreshButton class="header-btn refresh-btn" :loading="refreshing" :disabled="refreshing" :title="t('common.refresh')" @click="onRefresh" />
     </div>
     <!-- Unified scrollable content: task overview + execution history in one scroll container -->
     <div ref="scrollRef" class="detail-scroll">
@@ -69,9 +67,10 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { RefreshCw, History, Pencil, Pause, Power, Zap, Trash2 } from 'lucide-vue-next'
+import { History, Pencil, Pause, Power, Zap, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import TaskOverviewTab from '@/components/task/TaskOverviewTab.vue'
 import TaskHistoryTab from '@/components/task/TaskHistoryTab.vue'
 import { useTaskTab } from '@/composables/useTaskTab'
@@ -173,14 +172,6 @@ async function onRefresh() {
 
 .header-btn:active:not(:disabled) {
   transform: scale(0.9);
-}
-
-.header-btn.spinning svg {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  100% { transform: rotate(360deg); }
 }
 
 /* Single scroll container: overview + history flow together */

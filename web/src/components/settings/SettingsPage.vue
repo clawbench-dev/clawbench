@@ -30,8 +30,8 @@
       />
     </div>
     <footer v-if="needsRestart" class="settings-page__footer">
-      <button class="settings-restart-btn settings-restart-btn--pending" :disabled="restarting" @click="handleRestart">
-        <RefreshCw :size="14" class="settings-restart-btn__icon" :class="{ 'settings-restart-btn__icon--spin': restarting }" />
+      <button class="settings-restart-btn settings-restart-btn--pending refresh-spin" :class="{ 'refresh-spin--active': restarting }" :disabled="restarting" @click="handleRestart">
+        <RefreshCw :size="14" class="settings-restart-btn__icon" />
         <span>{{ restarting ? t('settings.restarting') : t('settings.restartPending') }}</span>
       </button>
     </footer>
@@ -258,14 +258,5 @@ watch(() => props.active, (val) => {
 
 .settings-restart-btn:active.settings-restart-btn--pending:not(:disabled) {
   background: var(--accent-hover);
-}
-
-.settings-restart-btn__icon--spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 </style>

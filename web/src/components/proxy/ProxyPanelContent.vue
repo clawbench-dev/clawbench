@@ -23,9 +23,7 @@
             <span class="tunnel-banner-title">{{ t('proxy.tunnelDisconnected') }}</span>
             <span class="tunnel-banner-detail">{{ tunnelErrorDetail }}</span>
           </div>
-          <button class="tunnel-retry-btn" :class="{ spinning: tunnelChecking }" :disabled="tunnelChecking" @click="handleRetryTunnel" :title="t('proxy.retryCheck')">
-            <RotateCcw :size="14" />
-          </button>
+          <RefreshButton icon="RotateCcw" class="tunnel-retry-btn" :loading="tunnelChecking" :disabled="tunnelChecking" :title="t('proxy.retryCheck')" @click="handleRetryTunnel" />
         </div>
         <div v-else-if="tunnelStatus === 'degraded'" class="tunnel-banner warning">
           <AlertTriangle :size="16" />
@@ -33,9 +31,7 @@
             <span class="tunnel-banner-title">{{ t('proxy.portsNoResponse') }}</span>
             <span class="tunnel-banner-detail">{{ t('proxy.tunnelConnectedButNoResponse') }}</span>
           </div>
-          <button class="tunnel-retry-btn" :class="{ spinning: tunnelChecking }" :disabled="tunnelChecking" @click="handleRetryTunnel" :title="t('proxy.retryCheck')">
-            <RotateCcw :size="14" />
-          </button>
+          <RefreshButton icon="RotateCcw" class="tunnel-retry-btn" :loading="tunnelChecking" :disabled="tunnelChecking" :title="t('proxy.retryCheck')" @click="handleRetryTunnel" />
         </div>
 
         <!-- App mode: background service tip -->
@@ -140,9 +136,7 @@
           <Search :size="16" class="bs-header-icon" />
           <span class="bs-header-title">{{ t('proxy.scanTitle') }}</span>
           <span class="port-scan-header-spacer"></span>
-          <button class="port-scan-rescan-icon" :disabled="scanning" :title="t('proxy.rescan')" @click.stop="rescanPorts">
-            <RefreshCw :size="16" />
-          </button>
+          <RefreshButton :size="16" class="port-scan-rescan-icon" :loading="scanning" :disabled="scanning" :title="t('proxy.rescan')" @click.stop="rescanPorts" />
         </template>
         <div class="port-scan-content">
           <div v-if="scanning" class="port-scan-loading">
@@ -238,13 +232,14 @@
 </template>
 
 <script setup>
-import { XCircle, RotateCcw, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, RefreshCw, Network as NetworkIcon, Server } from 'lucide-vue-next'
+import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, Network as NetworkIcon, Server } from 'lucide-vue-next'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import { usePortForward } from '@/composables/usePortForward.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer.ts'
 import { useToast } from '@/composables/useToast.ts'
@@ -621,15 +616,6 @@ async function handleRetryTunnel() {
 .tunnel-retry-btn:disabled {
   cursor: not-allowed;
   opacity: 0.6;
-}
-
-.tunnel-retry-btn.spinning svg {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 .proxy-loading,

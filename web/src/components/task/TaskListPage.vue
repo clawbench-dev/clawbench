@@ -3,9 +3,7 @@
     <!-- Compact header: breadcrumb + refresh + create button -->
     <div class="list-header">
       <TaskBreadcrumb />
-      <button class="header-btn refresh-btn" :class="{ spinning: loading }" :disabled="loading" @click="refresh" :title="t('common.refresh')">
-        <RefreshCw :size="14" />
-      </button>
+      <RefreshButton class="header-btn refresh-btn" :loading="loading" :disabled="loading" :title="t('common.refresh')" @click="refresh" />
       <button class="header-btn clear-unread-btn" :class="{ active: hasUnread }" :disabled="!hasUnread" @click="markAllTasksRead" :title="t('task.clearUnread')">
         <CheckCheck :size="14" />
       </button>
@@ -64,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, Loader2, CalendarX, Clock, Repeat, RefreshCw, CheckCheck } from 'lucide-vue-next'
+import { Plus, Loader2, CalendarX, Clock, Repeat, CheckCheck } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
@@ -72,6 +70,7 @@ import { useAgents } from '@/composables/useAgents'
 import { humanizeCron, repeatLabel, statusLabel, formatDateTime } from '@/utils/format'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 
 const { t } = useI18n()
@@ -192,10 +191,6 @@ onMounted(refresh)
 .clear-unread-btn.active {
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, var(--bg-secondary, #f1f3f5));
-}
-
-.header-btn.spinning svg {
-  animation: spin 1s linear infinite;
 }
 
 @media (hover: hover) {

@@ -8,9 +8,7 @@
           <button v-if="currentUrl || currentSvg" class="lb-btn" @click="handleDownload" title="Download">
             <Download :size="20" />
           </button>
-          <button class="lb-btn" @click="resetAndRefresh" title="Reset & Reload">
-            <RotateCcw :size="20" />
-          </button>
+          <RefreshButton icon="RotateCcw" :size="20" class="lb-btn" :loading="imageLoading" :disabled="imageLoading" title="Reset & Reload" @click="resetAndRefresh" />
           <button class="lb-btn lb-close" @click="close" title="Close">
             <X :size="20" />
           </button>
@@ -62,8 +60,9 @@
 </template>
 
 <script setup>
-import { RotateCcw, X, Loader, ChevronLeft, ChevronRight, Download } from 'lucide-vue-next'
+import { X, Loader, ChevronLeft, ChevronRight, Download } from 'lucide-vue-next'
 import { ref, computed, provide, watch, onMounted, onUnmounted } from 'vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'

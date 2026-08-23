@@ -57,8 +57,8 @@
             {{ t('welcomeInfo.ok') }}
           </button>
           <div class="footer-secondary">
-            <button class="btn-rescan" :disabled="rescanning" @click="rescan">
-              <Loader2 v-if="rescanning" :size="12" class="spin" />
+            <button class="btn-rescan refresh-spin" :class="{ 'refresh-spin--active': rescanning }" :disabled="rescanning" @click="rescan">
+              <Loader2 v-if="rescanning" :size="12" />
               {{ rescanning ? t('welcomeInfo.rescanning') : t('welcomeInfo.rescan') }}
             </button>
             <button class="btn-dont-show" @click="dontShowAgain">

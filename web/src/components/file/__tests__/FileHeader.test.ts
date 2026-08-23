@@ -46,6 +46,13 @@ vi.stubGlobal('ResizeObserver', class {
   disconnect() {}
 })
 
+// Mock useFileRefresh: refresh-button spin driven by shared isRefreshing ref.
+// Tests set .value before mounting and re-mount to flip the state.
+const { mockIsRefreshing } = vi.hoisted(() => ({ mockIsRefreshing: { value: false } }))
+vi.mock('@/composables/useFileRefresh', () => ({
+  isRefreshing: mockIsRefreshing,
+}))
+
 // Mock useAppMode
 vi.mock('@/composables/useAppMode.ts', () => ({
   useAppMode: () => ({ isAppMode: { value: false } }),
@@ -222,6 +229,34 @@ describe('FileHeader', () => {
     await nextTick()
     expect(wrapper.emitted('refresh')).toBeTruthy()
     expect(getMenuOpen(wrapper)).toBe(false)
+  })
+
+  it('shows the spinning feedback when the shared refresh state is active', async () => {
+    mockIsRefreshing.value = false
+    let wrapper = mountHeader()
+    let refreshBtn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Refresh')
+    expect(refreshBtn).toBeTruthy()
+    expect(refreshBtn!.classes()).not.toContain('refresh-spin--active')
+
+    // Click emits refresh
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleRefresh()
+    await nextTick()
+    expect(wrapper.emitted('refresh')).toHaveLength(1)
+
+    // Shared isRefreshing true → spin visible
+    mockIsRefreshing.value = true
+    wrapper.unmount()
+    wrapper = mountHeader()
+    refreshBtn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Refresh')
+    expect(refreshBtn!.classes()).toContain('refresh-spin--active')
+
+    // Shared isRefreshing false → spin ends
+    mockIsRefreshing.value = false
+    wrapper.unmount()
+    wrapper = mountHeader()
+    refreshBtn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Refresh')
+    expect(refreshBtn!.classes()).not.toContain('refresh-spin--active')
   })
 
   it('emits showDetails when file name is clicked', async () => {

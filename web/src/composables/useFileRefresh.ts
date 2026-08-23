@@ -57,8 +57,10 @@ let flashTimer: ReturnType<typeof setTimeout> | null = null
 
 // Generation counter to prevent race conditions with concurrent refreshCurrentFile calls
 let refreshGeneration = 0
-// Whether a refresh is currently in-flight
-let refreshing = false
+// Whether a refresh is currently in-flight. Exported as a reactive ref so
+// refresh buttons (FileManagerContent / FileHeader) can show a spin that
+// tracks the real load duration instead of a fixed timer.
+export const isRefreshing = ref(false)
 // If a new refresh arrives while one is in-flight, we defer it
 let pendingRefreshOptions: { loadDir?: boolean; clearOnError?: boolean } | null = null
 
@@ -237,7 +239,7 @@ export async function refreshCurrentFile(options: {
   clearOnError?: boolean
 } = {}): Promise<void> {
   // Dedup: if a refresh is already running, just remember to do another one after
-  if (refreshing) {
+  if (isRefreshing.value) {
     // Merge: if either wants loadDir or clearOnError, keep that
     if (pendingRefreshOptions) {
       if (options.loadDir) pendingRefreshOptions.loadDir = true
@@ -247,12 +249,12 @@ export async function refreshCurrentFile(options: {
     }
     return
   }
-  refreshing = true
+  isRefreshing.value = true
 
   try {
     await doRefreshCurrentFile(options)
   } finally {
-    refreshing = false
+    isRefreshing.value = false
     // If a refresh was deferred while we were running, execute it now
     if (pendingRefreshOptions) {
       const opts = pendingRefreshOptions
