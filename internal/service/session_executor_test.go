@@ -2518,3 +2518,156 @@ func TestSessionExecutor_Finalize_SlimsThinkingToDB(t *testing.T) {
 		t.Errorf("record text = %q", rec.Text)
 	}
 }
+
+// TestSessionExecutor_FlushIntervalLimit verifies that a burst of incremental
+// events does not trigger a DB write for every event — persistence is
+// rate-limited to once per flushInterval. With lastFlush zeroed, the first
+// event flushes immediately; a rapid burst right after must NOT write again
+// until the interval elapses.
+func TestSessionExecutor_FlushIntervalLimit(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// First event: lastFlush is zero value, so time.Since(zero) is huge and
+	// this flushes immediately — the streaming row gets content.
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "content", Content: "first"})
+	assertStreamingContentContains(t, sid, "first")
+
+	// Record the flush time and fire a rapid burst within flushInterval.
+	// None of these should trigger an additional flush (rate-limited).
+	executor.lastFlush = time.Now()
+	for range 50 {
+		executor.handleNonTerminalEvent(ai.StreamEvent{Type: "content", Content: "burst"})
+	}
+	assertStreamingContentContains(t, sid, "first")
+	assertStreamingContentNotContains(t, sid, "burst")
+
+	// After the interval elapses, the next event flushes again.
+	executor.lastFlush = time.Now().Add(-flushInterval - time.Millisecond)
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "content", Content: "after"})
+	assertStreamingContentContains(t, sid, "burst")
+	assertStreamingContentContains(t, sid, "after")
+}
+
+// TestSessionExecutor_FlushSkipsThinking verifies flushStreamingMessage excludes
+// thinking blocks from the DB content while streaming, and that Finalize
+// restores them to chat_thinking.
+func TestSessionExecutor_FlushSkipsThinking(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamingMsgID := GetStreamingMessageID(sid)
+	if streamingMsgID == 0 {
+		t.Fatal("expected non-zero streaming message ID from setup")
+	}
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamingMsgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Accumulate a thinking block plus normal content.
+	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "thinking", Content: "secret thinking"})
+	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "visible text"})
+
+	// Streaming flush must NOT persist the thinking block.
+	executor.flushStreamingMessage()
+	var content string
+	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", streamingMsgID).Scan(&content)
+	if err != nil {
+		t.Fatalf("read streaming content: %v", err)
+	}
+	if strings.Contains(content, "secret thinking") {
+		t.Error("streaming DB content should not include thinking text")
+	}
+	if !strings.Contains(content, "visible text") {
+		t.Error("streaming DB content should include text blocks")
+	}
+
+	// Finalize restores thinking into chat_thinking.
+	result := executor.buildResult(true, time.Now())
+	finalized := executor.Finalize(result, nil)
+	if finalized.MsgID == 0 {
+		t.Fatal("expected non-zero message ID after Finalize")
+	}
+
+	var thinkIDs []string
+	rows, err := dbRead.Query("SELECT think_id, text FROM chat_thinking WHERE message_id = ?", finalized.MsgID)
+	if err != nil {
+		t.Fatalf("query chat_thinking: %v", err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var tid, text string
+		if err := rows.Scan(&tid, &text); err != nil {
+			t.Fatalf("scan thinking row: %v", err)
+		}
+		thinkIDs = append(thinkIDs, tid)
+		if text == "secret thinking" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate thinking rows: %v", err)
+	}
+	if !found {
+		t.Errorf("expected thinking text in chat_thinking, records=%v", thinkIDs)
+	}
+}
+
+func assertStreamingContentContains(t *testing.T, sid, want string) {
+	t.Helper()
+	var content string
+	err := dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
+		sid,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("read streaming content: %v", err)
+	}
+	if !strings.Contains(content, want) {
+		t.Errorf("streaming content missing %q, got %q", want, content)
+	}
+}
+
+func assertStreamingContentNotContains(t *testing.T, sid, notWant string) {
+	t.Helper()
+	var content string
+	err := dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
+		sid,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("read streaming content: %v", err)
+	}
+	if strings.Contains(content, notWant) {
+		t.Errorf("streaming content should not contain %q, got %q", notWant, content)
+	}
+}

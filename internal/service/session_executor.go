@@ -58,6 +58,14 @@ const (
 	contentKeyType = "type"
 	// contentKeyReason is the JSON key for reason in content blocks.
 	contentKeyReason = "reason"
+
+	// flushInterval rate-limits streaming persistence of the assistant message.
+	// ACP backends emit bursts of incremental events (thinking/content deltas)
+	// at thousands per minute; flushing full-block JSON + SQLite on every N
+	// events saturates the consumer and the 512-slot stream channel fills,
+	// dropping events. Persisting at most once per 500ms keeps the DB fresh
+	// for reload-on-refresh without stalling the event loop.
+	flushInterval = 500 * time.Millisecond
 )
 
 // RunConfig configures a single SessionExecutor execution.
@@ -129,12 +137,16 @@ type SessionExecutor struct {
 	blocks           []model.ContentBlock
 	responseMetadata *ai.Metadata
 	rawOutput        string
-	eventCount       int
 	receivedTerminal bool
 	wallStart        int64 // unix millis at execution start
 	// toolStarts tracks the start time of each tool call (by tool ID) so the
 	// wall-clock duration can be computed when the tool completes.
 	toolStarts map[string]time.Time
+	// lastFlush is the last time flushStreamingMessage wrote to the DB.
+	// Used to rate-limit streaming persistence (flushInterval) so a burst of
+	// incremental events (e.g. ACP thinking deltas) does not saturate the
+	// consumer with full-block JSON marshal + SQLite writes.
+	lastFlush time.Time
 }
 
 // NewSessionExecutor creates a new executor for the given configuration.
@@ -164,7 +176,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		e.blocks = nil
 		e.rawOutput = ""
 		e.responseMetadata = nil
-		e.eventCount = 0
+		e.lastFlush = time.Time{}
 		e.toolStarts = make(map[string]time.Time)
 		// Reset the streaming message in DB to empty so stale partial content
 		// doesn't persist if the retry Prompt fails or the server crashes.
@@ -228,10 +240,13 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		}
 	}
 
-	// Incremental persistence (every 5 events)
-	e.eventCount++
-	if e.eventCount%5 == 0 {
+	// Incremental persistence (rate-limited). Persisting every N events is too
+	// aggressive for ACP backends that emit bursts of incremental deltas — the
+	// full-block JSON marshal + SQLite write stalls the consumer and the stream
+	// channel fills, dropping events. Persist at most once per flushInterval.
+	if time.Since(e.lastFlush) >= flushInterval {
 		e.flushStreamingMessage()
+		e.lastFlush = time.Now()
 	}
 }
 
@@ -259,7 +274,10 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 	e.wallStart = time.Now().UnixMilli()
 	wallStart := time.Now()
 
-	flushTicker := time.NewTicker(1 * time.Second)
+	// flushTicker guarantees that sparse-but-ongoing streams (e.g. a long tool
+	// call with few content events) still get persisted periodically, even when
+	// no event trips the rate-limited flush in handleNonTerminalEvent.
+	flushTicker := time.NewTicker(flushInterval)
 	defer flushTicker.Stop()
 
 	for {
@@ -449,10 +467,17 @@ func (e *SessionExecutor) upsertToolCallToDB(event ai.StreamEvent) {
 }
 
 // flushStreamingMessage persists the current accumulated blocks to the database.
+// Thinking blocks are excluded: they are process data rendered live over WS and
+// only persisted once at finalization via persistThinkingToDB. Excluding them
+// keeps the per-flush JSON small even when the agent streams tens of KB of
+// thinking, which is the dominant cost that previously stalled the consumer.
 func (e *SessionExecutor) flushStreamingMessage() {
-	serializedBlocks := e.blocks
-	if serializedBlocks == nil {
-		serializedBlocks = []model.ContentBlock{}
+	serializedBlocks := make([]model.ContentBlock, 0, len(e.blocks))
+	for _, b := range e.blocks {
+		if b.Type == "thinking" {
+			continue
+		}
+		serializedBlocks = append(serializedBlocks, b)
 	}
 	contentMap := map[string]any{contentKeyBlocks: serializedBlocks}
 	if e.responseMetadata != nil {

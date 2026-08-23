@@ -25,6 +25,15 @@ type ClientSubscription struct {
 	lastActive  time.Time
 	eventBuffer []ServerMessage
 	bufferStart time.Time
+
+	// Async send queue: BroadcastEvent enqueues marshaled messages here and a
+	// single writer goroutine (started by StartWriter) drains it to the socket.
+	// This decouples the chat event loop from slow WS clients — a client that
+	// can't keep up no longer stalls the producer (which previously held sub.mu
+	// during a synchronous conn.Write of up to wsWriteTimeout).
+	sendQueue     chan []byte   // bounded: maxAsyncQueue
+	writerStarted bool          // writer goroutine started for the current connection
+	writerStopped chan struct{} // closed when the writer goroutine exits
 }
 
 // maxSubscriptions limits the number of concurrent WS subscriptions to prevent
@@ -36,6 +45,12 @@ const pushAlertMaxRunes = model.PushPreviewMaxRunes
 
 // wsWriteTimeout is the maximum time to wait for a WebSocket write to complete.
 const wsWriteTimeout = 5 * time.Second
+
+// maxAsyncQueue bounds the per-subscription asynchronous send queue. Events
+// beyond this bound force a connection close so the client reconnects and
+// reloads a consistent snapshot (order preservation beats dropping events).
+// 256 comfortably covers bursts of stream events within a single flush cycle.
+const maxAsyncQueue = 256
 
 // disconnectedBufferWindow is the duration after disconnection during which
 // events are still buffered for replay. After this window, events are dropped.
@@ -126,17 +141,47 @@ func (m *Manager) Subscribe(conn *websocket.Conn, writeMu *sync.Mutex, clientID,
 	}
 
 	sub.mu.Lock()
-	// Save existing connection to close after releasing locks
+	// Save existing connection and writer state to clean up after releasing locks
 	oldConn := sub.conn
+	oldWriterStarted := sub.writerStarted
+	var oldQueue chan []byte
+	var oldExit chan struct{}
+	if oldWriterStarted {
+		// Detach the old connection's writer NOW (under the lock) so the old
+		// EventsHandler's deferred StopWriter becomes a no-op. Without this, the
+		// old handler's StopWriter could run after the new connection started its
+		// writer and would close the NEW queue / kill the NEW writer (the
+		// writerStarted/writerStopped fields are shared across connections).
+		oldQueue = sub.sendQueue
+		oldExit = sub.writerStopped
+		sub.writerStarted = false
+		sub.writerStopped = nil
+	}
 	sub.conn = conn
 	sub.writeMu = writeMu
 	sub.locale = locale
 	sub.lastActive = time.Now()
 	sub.eventBuffer = nil
 	sub.bufferStart = time.Time{}
+	// Rebuild the async queue for this connection. The fresh queue isolates the
+	// new connection from any stragglers of the old one.
+	sub.sendQueue = make(chan []byte, maxAsyncQueue)
 	sub.mu.Unlock()
 
 	m.mu.Unlock()
+
+	// Stop the old connection's writer outside the locks, so it cannot race with
+	// the new connection's StartWriter. close(oldQueue) makes the old writer's
+	// range-read return and it signals exit; we wait so no goroutine outlives
+	// the connection it writes to.
+	if oldWriterStarted {
+		if oldQueue != nil {
+			close(oldQueue)
+		}
+		if oldExit != nil {
+			<-oldExit
+		}
+	}
 
 	// Close old connection outside of locks to avoid blocking on slow networks
 	if oldConn != nil {
@@ -207,25 +252,35 @@ func (m *Manager) broadcastToSubscription(key string, msg ServerMessage) {
 	writeMu := sub.writeMu
 
 	if conn != nil && writeMu != nil {
-		// Client is connected — send via WS (serialized with writeMu)
+		// Client is connected — marshal once and enqueue for the async writer.
+		// The synchronous conn.Write path is gone: a slow client could hold
+		// sub.mu for up to wsWriteTimeout, stalling the entire session event
+		// loop and allowing the ACP stream channel to fill and drop events.
 		data, err := json.Marshal(msg)
 		if err != nil {
 			slog.Error("ws: marshal event", "error", err, "client_id", key)
 			sub.mu.Unlock()
 			return
 		}
-		writeErr := writeMessage(writeMu, conn, data)
-		if writeErr != nil {
-			// The socket is dead (peer gone, buffer full, or timed out). Close it
-			// so the client's onclose fires and it reconnects immediately, instead
-			// of leaving a half-dead connection that the client only detects much
-			// later via its heartbeat (or the ping goroutine silently dying).
-			// CloseNow avoids a blocking close handshake while sub.mu is held.
-			_ = conn.CloseNow()
+		needClose := false
+		if !sub.enqueueSendLocked(data) {
+			// Queue full or writer stopped. Force a reconnect so the client
+			// reloads a consistent snapshot; dropping mid-stream events would
+			// corrupt the rendered message far worse than a reconnect.
+			slog.Warn("ws: send queue full or stopped, closing connection for reconnect",
+				"client_id", key, "queue_cap", maxAsyncQueue)
+			needClose = true
 		}
-		// Buffer event for reconnect replay (even on write failure, so it isn't lost)
+		// Buffer event for reconnect replay (even on enqueue failure, so it isn't lost)
 		sub.bufferEvent(msg)
 		sub.mu.Unlock()
+
+		// Close outside the lock: CloseNow is non-blocking today, but keeping
+		// connection teardown out of sub.mu avoids reintroducing a stall if it
+		// ever performs a close handshake.
+		if needClose {
+			_ = conn.CloseNow()
+		}
 		return
 	}
 
@@ -235,6 +290,104 @@ func (m *Manager) broadcastToSubscription(key string, msg ServerMessage) {
 	}
 
 	sub.mu.Unlock()
+}
+
+// enqueueSendLocked enqueues a marshaled message for the async writer.
+// Must be called with sub.mu held. Returns false if the queue is full or the
+// writer has been stopped (sendQueue closed/nil), meaning this connection can
+// no longer accept events.
+func (s *ClientSubscription) enqueueSendLocked(data []byte) bool {
+	if s.sendQueue == nil {
+		return false
+	}
+	select {
+	case s.sendQueue <- data:
+		return true
+	default:
+		return false // queue full
+	}
+}
+
+// StartWriter launches the single writer goroutine that drains sendQueue to the
+// connection. The connection must be the subscription's current connection —
+// verified under the lock so a stale handler cannot start a writer on a
+// replaced (already-closed) connection. A writer is started at most once per
+// connection; repeated calls are no-ops.
+func (m *Manager) StartWriter(clientID string, conn *websocket.Conn, writeMu *sync.Mutex) {
+	m.mu.Lock()
+	sub, ok := m.subscriptions[clientID]
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+
+	sub.mu.Lock()
+	if sub.writerStarted || sub.sendQueue == nil || sub.conn != conn {
+		sub.mu.Unlock()
+		return
+	}
+	sub.writerStarted = true
+	exit := make(chan struct{})
+	sub.writerStopped = exit
+	sendQueue := sub.sendQueue
+	sub.mu.Unlock()
+
+	go sub.writeLoop(sendQueue, exit, conn, writeMu, clientID)
+}
+
+// StopWriter gracefully stops the writer goroutine for a connection: closes the
+// send queue so the writer drains what it can and exits, then waits for the
+// writer to signal exit. Safe to call multiple times; the writer's exit is
+// observed via writerStopped. Events enqueued after StopWriter are refused by
+// enqueueSendLocked (sendQueue set to nil) and instead only enter the replay
+// buffer, so nothing is lost on reconnect.
+func (m *Manager) StopWriter(clientID string) {
+	m.mu.Lock()
+	sub, ok := m.subscriptions[clientID]
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+
+	sub.mu.Lock()
+	if !sub.writerStarted {
+		sub.mu.Unlock()
+		return
+	}
+	sub.writerStarted = false
+	sendQueue := sub.sendQueue
+	sub.sendQueue = nil
+	exit := sub.writerStopped
+	sub.writerStopped = nil
+	sub.mu.Unlock()
+
+	// Closing sendQueue makes the writer's range-read return ok=false and exit.
+	// Guard nil defensively: a writer may have exited on its own (write failure)
+	// between our lock check and here — never close a nil channel.
+	if sendQueue != nil {
+		close(sendQueue)
+	}
+	if exit != nil {
+		<-exit
+	}
+}
+
+// writeLoop is the single writer goroutine for a connection. It drains sendQueue
+// and writes each message via writeMessage (serialized with the shared writeMu,
+// which the ping goroutine also uses). On write failure it force-closes the
+// socket so the client reconnects, then exits.
+func (s *ClientSubscription) writeLoop(sendQueue <-chan []byte, exit chan struct{}, conn *websocket.Conn, writeMu *sync.Mutex, clientID string) {
+	defer close(exit)
+
+	for data := range sendQueue {
+		if err := writeMessage(writeMu, conn, data); err != nil {
+			// Socket is dead (peer gone, buffer full, or timed out). Close it
+			// so the client's onclose fires and it reconnects immediately.
+			slog.Warn("ws: async write failed, closing connection", "error", err, "client_id", clientID)
+			_ = conn.CloseNow()
+			return
+		}
+	}
 }
 
 // GetBufferedEvents returns buffered events for replay on reconnect.

@@ -118,12 +118,15 @@ func TestSessionExecutor_HandleNonTerminalEvent_IncrementalPersistence(t *testin
 	}
 	executor := NewSessionExecutor(ctx, cfg)
 
-	// Send 5 events to trigger incremental persistence
+	// The first event flushes immediately because lastFlush starts as the zero
+	// value (time.Since(zero) is huge). Subsequent events within flushInterval
+	// are rate-limited. Explicitly flush to verify the accumulated content is
+	// persisted to the streaming message row.
 	for range 5 {
 		event := ai.StreamEvent{Type: "content", Content: "msg"}
 		executor.handleNonTerminalEvent(event)
 	}
-	// After 5 events, flushStreamingMessage should have been called
+	executor.flushStreamingMessage()
 	// Verify by checking DB
 	var content string
 	err := dbRead.QueryRow(

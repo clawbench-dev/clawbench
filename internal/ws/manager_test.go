@@ -658,6 +658,8 @@ func TestManager_BroadcastEvent_ConnectedClient(t *testing.T) {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			return
 		}
+		m.StartWriter("ws-client", conn, &wmu)
+		defer m.StopWriter("ws-client")
 		defer m.DisconnectClient("ws-client")
 		// Keep connection alive — read loop discards incoming client messages
 		readClientMessages(m, conn, &wmu, "ws-client")
@@ -830,6 +832,7 @@ func TestManager_BroadcastEvent_WriteFailureClosesConnection(t *testing.T) {
 			return
 		}
 		m.Subscribe(conn, &wmu, "failed-write", "")
+		m.StartWriter("failed-write", conn, &wmu)
 		serverConn = conn
 		subscribed <- struct{}{}
 		time.Sleep(2 * time.Second)
@@ -975,4 +978,334 @@ func TestCleanupStale_ConnectedNotCleaned_BranchCoverage(t *testing.T) {
 	if !exists {
 		t.Error("expected connected subscription to not be cleaned up")
 	}
+}
+
+// TestClientSubscription_AsyncSendQueue verifies the async writer drains the
+// send queue and delivers messages in FIFO order to the client.
+func TestClientSubscription_AsyncSendQueue(t *testing.T) {
+	m := NewManagerForTest()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		sub := m.Subscribe(conn, &wmu, "async-fifo", "")
+		if sub == nil {
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+			return
+		}
+		m.StartWriter("async-fifo", conn, &wmu)
+		defer m.StopWriter("async-fifo")
+		defer m.DisconnectClient("async-fifo")
+		readClientMessages(m, conn, &wmu, "async-fifo")
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = client.Close(websocket.StatusNormalClosure, "") }()
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Broadcast several events in a defined order.
+	const n = 5
+	for i := range n {
+		msg := ServerMessage{Type: "event", ID: fmt.Sprintf("fifo_%d", i), Event: "session_update", Data: &SessionUpdateData{SessionID: "s1", Status: "completed"}}
+		m.BroadcastEvent(msg)
+	}
+
+	// Read them back and verify FIFO order.
+	for i := range n {
+		readCtx, readCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, data, readErr := client.Read(readCtx)
+		readCancel()
+		if readErr != nil {
+			t.Fatalf("read %d failed: %v", i, readErr)
+		}
+		want := fmt.Sprintf("fifo_%d", i)
+		if !strings.Contains(string(data), want) {
+			t.Errorf("message %d = %q, want to contain %q", i, data, want)
+		}
+	}
+}
+
+// TestClientSubscription_QueueFullClosesConnection verifies that when the send
+// queue is full, broadcastToSubscription closes the connection so the client
+// reconnects instead of silently dropping events.
+func TestClientSubscription_QueueFullClosesConnection(t *testing.T) {
+	m := NewManagerForTest()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		sub := m.Subscribe(conn, &wmu, "queue-full", "")
+		if sub == nil {
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+			return
+		}
+		// No writer started — the send queue is never drained, so a broadcast
+		// beyond the queue capacity must overflow.
+		time.Sleep(2 * time.Second)
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = client.CloseNow() }()
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Shrink the queue so overflow is deterministic without waiting for 256+ events.
+	m.mu.Lock()
+	sub := m.subscriptions["queue-full"]
+	m.mu.Unlock()
+	sub.mu.Lock()
+	sub.sendQueue = make(chan []byte, 1)
+	sub.mu.Unlock()
+
+	msg := ServerMessage{Type: "event", ID: "overflow", Event: "session_update", Data: &SessionUpdateData{SessionID: "s1", Status: "completed"}}
+
+	// First broadcast fills the 1-slot queue.
+	m.BroadcastEvent(msg)
+
+	// The client should still be connected (queue not full yet).
+	client.SetReadLimit(1 << 20)
+	clientReadCtx, clientReadCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	_, _, readErr := client.Read(clientReadCtx)
+	clientReadCancel()
+	if readErr == nil {
+		t.Fatal("unexpected: client read data when nothing was written")
+	}
+
+	// Second broadcast overflows — connection must be closed for reconnect.
+	m.BroadcastEvent(msg)
+
+	// The close should surface to the client as a connection error.
+	readCtx, readCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer readCancel()
+	_, _, readErr = client.Read(readCtx)
+	if readErr == nil {
+		t.Fatal("expected connection to be closed after queue overflow, got a message instead")
+	}
+
+	// enqueueSendLocked must refuse further enqueues (queue full).
+	sub.mu.Lock()
+	ok := sub.enqueueSendLocked([]byte("x"))
+	sub.mu.Unlock()
+	if ok {
+		t.Error("expected enqueueSendLocked to return false when queue is full")
+	}
+}
+
+// TestClientSubscription_WriterGoroutine_StopsOnDisconnect verifies StopWriter
+// terminates the writer goroutine and that no goroutine leaks.
+func TestClientSubscription_WriterGoroutine_StopsOnDisconnect(t *testing.T) {
+	m := NewManagerForTest()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		m.Subscribe(conn, &wmu, "writer-stop", "")
+		m.StartWriter("writer-stop", conn, &wmu)
+		// Read loop blocks until the client disconnects.
+		readClientMessages(m, conn, &wmu, "writer-stop")
+		m.StopWriter("writer-stop")
+		m.DisconnectClient("writer-stop")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Client closes — server read loop exits, handler stops the writer.
+	_ = client.CloseNow()
+
+	// Give the handler time to run StopWriter.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		m.mu.Lock()
+		sub := m.subscriptions["writer-stop"]
+		m.mu.Unlock()
+		if sub == nil {
+			break
+		}
+		sub.mu.Lock()
+		started := sub.writerStarted
+		sub.mu.Unlock()
+		if !started {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("writer goroutine did not stop after disconnect")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestClientSubscription_DefensiveBranches covers the guard branches of the
+// async send machinery: enqueue on a nil queue, StartWriter/StopWriter for a
+// missing subscription, and StartWriter/StopWriter on a subscription whose
+// writer was never started.
+func TestClientSubscription_DefensiveBranches(t *testing.T) {
+	m := NewManagerForTest()
+
+	// enqueueSendLocked on a subscription with a nil queue refuses.
+	sub := &ClientSubscription{clientID: "nil-queue"}
+	if sub.enqueueSendLocked([]byte("x")) {
+		t.Error("expected enqueue on nil queue to be refused")
+	}
+
+	// StartWriter / StopWriter for a client that never subscribed: no-op.
+	var wmu sync.Mutex
+	m.StartWriter("ghost", nil, &wmu)
+	m.StopWriter("ghost")
+
+	// StartWriter on a subscription whose writer was not started is a no-op
+	// (writerStarted stays false), and StopWriter similarly returns early.
+	m.mu.Lock()
+	m.subscriptions["never-writer"] = &ClientSubscription{clientID: "never-writer"}
+	m.mu.Unlock()
+	// sendQueue nil → StartWriter no-op.
+	m.StartWriter("never-writer", nil, &wmu)
+	m.mu.Lock()
+	s := m.subscriptions["never-writer"]
+	m.mu.Unlock()
+	s.mu.Lock()
+	started := s.writerStarted
+	s.mu.Unlock()
+	if started {
+		t.Error("expected writer not to start when sendQueue is nil")
+	}
+	// StopWriter with writer never started: no-op (must not block).
+	m.StopWriter("never-writer")
+}
+
+// TestClientSubscription_ReconnectOldStopWriterNoOp verifies the C1 fix: when a
+// client reconnects (Subscribe replaces the connection), the OLD handler's
+// deferred StopWriter must NOT kill the NEW connection's writer.
+//
+// Regression scenario:
+//  1. Connection A subscribes and starts writer A.
+//  2. Connection B reconnects (Subscribe replaces A). Subscribe must actively
+//     stop writer A so A's deferred StopWriter becomes a no-op.
+//  3. Writer B starts. A's deferred StopWriter runs afterwards.
+//  4. A broadcast must still reach connection B (writer B alive).
+func TestClientSubscription_ReconnectOldStopWriterNoOp(t *testing.T) {
+	m := NewManagerForTest()
+
+	subAready := make(chan struct{}, 1)
+	subBready := make(chan struct{}, 1)
+	releaseA := make(chan struct{}, 1)
+
+	// Connection A handler: subscribe + start writer, then block until released,
+	// then run its deferred StopWriter (simulating the old connection tearing down).
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		sub := m.Subscribe(conn, &wmu, "reconnect-client", "")
+		if sub == nil {
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+			return
+		}
+		m.StartWriter("reconnect-client", conn, &wmu)
+		subAready <- struct{}{}
+		<-releaseA
+		m.StopWriter("reconnect-client")
+		m.DisconnectClient("reconnect-client")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Dial connection A.
+	clientA, _, err := websocket.Dial(ctx, "ws"+server.URL[4:], nil)
+	if err != nil {
+		t.Fatalf("dial A failed: %v", err)
+	}
+	<-subAready
+
+	// Simulate reconnection with connection B on a separate handler sharing the
+	// same clientID — Subscribe must replace A and stop writer A.
+	handlerB := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		sub := m.Subscribe(conn, &wmu, "reconnect-client", "")
+		if sub == nil {
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+			return
+		}
+		m.StartWriter("reconnect-client", conn, &wmu)
+		subBready <- struct{}{}
+		// Keep the connection alive.
+		readClientMessages(m, conn, &wmu, "reconnect-client")
+		m.StopWriter("reconnect-client")
+		m.DisconnectClient("reconnect-client")
+	})
+	serverB := httptest.NewServer(handlerB)
+	defer serverB.Close()
+
+	clientB, _, err := websocket.Dial(ctx, "ws"+serverB.URL[4:], nil)
+	if err != nil {
+		t.Fatalf("dial B failed: %v", err)
+	}
+	<-subBready
+
+	// Release connection A's handler so its deferred StopWriter runs against the
+	// same clientID (must be a no-op now — writer A was already stopped).
+	releaseA <- struct{}{}
+
+	// Broadcast — the message must reach connection B, proving writer B is alive
+	// after A's StopWriter ran.
+	msg := ServerMessage{Type: "event", ID: "reconnect_ok", Event: "session_update", Data: &SessionUpdateData{SessionID: "s1", Status: "completed"}}
+	m.BroadcastEvent(msg)
+
+	readCtx, readCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer readCancel()
+	_, data, readErr := clientB.Read(readCtx)
+	if readErr != nil {
+		t.Fatalf("connection B should still receive events, got error: %v", readErr)
+	}
+	if !strings.Contains(string(data), "reconnect_ok") {
+		t.Errorf("expected connection B to receive broadcast, got: %s", data)
+	}
+
+	_ = clientA.CloseNow()
+	_ = clientB.CloseNow()
 }
