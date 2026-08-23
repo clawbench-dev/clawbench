@@ -159,7 +159,14 @@ import { buildFileHistoryCommits } from '@/utils/gitFileHistory.ts'
 import { store } from '@/stores/app.ts'
 import { useCommitNavigation, consumePendingCommitNavigation } from '@/composables/useCommitNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_OVERLAY } from '@/composables/useEdgeSwipeBack'
+import { gitFetch, GitTimeoutError, createSeqGuard } from '@/utils/gitApi'
+import { appLog } from '@/utils/appLog'
 const { t } = useI18n()
+
+// Sequence guard to suppress stale concurrent loads — a refresh, re-open, or
+// load-more can overlap an in-flight request; only the latest call may write
+// data and reset the loading flag.
+const historySeq = createSeqGuard()
 
 const props = defineProps({
   open: Boolean,
@@ -268,6 +275,7 @@ const commitSearch = ref('')
 // ─── Data loading ───────────────────────────────────────────────────────────
 
 async function loadProjectHistory() {
+  const seq = historySeq.token()
   loading.value = true
   error.value = ''
   commits.value = []
@@ -280,7 +288,8 @@ async function loadProjectHistory() {
   isGit.value = true
 
   try {
-    const resp = await fetch('/api/git/project-history')
+    const resp = await gitFetch('/api/git/project-history')
+    if (!historySeq.isCurrent(seq)) return // superseded by a newer load
     if (!resp.ok) {
       const data = await resp.json()
       error.value = data.error || t('git.history.loadError')
@@ -296,13 +305,15 @@ async function loadProjectHistory() {
     isGit.value = true
 
     // Check working tree changes
-    const wtResp = await fetch('/api/git/working-tree')
+    const wtResp = await gitFetch('/api/git/working-tree')
     let loadedWtFiles = []
     if (wtResp.ok) {
       const wt = await wtResp.json()
       loadedWtFiles = wt.files || []
       wtFiles.value = loadedWtFiles
     }
+
+    if (!historySeq.isCurrent(seq)) return // superseded while working-tree was in flight
 
     const histCommits = data.commits || []
 
@@ -313,14 +324,22 @@ async function loadProjectHistory() {
       commits.value = histCommits
     }
     hasMore.value = data.hasMore
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return
+    if (!historySeq.isCurrent(seq)) return
+    if (err instanceof GitTimeoutError) {
+      appLog.w('GitHistory', err.message)
+      error.value = t('git.history.loadTimeout')
+      return
+    }
     error.value = t('git.history.loadError')
   } finally {
-    loading.value = false
+    if (historySeq.isCurrent(seq)) loading.value = false
   }
 }
 
 async function loadFileHistory(filePath) {
+  const seq = historySeq.token()
   loading.value = true
   error.value = ''
   commits.value = []
@@ -329,16 +348,17 @@ async function loadFileHistory(filePath) {
   untracked.value = false
 
   try {
-    const resp = await fetch(`/api/git/history?path=${encodeURIComponent(filePath)}`)
+    const resp = await gitFetch(`/api/git/history?path=${encodeURIComponent(filePath)}`)
+    if (!historySeq.isCurrent(seq)) return
     if (!resp.ok) {
       const data = await resp.json()
       error.value = data.error || t('git.history.loadError')
       return
     }
     const hist = await resp.json()
+    if (!historySeq.isCurrent(seq)) return
     if (!hist.isGit) {
       isGit.value = false
-      loading.value = false
       return
     }
     isGit.value = true
@@ -347,29 +367,40 @@ async function loadFileHistory(filePath) {
     // Prepend a working-tree entry only when this specific file has
     // uncommitted changes. Otherwise file history shows commits only.
     let hasUncommitted = false
-    const wtResp = await fetch(`/api/git/working-tree?path=${encodeURIComponent(filePath)}`)
+    const wtResp = await gitFetch(`/api/git/working-tree?path=${encodeURIComponent(filePath)}`)
     if (wtResp.ok) {
       const wt = await wtResp.json()
       hasUncommitted = !!wt.hasUncommitted
     }
 
+    if (!historySeq.isCurrent(seq)) return // superseded while working-tree was in flight
+
     const histCommits = hist.commits || []
     commits.value = buildFileHistoryCommits(histCommits, hasUncommitted, t('git.history.workingTreeChanges'))
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return
+    if (!historySeq.isCurrent(seq)) return
+    if (err instanceof GitTimeoutError) {
+      appLog.w('GitHistory', err.message)
+      error.value = t('git.history.loadTimeout')
+      return
+    }
     error.value = t('git.history.loadError')
   } finally {
-    loading.value = false
+    if (historySeq.isCurrent(seq)) loading.value = false
   }
 }
 
 async function loadMoreCommits() {
-  if (loadingMore.value || !hasMore.value || !isGit.value) return
+  // Skip while a full reload is in flight: loading replaces the commit list
+  // and loadMore would paginate the OLD commits with stale skip counts.
+  if (loading.value || loadingMore.value || !hasMore.value || !isGit.value) return
   loadingMore.value = true
   try {
     // Count only git commits (exclude WT node) for the skip parameter,
     // since WT is a frontend-only entry not present in git log output.
     const gitCount = commits.value.filter(c => !c.isWT).length
-    const resp = await fetch(`/api/git/project-history?skip=${gitCount}`)
+    const resp = await gitFetch(`/api/git/project-history?skip=${gitCount}`)
     if (!resp.ok) return
     const data = await resp.json()
     commits.value.push(...(data.commits || []))
@@ -384,16 +415,23 @@ async function loadMoreCommits() {
 // When searching, auto-load all commits so filtering covers the full history
 async function onSearch(q) {
   if (!q.trim() || !isGit.value || props.mode === 'file') return
+  const seq = historySeq.token()
   searchLoading.value = true
   try {
     while (hasMore.value) {
+      if (!historySeq.isCurrent(seq)) return // superseded by a refresh/load
       const gitCount = commits.value.filter(c => !c.isWT).length
-      const resp = await fetch(`/api/git/project-history?skip=${gitCount}`)
+      const resp = await gitFetch(`/api/git/project-history?skip=${gitCount}`)
       if (!resp.ok) break
       const data = await resp.json()
       commits.value.push(...(data.commits || []))
       hasMore.value = data.hasMore
     }
+  } catch (err) {
+    if (err instanceof GitTimeoutError) {
+      appLog.w('GitHistory', err.message)
+    }
+    // Search is best-effort: ignore failures, the already-loaded commits remain visible.
   } finally {
     searchLoading.value = false
   }
@@ -487,7 +525,7 @@ async function loadCommitFiles(sha) {
   files.value = []
   mergeGroups.value = []
   try {
-    const resp = await fetch(`/api/git/commit-files?sha=${encodeURIComponent(sha)}`)
+    const resp = await gitFetch(`/api/git/commit-files?sha=${encodeURIComponent(sha)}`)
     if (!resp.ok) { files.value = []; return }
     const data = await resp.json()
     if (data && data.merge === true && Array.isArray(data.groups)) {
@@ -514,11 +552,11 @@ async function loadDiff() {
   try {
     let resp
     if (props.mode === 'project') {
-      resp = await fetch(
+      resp = await gitFetch(
         `/api/git/file-diff?sha=${encodeURIComponent(selectedSHA.value)}&path=${encodeURIComponent(selectedFilePath.value)}`
       )
     } else {
-      resp = await fetch(
+      resp = await gitFetch(
         `/api/git/diff?path=${encodeURIComponent(props.file.path)}&commit=${encodeURIComponent(selectedSHA.value)}`
       )
     }

@@ -179,7 +179,14 @@ import { store } from '@/stores/app.ts'
 import { useCommitNavigation, consumePendingCommitNavigation, pendingSha as pendingCommitSha, consumePendingManageNavigation, pendingManageView } from '@/composables/useCommitNavigation.ts'
 import { useDiffNavigation } from '@/composables/useDiffNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
+import { gitFetch, GitTimeoutError, createSeqGuard } from '@/utils/gitApi'
+import { appLog } from '@/utils/appLog'
 const { t } = useI18n()
+
+// Sequence guard to suppress stale concurrent loads. A refresh, tab
+// re-activation, or load-more can overlap an in-flight request; only the
+// latest call may write data and reset the loading flag.
+const historySeq = createSeqGuard()
 
 const props = defineProps({
   mode: {
@@ -302,6 +309,7 @@ const commitSearch = ref('')
 // ─── Data loading ───────────────────────────────────────────────────────────
 
 async function loadProjectHistory() {
+  const seq = historySeq.token()
   loading.value = true
   error.value = ''
   commits.value = []
@@ -314,7 +322,8 @@ async function loadProjectHistory() {
   isGit.value = true
 
   try {
-    const resp = await fetch('/api/git/project-history')
+    const resp = await gitFetch('/api/git/project-history')
+    if (!historySeq.isCurrent(seq)) return // superseded by a newer load
     if (!resp.ok) {
       const data = await resp.json()
       error.value = data.error || t('git.history.loadError')
@@ -330,13 +339,15 @@ async function loadProjectHistory() {
     isGit.value = true
 
     // Check working tree changes
-    const wtResp = await fetch('/api/git/working-tree')
+    const wtResp = await gitFetch('/api/git/working-tree')
     let loadedWtFiles = []
     if (wtResp.ok) {
       const wt = await wtResp.json()
       loadedWtFiles = wt.files || []
       wtFiles.value = loadedWtFiles
     }
+
+    if (!historySeq.isCurrent(seq)) return // superseded while working-tree was in flight
 
     const histCommits = data.commits || []
 
@@ -350,14 +361,26 @@ async function loadProjectHistory() {
     // Record git state after successful load
     lastGitState.value = { branch: store.state.gitBranch, head: store.state.gitHead, dirty: store.state.gitDirty, changeCount: store.state.gitWorkingTreeChangeCount }
     refreshHint.value = false
-  } catch {
+  } catch (err) {
+    // A superseded request's abort must not surface as an error.
+    if (err instanceof Error && err.name === 'AbortError') return
+    if (!historySeq.isCurrent(seq)) return
+    // Timeout: the request is not coming back — surface a distinct message
+    // so the user can retry instead of staring at an endless spinner.
+    if (err instanceof GitTimeoutError) {
+      appLog.w('GitHistory', err.message)
+      error.value = t('git.history.loadTimeout')
+      return
+    }
     error.value = t('git.history.loadError')
   } finally {
-    loading.value = false
+    // Only the latest request may clear the loading flag.
+    if (historySeq.isCurrent(seq)) loading.value = false
   }
 }
 
 async function loadFileHistory(filePath) {
+  const seq = historySeq.token()
   loading.value = true
   error.value = ''
   commits.value = []
@@ -366,37 +389,47 @@ async function loadFileHistory(filePath) {
   untracked.value = false
 
   try {
-    const resp = await fetch(`/api/git/history?path=${encodeURIComponent(filePath)}`)
+    const resp = await gitFetch(`/api/git/history?path=${encodeURIComponent(filePath)}`)
+    if (!historySeq.isCurrent(seq)) return
     if (!resp.ok) {
       const data = await resp.json()
       error.value = data.error || t('git.history.loadError')
       return
     }
     const hist = await resp.json()
+    if (!historySeq.isCurrent(seq)) return
     if (!hist.isGit) {
       isGit.value = false
-      loading.value = false
       return
     }
     isGit.value = true
     untracked.value = !!hist.untracked
     commits.value = hist.commits || []
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return
+    if (!historySeq.isCurrent(seq)) return
+    if (err instanceof GitTimeoutError) {
+      appLog.w('GitHistory', err.message)
+      error.value = t('git.history.loadTimeout')
+      return
+    }
     error.value = t('git.history.loadError')
   } finally {
-    loading.value = false
+    if (historySeq.isCurrent(seq)) loading.value = false
   }
 }
 
 async function loadMoreCommits() {
-  if (loadingMore.value || !hasMore.value || !isGit.value) return
+  // Skip while a full reload is in flight: loading replaces the commit list
+  // and loadMore would paginate the OLD commits with stale skip counts.
+  if (loading.value || loadingMore.value || !hasMore.value || !isGit.value) return
   loadingMore.value = true
   hasLoadedMore.value = true
   try {
     // Count only git commits (exclude WT node) for the skip parameter,
     // since WT is a frontend-only entry not present in git log output.
     const gitCount = commits.value.filter(c => !c.isWT).length
-    const resp = await fetch(`/api/git/project-history?skip=${gitCount}`)
+    const resp = await gitFetch(`/api/git/project-history?skip=${gitCount}`)
     if (!resp.ok) return
     const data = await resp.json()
     commits.value.push(...(data.commits || []))
@@ -411,17 +444,24 @@ async function loadMoreCommits() {
 // When searching, auto-load all commits so filtering covers the full history
 async function onSearch(q) {
   if (!q.trim() || !isGit.value || props.mode === 'file') return
+  const seq = historySeq.token()
   searchLoading.value = true
   if (hasMore.value) hasLoadedMore.value = true
   try {
     while (hasMore.value) {
+      if (!historySeq.isCurrent(seq)) return // superseded by a refresh/load
       const gitCount = commits.value.filter(c => !c.isWT).length
-      const resp = await fetch(`/api/git/project-history?skip=${gitCount}`)
+      const resp = await gitFetch(`/api/git/project-history?skip=${gitCount}`)
       if (!resp.ok) break
       const data = await resp.json()
       commits.value.push(...(data.commits || []))
       hasMore.value = data.hasMore
     }
+  } catch (err) {
+    if (err instanceof GitTimeoutError) {
+      appLog.w('GitHistory', err.message)
+    }
+    // Search is best-effort: ignore failures, the already-loaded commits remain visible.
   } finally {
     searchLoading.value = false
   }
@@ -544,7 +584,7 @@ async function loadCommitFiles(sha) {
   files.value = []
   mergeGroups.value = []
   try {
-    const resp = await fetch(`/api/git/commit-files?sha=${encodeURIComponent(sha)}`)
+    const resp = await gitFetch(`/api/git/commit-files?sha=${encodeURIComponent(sha)}`)
     if (!resp.ok) { files.value = []; return }
     const data = await resp.json()
     if (data && data.merge === true && Array.isArray(data.groups)) {
@@ -571,11 +611,11 @@ async function loadDiff() {
   try {
     let resp
     if (props.mode === 'project') {
-      resp = await fetch(
+      resp = await gitFetch(
         `/api/git/file-diff?sha=${encodeURIComponent(selectedSHA.value)}&path=${encodeURIComponent(selectedFilePath.value)}`
       )
     } else {
-      resp = await fetch(
+      resp = await gitFetch(
         `/api/git/diff?path=${encodeURIComponent(props.file.path)}&commit=${encodeURIComponent(selectedSHA.value)}`
       )
     }

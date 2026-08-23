@@ -1114,6 +1114,7 @@ export default {
       unstaged: '未暂存',
       mergedFrom: '来自 {label}',
       loadError: '加载历史记录失败',
+      loadTimeout: '加载历史记录超时，请重试',
       workingTreeChanges: '工作区变更',
       prevFile: '上一个文件',
       nextFile: '下一个文件',

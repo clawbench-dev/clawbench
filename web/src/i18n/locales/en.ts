@@ -1114,6 +1114,7 @@ export default {
       unstaged: 'Unstaged',
       mergedFrom: 'From {label}',
       loadError: 'Failed to load history',
+      loadTimeout: 'Timed out loading history, please retry',
       workingTreeChanges: 'Working tree changes',
       prevFile: 'Previous file',
       nextFile: 'Next file',
