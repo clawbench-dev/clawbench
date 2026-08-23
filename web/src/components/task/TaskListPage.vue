@@ -101,9 +101,15 @@ defineEmits<{
 }>()
 
 async function refresh() {
+  if (loading.value) return
   loading.value = true
   try {
-    await Promise.all([loadTasks(), loadAgents()])
+    // Minimum spin duration so the refresh animation is always visible,
+    // even when the API responds almost instantly.
+    await Promise.all([
+      Promise.all([loadTasks(), loadAgents()]),
+      new Promise(resolve => setTimeout(resolve, 600)),
+    ])
   } finally {
     loading.value = false
   }

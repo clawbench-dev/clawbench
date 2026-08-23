@@ -53,6 +53,7 @@ export default {
     portForward: 'Port Mapping',
     frp: 'NAT Traversal (frp)',
     refresh: 'Refresh',
+    refreshed: 'Refreshed',
     more: 'More',
     settings: 'Settings',
   },

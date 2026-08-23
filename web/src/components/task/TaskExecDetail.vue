@@ -1,8 +1,11 @@
 <template>
   <div class="exec-detail-page">
-    <!-- Header: breadcrumb + actions -->
+    <!-- Header: breadcrumb + refresh button -->
     <div class="exec-detail-header">
       <TaskBreadcrumb />
+      <button class="header-btn refresh-btn" :class="{ spinning: refreshing }" :disabled="refreshing" @click="onRefresh" :title="t('common.refresh')">
+        <RefreshCw :size="14" />
+      </button>
     </div>
 
     <!-- Scrollable message content -->
@@ -36,9 +39,6 @@
       <button v-if="isRunning" class="action-btn danger" :disabled="cancelling" @click="onTerminate" :title="t('task.exec.cancel')">
         <Square :size="14" />
         <span class="action-text">{{ cancelling ? t('common.loading') : t('task.exec.cancel') }}</span>
-      </button>
-      <button class="action-btn" :class="{ spinning: refreshing }" :disabled="refreshing" @click="onRefresh" :title="t('common.refresh')">
-        <RefreshCw :size="14" />
       </button>
     </div>
 
@@ -185,11 +185,18 @@ async function onContinueConversation() {
 
 // ── Refresh logic ──
 const refreshing = ref(false)
+// Minimum spin duration so the refresh animation is always visible,
+// even when the API responds almost instantly.
+const REFRESH_MIN_MS = 600
 
 async function onRefresh() {
+  if (refreshing.value) return
   refreshing.value = true
   try {
-    await refreshExecDetail()
+    await Promise.all([
+      refreshExecDetail(),
+      new Promise(resolve => setTimeout(resolve, REFRESH_MIN_MS)),
+    ])
   } finally {
     refreshing.value = false
   }
@@ -593,6 +600,42 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+/* Refresh button in the breadcrumb bar (unified with TaskDetailPage) */
+.header-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 14px;
+  background: var(--bg-secondary, #f1f3f5);
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.header-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (hover: hover) {
+  .header-btn:hover:not(:disabled) {
+    background: var(--bg-tertiary, #eef1f4);
+    color: var(--accent-color, #0066cc);
+  }
+}
+
+.header-btn:active:not(:disabled) {
+  transform: scale(0.9);
+}
+
+.header-btn.spinning svg {
+  animation: exec-spin 1s linear infinite;
+}
+
 .exec-detail-content {
   flex: 1;
   overflow-y: auto;
@@ -648,13 +691,13 @@ onUnmounted(() => {
 }
 
 .action-btn.accent {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 20%, var(--bg-secondary, #f1f3f5));
-  color: var(--accent-color, #0066cc);
+  background: var(--accent-color, #0066cc);
+  color: #fff;
 }
 
 @media (hover: hover) {
   .action-btn.accent:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 35%, var(--bg-secondary, #f1f3f5));
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
     color: #fff;
   }
 }

@@ -424,7 +424,7 @@ onMounted(() => {
   background: rgba(34, 197, 94, 0.1);
   color: #16a34a;
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: 0;
   font-size: 12px;
   font-weight: 500;
   margin-bottom: 4px;
@@ -441,7 +441,7 @@ onMounted(() => {
 .form-section {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -450,6 +450,11 @@ onMounted(() => {
 
 .form-section.flex-fill {
   flex: 1;
+  background: var(--bg-secondary, #f8f9fa);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 0;
+  padding: 10px;
+  gap: 10px;
 }
 
 .section-title {
@@ -485,7 +490,7 @@ onMounted(() => {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
+  border-radius: 0;
   font-size: 13px;
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
@@ -654,7 +659,7 @@ onMounted(() => {
 .form-error-general {
   background: rgba(239, 68, 68, 0.1);
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: 0;
   margin-top: 6px;
 }
 
@@ -691,7 +696,7 @@ onMounted(() => {
 /* Time selectors */
 .time-selectors {
   background: var(--bg-tertiary, #f3f4f6);
-  border-radius: 6px;
+  border-radius: 0;
   padding: 10px 12px;
   border: 1px solid var(--border-color, #e5e7eb);
 }
@@ -766,7 +771,7 @@ onMounted(() => {
   padding: 8px 12px;
   background: var(--bg-tertiary, #f3f4f6);
   border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 6px;
+  border-radius: 0;
 }
 
 .cron-display code {

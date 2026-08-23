@@ -49,7 +49,7 @@
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
         <button class="action-btn success" :disabled="actionLoading" @click="resumeTask" :title="t('task.resume')">
-          <Play :size="14" />
+          <Power :size="14" />
           <span class="action-text">{{ t('task.resume') }}</span>
         </button>
         <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
@@ -69,7 +69,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { RefreshCw, History, Pencil, Pause, Play, Zap, Trash2 } from 'lucide-vue-next'
+import { RefreshCw, History, Pencil, Pause, Power, Zap, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import TaskOverviewTab from '@/components/task/TaskOverviewTab.vue'
@@ -111,9 +111,15 @@ function onClearAll() {
 }
 
 async function onRefresh() {
+  if (refreshing.value) return
   refreshing.value = true
   try {
-    await loadTasks()
+    // Minimum spin duration so the refresh animation is always visible,
+    // even when the API responds almost instantly.
+    await Promise.all([
+      loadTasks().then(() => historyTabRef.value?.reload()),
+      new Promise(resolve => setTimeout(resolve, 600)),
+    ])
   } finally {
     refreshing.value = false
   }
@@ -284,13 +290,13 @@ async function onRefresh() {
 }
 
 .action-btn.accent {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 20%, var(--bg-secondary, #f1f3f5));
-  color: var(--accent-color, #0066cc);
+  background: var(--accent-color, #0066cc);
+  color: #fff;
 }
 
 @media (hover: hover) {
   .action-btn.accent:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 35%, var(--bg-secondary, #f1f3f5));
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
     color: #fff;
   }
 }

@@ -53,6 +53,7 @@ export default {
     portForward: '端口映射',
     frp: '内网穿透 (frp)',
     refresh: '刷新',
+    refreshed: '已刷新',
     more: '更多',
     settings: '设置',
   },

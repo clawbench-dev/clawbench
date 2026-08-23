@@ -225,9 +225,17 @@ onUnmounted(() => {
 // "Clear all" button can live in the history section header bar.
 // hasExecutions is a computed ref so the parent's v-if stays reactive.
 const hasExecutions = computed(() => allExecutions.value.length > 0)
+
+/** Reload execution history + running status (used by the page refresh button) */
+async function reload() {
+  await loadExecutions()
+  loadRunningStatus()
+}
+
 defineExpose({
   deleteAllExecutions,
   hasExecutions,
+  reload,
 })
 </script>
 
