@@ -385,12 +385,15 @@ func TestPauseTask(t *testing.T) {
 	task := helperTask()
 	assert.NoError(t, s.AddTask(task))
 
+	assert.NotNil(t, task.NextRunAt, "active task should have a next run time")
 	s.PauseTask(task.ID)
 
 	// Task should be marked as paused in DB
 	persisted, err := service.GetTaskByID(task.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, "paused", persisted.Status)
+	// Paused tasks should no longer show a stale next run time in the UI
+	assert.Nil(t, persisted.NextRunAt, "paused task should have nil next_run_at")
 
 	// Paused tasks should still appear in GetTasks (not deleted)
 	tasks, err := service.GetTasks(task.ProjectPath)
@@ -423,6 +426,9 @@ func TestResumeTask(t *testing.T) {
 	persisted, err := service.GetTaskByID(task.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, "active", persisted.Status)
+	// Resume should recompute a fresh next run time (was cleared by pause)
+	assert.NotNil(t, persisted.NextRunAt, "resumed task should have a recomputed next_run_at")
+	assert.True(t, persisted.NextRunAt.After(time.Now()), "resumed next_run_at should be in the future")
 }
 
 func TestResumeTask_NotPaused(t *testing.T) {

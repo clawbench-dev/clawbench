@@ -105,9 +105,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
-import { apiPut } from '@/utils/api.ts'
-import { useToast } from '@/composables/useToast.ts'
-import { useDialog } from '@/composables/useDialog.ts'
+import { cancelExecution as cancelExecutionAction } from '@/utils/taskExecUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 
@@ -134,8 +132,6 @@ const isRunning = computed(() => props.execDetail?.status === 'running')
 
 // ── Terminate (cancel) running execution ──
 const cancelling = ref(false)
-const toast = useToast()
-const dialog = useDialog()
 
 // ── Live preview stream ──
 const execStatusRef = computed(() => props.execDetail?.status || '')
@@ -158,22 +154,20 @@ const showContinueBtn = computed(() => {
 
 async function onTerminate() {
   if (!props.taskId || !props.execDetail?.id || cancelling.value) return
-  if (!await dialog.confirm(t('task.exec.confirmCancel'))) return
   cancelling.value = true
   try {
-    await apiPut(`/api/tasks/${props.taskId}`, {
-      action: 'cancel',
-      executionId: String(props.execDetail.id),
+    // Backend runningExecutions map is keyed by session ID, not the DB id.
+    // Prefer sessionId for running executions; fall back to DB id.
+    const executionId = props.execDetail?.sessionId || String(props.execDetail.id)
+    const cancelled = await cancelExecutionAction({
+      taskId: props.taskId,
+      executionId,
+      onSuccess: () => {
+        execStream.stopPreview()
+        refreshExecDetail()
+      },
     })
-    toast.show(t('task.exec.cancelled'), { icon: '✅', type: 'success' })
-    execStream.stopPreview()
-    refreshExecDetail()
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('404')) {
-      toast.show(t('task.exec.alreadyFinished'), { icon: 'ℹ️', type: 'info' })
-    } else {
-      toast.show(t('task.exec.actionFailedDetail', { error: err?.message || String(err) }), { icon: '⚠️', type: 'error' })
-    }
+    if (cancelled) refreshExecDetail()
   } finally {
     cancelling.value = false
   }
@@ -662,6 +656,17 @@ onUnmounted(() => {
   .action-btn.accent:hover:not(:disabled) {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 35%, var(--bg-secondary, #f1f3f5));
     color: #fff;
+  }
+}
+
+.action-btn.danger {
+  background: color-mix(in srgb, #ef4444 10%, var(--bg-secondary, #f1f3f5));
+  color: #b91c1c;
+}
+
+@media (hover: hover) {
+  .action-btn.danger:hover:not(:disabled) {
+    background: color-mix(in srgb, #ef4444 25%, var(--bg-secondary, #f1f3f5));
   }
 }
 

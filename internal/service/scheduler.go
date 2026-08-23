@@ -358,7 +358,9 @@ func (s *Scheduler) PauseTask(id int64) {
 	}
 	s.mu.Unlock()
 
-	_, _ = WriteExec("UPDATE scheduled_tasks SET status = 'paused', updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+	// Clear next_run_at so a paused task no longer shows a stale "next run"
+	// time in the UI. It is recomputed on ResumeTask (or the next manual trigger).
+	_, _ = WriteExec("UPDATE scheduled_tasks SET status = 'paused', next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 }
 
 // ResumeTask re-registers a paused task with cron.
@@ -371,7 +373,13 @@ func (s *Scheduler) ResumeTask(id int64) error {
 		return fmt.Errorf("task is not paused")
 	}
 
-	_, _ = WriteExec("UPDATE scheduled_tasks SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+	schedule, err := cron.ParseStandard(task.CronExpr)
+	if err != nil {
+		return fmt.Errorf("invalid cron expression: %w", err)
+	}
+	nextRun := schedule.Next(time.Now())
+
+	_, _ = WriteExec("UPDATE scheduled_tasks SET status = 'active', next_run_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", nextRun, id)
 	task.Status = "active"
 
 	return s.registerTask(task)

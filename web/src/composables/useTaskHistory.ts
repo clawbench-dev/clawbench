@@ -1,5 +1,6 @@
 import { ref, reactive, computed, type Ref } from 'vue'
 import { apiGet, apiPut } from '@/utils/api'
+import { cancelExecution as cancelExecutionAction } from '@/utils/taskExecUtils.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTaskTab } from '@/composables/useTaskTab.ts'
@@ -228,19 +229,11 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
 
   async function cancelExecution(execId: string): Promise<void> {
     if (!task.value?.id) return
-    if (!await dialog.confirm(gt('task.exec.confirmCancel'))) return
-    try {
-      await apiPut(`/api/tasks/${task.value.id}`, {
-        action: 'cancel',
-        executionId: execId,
-      })
-      toast.show(gt('task.exec.cancelled'), { icon: '✅', type: 'success' })
-    } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes('404')) {
-        toast.show(gt('task.exec.alreadyFinished'), { icon: 'ℹ️', type: 'info' })
-      }
-    }
-    await loadRunningStatus()
+    const cancelled = await cancelExecutionAction({
+      taskId: task.value.id,
+      executionId: execId,
+    })
+    if (cancelled) await loadRunningStatus()
   }
 
   async function deleteExecution(execId: number): Promise<void> {
