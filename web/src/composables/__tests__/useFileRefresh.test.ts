@@ -257,7 +257,7 @@ describe('useFileRefresh modified-line flash', () => {
           modifiedPairs: [] as [number, number][],
         }
 
-        const changes = diffLines(oldText, newText, { timeout: 3 })
+        const changes = diffLines(oldText, newText, { timeout: 3 }) ?? []
         let oldLine = 1, newLine = 1
         const deleteGroups: Array<{ startOld: number; lines: string[] }> = []
         const addGroups: Array<{ startNew: number; lines: string[] }> = []

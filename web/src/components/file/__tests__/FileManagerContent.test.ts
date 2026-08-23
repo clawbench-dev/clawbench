@@ -2514,7 +2514,7 @@ describe('FileManagerContent — formatDate today', () => {
 
 describe('FileManagerContent — truncation', () => {
   it('renders the truncate hint when entries exceed MAX_VISIBLE_ENTRIES', async () => {
-    const manyEntries = Array.from({ length: 1005 }, (_, i) => ({
+    const manyEntries = Array.from({ length: 1002 }, (_, i) => ({
       name: `file${i}.txt`,
       type: 'file' as const,
       modified: '2025-01-01T00:00:00Z',
@@ -2525,7 +2525,7 @@ describe('FileManagerContent — truncation', () => {
 
     expect(wrapper.find('.truncate-hint').exists()).toBe(true)
     expect(wrapper.findAll('.file-item').length).toBe(1000)
-  }, 20000)
+  })
 
   it('does not render the truncate hint for a small entry list', () => {
     const wrapper = mountContent()

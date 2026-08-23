@@ -129,14 +129,11 @@ describe('computeDiff LCS behavior', () => {
     })
 
     it('does NOT pair lines when distance > 3', () => {
-        // Use computeDiff instead of direct lcsLineDiff
         const oldLines = ['deleted1', 'a', 'b', 'c', 'd']
         const newLines = ['a', 'b', 'c', 'd', 'added1']
         const result = computeDiff(oldLines.join('\n'), newLines.join('\n'))
-        // Should have some diff result
-        const totalChanges = result.deletedInOld.length + result.addedInNew.length +
-            result.deletedChars.size + result.addedChars.size
-        expect(totalChanges).toBeGreaterThan(0)
+        expect(result.deletedInOld.length).toBeGreaterThan(0)
+        expect(result.addedInNew.length).toBeGreaterThan(0)
     })
 
 })
