@@ -1,5 +1,13 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+
+// Full-suite scheduling: this file contains voice-input / compact-popup / slash
+// tests that depend on timers, async watchers, and DOM popup open/close cycles.
+// In isolation each case finishes in <1s, but under the coverage-gate's
+// full-suite run the worker pool is busy and a few cases occasionally hit the
+// default 5s testTimeout, causing flaky `Test timed out in 5000ms` failures
+// that drag down src/components coverage. Bump this file's timeout only.
+vi.setConfig({ testTimeout: 30_000 })
 import { ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'

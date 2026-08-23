@@ -1,5 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { reactive, ref } from 'vue'
+
+// Full-suite scheduling: this test exercises a swipe gesture watcher that
+// dispatches a debounced session switch. Finishes quickly in isolation but
+// can flake under the coverage-gate's full-suite run. Bump this file's
+// timeout only.
+vi.setConfig({ testTimeout: 30_000 })
 import { useSwipeSession } from '@/composables/useSwipeSession'
 
 // ── swipeSession disabled guard ──

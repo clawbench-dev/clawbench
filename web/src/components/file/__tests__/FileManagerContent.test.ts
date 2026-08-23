@@ -1,5 +1,12 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+
+// Full-suite scheduling: keyboard-shortcut / upload / paste tests in this file
+// drive many async paths (DOM events, timers, uploads). They finish well under
+// 1s in isolation, but under the coverage-gate's full-suite run the worker
+// pool is busy and the default 5s testTimeout occasionally flakes. Bump this
+// file's timeout only.
+vi.setConfig({ testTimeout: 30_000 })
 import { nextTick, reactive, ref, computed, readonly, defineComponent } from 'vue'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
