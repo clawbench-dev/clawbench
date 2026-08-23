@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { RefreshCw, RotateCw, RotateCcw, Check } from 'lucide-vue-next'
 
 /**
@@ -103,7 +103,6 @@ function svgEl(): SVGSVGElement | null {
 
 function startSpin() {
   clearFinishTimer()
-  showConfirm.value = false
   const svg = svgEl()
   if (!svg || typeof svg.animate !== 'function') return
   // If an animation is already running (e.g. rapid re-toggle), keep it going —
@@ -167,9 +166,28 @@ function playConfirm() {
   }, CONFIRM_MS)
 }
 
-watch(() => props.loading, (v) => {
-  if (v) startSpin()
-  else stopSpin()
+watch(() => props.loading, async (v) => {
+  if (v) {
+    // Reset any lingering confirm state first, then wait for the DOM to swap
+    // back to the refresh icon so the WAAPI animation targets the svg the user
+    // actually sees (not a soon-to-be-replaced Check icon).
+    showConfirm.value = false
+    await nextTick()
+    // Re-check: loading may have flipped back while we awaited the DOM update.
+    if (!props.loading) return
+    startSpin()
+  } else {
+    stopSpin()
+  }
+})
+
+onMounted(() => {
+  // Component may mount already-loading (e.g. a file refresh is in flight when
+  // the panel opens) — the watch above only fires on changes.
+  if (props.loading) {
+    showConfirm.value = false
+    nextTick(() => { if (props.loading) startSpin() })
+  }
 })
 
 onBeforeUnmount(() => {

@@ -22,17 +22,21 @@ interface MockAnimation {
 
 const animateMock = vi.fn()
 const animations: MockAnimation[] = []
+// The svg element each animation was started on (the `this` of svg.animate).
+const animatedEls: (Element | null)[] = []
 
 function installAnimateMock() {
   animateMock.mockReset()
   animations.length = 0
-  ;(Element.prototype as any).animate = animateMock.mockImplementation((_keyframes: any, opts: any) => {
+  animatedEls.length = 0
+  ;(Element.prototype as any).animate = animateMock.mockImplementation(function (this: Element, _keyframes: any, opts: any) {
     const anim: MockAnimation = {
       currentTime: 0,
       cancel: vi.fn(),
       duration: opts?.duration ?? 0,
     }
     animations.push(anim)
+    animatedEls.push(this)
     return anim
   })
 }
@@ -193,6 +197,44 @@ describe('RefreshButton', () => {
     vi.advanceTimersByTime(300)
     await nextTick()
     expect(confirmIcon().exists()).toBe(false)
+  })
+
+  it('starts spinning when mounted with loading=true (in-flight refresh)', async () => {
+    const wrapper = mountBtn({ loading: true })
+    await nextTick()
+    await nextTick() // watch's DOM-update await resolves after mount
+
+    expect(animateMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('animates the visible icon when restarting during the confirm window', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBtn()
+    const confirmIcon = () => wrapper.find('svg[data-confirm="true"]')
+    const originalIcon = () => wrapper.find('svg:not([data-confirm])')
+
+    // First refresh completes → confirm Check shows
+    await wrapper.setProps({ loading: true })
+    await nextTick()
+    latestAnim()!.currentTime = 200
+    await wrapper.setProps({ loading: false })
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    await nextTick()
+    expect(confirmIcon().exists()).toBe(true)
+
+    // Restart during the confirm window: the new spin must run on the icon the
+    // user sees (the refresh icon), not on the soon-to-be-replaced Check.
+    const animsBefore = animateMock.mock.calls.length
+    await wrapper.setProps({ loading: true })
+    await nextTick()
+    await nextTick()
+    expect(confirmIcon().exists()).toBe(false) // check swapped back to refresh icon
+    expect(animateMock.mock.calls.length).toBe(animsBefore + 1) // new spin started
+    // The animated element is the currently-rendered (non-confirm) svg
+    const animatedSvg = animatedEls[animsBefore]
+    const renderedSvg = originalIcon().element
+    expect(animatedSvg).toBe(renderedSvg)
   })
 
   it('emits click and stays disabled while loading', async () => {

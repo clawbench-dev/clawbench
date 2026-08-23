@@ -530,7 +530,8 @@ function confirmEdit() {
   transition: color 0.15s ease;
 }
 
-.settings-item__refresh:hover {
+.settings-item__refresh:hover,
+.settings-item__refresh.refresh-spin--active {
   color: var(--accent-color);
 }
 
@@ -545,6 +546,11 @@ function confirmEdit() {
   cursor: pointer;
   flex-shrink: 0;
   transition: color 0.15s ease;
+}
+
+.settings-item__rebuild:hover,
+.settings-item__rebuild.refresh-spin--active {
+  color: var(--accent-color);
 }
 
 .settings-item__rebuild:hover {

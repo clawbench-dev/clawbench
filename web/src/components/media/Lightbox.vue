@@ -458,7 +458,12 @@ function close() {
 }
 
 function resetAndRefresh() {
-    imageLoading.value = true
+    // SVG content is rendered synchronously from the in-memory string — there
+    // is no fetch/load cycle, so the loading state (and the spinning button)
+    // must not be engaged for it.
+    if (!currentSvg.value) {
+        imageLoading.value = true
+    }
     fitScale.value = 1
     naturalW.value = 0
     naturalH.value = 0

@@ -108,7 +108,7 @@ vi.mock('@/composables/useDialog.ts', () => ({
   }),
 }))
 
-import { refreshCurrentFile, flashRanges, flashType, markFileSaved, wasRecentlySaved } from '../useFileRefresh.ts'
+import { refreshCurrentFile, isRefreshing, flashRanges, flashType, markFileSaved, wasRecentlySaved } from '../useFileRefresh.ts'
 import { store } from '@/stores/app.ts'
 import { computeDiff } from '@/utils/diffUtils.ts'
 import { computeCodeDiffMarkers, diffMarkers, diffOldContent } from '@/composables/useMarkdownDiff.ts'
@@ -121,6 +121,7 @@ describe('useFileRefresh deduplication', () => {
     flashType.value = 'add'
     diffMarkers.value = []
     diffOldContent.value = null
+    isRefreshing.value = false
   })
 
   it('should set diffMarkers and diffOldContent when refresh completes', async () => {
@@ -184,6 +185,7 @@ describe('useFileRefresh deduplication', () => {
 
     // Start first refresh (will block on selectFile)
     const p1 = refreshCurrentFile({ loadDir: true })
+    expect(isRefreshing.value).toBe(true)
 
     // While first is in-flight, start second refresh with clearOnError=true
     const p2 = refreshCurrentFile({ loadDir: false, clearOnError: true })
@@ -191,6 +193,7 @@ describe('useFileRefresh deduplication', () => {
     // Let first refresh complete
     resolveSelect!()
     await Promise.all([p1, p2])
+    expect(isRefreshing.value).toBe(false)
 
     // Both should complete without error.
     // The deferred refresh should run after the first one.
