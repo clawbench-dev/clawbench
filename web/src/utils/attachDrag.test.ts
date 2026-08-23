@@ -187,11 +187,11 @@ describe('resolveAccentColor', () => {
     expect(color).toBe('#4a90d9')
   })
 
-  it('returns dark fallback when CSS variable is absent and theme is dark', () => {
+  it('returns the default fallback when CSS variable is absent even in dark theme', () => {
     document.documentElement.removeAttribute('style')
     document.documentElement.setAttribute('data-theme', 'dark')
     const color = resolveAccentColor()
-    expect(color).toBe('#5b9bd5')
+    expect(color).toBe('#4a90d9')
   })
 })
 

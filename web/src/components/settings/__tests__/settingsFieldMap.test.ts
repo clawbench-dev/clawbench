@@ -154,9 +154,11 @@ describe('settingsFieldMap', () => {
     const cfg = panels[0]
     expect(cfg.enableKey).toBe('terminal.enabled')
     expect(cfg.enableLabelKey).toBe('settings.items.terminalEnabled')
-    expect(cfg.commonFields.length).toBe(4)
-    expect(cfg.commonFields[0].key).toBe('terminalFontSize')
+    expect(cfg.commonFields.length).toBe(5)
+    expect(cfg.commonFields[0].key).toBe('terminalTheme')
     expect(cfg.commonFields[0].source).toBe('local')
+    expect(cfg.commonFields[1].key).toBe('terminalFontSize')
+    expect(cfg.commonFields[1].source).toBe('local')
   })
 
   // ── TTS panel ──

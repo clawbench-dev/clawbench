@@ -71,12 +71,14 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain("t('terminal.theme')")
   })
 
-  it('theme popup lists Follow App Theme + searchable theme ids', () => {
+  it('theme popup lists Follow App Theme + theme ids', () => {
     const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
     expect(source).toContain('themeFollowApp')
-    expect(source).toContain('themeSearchPlaceholder')
-    expect(source).toContain('filteredThemes')
     expect(source).toContain('formatThemeName(id)')
+    expect(source).toContain('THEME_IDS')
+    // Theme search was intentionally removed (see commit 68c91379)
+    expect(source).not.toContain('themeSearchPlaceholder')
+    expect(source).not.toContain('filteredThemes')
   })
 
   it('keeps terminal virtual keys in a borderless, transparent overlay system', () => {

@@ -77,7 +77,7 @@ describe('exportRenderedHtml', () => {
     expect(result.html).toContain('<title>a&amp;b</title>')
   })
 
-  it('uses current app theme as data-theme attribute', async () => {
+  it('defaults exported HTML to light data-theme-base', async () => {
     document.documentElement.setAttribute('data-theme', 'dark')
     const el = createElement('<p>dark mode</p>')
     const result = await exportRenderedHtml({
@@ -87,7 +87,7 @@ describe('exportRenderedHtml', () => {
     })
     el.remove()
 
-    expect(result.html).toContain('data-theme="dark"')
+    expect(result.html).toContain('data-theme-base="light"')
   })
 
   it('includes the cloned body content', async () => {
@@ -758,7 +758,7 @@ describe('exportRenderedHtml', () => {
     expect(result.html).toContain('<!DOCTYPE html>')
   })
 
-  it('handles dark theme as current theme', async () => {
+  it('exports light theme-base with dual-theme mermaid even when app is dark', async () => {
     document.documentElement.setAttribute('data-theme', 'dark')
     mockMermaid.render.mockResolvedValue({ svg: '<svg>light</svg>' })
 
@@ -770,7 +770,7 @@ describe('exportRenderedHtml', () => {
     })
     el.remove()
 
-    expect(result.html).toContain('data-theme="dark"')
+    expect(result.html).toContain('data-theme-base="light"')
     expect(result.html).toContain('mermaid-dual')
   })
 

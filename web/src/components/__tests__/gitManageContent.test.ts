@@ -105,6 +105,13 @@ function findWorktreeList(wrapper: ReturnType<typeof mount>) {
   return wrapper.findComponent(GitWorktreeList)
 }
 
+// Helper: switch to the worktrees tab so GitWorktreeList is rendered
+async function openWorktreesTab(wrapper: ReturnType<typeof mount>) {
+  const tabBtn = wrapper.findAll('.manage-tab').find(b => b.text().includes('工作树'))
+  await tabBtn!.trigger('click')
+  await flush()
+}
+
 describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -127,6 +134,7 @@ describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
 
     const wrapper = mountContent()
     await flush()
+    await openWorktreesTab(wrapper)
 
     // Trigger delete-worktree event from the GitWorktreeList child
     const wt = { path: '/repo/.worktrees/fix-lint', branch: 'fix-lint' }
@@ -163,6 +171,7 @@ describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
 
     const wrapper = mountContent()
     await flush()
+    await openWorktreesTab(wrapper)
 
     const wt = { path: '/repo/.worktrees/fix-lint', branch: 'fix-lint' }
     findWorktreeList(wrapper).vm.$emit('delete-worktree', wt)
@@ -179,6 +188,7 @@ describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
 
     const wrapper = mountContent()
     await flush()
+    await openWorktreesTab(wrapper)
 
     const wt = { path: '/repo/.worktrees/clean', branch: 'clean' }
     findWorktreeList(wrapper).vm.$emit('delete-worktree', wt)
@@ -194,6 +204,7 @@ describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
 
     const wrapper = mountContent()
     await flush()
+    await openWorktreesTab(wrapper)
 
     const wt = { path: '/repo/.worktrees/clean', branch: 'clean' }
     findWorktreeList(wrapper).vm.$emit('delete-worktree', wt)

@@ -88,7 +88,7 @@ describe('OfficePreview', () => {
 
   it('shows loading overlay initially', () => {
     const wrapper = mountOffice()
-    expect(wrapper.find('.office-loading-overlay').exists()).toBe(true)
+    expect(wrapper.find('.loading-indicator.overlay').exists()).toBe(true)
   })
 
   it('renders docx component for .docx files', () => {
