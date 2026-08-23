@@ -48,9 +48,10 @@
                 <span v-if="task.repeatMode !== 'unlimited'" class="task-progress">({{ task.runCount }}/{{ task.maxRuns || 1 }})</span>
               </div>
             </div>
-            <div v-if="task.nextRunAt" class="task-item-next">
+            <div class="task-item-next">
               <Clock class="meta-icon" :size="12" />
-              <span>{{ t('task.nextRun', { time: formatDateTime(task.nextRunAt) }) }}</span>
+              <span v-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTime(task.nextRunAt) }) }}</span>
+              <span v-else>{{ t('task.nextRunNone') }}</span>
             </div>
           </div>
           <div class="task-item-right">

@@ -677,6 +677,7 @@ export default {
     noTasks: 'No scheduled tasks',
     confirmDelete: 'Delete this task?',
     nextRun: 'Next run: {time}',
+    nextRunNone: 'Next run: none',
     pause: 'Disable',
     resume: 'Enable',
     run: 'Run',

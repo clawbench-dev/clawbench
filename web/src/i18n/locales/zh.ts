@@ -677,6 +677,7 @@ export default {
     noTasks: '暂无定时任务',
     confirmDelete: '确定删除此任务？',
     nextRun: '下次执行: {time}',
+    nextRunNone: '下次执行: 无',
     pause: '禁用',
     resume: '启用',
     run: '执行',
