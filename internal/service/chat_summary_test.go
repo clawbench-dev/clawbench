@@ -193,7 +193,7 @@ func TestTriggerChatSummarization_ExtractsLastAnswer(t *testing.T) {
 	assistantContent := `{"blocks":[{"type":"text","text":"Let me check."},{"type":"tool_use","name":"Bash","id":"t1"},{"type":"text","text":"The answer is 42."}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (101, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
-	triggerChatSummarization(sessionID)
+	triggerChatSummarization(context.Background(), sessionID)
 
 	// Always-extract: should have saved the last text block (conclusion) as summary
 	summary, found := GetSummary("chat_message", 101)
@@ -211,7 +211,7 @@ func TestTriggerChatSummarization_NoTextAfterToolUse(t *testing.T) {
 	assistantContent := `{"blocks":[{"type":"tool_use","name":"Bash","id":"t1"}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (111, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
-	triggerChatSummarization(sessionID)
+	triggerChatSummarization(context.Background(), sessionID)
 
 	// No text block at all → no summary saved
 	_, found := GetSummary("chat_message", 111)
@@ -296,7 +296,7 @@ func TestTriggerChatSummarization_DoesNotBlockOnRecommendation(t *testing.T) {
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (501, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"The answer is 42.\"}]}', ?, 0)", sessionID)
 
 	start := time.Now()
-	triggerChatSummarization(sessionID)
+	triggerChatSummarization(context.Background(), sessionID)
 	elapsed := time.Since(start)
 
 	// Must return well before the 800ms server sleep — the recommendation runs async.

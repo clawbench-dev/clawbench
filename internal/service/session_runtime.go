@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -507,7 +508,7 @@ func ForceCancelSession(sessionID string) {
 // completes and a queued message is drained immediately, only the final reply
 // used to get a summary and every intermediate reply was skipped. Summarizing
 // each missing message closes that gap.
-func triggerChatSummarization(sessionID string) {
+func triggerChatSummarization(ctx context.Context, sessionID string) {
 	if dbRead == nil {
 		return
 	}
@@ -550,7 +551,7 @@ func triggerChatSummarization(sessionID string) {
 		// "loading" placeholder when the user switches to the session meanwhile. The
 		// recommendation chip is a nice-to-have and can arrive whenever the LLM
 		// responds. blocks is a fresh slice parsed above — safe to hand to the goroutine.
-		go triggerChatRecommendation(sessionID, projectPath, lastAssistant.ID, blocks)
+		go triggerChatRecommendation(ctx, sessionID, projectPath, lastAssistant.ID, blocks)
 	}
 }
 
@@ -568,7 +569,23 @@ func parseMessageBlocks(content string) ([]model.ContentBlock, error) {
 // triggerChatRecommendation generates a next-step recommendation (推荐回复) after
 // an assistant reply completes, using the shared ai_summary LLM config. Emits a
 // chat_recommendation WS event when a recommendation is produced.
-func triggerChatRecommendation(sessionID, projectPath string, messageID int64, blocks []model.ContentBlock) {
+//
+// ctx is the session execution context: when the session is cancelled/closed its
+// cancel func fires and this goroutine (whose LLM call can otherwise run up to
+// 60s) is aborted. A recover() wraps the body so a panic here can never crash the
+// process — it runs detached from the main session goroutine.
+func triggerChatRecommendation(ctx context.Context, sessionID, projectPath string, messageID int64, blocks []model.ContentBlock) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("chat recommendation goroutine panicked",
+				slog.String("session_id", sessionID),
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())))
+		}
+	}()
+	if ctx.Err() != nil {
+		return
+	}
 	if !model.ConfigInstance.Chat.RecommendEnabled {
 		return
 	}
@@ -592,7 +609,7 @@ func triggerChatRecommendation(sessionID, projectPath string, messageID int64, b
 	commands := quickCommandList(projectPath)
 	projContext := projectContext(projectPath)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	recommendation, err := summarize.RecommendNextStep(ctx, summarizer, conversation, commands, projContext, conclusion, "zh")

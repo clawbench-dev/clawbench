@@ -649,7 +649,7 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// would never be reached via that path. Call it here instead, right after
 	// the message is finalized and streaming=0 is persisted.
 	if msgID > 0 {
-		triggerChatSummarization(e.cfg.SessionID)
+		triggerChatSummarization(e.ctx, e.cfg.SessionID)
 	}
 
 	// Save metadata to dedicated table for analytical queries

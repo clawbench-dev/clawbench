@@ -269,6 +269,20 @@ describe('providerIcons', () => {
             expect(svg!).toContain('provider-icon-svg')
         })
 
+        it('escapes quotes and HTML in the injected aria-label', () => {
+            // ariaLabel derives from user/agent-controlled model names; a stray
+            // quote must not break the attribute or smuggle in extra attributes.
+            const malicious = 'gpt-4" onclick="alert(1)'
+            const svg = getProviderFullSvg('openai', 16, [], malicious)
+            expect(svg).not.toBeNull()
+            // Both embedded quotes are neutralized; the attribute cannot be broken.
+            expect(svg!).not.toContain('aria-label="gpt-4" onclick=')
+            expect(svg!).toContain('aria-label="gpt-4&quot; onclick=&quot;alert(1)"')
+            // An ampersand and angle brackets are also neutralized.
+            const svg2 = getProviderFullSvg('openai', 16, [], 'a<b>&c')
+            expect(svg2).toContain('aria-label="a&lt;b&gt;&amp;c"')
+        })
+
         it('returns null for unknown provider', () => {
             expect(getProviderFullSvg('unknown', 16)).toBeNull()
         })

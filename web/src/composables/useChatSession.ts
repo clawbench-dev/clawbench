@@ -188,29 +188,39 @@ export function useChatSession(options: UseChatSessionOptions) {
       recentlyFinalized.set(i, prev)
     }
 
-    for (let pi = 0; pi < parsed.length; pi++) {
-      const newMsg = parsed[pi]
-      if (newMsg.role !== 'assistant') continue
-      if (typeof newMsg.id !== 'number') continue
-      const newCreatedAt = newMsg.createdAt as string | undefined
-      if (!newCreatedAt) continue
-      // Find a matching recently-finalized message
-      for (const [prevIdx, prevMsg] of recentlyFinalized) {
-        const prevCreatedAt = prevMsg.createdAt as string | undefined
-        if (!prevCreatedAt) continue
-        // Match by createdAt within 5 seconds tolerance
-        const prevTime = new Date(prevCreatedAt).getTime()
-        const newTime = new Date(newCreatedAt).getTime()
-        if (Math.abs(prevTime - newTime) > 5000) continue
-        // Merge DB fields into the existing object to preserve Vue component identity
-        prevMsg.id = newMsg.id
-        if (newMsg.summary) prevMsg.summary = newMsg.summary
-        if (newMsg.summaryCards) prevMsg.summaryCards = newMsg.summaryCards
-        if (newMsg.metadata && !prevMsg.metadata) prevMsg.metadata = newMsg.metadata
-        // Replace the parsed message with the reused existing object
-        parsed[pi] = prevMsg
-        recentlyFinalized.delete(prevIdx)
-        break
+    // Race guard (adf6c9e6): 'done' now unlocks the UI and runs loadHistory in
+    // the background. If the user sends a new message before that loadHistory
+    // arrives, a NEW streaming assistant message (drain-*) coexists with the just-
+    // finalized one. Adopting DB fields while a stream is live is unsafe: the
+    // new message's createdAt can fall inside the 5s tolerance of a DB row and get
+    // merged into (clobbered by) the wrong object. Skip the whole merge while any
+    // assistant message is currently streaming — the DB identity is adopted by the
+    // next loadHistory that runs after the stream ends.
+    if (!messages.value.some((m) => m.role === 'assistant' && m.streaming)) {
+      for (let pi = 0; pi < parsed.length; pi++) {
+        const newMsg = parsed[pi]
+        if (newMsg.role !== 'assistant') continue
+        if (typeof newMsg.id !== 'number') continue
+        const newCreatedAt = newMsg.createdAt as string | undefined
+        if (!newCreatedAt) continue
+        // Find a matching recently-finalized message
+        for (const [prevIdx, prevMsg] of recentlyFinalized) {
+          const prevCreatedAt = prevMsg.createdAt as string | undefined
+          if (!prevCreatedAt) continue
+          // Match by createdAt within 5 seconds tolerance
+          const prevTime = new Date(prevCreatedAt).getTime()
+          const newTime = new Date(newCreatedAt).getTime()
+          if (Math.abs(prevTime - newTime) > 5000) continue
+          // Merge DB fields into the existing object to preserve Vue component identity
+          prevMsg.id = newMsg.id
+          if (newMsg.summary) prevMsg.summary = newMsg.summary
+          if (newMsg.summaryCards) prevMsg.summaryCards = newMsg.summaryCards
+          if (newMsg.metadata && !prevMsg.metadata) prevMsg.metadata = newMsg.metadata
+          // Replace the parsed message with the reused existing object
+          parsed[pi] = prevMsg
+          recentlyFinalized.delete(prevIdx)
+          break
+        }
       }
     }
 
@@ -245,15 +255,38 @@ export function useChatSession(options: UseChatSessionOptions) {
       const bPaths = filePathsOf(b).slice().sort().join('|')
       return aPaths.length > 0 && aPaths === bPaths
     }
+    // Time tolerance for the ghost-drain guard: a drained pending's DB row keeps
+    // roughly the send-time createdAt, so the persisted twin must be close. A
+    // later repeat turn with identical text is a different message and is newer.
+    const GHOST_DRAIN_TIME_TOLERANCE_MS = 5000
+    const parseMsgTime = (createdAt: unknown): number | null => {
+      if (typeof createdAt !== 'string' || !createdAt) return null
+      const t = new Date(createdAt).getTime()
+      return Number.isNaN(t) ? null : t
+    }
     for (const prev of prevMessages) {
       if (prev.role !== 'user' || !prev.pending) continue
       if (typeof prev.id !== 'string') continue
       if (messages.value.some((m) => m.role === 'user' && m.id === prev.id)) continue
       // Gone from the queue (no longer in the new array). Drop only if the DB
       // already persisted this identity — otherwise keep it conservatively.
-      const persistedSameIdentity = messages.value.some(
-        (m) => m.role === 'user' && !m.pending && !m._remote && !m._drain && sameIdentity(prev, m)
-      )
+      //
+      // A pending message that genuinely drained is persisted at roughly the same
+      // createdAt it was sent. A later, still-queued turn with the SAME text is a
+      // different message whose createdAt is noticeably newer than the earlier
+      // persisted row. Without a time constraint, the identity-only match would
+      // wrongly drop the still-queued repeat when the backend's queue field is
+      // stale/empty. So require the persisted twin to be time-close to the pending
+      // (only applied when both timestamps are present, keeping pre-timestamp
+      // optimistic messages on the conservative legacy path).
+      const prevTime = parseMsgTime(prev.createdAt)
+      const persistedSameIdentity = messages.value.some((m) => {
+        if (m.role !== 'user' || m.pending || m._remote || m._drain) return false
+        if (!sameIdentity(prev, m)) return false
+        const mTime = parseMsgTime(m.createdAt)
+        if (prevTime && mTime && Math.abs(prevTime - mTime) > GHOST_DRAIN_TIME_TOLERANCE_MS) return false
+        return true
+      })
       if (persistedSameIdentity) {
         appLog.d(TAG, `syncSessionState: dropping drained ghost pending queueId=${String(prev.id).slice(0, 20)} text="${((prev.content || '') as string).slice(0, 40)}" files=${filePathsOf(prev).length}`)
         continue

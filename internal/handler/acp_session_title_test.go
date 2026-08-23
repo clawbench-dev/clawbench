@@ -442,6 +442,35 @@ func TestScanTranscriptForTitles_ScansLargeFiles(t *testing.T) {
 	assert.Equal(t, "大文件首问", first, "head first question must be read even in large files")
 }
 
+func TestScanTranscriptForTitles_LineBeyondScannerCap(t *testing.T) {
+	home := t.TempDir()
+	// A single line larger than bufio.Scanner's hard 16MB per-line cap used to
+	// return bufio.ErrTooLong and abort the whole scan, silently dropping the
+	// tail custom-title. The reader-based scan must keep reading past such a line.
+	munged := strings.ReplaceAll("/Users/x", "/", "-")
+	dir := filepath.Join(home, ".claude", "projects", munged)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	path := filepath.Join(dir, "sid-hugeline.jsonl")
+
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	defer f.Close()
+	_, err = fmt.Fprintln(f, userTurnJSON(t, "超大行首问"))
+	require.NoError(t, err)
+	// One single line > 16MB (would trip bufio.Scanner's per-line cap).
+	huge := strings.Repeat("y", 17*1024*1024)
+	_, err = fmt.Fprintf(f, "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":%q}}\n", huge)
+	require.NoError(t, err)
+	_, err = fmt.Fprintln(f, customTitleJSON(t, "超大行后标题"))
+	require.NoError(t, err)
+
+	require.NoError(t, f.Sync())
+
+	custom, first := scanTranscriptForTitles(path)
+	assert.Equal(t, "超大行后标题", custom, "tail custom-title must survive a >16MB middle line")
+	assert.Equal(t, "超大行首问", first, "head first question must be read even with a >16MB middle line")
+}
+
 func TestDeriveSessionTitleForAgent_ClaudeTranscriptTiers(t *testing.T) {
 	agent := &model.Agent{ID: "claude", Name: "Claude Code Cli", Backend: "claude", Transport: "acp-stdio"}
 	userMsg := func(text string) replayMessage {

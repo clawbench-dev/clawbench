@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"strings"
@@ -85,7 +86,7 @@ func TestTriggerChatSummarization_NoMessages(t *testing.T) {
 	defer teardown()
 
 	// Session doesn't exist in DB — should return with no error
-	triggerChatSummarization("nonexistent-session")
+	triggerChatSummarization(context.Background(), "nonexistent-session")
 }
 
 func TestTriggerChatSummarization_NoAssistantMessages(t *testing.T) {
@@ -99,7 +100,7 @@ func TestTriggerChatSummarization_NoAssistantMessages(t *testing.T) {
 	assert.NoError(t, err)
 
 	// No assistant message — should return without saving a summary
-	triggerChatSummarization("sess-1")
+	triggerChatSummarization(context.Background(), "sess-1")
 }
 
 func TestTriggerChatSummarization_AlreadySummarized(t *testing.T) {
@@ -125,7 +126,7 @@ func TestTriggerChatSummarization_AlreadySummarized(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Should skip summarization since already summarized
-	triggerChatSummarization("sess-2")
+	triggerChatSummarization(context.Background(), "sess-2")
 
 	// Original summary preserved
 	summary, found := GetSummary("chat_message", msgID)
@@ -146,7 +147,7 @@ func TestTriggerChatSummarization_EmptyBlocks(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Should return since blocks are empty
-	triggerChatSummarization("sess-3")
+	triggerChatSummarization(context.Background(), "sess-3")
 }
 
 func TestTriggerChatSummarization_InvalidJSON(t *testing.T) {
@@ -160,7 +161,7 @@ func TestTriggerChatSummarization_InvalidJSON(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Should return on JSON parse error without panicking
-	triggerChatSummarization("sess-4")
+	triggerChatSummarization(context.Background(), "sess-4")
 }
 
 func TestTriggerChatSummarization_Success(t *testing.T) {
@@ -179,7 +180,7 @@ func TestTriggerChatSummarization_Success(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Trigger summarization
-	triggerChatSummarization("sess-5")
+	triggerChatSummarization(context.Background(), "sess-5")
 
 	// Always-extract: the full answer text is saved directly as the summary
 	var msgID int64
@@ -260,7 +261,7 @@ func TestTriggerChatSummarization_MultipleAssistantMessages(t *testing.T) {
 	err = SaveSummary("chat_message", ids[1], text2)
 	assert.NoError(t, err)
 
-	triggerChatSummarization("sess-multi")
+	triggerChatSummarization(context.Background(), "sess-multi")
 
 	// m1 must now be summarized even though it is NOT the last assistant message
 	s1, found1 := GetSummary("chat_message", ids[0])

@@ -55,7 +55,7 @@
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
               <span class="default-star"><Star :size="12" fill="currentColor" /></span>
             </span>
-            <button v-if="m.id !== defaultModelId" class="set-default-btn" @click.stop="setDefaultModel(m)" :title="t('chat.sessionSetting.setAsDefault')">
+            <button v-if="m.id !== defaultModelId" class="set-default-btn" @click.stop="setDefaultModel(m)" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
               <Star :size="12" />
             </button>
           </button>
@@ -93,7 +93,7 @@
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
               <span class="default-star"><Star :size="12" fill="currentColor" /></span>
             </span>
-            <button v-if="level.id !== defaultThinkingEffort" class="set-default-btn" @click.stop="setDefaultThinkingEffort(level.id)" :title="t('chat.sessionSetting.setAsDefault')">
+            <button v-if="level.id !== defaultThinkingEffort" class="set-default-btn" @click.stop="setDefaultThinkingEffort(level.id)" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
               <Star :size="12" />
             </button>
           </button>
@@ -118,7 +118,7 @@
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
               <span class="default-star"><Star :size="12" fill="currentColor" /></span>
             </span>
-            <button v-if="defaultTransport !== 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('acp-stdio')" :title="t('chat.sessionSetting.setAsDefault')">
+            <button v-if="defaultTransport !== 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('acp-stdio')" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
               <Star :size="12" />
             </button>
           </button>
@@ -137,7 +137,7 @@
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
               <span class="default-star"><Star :size="12" fill="currentColor" /></span>
             </span>
-            <button v-if="defaultTransport === 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('cli')" :title="t('chat.sessionSetting.setAsDefault')">
+            <button v-if="defaultTransport === 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('cli')" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
               <Star :size="12" />
             </button>
           </button>
@@ -172,7 +172,7 @@
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
               <span class="default-star"><Star :size="12" fill="currentColor" /></span>
             </span>
-            <button v-if="mode.id !== defaultModeId" class="set-default-btn" @click.stop="setDefaultMode(mode)" :title="t('chat.sessionSetting.setAsDefault')">
+            <button v-if="mode.id !== defaultModeId" class="set-default-btn" @click.stop="setDefaultMode(mode)" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
               <Star :size="12" />
             </button>
           </button>

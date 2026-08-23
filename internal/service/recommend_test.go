@@ -38,7 +38,7 @@ func TestTriggerChatRecommendation_Disabled(t *testing.T) {
 	model.ConfigInstance.AISummary.API.BaseURL = "https://example.com"
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "conclusion here"}}
-	triggerChatRecommendation("sess-rec-disabled", "/test", 11, blocks)
+	triggerChatRecommendation(context.Background(), "sess-rec-disabled", "/test", 11, blocks)
 
 	if evts := sub.GetBufferedEvents(); len(evts) != 0 {
 		t.Fatalf("expected no events when recommend disabled, got %d", len(evts))
@@ -53,7 +53,7 @@ func TestTriggerChatRecommendation_NoAISummary(t *testing.T) {
 	model.ConfigInstance.Chat.RecommendEnabled = true // no ai_summary base_url
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "conclusion here"}}
-	triggerChatRecommendation("sess-rec-noai", "/test", 12, blocks)
+	triggerChatRecommendation(context.Background(), "sess-rec-noai", "/test", 12, blocks)
 
 	if evts := sub.GetBufferedEvents(); len(evts) != 0 {
 		t.Fatalf("expected no events without ai_summary, got %d", len(evts))
@@ -76,7 +76,7 @@ func TestTriggerChatRecommendation_EmitsEvent(t *testing.T) {
 	model.ConfigInstance.AISummary.Format = "openai"
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "The build passed."}}
-	triggerChatRecommendation("sess-rec-emit", "/test", 13, blocks)
+	triggerChatRecommendation(context.Background(), "sess-rec-emit", "/test", 13, blocks)
 
 	evts := sub.GetBufferedEvents()
 	if len(evts) != 1 {
@@ -101,7 +101,7 @@ func TestTriggerChatRecommendation_EmptyConclusion(t *testing.T) {
 	model.ConfigInstance.AISummary.API.BaseURL = "https://example.com"
 
 	// No text blocks → empty conclusion → no call, no event
-	triggerChatRecommendation("sess-rec-empty", "/test", 14, nil)
+	triggerChatRecommendation(context.Background(), "sess-rec-empty", "/test", 14, nil)
 
 	if evts := sub.GetBufferedEvents(); len(evts) != 0 {
 		t.Fatalf("expected no events for empty conclusion, got %d", len(evts))

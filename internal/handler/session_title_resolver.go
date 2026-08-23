@@ -49,6 +49,8 @@ package handler
 import (
 	"bufio"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -286,41 +288,57 @@ func scanTranscriptForTitles(path string) (customTitle, firstQuestion string) {
 		return c.CustomTitle, c.FirstQuestion
 	}
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	// Read line by line. A bufio.Reader (not a bufio.Scanner) is used so that a
+	// single pathologically long line cannot silently abort the scan: Scanner has
+	// a hard per-line cap (16MB) beyond which it returns bufio.ErrTooLong and stops,
+	// dropping the rest of the transcript (e.g. a tail custom-title or a head
+	// first-question). ReadBytes grows its buffer for arbitrarily long lines, so
+	// the "always scan the whole file" contract holds for transcripts of any size.
+	r := bufio.NewReader(f)
 	lastCustom := ""
 	foundFirst := false
-	for scanner.Scan() {
-		var d struct {
-			Type        string `json:"type"`
-			CustomTitle string `json:"customTitle"`
-			Message     *struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &d); err != nil {
-			continue
-		}
-		// Extract custom-title (keep the newest).
-		if d.Type == "custom-title" {
-			if s := strings.TrimSpace(d.CustomTitle); s != "" {
-				lastCustom = s
+	for {
+		line, readErr := r.ReadBytes('\n')
+		if len(line) > 0 {
+			var d struct {
+				Type        string `json:"type"`
+				CustomTitle string `json:"customTitle"`
+				Message     *struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"message"`
 			}
-			continue
-		}
-		// Extract first real user question.
-		if !foundFirst && d.Type == strUser && d.Message != nil {
-			raw := transcriptContentText(d.Message.Content)
-			// Claude transcript first-question extraction strips with the
-			// claude rule set (universal + claude-native) — the transcript
-			// is always claude's own format.
-			text, ok := stripMachineText(raw, stripRulesFor(claudeTranscriptResolver{}))
-			if ok {
-				if t := strings.TrimSpace(text); t != "" {
-					firstQuestion = t
-					foundFirst = true
+			if err := json.Unmarshal(line, &d); err != nil {
+				// Non-JSON / malformed line — skip it and keep scanning.
+			} else {
+				// Extract custom-title (keep the newest).
+				if d.Type == "custom-title" {
+					if s := strings.TrimSpace(d.CustomTitle); s != "" {
+						lastCustom = s
+					}
+				} else if !foundFirst && d.Type == strUser && d.Message != nil {
+					raw := transcriptContentText(d.Message.Content)
+					// Claude transcript first-question extraction strips with the
+					// claude rule set (universal + claude-native) — the transcript
+					// is always claude's own format.
+					text, ok := stripMachineText(raw, stripRulesFor(claudeTranscriptResolver{}))
+					if ok {
+						if t := strings.TrimSpace(text); t != "" {
+							firstQuestion = t
+							foundFirst = true
+						}
+					}
 				}
 			}
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				// Rare non-EOF read error — log it so the whole-file-scan contract
+				// degradation is explicit rather than silent.
+				slog.Warn("transcript title scan aborted early",
+					slog.String("path", path),
+					slog.String("err", readErr.Error()))
+			}
+			break
 		}
 	}
 

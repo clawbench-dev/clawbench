@@ -1616,7 +1616,7 @@ func TestTriggerChatSummarization_BroadcastsWSUpdate(t *testing.T) {
 	assistantContent := `{"blocks":[{"type":"text","text":"Here's the answer."}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (201, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
-	triggerChatSummarization(sessionID)
+	triggerChatSummarization(context.Background(), sessionID)
 
 	// Should have saved the summary
 	summary, found := GetSummary("chat_message", 201)
@@ -1647,7 +1647,7 @@ func TestTriggerChatSummarization_SaveSummaryError(t *testing.T) {
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (501, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
 	// Should not panic, just log warning and return
-	triggerChatSummarization(sessionID)
+	triggerChatSummarization(context.Background(), sessionID)
 }
 
 // --- truncatePreview tests ---
@@ -2135,7 +2135,7 @@ func TestTriggerChatSummarization_AlwaysExtracts(t *testing.T) {
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (601, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
 	// Summarization is always enabled — a summary should be created.
-	triggerChatSummarization(sessionID)
+	triggerChatSummarization(context.Background(), sessionID)
 
 	summary, found := GetSummary("chat_message", 601)
 	assert.True(t, found, "summary should always be created (no disable switch)")

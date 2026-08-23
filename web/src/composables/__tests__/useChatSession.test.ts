@@ -1902,6 +1902,93 @@ describe('switchSession', () => {
     expect(pending).toHaveLength(0)
   })
 
+  it('keeps a later still-queued repeat turn when an earlier same-text turn is persisted (ghost time guard)', async () => {
+    // Regression (medium): user asked "hi" twice. Turn 1 is persisted in the DB
+    // (id=1). Turn 2 is STILL genuinely queued, but the backend's queue field is
+    // stale/empty in this response. Identity-only ghost matching would drop the
+    // still-queued turn 2 because it shares the text of the persisted turn 1. The
+    // time constraint (persisted twin must be time-close to the pending) keeps it.
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 2, role: 'assistant', content: 'first reply', blocks: [{ type: 'text', text: 'first reply' }], createdAt: '2026-01-01T00:00:10Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: 'hi' }, { id: 2, role: 'assistant', content: 'first reply' }],
+        total: 2,
+        running: false,
+        // queue is stale/empty — the still-queued turn 2 is NOT listed
+      }),
+    })
+
+    const session = createSession()
+    // The still-queued turn 2 pending (sent minutes after the persisted turn 1).
+    lastSessionOptions!.messages.value = [{
+      role: 'user', id: 'pending-2', content: 'hi', pending: true,
+      createdAt: '2026-01-01T00:05:00Z', seq: 1,
+    }]
+
+    await session.loadHistory(true, false, false)
+
+    const userMsgs = lastSessionOptions!.messages.value.filter((m: any) => m.role === 'user')
+    // Turn 1 persisted + turn 2 still queued — both must be present.
+    expect(userMsgs.some((m: any) => m.id === 1 && !m.pending)).toBe(true)
+    expect(userMsgs.some((m: any) => m.id === 'pending-2' && m.pending)).toBe(true)
+  })
+
+  it('does not merge DB identity into drain messages while a new turn is streaming (done→send→loadHistory race)', async () => {
+    // Regression (medium): 'done' unlocks the UI and fires loadHistory in the
+    // background. If the user immediately sends a new message, a NEW streaming
+    // assistant message (drain-B) coexists with the just-finalized one (drain-A).
+    // While a stream is live, the DB-identity merge must be deferred entirely —
+    // otherwise the new message's createdAt (inside the 5s tolerance) could get
+    // adopted into the wrong drain object.
+    const drainA = {
+      role: 'assistant', id: 'drain-A', content: '', blocks: [{ type: 'text', text: 'reply A' }],
+      createdAt: '2026-01-01T00:00:00Z', seq: 1,
+    }
+    const drainB = {
+      role: 'assistant', id: 'drain-B', content: '', blocks: [], streaming: true,
+      createdAt: '2026-01-01T00:00:01Z', seq: 2,
+    }
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'question A', blocks: [{ type: 'text', text: 'question A' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply A"}]}', blocks: [{ type: 'text', text: 'reply A' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 3, role: 'assistant', content: '', blocks: [], streaming: true, fromDB: true, createdAt: '2026-01-01T00:00:01Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [
+          { id: 1, role: 'user', content: 'question A' },
+          { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply A"}]}' },
+          { id: 3, role: 'assistant', content: '', streaming: true },
+        ],
+        total: 3,
+        running: true,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = [drainA, drainB]
+
+    await session.loadHistory(true, false, false)
+
+    const msgs = lastSessionOptions!.messages.value
+    // The new streaming turn survives and is still streaming (never clobbered).
+    const streamingMsgs = msgs.filter((m: any) => m.role === 'assistant' && m.streaming)
+    expect(streamingMsgs).toHaveLength(1)
+    expect(streamingMsgs[0].id).toBe(3)
+    // The just-finalized drain-A was NOT merged into the DB id=2 slot during the
+    // live stream — the merge is deferred until the stream ends.
+    const id2 = msgs.find((m: any) => m.id === 2)
+    expect(id2).toBeDefined()
+    expect(id2).not.toBe(drainA)
+  })
+
   it('restores usage state from API response after switch', async () => {
     resetAdditionalMocks() // Ensure mock call records are clean
     mockClearUsageState.mockClear()

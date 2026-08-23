@@ -342,9 +342,22 @@ export function getProviderFullSvg(providerId: string, size: number, cssClasses:
     const styleAttr = ` style="width:${size}px;height:${size}px"`
     const viewBoxAttr = ` viewBox="${viewBox}"`
     const roleAttr = ' role="img"'
-    const ariaAttr = ariaLabel ? ` aria-label="${ariaLabel}"` : ''
+    // Escape the aria-label: it derives from user/agent-controlled input
+    // (model name) and is injected into an HTML attribute via v-html. A stray
+    // `"` would break the attribute and could smuggle in extra attributes.
+    const ariaAttr = ariaLabel ? ` aria-label="${escapeAttr(ariaLabel)}"` : ''
 
     return `<svg${classAttr}${styleAttr}${viewBoxAttr}${roleAttr}${ariaAttr} xmlns="http://www.w3.org/2000/svg">${inner}</svg>`
+}
+
+// Escape a string for safe injection inside a double-quoted HTML attribute.
+function escapeAttr(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
 }
 
 /**

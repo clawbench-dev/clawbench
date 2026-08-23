@@ -1755,7 +1755,16 @@ defineExpose({
 }
 .recommend-slide-enter-to,
 .recommend-slide-leave-from {
-  max-height: 150px;
+  max-height: 600px;
+}
+
+/* Respect users who prefer reduced motion — snap the banner in/out instead of
+   animating height/opacity. */
+@media (prefers-reduced-motion: reduce) {
+  .recommend-slide-enter-active,
+  .recommend-slide-leave-active {
+    transition: none;
+  }
 }
 
 /* Conversation recommendation banner (推荐回复) — rendered above the input box */

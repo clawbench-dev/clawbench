@@ -509,6 +509,20 @@ describe('SessionDrawer', () => {
     expect(wrapper.vm.showDefaultPopupMenu).toBe(false)
   })
 
+  it('set-default star buttons expose aria-pressed and aria-label', () => {
+    // The claude agent has two models; the non-default one renders the
+    // set-default star button. It must expose an aria-label (touch users can't
+    // hover for the :title tooltip) and aria-pressed=false (it is not the
+    // current default).
+    const wrapper = mountDrawer()
+    const btns = wrapper.findAll('.set-default-btn')
+    expect(btns.length).toBeGreaterThan(0)
+    for (const btn of btns) {
+      expect(btn.attributes('aria-pressed')).toBe('false')
+      expect(btn.attributes('aria-label')).toBeTruthy()
+    }
+  })
+
   it('setAsDefault calls patchAgentPref for thinking effort', async () => {
     const wrapper = mountDrawer()
     wrapper.vm.showDefaultPopupMenu = true

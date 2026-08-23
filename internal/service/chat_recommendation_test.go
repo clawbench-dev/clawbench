@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,9 +30,29 @@ func TestTriggerChatRecommendation_RecommendError(t *testing.T) {
 	model.ConfigInstance.AISummary.Format = "openai"
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "conclusion"}}
-	triggerChatRecommendation("sess-rec-err", "/test", 21, blocks)
+	triggerChatRecommendation(context.Background(), "sess-rec-err", "/test", 21, blocks)
 
 	assert.Empty(t, sub.GetBufferedEvents(), "no event expected when recommendation call fails")
+}
+
+func TestTriggerChatRecommendation_CancelledContextShortCircuits(t *testing.T) {
+	// When the session is cancelled/closed its ctx is cancelled before the
+	// recommendation goroutine starts its (potentially 60s) LLM call. A cancelled
+	// ctx must short-circuit before any network call / event emission.
+	sub, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Chat.RecommendEnabled = true
+	model.ConfigInstance.AISummary.API.BaseURL = "https://example.com"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // session cancelled before the goroutine body runs
+
+	blocks := []model.ContentBlock{{Type: "text", Text: "conclusion"}}
+	triggerChatRecommendation(ctx, "sess-rec-cancelled", "/test", 21, blocks)
+
+	assert.Empty(t, sub.GetBufferedEvents(), "no event expected when ctx is already cancelled")
 }
 
 func TestTriggerChatRecommendation_NilManager(t *testing.T) {
@@ -53,7 +74,7 @@ func TestTriggerChatRecommendation_NilManager(t *testing.T) {
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "conclusion"}}
 	assert.NotPanics(t, func() {
-		triggerChatRecommendation("sess-rec-nilmgr", "/test", 22, blocks)
+		triggerChatRecommendation(context.Background(), "sess-rec-nilmgr", "/test", 22, blocks)
 	})
 }
 
