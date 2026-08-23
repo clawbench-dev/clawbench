@@ -293,7 +293,9 @@ function handleBodyInput(event) {
   min-width: 0;
 }
 
-/* Markdown output in tool output body — reuse agent-call-prompt styling */
+/* Markdown output in tool output body — reuse agent-call-prompt styling.
+   Font sizes are 1px larger than ContentBlocks (11px) to match the
+   BottomSheet's 12px base font-size for better readability. */
 .tool-detail-body .tool-output-body .agent-call-prompt {
   color: var(--text-secondary);
   font-size: 12px;

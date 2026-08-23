@@ -553,8 +553,8 @@ function renderAgentCall(input: ToolInput): string {
       sanitize: true,
       wrapTables: false,
     })
-    _pendingOutputPaths.push(...detectedPaths)
-    _pendingOutputSHAs.push(...detectedSHAs)
+    _pendingInputPaths.push(...detectedPaths)
+    _pendingInputSHAs.push(...detectedSHAs)
     html += `<div class="agent-call-prompt">${rendered}</div>`
   }
 
@@ -964,8 +964,8 @@ function renderDeepThink(input: ToolInput): string {
 
     if (prompt) {
       const { html: rendered, detectedPaths, detectedSHAs } = renderMarkdown(prompt, { sanitize: true, wrapTables: false })
-      _pendingOutputPaths.push(...detectedPaths)
-      _pendingOutputSHAs.push(...detectedSHAs)
+      _pendingInputPaths.push(...detectedPaths)
+      _pendingInputSHAs.push(...detectedSHAs)
       html += `<div class="agent-call-prompt">${rendered}</div>`
     }
   }
@@ -1302,16 +1302,13 @@ export function shouldAutoExpandTool(toolName: string): boolean {
  * Looks up the tool name in the renderer registry; falls back to JSON.
  */
 export function formatToolInput(input: unknown, toolName?: string, blockCtx?: ToolBlockCtx): string {
-  // Clear pending annotations from any previous render
-  _pendingOutputPaths = []
-  _pendingOutputSHAs = []
+  // Clear pending input annotations from any previous render
+  _pendingInputPaths = []
+  _pendingInputSHAs = []
   if (toolName) {
     const renderer = TOOL_RENDERERS[toolName.toLowerCase()]
     if (renderer && input && typeof input === 'object') {
-      const result = renderer(input as ToolInput, blockCtx)
-      // Trigger async verification if any paths/SHAs were detected
-      verifyToolOutputAnnotations()
-      return result
+      return renderer(input as ToolInput, blockCtx)
     }
   }
   return renderJsonFallback(input)
@@ -1382,31 +1379,39 @@ function renderCodeOutput(output: string): string {
   return `<div class="tool-output-content"><pre>${annotated}</pre></div>`
 }
 
-// Accumulated detected paths/SHAs from tool output Markdown rendering.
-// Cleared on each formatToolOutput call, consumed by verifyToolOutputAnnotations().
+// Accumulated detected paths/SHAs from tool Markdown rendering.
+// Separate accumulators for input and output to avoid cross-contamination
+// when formatToolInput and formatToolOutput are called in sequence.
+let _pendingInputPaths: string[] = []
+let _pendingInputSHAs: string[] = []
 let _pendingOutputPaths: string[] = []
 let _pendingOutputSHAs: string[] = []
 
 /**
- * After tool output HTML is inserted into the DOM, call this to verify
+ * After tool input/output HTML is inserted into the DOM, call this to verify
  * file path and commit hash annotations detected during rendering.
- * Finds the ToolDetailDrawer's .tool-output-body element as the verification scope.
+ * @param scope 'input' or 'output' — which accumulator to drain
+ * @param containerEl the specific DOM element to scope verification to
  */
-export function verifyToolOutputAnnotations(): void {
-  const paths = [...new Set(_pendingOutputPaths)]
-  const shas = [...new Set(_pendingOutputSHAs)]
-  _pendingOutputPaths = []
-  _pendingOutputSHAs = []
-  if (paths.length === 0 && shas.length === 0) return
+export function verifyToolOutputAnnotations(scope: 'input' | 'output', containerEl: HTMLElement): void {
+  const paths = scope === 'input' ? _pendingInputPaths : _pendingOutputPaths
+  const shas = scope === 'input' ? _pendingInputSHAs : _pendingOutputSHAs
+  // Drain accumulators
+  if (scope === 'input') {
+    _pendingInputPaths = []
+    _pendingInputSHAs = []
+  } else {
+    _pendingOutputPaths = []
+    _pendingOutputSHAs = []
+  }
+  const uniquePaths = [...new Set(paths)]
+  const uniqueSHAs = [...new Set(shas)]
+  if (uniquePaths.length === 0 && uniqueSHAs.length === 0) return
   // nextTick so the HTML is in the DOM before we query
   import('vue').then(({ nextTick }) => {
     nextTick(() => {
-      // Verify in ToolDetailDrawer (bottom sheet) and inline tool-detail
-      const containers = document.querySelectorAll('.tool-output-body')
-      for (const el of containers) {
-        if (paths.length > 0) verifyFilePaths(paths, el as HTMLElement)
-        if (shas.length > 0) verifyCommitHashes(shas, el as HTMLElement)
-      }
+      if (uniquePaths.length > 0) verifyFilePaths(uniquePaths, containerEl)
+      if (uniqueSHAs.length > 0) verifyCommitHashes(uniqueSHAs, containerEl)
     })
   })
 }
@@ -1440,6 +1445,9 @@ function renderStatusOutput(output: string): string {
 /**
  * Try to parse output as JSON and pretty-print with syntax highlighting.
  * If parsing fails, treat as plain text.
+ * Note: localhost URL annotation is skipped for highlighted JSON because hljs
+ * splits string values into <span> tokens, and regex-based annotation would
+ * produce invalid HTML by inserting tags mid-span.
  */
 function renderSmartOutput(output: string): string {
   const trimmed = output.trim()
@@ -1449,8 +1457,7 @@ function renderSmartOutput(output: string): string {
       const parsed = JSON.parse(trimmed)
       const pretty = JSON.stringify(parsed, null, 2)
       const highlighted = highlightCode(pretty, 'json')
-      const annotated = annotateLocalhostInEscapedText(highlighted)
-      return `<div class="tool-output-content"><pre>${annotated}</pre></div>`
+      return `<div class="tool-output-content"><pre>${highlighted}</pre></div>`
     } catch {
       // Not valid JSON, treat as plain text
     }
@@ -1466,17 +1473,14 @@ function renderSmartOutput(output: string): string {
  */
 export function formatToolOutput(output: string, toolName?: string): string {
   if (!output) return ''
-  // Clear pending annotations from any previous render
+  // Clear pending output annotations from any previous render
   _pendingOutputPaths = []
   _pendingOutputSHAs = []
   // Check for a registered output renderer
   if (toolName) {
     const renderer = TOOL_OUTPUT_RENDERERS[toolName.toLowerCase()]
     if (renderer) {
-      const result = renderer(output)
-      // Trigger async verification if any paths/SHAs were detected
-      verifyToolOutputAnnotations()
-      return result
+      return renderer(output)
     }
   }
   // Fallback: smart output (detect JSON vs plain text)
