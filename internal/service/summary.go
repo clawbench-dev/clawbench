@@ -2,11 +2,32 @@ package service
 
 import (
 	"log/slog"
+	"sync"
 
 	"clawbench/internal/model"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
 )
+
+// summaryInFlight tracks chat-message IDs currently being summarized by the
+// bulk background paths (triggerChatSummarization, backfillMissingSummaries).
+// GetChatHistoryPaged spawns a backfill goroutine on every read, so without this
+// dedup concurrent reads would generate duplicate summary goroutines — and
+// duplicate DB writes + WS broadcasts — for the same message.
+var summaryInFlight sync.Map // map[int64]struct{} keyed by chat_history message ID
+
+// summarizeMessageOnce runs summarizeMessage under a per-message in-flight guard.
+// If another goroutine is already summarizing the same message, it returns false
+// (skipped) and the in-flight call will persist the summary. Returns true when
+// this call performed the summarization.
+func summarizeMessageOnce(targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) bool {
+	if _, loaded := summaryInFlight.LoadOrStore(targetID, struct{}{}); loaded {
+		return false
+	}
+	defer summaryInFlight.Delete(targetID)
+	_ = summarizeMessage(targetID, blocks, projectPath, sessionID)
+	return true
+}
 
 // summarizeMessage extracts the last answer text and saves it as a reading
 // summary for a chat message, without any AI call or length threshold.

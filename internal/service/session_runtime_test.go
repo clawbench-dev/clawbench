@@ -2573,6 +2573,58 @@ func TestEmitSessionPushNotification_Cancelled(t *testing.T) {
 	assert.Empty(t, data["response_preview"])
 }
 
+// TestCancelSession_DoesNotDoublePush verifies the M2 fix: when the session
+// goroutine completes first (claiming the terminal push guard and pushing
+// "completed"), CancelSession's "cancelled" broadcast must NOT send a second,
+// contradictory push.
+func TestCancelSession_DoesNotDoublePush(t *testing.T) {
+	db := setupPushNotificationTest(t, "session-cancel-race")
+
+	// Set up a running session with a registered cancel func so CancelSession
+	// reaches its emit path.
+	require.True(t, TrySetSessionRunning("session-cancel-race"))
+	t.Cleanup(func() { SetSessionRunning("session-cancel-race", false, true) })
+	_, cancel := context.WithCancel(context.Background())
+	RegisterSessionCancel("session-cancel-race", cancel)
+	t.Cleanup(func() {
+		cancel()
+		UnregisterSessionCancel("session-cancel-race")
+	})
+
+	// Simulate the goroutine completing first: claim the terminal push guard and
+	// push "completed" (stores one pending event).
+	EmitSessionPushNotification("session-cancel-race", "completed")
+	assert.Equal(t, 1, pendingEventCount(t, db))
+
+	// CancelSession must broadcast "cancelled" over WS but must NOT push a second
+	// notification (the guard is already claimed).
+	require.True(t, CancelSession("session-cancel-race"))
+	assert.Equal(t, 1, pendingEventCount(t, db), "CancelSession must not add a duplicate push after 'completed'")
+
+	// Session must no longer be running.
+	assert.False(t, IsSessionRunning("session-cancel-race"))
+}
+
+// TestCancelSession_PushesWhenFirst confirms the reverse ordering: when
+// CancelSession claims the guard first (no goroutine push yet), it DOES push
+// "cancelled" (one pending event).
+func TestCancelSession_PushesWhenFirst(t *testing.T) {
+	db := setupPushNotificationTest(t, "session-cancel-first")
+
+	require.True(t, TrySetSessionRunning("session-cancel-first"))
+	t.Cleanup(func() { SetSessionRunning("session-cancel-first", false, true) })
+	_, cancel := context.WithCancel(context.Background())
+	RegisterSessionCancel("session-cancel-first", cancel)
+	t.Cleanup(func() {
+		cancel()
+		UnregisterSessionCancel("session-cancel-first")
+	})
+
+	require.True(t, CancelSession("session-cancel-first"))
+	assert.Equal(t, 1, pendingEventCount(t, db), "CancelSession as the first terminal state must push 'cancelled'")
+	assert.False(t, IsSessionRunning("session-cancel-first"))
+}
+
 // --- getSessionResponsePreview: query error path (lines 93-96) ---
 
 func TestGetSessionResponsePreview_QueryError(t *testing.T) {

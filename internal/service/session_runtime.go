@@ -44,6 +44,14 @@ const responsePreviewMaxRunes = model.ResponsePreviewMaxRunes
 // EmitSessionEvent broadcasts a session_update event to connected clients.
 // toolName and toolInput are optional and only used for "permission_pending" status.
 func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolNameAndInput ...string) {
+	emitSessionEvent(sessionID, status, hasNewMessages, true, toolNameAndInput...)
+}
+
+// emitSessionEvent is EmitSessionEvent with an explicit push control. Callers
+// that manage their own terminal-push guard (e.g. CancelSession) pass pushEnabled
+// based on whether they won the guard, so a duplicate "cancelled" push is avoided
+// while the WS broadcast always happens.
+func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled bool, toolNameAndInput ...string) {
 	mgr := ws.GetManager()
 	if mgr == nil {
 		return
@@ -87,17 +95,28 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolNameAnd
 		Event: "session_update",
 		Data:  data,
 	}
-	// Write-ahead: persist before broadcast so event log has no gaps
-	// Skip when push_mode is "disabled" — no notifications desired
-	if model.ConfigInstance.PushMode != "disabled" {
+	// Write-ahead: persist before broadcast so event log has no gaps.
+	// Skip when push_mode is "disabled" — no notifications desired.
+	// When pushEnabled is false (a terminal state already reported elsewhere, e.g.
+	// the goroutine pushed "completed" before CancelSession ran), neither the
+	// notifiable pending event nor a push is produced — only the live WS broadcast.
+	if model.ConfigInstance.PushMode != "disabled" && pushEnabled {
 		StoreNotifiableEvent(msg)
 	}
 	mgr.BroadcastEvent(msg)
 
-	// DingTalk/Feishu push notification for session events.
-	// Pass raw (untruncated) preview — DingTalk/Feishu packages apply their own limit.
-	// If push succeeds, remove from pending_events to avoid duplicate
-	// Android notification when the app comes back online.
+	if !pushEnabled {
+		return
+	}
+
+	pushSessionEvent(sessionID, status, msg, data, responsePreviewRaw)
+}
+
+// pushSessionEvent sends the DingTalk/Feishu push for a session event. Pass the
+// raw (untruncated) preview — DingTalk/Feishu packages apply their own limit.
+// If the push succeeds, the pending event is removed to avoid a duplicate
+// Android notification when the app comes back online.
+func pushSessionEvent(sessionID, status string, msg ws.ServerMessage, data *ws.SessionUpdateData, responsePreviewRaw string) {
 	if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath, data.ToolName, data.ToolInput) {
 		_ = DeletePendingEvent(msg.ID)
 	} else if feishu.IsStarted() && feishu.PushSessionEvent(sessionID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath, data.ToolName, data.ToolInput) {
@@ -458,11 +477,12 @@ func CancelSession(sessionID string) bool {
 
 	ai.GetACPConnManager().CancelTurn(sessionID)
 
-	EmitSessionEvent(sessionID, "cancelled", false)
-
-	// Claim the terminal push slot so the goroutine's eventual done/cancelled
-	// path (via EmitSessionPushNotification) won't send a second push.
-	markTerminalPushDone(sessionID)
+	// Claim the terminal push slot BEFORE emitting. If a concurrent terminal path
+	// (the goroutine's done) already claimed it, we lose the guard — suppress the
+	// "cancelled" push (which would otherwise contradict the "completed" push the
+	// goroutine already sent) while still broadcasting "cancelled" over WS.
+	wonPush := markTerminalPushDone(sessionID)
+	emitSessionEvent(sessionID, "cancelled", false, wonPush)
 
 	// Mark session as not running (skip completed event — we already sent "cancelled")
 	SetSessionRunning(sessionID, false, true)
@@ -531,7 +551,7 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 		if _, found := GetSummary("chat_message", messages[i].ID); found {
 			continue
 		}
-		_ = summarizeMessage(messages[i].ID, blocks, projectPath, sessionID)
+		summarizeMessageOnce(messages[i].ID, blocks, projectPath, sessionID)
 	}
 
 	// 推荐回复: only for the last assistant message. If enabled, generate a
@@ -663,7 +683,8 @@ func SaveChatRecommendation(sessionID, projectPath string, messageID int64, reco
 // stale recommendation from a previous reply. Returns empty string if none.
 func LatestChatRecommendation(ctx context.Context, sessionID string, messageID int64) string {
 	var rec string
-	err := dbRead.QueryRowContext(ctx,
+	err := dbRead.QueryRowContext(
+		ctx,
 		"SELECT recommendation FROM chat_recommendations WHERE session_id = ? AND message_id = ? ORDER BY id DESC LIMIT 1",
 		sessionID, messageID,
 	).Scan(&rec)

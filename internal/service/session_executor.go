@@ -306,6 +306,7 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 		case <-flushTicker.C:
 			if len(e.blocks) > 0 {
 				e.flushStreamingMessage()
+				e.lastFlush = time.Now()
 			}
 		}
 	}
@@ -472,6 +473,12 @@ func (e *SessionExecutor) upsertToolCallToDB(event ai.StreamEvent) {
 // keeps the per-flush JSON small even when the agent streams tens of KB of
 // thinking, which is the dominant cost that previously stalled the consumer.
 func (e *SessionExecutor) flushStreamingMessage() {
+	// No DB initialized (e.g. a bare executor in an isolated unit test) — there
+	// is nothing to persist to. Guarding here keeps the rate-limited streaming
+	// flush safe on every non-terminal event without assuming a DB exists.
+	if db == nil {
+		return
+	}
 	serializedBlocks := make([]model.ContentBlock, 0, len(e.blocks))
 	for _, b := range e.blocks {
 		if b.Type == "thinking" {

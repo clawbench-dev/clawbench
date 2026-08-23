@@ -82,7 +82,9 @@ func EventsHandler(w http.ResponseWriter, r *http.Request) {
 		mgr.StreamHub().UnsubscribeAll(clientID)
 		// Stop the async writer goroutine for this connection before returning.
 		// Events arriving after this point are buffered for reconnect replay.
-		mgr.StopWriter(clientID)
+		// Pass conn so StopWriter only stops this connection's writer (an old
+		// handler's deferred StopWriter must not kill a reconnected writer).
+		mgr.StopWriter(clientID, conn)
 	}()
 
 	// Replay buffered events on reconnect

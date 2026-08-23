@@ -12,6 +12,7 @@ import (
 	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupTestDBForChatSummary creates an in-memory DB with chat_history and summaries tables.
@@ -266,6 +267,40 @@ func TestBackfillMissingSummaries_GeneratesMissingSummaries(t *testing.T) {
 	// Message 202: streaming — should NOT be summarized
 	_, found202 := GetSummary("chat_message", 202)
 	assert.False(t, found202)
+}
+
+// TestSummarizeMessageOnce_Dedup verifies the M3 fix: while a summary for a
+// message is already in flight, a concurrent call for the same message is
+// skipped (returns false) instead of generating a duplicate summary + broadcast.
+func TestSummarizeMessageOnce_Dedup(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "test-summary-dedup"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	content := `{"blocks":[{"type":"text","text":"dedup me"}]}`
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (300, '/test', 'assistant', ?, ?, 0)", content, sessionID)
+
+	blocks, err := parseMessageBlocks(content)
+	require.NoError(t, err)
+
+	// Simulate another goroutine already summarizing message 300.
+	summaryInFlight.Store(int64(300), struct{}{})
+	t.Cleanup(func() { summaryInFlight.Delete(int64(300)) })
+
+	// Concurrent call must be skipped and must NOT persist a summary.
+	ran := summarizeMessageOnce(300, blocks, "/test", sessionID)
+	assert.False(t, ran, "in-flight message must not be summarized twice")
+	_, found := GetSummary("chat_message", 300)
+	assert.False(t, found, "skipped call must not persist a summary")
+
+	// Once the in-flight claim is released, a later call proceeds normally.
+	summaryInFlight.Delete(int64(300))
+	ran = summarizeMessageOnce(300, blocks, "/test", sessionID)
+	assert.True(t, ran, "call after in-flight release must run")
+	s, found := GetSummary("chat_message", 300)
+	assert.True(t, found)
+	assert.Equal(t, "dedup me", s)
 }
 
 // The chat recommendation's blocking LLM call must NOT delay stream finalization.

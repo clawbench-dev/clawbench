@@ -659,7 +659,7 @@ func TestManager_BroadcastEvent_ConnectedClient(t *testing.T) {
 			return
 		}
 		m.StartWriter("ws-client", conn, &wmu)
-		defer m.StopWriter("ws-client")
+		defer m.StopWriter("ws-client", conn)
 		defer m.DisconnectClient("ws-client")
 		// Keep connection alive — read loop discards incoming client messages
 		readClientMessages(m, conn, &wmu, "ws-client")
@@ -997,7 +997,7 @@ func TestClientSubscription_AsyncSendQueue(t *testing.T) {
 			return
 		}
 		m.StartWriter("async-fifo", conn, &wmu)
-		defer m.StopWriter("async-fifo")
+		defer m.StopWriter("async-fifo", conn)
 		defer m.DisconnectClient("async-fifo")
 		readClientMessages(m, conn, &wmu, "async-fifo")
 		_ = conn.Close(websocket.StatusNormalClosure, "done")
@@ -1130,7 +1130,7 @@ func TestClientSubscription_WriterGoroutine_StopsOnDisconnect(t *testing.T) {
 		m.StartWriter("writer-stop", conn, &wmu)
 		// Read loop blocks until the client disconnects.
 		readClientMessages(m, conn, &wmu, "writer-stop")
-		m.StopWriter("writer-stop")
+		m.StopWriter("writer-stop", conn)
 		m.DisconnectClient("writer-stop")
 	})
 	server := httptest.NewServer(handler)
@@ -1187,7 +1187,7 @@ func TestClientSubscription_DefensiveBranches(t *testing.T) {
 	// StartWriter / StopWriter for a client that never subscribed: no-op.
 	var wmu sync.Mutex
 	m.StartWriter("ghost", nil, &wmu)
-	m.StopWriter("ghost")
+	m.StopWriter("ghost", nil)
 
 	// StartWriter on a subscription whose writer was not started is a no-op
 	// (writerStarted stays false), and StopWriter similarly returns early.
@@ -1206,7 +1206,7 @@ func TestClientSubscription_DefensiveBranches(t *testing.T) {
 		t.Error("expected writer not to start when sendQueue is nil")
 	}
 	// StopWriter with writer never started: no-op (must not block).
-	m.StopWriter("never-writer")
+	m.StopWriter("never-writer", nil)
 }
 
 // TestClientSubscription_ReconnectOldStopWriterNoOp verifies the C1 fix: when a
@@ -1242,7 +1242,7 @@ func TestClientSubscription_ReconnectOldStopWriterNoOp(t *testing.T) {
 		m.StartWriter("reconnect-client", conn, &wmu)
 		subAready <- struct{}{}
 		<-releaseA
-		m.StopWriter("reconnect-client")
+		m.StopWriter("reconnect-client", conn)
 		m.DisconnectClient("reconnect-client")
 	})
 	server := httptest.NewServer(handler)
@@ -1275,7 +1275,7 @@ func TestClientSubscription_ReconnectOldStopWriterNoOp(t *testing.T) {
 		subBready <- struct{}{}
 		// Keep the connection alive.
 		readClientMessages(m, conn, &wmu, "reconnect-client")
-		m.StopWriter("reconnect-client")
+		m.StopWriter("reconnect-client", conn)
 		m.DisconnectClient("reconnect-client")
 	})
 	serverB := httptest.NewServer(handlerB)

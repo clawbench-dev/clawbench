@@ -31,9 +31,10 @@ type ClientSubscription struct {
 	// This decouples the chat event loop from slow WS clients — a client that
 	// can't keep up no longer stalls the producer (which previously held sub.mu
 	// during a synchronous conn.Write of up to wsWriteTimeout).
-	sendQueue     chan []byte   // bounded: maxAsyncQueue
-	writerStarted bool          // writer goroutine started for the current connection
-	writerStopped chan struct{} // closed when the writer goroutine exits
+	sendQueue     chan []byte     // bounded: maxAsyncQueue
+	writerStarted bool            // writer goroutine started for the current connection
+	writerConn    *websocket.Conn // connection the current writer was started for (identity check)
+	writerStopped chan struct{}   // closed when the writer goroutine exits
 }
 
 // maxSubscriptions limits the number of concurrent WS subscriptions to prevent
@@ -156,6 +157,7 @@ func (m *Manager) Subscribe(conn *websocket.Conn, writeMu *sync.Mutex, clientID,
 		oldExit = sub.writerStopped
 		sub.writerStarted = false
 		sub.writerStopped = nil
+		sub.writerConn = nil
 	}
 	sub.conn = conn
 	sub.writeMu = writeMu
@@ -327,6 +329,7 @@ func (m *Manager) StartWriter(clientID string, conn *websocket.Conn, writeMu *sy
 		return
 	}
 	sub.writerStarted = true
+	sub.writerConn = conn
 	exit := make(chan struct{})
 	sub.writerStopped = exit
 	sendQueue := sub.sendQueue
@@ -341,7 +344,12 @@ func (m *Manager) StartWriter(clientID string, conn *websocket.Conn, writeMu *sy
 // observed via writerStopped. Events enqueued after StopWriter are refused by
 // enqueueSendLocked (sendQueue set to nil) and instead only enter the replay
 // buffer, so nothing is lost on reconnect.
-func (m *Manager) StopWriter(clientID string) {
+//
+// conn identifies the connection this caller is responsible for. StopWriter
+// only stops a writer that was started for that same connection — an old
+// handler's deferred StopWriter running after a reconnect must not kill the
+// new connection's writer (see Subscribe's replacement logic).
+func (m *Manager) StopWriter(clientID string, conn *websocket.Conn) {
 	m.mu.Lock()
 	sub, ok := m.subscriptions[clientID]
 	m.mu.Unlock()
@@ -350,11 +358,12 @@ func (m *Manager) StopWriter(clientID string) {
 	}
 
 	sub.mu.Lock()
-	if !sub.writerStarted {
+	if !sub.writerStarted || sub.writerConn != conn {
 		sub.mu.Unlock()
 		return
 	}
 	sub.writerStarted = false
+	sub.writerConn = nil
 	sendQueue := sub.sendQueue
 	sub.sendQueue = nil
 	exit := sub.writerStopped
@@ -368,7 +377,14 @@ func (m *Manager) StopWriter(clientID string) {
 		close(sendQueue)
 	}
 	if exit != nil {
-		<-exit
+		// Wait bounded: the writer may be blocked writing to a slow/dead socket
+		// for up to wsWriteTimeout. Bound the wait so connection teardown is not
+		// delayed beyond that on the caller's path; the writer still exits on
+		// its own once the write completes or fails.
+		select {
+		case <-exit:
+		case <-time.After(wsWriteTimeout):
+		}
 	}
 }
 

@@ -1894,6 +1894,6 @@ func backfillMissingSummaries(assistantIDs []int64, summaryMap map[int64]string)
 			continue
 		}
 		projectPath := GetSessionProjectPath(sessionID)
-		_ = summarizeMessage(id, blocks, projectPath, sessionID)
+		summarizeMessageOnce(id, blocks, projectPath, sessionID)
 	}
 }
