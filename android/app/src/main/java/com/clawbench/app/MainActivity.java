@@ -356,8 +356,8 @@ public class MainActivity extends AppCompatActivity {
                 textPrimary = 0xFFF8F8F2; textMuted = 0xFF6272A4; textHint = 0xFF6272A4;
                 isLight = false; break;
             case "nord":
-                bgPrimary = 0xFF2E3440; bgSecondary = 0xFF3B4252;
-                textPrimary = 0xFFD8DEE9; textMuted = 0xFF81A1C1; textHint = 0xFF81A1C1;
+                bgPrimary = 0xFF171E27; bgSecondary = 0xFF202833;
+                textPrimary = 0xFFE6ECF4; textMuted = 0xFF7F8FA5; textHint = 0xFF7F8FA5;
                 isLight = false; break;
             case "tokyo-night":
                 bgPrimary = 0xFF1A1B26; bgSecondary = 0xFF16161E;
