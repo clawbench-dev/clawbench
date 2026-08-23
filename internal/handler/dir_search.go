@@ -33,6 +33,42 @@ var ignoredSearchDirs = map[string]bool{
 	".gradle":      true,
 }
 
+// isStrictlyBelowBuild reports whether relPath has a `build` segment strictly
+// above the leaf (i.e. the path itself is not the `build` directory).
+func isStrictlyBelowBuild(relPath string) bool {
+	segs := strings.Split(relPath, "/")
+	for i, s := range segs {
+		if s == "build" && i < len(segs)-1 {
+			return true
+		}
+	}
+	return false
+}
+
+// isWithinAndroidOutputs reports whether relPath is inside a `build/outputs`
+// subtree (e.g. app/build/outputs/apk/release/app-debug.apk).
+func isWithinAndroidOutputs(relPath string) bool {
+	segs := strings.Split(relPath, "/")
+	for i := 0; i < len(segs)-1; i++ {
+		if segs[i] == "build" && segs[i+1] == "outputs" {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldSkipSearchDir decides whether to prune the subtree at relPath (slash-
+// normalized, project-root relative) during recursive search. Standard ignored
+// dirs are skipped; within a `build` tree only the Android `build/outputs`
+// subtree (which holds artifacts like .apk) is kept searchable, so large build
+// trees are not fully traversed.
+func shouldSkipSearchDir(relPath string, name string) bool {
+	if ignoredSearchDirs[name] {
+		return true
+	}
+	return isStrictlyBelowBuild(relPath) && !isWithinAndroidOutputs(relPath)
+}
+
 const (
 	maxSearchQueryLen = 256 // Maximum query string length
 	maxSearchLimit    = 500 // Maximum number of results a client can request
@@ -232,9 +268,6 @@ func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string,
 		default:
 		}
 
-		if d.IsDir() && path != absPath && ignoredSearchDirs[d.Name()] {
-			return fs.SkipDir
-		}
 		if path == absPath {
 			return nil
 		}
@@ -243,12 +276,17 @@ func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string,
 		if relErr != nil {
 			return nil //nolint:nilerr // skip entries with invalid relative paths
 		}
+		relPathSlash := filepath.ToSlash(relPath)
+
+		if d.IsDir() && shouldSkipSearchDir(relPathSlash, d.Name()) {
+			return fs.SkipDir
+		}
 
 		name := d.Name()
 		matchedIndexes := matchName(name, query, exact)
 		if len(matchedIndexes) > 0 {
 			entryType := classifyEntry(d, name)
-			onMatch(name, filepath.ToSlash(relPath), entryType, matchedIndexes)
+			onMatch(name, relPathSlash, entryType, matchedIndexes)
 		}
 
 		return nil

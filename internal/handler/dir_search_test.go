@@ -218,6 +218,94 @@ func TestDirSearch_ExactMatchingCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestShouldSkipSearchDir(t *testing.T) {
+	tests := []struct {
+		relPath string
+		name    string
+		want    bool
+	}{
+		// Standard ignored dirs are always skipped.
+		{"node_modules/pkg", "node_modules", true},
+		{".git", ".git", true},
+		{"vendor", "vendor", true},
+		// A `build` dir itself is walked so the Android outputs subtree stays reachable.
+		{"app/build", "build", false},
+		{"build", "build", false},
+		// Android build/outputs subtree (e.g. .apk) is searchable.
+		{"app/build/outputs", "outputs", false},
+		{"app/build/outputs/apk/release", "release", false},
+		// Non-outputs children of a build tree are skipped.
+		{"app/build/intermediates", "intermediates", true},
+		{"app/build/generated", "generated", true},
+		{"app/build/intermediates/debug", "debug", true},
+		// Native build subdirs are skipped.
+		{"build/CMakeFiles", "CMakeFiles", true},
+		{"build/_deps", "_deps", true},
+		// Unrelated directories are not skipped.
+		{"src/main", "main", false},
+		{"internal/handler", "handler", false},
+		// A dir literally named "build" not in a build tree is still walked.
+		{"src/build-tool", "build-tool", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.relPath, func(t *testing.T) {
+			if got := shouldSkipSearchDir(tt.relPath, tt.name); got != tt.want {
+				t.Errorf("shouldSkipSearchDir(%q, %q) = %v, want %v", tt.relPath, tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDirSearch_AndroidBuildOutputs(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// APK under build/outputs should be searchable...
+	createTestFile(t, env.ProjectDir, "android/app/build/outputs/apk/release/clawbench-android.apk", "apk")
+	// ...while the rest of the build tree stays skipped.
+	createTestFile(t, env.ProjectDir, "android/app/build/intermediates/debug/symbols.txt", "symbols")
+	createTestFile(t, env.ProjectDir, "android/app/build/generated/foo.txt", "generated")
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=clawbench&recursive=true", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+	results := events["result"]
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (the .apk), got %d", len(results))
+	}
+	var r DirSearchResult
+	if err := json.Unmarshal(results[0], &r); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+	if r.Name != "clawbench-android.apk" {
+		t.Errorf("expected name clawbench-android.apk, got %s", r.Name)
+	}
+	if r.Path != "android/app/build/outputs/apk/release/clawbench-android.apk" {
+		t.Errorf("expected apk path, got %s", r.Path)
+	}
+}
+
+func TestDirSearch_SkipsBuildIntermediates(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "android/app/build/intermediates/debug/symbols.txt", "symbols")
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=symbols&recursive=true", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+	if len(events["result"]) != 0 {
+		t.Fatalf("expected 0 results from build/intermediates, got %d", len(events["result"]))
+	}
+}
+
 func TestDirSearch_IgnoresDirs(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

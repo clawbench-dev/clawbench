@@ -3,6 +3,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { contextMenuLabels } from './contextMenu'
+import { classifyUrl } from './urlPolicy'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -64,23 +65,6 @@ function registerContextMenu(webContents: Electron.WebContents): void {
   })
 }
 
-/** Check if a target URL is an external link outside the configured ClawBench server. */
-function isExternalUrl(targetUrl: string): boolean {
-  try {
-    const parsed = new URL(targetUrl)
-    if (parsed.protocol === 'file:') return false
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'mailto:') {
-      return true
-    }
-    const serverUrl = getStore().get('serverUrl')
-    if (!serverUrl) return true
-    const serverOrigin = new URL(serverUrl).origin
-    return parsed.origin !== serverOrigin
-  } catch {
-    return false
-  }
-}
-
 export function createMainWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, show: false,
@@ -112,14 +96,19 @@ export function createMainWindow(): BrowserWindow {
 
   // Open external web links in the user's default browser instead of navigating within the app window.
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (isExternalUrl(url)) {
+    const disposition = classifyUrl(url, getStore().get('serverUrl'))
+    if (disposition === 'external') {
       event.preventDefault()
       void shell.openExternal(url)
+    } else if (disposition === 'block') {
+      // Block file:, javascript:, data:, and unknown schemes rather than
+      // letting the window navigate to (or the OS handle) arbitrary content.
+      event.preventDefault()
     }
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (isExternalUrl(target)) {
+    if (classifyUrl(target, getStore().get('serverUrl')) === 'external') {
       void shell.openExternal(target)
     }
     return { action: 'deny' }
