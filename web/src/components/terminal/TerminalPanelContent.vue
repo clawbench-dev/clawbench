@@ -264,7 +264,7 @@ import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
 import TerminalHelpDrawer from '@/components/terminal/TerminalHelpDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
-import type { Terminal as TerminalType } from '@xterm/xterm'
+import type { Terminal as TerminalType, ITheme } from '@xterm/xterm'
 import { copyText } from '@/utils/clipboard.ts'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
@@ -467,7 +467,7 @@ const themeMenuOpen = ref(false)
 const themeMenuTarget = ref<HTMLElement | null>(null)
 const themeLoading = ref(false)
 const themeLoadError = ref(false)
-const allThemes = ref<Record<string, unknown> | null>(null)
+const allThemes = ref<Record<string, ITheme> | null>(null)
 
 async function ensureThemesLoaded() {
   if (allThemes.value || themeLoading.value) return

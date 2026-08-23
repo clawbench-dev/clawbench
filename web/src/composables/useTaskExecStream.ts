@@ -91,7 +91,6 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
         const sm = streamingMsg.value
         if (!sm) return
         sm.blocks = []
-        sm.streamingText = ''
         sm.metadata = undefined
         break
       }
