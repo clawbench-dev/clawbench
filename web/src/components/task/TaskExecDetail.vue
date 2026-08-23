@@ -33,6 +33,10 @@
         <span class="action-text">{{ continueLoading ? t('task.exec.continueConversationLoading') : t('task.exec.continueConversation') }}</span>
       </button>
       <span class="actions-spacer"></span>
+      <button v-if="isRunning" class="action-btn danger" :disabled="cancelling" @click="onTerminate" :title="t('task.exec.cancel')">
+        <Square :size="14" />
+        <span class="action-text">{{ cancelling ? t('common.loading') : t('task.exec.cancel') }}</span>
+      </button>
       <button class="action-btn" :class="{ spinning: refreshing }" :disabled="refreshing" @click="onRefresh" :title="t('common.refresh')">
         <RefreshCw :size="14" />
       </button>
@@ -83,7 +87,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, provide, onUnmounted, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RefreshCw, MessageSquare } from 'lucide-vue-next'
+import { RefreshCw, MessageSquare, Square } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
@@ -101,6 +105,9 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
+import { apiPut } from '@/utils/api.ts'
+import { useToast } from '@/composables/useToast.ts'
+import { useDialog } from '@/composables/useDialog.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 
@@ -125,6 +132,11 @@ const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTab
 const continueLoading = ref(false)
 const isRunning = computed(() => props.execDetail?.status === 'running')
 
+// ── Terminate (cancel) running execution ──
+const cancelling = ref(false)
+const toast = useToast()
+const dialog = useDialog()
+
 // ── Live preview stream ──
 const execStatusRef = computed(() => props.execDetail?.status || '')
 const execSessionIdRef = computed(() => props.execDetail?.sessionId || null)
@@ -143,6 +155,29 @@ const showContinueBtn = computed(() => {
   const status = props.execDetail?.status
   return status && status !== 'running' && props.taskId && props.execDetail?.id
 })
+
+async function onTerminate() {
+  if (!props.taskId || !props.execDetail?.id || cancelling.value) return
+  if (!await dialog.confirm(t('task.exec.confirmCancel'))) return
+  cancelling.value = true
+  try {
+    await apiPut(`/api/tasks/${props.taskId}`, {
+      action: 'cancel',
+      executionId: String(props.execDetail.id),
+    })
+    toast.show(t('task.exec.cancelled'), { icon: '✅', type: 'success' })
+    execStream.stopPreview()
+    refreshExecDetail()
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('404')) {
+      toast.show(t('task.exec.alreadyFinished'), { icon: 'ℹ️', type: 'info' })
+    } else {
+      toast.show(t('task.exec.actionFailedDetail', { error: err?.message || String(err) }), { icon: '⚠️', type: 'error' })
+    }
+  } finally {
+    cancelling.value = false
+  }
+}
 
 async function onContinueConversation() {
   if (!props.taskId || !props.execDetail?.id || continueLoading.value) return
