@@ -224,7 +224,7 @@ import { useSystemResources } from '@/composables/useSystemResources'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
-import { isDarkTheme, resolveThemeId, THEME_IDS, THEME_PREVIEW_COLORS } from '@/utils/themeMeta'
+import { isDarkTheme, resolveThemeId, THEME_IDS, getThemeLabelKey, getThemePreviewColor } from '@/utils/themeMeta'
 import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
 import type { ShortcutContext } from '@/config/shortcutTips'
 import { resolveShortcutContext } from '@/config/shortcutTips'
@@ -251,21 +251,11 @@ const shortcutTipsOpen = ref(false)
 const themeBtnRef = ref<HTMLElement | null>(null)
 const themeMenuOpen = ref(false)
 const currentThemeValue = computed(() => localConfig.theme || 'auto')
-const autoPreviewColors = computed(() => {
-  const resolved = resolveThemeId('auto')
-  return THEME_PREVIEW_COLORS[resolved] ?? null
-})
+const autoPreviewColors = computed(() => getThemePreviewColor(resolveThemeId('auto')))
 
 const themeOptions = computed(() => [
   { label: t('settings.items.themeAuto'), value: 'auto' },
-  ...THEME_IDS.map(id => {
-    // Map theme ID to its i18n label key, e.g. 'github-light' -> 'settings.items.themeGithubLight'
-    const key = 'settings.items.theme' + id
-      .split('-')
-      .map(s => s.charAt(0).toUpperCase() + s.slice(1))
-      .join('')
-    return { label: t(key), value: id }
-  }),
+  ...THEME_IDS.map(id => ({ label: t(getThemeLabelKey(id)), value: id })),
 ])
 
 function toggleThemeMenu() {
@@ -285,12 +275,7 @@ function selectTheme(value: string) {
 }
 
 function getThemePreviewStyle(value: string) {
-  if (value === 'auto') {
-    const c = autoPreviewColors.value
-    if (!c) return undefined
-    return { '--theme-preview-bg': c.bg, '--theme-preview-fg': c.text, '--theme-preview-accent': c.accent }
-  }
-  const c = THEME_PREVIEW_COLORS[value]
+  const c = value === 'auto' ? autoPreviewColors.value : getThemePreviewColor(value)
   if (!c) return undefined
   return { '--theme-preview-bg': c.bg, '--theme-preview-fg': c.text, '--theme-preview-accent': c.accent }
 }
@@ -1435,6 +1420,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
   .theme-picker-item:hover {
     background: var(--bg-tertiary);
   }
+}
+
+.theme-picker-item:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
 }
 
 .theme-picker-item.active {
