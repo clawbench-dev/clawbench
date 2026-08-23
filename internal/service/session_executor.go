@@ -37,6 +37,8 @@ const (
 	blockTypeWarning = "warning"
 	// eventTypeContentReset clears accumulated blocks from a failed Prompt before retry.
 	eventTypeContentReset = "content_reset"
+	// eventTypeDone is the stream event type for stream completion.
+	eventTypeDone = "done"
 
 	// transportACPStdio is the ACP stdio transport type.
 	transportACPStdio = "acp-stdio"
@@ -44,6 +46,8 @@ const (
 	transportCLI = "cli"
 	// eventTypeError is the stream event type for errors.
 	eventTypeError = "error"
+	// eventTypeSessionUpdate is the stream event type for session updates.
+	eventTypeSessionUpdate = "session_update"
 	// eventTypeToolUse is the stream event type for tool calls.
 	eventTypeToolUse = "tool_use"
 	// eventTypeToolResult is the stream event type for tool results.
@@ -287,7 +291,7 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 				// Channel closed without a terminal event — CLI process crash
 				return e.buildResult(false, wallStart)
 			}
-			if event.Type == "done" || event.Type == eventTypeError {
+			if event.Type == eventTypeDone || event.Type == eventTypeError {
 				e.receivedTerminal = true
 				// For "error" events, AccumulateBlock handles them.
 				// We process the error event but still finalize.

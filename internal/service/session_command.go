@@ -230,7 +230,7 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			// must be triggered here for normal completion.
 			// Skip for cancelled: CancelSession already calls EmitSessionEvent("cancelled")
 			// which handles push. Skip for error: no meaningful push content.
-			if event.Type == "done" {
+			if event.Type == eventTypeDone {
 				EmitSessionPushNotification(sessionID, statusCompleted)
 			}
 		}

@@ -97,7 +97,7 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 		}
 		if !ok {
 			// Queue empty — truly done
-			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: "done"})
+			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: eventTypeDone})
 			return
 		}
 

@@ -50,7 +50,7 @@ func IsNotifiableEvent(event string, data any) bool {
 		return false
 	}
 	switch event {
-	case "session_update":
+	case eventTypeSessionUpdate:
 		return status == statusCompleted || status == statusCancelled || status == "permission_pending"
 	case "task_update":
 		return status == statusCompleted || status == "failed" || status == statusCancelled
@@ -62,7 +62,7 @@ func IsNotifiableEvent(event string, data any) bool {
 // pendingEventExpiresAt returns the expires_at value for an event type.
 // permission_pending events get 7-day TTL; others get 24h.
 func pendingEventExpiresAt(event, status string) string {
-	if event == "session_update" && status == "permission_pending" {
+	if event == eventTypeSessionUpdate && status == "permission_pending" {
 		return time.Now().Add(pendingEventPermPendTTL).UTC().Format(time.RFC3339)
 	}
 	return time.Now().Add(pendingEventTTL).UTC().Format(time.RFC3339)

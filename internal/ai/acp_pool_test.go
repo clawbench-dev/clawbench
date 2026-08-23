@@ -1311,8 +1311,8 @@ func TestSweepOnce_KillsExcessBeyondMinAliveConns(t *testing.T) {
 	// Actually minAliveConns=3 and 5 alive → maxKill=2, so the 2 oldest
 	// (1 and 2) are killed, leaving 3, 4, 5 alive.
 	type entry struct {
-		sid      string
-		idleAgo  time.Duration
+		sid     string
+		idleAgo time.Duration
 	}
 	entries := []entry{
 		{"session-min-excess-1", 30 * time.Minute}, // oldest → killed
