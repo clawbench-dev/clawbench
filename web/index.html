@@ -13,7 +13,7 @@
          Must run synchronously before any rendering to avoid a single white frame. -->
     <script>
       (function() {
-        var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','gruvbox-dark','high-contrast-dark','night-owl','ayu-dark','vitesse-dark'];
+        var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','solarized-deep','gruvbox-dark','high-contrast-dark','night-owl','ayu-dark','vitesse-dark'];
         var t = null;
         try { var s = localStorage.getItem('clawbench-settings-theme'); if (s) t = JSON.parse(s); } catch {}
         if (t === null) { try { t = localStorage.getItem('theme'); } catch {} }
@@ -30,7 +30,7 @@
         document.documentElement.setAttribute('data-theme-base', base);
         document.documentElement.setAttribute('data-hljs-theme', base);
         // Update meta theme-color for Android WebView status bar
-        var SB_COLORS = {'github-light':'#f8f9fa','github-dark':'#161b22','one-dark-pro':'#21252b','catppuccin-mocha':'#181825','catppuccin-latte':'#e6e9ef','dracula':'#21222c','nord':'#202833','tokyo-night':'#16161e','solarized-dark':'#0a3541','solarized-light':'#eee8d5','gruvbox-dark':'#1d2021','gruvbox-light':'#f2e5bc','high-contrast-dark':'#0a0a0a','high-contrast-light':'#f5f5f5','night-owl':'#001122','ayu-dark':'#0d1017','vitesse-dark':'#181818'};
+        var SB_COLORS = {'github-light':'#f8f9fa','github-dark':'#161b22','one-dark-pro':'#21252b','catppuccin-mocha':'#181825','catppuccin-latte':'#e6e9ef','dracula':'#21222c','nord':'#202833','tokyo-night':'#16161e','solarized-dark':'#0a3541','solarized-deep':'#15212b','solarized-light':'#eee8d5','gruvbox-dark':'#1d2021','gruvbox-light':'#f2e5bc','high-contrast-dark':'#0a0a0a','high-contrast-light':'#f5f5f5','night-owl':'#001122','ayu-dark':'#0d1017','vitesse-dark':'#181818'};
         var metaTC = document.querySelector('meta[name="theme-color"]');
         if (metaTC) metaTC.setAttribute('content', SB_COLORS[t] || '#161b22');
       })();

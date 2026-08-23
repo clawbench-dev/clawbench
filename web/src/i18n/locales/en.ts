@@ -1384,6 +1384,7 @@ export default {
       themeNord: 'Nord',
       themeTokyoNight: 'Tokyo Night',
       themeSolarizedDark: 'Solarized Dark',
+      themeSolarizedDeep: 'Solarized Deep',
       themeSolarizedLight: 'Solarized Light',
       themeGruvboxDark: 'Gruvbox Dark',
       themeGruvboxLight: 'Gruvbox Light',

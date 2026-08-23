@@ -12,7 +12,7 @@ export const THEME_IDS = [
   'dracula',
   'nord',
   'tokyo-night',
-  'solarized-dark', 'solarized-light',
+  'solarized-dark', 'solarized-light', 'solarized-deep',
   'gruvbox-dark', 'gruvbox-light',
   'high-contrast-dark', 'high-contrast-light',
   'night-owl',
@@ -26,7 +26,7 @@ export type ThemeId = typeof THEME_IDS[number]
 
 const DARK_THEME_IDS = new Set<string>([
   'github-dark', 'one-dark-pro', 'catppuccin-mocha', 'dracula',
-  'nord', 'tokyo-night', 'solarized-dark', 'gruvbox-dark',
+  'nord', 'tokyo-night', 'solarized-dark', 'solarized-deep', 'gruvbox-dark',
   'high-contrast-dark',
   'night-owl', 'ayu-dark', 'vitesse-dark',
 ])
@@ -65,6 +65,7 @@ export const STATUS_BAR_COLORS: Record<string, string> = {
   'nord':               '#202833',
   'tokyo-night':        '#16161e',
   'solarized-dark':     '#0a3541',
+  'solarized-deep':     '#15212b',
   'solarized-light':    '#eee8d5',
   'gruvbox-dark':       '#1d2021',
   'gruvbox-light':      '#f2e5bc',
@@ -92,6 +93,7 @@ export const THEME_PREVIEW_COLORS: Record<string, { bg: string; text: string; ac
   'nord':               { bg: '#202833', text: '#e6ecf4', accent: '#6cb2f0' },
   'tokyo-night':        { bg: '#16161e', text: '#c0caf5', accent: '#7aa2f7' },
   'solarized-dark':     { bg: '#0a3541', text: '#a0b0b4', accent: '#2e9fd8' },
+  'solarized-deep':     { bg: '#15212b', text: '#dce5ec', accent: '#3bb8e0' },
   'solarized-light':    { bg: '#eee8d5', text: '#657b83', accent: '#268bd2' },
   'gruvbox-dark':       { bg: '#1d2021', text: '#ebdbb2', accent: '#fe8019' },
   'gruvbox-light':      { bg: '#f2e5bc', text: '#3c3836', accent: '#af3a03' },

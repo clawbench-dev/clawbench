@@ -1384,6 +1384,7 @@ export default {
       themeNord: '极夜',
       themeTokyoNight: '东京夜色',
       themeSolarizedDark: 'Solarized 暗色',
+      themeSolarizedDeep: 'Solarized 深邃',
       themeSolarizedLight: 'Solarized 亮色',
       themeGruvboxDark: 'Gruvbox 暖暗',
       themeGruvboxLight: 'Gruvbox 暖亮',

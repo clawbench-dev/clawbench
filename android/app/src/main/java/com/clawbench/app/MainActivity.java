@@ -367,6 +367,10 @@ public class MainActivity extends AppCompatActivity {
                 bgPrimary = 0xFF002B36; bgSecondary = 0xFF0A3541;
                 textPrimary = 0xFFA0B0B4; textMuted = 0xFF677F86; textHint = 0xFF677F86;
                 isLight = false; break;
+            case "solarized-deep":
+                bgPrimary = 0xFF0C141D; bgSecondary = 0xFF15212B;
+                textPrimary = 0xFFDCE5EC; textMuted = 0xFF7D8EA0; textHint = 0xFF7D8EA0;
+                isLight = false; break;
             case "solarized-light":
                 bgPrimary = 0xFFFDF6E3; bgSecondary = 0xFFEEE8D5;
                 textPrimary = 0xFF657B83; textMuted = 0xFF93A1A1; textHint = 0xFF93A1A1;

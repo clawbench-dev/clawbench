@@ -456,6 +456,55 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
+   9b. Solarized Deep（Solarized 暗色增强版：更深背景、更高对比、保留青蓝基调）
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="solarized-deep"] {
+    --bg-primary: #0c141d;
+    --bg-secondary: #15212b;
+    --bg-tertiary: #1d2b37;
+    --text-primary: #dce5ec;
+    --text-secondary: #a4b3c2;
+    --text-muted: #7d8ea0;
+    --border-color: #2a3a48;
+    --accent-color: #3bb8e0;
+    --accent-hover: #4fc8f0;
+    --user-msg-color: #3a6d85;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --code-bg: #101b25;
+    --blockquote-border: #2a3a48;
+    --table-border: #2a3a48;
+    --scrollbar-thumb: #33506a;
+    --scrollbar-track: #15212b;
+    --dock-bg: rgba(21, 33, 43, 0.75);
+    --dock-border: rgba(255, 255, 255, 0.08);
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(12, 20, 29, 0.95);
+    --bg-key: #1d2b37;
+    --text-color: #dce5ec;
+    --bg-key-active: #2a3a48;
+    --color-green: #8fd07a;
+    --color-yellow: #e0b45c;
+    --color-red: #e06262;
+    --color-purple: #a78fd8;
+    --text-bold: #f0f5fa;
+    --code-syntax-comment: #6b7f90;
+    --code-syntax-keyword: #8fd07a;
+    --code-syntax-string: #4fc8b0;
+    --code-syntax-number: #e06c9c;
+    --code-syntax-function: #3bb8e0;
+    --code-syntax-type: #e0b45c;
+    --code-syntax-variable: #e07a4a;
+    --code-syntax-property: #3bb8e0;
+    --code-syntax-operator: #8fd07a;
+    --code-syntax-tag: #3bb8e0;
+    --code-syntax-attribute: #4fc8b0;
+    --code-syntax-meta: #dce5ec;
+    --code-syntax-heading: #3bb8e0;
+    --code-syntax-link: #3bb8e0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
    10. Solarized Light
    ══════════════════════════════════════════════════════════════════════════════ */
 [data-theme="solarized-light"] {

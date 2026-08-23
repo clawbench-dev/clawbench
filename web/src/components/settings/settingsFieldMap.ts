@@ -120,6 +120,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.themeNord', value: 'nord' },
       { labelKey: 'settings.items.themeTokyoNight', value: 'tokyo-night' },
       { labelKey: 'settings.items.themeSolarizedDark', value: 'solarized-dark' },
+      { labelKey: 'settings.items.themeSolarizedDeep', value: 'solarized-deep' },
       { labelKey: 'settings.items.themeSolarizedLight', value: 'solarized-light' },
       { labelKey: 'settings.items.themeGruvboxDark', value: 'gruvbox-dark' },
       { labelKey: 'settings.items.themeGruvboxLight', value: 'gruvbox-light' },
