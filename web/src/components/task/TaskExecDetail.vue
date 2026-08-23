@@ -20,6 +20,7 @@
         @show-tool-detail="handleShowToolDetail"
         @show-metadata="showMetadata"
         @task-card-click="() => {}"
+        @render-flush="scrollToBottom"
       />
       <div v-else-if="execDetail?.status === 'cancelled'" class="exec-cancelled-notice">{{ t('task.exec.cancelledNotice') }}</div>
       <div v-else class="exec-detail-empty">{{ isRunning ? t('task.exec.startingPreview') : t('task.exec.noTextOutput') }}</div>
@@ -435,13 +436,13 @@ function onContentTouchEnd() {
 }
 
 function scrollToBottom() {
-  if (!contentRef.value || !isAtBottom.value) return
+  if (!contentRef.value || !isAtBottom.value || userTouching) return
   const el = contentRef.value
   el.scrollTop = el.scrollHeight
   // Re-check after layout — content may grow during streaming.
   // Only correct if the user hasn't scrolled up since (sticky-jitter guard).
   requestAnimationFrame(() => {
-    if (!contentRef.value || !isAtBottom.value) return
+    if (!contentRef.value || !isAtBottom.value || userTouching) return
     const c = contentRef.value
     const gap = c.scrollHeight - c.scrollTop - c.clientHeight
     if (gap > 0) c.scrollTop = c.scrollHeight
@@ -450,7 +451,6 @@ function scrollToBottom() {
 
 // Follow streaming updates while at the bottom
 watch(activeMsgData, () => {
-  if (userTouching) return
   nextTick(scrollToBottom)
 })
 
