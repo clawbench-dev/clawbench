@@ -57,6 +57,13 @@ export interface ChatMessage {
    * are still pending. Absent for DB-backed and pending-user messages.
    */
   afterSort?: number
+  /** DB-assigned queue id (backend echoes the frontend queueId for a queued
+   *  message). Lets the frontend match an optimistic pending bubble to its DB
+   *  row and lets queue_cancel remove pending bubbles whose id became numeric. */
+  queueId?: string
+  /** True while this message is still waiting for the drain loop (queued=1 in
+   *  chat_history). The frontend treats it as a pending bubble until queue_drain. */
+  queued?: boolean
   [key: string]: unknown
 }
 
@@ -388,13 +395,10 @@ export function sortMessages(messages: ChatMessage[]): void {
  * 1. Finalizes the current streaming assistant message (removes streaming flag,
  *    marks unfinished tool_use blocks as done) — WITHOUT deleting it, even if
  *    it appears empty. This prevents v-for key shifts from index-based keys.
- * 2. Finds the drained user message (by its stable queueId) and clears its
- *    transient flags. It is persisted to DB by the backend (AddChatMessage)
- *    BEFORE the queue_drain event, so it survives a loadHistory, but the
- *    frontend does NOT adopt its numeric DB id here — it stays in the
- *    client seq-order domain (string id) until loadHistory runs. This keeps
- *    ordering consistent among all in-flight transient messages and is the
- *    root fix for queued-message / conversation display misalignment.
+ * 2. Finds the drained user message (by its stable queueId) and adopts its
+ *    numeric DB id (dbMessageId). The row is already persisted in chat_history
+ *    with queued=0 (the drain loop flipped it), so adopting the id is safe —
+ *    the message is now a normal conversation record ordered by id.
  * 3. Pushes a new streaming assistant placeholder for the next message.
  *
  * Returns the new streaming assistant message.
@@ -410,13 +414,7 @@ export function drainQueueMessage(
     onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
   },
   drainId?: string,
-  // Deliberate no-op kept only for caller signature compatibility: the backend
-  // sends the drained message's numeric DB id here, but it must NOT be applied
-  // to the message during streaming (it would move it out of the transient
-  // seq-order domain and displace its still-transient siblings — see step 2).
-  // loadHistory() reconciles the authoritative numeric id/order when the stream
-  // ends. Never use this to set the message id.
-  _dbMessageId?: number
+  dbMessageId?: number,
 ): ChatMessage {
   // 1. Finalize any streaming assistant message — never delete to avoid key shifts
   const streamingMsg = messages.find((m) => m.role === 'assistant' && m.streaming)
@@ -438,12 +436,10 @@ export function drainQueueMessage(
 
   // 2. Find the queued user message by its STABLE key — the queueId that the
   //    frontend generated and sent to the backend, and which the backend echoes
-  //    back in queue_drain. No content guessing: identity is the key. The
-  //    message is guaranteed present (kept alive across loadHistory), so the
-  //    exact match always resolves here.
+  //    back in queue_drain. No content guessing: identity is the key.
   let pendingIdx = -1
   if (queueId) {
-    pendingIdx = messages.findIndex((m) => m.role === 'user' && m.pending && m.id === queueId)
+    pendingIdx = messages.findIndex((m) => m.role === 'user' && (m.pending || m._remote) && m.id === queueId)
   }
   if (pendingIdx === -1 && queueId) {
     // Cross-device: the remote user message stores the same queueId in _remoteQueueId.
@@ -453,71 +449,43 @@ export function drainQueueMessage(
   if (pendingIdx !== -1) {
     // Found by stable key — clear transient flags.
     //
-    // Deliberately do NOT adopt the numeric DB id (dbMessageId) here. A drained
-    // message must stay in the client seq-order domain (string id) so it keeps
-    // sorting alongside the other still-transient in-flight messages. Adopting
-    // the DB id mid-stream moves this message into the DB-id domain, where it
-    // sorts above every earlier still-transient message — including this one's
-    // own question and reply, whose DB ids the frontend doesn't know until
-    // loadHistory — producing the queued-message / normal-conversation display
-    // misalignment. loadHistory() rebuilds the authoritative DB order on 'done'.
+    // Adopt the numeric DB id ONLY when the message's parent (the preceding
+    // user question) is already in the DB-id domain. If the parent is still a
+    // transient string-id message (its DB id not yet known), adopting the id
+    // would move this drained message to the DB-id domain where it sorts ABOVE
+    // its still-transient parent and earlier replies — the queued-message
+    // display misalignment (M1). In that case keep the transient string id
+    // (queueId) + seq; loadHistory reconciles the authoritative order later.
     delete messages[pendingIdx].pending
     delete messages[pendingIdx]._remote
     delete messages[pendingIdx]['_remoteQueueId']
-    // Preserve the existing id for ordering + v-for key stability:
-    //  - a string id (local pending queueId, or a queued cross-device remote) is
-    //    kept in the transient (seq) domain;
-    //  - a numeric id (a cross-device _remote that arrived already persisted in
-    //    the DB) is authoritative and must be kept — replacing it would churn the
-    //    v-for key (db-<n> → db-drain-…) and drop per-bubble render state.
-    // Only synthesize a drain id defensively if the message has no id at all.
-    if (messages[pendingIdx].id == null) {
+    const parentIsDB = messages.slice(0, pendingIdx).some((m) => m.role === 'user' && typeof m.id === 'number')
+    if (typeof dbMessageId === 'number' && dbMessageId > 0 && parentIsDB) {
+      messages[pendingIdx].queueId = String(messages[pendingIdx].id)
+      messages[pendingIdx].id = dbMessageId
+      delete messages[pendingIdx].seq
+    } else if (messages[pendingIdx].id == null) {
       messages[pendingIdx].id = drainId || generateDrainId()
     }
-    // Defense-in-depth: a pending message pushed without a seq would sort at
-    // TRANSIENT_BASE + 0 (above every other transient message). Guarantee a
-    // valid position in the transient domain so it can never jump to the top.
     if (typeof messages[pendingIdx].seq !== 'number') {
       messages[pendingIdx].seq = nextClientSeq()
     }
   } else if (userContent) {
     // Defensive: the queued message wasn't found by its key (its optimistic
-    // push was dropped before this drain, e.g. the queue wasn't re-synced).
-    // Update an in-flight queued message (pending/_remote) that already shows
-    // the same content — it belongs to this drain. Already-pushed (_drain) and
-    // DB-backed messages are never matched, so genuinely repeated identical
-    // questions remain distinct turns.
-    const existing = messages.findIndex(
-      (m) => m.role === 'user' && (m.pending || m._remote) && m.content === userContent
-    )
-    if (existing !== -1) {
-      pendingIdx = existing
-      delete messages[existing].pending
-      delete messages[existing]._remote
-      delete messages[existing]['_remoteQueueId']
-      // Preserve a valid existing id (string → transient domain; numeric → a
-      // persisted cross-device remote, keep authoritative). Only synthesize a
-      // drain id if the message has no id.
-      if (messages[existing].id == null) {
-        messages[existing].id = drainId || generateDrainId()
-      }
-    } else {
-      // Keep the drained message transient (string id) so it stays ordered by
-      // seq among in-flight messages; do not adopt the numeric DB id.
-      const effectiveDrainId = drainId || generateDrainId()
-      if (!messages.some((m) => m.id === effectiveDrainId)) {
-        messages.push({
-          role: 'user',
-          id: effectiveDrainId,
-          _drain: true,
-          content: userContent,
-          blocks: userContent ? [{ type: 'text', text: userContent }] : [],
-          files: userFiles.map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-          createdAt: new Date().toISOString(),
-          seq: nextClientSeq(),
-        })
-        pendingIdx = messages.length - 1
-      }
+    // push was dropped before this drain). Create it from the drain payload.
+    const effectiveId = (typeof dbMessageId === 'number' && dbMessageId > 0) ? dbMessageId : (drainId || generateDrainId())
+    if (!messages.some((m) => m.id === effectiveId)) {
+      messages.push({
+        role: 'user',
+        id: effectiveId,
+        queueId: queueId || undefined,
+        content: userContent,
+        blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+        files: userFiles.map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+        createdAt: new Date().toISOString(),
+        seq: nextClientSeq(),
+      })
+      pendingIdx = messages.length - 1
     }
   }
 
@@ -547,7 +515,9 @@ export function drainQueueMessage(
 /**
  * Remove pending messages from the messages array whose IDs match
  * the given queueIds. Used by the queue_cancel event handler.
- * Returns the number of removed messages.
+ * Matches by id (optimistic pending bubble, string id = queueId) OR by the
+ * queueId field (a queued message already adopted a numeric DB id via
+ * drainQueueMessage or loadHistory). Returns the number of removed messages.
  */
 export function cancelPendingMessages(
   messages: ChatMessage[],
@@ -555,7 +525,7 @@ export function cancelPendingMessages(
 ): number {
   let removed = 0
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].pending && queueIds.includes(String(messages[i].id))) {
+    if (messages[i].pending && (queueIds.includes(String(messages[i].id)) || queueIds.includes(messages[i].queueId || ''))) {
       messages.splice(i, 1)
       removed++
     }
