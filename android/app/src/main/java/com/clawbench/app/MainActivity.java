@@ -178,39 +178,56 @@ public class MainActivity extends AppCompatActivity {
     private final ActivityResultLauncher<Intent> fileChooserLauncher =
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
                 if (filePathCallback == null) return;
-                Uri[] results = null;
-                if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
-                    Intent data = result.getData();
-                    String dataString = data.getDataString();
-                    if (dataString != null) {
-                        results = new Uri[]{ Uri.parse(dataString) };
-                    } else if (data.getClipData() != null) {
-                        // Multiple files selected
-                        int count = data.getClipData().getItemCount();
-                        results = new Uri[count];
-                        for (int i = 0; i < count; i++) {
-                            results[i] = data.getClipData().getItemAt(i).getUri();
-                        }
-                    }
-                    // Only use camera URI as fallback when RESULT_OK — this means
-                    // the user actively chose the camera option and took a photo.
-                    // Without this guard, cancelling the picker would falsely report
-                    // the pre-created camera temp file as the "selected" file.
-                    if (results == null && cameraImageUri != null) {
-                        results = new Uri[]{ cameraImageUri };
-                    }
-                }
+                Uri[] results = resolveFileChooserResult(result);
                 // Use empty array instead of null for cancellation — some WebView implementations
                 // fire the JS change event with stale file data when onReceiveValue(null) is called.
                 // An empty array explicitly means "0 files selected".
                 filePathCallback.onReceiveValue(results != null ? results : new Uri[0]);
                 filePathCallback = null;
                 // Clean up unused camera temp file if user didn't take a photo
-                if (cameraImageUri != null && (results == null || !cameraImageUri.equals(results[0]))) {
+                if (cameraImageUri != null
+                        && (results == null || results.length == 0 || !cameraImageUri.equals(results[0]))) {
                     new File(cameraImageUri.getPath()).delete();
                 }
                 cameraImageUri = null;
             });
+
+    /**
+     * Resolve the file chooser activity result into the list of selected URIs.
+     *
+     * Returns null when nothing was selected (cancelled). Falls back to the
+     * pre-created cameraImageUri when the result is RESULT_OK but carries no
+     * data — ACTION_IMAGE_CAPTURE writes the photo to EXTRA_OUTPUT and returns
+     * RESULT_OK with data==null, so the photo is only available via that URI.
+     *
+     * Package-private for unit testing.
+     */
+    Uri[] resolveFileChooserResult(androidx.activity.result.ActivityResult result) {
+        if (result == null || result.getResultCode() != Activity.RESULT_OK) return null;
+        Intent data = result.getData();
+        Uri[] results = null;
+        if (data != null) {
+            String dataString = data.getDataString();
+            if (dataString != null) {
+                results = new Uri[]{ Uri.parse(dataString) };
+            } else if (data.getClipData() != null) {
+                // Multiple files selected
+                int count = data.getClipData().getItemCount();
+                results = new Uri[count];
+                for (int i = 0; i < count; i++) {
+                    results[i] = data.getClipData().getItemAt(i).getUri();
+                }
+            }
+        }
+        // Fall back to the camera FileProvider URI when the result carries
+        // no data — ACTION_IMAGE_CAPTURE writes to EXTRA_OUTPUT and returns
+        // RESULT_OK with data==null, so the photo is only available via the
+        // pre-created cameraImageUri.
+        if (results == null && cameraImageUri != null) {
+            results = new Uri[]{ cameraImageUri };
+        }
+        return results;
+    }
 
     // Map of ports currently being forwarded: port -> host (thread-safe for access from WebView background threads)
     final Map<Integer, String> forwardedPorts = new java.util.concurrent.ConcurrentHashMap<>();
