@@ -66,10 +66,12 @@ vi.mock('@/composables/useTerminalSession', () => {
 // Mock xterm — useTerminalTabs creates Terminal/FitAddon/WebLinksAddon instances
 vi.mock('@xterm/xterm', () => {
   class MockTerminal {
-    options: Record<string, unknown> = {}
+    options: Record<string, unknown>
     element: HTMLElement | null = null
     private _dataCallbacks: ((data: string) => void)[] = []
     private _resizeCallbacks: (() => void)[] = []
+
+    constructor(options: Record<string, unknown> = {}) { this.options = { ...options } }
 
     loadAddon() {}
     open(el: HTMLElement) { this.element = el }
@@ -108,12 +110,13 @@ function createTabManager(overrides?: {
   onTermCreated?: (term: unknown) => void
   autoExecCommand?: ReturnType<typeof ref<{ command: string } | null>>
   onAutoExec?: (tabId: string, command: string) => void
+  getXtermTheme?: () => Record<string, unknown>
 }) {
   return useTerminalTabs(
     (cwd?: string) => `ws://localhost:8080/api/terminal/ws${cwd ? `?cwd=${cwd}` : ''}`,
     {
       fontSize: ref(14),
-      getXtermTheme: () => ({}),
+      getXtermTheme: overrides?.getXtermTheme ?? (() => ({})),
       errorMessages: defaultErrorMessages,
       onCloseSessionViaHttp: overrides?.onCloseSessionViaHttp,
       onExit: overrides?.onExit,
@@ -598,6 +601,21 @@ describe('useTerminalTabs', () => {
 
       for (const tab of mgr.tabs.value) {
         expect(tab.xterm!.options.theme).toStrictEqual(theme)
+      }
+    })
+  })
+
+  describe('createXtermInstance theme', () => {
+    it('applies the configured getXtermTheme() theme to newly created tabs', () => {
+      // Simulates the user having picked a fixed terminal theme: every new
+      // session (tab) must be created with that theme, not the app default.
+      const selectedTheme = { background: '#1e1f29', foreground: '#f8f8f2' }
+      const mgr = createTabManager({ getXtermTheme: () => selectedTheme })
+
+      mgr.createTab()
+
+      for (const tab of mgr.tabs.value) {
+        expect(tab.xterm!.options.theme).toStrictEqual(selectedTheme)
       }
     })
   })

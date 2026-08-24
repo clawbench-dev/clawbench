@@ -299,6 +299,7 @@ import {
   formatThemeName,
   loadThemesModule,
   resolveTheme,
+  resolveThemeSync,
   isAppDarkTheme,
   darkTheme,
   lightTheme,
@@ -462,8 +463,13 @@ function getWsUrl(cwd?: string, cols?: number, rows?: number) {
 }
 
 // Theme
+// Every new session reads its theme from here. It must respect the user's
+// selection (not just app dark/light), so newly created tabs inherit the
+// chosen terminal theme instead of falling back to the app default.
+// resolveThemeSync only sees fixed themes once xterm-theme is loaded; the
+// palette menu (ensureThemesLoaded) and onMounted (applyTheme) warm the cache.
 function getXtermTheme(): Record<string, unknown> {
-  return (isAppDarkTheme() ? darkTheme : lightTheme) as Record<string, unknown>
+  return resolveThemeSync(themeSelection.value, isAppDarkTheme()) as Record<string, unknown>
 }
 
 // Terminal theme state + selection (persisted to localConfig)
@@ -505,6 +511,18 @@ function selectTheme(selection: string) {
   themeMenuOpen.value = false
   applyTheme(selection)
 }
+
+// React to terminal theme changes made from the Settings panel. The palette
+// button routes through applyTheme() directly; the settings save only calls
+// setLocalConfig('terminalTheme'), so this watcher keeps existing sessions in
+// sync and keeps themeSelection current (which getXtermTheme reads for new
+// sessions). applyTheme also warms the xterm-theme cache so freshly created
+// sessions resolve the chosen fixed theme synchronously.
+watch(() => localConfig.terminalTheme, (selection) => {
+  if (typeof selection !== 'string') return
+  if (selection === themeSelection.value) return
+  applyTheme(selection).catch(() => {})
+})
 
 // Theme preview helpers
 const autoThemeIsDark = computed(() => isAppDarkTheme())
@@ -1116,7 +1134,9 @@ onMounted(async () => {
 
   themeObserver = new MutationObserver(() => {
     if (themeSelection.value === TERMINAL_THEME_AUTO) {
-      tabManager.updateTheme(getXtermTheme())
+      const theme = getXtermTheme()
+      tabManager.updateTheme(theme)
+      document.documentElement.style.setProperty('--terminal-bg', (theme.background as string | undefined) || '')
     }
   })
   themeObserver.observe(document.documentElement, {

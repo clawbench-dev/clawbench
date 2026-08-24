@@ -64,6 +64,11 @@ export async function loadThemesModule(): Promise<Record<string, ITheme>> {
   return cachedThemes
 }
 
+/** 清空已加载主题缓存（仅供测试使用）。 */
+export function resetThemesCache(): void {
+  cachedThemes = null
+}
+
 /** 把主题 id 转成展示名（下划线 → 空格）。 */
 export function formatThemeName(id: string): string {
   return id.replace(/_/g, ' ')
@@ -85,6 +90,22 @@ export async function resolveTheme(selection: string, isAppDark: boolean): Promi
   } catch {
     // 加载失败或 id 缺失 → 回退
   }
+  return isAppDark ? darkTheme : lightTheme
+}
+
+/**
+ * 同步解析最终主题。仅在 xterm-theme 已加载（缓存命中）时可拿到固定主题；
+ * 否则固定 id 回退到按 isAppDark 的自动主题。
+ *
+ * 用途：新建会话（xterm 实例创建是同步的）必须在打开瞬间拿到主题，
+ * 不能 await 懒加载。配合 resolveTheme 在组件挂载时预热缓存即可。
+ */
+export function resolveThemeSync(selection: string, isAppDark: boolean): ITheme {
+  if (selection === TERMINAL_THEME_AUTO) {
+    return isAppDark ? darkTheme : lightTheme
+  }
+  const theme = cachedThemes?.[selection]
+  if (theme) return theme
   return isAppDark ? darkTheme : lightTheme
 }
 

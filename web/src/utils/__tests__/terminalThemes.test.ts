@@ -19,12 +19,20 @@ import {
   THEME_IDS,
   formatThemeName,
   resolveTheme,
+  resolveThemeSync,
+  loadThemesModule,
+  resetThemesCache,
   darkTheme,
   lightTheme,
 } from '@/utils/terminalThemes'
 
 describe('terminalThemes', () => {
-  beforeEach(() => { vi.restoreAllMocks() })
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    // The lazy-load cache is module-level and persists across tests, so reset
+    // it to keep each test's resolveThemeSync expectations deterministic.
+    resetThemesCache()
+  })
 
   it('exports 157 theme ids and the auto/storage constants', () => {
     expect(THEME_IDS.length).toBe(157)
@@ -56,5 +64,26 @@ describe('terminalThemes', () => {
   it('resolveTheme falls back to app theme for unknown id', async () => {
     const theme = await resolveTheme('Not_A_Real_Theme', false)
     expect(theme.background).toBe(lightTheme.background)
+  })
+
+  it('resolveThemeSync("auto") returns the app theme synchronously', () => {
+    const dark = resolveThemeSync(TERMINAL_THEME_AUTO, true)
+    const light = resolveThemeSync(TERMINAL_THEME_AUTO, false)
+    expect(dark.background).toBe(darkTheme.background)
+    expect(light.background).toBe(lightTheme.background)
+  })
+
+  it('resolveThemeSync returns a fixed theme once the module is loaded', async () => {
+    // Warm the cache exactly like the terminal panel does on mount.
+    await loadThemesModule()
+    const theme = resolveThemeSync('Dracula', false)
+    expect(theme.background).toBe('#1e1f29')
+  })
+
+  it('resolveThemeSync falls back to app theme for an unknown id or unloaded module', () => {
+    const unknown = resolveThemeSync('Not_A_Real_Theme', true)
+    expect(unknown.background).toBe(darkTheme.background)
+    const unloaded = resolveThemeSync('Dracula', true)
+    expect(unloaded.background).toBe(darkTheme.background)
   })
 })
