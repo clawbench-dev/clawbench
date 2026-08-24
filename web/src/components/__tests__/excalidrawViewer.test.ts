@@ -11,12 +11,12 @@ vi.mock('@/composables/useCodeEditorSave', () => ({
   useCodeEditorSave: () => ({ saving: { value: false }, saveFile: mockSaveFile }),
 }))
 
-// Mock i18n used by useCodeEditorSave internally — keep the real createI18n.
+// Mock i18n used by the component and useCodeEditorSave — keep real createI18n.
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
   return {
     ...actual,
-    useI18n: () => ({ t: (k: string) => k }),
+    useI18n: () => ({ t: (k: string) => k, locale: { value: 'zh-CN' } }),
   }
 })
 
@@ -99,6 +99,8 @@ describe('ExcalidrawViewer', () => {
     const parsed = JSON.parse(payload)
     expect(parsed.event).toBe('load')
     expect(parsed.data.content).toBe(file.content)
+    expect(parsed.data.lang).toBe('zh-CN')
+    expect(['light', 'dark']).toContain(parsed.data.theme)
   })
 
   it('still sends the load when content arrives before the iframe is ready', async () => {

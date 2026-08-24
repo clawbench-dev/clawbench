@@ -11,6 +11,7 @@
 
 <script setup>
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 
@@ -21,7 +22,8 @@ import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
  * served at /vendor/excalidraw/index.html — Vue and React never share a
  * bundle. Communication is via postMessage:
  *
- *   this → iframe: { event: 'load', data: { content } } | { event: 'saveRequest' }
+ *   this → iframe: { event: 'load', data: { content, lang, theme } }
+ *                   { event: 'theme', data: { theme } } | { event: 'lang', data: { lang } }
  *   iframe → this: ready | changed | save | exit
  *
  * .excalidraw files open directly in the editor (no browse/read-only mode),
@@ -33,6 +35,7 @@ const props = defineProps({
     file: Object,
 })
 
+const { locale } = useI18n()
 const frameRef = ref(null)
 const fileEditor = useFileEditor()
 const { saveFile } = useCodeEditorSave()
@@ -41,6 +44,16 @@ let contentSent = false // whether initial .excalidraw JSON was handed over
 let iframeReady = false // iframe signalled 'ready'
 let pendingContent = null // content received before the iframe signalled 'ready'
 let dirty = false // local dirty flag (kept in sync with the global getter)
+
+// Resolve the current theme base ("light"|"dark") from the host document —
+// the app sets data-theme-base on <html> via applyThemeAttributes.
+function currentTheme() {
+    return document.documentElement.getAttribute('data-theme-base') === 'dark' ? 'dark' : 'light'
+}
+
+function currentLang() {
+    return typeof locale.value === 'string' ? locale.value : 'en'
+}
 
 // Messages from the iframe are received here.
 function onMessage(e) {
@@ -85,10 +98,29 @@ function onMessage(e) {
 function sendLoad(content) {
     if (!frameRef.value?.contentWindow) return
     frameRef.value.contentWindow.postMessage(
-        JSON.stringify({ event: 'load', data: { content } }),
+        JSON.stringify({
+            event: 'load',
+            data: { content, lang: currentLang(), theme: currentTheme() },
+        }),
         '*'
     )
     contentSent = true
+}
+
+function sendTheme(theme) {
+    if (!frameRef.value?.contentWindow || !iframeReady) return
+    frameRef.value.contentWindow.postMessage(
+        JSON.stringify({ event: 'theme', data: { theme } }),
+        '*'
+    )
+}
+
+function sendLang(lang) {
+    if (!frameRef.value?.contentWindow || !iframeReady) return
+    frameRef.value.contentWindow.postMessage(
+        JSON.stringify({ event: 'lang', data: { lang } }),
+        '*'
+    )
 }
 
 function sendSaveRequest() {
@@ -121,6 +153,7 @@ async function handleExit() {
 
 let unregisterExitEdit = null
 let unregisterDirtyGetter = null
+let themeObserver = null
 
 onMounted(() => {
     window.addEventListener('message', onMessage)
@@ -128,10 +161,24 @@ onMounted(() => {
     // FileViewer's guardExitEdit find us.
     unregisterExitEdit = fileEditor.registerExitEditHandler(handleExit)
     unregisterDirtyGetter = fileEditor.registerDirtyGetter(() => dirty)
+
+    // Push host theme changes (light/dark) into the iframe so the editor stays
+    // in sync with the rest of the app.
+    themeObserver = new MutationObserver(() => {
+        sendTheme(currentTheme())
+    })
+    themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme-base'],
+    })
 })
 
 onBeforeUnmount(() => {
     window.removeEventListener('message', onMessage)
+    if (themeObserver) {
+        themeObserver.disconnect()
+        themeObserver = null
+    }
     if (unregisterExitEdit) {
         unregisterExitEdit()
         unregisterExitEdit = null
@@ -140,6 +187,12 @@ onBeforeUnmount(() => {
         unregisterDirtyGetter()
         unregisterDirtyGetter = null
     }
+})
+
+// Push app language changes into the iframe editor.
+watch(locale, (lang) => {
+    if (typeof lang !== 'string' || !lang) return
+    sendLang(lang)
 })
 
 // If the file content arrives (fetch resolves) or is replaced externally

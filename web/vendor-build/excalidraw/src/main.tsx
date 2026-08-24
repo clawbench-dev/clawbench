@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Excalidraw, exportToSvg } from '@excalidraw/excalidraw'
 // Required — @excalidraw/excalidraw ships its styles as a separate CSS entry
@@ -47,6 +47,10 @@ function ExcalidrawHost() {
   const excalidrawAPI = useRef<unknown>(null)
   const initialRef = useRef<ExcalidrawFile | null>(null)
   const dirtyRef = useRef(false)
+  // Theme ("light"|"dark") and language code follow the host app — received
+  // via postMessage and applied to the Excalidraw props (langCode / theme).
+  const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const [langCode, setLangCode] = useState<string>('en')
 
   const handleApiRef = useCallback((api: unknown) => {
     excalidrawAPI.current = api
@@ -59,7 +63,7 @@ function ExcalidrawHost() {
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       if (!e.data || typeof e.data !== 'string') return
-      let msg: { event: string; data?: { content: string } }
+      let msg: { event: string; data?: Record<string, unknown> }
       try {
         msg = JSON.parse(e.data)
       } catch {
@@ -67,7 +71,7 @@ function ExcalidrawHost() {
       }
       if (msg.event === 'load' && msg.data?.content != null) {
         try {
-          initialRef.current = JSON.parse(msg.data.content) as ExcalidrawFile
+          initialRef.current = JSON.parse(msg.data.content as string) as ExcalidrawFile
         } catch {
           initialRef.current = { type: 'excalidraw', version: 2, source: 'clawbench', elements: [], appState: {}, files: {} }
         }
@@ -77,6 +81,17 @@ function ExcalidrawHost() {
         if (api?.updateScene && Array.isArray(initialRef.current.elements)) {
           api.updateScene({ elements: initialRef.current.elements })
         }
+        // Apply host theme/lang if provided.
+        if (msg.data.theme === 'dark' || msg.data.theme === 'light') {
+          setTheme(msg.data.theme)
+        }
+        if (typeof msg.data.lang === 'string' && msg.data.lang) {
+          setLangCode(msg.data.lang)
+        }
+      } else if (msg.event === 'theme' && (msg.data?.theme === 'dark' || msg.data?.theme === 'light')) {
+        setTheme(msg.data.theme)
+      } else if (msg.event === 'lang' && typeof msg.data?.lang === 'string' && msg.data.lang) {
+        setLangCode(msg.data.lang)
       } else if (msg.event === 'saveRequest') {
         const api = excalidrawAPI.current
         if (api) {
@@ -128,6 +143,9 @@ function ExcalidrawHost() {
       <Excalidraw
         excalidrawAPI={handleApiRef}
         onChange={handleChange}
+        // Language and theme follow the host app (postMessage from parent).
+        langCode={langCode}
+        theme={theme}
         // Allow the parent to drive save; keep the built-in autosave off so we
         // control exactly when files are written.
         autoSave={false}
