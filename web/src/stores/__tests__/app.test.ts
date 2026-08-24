@@ -432,6 +432,31 @@ describe('loadFiles Windows path normalization', () => {
     await store.loadFiles('internal/handler')
     expect(store.state.currentDir).toBe('internal/handler')
   })
+
+  it('relativizes an absolute drive path inside the project root', async () => {
+    // Reproduces: /api/dir?path=E:/git/vllm-input/internal/app → AccessDenied.
+    // An absolute path under the project root must be converted to project-
+    // relative before hitting /api/dir.
+    store.state.projectRoot = 'E:/git/vllm-input'
+    store.state.currentDir = ''
+    await store.loadFiles('E:/git/vllm-input/internal/app')
+    expect(store.state.currentDir).toBe('internal/app')
+    expect(apiGet).toHaveBeenCalledWith('/api/dir?path=internal%2Fapp')
+  })
+
+  it('relativizes a backslash absolute drive path inside the project root', async () => {
+    store.state.projectRoot = 'E:\\git\\vllm-input'
+    store.state.currentDir = ''
+    await store.loadFiles('E:\\git\\vllm-input\\internal\\app')
+    expect(store.state.currentDir).toBe('internal/app')
+  })
+
+  it('keeps an absolute drive path outside the project root as-is', async () => {
+    store.state.projectRoot = 'E:/git/vllm-input'
+    store.state.currentDir = ''
+    await store.loadFiles('D:/other/dir')
+    expect(store.state.currentDir).toBe('D:/other/dir')
+  })
 })
 
 describe('selectFile Windows absolute path detection', () => {

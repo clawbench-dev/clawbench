@@ -351,6 +351,15 @@ async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false
     // data-path attributes use a consistent separator style (the Go backend
     // returns paths via filepath.ToSlash).
     dir = dir.replace(/\\/g, '/')
+    // Relativize an absolute path that lies inside the current project root.
+    // /api/dir resolves relative paths against the project root, so passing an
+    // absolute drive path (E:/git/…, possibly from file search or chat
+    // annotation) must be converted to project-relative first. Without this the
+    // backend rejects it (AccessDenied).
+    const root = state.projectRoot ? state.projectRoot.replace(/\\/g, '/') : ''
+    if (root && isWindowsAbsolutePath(dir) && dir.toLowerCase().startsWith(root.toLowerCase() + '/')) {
+        dir = dir.slice(root.length + 1)
+    }
     // Defensive: strip leading slashes so currentDir is always a project-relative path.
     // The Go backend treats paths starting with "/" as absolute filesystem paths,
     // which causes 500 errors when they're not under configured root paths.
