@@ -136,6 +136,7 @@ describe('AppHeader', () => {
   let activeContainer: HTMLDivElement | null = null
 
   afterEach(() => {
+    vi.useRealTimers()
     if (activeWrapper) {
       activeWrapper.unmount()
       activeWrapper = null
@@ -1055,5 +1056,19 @@ describe('AppHeader', () => {
     try { await wrapper.vm.$nextTick() } catch {}
 
     expect(wrapper.vm.resourcesMenuOpen).toBe(false)
+  })
+
+  it('highlights the changed file segment on file change', async () => {
+    const wrapper = mountAndTrack({ currentFileName: 'src/a.ts' })
+    await wrapper.setProps({ currentFileName: 'src/longer-name-abcdef.ts' })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick() // pulseBadge's nextTick measurement
+
+    const capsule = document.querySelector('.badge-capsule')
+    const fileBtn = document.querySelector('.current-file-badge')
+    expect(capsule).toBeTruthy()
+    expect((wrapper.vm as any).highlightBadge).toBe('file')
+    expect(fileBtn).toBeTruthy()
+    expect(fileBtn?.classList.contains('badge-highlight')).toBe(true)
   })
 })

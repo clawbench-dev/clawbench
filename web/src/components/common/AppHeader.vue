@@ -5,14 +5,14 @@
     <img class="header-logo" src="/logo-64.png" alt="ClawBench">
 
     <div class="badge-capsule" ref="capsuleRef">
-      <div class="project-dropdown-wrapper" ref="dropdownRef" :class="{ 'badge-segment-hidden': fillBadge !== null && fillBadge !== 'project', 'badge-highlight': highlightBadge === 'project', 'badge-highlight--fill': fillBadge === 'project' }" :style="highlightBadge === 'project' && fillBadge !== 'project' ? highlightShapeStyle : undefined">
+      <div class="project-dropdown-wrapper" ref="dropdownRef" :class="segmentClass('project')" :style="segmentStyle('project')">
         <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
           <Projector :size="12" />
           <span class="project-name">{{ projectName }}</span>
         </button>
       </div>
       <div v-if="gitBranch" class="badge-capsule-divider" :class="{ 'badge-segment-hidden': fillBadge !== null }"></div>
-      <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown" :class="{ 'badge-segment-hidden': fillBadge !== null && fillBadge !== 'branch', 'badge-highlight': highlightBadge === 'branch', 'badge-highlight--fill': fillBadge === 'branch' }" :style="highlightBadge === 'branch' && fillBadge !== 'branch' ? highlightShapeStyle : undefined">
+      <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown" :class="segmentClass('branch')" :style="segmentStyle('branch')">
         <GitBranch :size="12" class="branch-icon" />
         <span class="branch-name">{{ gitBranch }}</span>
       </div>
@@ -20,8 +20,8 @@
       <button
         v-if="currentFileName || recentFilesAvailable > 0"
         class="current-file-badge"
-        :class="{ 'no-file': !currentFileName, 'badge-segment-hidden': fillBadge !== null && fillBadge !== 'file', 'badge-highlight': highlightBadge === 'file', 'badge-highlight--fill': fillBadge === 'file' }"
-        :style="highlightBadge === 'file' && fillBadge !== 'file' ? highlightShapeStyle : undefined"
+        :class="segmentClass('file')"
+        :style="segmentStyle('file')"
         :title="currentFileName || t('appHeader.noFileOpen')"
         :disabled="recentFilesAvailable === 0"
         @click="toggleFileDropdown"
@@ -623,6 +623,7 @@ let clearTimer: ReturnType<typeof setTimeout> | null = null
 const HIGHLIGHT_PRE_MS = 200
 const FILL_MS = 1000
 const HIGHLIGHT_POST_MS = 200
+const HIGHLIGHT_NO_FILL_MS = 400
 const EDGE_THRESHOLD_PX = 2
 
 /** Non-fill highlight shape → border-radius: left edge → round-left pill,
@@ -635,6 +636,24 @@ const highlightShapeStyle = computed(() => {
         default: return { borderRadius: '0' }
     }
 })
+
+/** Reactive class object for a badge segment (project / branch / file).
+    NOTE: reads refs via .value — inside a plain function (not the template)
+    refs are NOT auto-unwrapped. */
+function segmentClass(source: 'project' | 'branch' | 'file') {
+    return {
+        'no-file': source === 'file' && !props.currentFileName,
+        'badge-segment-hidden': fillBadge.value !== null && fillBadge.value !== source,
+        'badge-highlight': highlightBadge.value === source,
+        'badge-highlight--fill': fillBadge.value === source,
+    }
+}
+
+/** Inline style for a highlighted segment: the position-dependent half-pill
+    shape when highlighted but not filling. */
+function segmentStyle(source: 'project' | 'branch' | 'file') {
+    return highlightBadge.value === source && fillBadge.value !== source ? highlightShapeStyle.value : undefined
+}
 
 function clearTimers() {
     if (highlightTimer) { clearTimeout(highlightTimer); highlightTimer = null }
@@ -670,21 +689,42 @@ function highlightSegmentEl(source: 'project' | 'branch' | 'file'): HTMLElement 
 
 /** Decide the highlighted segment's shape when it is NOT filling the capsule:
     touching the capsule's left edge → round left side; right edge → round
-    right side; in the middle → rectangle. */
+    right side; in the middle → rectangle. Positions are measured via
+    getBoundingClientRect and normalized into the capsule's coordinate space —
+    offsetLeft is relative to the offsetParent (the fixed <header>), which is a
+    different coordinate system than the capsule width. */
+function decideHighlightShape(left: number, right: number, capsuleW: number): 'left' | 'right' | 'none' {
+    if (left <= EDGE_THRESHOLD_PX) return 'left'
+    if (right >= capsuleW - EDGE_THRESHOLD_PX) return 'right'
+    return 'none'
+}
+
 function measureHighlightShape(source: 'project' | 'branch' | 'file') {
     const capsule = capsuleRef.value
     const seg = highlightSegmentEl(source)
     if (!capsule || !seg) return
-    const left = seg.offsetLeft
-    const right = left + seg.offsetWidth
-    const capsuleW = capsule.clientWidth
-    if (left <= EDGE_THRESHOLD_PX) highlightRadius.value = 'left'
-    else if (right >= capsuleW - EDGE_THRESHOLD_PX) highlightRadius.value = 'right'
-    else highlightRadius.value = 'none'
+    const cRect = capsule.getBoundingClientRect()
+    const sRect = seg.getBoundingClientRect()
+    // Normalize into the capsule coordinate space (capsule left edge = 0).
+    const left = sRect.left - cRect.left
+    const right = sRect.right - cRect.left
+    highlightRadius.value = decideHighlightShape(left, right, cRect.width)
 }
+
+// Animation generation guard: each pulseBadge bumps the sequence; async
+// callbacks (nextTick / timers) capture their own seq and bail out if a newer
+// change already superseded them. This prevents orphan fill timers and stale
+// measurements when two badge sources change within the same tick.
+let animSeq = 0
 
 function pulseBadge(source: 'project' | 'branch' | 'file') {
     clearTimers()
+    const seq = ++animSeq
+
+    // Reset any previous fill/highlight state so a mid-fill change doesn't
+    // leave the old segment filling while the new one is highlighted.
+    fillBadge.value = null
+    highlightRadius.value = null
 
     // 1. Highlight first (accent background on the changed segment) — always.
     highlightBadge.value = source
@@ -693,26 +733,47 @@ function pulseBadge(source: 'project' | 'branch' | 'file') {
     //    other segments). Measured after the new content has rendered. Also
     //    decide the non-fill highlight shape from the segment's position.
     nextTick(() => {
+        if (seq !== animSeq) return // superseded by a newer change
         measureHighlightShape(source)
         if (capsuleOverflowing()) {
             fillTimer = setTimeout(() => {
+                if (seq !== animSeq) return // superseded while waiting
                 fillBadge.value = source
                 fillTimer = null
 
-                // 3. Expand back after the fill window.
+                // 3. Expand back after the fill window...
                 clearTimer = setTimeout(() => {
                     fillBadge.value = null
-                    // 4. Finally drop the highlight.
-                    highlightBadge.value = null
-                    highlightRadius.value = null
                     clearTimer = null
+                    // 4. ...then, after HIGHLIGHT_POST_MS, drop the highlight.
+                    const postTimer = setTimeout(() => {
+                        if (seq !== animSeq) return
+                        highlightBadge.value = null
+                        highlightRadius.value = null
+                    }, HIGHLIGHT_POST_MS)
+                    // Track for cleanup (reuse the highlightTimer slot).
+                    if (highlightTimer) clearTimeout(highlightTimer)
+                    highlightTimer = postTimer
                 }, FILL_MS)
             }, HIGHLIGHT_PRE_MS)
+        } else {
+            // No fill: keep the highlight briefly, then drop it. Short window
+            // so a plain highlight doesn't feel stuck for the full fill length.
+            if (highlightTimer) clearTimeout(highlightTimer)
+            highlightTimer = setTimeout(() => {
+                if (seq !== animSeq) return
+                highlightBadge.value = null
+                highlightRadius.value = null
+                highlightTimer = null
+            }, HIGHLIGHT_NO_FILL_MS)
         }
     })
 
-    // Safety net: ensure the highlight always resets, filled or not.
+    // Safety net: ensure the highlight always resets, filled or not. Longest
+    // possible window; overwritten by the branch-specific timer above when it
+    // fires first.
     highlightTimer = setTimeout(() => {
+        if (seq !== animSeq) return
         fillBadge.value = null
         highlightBadge.value = null
         highlightRadius.value = null
@@ -1168,6 +1229,9 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     overflow: hidden;
 }
 
+/* Hidden segment — collapses to zero width. !important on max-width/padding:
+   must beat each segment's own explicit max-width (e.g. .branch-badge
+   max-width:100%, .project-dropdown-wrapper max-width:220px). */
 .badge-capsule .badge-segment-hidden {
     max-width: 0 !important;
     opacity: 0;
@@ -1183,11 +1247,16 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
    (badge-highlight--fill, other segments collapsed) does it take the capsule
    pill shape. */
 .badge-capsule .badge-highlight {
+    /* !important: must beat the segment's own hover background rule
+       (e.g. .project-switch-btn:hover) which would otherwise win. */
     background: var(--accent-color) !important;
     color: #fff;
     border-radius: 0;
 }
 
+/* ORDER-SENSITIVE: .badge-highlight--fill is declared after .badge-highlight
+   and has the same specificity — if these are reordered the pill shape would
+   silently stop applying. */
 .badge-capsule .badge-highlight--fill {
     border-radius: 999px;
 }
@@ -1198,6 +1267,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     color: #fff;
 }
 
+/* !important: icons (e.g. .project-switch-btn svg:first-child) set
+   --accent-color with equal-or-higher specificity otherwise. */
 .badge-capsule .badge-highlight svg {
     color: #fff !important;
 }
