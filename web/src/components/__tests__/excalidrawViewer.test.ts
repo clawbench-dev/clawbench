@@ -98,13 +98,18 @@ describe('ExcalidrawViewer', () => {
     sendFromIframe('ready')
     await nextTick()
 
-    expect(postMessage).toHaveBeenCalledTimes(1)
+    // load + a separate theme message (theme is sent after load to avoid
+    // Excalidraw resetting the language when both arrive together).
+    expect(postMessage).toHaveBeenCalledTimes(2)
     const [payload] = postMessage.mock.calls[0]
     const parsed = JSON.parse(payload)
     expect(parsed.event).toBe('load')
     expect(parsed.data.content).toBe(file.content)
     expect(parsed.data.lang).toBe('zh-CN')
-    expect(['light', 'dark']).toContain(parsed.data.theme)
+    const [themePayload] = postMessage.mock.calls[1]
+    const themeParsed = JSON.parse(themePayload)
+    expect(themeParsed.event).toBe('theme')
+    expect(['light', 'dark']).toContain(themeParsed.data.theme)
   })
 
   it('still sends the load when content arrives before the iframe is ready', async () => {
@@ -122,7 +127,7 @@ describe('ExcalidrawViewer', () => {
     sendFromIframe('ready')
     await nextTick()
 
-    expect(postMessage).toHaveBeenCalledTimes(1)
+    expect(postMessage).toHaveBeenCalledTimes(2)
     const [payload] = postMessage.mock.calls[0]
     const parsed = JSON.parse(payload)
     expect(parsed.event).toBe('load')

@@ -103,11 +103,17 @@ function sendLoad(content) {
     frameRef.value.contentWindow.postMessage(
         JSON.stringify({
             event: 'load',
-            data: { content, lang: currentLang(), theme: currentTheme() },
+            data: { content, lang: currentLang() },
         }),
         window.location.origin
     )
     contentSent = true
+    // Theme is sent separately (after load) — applying theme+lang in the same
+    // load message makes Excalidraw's theme initialization reset the language
+    // back to English.
+    if (iframeReady) {
+        sendTheme(currentTheme())
+    }
 }
 
 function sendTheme(theme) {

@@ -97,12 +97,16 @@ function ExcalidrawHost() {
         if (api?.updateScene && Array.isArray(initialRef.current.elements)) {
           api.updateScene({ elements: initialRef.current.elements })
         }
-        // Apply host theme/lang if provided.
-        if (msg.data.theme === 'dark' || msg.data.theme === 'light') {
-          setTheme(msg.data.theme)
-        }
+        // Apply host theme/lang if provided. Order matters: the language is
+        // applied FIRST and the theme shortly after — Excalidraw's theme
+        // initialization can reset i18n back to the default language if both
+        // update in the same render (async language chunk loading is
+        // interrupted). Deferring the theme keeps the language intact.
         if (typeof msg.data.lang === 'string' && msg.data.lang) {
           setLangCode(resolveLangCode(msg.data.lang))
+        }
+        if (msg.data.theme === 'dark' || msg.data.theme === 'light') {
+          window.setTimeout(() => setTheme(msg.data.theme), 0)
         }
       } else if (msg.event === 'theme' && (msg.data?.theme === 'dark' || msg.data?.theme === 'light')) {
         setTheme(msg.data.theme)
