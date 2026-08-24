@@ -29,6 +29,7 @@ import {
   colorDistance,
   findClosestThemeByBackground,
   resolveAutoTheme,
+  resolveAutoThemeSync,
   resolveTheme,
   resolveThemeSync,
   getAppThemeBg,
@@ -173,5 +174,28 @@ describe('terminalThemes', () => {
     expect(getAppThemeBg()).toBe('#21252b')
     document.documentElement.setAttribute('data-theme', 'not-a-real-theme')
     expect(getAppThemeBg()).toBeNull()
+  })
+
+  it('resolveAutoThemeSync matches closest background once themes are loaded', async () => {
+    document.documentElement.setAttribute('data-theme', 'one-dark-pro')
+    document.documentElement.setAttribute('data-theme-base', 'dark')
+    // Warm the module cache (mimics onMounted applyTheme).
+    await loadThemesModule()
+    // one-dark-pro preview bg is #21252b → Dracula (#1e1f29) is nearest.
+    expect(resolveAutoThemeSync(true).background).toBe('#1e1f29')
+  })
+
+  it('resolveAutoThemeSync falls back to Catppuccin when themes not loaded', () => {
+    document.documentElement.setAttribute('data-theme', 'one-dark-pro')
+    document.documentElement.setAttribute('data-theme-base', 'dark')
+    // Cache is empty (reset in beforeEach) → cannot match synchronously.
+    expect(resolveAutoThemeSync(true).background).toBe(darkTheme.background)
+  })
+
+  it('resolveAutoThemeSync falls back to Catppuccin when no App theme set', async () => {
+    // No data-theme → getAppThemeBg() returns null → fallback by isAppDark.
+    await loadThemesModule()
+    expect(resolveAutoThemeSync(true).background).toBe(darkTheme.background)
+    expect(resolveAutoThemeSync(false).background).toBe(lightTheme.background)
   })
 })

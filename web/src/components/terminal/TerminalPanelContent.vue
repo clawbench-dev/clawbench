@@ -300,8 +300,7 @@ import {
   loadThemesModule,
   resolveTheme,
   resolveThemeSync,
-  resolveAutoTheme,
-  getAppThemeBg,
+  resolveAutoThemeSync,
   isAppDarkTheme,
   darkTheme,
   lightTheme,
@@ -468,16 +467,13 @@ function getWsUrl(cwd?: string, cols?: number, rows?: number) {
 // Every new session reads its theme from here. It must respect the user's
 // selection (not just app dark/light), so newly created tabs inherit the
 // chosen terminal theme instead of falling back to the app default.
-// resolveThemeSync only sees fixed themes once xterm-theme is loaded; the
-// palette menu (ensureThemesLoaded) and onMounted (applyTheme) warm the cache.
+// Auto 模式用模块级缓存同步匹配最接近 App 主题背景色的终端主题（不依赖
+// allThemes ref — 该 ref 只在打开调色板菜单时赋值，applyTheme 不会回填，
+// 否则第二个 tab 会落到默认主题）。固定主题由 resolveThemeSync 解析，
+// 需 xterm-theme 已加载（onMounted applyTheme / 调色板菜单会预热）。
 function getXtermTheme(): Record<string, unknown> {
   if (themeSelection.value === TERMINAL_THEME_AUTO) {
-    const appThemeBg = getAppThemeBg()
-    if (appThemeBg && allThemes.value) {
-      // auto + 已加载 + 有 App 主题：同步匹配背景色最接近的终端主题。
-      const theme = resolveAutoTheme(appThemeBg, allThemes.value, isAppDarkTheme())
-      return theme as Record<string, unknown>
-    }
+    return resolveAutoThemeSync(isAppDarkTheme()) as Record<string, unknown>
   }
   return resolveThemeSync(themeSelection.value, isAppDarkTheme()) as Record<string, unknown>
 }

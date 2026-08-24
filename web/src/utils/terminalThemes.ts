@@ -181,6 +181,21 @@ export function getAppThemeBg(): string | null {
 }
 
 /**
+ * 同步解析 auto 主题（跟随 App）：在已加载的终端主题里找背景色与当前 App
+ * 主题最接近的一个；主题未加载（懒加载尚未完成/失败）或无 App 主题 →
+ * 回退 Catppuccin。
+ *
+ * 用途：新建会话（xterm 实例创建是同步的）必须在打开瞬间拿到主题，
+ * 不能 await 懒加载。与 resolveThemeSync 不同，auto 模式下已加载的主题
+ * 也能被同步使用（模块级 cachedThemes），不依赖组件侧的 allThemes ref。
+ */
+export function resolveAutoThemeSync(isAppDark: boolean): ITheme {
+  const appThemeBg = getAppThemeBg()
+  if (!appThemeBg || !cachedThemes) return isAppDark ? darkTheme : lightTheme
+  return resolveAutoTheme(appThemeBg, cachedThemes, isAppDark)
+}
+
+/**
  * 同步解析最终主题。仅在 xterm-theme 已加载（缓存命中）时可拿到固定主题；
  * 否则固定 id 回退到按 isAppDark 的自动主题。
  *
