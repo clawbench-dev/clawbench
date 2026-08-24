@@ -4,17 +4,15 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
-	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
 
 // QueueHandler handles pending message queue operations.
-// POST   /api/ai/queue?session_id=xxx  — enqueue a message
-// GET    /api/ai/queue?session_id=xxx  — get current queue
-// DELETE /api/ai/queue?session_id=xxx[&index=N|&queueId=xxx] — remove item or clear all
+// POST   /api/ai/queue?session_id=xxx  — enqueue a message (unified send endpoint)
+// GET    /api/ai/queue?session_id=xxx  — get current queued messages
+// DELETE /api/ai/queue?session_id=xxx[&queueId=xxx] — cancel a queued message or clear all
 func QueueHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -41,9 +39,15 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the session belongs to the requesting project (ISS-180)
-	// Skip ownership check if session doesn't exist in DB (not-yet-persisted or in-memory only)
 	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != "" && sessionProject != projectPath {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	// Verify the session exists and resolve its backend/agent.
+	info := service.GetSessionFullInfo(sessionID)
+	if info == nil {
+		writeLocalizedError(w, r, model.NotFound(nil, "SessionNotFound"))
 		return
 	}
 
@@ -52,6 +56,9 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		QueueID   string            `json:"queueId"`
 		FilePaths []string          `json:"filePaths"`
 		Files     []model.FileEntry `json:"files"`
+		AgentID   string            `json:"agentId"`
+		ModelID   string            `json:"modelId"`
+		Transport string            `json:"transport"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
@@ -63,40 +70,24 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	qMsg := model.QueuedMessage{
-		QueueID:   req.QueueID,
-		Text:      req.Message,
-		FilePaths: req.FilePaths,
-		Files:     req.Files,
-		CreatedAt: time.Now().Format(time.RFC3339),
-	}
-
-	queue := service.EnqueueMessage(sessionID, qMsg)
-
-	// Race condition fix: if the session is not running when we enqueue, no
-	// goroutine will drain the queue. This happens when the user sends a
-	// message right as the AI finishes — the frontend sees loading=true and
-	// enqueues, but the drain loop has already exited. Dequeue the message
-	// and tell the frontend to resubmit as a new chat request.
-	if !service.IsSessionRunning(sessionID) {
-		dequeued, ok := service.DequeueMessage(sessionID)
-		if ok {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"ok":          true,
-				"needs_start": true,
-				"message":     dequeued.Text,
-				"filePaths":   dequeued.FilePaths,
-				"files":       dequeued.Files,
-				"queueId":     dequeued.QueueID,
-				"queue":       service.GetQueue(sessionID),
-			})
-			return
-		}
+	// Persist the message + start execution or signal the running drain loop.
+	started, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+		SessionID:   sessionID,
+		ProjectPath: info.ProjectPath,
+		BackendName: info.Backend,
+		AgentID:     req.AgentID,
+		Message:     req.Message,
+		Files:       req.Files,
+		QueueID:     req.QueueID,
+	})
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":    true,
-		"queue": queue,
+		"ok":      true,
+		"started": started,
 	})
 }
 
@@ -112,19 +103,21 @@ func handleQueueGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the session belongs to the requesting project (ISS-180)
-	// Skip ownership check if session doesn't exist in DB (not-yet-persisted or in-memory only)
 	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != "" && sessionProject != projectPath {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}
 
-	queue := service.GetQueue(sessionID)
-	if queue == nil {
-		queue = []model.QueuedMessage{}
+	msgs, err := service.GetQueuedMessages(sessionID)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueReadFailed")
+		return
+	}
+	if msgs == nil {
+		msgs = []model.ChatMessage{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"queue": queue,
+		"queue": msgs,
 	})
 }
 
@@ -140,48 +133,34 @@ func handleQueueDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the session belongs to the requesting project (ISS-180)
-	// Skip ownership check if session doesn't exist in DB (not-yet-persisted or in-memory only)
 	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != "" && sessionProject != projectPath {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}
 
-	// Support deletion by queueId (preferred) or index (legacy)
+	// Cancel by queueId (preferred).
 	queueID := r.URL.Query().Get("queueId")
 	if queueID != "" {
-		queue := service.RemoveQueueItemByQueueID(sessionID, queueID)
-		if queue == nil {
-			queue = []model.QueuedMessage{}
+		if err := service.CancelQueuedMessage(sessionID, queueID); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueDeleteFailed")
+			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":    true,
-			"queue": queue,
-		})
-		return
-	}
-
-	indexStr := r.URL.Query().Get("index")
-	if indexStr == "" {
-		// Clear all
-		service.ClearQueue(sessionID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 
-	// Remove specific item by index (legacy)
-	index, err := strconv.Atoi(indexStr)
-	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidIndex")
+	// Legacy index-based delete — no longer supported (queued messages are
+	// identified by queueId; index is ambiguous under concurrent drains).
+	indexStr := r.URL.Query().Get("index")
+	if indexStr != "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidQueueDelete")
 		return
 	}
 
-	queue := service.RemoveQueueItem(sessionID, index)
-	if queue == nil {
-		queue = []model.QueuedMessage{}
+	// Clear all queued messages for the session.
+	if err := service.ClearQueuedMessages(sessionID); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueClearFailed")
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":    true,
-		"queue": queue,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

@@ -457,7 +457,7 @@ func CancelSession(sessionID string) bool {
 		// Force-clear the running state to unstick the session.
 		slog.Warn("CancelSession: session running but no cancel func, force-clearing",
 			slog.String("session_id", sessionID))
-		ClearQueue(sessionID)
+		ClearQueuedMessages(sessionID)
 		SetSessionRunning(sessionID, false, true)
 		// Stuck session: nothing will finalize its streaming messages.
 		FinalizeOrphanedMessages(sessionID, "user")
@@ -472,7 +472,7 @@ func CancelSession(sessionID string) bool {
 	// freeing its stdin pipe. Then send ACP Cancel (with 3s timeout) so the
 	// agent can stop its turn gracefully on next stdin read.
 	sessionCancelReasons.Store(sessionID, "user")
-	ClearQueue(sessionID)
+	ClearQueuedMessages(sessionID)
 	cancel()
 
 	ai.GetACPConnManager().CancelTurn(sessionID)
@@ -499,7 +499,7 @@ func ForceCancelSession(sessionID string) {
 		return
 	}
 	sessionCancelReasons.Store(sessionID, "disconnect")
-	ClearQueue(sessionID)
+	ClearQueuedMessages(sessionID)
 	if cancel, ok := val.(context.CancelFunc); ok {
 		cancel()
 	}

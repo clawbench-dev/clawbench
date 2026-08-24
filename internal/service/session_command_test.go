@@ -1744,21 +1744,23 @@ func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *test
 	TrySetSessionRunning(sessionID)
 	defer func() {
 		SetSessionRunning(sessionID, false, true)
-		ClearQueue(sessionID)
+		ClearQueuedMessages(sessionID)
 	}()
 
 	err = SendMessageToSessionFromDingTalk(sessionID, "queued from dingtalk")
 	assert.NoError(t, err)
 
-	// Verify message was NOT persisted (enqueue path doesn't persist)
+	// Verify message IS persisted to DB with queued=1 (enqueue-path now persists).
 	messages, err := GetMessagesBySessionID(sessionID)
 	require.NoError(t, err)
-	assert.Len(t, messages, 0, "enqueue path should not persist user message to DB")
+	assert.Len(t, messages, 1, "enqueue path should persist user message to DB")
+	assert.True(t, messages[0].Queued, "persisted message should be queued=1")
 
-	// Verify message is in the in-memory queue
-	queue := GetQueue(sessionID)
+	// Verify message is discoverable via the queued-message query.
+	queue, err := GetQueuedMessages(sessionID)
+	require.NoError(t, err)
 	assert.Len(t, queue, 1)
-	assert.Equal(t, "queued from dingtalk", queue[0].Text)
+	assert.Equal(t, "queued from dingtalk", queue[0].Content)
 }
 
 // ============================================================================
@@ -1829,11 +1831,10 @@ func TestSendMessageToSessionFromDingTalk_AddChatMessageFails(t *testing.T) {
 	_, _ = db.Exec("DROP TABLE chat_history")
 
 	err = SendMessageToSessionFromDingTalk(sessionID, "this will fail")
-	assert.Error(t, err, "should return error when AddChatMessage fails")
-	assert.Contains(t, err.Error(), "persist message")
+	assert.Error(t, err, "should return error when message persistence fails")
 
 	// Session should no longer be running (rollback)
-	assert.False(t, IsSessionRunning(sessionID), "session should not be running after AddChatMessage failure")
+	assert.False(t, IsSessionRunning(sessionID), "session should not be running after persistence failure")
 }
 
 // ============================================================================
@@ -2465,6 +2466,5 @@ func TestSendMessageToSessionFromFeishu_AddChatMessageFails(t *testing.T) {
 	_, _ = db.Exec("DROP TABLE chat_history")
 
 	err = SendMessageToSessionFromFeishu(sessionID, "this will fail")
-	assert.Error(t, err, "should return error when AddChatMessage fails")
-	assert.Contains(t, err.Error(), "persist message")
+	assert.Error(t, err, "should return error when message persistence fails")
 }

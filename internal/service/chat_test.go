@@ -4117,3 +4117,65 @@ func TestReplaceSessionHistory_RollbackRestoresHistory(t *testing.T) {
 	require.NoError(t, db.QueryRow("SELECT content FROM chat_history WHERE session_id = ?", sid).Scan(&content))
 	assert.Equal(t, "old", content)
 }
+
+// TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine verifies that when the
+// session is not running, EnqueueAndMaybeStart starts an AI execution goroutine
+// (which drains the queued message).
+func TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Enqueue Start")
+
+	// Verify running state becomes true (goroutine started).
+	started, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+		SessionID:   sid,
+		ProjectPath: "/project",
+		BackendName: "claude",
+		Message:     "hello",
+		QueueID:     "pending-1",
+	})
+	assert.NoError(t, err)
+	assert.True(t, started, "should start a goroutine when session not running")
+
+	// Message should be persisted as queued (or already drained by goroutine).
+	count := service.GetQueuedCount(sid)
+	assert.LessOrEqual(t, count, 1)
+
+	// Clean up: cancel the session to kill the started goroutine, then wait
+	// for it to fully unwind BEFORE the test DB is torn down (otherwise the
+	// goroutine's deferred cleanup touches a nil DB).
+	service.CancelSession(sid)
+	time.Sleep(200 * time.Millisecond)
+}
+
+// TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine verifies that when the
+// session is already running, EnqueueAndMaybeStart does NOT start a second
+// goroutine — it signals the existing drain loop instead.
+func TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Enqueue Running")
+
+	// Mark session as already running.
+	service.SetSessionRunning(sid, true)
+
+	started, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+		SessionID:   sid,
+		ProjectPath: "/project",
+		BackendName: "claude",
+		Message:     "hello",
+		QueueID:     "pending-2",
+	})
+	assert.NoError(t, err)
+	assert.False(t, started, "should NOT start a goroutine when session already running")
+
+	// Message should be queued in DB (drain loop will pick it up).
+	assert.Equal(t, 1, service.GetQueuedCount(sid))
+
+	// Clean up: cancel kills the running session AND prevents the B2
+	// self-heal goroutine (scheduled 100ms later) from starting a new one.
+	// Wait for the self-heal window to pass so its goroutine can unwind
+	// before the test DB is torn down.
+	service.CancelSession(sid)
+	time.Sleep(200 * time.Millisecond)
+}

@@ -156,44 +156,31 @@ func sendMessageToSessionFromPush(sessionID, message string) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	if !TrySetSessionRunning(sessionID) {
-		// Session already running — enqueue the message (not yet persisted to DB)
-		EnqueueMessage(sessionID, model.QueuedMessage{
-			Text:      message,
-			CreatedAt: time.Now().Format(time.RFC3339),
-		})
-		// Emit user_message for cross-device sync (messageId=0 because not yet persisted)
-		ws.EmitToSession(sessionID, ai.StreamEvent{
-			Type: "user_message",
-			UserMessage: &ai.UserMessageData{
-				MessageID: 0,
-				Content:   message,
-			},
-		})
-		return nil
+	// Persist the message + start execution or signal the running drain loop.
+	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally.
+	_, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+		SessionID:   sessionID,
+		ProjectPath: info.ProjectPath,
+		BackendName: info.Backend,
+		AgentID:     info.AgentID,
+		Message:     message,
+	})
+	if err != nil {
+		return err
 	}
 
-	// Session not running — persist user message and launch execution
-	msgID, err := AddChatMessage(info.ProjectPath, info.Backend, sessionID, roleUser, message, nil, false, info.Title)
-	if err != nil {
-		SetSessionRunning(sessionID, false, true) // rollback running state; skipEvent — session never actually started
-		return fmt.Errorf("persist message: %w", err)
+	// Emit user_message for cross-device sync. MessageID is the persisted DB id
+	// (EnqueueAndMaybeStart wrote the row; the id is discoverable via the queue).
+	msgID := int64(0)
+	if msgs, qerr := GetQueuedMessages(sessionID); qerr == nil && len(msgs) > 0 {
+		msgID = msgs[len(msgs)-1].ID
 	}
-	// Emit user_message for cross-device sync
 	ws.EmitToSession(sessionID, ai.StreamEvent{
 		Type: "user_message",
 		UserMessage: &ai.UserMessageData{
 			MessageID: msgID,
 			Content:   message,
 		},
-	})
-
-	LaunchSessionExecution(LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: info.ProjectPath,
-		BackendName: info.Backend,
-		AgentID:     info.AgentID,
-		Message:     message,
 	})
 
 	return nil
@@ -256,6 +243,75 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			Empty:        result.empty,
 		})
 	}()
+}
+
+// EnqueueStartConfig carries the parameters for EnqueueAndMaybeStart.
+type EnqueueStartConfig struct {
+	SessionID   string
+	ProjectPath string
+	BackendName string
+	AgentID     string
+	Message     string
+	Files       []model.FileEntry
+	QueueID     string
+}
+
+// EnqueueAndMaybeStart is the unified enqueue entry point (POST /api/ai/queue).
+// It persists the message to chat_history (queued=1), then:
+//   - if the session is NOT running, starts an AI execution goroutine that
+//     drains the queue (returns started=true);
+//   - if the session IS running, signals the existing drain loop (returns
+//     started=false).
+//
+// B2 self-healing: a race exists where the drain loop has just decided to exit
+// (WaitForEnqueue timed out) while the session is still marked running. The
+// delayed recheck goroutine below watches this window: 100ms later, if the
+// session is no longer running, it takes over and starts the execution itself
+// so the queued message is never silently lost.
+func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, err error) {
+	_, err = AddQueuedMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, cfg.Message, cfg.Files, cfg.QueueID, "")
+	if err != nil {
+		return false, err
+	}
+
+	if TrySetSessionRunning(cfg.SessionID) {
+		// Session was idle — start execution now; the drain loop inside will
+		// consume the queue (including this message).
+		LaunchSessionExecution(LaunchConfig{
+			SessionID:   cfg.SessionID,
+			ProjectPath: cfg.ProjectPath,
+			BackendName: cfg.BackendName,
+			AgentID:     cfg.AgentID,
+			Message:     cfg.Message,
+		})
+		return true, nil
+	}
+
+	// Session is running — the drain loop will pick the message up. Signal it.
+	SignalDrain(cfg.SessionID)
+
+	// B2 self-heal: delayed recheck for the drain-loop exit race.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		// Defensive: if the DB has been torn down (test cleanup), do nothing.
+		if !DBReady() {
+			return
+		}
+		// If the session is no longer running, the drain loop exited without
+		// consuming our message — take over and start execution ourselves.
+		if !IsSessionRunning(cfg.SessionID) {
+			if TrySetSessionRunning(cfg.SessionID) {
+				LaunchSessionExecution(LaunchConfig{
+					SessionID:   cfg.SessionID,
+					ProjectPath: cfg.ProjectPath,
+					BackendName: cfg.BackendName,
+					AgentID:     cfg.AgentID,
+					Message:     cfg.Message,
+				})
+			}
+		}
+	}()
+	return false, nil
 }
 
 // handleSessionPanic recovers from panics in the session goroutine.

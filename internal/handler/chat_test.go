@@ -1285,35 +1285,27 @@ func TestAIChat_EnqueuePath_FilesNoDuplicate(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["queued"])
 
-	// Verify DB has no message — enqueue path no longer persists to DB
-	// (persistence happens at drain time when the message is actually processed)
+	// Verify the message is persisted (queued=1) with deduplicated files.
 	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
 	assert.NoError(t, err)
-	assert.Len(t, messages, 0, "enqueue path should not persist user message to DB")
-
-	// Verify the message is in the in-memory queue instead
-	queue := service.GetQueue(sessionID)
-	assert.Len(t, queue, 1, "should have 1 queued message in memory")
-	assert.Equal(t, "check this", queue[0].Text)
-	// Verify no duplicate files in the queued message
-	assert.Len(t, queue[0].Files, 1, "files should have exactly 1 entry (no duplicate), got %v", queue[0].Files)
+	assert.Len(t, messages, 1, "enqueue path should persist user message to DB")
+	assert.Len(t, messages[0].Files, 1, "files should have exactly 1 entry (no duplicate), got %v", messages[0].Files)
 }
 
-// TestAIChat_EnqueuePath_NoDBPersist verifies that when a session is already
+// TestAIChat_EnqueuePath_PersistsToDB verifies that when a session is already
 // running and a message is enqueued via POST /api/ai/chat, the user message
-// is NOT persisted to the database. This prevents orphan "queued" messages
-// from appearing after page refresh (regression: messages persisted at enqueue
-// time appeared as unanswered user messages with no assistant response).
-func TestAIChat_EnqueuePath_NoDBPersist(t *testing.T) {
+// IS persisted to the database (queued-message-persistence plan). The row is
+// queued=1 and discovered via the queued-message query.
+func TestAIChat_EnqueuePath_PersistsToDB(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "enqueue-no-persist", "", "", "default", "chat")
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "enqueue-persists", "", "", "default", "chat")
 	assert.NoError(t, err)
 	service.TrySetSessionRunning(sessionID)
 	defer func() {
 		service.SetSessionRunning(sessionID, false)
-		service.ClearQueue(sessionID)
+		service.ClearQueuedMessages(sessionID)
 	}()
 
 	body := map[string]any{
@@ -1330,15 +1322,17 @@ func TestAIChat_EnqueuePath_NoDBPersist(t *testing.T) {
 	assert.Equal(t, true, result["queued"])
 	assert.Equal(t, true, result["running"])
 
-	// DB must have ZERO messages — enqueue path must not persist
+	// DB must have exactly ONE message — enqueue path now persists (queued=1).
 	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
 	assert.NoError(t, err)
-	assert.Len(t, messages, 0, "enqueue path must not persist user message to DB")
+	assert.Len(t, messages, 1, "enqueue path must persist user message to DB")
+	assert.True(t, messages[0].Queued, "persisted message should be queued=1")
 
-	// Message should be in the in-memory queue
-	queue := service.GetQueue(sessionID)
+	// Message should be in the queued-message query.
+	queue, err := service.GetQueuedMessages(sessionID)
+	assert.NoError(t, err)
 	assert.Len(t, queue, 1)
-	assert.Equal(t, "queued msg", queue[0].Text)
+	assert.Equal(t, "queued msg", queue[0].Content)
 }
 
 // TestAIChat_EnqueuePath_MultipleSessionsNoCrossContamination verifies that
@@ -1360,7 +1354,7 @@ func TestAIChat_EnqueuePath_MultipleSessionsNoCrossContamination(t *testing.T) {
 	service.TrySetSessionRunning(sessionA)
 	defer func() {
 		service.SetSessionRunning(sessionA, false)
-		service.ClearQueue(sessionA)
+		service.ClearQueuedMessages(sessionA)
 	}()
 
 	body := map[string]any{
@@ -1376,37 +1370,40 @@ func TestAIChat_EnqueuePath_MultipleSessionsNoCrossContamination(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["queued"])
 
-	// Session B's DB history must be empty — no cross-contamination
+	// Session B's DB history must be empty — no cross-contamination.
 	messagesB, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionB)
 	assert.NoError(t, err)
 	assert.Len(t, messagesB, 0, "session B must have no messages from session A's enqueue")
 
-	// Session A's DB history must also be empty (enqueue does not persist)
+	// Session A's DB history has exactly one queued message.
 	messagesA, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionA)
 	assert.NoError(t, err)
-	assert.Len(t, messagesA, 0, "session A enqueue must not persist to DB")
+	assert.Len(t, messagesA, 1, "session A enqueue must persist to DB")
 }
 
 // TestAIChat_EnqueueThenDrain_SinglePersist verifies that when a queued
 // message is eventually drained and processed, it is persisted exactly once
 // (no double-persist from both enqueue and drain paths).
 func TestAIChat_EnqueueThenDrain_SinglePersist(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
 	sessionID := "drain-single-persist"
-	defer service.ClearQueue(sessionID)
+	defer service.ClearQueuedMessages(sessionID)
 
-	// Simulate: enqueue a message, then dequeue it
-	service.EnqueueMessage(sessionID, model.QueuedMessage{
-		Text:      "will be drained",
-		CreatedAt: time.Now().Format(time.RFC3339),
-	})
+	// Simulate: enqueue a message to DB (queued=1), then dequeue it once.
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "will be drained", nil, "q-1", "")
+	assert.NoError(t, err)
 
-	// Dequeue should return the message exactly once
-	msg, ok := service.DequeueMessage(sessionID)
+	// Dequeue should return the message exactly once (row becomes queued=0).
+	msg, ok, err := service.DequeueQueuedMessage(sessionID)
+	assert.NoError(t, err)
 	assert.True(t, ok)
-	assert.Equal(t, "will be drained", msg.Text)
+	assert.Equal(t, "will be drained", msg.Content)
 
-	// Second dequeue should return nothing (no double)
-	_, ok = service.DequeueMessage(sessionID)
+	// Second dequeue should return nothing (no double).
+	_, ok, err = service.DequeueQueuedMessage(sessionID)
+	assert.NoError(t, err)
 	assert.False(t, ok, "message should not be dequeued twice")
 }
 
