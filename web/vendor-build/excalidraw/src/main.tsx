@@ -99,13 +99,32 @@ function ExcalidrawHost() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [])
 
+  // Intercept Ctrl+S / Cmd+S inside the editor and route it to the parent so
+  // the file is written back to its original path (instead of the browser
+  // download Excalidraw performs by default).
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const mod = e.ctrlKey || e.metaKey
+      if (mod && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        const api = excalidrawAPI.current
+        if (api) {
+          emitSave(serializeScene(api, initialRef.current))
+          dirtyRef.current = false
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
+  }, [])
+
   const handleChange = useCallback(() => {
     dirtyRef.current = true
     emitChanged()
   }, [])
 
   return (
-    <div style={{ width: '100%', height: '100%' }}>
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <Excalidraw
         excalidrawAPI={handleApiRef}
         onChange={handleChange}
@@ -114,9 +133,46 @@ function ExcalidrawHost() {
         autoSave={false}
         UIOptions={{
           tools: { image: true },
+          // Hide the default "download" style save/export actions — in this
+          // embed, saving must write back to the original file path via the
+          // parent (Ctrl+S or the floating save button).
+          canvasActions: {
+            saveToActiveFile: false,
+            saveAsImage: false,
+            loadScene: false,
+          },
         }}
         zenModeEnabled={false}
       />
+      {/* Floating save button — Excalidraw's own download-style actions are
+          hidden, so this is the visible "save to file" affordance. */}
+      <button
+        type="button"
+        onClick={() => {
+          const api = excalidrawAPI.current
+          if (api) {
+            emitSave(serializeScene(api, initialRef.current))
+            dirtyRef.current = false
+          }
+        }}
+        style={{
+          position: 'absolute',
+          bottom: '16px',
+          right: '16px',
+          zIndex: 1000,
+          padding: '8px 16px',
+          borderRadius: '8px',
+          border: 'none',
+          background: '#6965db',
+          color: '#fff',
+          fontSize: '14px',
+          fontWeight: 600,
+          cursor: 'pointer',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+        }}
+      >
+        保存
+      </button>
     </div>
   )
 }
