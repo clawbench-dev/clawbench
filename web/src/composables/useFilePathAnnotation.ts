@@ -856,53 +856,35 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
     let targetPath = parsed.path
     if (!targetPath) return false
 
-    // Normalize Windows backslashes to forward slashes so all downstream
-    // matching (project-root prefix, external check, dirName/joinPath,
-    // DOM data-path highlight) uses a single separator convention.
+    // Normalize Windows backslashes to forward slashes so the project-root
+    // prefix match below works for drive-letter paths (C:\…/C:/…).
     targetPath = targetPath.replace(/\\/g, '/')
     const root = store.state.projectRoot ? store.state.projectRoot.replace(/\\/g, '/') : ''
-    const rootRel = root.replace(/^\/+/, '')
 
-    // Resolve the path into two forms:
-    //  - absPath:     absolute form, used for /api/file/batch-exists (whose
-    //                 relative paths resolve against the project root).
-    //  - browsePath:  filesystem-root-relative form, used for /api/dir listing
-    //                 (whose relative paths resolve against the filesystem root).
-    const isWinAbs = isWindowsAbsolutePath(targetPath)
-    const isAbs = targetPath.startsWith('/') || isWinAbs
-    let absPath: string
-    let browsePath: string
-    if (rootRel && targetPath.startsWith(rootRel + '/')) {
-        // Already filesystem-root-relative (path produced by file-manager browsing).
-        absPath = isWinAbs ? targetPath : '/' + targetPath
-        browsePath = targetPath
-    } else if (isAbs) {
-        absPath = targetPath
-        browsePath = isWinAbs ? targetPath : targetPath.replace(/^\/+/, '')
-    } else if (root) {
-        // Project-relative path (chat annotations) — resolve against the project root.
-        absPath = root + '/' + targetPath
-        browsePath = isWinAbs ? absPath : absPath.replace(/^\/+/, '')
-    } else {
-        absPath = targetPath
-        browsePath = targetPath
+    // Convert an absolute project path to a project-relative one so the /api/dir
+    // listing (whose relative paths resolve against the project root) can
+    // navigate into its parent directory.
+    if (root && targetPath.startsWith(root + '/')) {
+        targetPath = targetPath.slice(root.length + 1)
     }
 
-    // An absolute path outside the project root is external. Used to reject
-    // external directories and to show the external-file toast.
-    const isExternal = isAbs && !(root && absPath.toLowerCase().startsWith(root.toLowerCase() + '/'))
+    // /api/dir only browses inside the project root, so external paths
+    // (Unix absolute outside the project, or other drives on Windows) cannot
+    // be revealed in the file manager — show the unsupported toast instead.
+    const isExternal = targetPath.startsWith('/') || isWindowsAbsolutePath(targetPath)
 
-    // Verify the path exists (absolute form, so it resolves regardless of root)
+    // Verify the path exists. Project-relative paths resolve against the
+    // project root on the backend; external paths are stat'd directly.
     let pathType: 'file' | 'dir' | 'none' = 'none'
     try {
         const resp = await fetch('/api/file/batch-exists', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: [absPath] }),
+            body: JSON.stringify({ paths: [targetPath] }),
         })
         if (resp.ok) {
             const data = await resp.json() as { results: Record<string, string> }
-            pathType = (data.results?.[absPath] as 'file' | 'dir' | 'none') || 'none'
+            pathType = (data.results?.[targetPath] as 'file' | 'dir' | 'none') || 'none'
         }
     } catch { /* proceed as best-effort */ }
 
@@ -912,7 +894,9 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
         return false
     }
 
-    if (isExternal && pathType === 'dir') {
+    // External paths (directories AND files) cannot be revealed: /api/dir only
+    // lists directories inside the project root.
+    if (isExternal && (pathType === 'dir' || pathType === 'file')) {
         const { useToast } = await import('@/composables/useToast')
         useToast().show(gt('file.toast.externalDirNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
         return false
@@ -931,12 +915,12 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
 
     // Navigate to the containing directory using loadFiles directly
     // (navigateToDir silently no-ops when dirLoading is true, which can race)
-    const parentDir = dirName(browsePath)
+    const parentDir = dirName(targetPath)
     await store.loadFiles(parentDir, false, 0, true)
 
     // Brief delay to let DOM settle after loadFiles before highlighting the target
     setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: browsePath } }))
+        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: targetPath } }))
     }, 50)
 
     return true

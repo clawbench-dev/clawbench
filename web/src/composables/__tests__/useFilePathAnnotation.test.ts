@@ -1822,7 +1822,7 @@ describe('openFilePath', () => {
   it('navToFileInManager: navigates to parent dir and dispatches events for file', async () => {
     vi.useFakeTimers()
     const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { '/home/user/project/src/main.go': 'file' } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) })
 
     vi.stubGlobal('fetch', mockFetch)
 
@@ -1834,9 +1834,9 @@ describe('openFilePath', () => {
     await vi.advanceTimersByTimeAsync(400)
 
     expect(result).toBe(true)
-    // Project-relative paths are resolved against the project root and loaded
-    // in filesystem-root-relative form so /api/dir lists the project's src/.
-    expect(mockLoadFiles).toHaveBeenCalledWith('home/user/project/src', false, 0, true)
+    // /api/dir resolves relative paths against the project root, so project
+    // paths stay project-relative.
+    expect(mockLoadFiles).toHaveBeenCalledWith('src', false, 0, true)
     const eventTypes = mockDispatchEvent.mock.calls.map((call: any[]) => call[0].type)
     expect(eventTypes).toContain('close-file-overlay')
     expect(eventTypes).toContain('open-file-manager')
@@ -1850,7 +1850,7 @@ describe('openFilePath', () => {
   it('navToFileInManager: navigates to parent dir for directory path', async () => {
     vi.useFakeTimers()
     const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { '/home/user/project/internal/rag': 'dir' } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'internal/rag': 'dir' } }) })
 
     vi.stubGlobal('fetch', mockFetch)
 
@@ -1862,7 +1862,7 @@ describe('openFilePath', () => {
     await vi.advanceTimersByTimeAsync(400)
 
     expect(result).toBe(true)
-    expect(mockLoadFiles).toHaveBeenCalledWith('home/user/project/internal', false, 0, true)
+    expect(mockLoadFiles).toHaveBeenCalledWith('internal', false, 0, true)
     const eventTypes = mockDispatchEvent.mock.calls.map((call: any[]) => call[0].type)
     expect(eventTypes).toContain('highlight-file-item')
 
@@ -1874,7 +1874,7 @@ describe('openFilePath', () => {
   it('navToFileInManager: dispatches highlight-file-item with correct path', async () => {
     vi.useFakeTimers()
     const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { '/home/user/project/src/composables/useFoo.ts': 'file' } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/composables/useFoo.ts': 'file' } }) })
 
     vi.stubGlobal('fetch', mockFetch)
 
@@ -1887,7 +1887,7 @@ describe('openFilePath', () => {
 
     const highlightCall = mockDispatchEvent.mock.calls.find((call: any[]) => call[0].type === 'highlight-file-item')
     expect(highlightCall).toBeDefined()
-    expect(highlightCall![0].detail.path).toBe('home/user/project/src/composables/useFoo.ts')
+    expect(highlightCall![0].detail.path).toBe('src/composables/useFoo.ts')
 
     window.dispatchEvent = origDispatch
     vi.useRealTimers()
@@ -1910,12 +1910,13 @@ describe('openFilePath', () => {
       storeMock.state.projectRoot = origProjectRoot
     })
 
-    it('navigates to a project-internal file using forward-slash drive path', async () => {
+    it('converts an absolute project-internal drive path to project-relative before navigating', async () => {
       const { store: storeMock } = await import('@/stores/app')
       storeMock.state.projectRoot = 'C:/Users/foo/project'
       vi.useFakeTimers()
+      // batch-exists receives the project-relative form
       const mockFetch = vi.fn()
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'C:/Users/foo/project/src/main.go': 'file' } }) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) })
 
       vi.stubGlobal('fetch', mockFetch)
 
@@ -1927,39 +1928,39 @@ describe('openFilePath', () => {
       await vi.advanceTimersByTimeAsync(400)
 
       expect(result).toBe(true)
-      expect(mockLoadFiles).toHaveBeenCalledWith('C:/Users/foo/project/src', false, 0, true)
+      expect(mockLoadFiles).toHaveBeenCalledWith('src', false, 0, true)
       const highlightCall = mockDispatchEvent.mock.calls.find((call: any[]) => call[0].type === 'highlight-file-item')
-      expect(highlightCall![0].detail.path).toBe('C:/Users/foo/project/src/main.go')
+      expect(highlightCall![0].detail.path).toBe('src/main.go')
 
       window.dispatchEvent = origDispatch
       vi.useRealTimers()
       vi.unstubAllGlobals()
     })
 
-    it('navigates to a project-external drive path (backslash input normalized)', async () => {
+    it('shows the unsupported toast for a project-external drive file (backslash normalized)', async () => {
       const { store: storeMock } = await import('@/stores/app')
       storeMock.state.projectRoot = 'C:/Users/foo/project'
-      vi.useFakeTimers()
       const mockFetch = vi.fn()
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'D:/Users/foo/other/a.go': 'file' } }) })
 
       vi.stubGlobal('fetch', mockFetch)
 
-      const mockDispatchEvent = vi.fn()
-      const origDispatch = window.dispatchEvent
-      window.dispatchEvent = mockDispatchEvent
+      const mockShow = vi.fn()
+      vi.doMock('@/composables/useToast', () => ({
+        useToast: () => ({ show: mockShow }),
+      }))
 
+      // Backslash input must be normalized to a forward-slash drive path so
+      // isWindowsAbsolutePath recognizes it as external.
       const result = await navToFileInManager('D:\\Users\\foo\\other\\a.go')
-      await vi.advanceTimersByTimeAsync(400)
 
-      expect(result).toBe(true)
-      expect(mockLoadFiles).toHaveBeenCalledWith('D:/Users/foo/other', false, 0, true)
-      const highlightCall = mockDispatchEvent.mock.calls.find((call: any[]) => call[0].type === 'highlight-file-item')
-      expect(highlightCall![0].detail.path).toBe('D:/Users/foo/other/a.go')
+      expect(result).toBe(false)
+      expect(mockShow).toHaveBeenCalled()
+      // /api/dir cannot browse outside the project root — no navigation attempted
+      expect(mockLoadFiles).not.toHaveBeenCalled()
 
-      window.dispatchEvent = origDispatch
-      vi.useRealTimers()
       vi.unstubAllGlobals()
+      vi.doUnmock('@/composables/useToast')
     })
 
     it('rejects an external directory on another drive with the unsupported toast', async () => {
@@ -1986,28 +1987,27 @@ describe('openFilePath', () => {
       vi.doUnmock('@/composables/useToast')
     })
 
-    it('navigates to a drive root when the file is at the drive top level', async () => {
+    it('shows the unsupported toast for a file at the top of an external drive', async () => {
       const { store: storeMock } = await import('@/stores/app')
       storeMock.state.projectRoot = 'C:/Users/foo/project'
-      vi.useFakeTimers()
       const mockFetch = vi.fn()
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'D:/a.go': 'file' } }) })
 
       vi.stubGlobal('fetch', mockFetch)
 
-      const mockDispatchEvent = vi.fn()
-      const origDispatch = window.dispatchEvent
-      window.dispatchEvent = mockDispatchEvent
+      const mockShow = vi.fn()
+      vi.doMock('@/composables/useToast', () => ({
+        useToast: () => ({ show: mockShow }),
+      }))
 
       const result = await navToFileInManager('D:/a.go')
-      await vi.advanceTimersByTimeAsync(400)
 
-      expect(result).toBe(true)
-      expect(mockLoadFiles).toHaveBeenCalledWith('D:/', false, 0, true)
+      expect(result).toBe(false)
+      expect(mockShow).toHaveBeenCalled()
+      expect(mockLoadFiles).not.toHaveBeenCalled()
 
-      window.dispatchEvent = origDispatch
-      vi.useRealTimers()
       vi.unstubAllGlobals()
+      vi.doUnmock('@/composables/useToast')
     })
   })
 
