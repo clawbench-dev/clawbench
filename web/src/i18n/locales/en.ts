@@ -846,7 +846,7 @@ export default {
       fileNotFound: 'File not found',
       fileRemoved: 'File does not exist; it may have been removed',
       externalFile: 'This file is outside the project directory',
-      externalDirNotSupported: 'Opening external directories is not supported',
+      externalPathNotSupported: 'Only paths inside the project can be navigated to',
       archiving: 'Packing {n} items...',
       archiveDone: 'Download ready',
       archiveFailed: 'Pack failed',

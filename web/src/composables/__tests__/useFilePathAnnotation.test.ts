@@ -2011,7 +2011,7 @@ describe('openFilePath', () => {
       const result = await navToFileInManager('D:\\Users\\foo\\other\\a.go')
 
       expect(result).toBe(false)
-      expect(mockShow).toHaveBeenCalled()
+      expect(mockShow).toHaveBeenCalledWith('file.toast.externalPathNotSupported', expect.any(Object))
       // /api/dir cannot browse outside the project root — no navigation attempted
       expect(mockLoadFiles).not.toHaveBeenCalled()
 
@@ -2035,7 +2035,7 @@ describe('openFilePath', () => {
       const result = await navToFileInManager('D:/external/dir')
 
       expect(result).toBe(false)
-      expect(mockShow).toHaveBeenCalled()
+      expect(mockShow).toHaveBeenCalledWith('file.toast.externalPathNotSupported', expect.any(Object))
       // loadFiles should not be called for an unsupported external directory
       expect(mockLoadFiles).not.toHaveBeenCalled()
 
@@ -2059,7 +2059,7 @@ describe('openFilePath', () => {
       const result = await navToFileInManager('D:/a.go')
 
       expect(result).toBe(false)
-      expect(mockShow).toHaveBeenCalled()
+      expect(mockShow).toHaveBeenCalledWith('file.toast.externalPathNotSupported', expect.any(Object))
       expect(mockLoadFiles).not.toHaveBeenCalled()
 
       vi.unstubAllGlobals()

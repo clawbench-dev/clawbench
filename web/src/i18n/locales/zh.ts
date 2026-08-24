@@ -846,7 +846,7 @@ export default {
       fileNotFound: '文件不存在',
       fileRemoved: '文件不存在，可能已被移除',
       externalFile: '此文件位于项目目录之外',
-      externalDirNotSupported: '暂不支持打开项目外目录',
+      externalPathNotSupported: '仅支持项目内的路径跳转',
       archiving: '正在打包 {n} 个文件...',
       archiveDone: '打包下载完成',
       archiveFailed: '打包失败',

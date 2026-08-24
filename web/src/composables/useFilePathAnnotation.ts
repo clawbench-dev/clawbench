@@ -862,7 +862,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
             if (isExternal && type === 'dir') {
                 const { useToast } = await import('@/composables/useToast')
                 const { gt } = await import('@/composables/useLocale')
-                useToast().show(gt('file.toast.externalDirNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
+                useToast().show(gt('file.toast.externalPathNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
                 return false
             }
             if (type === 'dir') {
@@ -940,7 +940,7 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
     // lists directories inside the project root.
     if (isExternal && (pathType === 'dir' || pathType === 'file')) {
         const { useToast } = await import('@/composables/useToast')
-        useToast().show(gt('file.toast.externalDirNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
+        useToast().show(gt('file.toast.externalPathNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
         return false
     }
 
