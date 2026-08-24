@@ -1245,3 +1245,351 @@
     --code-syntax-heading: #7e9cd8;
     --code-syntax-link: #7e9cd8;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   21. One Light（VS Code One Light Pro 官方配色）
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="one-light"] {
+    --bg-primary: #fafafa;
+    --bg-secondary: #f0f0f0;
+    --bg-tertiary: #e5e5e5;
+    --bg-elevated: #ffffff;
+    --bg-hover: rgba(0,0,0,0.04);
+    --bg-active: rgba(0,0,0,0.08);
+    --text-primary: #383a42;
+    --text-secondary: #4f525e;
+    --text-muted: #a0a1a7;
+    --text-hint: #b8b8c0;
+    --border-color: #e0e0e0;
+    --accent-color: #4078f2;
+    --accent-hover: #2c65d8;
+    --brand-color: #4078f2;
+    --link-color: #4078f2;
+    --focus-ring: rgba(64,120,242,0.4);
+    --selection-bg: rgba(64,120,242,0.2);
+    --user-msg-color: #5b7fbf;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --code-bg: #f0f0f0;
+    --table-border: #e0e0e0;
+    --scrollbar-thumb: #c8c8cd;
+    --scrollbar-thumb-hover: #b0b0b8;
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(250, 250, 250, 0.9);
+    --text-color: #383a42;
+    --color-green: #50a14f;
+    --color-yellow: #c18401;
+    --color-red: #e45649;
+    --color-purple: #a626a4;
+    --color-info: #4078f2;
+    --color-orange: #d9730d;
+    --color-success: #50a14f;
+    --text-bold: #202227;
+    --gradient-brand: linear-gradient(135deg, #4078f2, #6b9bf8);
+    --gradient-success: linear-gradient(135deg, #50a14f, #72c272);
+    --gradient-warning: linear-gradient(135deg, #c18401, #d9730d);
+    --code-syntax-comment: #a0a1a7;
+    --code-syntax-keyword: #a626a4;
+    --code-syntax-string: #50a14f;
+    --code-syntax-number: #986801;
+    --code-syntax-function: #4078f2;
+    --code-syntax-type: #c18401;
+    --code-syntax-variable: #e45649;
+    --code-syntax-property: #4078f2;
+    --code-syntax-operator: #0184bc;
+    --code-syntax-tag: #e45649;
+    --code-syntax-attribute: #986801;
+    --code-syntax-meta: #383a42;
+    --code-syntax-heading: #4078f2;
+    --code-syntax-link: #4078f2;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   22. Everforest Light（柔和森林绿浅色，与 everforest-dark 配对）
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="everforest-light"] {
+    --bg-primary: #fdf6e3;
+    --bg-secondary: #f2e9d0;
+    --bg-tertiary: #e5dcc0;
+    --bg-elevated: #fffaf0;
+    --bg-hover: rgba(0,0,0,0.04);
+    --bg-active: rgba(0,0,0,0.08);
+    --text-primary: #5c6a72;
+    --text-secondary: #6f7b80;
+    --text-muted: #939f91;
+    --text-hint: #a8b3a4;
+    --border-color: #d8cdb1;
+    --accent-color: #7a8478;
+    --accent-hover: #8b9885;
+    --brand-color: #7a8478;
+    --link-color: #7fbbb3;
+    --focus-ring: rgba(122,132,120,0.4);
+    --selection-bg: rgba(122,132,120,0.2);
+    --user-msg-color: #6b8fb5;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --code-bg: #f2e9d0;
+    --table-border: #d8cdb1;
+    --scrollbar-thumb: #b6c0ad;
+    --scrollbar-thumb-hover: #a0ab98;
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(253, 246, 227, 0.9);
+    --text-color: #5c6a72;
+    --color-green: #829c6a;
+    --color-yellow: #c7a653;
+    --color-red: #c65c5c;
+    --color-purple: #9b6fb8;
+    --color-info: #7fbbb3;
+    --color-orange: #d1914f;
+    --color-success: #829c6a;
+    --text-bold: #414b50;
+    --gradient-brand: linear-gradient(135deg, #7a8478, #9ab07a);
+    --gradient-success: linear-gradient(135deg, #829c6a, #9db883);
+    --gradient-warning: linear-gradient(135deg, #c7a653, #d1914f);
+    --code-syntax-comment: #939f91;
+    --code-syntax-keyword: #b4567a;
+    --code-syntax-string: #829c6a;
+    --code-syntax-number: #d1914f;
+    --code-syntax-function: #7fbbb3;
+    --code-syntax-type: #c7a653;
+    --code-syntax-variable: #5c6a72;
+    --code-syntax-property: #7a9e6b;
+    --code-syntax-operator: #b4567a;
+    --code-syntax-tag: #c65c5c;
+    --code-syntax-attribute: #829c6a;
+    --code-syntax-meta: #5c6a72;
+    --code-syntax-heading: #7fbbb3;
+    --code-syntax-link: #7fbbb3;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   23. Ayu Light（Ayu 亮色，暖橙 accent，与 ayu-dark 配对）
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="ayu-light"] {
+    --bg-primary: #fafafa;
+    --bg-secondary: #f3f3f3;
+    --bg-tertiary: #e8e8e8;
+    --bg-elevated: #ffffff;
+    --bg-hover: rgba(0,0,0,0.04);
+    --bg-active: rgba(0,0,0,0.08);
+    --text-primary: #5c6166;
+    --text-secondary: #777c81;
+    --text-muted: #a0a5aa;
+    --text-hint: #b8bdc2;
+    --border-color: #e3e3e3;
+    --accent-color: #ff9940;
+    --accent-hover: #f2872a;
+    --brand-color: #ff9940;
+    --link-color: #399ee6;
+    --focus-ring: rgba(255,153,64,0.4);
+    --selection-bg: rgba(255,153,64,0.2);
+    --user-msg-color: #c77b3a;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --code-bg: #f3f3f3;
+    --table-border: #e3e3e3;
+    --scrollbar-thumb: #c9c9c9;
+    --scrollbar-thumb-hover: #b0b0b0;
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(250, 250, 250, 0.9);
+    --text-color: #5c6166;
+    --color-green: #86b300;
+    --color-yellow: #f2ae49;
+    --color-red: #f51818;
+    --color-purple: #a37acc;
+    --color-info: #399ee6;
+    --color-orange: #ff9940;
+    --color-success: #86b300;
+    --text-bold: #33373b;
+    --gradient-brand: linear-gradient(135deg, #ff9940, #ffb870);
+    --gradient-success: linear-gradient(135deg, #86b300, #a2cc2e);
+    --gradient-warning: linear-gradient(135deg, #f2ae49, #ff9940);
+    --code-syntax-comment: #a0a5aa;
+    --code-syntax-keyword: #f51818;
+    --code-syntax-string: #86b300;
+    --code-syntax-number: #f2ae49;
+    --code-syntax-function: #399ee6;
+    --code-syntax-type: #f07178;
+    --code-syntax-variable: #5c6166;
+    --code-syntax-property: #f2ae49;
+    --code-syntax-operator: #399ee6;
+    --code-syntax-tag: #f51818;
+    --code-syntax-attribute: #86b300;
+    --code-syntax-meta: #5c6166;
+    --code-syntax-heading: #399ee6;
+    --code-syntax-link: #399ee6;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   24. Nord Light（Nord 官方浅色，冰雪蓝 accent，与 nord 配对）
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="nord-light"] {
+    --bg-primary: #eceff4;
+    --bg-secondary: #e5e9f0;
+    --bg-tertiary: #d8dee9;
+    --bg-elevated: #f6f8fa;
+    --bg-hover: rgba(0,0,0,0.04);
+    --bg-active: rgba(0,0,0,0.08);
+    --text-primary: #2e3440;
+    --text-secondary: #4c566a;
+    --text-muted: #8a93a5;
+    --text-hint: #a5adbb;
+    --border-color: #d5dbe5;
+    --accent-color: #5e81ac;
+    --accent-hover: #6b95c0;
+    --brand-color: #5e81ac;
+    --link-color: #5e81ac;
+    --focus-ring: rgba(94,129,172,0.4);
+    --selection-bg: rgba(94,129,172,0.2);
+    --user-msg-color: #5e7fae;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --code-bg: #e5e9f0;
+    --table-border: #d5dbe5;
+    --scrollbar-thumb: #b8c0cf;
+    --scrollbar-thumb-hover: #9fa9ba;
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(236, 239, 244, 0.9);
+    --text-color: #2e3440;
+    --color-green: #8fbc8f;
+    --color-yellow: #d9a63e;
+    --color-red: #bf616a;
+    --color-purple: #b48ead;
+    --color-info: #5e81ac;
+    --color-orange: #d08770;
+    --color-success: #8fbc8f;
+    --text-bold: #242933;
+    --gradient-brand: linear-gradient(135deg, #5e81ac, #81a1c1);
+    --gradient-success: linear-gradient(135deg, #8fbc8f, #a8cfa8);
+    --gradient-warning: linear-gradient(135deg, #d9a63e, #d08770);
+    --code-syntax-comment: #8a93a5;
+    --code-syntax-keyword: #b48ead;
+    --code-syntax-string: #8fbc8f;
+    --code-syntax-number: #d08770;
+    --code-syntax-function: #5e81ac;
+    --code-syntax-type: #d9a63e;
+    --code-syntax-variable: #2e3440;
+    --code-syntax-property: #5e81ac;
+    --code-syntax-operator: #b48ead;
+    --code-syntax-tag: #bf616a;
+    --code-syntax-attribute: #8fbc8f;
+    --code-syntax-meta: #2e3440;
+    --code-syntax-heading: #5e81ac;
+    --code-syntax-link: #5e81ac;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   25. Mint Light（薄荷绿浅色背景）
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="mint-light"] {
+    --bg-primary: #e8f5e9;
+    --bg-secondary: #dcf0dd;
+    --bg-tertiary: #c8e6c9;
+    --bg-elevated: #f4fbf5;
+    --bg-hover: rgba(0,0,0,0.04);
+    --bg-active: rgba(0,0,0,0.08);
+    --text-primary: #1b5e20;
+    --text-secondary: #2e7d32;
+    --text-muted: #6b9a72;
+    --text-hint: #8cb894;
+    --border-color: #b5dcb8;
+    --accent-color: #43a047;
+    --accent-hover: #388e3c;
+    --brand-color: #43a047;
+    --link-color: #2e7d32;
+    --focus-ring: rgba(67,160,71,0.4);
+    --selection-bg: rgba(67,160,71,0.2);
+    --user-msg-color: #4a8f52;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --code-bg: #dcf0dd;
+    --table-border: #b5dcb8;
+    --scrollbar-thumb: #9cc7a1;
+    --scrollbar-thumb-hover: #84b78a;
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(232, 245, 233, 0.9);
+    --text-color: #1b5e20;
+    --color-green: #2e7d32;
+    --color-yellow: #b7950b;
+    --color-red: #c62828;
+    --color-purple: #6a4c93;
+    --color-info: #1e88e5;
+    --color-orange: #d9730d;
+    --color-success: #2e7d32;
+    --text-bold: #103514;
+    --gradient-brand: linear-gradient(135deg, #43a047, #66bb6a);
+    --gradient-success: linear-gradient(135deg, #2e7d32, #4caf50);
+    --gradient-warning: linear-gradient(135deg, #b7950b, #d9730d);
+    --code-syntax-comment: #6b9a72;
+    --code-syntax-keyword: #c62828;
+    --code-syntax-string: #2e7d32;
+    --code-syntax-number: #ef6c00;
+    --code-syntax-function: #1e88e5;
+    --code-syntax-type: #b7950b;
+    --code-syntax-variable: #1b5e20;
+    --code-syntax-property: #1565c0;
+    --code-syntax-operator: #388e3c;
+    --code-syntax-tag: #c62828;
+    --code-syntax-attribute: #2e7d32;
+    --code-syntax-meta: #1b5e20;
+    --code-syntax-heading: #1e88e5;
+    --code-syntax-link: #2e7d32;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   26. Sky Light（天空蓝浅色背景）
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-theme="sky-light"] {
+    --bg-primary: #e3f2fd;
+    --bg-secondary: #d9edf9;
+    --bg-tertiary: #bbdefb;
+    --bg-elevated: #f2f9fe;
+    --bg-hover: rgba(0,0,0,0.04);
+    --bg-active: rgba(0,0,0,0.08);
+    --text-primary: #0d47a1;
+    --text-secondary: #1565c0;
+    --text-muted: #5c93c8;
+    --text-hint: #7fadd8;
+    --border-color: #a6c8e6;
+    --accent-color: #1e88e5;
+    --accent-hover: #1976d2;
+    --brand-color: #1e88e5;
+    --link-color: #1565c0;
+    --focus-ring: rgba(30,136,229,0.4);
+    --selection-bg: rgba(30,136,229,0.2);
+    --user-msg-color: #3b6fa8;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --code-bg: #d9edf9;
+    --table-border: #a6c8e6;
+    --scrollbar-thumb: #8ab8dd;
+    --scrollbar-thumb-hover: #70a6d0;
+    --lb-bg: rgba(0,0,0,0.92);
+    --lb-toolbar-bg: rgba(227, 242, 253, 0.9);
+    --text-color: #0d47a1;
+    --color-green: #2e7d32;
+    --color-yellow: #b7950b;
+    --color-red: #c62828;
+    --color-purple: #6a4c93;
+    --color-info: #1e88e5;
+    --color-orange: #d9730d;
+    --color-success: #2e7d32;
+    --text-bold: #082f6d;
+    --gradient-brand: linear-gradient(135deg, #1e88e5, #42a5f5);
+    --gradient-success: linear-gradient(135deg, #2e7d32, #4caf50);
+    --gradient-warning: linear-gradient(135deg, #b7950b, #d9730d);
+    --code-syntax-comment: #5c93c8;
+    --code-syntax-keyword: #c62828;
+    --code-syntax-string: #2e7d32;
+    --code-syntax-number: #ef6c00;
+    --code-syntax-function: #1e88e5;
+    --code-syntax-type: #b7950b;
+    --code-syntax-variable: #0d47a1;
+    --code-syntax-property: #1565c0;
+    --code-syntax-operator: #00695c;
+    --code-syntax-tag: #c62828;
+    --code-syntax-attribute: #2e7d32;
+    --code-syntax-meta: #0d47a1;
+    --code-syntax-heading: #1e88e5;
+    --code-syntax-link: #1565c0;
+}

@@ -112,8 +112,14 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.theme', descriptionKey: 'settings.items.themeDesc', key: 'theme', type: 'select', source: 'local', sectionHeader: 'settings.items.themeSection', options: [
       { labelKey: 'settings.items.themeAuto', value: 'auto' },
       // 按背景亮度从浅到深排列
+      { labelKey: 'settings.items.themeOneLight', value: 'one-light' },
+      { labelKey: 'settings.items.themeAyuLight', value: 'ayu-light' },
       { labelKey: 'settings.items.themeGithubLight', value: 'github-light' },
+      { labelKey: 'settings.items.themeEverforestLight', value: 'everforest-light' },
       { labelKey: 'settings.items.themeHighContrastLight', value: 'high-contrast-light' },
+      { labelKey: 'settings.items.themeMintLight', value: 'mint-light' },
+      { labelKey: 'settings.items.themeSkyLight', value: 'sky-light' },
+      { labelKey: 'settings.items.themeNordLight', value: 'nord-light' },
       { labelKey: 'settings.items.themeCatppuccinLatte', value: 'catppuccin-latte' },
       { labelKey: 'settings.items.themeSolarizedLight', value: 'solarized-light' },
       { labelKey: 'settings.items.themeGruvboxLight', value: 'gruvbox-light' },

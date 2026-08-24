@@ -348,6 +348,30 @@ public class MainActivity extends AppCompatActivity {
         int bgPrimary, bgSecondary, textPrimary, textMuted, textHint;
         boolean isLight;
         switch (theme) {
+            case "one-light":
+                bgPrimary = 0xFFFAFAFA; bgSecondary = 0xFFF0F0F0;
+                textPrimary = 0xFF383A42; textMuted = 0xFFA0A1A7; textHint = 0xFFA0A1A7;
+                isLight = true; break;
+            case "ayu-light":
+                bgPrimary = 0xFFFAFAFA; bgSecondary = 0xFFF3F3F3;
+                textPrimary = 0xFF5C6166; textMuted = 0xFFA0A5AA; textHint = 0xFFA0A5AA;
+                isLight = true; break;
+            case "everforest-light":
+                bgPrimary = 0xFFFDF6E3; bgSecondary = 0xFFF2E9D0;
+                textPrimary = 0xFF5C6A72; textMuted = 0xFF939F91; textHint = 0xFF939F91;
+                isLight = true; break;
+            case "nord-light":
+                bgPrimary = 0xFFECEFF4; bgSecondary = 0xFFE5E9F0;
+                textPrimary = 0xFF2E3440; textMuted = 0xFF8A93A5; textHint = 0xFF8A93A5;
+                isLight = true; break;
+            case "mint-light":
+                bgPrimary = 0xFFE8F5E9; bgSecondary = 0xFFDCF0DD;
+                textPrimary = 0xFF1B5E20; textMuted = 0xFF6B9A72; textHint = 0xFF6B9A72;
+                isLight = true; break;
+            case "sky-light":
+                bgPrimary = 0xFFE3F2FD; bgSecondary = 0xFFD9EDF9;
+                textPrimary = 0xFF0D47A1; textMuted = 0xFF5C93C8; textHint = 0xFF5C93C8;
+                isLight = true; break;
             case "github-light":
                 bgPrimary = 0xFFFFFFFF; bgSecondary = 0xFFF8F9FA;
                 textPrimary = 0xFF212529; textMuted = 0xFF6C757D; textHint = 0xFF6C757D;
