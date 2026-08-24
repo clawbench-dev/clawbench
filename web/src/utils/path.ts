@@ -27,6 +27,13 @@ export function baseName(path: string): string {
     return path
 }
 
+// Detect Windows absolute paths: drive-letter roots (C:\ or C:/) and UNC
+// paths (\\server\share). Unix absolute paths (leading "/") are matched
+// separately by callers via startsWith('/').
+export function isWindowsAbsolutePath(path: string): boolean {
+    return /^[A-Za-z]:[/\\]/.test(path) || path.startsWith('\\\\')
+}
+
 // Get the parent directory of a path
 export function dirName(path: string): string {
     const parts = splitPath(path)
@@ -35,8 +42,10 @@ export function dirName(path: string): string {
     // Rejoin with original separator style
     const useBackslash = path.includes('\\') && !path.includes('/')
     const result = useBackslash ? parts.join('\\') : parts.join('/')
-    // On Windows, a lone "C:" should be "C:\" (drive root)
-    if (/^[A-Za-z]:$/.test(result)) return result + '\\'
+    // On Windows, a lone "C:" should be the drive root. Match the separator
+    // style of the input so joinPath (which uses "/") stays consistent when
+    // the path was normalized to forward slashes.
+    if (/^[A-Za-z]:$/.test(result)) return useBackslash ? result + '\\' : result + '/'
     return result
 }
 

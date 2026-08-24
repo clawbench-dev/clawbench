@@ -406,3 +406,56 @@ describe('selectFile not-found handling', () => {
     expect(store.state.fileLoading).toBe(false) // cleared in finally
   })
 })
+
+describe('loadFiles Windows path normalization', () => {
+  beforeEach(() => {
+    vi.mocked(apiGet).mockResolvedValue({ items: [] } as never)
+  })
+
+  it('normalizes backslash drive paths to forward slashes', async () => {
+    store.state.currentDir = ''
+    await store.loadFiles('C:\\Users\\dev\\src')
+    // currentDir must use forward slashes so item data-path attributes match
+    // the paths produced by navToFileInManager (which normalizes to "/" too).
+    expect(store.state.currentDir).toBe('C:/Users/dev/src')
+    expect(apiGet).toHaveBeenCalledWith('/api/dir?path=C%3A%2FUsers%2Fdev%2Fsrc')
+  })
+
+  it('strips leading slashes after backslash normalization', async () => {
+    store.state.currentDir = ''
+    await store.loadFiles('\\Users\\dev')
+    expect(store.state.currentDir).toBe('Users/dev')
+  })
+
+  it('leaves forward-slash relative paths unchanged', async () => {
+    store.state.currentDir = ''
+    await store.loadFiles('internal/handler')
+    expect(store.state.currentDir).toBe('internal/handler')
+  })
+})
+
+describe('selectFile Windows absolute path detection', () => {
+  beforeEach(() => {
+    store.state.projectRoot = '/project'
+    vi.mocked(apiGet).mockResolvedValue({ content: 'hello' } as never)
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ content: 'hello', name: 'a.go', path: 'D:/a.go' }),
+    }) as unknown as typeof fetch
+  })
+
+  it('treats a drive-letter path as absolute (uses ?path= query)', async () => {
+    await store.selectFile('D:/external/a.go')
+    const fetchCalls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls
+    const url = fetchCalls[0][0] as string
+    expect(url).toContain('/api/file?path=')
+    expect(url).toContain('D%3A%2Fexternal%2Fa.go')
+  })
+
+  it('treats a backslash drive path as absolute', async () => {
+    await store.selectFile('D:\\external\\a.go')
+    const fetchCalls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls
+    const url = fetchCalls[0][0] as string
+    expect(url).toContain('/api/file?path=')
+  })
+})

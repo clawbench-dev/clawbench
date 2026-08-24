@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitPath, baseName, dirName, toRelativePath, joinPath } from '@/utils/path.ts'
+import { splitPath, baseName, dirName, toRelativePath, joinPath, isWindowsAbsolutePath } from '@/utils/path.ts'
 
 describe('splitPath', () => {
   it('splits on forward slashes', () => {
@@ -58,6 +58,42 @@ describe('dirName', () => {
 
   it('handles Windows paths with backslash', () => {
     expect(dirName('C:\\Users\\dev')).toBe('C:\\Users')
+  })
+
+  it('returns forward-slash drive root for forward-slash input', () => {
+    // When the path has been normalized to forward slashes (as navToFileInManager
+    // does), the drive root must come back with "/" so joinPath produces a
+    // consistent separator style that DOM data-path matching relies on.
+    expect(dirName('C:/Users/dev')).toBe('C:/Users')
+    expect(dirName('C:/dev')).toBe('C:/')
+  })
+})
+
+describe('isWindowsAbsolutePath', () => {
+  it('detects drive-letter absolute paths with forward slashes', () => {
+    expect(isWindowsAbsolutePath('C:/Users/foo/a.go')).toBe(true)
+  })
+
+  it('detects drive-letter absolute paths with backslashes', () => {
+    expect(isWindowsAbsolutePath('C:\\Users\\foo\\a.go')).toBe(true)
+  })
+
+  it('detects bare drive roots', () => {
+    expect(isWindowsAbsolutePath('C:\\')).toBe(true)
+    expect(isWindowsAbsolutePath('C:/')).toBe(true)
+  })
+
+  it('detects UNC paths', () => {
+    expect(isWindowsAbsolutePath('\\\\server\\share\\a.go')).toBe(true)
+  })
+
+  it('does not match relative paths or bare drive letters', () => {
+    expect(isWindowsAbsolutePath('src/main.go')).toBe(false)
+    expect(isWindowsAbsolutePath('C:')).toBe(false)
+  })
+
+  it('does not match Unix absolute paths', () => {
+    expect(isWindowsAbsolutePath('/home/user/a.go')).toBe(false)
   })
 })
 

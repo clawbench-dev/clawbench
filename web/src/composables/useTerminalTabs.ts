@@ -11,6 +11,8 @@ export interface TerminalTab {
   sessionId: string
   cwd: string
   title: string
+  /** True when this tab received output while not being the active tab. */
+  hasUnread: boolean
   session: ReturnType<typeof useTerminalSession>
   xterm: TerminalType | null
   fitAddon: FitAddon | null
@@ -94,6 +96,7 @@ export function useTerminalTabs(
       sessionId: '',
       cwd: resolvedCwd,
       title,
+      hasUnread: false,
       session,
       xterm: markRaw(term),
       fitAddon: markRaw(fit),
@@ -120,6 +123,10 @@ export function useTerminalTabs(
     // from batched updates since we are streaming data over a WebSocket.
     session.setCallbacks({
       onOutput: (data: string) => {
+        // Mark tab as having unread output when it's not the active tab.
+        if (tab.id !== activeTabId.value) {
+          tab.hasUnread = true
+        }
         term.write(stripSyncOutput(data))
       },
       onReplay: (data: string) => {
@@ -211,6 +218,7 @@ export function useTerminalTabs(
     if (tabs.value.length > 0 && activeTabId.value === id) {
       const newIdx = Math.min(idx, tabs.value.length - 1)
       activeTabId.value = tabs.value[newIdx].id
+      tabs.value[newIdx].hasUnread = false
     }
 
     return { switchToId: tabs.value.length > 0 ? activeTabId.value : null }
@@ -221,6 +229,7 @@ export function useTerminalTabs(
     if (!tab) return
 
     activeTabId.value = id
+    tab.hasUnread = false
 
     // Fit the newly active terminal after a tick (DOM needs to be visible)
     if (tab.fitAddon && tab.container) {

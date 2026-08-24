@@ -2,7 +2,7 @@
 import { reactive } from 'vue'
 import { apiGet, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
-import { baseName, dirName } from '@/utils/path.ts'
+import { baseName, dirName, isWindowsAbsolutePath } from '@/utils/path.ts'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -347,6 +347,10 @@ let selectFileSeq = 0 // monotonic counter to suppress stale concurrent file loa
 
 async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false): Promise<void> {
     const seq = ++loadFilesSeq // this call supersedes any earlier in-flight call
+    // Normalize Windows backslashes to forward slashes so currentDir and item
+    // data-path attributes use a consistent separator style (the Go backend
+    // returns paths via filepath.ToSlash).
+    dir = dir.replace(/\\/g, '/')
     // Defensive: strip leading slashes so currentDir is always a project-relative path.
     // The Go backend treats paths starting with "/" as absolute filesystem paths,
     // which causes 500 errors when they're not under configured root paths.
@@ -446,7 +450,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         // Go's ServeMux decodes back to /, making it look like a relative path.
         // Project-internal relative paths continue to use URL path encoding.
         if (!noLoading) state.fileLoading = true
-        const isAbsPath = path.startsWith('/')
+        const isAbsPath = path.startsWith('/') || isWindowsAbsolutePath(path)
         let url: string
         if (isAbsPath) {
             url = forceText

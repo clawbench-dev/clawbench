@@ -1952,6 +1952,7 @@ export default {
     tabLimitReached: 'Maximum terminal sessions reached',
     newTab: 'New Tab',
     noSessions: 'No terminal sessions',
+    unreadOutput: 'New output',
     createSession: 'Create Session',
     keyConfigTitle: 'Toolbar Config',
     clipboard: 'Clipboard',

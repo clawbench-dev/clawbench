@@ -1,5 +1,5 @@
 import { escapeHtml } from '@/utils/html.ts'
-import { splitPath, dirName } from '@/utils/path.ts'
+import { splitPath, dirName, isWindowsAbsolutePath } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
@@ -306,7 +306,7 @@ export const FILE_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="
  * Optionally includes line range attributes and a fallback path for dual-candidate verification.
  */
 export function fileOpenButtonHtml(resolvedPath: string, lineStart?: number, lineEnd?: number, fallbackPath?: string): string {
-    const isExternal = resolvedPath.startsWith('/')
+    const isExternal = resolvedPath.startsWith('/') || isWindowsAbsolutePath(resolvedPath)
     const lineAttrs = lineStart ? ` data-line-start="${lineStart}"${lineEnd ? ` data-line-end="${lineEnd}"` : ''}` : ''
     const externalClass = isExternal ? ' external' : ''
     const fallbackAttr = fallbackPath && fallbackPath !== resolvedPath ? ` data-fallback-path="${escapeHtml(fallbackPath)}"` : ''
@@ -772,17 +772,21 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
     let targetPath = parsed.path
     if (!targetPath) return false
 
+    // Normalize Windows backslashes so the project-root prefix match and the
+    // external-path check below work for drive-letter paths (C:\…/C:/…).
+    targetPath = targetPath.replace(/\\/g, '/')
+
     const finalLineStart = lineStart ?? parsed.lineStart
     const finalLineEnd = lineEnd ?? parsed.lineEnd
 
     // Normalize an absolute project path (e.g. file:///root/… or /root/…) to
     // a project-relative path so it is opened inside the current project.
-    const root = store.state.projectRoot
+    const root = store.state.projectRoot ? store.state.projectRoot.replace(/\\/g, '/') : ''
     if (root && targetPath.startsWith(root + '/')) {
         targetPath = targetPath.slice(root.length + 1)
     }
 
-    const isExternal = targetPath.startsWith('/')
+    const isExternal = targetPath.startsWith('/') || isWindowsAbsolutePath(targetPath)
 
     if (!isExternal) {
         try {
@@ -852,24 +856,53 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
     let targetPath = parsed.path
     if (!targetPath) return false
 
-    const root = store.state.projectRoot
-    if (root && targetPath.startsWith(root + '/')) {
-        targetPath = targetPath.slice(root.length + 1)
+    // Normalize Windows backslashes to forward slashes so all downstream
+    // matching (project-root prefix, external check, dirName/joinPath,
+    // DOM data-path highlight) uses a single separator convention.
+    targetPath = targetPath.replace(/\\/g, '/')
+    const root = store.state.projectRoot ? store.state.projectRoot.replace(/\\/g, '/') : ''
+    const rootRel = root.replace(/^\/+/, '')
+
+    // Resolve the path into two forms:
+    //  - absPath:     absolute form, used for /api/file/batch-exists (whose
+    //                 relative paths resolve against the project root).
+    //  - browsePath:  filesystem-root-relative form, used for /api/dir listing
+    //                 (whose relative paths resolve against the filesystem root).
+    const isWinAbs = isWindowsAbsolutePath(targetPath)
+    const isAbs = targetPath.startsWith('/') || isWinAbs
+    let absPath: string
+    let browsePath: string
+    if (rootRel && targetPath.startsWith(rootRel + '/')) {
+        // Already filesystem-root-relative (path produced by file-manager browsing).
+        absPath = isWinAbs ? targetPath : '/' + targetPath
+        browsePath = targetPath
+    } else if (isAbs) {
+        absPath = targetPath
+        browsePath = isWinAbs ? targetPath : targetPath.replace(/^\/+/, '')
+    } else if (root) {
+        // Project-relative path (chat annotations) — resolve against the project root.
+        absPath = root + '/' + targetPath
+        browsePath = isWinAbs ? absPath : absPath.replace(/^\/+/, '')
+    } else {
+        absPath = targetPath
+        browsePath = targetPath
     }
 
-    const isExternal = targetPath.startsWith('/')
+    // An absolute path outside the project root is external. Used to reject
+    // external directories and to show the external-file toast.
+    const isExternal = isAbs && !(root && absPath.toLowerCase().startsWith(root.toLowerCase() + '/'))
 
-    // Verify the path exists
+    // Verify the path exists (absolute form, so it resolves regardless of root)
     let pathType: 'file' | 'dir' | 'none' = 'none'
     try {
         const resp = await fetch('/api/file/batch-exists', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: [targetPath] }),
+            body: JSON.stringify({ paths: [absPath] }),
         })
         if (resp.ok) {
             const data = await resp.json() as { results: Record<string, string> }
-            pathType = (data.results?.[targetPath] as 'file' | 'dir' | 'none') || 'none'
+            pathType = (data.results?.[absPath] as 'file' | 'dir' | 'none') || 'none'
         }
     } catch { /* proceed as best-effort */ }
 
@@ -898,12 +931,12 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
 
     // Navigate to the containing directory using loadFiles directly
     // (navigateToDir silently no-ops when dirLoading is true, which can race)
-    const parentDir = dirName(targetPath)
+    const parentDir = dirName(browsePath)
     await store.loadFiles(parentDir, false, 0, true)
 
     // Brief delay to let DOM settle after loadFiles before highlighting the target
     setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: targetPath } }))
+        window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: browsePath } }))
     }, 50)
 
     return true

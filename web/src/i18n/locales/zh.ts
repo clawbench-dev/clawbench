@@ -1952,6 +1952,7 @@ export default {
     tabLimitReached: '已达到终端会话上限',
     newTab: '新标签页',
     noSessions: '暂无终端会话',
+    unreadOutput: '有新输出',
     createSession: '创建会话',
     keyConfigTitle: '工具栏配置',
     clipboard: '剪贴板',

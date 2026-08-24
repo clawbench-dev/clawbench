@@ -24,12 +24,17 @@ vi.mock('@/utils/path', () => ({
   dirName: (p: string) => {
     const parts = p.split('/')
     parts.pop()
-    return parts.join('/')
+    if (parts.length === 0) return ''
+    const result = parts.join('/')
+    // Drive-root special case (matches the real dirName): a lone "D:" → "D:/"
+    if (/^[A-Za-z]:$/.test(result)) return result + '/'
+    return result
   },
   baseName: (p: string) => {
     const parts = p.split('/')
     return parts[parts.length - 1] || ''
   },
+  isWindowsAbsolutePath: (p: string) => /^[A-Za-z]:[/\\]/.test(p) || p.startsWith('\\\\'),
 }))
 
 // Mock store
@@ -1817,7 +1822,7 @@ describe('openFilePath', () => {
   it('navToFileInManager: navigates to parent dir and dispatches events for file', async () => {
     vi.useFakeTimers()
     const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { '/home/user/project/src/main.go': 'file' } }) })
 
     vi.stubGlobal('fetch', mockFetch)
 
@@ -1829,7 +1834,9 @@ describe('openFilePath', () => {
     await vi.advanceTimersByTimeAsync(400)
 
     expect(result).toBe(true)
-    expect(mockLoadFiles).toHaveBeenCalledWith('src', false, 0, true)
+    // Project-relative paths are resolved against the project root and loaded
+    // in filesystem-root-relative form so /api/dir lists the project's src/.
+    expect(mockLoadFiles).toHaveBeenCalledWith('home/user/project/src', false, 0, true)
     const eventTypes = mockDispatchEvent.mock.calls.map((call: any[]) => call[0].type)
     expect(eventTypes).toContain('close-file-overlay')
     expect(eventTypes).toContain('open-file-manager')
@@ -1843,7 +1850,7 @@ describe('openFilePath', () => {
   it('navToFileInManager: navigates to parent dir for directory path', async () => {
     vi.useFakeTimers()
     const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'internal/rag': 'dir' } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { '/home/user/project/internal/rag': 'dir' } }) })
 
     vi.stubGlobal('fetch', mockFetch)
 
@@ -1855,7 +1862,7 @@ describe('openFilePath', () => {
     await vi.advanceTimersByTimeAsync(400)
 
     expect(result).toBe(true)
-    expect(mockLoadFiles).toHaveBeenCalledWith('internal', false, 0, true)
+    expect(mockLoadFiles).toHaveBeenCalledWith('home/user/project/internal', false, 0, true)
     const eventTypes = mockDispatchEvent.mock.calls.map((call: any[]) => call[0].type)
     expect(eventTypes).toContain('highlight-file-item')
 
@@ -1867,7 +1874,7 @@ describe('openFilePath', () => {
   it('navToFileInManager: dispatches highlight-file-item with correct path', async () => {
     vi.useFakeTimers()
     const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/composables/useFoo.ts': 'file' } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { '/home/user/project/src/composables/useFoo.ts': 'file' } }) })
 
     vi.stubGlobal('fetch', mockFetch)
 
@@ -1880,11 +1887,128 @@ describe('openFilePath', () => {
 
     const highlightCall = mockDispatchEvent.mock.calls.find((call: any[]) => call[0].type === 'highlight-file-item')
     expect(highlightCall).toBeDefined()
-    expect(highlightCall![0].detail.path).toBe('src/composables/useFoo.ts')
+    expect(highlightCall![0].detail.path).toBe('home/user/project/src/composables/useFoo.ts')
 
     window.dispatchEvent = origDispatch
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  // ── Windows drive-letter path handling ──
+
+  describe('navToFileInManager: Windows paths', () => {
+    // Store mock projectRoot is '/home/user/project' — override per test.
+    let origProjectRoot: string
+
+    beforeEach(async () => {
+      const { store: storeMock } = await import('@/stores/app')
+      origProjectRoot = storeMock.state.projectRoot
+    })
+
+    afterEach(async () => {
+      const { store: storeMock } = await import('@/stores/app')
+      storeMock.state.projectRoot = origProjectRoot
+    })
+
+    it('navigates to a project-internal file using forward-slash drive path', async () => {
+      const { store: storeMock } = await import('@/stores/app')
+      storeMock.state.projectRoot = 'C:/Users/foo/project'
+      vi.useFakeTimers()
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'C:/Users/foo/project/src/main.go': 'file' } }) })
+
+      vi.stubGlobal('fetch', mockFetch)
+
+      const mockDispatchEvent = vi.fn()
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = mockDispatchEvent
+
+      const result = await navToFileInManager('C:/Users/foo/project/src/main.go')
+      await vi.advanceTimersByTimeAsync(400)
+
+      expect(result).toBe(true)
+      expect(mockLoadFiles).toHaveBeenCalledWith('C:/Users/foo/project/src', false, 0, true)
+      const highlightCall = mockDispatchEvent.mock.calls.find((call: any[]) => call[0].type === 'highlight-file-item')
+      expect(highlightCall![0].detail.path).toBe('C:/Users/foo/project/src/main.go')
+
+      window.dispatchEvent = origDispatch
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('navigates to a project-external drive path (backslash input normalized)', async () => {
+      const { store: storeMock } = await import('@/stores/app')
+      storeMock.state.projectRoot = 'C:/Users/foo/project'
+      vi.useFakeTimers()
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'D:/Users/foo/other/a.go': 'file' } }) })
+
+      vi.stubGlobal('fetch', mockFetch)
+
+      const mockDispatchEvent = vi.fn()
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = mockDispatchEvent
+
+      const result = await navToFileInManager('D:\\Users\\foo\\other\\a.go')
+      await vi.advanceTimersByTimeAsync(400)
+
+      expect(result).toBe(true)
+      expect(mockLoadFiles).toHaveBeenCalledWith('D:/Users/foo/other', false, 0, true)
+      const highlightCall = mockDispatchEvent.mock.calls.find((call: any[]) => call[0].type === 'highlight-file-item')
+      expect(highlightCall![0].detail.path).toBe('D:/Users/foo/other/a.go')
+
+      window.dispatchEvent = origDispatch
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('rejects an external directory on another drive with the unsupported toast', async () => {
+      const { store: storeMock } = await import('@/stores/app')
+      storeMock.state.projectRoot = 'C:/Users/foo/project'
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'D:/external/dir': 'dir' } }) })
+
+      vi.stubGlobal('fetch', mockFetch)
+
+      const mockShow = vi.fn()
+      vi.doMock('@/composables/useToast', () => ({
+        useToast: () => ({ show: mockShow }),
+      }))
+
+      const result = await navToFileInManager('D:/external/dir')
+
+      expect(result).toBe(false)
+      expect(mockShow).toHaveBeenCalled()
+      // loadFiles should not be called for an unsupported external directory
+      expect(mockLoadFiles).not.toHaveBeenCalled()
+
+      vi.unstubAllGlobals()
+      vi.doUnmock('@/composables/useToast')
+    })
+
+    it('navigates to a drive root when the file is at the drive top level', async () => {
+      const { store: storeMock } = await import('@/stores/app')
+      storeMock.state.projectRoot = 'C:/Users/foo/project'
+      vi.useFakeTimers()
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'D:/a.go': 'file' } }) })
+
+      vi.stubGlobal('fetch', mockFetch)
+
+      const mockDispatchEvent = vi.fn()
+      const origDispatch = window.dispatchEvent
+      window.dispatchEvent = mockDispatchEvent
+
+      const result = await navToFileInManager('D:/a.go')
+      await vi.advanceTimersByTimeAsync(400)
+
+      expect(result).toBe(true)
+      expect(mockLoadFiles).toHaveBeenCalledWith('D:/', false, 0, true)
+
+      window.dispatchEvent = origDispatch
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
   })
 
   describe('parseFileUri', () => {

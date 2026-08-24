@@ -780,6 +780,66 @@ describe('useTerminalTabs', () => {
     })
   })
 
+  describe('unread dot (hasUnread)', () => {
+    /** Wire onOutput for a tab and fire it with given data. */
+    function fireOutput(mgr: ReturnType<typeof useTerminalTabs>, tab: TerminalTab, data: string) {
+      const rawSession = getRawSession(tabIndex(mgr, tab))
+      const setCallbacksCall = rawSession.setCallbacks.mock.calls[0][0]
+      setCallbacksCall.onOutput(data)
+    }
+
+    it('defaults hasUnread to false', () => {
+      const mgr = createTabManager()
+      const tab = mgr.tabs.value[0]
+      expect(tab.hasUnread).toBe(false)
+    })
+
+    it('sets hasUnread when output arrives for a background tab', () => {
+      const mgr = createTabManager()
+      const bgTab = mgr.tabs.value[0]
+      const activeTab = mgr.createTab() // becomes active
+      expect(activeTab.id).toBe(mgr.activeTabId.value)
+
+      fireOutput(mgr, bgTab, 'background output')
+      expect(bgTab.hasUnread).toBe(true)
+    })
+
+    it('does not set hasUnread when output arrives for the active tab', () => {
+      const mgr = createTabManager()
+      const activeTab = mgr.tabs.value[0]
+      expect(activeTab.id).toBe(mgr.activeTabId.value)
+
+      fireOutput(mgr, activeTab, 'active output')
+      expect(activeTab.hasUnread).toBe(false)
+    })
+
+    it('clears hasUnread on switchTab', () => {
+      const mgr = createTabManager()
+      const bgTab = mgr.tabs.value[0]
+      const activeTab = mgr.createTab()
+
+      fireOutput(mgr, bgTab, 'background output')
+      expect(bgTab.hasUnread).toBe(true)
+
+      mgr.switchTab(bgTab.id)
+      expect(bgTab.hasUnread).toBe(false)
+    })
+
+    it('clears hasUnread on the tab switched to after closing the active tab', () => {
+      const mgr = createTabManager()
+      const firstTab = mgr.tabs.value[0]
+      const activeTab = mgr.createTab()
+
+      fireOutput(mgr, firstTab, 'background output')
+      expect(firstTab.hasUnread).toBe(true)
+
+      // Closing the active tab auto-switches to the adjacent tab (firstTab)
+      mgr.closeTab(activeTab.id)
+      expect(mgr.activeTabId.value).toBe(firstTab.id)
+      expect(firstTab.hasUnread).toBe(false)
+    })
+  })
+
   describe('mountTabXterm', () => {
     it('sets container on the tab', () => {
       const mgr = createTabManager()
