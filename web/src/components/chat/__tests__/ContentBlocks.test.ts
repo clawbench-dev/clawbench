@@ -114,10 +114,13 @@ function mountBlocks(props: Record<string, unknown> = {}) {
     global: {
       plugins: [i18n],
       stubs: {
-        'lucide-vue-next': LucideStub,
+        // Note: CheckCircle2 is intentionally NOT stubbed so the "shows check
+        // icon" test verifies the real component renders. Stub every other
+        // lucide icon explicitly instead of the package-level stub.
         Brain: LucideStub,
         ChevronRight: LucideStub,
-        CheckCircle2: LucideStub,
+        ChevronDown: LucideStub,
+        ChevronUp: LucideStub,
         AlertCircle: LucideStub,
         AlertTriangle: LucideStub,
         XCircle: LucideStub,
@@ -194,7 +197,13 @@ describe('ContentBlocks', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'tool_use', name: 'Read', done: true, status: 'success' }],
       })
-      expect(wrapper.find('.tool-check').exists()).toBe(true)
+      const check = wrapper.find('.tool-check')
+      expect(check.exists()).toBe(true)
+      // CheckCircle2 is intentionally NOT stubbed here — a regression guard for
+      // the missing-import bug where the icon component was unregistered and
+      // rendered as an empty element. The lucide component's root IS the svg
+      // carrying the .tool-check class, so assert it is a real svg element.
+      expect(check.element.tagName.toLowerCase()).toBe('svg')
     })
 
     it('shows error icon when tool has error status', () => {
