@@ -77,6 +77,7 @@
       <!-- Excalidraw diagram (opens directly in the editor) -->
       <ExcalidrawViewer
         v-else-if="file.isExcalidraw"
+        ref="excalidrawViewerRef"
         :file="file"
       />
 
@@ -331,11 +332,18 @@ const fileEditor = useFileEditor()
 const editing = fileEditor.editing
 const { saving, saveFile } = useCodeEditorSave()
 const cmEditorRef = ref(null)
+const excalidrawViewerRef = ref(null)
 
-// The global back handler calls exitEdit() → run CodeMirrorViewer's exit flow,
-// which confirms save/discard/cancel when there are unsaved changes.
+// The global back handler calls exitEdit() → run the active editor's exit flow,
+// which confirms save/discard/cancel when there are unsaved changes. For
+// Excalidraw files the iframe editor registers its own flow; otherwise it's
+// CodeMirrorViewer.
 function handleExitEditRequest() {
-    cmEditorRef.value?.handleExit?.()
+    if (props.file?.isExcalidraw) {
+        excalidrawViewerRef.value?.requestExit?.()
+    } else {
+        cmEditorRef.value?.handleExit?.()
+    }
 }
 
 let unregisterExitEdit = null

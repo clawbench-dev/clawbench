@@ -34,17 +34,20 @@ vi.mock('@/composables/useFileRefresh', () => ({
 }))
 
 let postMessage: ReturnType<typeof vi.fn>
+let contentWindowMock: Window | null = null
 
 function mockContentWindow() {
   postMessage = vi.fn()
+  contentWindowMock = { postMessage } as unknown as Window
   vi.spyOn(HTMLIFrameElement.prototype, 'contentWindow', 'get')
-    .mockReturnValue({ postMessage } as unknown as Window)
+    .mockReturnValue(contentWindowMock)
   return postMessage
 }
 
 function sendFromIframe(event: string, data?: Record<string, unknown>) {
   const msg = JSON.stringify({ event, data })
-  window.dispatchEvent(new MessageEvent('message', { data: msg }))
+  // source must equal the component's iframe contentWindow (origin check).
+  window.dispatchEvent(new MessageEvent('message', { data: msg, source: contentWindowMock }))
 }
 
 const file = {
@@ -67,6 +70,7 @@ describe('ExcalidrawViewer', () => {
     wrapper?.unmount()
     wrapper = null
     document.body.innerHTML = ''
+    contentWindowMock = null
     vi.restoreAllMocks()
   })
 
@@ -156,11 +160,14 @@ describe('ExcalidrawViewer', () => {
     expect(fileEditor.isEditorDirty()).toBe(true)
   })
 
-  it('requests a save when exiting edit mode', async () => {
+  it('requests a save when exiting edit mode with unsaved changes', async () => {
     mockContentWindow()
     wrapper = mount(ExcalidrawViewer, { props: { file } })
     // Mark the iframe ready so the saveRequest is actually sent.
     sendFromIframe('ready')
+    await nextTick()
+    // Dirty state is required for the exit flow to request a save.
+    sendFromIframe('changed')
     await nextTick()
     postMessage.mockClear()
 
@@ -171,5 +178,44 @@ describe('ExcalidrawViewer', () => {
     const [payload] = postMessage.mock.calls[0]
     const parsed = JSON.parse(payload)
     expect(parsed.event).toBe('saveRequest')
+  })
+
+  it('does not request a save when exiting with no unsaved changes', async () => {
+    mockContentWindow()
+    wrapper = mount(ExcalidrawViewer, { props: { file } })
+    sendFromIframe('ready')
+    await nextTick()
+    postMessage.mockClear()
+
+    const fileEditor = useFileEditor()
+    await fileEditor.exitEdit?.()
+
+    expect(postMessage).not.toHaveBeenCalled()
+  })
+
+  it('rejects the save if the iframe reports a failed write', async () => {
+    mockContentWindow()
+    mockSaveFile.mockResolvedValueOnce(false)
+    wrapper = mount(ExcalidrawViewer, { props: { file } })
+    sendFromIframe('ready')
+    await nextTick()
+    sendFromIframe('changed')
+    await nextTick()
+    postMessage.mockClear()
+
+    const exitPromise = useFileEditor().exitEdit?.()
+    // iframe replies with a save payload that fails to persist.
+    sendFromIframe('save', { content: file.content })
+    await nextTick()
+
+    await expect(exitPromise).resolves.toBe(false)
+    expect(mockSaveFile).toHaveBeenCalledWith(file.path, file.content)
+  })
+
+  it('marks the editor as editing so the global back gesture protects unsaved work', () => {
+    wrapper = mount(ExcalidrawViewer, { props: { file } })
+    expect(useFileEditor().isEditing()).toBe(true)
+    wrapper.unmount()
+    expect(useFileEditor().isEditing()).toBe(false)
   })
 })

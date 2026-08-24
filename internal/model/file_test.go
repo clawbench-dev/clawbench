@@ -100,6 +100,16 @@ func TestDetectSubtype(t *testing.T) {
 		assert.Equal(t, model.SubtypeExcalidraw, got)
 	})
 
+	t.Run("Excalidraw large file with embedded image", func(t *testing.T) {
+		// Diagrams with base64-embedded images can exceed maxSpecSniffSize.
+		// The extension must be recognized BEFORE the size check so such
+		// files still open in the Excalidraw editor.
+		big := `{"type":"excalidraw","elements":[],"files":{"img":{"dataURL":"data:image/png;base64,` +
+			strings.Repeat("A", 1<<20) + `"}}}`
+		got := model.DetectSubtype("big.excalidraw", big)
+		assert.Equal(t, model.SubtypeExcalidraw, got)
+	})
+
 	t.Run("Non YAML/JSON file", func(t *testing.T) {
 		got := model.DetectSubtype("main.go", "package main")
 		assert.Equal(t, "", got)

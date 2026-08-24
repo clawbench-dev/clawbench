@@ -16,13 +16,15 @@
  */
 
 export interface BridgeMessage {
-  event: 'load' | 'saveRequest'
-  data?: { content: string }
+  event: 'load' | 'saveRequest' | 'theme' | 'lang'
+  data?: { content: string; lang?: string; theme?: string }
 }
 
-export function postToParent(msg: BridgeMessage): void {
+// The iframe is same-origin with the host app, so we can target the exact
+// origin instead of '*' — third-party frames can't eavesdrop on messages.
+function postToParent(msg: BridgeMessage): void {
   if (!window.parent) return
-  window.parent.postMessage(JSON.stringify(msg), '*')
+  window.parent.postMessage(JSON.stringify(msg), window.location.origin)
 }
 
 export function emitReady(): void {

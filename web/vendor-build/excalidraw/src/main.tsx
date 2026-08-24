@@ -75,6 +75,9 @@ function ExcalidrawHost() {
   // Listen for messages from the parent Vue app.
   useEffect(() => {
     function onMessage(e: MessageEvent) {
+      // Only accept messages from the parent frame — ignore forged messages
+      // from other windows.
+      if (e.source !== window.parent) return
       if (!e.data || typeof e.data !== 'string') return
       let msg: { event: string; data?: Record<string, unknown> }
       try {

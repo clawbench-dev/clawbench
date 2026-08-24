@@ -138,22 +138,25 @@ func IsOfficeFile(name string) bool {
 
 // DetectSubtype examines file content to determine its subtype (e.g., "openapi").
 // Returns ("", "") for unrecognized or malformed content.
-// Files larger than maxSpecSniffSize are skipped for performance.
+// Files larger than maxSpecSniffSize are skipped for performance — but the
+// .excalidraw extension is recognized BEFORE that check, because diagrams with
+// embedded images easily exceed 1MB yet must still open in the editor.
 func DetectSubtype(filename, content string) (subtype string) {
+	lower := strings.ToLower(filename)
+	if strings.HasSuffix(lower, ".excalidraw") {
+		// The .excalidraw extension alone is sufficient — the file is an
+		// Excalidraw scene even when empty (a brand-new blank diagram). Content
+		// sniffing would reject empty/large files and fall back to plain text.
+		return SubtypeExcalidraw
+	}
 	if len(content) > maxSpecSniffSize {
 		return ""
 	}
-	lower := strings.ToLower(filename)
 	switch {
 	case strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml"):
 		return detectSubtypeYAML(content)
 	case strings.HasSuffix(lower, ".json") || strings.HasSuffix(lower, ".jsonc") || strings.HasSuffix(lower, ".json5"):
 		return detectSubtypeJSON(content)
-	case strings.HasSuffix(lower, ".excalidraw"):
-		// The .excalidraw extension alone is sufficient — the file is an
-		// Excalidraw scene even when empty (a brand-new blank diagram). Content
-		// sniffing would reject empty files and fall back to plain text.
-		return SubtypeExcalidraw
 	default:
 		return ""
 	}
