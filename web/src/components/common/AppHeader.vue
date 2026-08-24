@@ -167,22 +167,25 @@
       <Palette :size="14" />
     </button>
     <PopupMenu v-model:show="themeMenuOpen" :target-element="themeBtnRef" :max-width="200" :max-height="440" :menu-items-count="1 + THEME_IDS.length" anchor="right">
-      <div class="theme-picker-menu">
-        <div
-          v-for="opt in themeOptions"
-          :key="opt.value"
-          class="theme-picker-item"
-          role="menuitem"
-          tabindex="-1"
-          :class="{ active: currentThemeValue === opt.value }"
-          :style="getThemePreviewStyle(opt.value)"
-          @click="selectTheme(opt.value)"
-          @keydown.enter="selectTheme(opt.value)"
-          @keydown.space.prevent="selectTheme(opt.value)"
-        >
-          <span class="theme-picker-check">{{ currentThemeValue === opt.value ? '✓' : '' }}</span>
-          <span class="theme-picker-label">{{ opt.label }}</span>
-          <component :is="getThemeBaseIcon(opt.value)" :size="12" class="theme-picker-base-icon" />
+      <div class="theme-picker">
+        <div class="theme-picker-title">{{ t('terminal.theme') }}</div>
+        <div class="theme-picker-list">
+          <button
+            v-for="opt in themeOptions"
+            :key="opt.value"
+            class="theme-item"
+            role="menuitem"
+            tabindex="-1"
+            :class="{ active: currentThemeValue === opt.value }"
+            :style="getThemePreviewStyle(opt.value)"
+            @click="selectTheme(opt.value)"
+            @keydown.enter="selectTheme(opt.value)"
+            @keydown.space.prevent="selectTheme(opt.value)"
+          >
+            <span class="theme-item-check">{{ currentThemeValue === opt.value ? '✓' : '' }}</span>
+            <span class="theme-item-name">{{ opt.label }}</span>
+            <component :is="getThemeBaseIcon(opt.value)" :size="12" class="theme-item-base-icon" />
+          </button>
         </div>
       </div>
     </PopupMenu>
@@ -277,7 +280,7 @@ function selectTheme(value: string) {
 function getThemePreviewStyle(value: string) {
   const c = value === 'auto' ? autoPreviewColors.value : getThemePreviewColor(value)
   if (!c) return undefined
-  return { '--theme-preview-bg': c.bg, '--theme-preview-fg': c.text, '--theme-preview-accent': c.accent }
+  return { '--tterm-preview-bg': c.bg, '--tterm-preview-fg': c.text, '--tterm-preview-accent': c.accent }
 }
 
 function getThemeBaseIcon(value: string) {
@@ -1396,73 +1399,29 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     color: var(--text-secondary, #666);
 }
 
-/* ─── Theme picker popup ─────────────────────────────────────────────── */
-
-.theme-picker-menu {
-    padding: 0;
-    min-width: 160px;
+/* ─── Theme picker popup (unified with terminal theme picker) ─────────── */
+.theme-picker { padding: 0; min-width: 160px; }
+.theme-picker-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 5px 10px 4px; border-bottom: 1px solid var(--border-color); }
+.theme-picker-list { max-height: 300px; overflow-y: auto; }
+.theme-item {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 5px 10px; border: none; border-radius: 0;
+  background: var(--tterm-preview-bg, transparent);
+  color: var(--tterm-preview-fg, var(--text-primary));
+  font-size: 12px; text-align: left; cursor: pointer;
+  transition: background 0.1s;
 }
-
-.theme-picker-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 10px;
-    cursor: pointer;
-    transition: background 0.1s;
-    font-size: 12px;
-    color: var(--text-primary);
-    background: var(--theme-preview-bg, transparent);
-    color: var(--theme-preview-fg, var(--text-primary));
+.theme-item:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
 }
-
 @media (hover: hover) {
-  .theme-picker-item:hover {
-    background: var(--bg-tertiary);
-  }
+  .theme-item:hover { background: var(--bg-tertiary); }
 }
-
-.theme-picker-item:focus-visible {
-    outline: 2px solid var(--accent-color);
-    outline-offset: -2px;
-}
-
-.theme-picker-item.active {
-    background: var(--theme-preview-bg, transparent);
-    color: var(--theme-preview-fg, var(--text-primary));
-}
-
-.theme-picker-check {
-    flex-shrink: 0;
-    width: 16px;
-    height: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    border-radius: 50%;
-}
-
-.theme-picker-item.active .theme-picker-check {
-    background: var(--accent-color);
-    color: #fff;
-}
-
-.theme-picker-label {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 500;
-}
-
-.theme-picker-base-icon {
-    flex-shrink: 0;
-    color: var(--theme-preview-accent, var(--text-muted));
-}
-
-.theme-picker-item.active .theme-picker-base-icon {
-    color: var(--theme-preview-accent, var(--text-muted));
-}
+.theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
+.theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: 10px; border-radius: 50%; }
+.theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }
+.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }
+.theme-item.active .theme-item-base-icon { color: var(--tterm-preview-accent, var(--text-muted)); }
 </style>

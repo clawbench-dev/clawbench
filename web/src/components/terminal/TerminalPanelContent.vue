@@ -29,6 +29,11 @@
           @click="handleTabClick(tab.id)"
         >
           <span class="terminal-tab-title" :title="tab.cwd">{{ tab.title }}</span>
+          <span
+            v-if="tab.hasUnread && tab.id !== activeTabId"
+            class="terminal-tab-unread-dot"
+            :title="t('terminal.unreadOutput')"
+          ></span>
           <button class="terminal-tab-menu-btn" @click.stop="openTabMenu($event, tab)" :title="t('terminal.title')">
             <MoreVerticalIcon :size="12" />
           </button>
@@ -210,7 +215,7 @@
       v-model:show="themeMenuOpen"
       :target-element="themeMenuTarget"
       :max-width="240"
-      :max-height="320"
+      :max-height="440"
       :menu-items-count="6"
       anchor="right"
     >
@@ -1278,6 +1283,14 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   font-weight: 700;
 }
 
+.terminal-tab-unread-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-color, #0066cc);
+}
+
 .terminal-tab-menu-btn {
   display: flex;
   align-items: center;
@@ -1765,7 +1778,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .theme-picker-status { padding: 10px 12px; text-align: center; color: var(--text-muted); font-size: 12px; }
 .theme-picker-error { display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .theme-retry-btn { padding: 4px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 12px; }
-.theme-picker-list { max-height: 220px; overflow-y: auto; }
+.theme-picker-list { max-height: 300px; overflow-y: auto; }
 .theme-item {
   display: flex; align-items: center; gap: 6px;
   width: 100%; padding: 5px 10px; border: none; border-radius: 0;
