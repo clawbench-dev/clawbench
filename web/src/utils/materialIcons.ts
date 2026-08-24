@@ -3,24 +3,26 @@
  * Resolves file/folder paths to per-file-type SVG icon URLs
  * using the vscode-material-icon-theme package.
  *
- * Icons are loaded lazily (not eager) to reduce initial bundle size.
- * Each icon URL is fetched on first access and cached.
+ * Icons are served as static assets at /material-icons/<name>.svg
+ * (copied from node_modules by the material-icons-copy Vite plugin) and
+ * fetched lazily on first access, then cached.
  */
 
 import { generateManifest } from 'material-icon-theme'
 import { appLog } from '@/utils/appLog'
 
-// Lazy-load icon modules — Vite splits each SVG into its own chunk
-const iconModules = import.meta.glob<string>('../assets/material-icons/*.svg', {
-  query: '?url',
-  import: 'default',
-})
+// Static asset base URL (absolute so it resolves regardless of the current
+// page path). Icons live in public/material-icons/ (build output) and are
+// copied there by vite.config.ts material-icons-copy plugin.
+// import.meta.glob is intentionally NOT used: globbing 1250 SVGs into the JS
+// module graph inflated rollup's peak build memory to ~3.4GB.
+const ICON_BASE = '/material-icons/'
 
 // Cache: iconName → resolved URL (populated on first access)
 const iconUrlCache = new Map<string, string>()
 
-// Pending loads: iconName → Promise<string> (dedup concurrent loads)
-const iconUrlPending = new Map<string, Promise<string>>()
+// Pending loads: iconName → Promise<string | undefined> (dedup concurrent loads)
+const iconUrlPending = new Map<string, Promise<string | undefined>>()
 
 // Generate manifest once at module init
 const manifest = generateManifest()
@@ -101,7 +103,7 @@ export function getFolderIconName(name: string, open = false): string {
 }
 
 /**
- * Get the Vite asset URL for an icon by name (lazy-loaded and cached).
+ * Get the static asset URL for an icon by name (lazy-loaded and cached).
  * Returns undefined if the icon SVG is not available.
  */
 export async function getIconUrl(iconName: string): Promise<string | undefined> {
@@ -113,23 +115,38 @@ export async function getIconUrl(iconName: string): Promise<string | undefined> 
   const pending = iconUrlPending.get(iconName)
   if (pending) return pending
 
-  // Find the matching module path
-  const modulePath = `../assets/material-icons/${iconName}.svg`
-  const loader = iconModules[modulePath]
-  if (!loader) return undefined
+  const url = `${ICON_BASE}${iconName}.svg`
 
-  const loadPromise = loader().then((url) => {
+  const loadPromise = checkIconExists(url).then((ok) => {
+    if (!ok) {
+      iconUrlPending.delete(iconName)
+      return undefined
+    }
     iconUrlCache.set(iconName, url)
     iconUrlPending.delete(iconName)
     return url
   }).catch((err) => {
     iconUrlPending.delete(iconName)
-    appLog.w('MaterialIcons', `Failed to load icon: ${iconName}`, err)
-    return ''
+    appLog.w('MaterialIcons', `Failed to check icon: ${iconName}`, err)
+    return undefined
   })
 
   iconUrlPending.set(iconName, loadPromise)
   return loadPromise
+}
+
+/**
+ * HEAD request to verify the icon asset exists before returning its URL.
+ * Icons absent from the material-icon-theme package must not resolve to a
+ * 404 <img> src; callers fall back to the default icon in that case.
+ */
+async function checkIconExists(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { method: 'HEAD' })
+    return res.ok
+  } catch {
+    return false
+  }
 }
 
 /**

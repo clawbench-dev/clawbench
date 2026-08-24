@@ -399,6 +399,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Serve static assets from frontend filesystem (disk public/ > embed fallback)
 	// http.FileServerFS internally cleans paths before Open(), preventing traversal.
 	// For embed.FS, Open() additionally rejects ".." paths. No explicit ISS-055 guard needed.
+	// NOTE: all other static paths (/index-*.js, /material-icons/*, etc.) are
+	// handled by ServeIndex, which reads directly from the frontend FS.
 	fsys := frontend.GetFS()
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServerFS(fsys)))
 	if !frontend.DiskPublicExists() {

@@ -162,6 +162,116 @@ func TestServeIndex_CSSFallback_DevMode(t *testing.T) {
 	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code)
 }
 
+// --- /material-icons/ static route (file-type icons) ---
+
+func TestMaterialIconsRoute_ServesSvgFromPublic(t *testing.T) {
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	iconsDir := filepath.Join(publicDir, "material-icons")
+	if err := os.MkdirAll(iconsDir, 0o755); err != nil {
+		t.Fatalf("failed to create material-icons dir: %v", err)
+	}
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>`)
+	if err := os.WriteFile(filepath.Join(iconsDir, "go.svg"), svg, 0o644); err != nil {
+		t.Fatalf("failed to write go.svg: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/material-icons/go.svg", http.NoBody)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, string(svg), w.Body.String())
+}
+
+func TestMaterialIconsRoute_HEAD_ReturnsOK(t *testing.T) {
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	iconsDir := filepath.Join(publicDir, "material-icons")
+	if err := os.MkdirAll(iconsDir, 0o755); err != nil {
+		t.Fatalf("failed to create material-icons dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(iconsDir, "go.svg"), []byte(`<svg/>`), 0o644); err != nil {
+		t.Fatalf("failed to write go.svg: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux)
+
+	// getIconUrl() verifies icon existence with a HEAD request.
+	req := httptest.NewRequest(http.MethodHead, "/material-icons/go.svg", http.NoBody)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestMaterialIconsRoute_MissingIcon_Returns404(t *testing.T) {
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		t.Fatalf("failed to create public dir: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/material-icons/nonexistent.svg", http.NoBody)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestMaterialIconsRoute_TraversalBlocked(t *testing.T) {
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	iconsDir := filepath.Join(publicDir, "material-icons")
+	if err := os.MkdirAll(iconsDir, 0o755); err != nil {
+		t.Fatalf("failed to create material-icons dir: %v", err)
+	}
+	// Secret outside the icons directory
+	if err := os.WriteFile(filepath.Join(publicDir, "secret.txt"), []byte("SECRET"), 0o644); err != nil {
+		t.Fatalf("failed to write secret: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/material-icons/../secret.txt", http.NoBody)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	assert.NotEqual(t, http.StatusOK, w.Code, "should not serve files outside material-icons/")
+}
+
 // --- isHashedAsset ---
 
 func TestIsHashedAsset(t *testing.T) {

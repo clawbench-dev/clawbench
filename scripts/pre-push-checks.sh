@@ -142,7 +142,7 @@ fi
 
 # ─── 8. Frontend build ───
 if command -v npx >/dev/null 2>&1 && [ -f "$ROOT_DIR/package.json" ]; then
-    run_check "Build (Frontend)" env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}" npm run build
+    run_check "Build (Frontend)" env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=3072}" npm run build
 else
     echo -e "${YELLOW}⚠️  跳过 Frontend build（未找到 npm）${NC}"
     echo ""

@@ -1,9 +1,9 @@
 import { defineConfig, Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import VueI18nPlugin from '@intlify/unplugin-vue-i18n/vite'
-import { resolve, dirname } from 'path'
+import { resolve, dirname, sep } from 'path'
 import { fileURLToPath } from 'url'
-import { cpSync, existsSync, mkdirSync, readdirSync } from 'fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const publicDir = resolve(__dirname, 'public')
@@ -23,11 +23,16 @@ if (existsSync(srcAssets)) {
   }
 }
 
-// Vite plugin: copy material-icon-theme SVGs to web/src/assets/material-icons/
-// so import.meta.glob can reference them (Vite cannot glob into node_modules).
+// Vite plugin: copy material-icon-theme SVGs to public/material-icons/
+// so they are served as static assets at /material-icons/<name>.svg.
+//
+// The icons are NOT part of the JS module graph: materialIcons.ts resolves
+// them by URL at runtime. Keeping them as plain static files (instead of
+// import.meta.glob over 1250 SVGs) avoids inflating rollup's module graph,
+// which previously pushed peak build memory to ~3.4GB.
 function materialIconsCopy(): Plugin {
   const srcDir = resolve(__dirname, 'node_modules/material-icon-theme/icons')
-  const destDir = resolve(__dirname, 'web/src/assets/material-icons')
+  const destDir = resolve(__dirname, 'public/material-icons')
 
   function copy() {
     if (!existsSync(srcDir)) {
@@ -44,8 +49,32 @@ function materialIconsCopy(): Plugin {
 
   return {
     name: 'material-icons-copy',
-    buildStart() { copy() },
-    configureServer() { copy() },
+    // Build: copy after bundle is written so `emptyOutDir: true` (if ever
+    // enabled) cannot wipe the icons before they are emitted.
+    closeBundle() { copy() },
+    // Dev: public/ (the build outDir) is NOT served by the dev server — only
+    // publicDir is. Serve /material-icons/* straight from public/material-icons
+    // so getIconUrl() works identically in dev and production.
+    configureServer(server) {
+      copy()
+      server.middlewares.use('/material-icons', (req, res) => {
+        const url = decodeURIComponent((req.url || '').replace(/^\//, ''))
+        const file = resolve(destDir, url)
+        // Prevent path traversal outside the icons directory.
+        if (!file.startsWith(destDir + sep)) {
+          res.statusCode = 403
+          res.end('Forbidden')
+          return
+        }
+        if (!existsSync(file)) {
+          res.statusCode = 404
+          res.end('Not Found')
+          return
+        }
+        res.setHeader('Content-Type', 'image/svg+xml')
+        res.end(readFileSync(file))
+      })
+    },
   }
 }
 
