@@ -407,6 +407,29 @@ describe('selectFile not-found handling', () => {
   })
 })
 
+describe('selectFile excalidraw detection', () => {
+  beforeEach(() => {
+    store.state.currentFile = null
+    store.state.projectRoot = '/tmp/project'
+  })
+
+  it('flags .excalidraw files without fetching content', async () => {
+    const ok = await store.selectFile('/tmp/project/flow.excalidraw')
+    expect(ok).toBe(true)
+    expect(store.state.currentFile?.isExcalidraw).toBe(true)
+    expect(store.state.currentFile?.path).toBe('/tmp/project/flow.excalidraw')
+  })
+
+  it('does not flag non-excalidraw files', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ name: 'a.json', path: '/tmp/project/a.json', content: '{}' }),
+    })
+    await store.selectFile('/tmp/project/a.json')
+    expect(store.state.currentFile?.isExcalidraw).toBeUndefined()
+  })
+})
+
 describe('loadFiles Windows path normalization', () => {
   beforeEach(() => {
     vi.mocked(apiGet).mockResolvedValue({ items: [] } as never)

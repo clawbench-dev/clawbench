@@ -100,6 +100,22 @@ describe('getFileType', () => {
     expect(ft.isPdf).toBe(true)
     expect(ft.lang).toBe('pdf')
   })
+
+  it('detects Excalidraw', () => {
+    const ft = getFileType('diagram.excalidraw')
+    expect(ft.isExcalidraw).toBe(true)
+    expect(ft.lang).toBe('plaintext')
+  })
+
+  it('detects Excalidraw case-insensitively', () => {
+    const ft = getFileType('DIAGRAM.EXCALIDRAW')
+    expect(ft.isExcalidraw).toBe(true)
+  })
+
+  it('does not flag .json as Excalidraw', () => {
+    const ft = getFileType('data.json')
+    expect(ft.isExcalidraw).toBeUndefined()
+  })
 })
 
 describe('formatFileSize', () => {

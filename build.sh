@@ -101,6 +101,21 @@ elif [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
         echo "  Installing dependencies..."
         npm install || { echo "ERROR: npm install failed" >&2; exit 1; }
     fi
+
+    # 1a. Build the isolated Excalidraw editor (React) into public/vendor/excalidraw/.
+    # It is intentionally a separate build (react + @excalidraw/excalidraw ~8MB) so
+    # the Vue main bundle never grows. The iframe host is served at
+    # /vendor/excalidraw/index.html and lazy-loaded only when a .excalidraw file opens.
+    EXCALIDRAW_BUILD_DIR="web/vendor-build/excalidraw"
+    if [ -d "$EXCALIDRAW_BUILD_DIR" ]; then
+        echo "  Building isolated Excalidraw editor..."
+        (cd "$EXCALIDRAW_BUILD_DIR" && npm install --no-audit --no-fund && npm run build) \
+            || { echo "ERROR: Excalidraw vendor build failed" >&2; exit 1; }
+        echo "  Excalidraw: web/public/vendor/excalidraw/"
+    else
+        echo "  Warning: $EXCALIDRAW_BUILD_DIR not found, skipping Excalidraw build"
+    fi
+
     # Clean all stale build output before rebuild.
     # Vite generates new hashed filenames each build but does not remove old ones,
     # so leftover chunks (diagram JS, CSS, fonts, etc.) accumulate indefinitely.

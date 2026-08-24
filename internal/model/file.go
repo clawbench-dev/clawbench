@@ -10,7 +10,8 @@ import (
 
 // Subtype constants for FileContent.Subtype
 const (
-	SubtypeOpenAPI = "openapi"
+	SubtypeOpenAPI    = "openapi"
+	SubtypeExcalidraw = "excalidraw"
 )
 
 // maxSpecSniffSize is the maximum file content size (1MB) for subtype detection.
@@ -68,6 +69,7 @@ func IsTextFile(name string) bool {
 		".tex",
 		".pem", ".crt", ".key", ".pub",
 		".regex", ".regexp",
+		".excalidraw",
 	}
 	lower := strings.ToLower(name)
 	for _, ext := range exts {
@@ -147,6 +149,8 @@ func DetectSubtype(filename, content string) (subtype string) {
 		return detectSubtypeYAML(content)
 	case strings.HasSuffix(lower, ".json") || strings.HasSuffix(lower, ".jsonc") || strings.HasSuffix(lower, ".json5"):
 		return detectSubtypeJSON(content)
+	case strings.HasSuffix(lower, ".excalidraw"):
+		return detectSubtypeExcalidraw(content)
 	default:
 		return ""
 	}
@@ -178,6 +182,19 @@ func detectSubtypeJSON(content string) string {
 	}
 	if _, ok := root["swagger"]; ok {
 		return SubtypeOpenAPI
+	}
+	return ""
+}
+
+// detectSubtypeExcalidraw parses .excalidraw JSON content and checks for the
+// excalidraw type discriminator ("type":"excalidraw").
+func detectSubtypeExcalidraw(content string) string {
+	var root map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &root); err != nil {
+		return ""
+	}
+	if typ, ok := root["type"].(string); ok && typ == "excalidraw" {
+		return SubtypeExcalidraw
 	}
 	return ""
 }

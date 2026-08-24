@@ -74,6 +74,12 @@
         :file="file"
       />
 
+      <!-- Excalidraw diagram (opens directly in the editor) -->
+      <ExcalidrawViewer
+        v-else-if="file.isExcalidraw"
+        :file="file"
+      />
+
       <!-- Too large -->
       <div v-else-if="file.tooLarge" class="raw-content-viewer">
         <div class="unsupported-file">
@@ -267,6 +273,7 @@ import AudioPreview from '@/components/media/AudioPreview.vue'
 import VideoPreview from '@/components/media/VideoPreview.vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent.ts'
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
+const ExcalidrawViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./ExcalidrawViewer.vue') }))
 import MarkdownPreview from './MarkdownPreview.vue'
 const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./CodeMirrorViewer.vue') }))
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./OpenApiPreview.vue') }))
@@ -519,6 +526,9 @@ function scrollElFor(viewMode, isEditing) {
     if (isOpenapi.value && viewMode === 'rendered') {
         return null // ReDoc iframe handles its own scrolling
     }
+    if (props.file?.isExcalidraw) {
+        return null // Excalidraw iframe handles its own scrolling
+    }
     // CodeMirror-based viewers scroll inside .cm-scroller
     return el.querySelector('.cm-scroller')
 }
@@ -696,7 +706,7 @@ watch(() => props.file, (f, oldF) => {
     clearRestoreTimer()
     if (!f) { currentFilePath = null; loading.value = true; return }
     currentFilePath = f.path
-    if (f.isImage || f.isPdf || f.isAudio || f.isVideo || f.isOffice || f.isBinary || f.tooLarge || f.error) {
+    if (f.isImage || f.isPdf || f.isAudio || f.isVideo || f.isOffice || f.isExcalidraw || f.isBinary || f.tooLarge || f.error) {
         loading.value = false
     } else {
         loading.value = f.content == null
@@ -713,7 +723,7 @@ watch(() => props.file, (f, oldF) => {
 
 watch(() => props.file?.content, (content) => {
     if (!props.file) return
-    if (props.file.isImage || props.file.isPdf || props.file.isAudio || props.file.isVideo || props.file.isOffice || props.file.isBinary || props.file.tooLarge || props.file.error) return
+    if (props.file.isImage || props.file.isPdf || props.file.isAudio || props.file.isVideo || props.file.isOffice || props.file.isExcalidraw || props.file.isBinary || props.file.tooLarge || props.file.error) return
     loading.value = content == null
     // Content loaded, try restore or attach listener
     if (content != null) {

@@ -299,7 +299,7 @@ const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value || i
 const effectiveViewMode = computed(() => (isMarkdownRendered.value) ? 'rendered' : 'raw')
 const isMediaFile = computed(() => {
     const ft = fileType.value
-    return ft?.isImage || ft?.isAudio || ft?.isVideo || ft?.isPdf || false
+    return ft?.isImage || ft?.isAudio || ft?.isVideo || ft?.isPdf || ft?.isExcalidraw || false
 })
 // File has usable text content for code-specific features.
 // An empty (but loaded) file has content === '' and must still be editable;
@@ -321,16 +321,16 @@ const hasToc = computed(() => {
     if (ft.isPdf) return true
     // Other file types: need content
     if (!props.file.content) return false
-    if (ft.isImage || ft.isAudio || ft.isVideo) return false
+    if (ft.isImage || ft.isAudio || ft.isVideo || ft.isExcalidraw) return false
     // OpenAPI rendered mode: ReDoc has its own sidebar, TOC/Search would operate on raw text
     if (isOpenapi.value && effectiveViewMode.value === 'rendered') return false
     return true
 })
 
-// Search requires file.content — PDF/Office don't have it, hide (not disable) search
+// Search requires file.content — PDF/Office/Excalidraw don't have usable text, hide (not disable) search
 const hasSearch = computed(() => {
     if (!props.file) return false
-    if (props.file.isPdf || props.file.isOffice) return false
+    if (props.file.isPdf || props.file.isOffice || props.file.isExcalidraw) return false
     return hasToc.value
 })
 

@@ -100,6 +100,7 @@ interface CurrentFile {
     isVideo?: boolean
     isHtml?: boolean
     isOffice?: boolean
+    isExcalidraw?: boolean
     isBinary?: boolean
     tooLarge?: boolean
     truncated?: boolean
@@ -424,6 +425,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
     const isVideo = videoExts.some(ext => lower.endsWith(ext))
     const officeExts = ['.docx', '.xlsx', '.pptx', '.xls']
     const isOffice = officeExts.some(ext => lower.endsWith(ext))
+    const isExcalidraw = lower.endsWith('.excalidraw')
     if (isPdf) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isPdf: true }
@@ -447,6 +449,11 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
     if (isOffice) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isOffice: true }
+        saveOpenFile(); return true
+    }
+    if (isExcalidraw) {
+        const fileName = baseName(path)
+        state.currentFile = { name: fileName, path, content: null, isExcalidraw: true }
         saveOpenFile(); return true
     }
 

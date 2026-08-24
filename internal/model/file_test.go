@@ -23,6 +23,7 @@ func TestIsSupportedFile(t *testing.T) {
 		{"office docx", "report.docx", true},
 		{"office xlsx", "data.xlsx", true},
 		{"office pptx", "slides.pptx", true},
+		{"excalidraw file", "diagram.excalidraw", true},
 		{"unsupported file", "data.bin", false},
 		{"empty string", "", false},
 	}
@@ -74,6 +75,26 @@ func TestDetectSubtype(t *testing.T) {
 	t.Run("JSONC extension with openapi", func(t *testing.T) {
 		got := model.DetectSubtype("api.jsonc", `{"openapi":"3.0.0","info":{"title":"Test"}}`)
 		assert.Equal(t, model.SubtypeOpenAPI, got)
+	})
+
+	t.Run("Excalidraw JSON", func(t *testing.T) {
+		got := model.DetectSubtype("diagram.excalidraw", `{"type":"excalidraw","version":2,"source":"https://excalidraw.com","elements":[],"appState":{},"files":{}}`)
+		assert.Equal(t, model.SubtypeExcalidraw, got)
+	})
+
+	t.Run("Excalidraw JSON without type", func(t *testing.T) {
+		got := model.DetectSubtype("diagram.excalidraw", `{"elements":[],"appState":{}}`)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("Excalidraw malformed JSON", func(t *testing.T) {
+		got := model.DetectSubtype("diagram.excalidraw", `{type: invalid}`)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("Excalidraw wrong type value", func(t *testing.T) {
+		got := model.DetectSubtype("diagram.excalidraw", `{"type":"drawio","elements":[]}`)
+		assert.Equal(t, "", got)
 	})
 
 	t.Run("Non YAML/JSON file", func(t *testing.T) {
@@ -316,6 +337,10 @@ func TestIsTextFile(t *testing.T) {
 		// Regex
 		{"regex", "pattern.regex", true},
 		{"regexp", "pattern.regexp", true},
+
+		// Excalidraw
+		{"excalidraw", "diagram.excalidraw", true},
+		{"excalidraw case insensitive", "DIAGRAM.EXCALIDRAW", true},
 
 		// Case insensitivity
 		{"case insensitive .GO", "main.GO", true},

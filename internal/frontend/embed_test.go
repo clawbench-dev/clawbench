@@ -213,6 +213,40 @@ func TestGetFS_DiskPublic(t *testing.T) {
 	}
 }
 
+// TestVendorExcalidrawServed verifies that the isolated Excalidraw host is
+// reachable through the same frontend FS the backend serves at
+// /vendor/excalidraw/index.html. This is the contract that makes the iframe
+// editor work: the vendor build output (public/vendor/excalidraw/) must be
+// embedded alongside the Vue app and served by ServeIndex.
+func TestVendorExcalidrawServed(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public", "vendor", "excalidraw")
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(publicDir, "index.html"), []byte(`<div id="root"></div>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	fsys := GetFS()
+	data, err := fs.ReadFile(fsys, "vendor/excalidraw/index.html")
+	if err != nil {
+		t.Fatalf("vendor/excalidraw/index.html not reachable via frontend FS: %v", err)
+	}
+	if string(data) != `<div id="root"></div>` {
+		t.Errorf("unexpected content: %q", data)
+	}
+}
+
 func TestServeFileFromFS_ReadSeekerPath(t *testing.T) {
 	// embed.FS files implement io.ReadSeeker, so ServeFileFromFS should
 	// take the fast path (ServeContent with seeker directly).

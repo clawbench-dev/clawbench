@@ -1,9 +1,9 @@
 import { defineConfig, Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import VueI18nPlugin from '@intlify/unplugin-vue-i18n/vite'
-import { resolve, dirname, sep } from 'path'
+import { resolve, dirname, sep, extname } from 'path'
 import { fileURLToPath } from 'url'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const publicDir = resolve(__dirname, 'public')
@@ -139,6 +139,50 @@ function xtermRequestModeFix(): Plugin {
   }
 }
 
+// Vite plugin: serve the isolated Excalidraw editor build during development.
+// The React+Excalidraw bundle lives in public/vendor/excalidraw/ (built by
+// build.sh step 1a) and is NOT part of the Vue module graph. The Vue dev server
+// only serves publicDir (assets/), so this middleware exposes /vendor/excalidraw/*
+// straight from public/vendor/excalidraw/ — mirroring the production path
+// where the backend serves it at /vendor/excalidraw/index.html.
+function excalidrawVendorServe(): Plugin {
+  const destDir = resolve(__dirname, 'public/vendor/excalidraw')
+  return {
+    name: 'excalidraw-vendor-serve',
+    configureServer(server) {
+      server.middlewares.use('/vendor/excalidraw', (req, res) => {
+        const url = decodeURIComponent((req.url || '').replace(/^\//, ''))
+        const file = resolve(destDir, url)
+        // Prevent path traversal outside the excalidraw directory.
+        if (!file.startsWith(destDir + sep)) {
+          res.statusCode = 403
+          res.end('Forbidden')
+          return
+        }
+        const ext = extname(file)
+        const mime: Record<string, string> = {
+          '.html': 'text/html; charset=utf-8',
+          '.js': 'text/javascript',
+          '.mjs': 'text/javascript',
+          '.css': 'text/css',
+          '.json': 'application/json',
+          '.svg': 'image/svg+xml',
+          '.png': 'image/png',
+          '.woff2': 'font/woff2',
+          '.ttf': 'font/ttf',
+        }
+        if (!existsSync(file) || statSync(file).isDirectory()) {
+          res.statusCode = 404
+          res.end('Not Found')
+          return
+        }
+        res.setHeader('Content-Type', mime[ext] || 'application/octet-stream')
+        res.end(readFileSync(file))
+      })
+    },
+  }
+}
+
 const backendPort = process.env.VITE_BACKEND_PORT || 20000
 const backendProto = process.env.VITE_BACKEND_PROTO || 'https'
 const frontendPort = parseInt(process.env.VITE_FRONTEND_PORT || '20001', 10)
@@ -152,7 +196,8 @@ export default defineConfig({
     }),
     hljsThemeWrapper(),
     xtermRequestModeFix(),
-    materialIconsCopy()
+    materialIconsCopy(),
+    excalidrawVendorServe()
   ],
   root: 'web',
   publicDir: srcAssets,
