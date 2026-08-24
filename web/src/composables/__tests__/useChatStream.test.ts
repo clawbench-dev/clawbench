@@ -2239,6 +2239,51 @@ describe('useChatStream', () => {
       expect(readBlock.done).toBe(true)
       vi.useRealTimers()
     })
+
+    it('keeps a long-running tool running when progress events keep arriving (watchdog re-armed)', () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // First sight of the tool call arms the watchdog.
+      simulateWsEvent('tool_use', { id: 'tool-bash-1', name: 'Bash', done: false, status: '' })
+      // Progress events every 25s keep re-arming the 30s watchdog — the tool
+      // runs for well past the original 30s but must NOT be marked done.
+      for (let t = 25; t <= 100; t += 25) {
+        vi.advanceTimersByTime(25000)
+        simulateWsEvent('tool_use', { id: 'tool-bash-1', name: 'Bash', done: false, status: 'running', summary: `progress ${t}s` })
+      }
+
+      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant')
+      const bashBlock = streamingMsg.blocks.find((b: any) => b.id === 'tool-bash-1')
+      expect(bashBlock.done).toBe(false)
+      expect(bashBlock.summary).toBe('progress 100s')
+      vi.useRealTimers()
+    })
+
+    it('marks a tool done when it goes silent for 30s even after progress events (stall fallback)', () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // Two progress events keep the tool alive...
+      simulateWsEvent('tool_use', { id: 'tool-grep-1', name: 'Grep', done: false, status: '' })
+      vi.advanceTimersByTime(20000)
+      simulateWsEvent('tool_use', { id: 'tool-grep-1', name: 'Grep', done: false, status: 'running' })
+      // Re-arm the stream watchdog separately (content event) so the per-tool
+      // watchdog at 50s fires without racing the stream timeout.
+      vi.advanceTimersByTime(25000)
+      simulateWsEvent('content', { content: 'still working' })
+      vi.advanceTimersByTime(10000)
+
+      // ...then it goes silent — the per-tool watchdog (last armed at 20s) fires at 50s.
+      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant')
+      const grepBlock = streamingMsg.blocks.find((b: any) => b.id === 'tool-grep-1')
+      expect(grepBlock.done).toBe(true)
+      vi.useRealTimers()
+    })
   })
 
   describe('queue events (queue_drain / queue_cancel)', () => {

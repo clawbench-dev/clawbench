@@ -9,6 +9,7 @@ import { updatePlanEntries } from './usePlanProgress'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, cancelPendingMessages, sortMessages, nextClientSeq, computeAfterSort, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
+import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 
 const TAG = 'ChatStream'
 
@@ -58,8 +59,10 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   let streamTimeout: ReturnType<typeof setTimeout> | null = null
   const renderScheduler = new StreamFrameScheduler()
-  // Track tool_use timeout timers so we can clean them up
-  const toolUseTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map()
+  // Watchdog for tool_use blocks: a tool that goes silent for TOOL_USE_TIMEOUT_MS
+  // is considered stalled and marked done. Restarted on every tool_use progress
+  // event so long-running tools aren't falsely marked finished.
+  const toolUseWatchdog = new ToolUseWatchdog()
   // Counter for assigning stable _key to thinking blocks during streaming
   let thinkingBlockCounter = 0
   // Whether we are currently streaming (subscribed to a session)
@@ -137,10 +140,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   }
 
   function clearToolUseTimeouts() {
-    for (const timer of toolUseTimeouts.values()) {
-      clearTimeout(timer)
-    }
-    toolUseTimeouts.clear()
+    toolUseWatchdog.clearAll()
   }
 
   /**
@@ -321,8 +321,7 @@ export function useChatStream(options: UseChatStreamOptions) {
             if (data.duration_ms !== undefined) newBlock.duration_ms = data.duration_ms
             blocks.push(newBlock)
           }
-          const timer = toolUseTimeouts.get(data.id!)
-          if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id!) }
+          toolUseWatchdog.clear(data.id!)
 
           if (data.name && FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
             const filePath = data.file_path || existing?.file_path
@@ -340,6 +339,18 @@ export function useChatStream(options: UseChatStreamOptions) {
             if (data.summary !== undefined) existing.summary = data.summary
             if (data.display_name !== undefined) existing.display_name = data.display_name
             if (data.file_path !== undefined) existing.file_path = data.file_path
+            // Progress event: reset the stall watchdog so long-running tools
+            // that keep emitting updates are never falsely marked done.
+            // Check the event's name (may be more up-to-date than the block's).
+            if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
+              toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
+                if (!existing.done) {
+                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
+                  existing.done = true
+                  onRenderNeeded()
+                }
+              })
+            }
           } else {
             const newBlock: ContentBlock = {
               type: 'tool_use', name: data.name!, id: data.id!, done: false,
@@ -353,15 +364,13 @@ export function useChatStream(options: UseChatStreamOptions) {
             if (data.file_path) newBlock.file_path = data.file_path
             blocks.push(newBlock)
             if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
-              const timer = setTimeout(() => {
+              toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
                 if (!newBlock.done) {
-                  appLog.w(TAG, `tool_use block ${data.id} timed out without 'done', marking as done`)
+                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
                   newBlock.done = true
                   onRenderNeeded()
                 }
-                toolUseTimeouts.delete(data.id!)
-              }, TOOL_USE_TIMEOUT_MS)
-              toolUseTimeouts.set(data.id!, timer)
+              })
             }
           }
         }
@@ -388,8 +397,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           existing.done = true
           if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
         }
-        const timer = toolUseTimeouts.get(data.id!)
-        if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id!) }
+        toolUseWatchdog.clear(data.id!)
         onRenderNeeded()
         if (onToolResult && data.id) {
           onToolResult(data.id)

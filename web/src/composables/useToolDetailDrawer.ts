@@ -1,4 +1,4 @@
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { shouldRetryToolFetch, resolveEffectiveMsgId, type ContentBlock } from '@/utils/chatStreamUtils.ts'
@@ -236,6 +236,31 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
   }
 
   const toolDetailOverlay = computed(() => ({ show: drawer.effectiveOpen.value, ...toolDetailData.value }))
+
+  // Keep the drawer's done/status in sync with the live message block while the
+  // drawer is open. The live block is the source of truth for streaming state;
+  // the API-backed fetch (fetchToolCallDetail) only fills in input/output HTML.
+  // Without this, the drawer would keep showing a spinner after the tool already
+  // finished (or vice-versa) when the live block's done flips during streaming.
+  if (findLiveBlock) {
+    watch(
+      () => {
+        if (!activeToolOverlay.value) return null
+        const block = findLiveBlock(activeToolOverlay.value)
+        return block ? { done: !!block.done, status: block.status || '', duration: block.duration_ms || 0 } : null
+      },
+      (snap) => {
+        if (!snap || !drawer.isOpen.value) return
+        // Direct assignment (no truthy guards): live block is the source of
+        // truth for streaming state, and its fields only ever accumulate
+        // ('' → 'running' → success/error, duration 0 → positive). Keeping the
+        // guards would leave stale values if a field were ever reset.
+        toolDetailData.value.done = snap.done
+        toolDetailData.value.status = snap.status
+        toolDetailData.value.duration = snap.duration
+      },
+    )
+  }
 
   return {
     drawer,

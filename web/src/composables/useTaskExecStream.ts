@@ -3,6 +3,7 @@ import { appLog } from '@/utils/appLog'
 import { useGlobalEvents } from './useGlobalEvents'
 import { findLastBlockOfType, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
+import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 
 const TAG = 'TaskExecStream'
 
@@ -39,7 +40,22 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
   const isStreaming = ref(false)
 
   const TOOL_USE_TIMEOUT_MS = 30000
-  const toolUseTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map()
+  // Watchdog for tool_use blocks: reset on every tool_use progress event so
+  // long-running tools aren't falsely marked done after a fixed 30s.
+  const toolUseWatchdog = new ToolUseWatchdog()
+
+  // Subagent (task/Agent) tool calls run for minutes inside a child session whose
+  // inner events aren't forwarded over ACP, so the outer call legitimately exceeds
+  // TOOL_USE_TIMEOUT_MS. Don't kill their spinner with the 30s fallback, otherwise
+  // a long-running subagent looks like it already finished. Same for
+  // PermissionApproval, which waits on user interaction.
+  const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent'])
+  function isSubagentToolName(name?: unknown): boolean {
+    return typeof name === 'string' && SUBAGENT_TOOL_NAMES.has(name.toLowerCase())
+  }
+  function shouldSkipWatchdog(name?: unknown): boolean {
+    return name === 'PermissionApproval' || isSubagentToolName(name)
+  }
 
   const { onEvent, sendWsMessage, connected } = useGlobalEvents()
 
@@ -57,8 +73,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
   }
 
   function clearToolUseTimeouts() {
-    for (const timer of toolUseTimeouts.values()) clearTimeout(timer)
-    toolUseTimeouts.clear()
+    toolUseWatchdog.clearAll()
   }
 
   function stopPreview() {
@@ -150,8 +165,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (data.file_path !== undefined) existing.file_path = data.file_path
             if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
           }
-          const timer = toolUseTimeouts.get(data.id)
-          if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
+          toolUseWatchdog.clear(data.id)
         } else {
           if (existing) {
             if (data.name) existing.name = data.name
@@ -159,6 +173,16 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (data.summary !== undefined) existing.summary = data.summary
             if (data.display_name !== undefined) existing.display_name = data.display_name
             if (data.file_path !== undefined) existing.file_path = data.file_path
+            // Progress event: reset the stall watchdog so long-running tools
+            // that keep emitting updates are never falsely marked done.
+            if (!shouldSkipWatchdog(existing.name)) {
+              toolUseWatchdog.start(data.id, TOOL_USE_TIMEOUT_MS, () => {
+                if (!existing.done) {
+                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
+                  existing.done = true
+                }
+              })
+            }
           } else {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool_use block shape is dynamic
             const newBlock: any = {
@@ -169,13 +193,14 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (data.display_name) newBlock.display_name = data.display_name
             if (data.file_path) newBlock.file_path = data.file_path
             blocks.push(newBlock)
-            const timer = setTimeout(() => {
-              if (!newBlock.done) {
-                newBlock.done = true
-              }
-              toolUseTimeouts.delete(data.id)
-            }, TOOL_USE_TIMEOUT_MS)
-            toolUseTimeouts.set(data.id, timer)
+            if (!shouldSkipWatchdog(data.name)) {
+              toolUseWatchdog.start(data.id, TOOL_USE_TIMEOUT_MS, () => {
+                if (!newBlock.done) {
+                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
+                  newBlock.done = true
+                }
+              })
+            }
           }
         }
         break
@@ -194,8 +219,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
           existing.done = true
           if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
         }
-        const timer = toolUseTimeouts.get(data.id)
-        if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
+        toolUseWatchdog.clear(data.id)
         break
       }
 
