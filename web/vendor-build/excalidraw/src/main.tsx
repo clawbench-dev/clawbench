@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Excalidraw, exportToSvg } from '@excalidraw/excalidraw'
+// Required — @excalidraw/excalidraw ships its styles as a separate CSS entry
+// (@excalidraw/excalidraw/index.css). Without this import the editor renders
+// unstyled (huge icons, broken layout).
+import '@excalidraw/excalidraw/index.css'
 import {
   emitReady,
   emitChanged,
