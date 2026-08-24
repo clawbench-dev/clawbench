@@ -12,6 +12,7 @@
 <script setup>
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useDialog } from '@/composables/useDialog.ts'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 
@@ -35,7 +36,8 @@ const props = defineProps({
     file: Object,
 })
 
-const { locale } = useI18n()
+const { locale, t } = useI18n()
+const dialog = useDialog()
 const frameRef = ref(null)
 const fileEditor = useFileEditor()
 const { saveFile } = useCodeEditorSave()
@@ -163,33 +165,47 @@ async function handleIframeSave(content) {
     }
 }
 
-// Exit flow used by the global back gesture / navigation: ask the iframe for
-// its current scene, then persist it if dirty. Resolves true when the scene
-// is saved (or nothing was dirty); resolves false if the write failed, so the
-// caller can keep the file open and surface the error.
-function handleExit() {
+// Exit flow used by the global back gesture / navigation / close button. If
+// there are unsaved changes, confirm whether to save, discard, or cancel
+// (stay editing) — matching CodeMirrorViewer's behavior instead of silently
+// auto-saving. Resolves true when the scene is saved or discarded; false if
+// the user cancelled or a write failed.
+async function handleExit() {
     if (!iframeReady) return true
-    // If nothing is dirty there's nothing to persist.
+    // Nothing to persist — exit directly.
     if (!dirty) return true
-    // Wait for the iframe's 'save' reply so persistence completes before the
-    // editor unmounts.
-    return new Promise((resolve) => {
-        saveResolver = (ok) => {
-            // A successful save means the back gesture may proceed next time
-            // (the "editing" flag consumed the first back to persist changes).
-            if (ok) fileEditor.setEditing(false)
-            resolve(ok)
-        }
-        sendSaveRequest()
-        // Safety timeout — never block navigation forever if the iframe is
-        // unresponsive (e.g. it was killed or the message was lost).
-        setTimeout(() => {
-            if (saveResolver) {
-                saveResolver(false)
-                saveResolver = null
-            }
-        }, 3000)
+    const choice = await dialog.confirm(t('file.editor.confirmExit'), {
+        confirmText: t('file.editor.save'),
+        cancelText: t('common.cancel'),
+        extraText: t('file.editor.dontSave'),
+        extraPrimedText: t('common.confirm'),
     })
+    if (choice === true) {
+        // Save: wait for the iframe's 'save' reply so persistence completes
+        // before the editor unmounts.
+        const ok = await new Promise((resolve) => {
+            saveResolver = (saved) => resolve(saved)
+            sendSaveRequest()
+            // Safety timeout — never block navigation forever if the iframe
+            // is unresponsive (e.g. it was killed or the message was lost).
+            setTimeout(() => {
+                if (saveResolver) {
+                    saveResolver(false)
+                    saveResolver = null
+                }
+            }, 3000)
+        })
+        if (ok) fileEditor.setEditing(false)
+        return ok
+    }
+    if (choice === null) {
+        // Discard changes and exit.
+        dirty = false
+        fileEditor.setEditing(false)
+        return true
+    }
+    // Cancel — stay in the editor.
+    return false
 }
 
 let unregisterExitEdit = null

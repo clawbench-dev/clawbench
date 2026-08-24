@@ -20,6 +20,14 @@ vi.mock('vue-i18n', async (importOriginal) => {
   }
 })
 
+// Mock the confirm dialog — each test sets the desired choice.
+let mockDialogChoice: boolean | null = true
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({
+    confirm: vi.fn().mockImplementation(async () => mockDialogChoice),
+  }),
+}))
+
 // Mock toast used by useCodeEditorSave.
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: vi.fn() }),
@@ -63,6 +71,7 @@ describe('ExcalidrawViewer', () => {
   beforeEach(() => {
     _resetForTesting()
     mockSaveFile.mockClear()
+    mockDialogChoice = true
     store.state.currentFile = file as never
   })
 
@@ -177,12 +186,53 @@ describe('ExcalidrawViewer', () => {
     postMessage.mockClear()
 
     const fileEditor = useFileEditor()
-    await fileEditor.exitEdit?.()
+    const exitPromise = fileEditor.exitEdit?.()
+    await nextTick()
 
     expect(postMessage).toHaveBeenCalledTimes(1)
     const [payload] = postMessage.mock.calls[0]
     const parsed = JSON.parse(payload)
     expect(parsed.event).toBe('saveRequest')
+    // Reply with a successful save so the exit resolves quickly.
+    sendFromIframe('save', { content: file.content })
+    await expect(exitPromise).resolves.toBe(true)
+  })
+
+  it('discards changes and exits when the user chooses not to save', async () => {
+    mockDialogChoice = null // "dont save"
+    mockContentWindow()
+    wrapper = mount(ExcalidrawViewer, { props: { file } })
+    sendFromIframe('ready')
+    await nextTick()
+    sendFromIframe('changed')
+    await nextTick()
+    postMessage.mockClear()
+
+    const fileEditor = useFileEditor()
+    await fileEditor.exitEdit?.()
+
+    // No saveRequest was sent, no saveFile call, and the exit succeeds.
+    expect(postMessage).not.toHaveBeenCalled()
+    expect(mockSaveFile).not.toHaveBeenCalled()
+    expect(fileEditor.isEditing()).toBe(false)
+  })
+
+  it('stays in the editor when the user cancels the exit dialog', async () => {
+    mockDialogChoice = false // cancel
+    mockContentWindow()
+    wrapper = mount(ExcalidrawViewer, { props: { file } })
+    sendFromIframe('ready')
+    await nextTick()
+    sendFromIframe('changed')
+    await nextTick()
+    postMessage.mockClear()
+
+    const fileEditor = useFileEditor()
+    const exited = await fileEditor.exitEdit?.()
+
+    expect(exited).toBe(false)
+    expect(postMessage).not.toHaveBeenCalled()
+    expect(fileEditor.isEditing()).toBe(true)
   })
 
   it('does not request a save when exiting with no unsaved changes', async () => {
