@@ -49,8 +49,8 @@
 }
 
 /* Success-confirmation bounce for RefreshButton: after the spin finishes a
-   whole revolution the icon briefly swaps to a green Check with this bounce-in,
-   applied via inline `animation: check-in 0.4s ease-out` on the Check icon. */
+   whole revolution the icon briefly swaps to a green circled check (CheckCircle2)
+   with this bounce-in, applied via inline `animation: check-in 0.4s ease-out`. */
 @keyframes check-in {
     0% { transform: scale(0); opacity: 0; }
     50% { transform: scale(1.3); }

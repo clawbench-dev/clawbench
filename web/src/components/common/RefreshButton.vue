@@ -9,7 +9,7 @@
     @click="handleClick"
   >
     <component
-      :is="showConfirm ? Check : iconComp"
+      :is="showConfirm ? CheckCircle2 : iconComp"
       :size="size"
       :data-confirm="showConfirm || undefined"
       :style="showConfirm ? confirmStyle : svgStyle"
@@ -19,7 +19,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { RefreshCw, RotateCw, RotateCcw, Check } from 'lucide-vue-next'
+import { RefreshCw, RotateCw, RotateCcw, CheckCircle2 } from 'lucide-vue-next'
 
 /**
  * RefreshButton — unified refresh/rescan button with spin feedback.
@@ -33,7 +33,8 @@ import { RefreshCw, RotateCw, RotateCcw, Check } from 'lucide-vue-next'
  * infinite`, so that when `loading` flips to false the icon always finishes an
  * exact whole number of revolutions — it never freezes mid-turn. Speed is
  * 0.5s per revolution; the CSS animation in refresh-spin.css only applies to
- * non-RefreshButton native buttons.
+ * non-RefreshButton native buttons. After the spin completes, the icon briefly
+ * swaps to a green circled check (CheckCircle2) with a bounce-in.
  *
  * Usage:
  *   <RefreshButton :loading="refreshing" title="刷新" @click="onRefresh" />
@@ -82,7 +83,8 @@ let spinAnimEl: SVGSVGElement | null = null
 let finishTimer: ReturnType<typeof setTimeout> | null = null
 
 // Success confirmation: after the spin completes a whole revolution, the icon
-// briefly swaps to a green Check (bounce-in), then reverts to the original icon.
+// briefly swaps to a green circled check (CheckCircle2, bounce-in), then
+// reverts to the original icon.
 const CONFIRM_MS = 400
 const showConfirm = ref(false)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
@@ -163,9 +165,10 @@ function stopSpin() {
 }
 
 /**
- * Success confirmation: swap the icon to a green Check with a bounce-in, then
- * restore the original icon after a short window. Skipped if a new refresh has
- * already started (`loading` flipped back to true → startSpin reset showConfirm).
+ * Success confirmation: swap the icon to a green circled check (CheckCircle2)
+ * with a bounce-in, then restore the original icon after a short window.
+ * Skipped if a new refresh has already started (`loading` flipped back to true
+ * → startSpin reset showConfirm).
  */
 function playConfirm() {
   if (props.loading) return

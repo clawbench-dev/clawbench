@@ -144,7 +144,7 @@ describe('RefreshButton', () => {
     expect(latestAnim()!.cancel).toHaveBeenCalledTimes(1)
   })
 
-  it('shows a green Check confirmation after the spin finishes', async () => {
+  it('shows a green circled check confirmation after the spin finishes', async () => {
     vi.useFakeTimers()
     const wrapper = mountBtn()
     const confirmIcon = () => wrapper.find('svg[data-confirm="true"]')
@@ -165,10 +165,14 @@ describe('RefreshButton', () => {
     await nextTick()
     expect(confirmIcon().exists()).toBe(true)
 
-    // Confirm icon is the green Check with the bounce-in animation
+    // Confirm icon is the green circled check (CheckCircle2 → a circle with a
+    // check path) with the bounce-in animation
     const iconSvg = confirmIcon().element as SVGElement
     expect(iconSvg.style.color).toBe('var(--color-green, #16a34a)')
     expect(iconSvg.style.animation).toContain('check-in')
+    // CircleCheck renders a <circle> plus the check <path>, unlike the bare
+    // Check icon which has no circle
+    expect(iconSvg.querySelector('circle')).not.toBeNull()
 
     // After the confirmation window the original icon comes back
     vi.advanceTimersByTime(400)
