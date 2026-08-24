@@ -106,7 +106,7 @@ elif [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
     # so leftover chunks (diagram JS, CSS, fonts, etc.) accumulate indefinitely.
     # Preserve only index.html and assets/ (static user assets); Vite regenerates the rest.
     find public/ -maxdepth 1 -type f ! -name 'index.html' -delete 2>/dev/null || true
-    NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=3072}" npm run build || { echo "ERROR: npm run build failed" >&2; exit 1; }
+    npm run build || { echo "ERROR: npm run build failed" >&2; exit 1; }
     echo "  Frontend: public/"
 
     # Copy ALL frontend build output for Go embed (go:embed all:dist in internal/frontend/)
