@@ -300,6 +300,8 @@ import {
   loadThemesModule,
   resolveTheme,
   resolveThemeSync,
+  resolveAutoTheme,
+  getAppThemeBg,
   isAppDarkTheme,
   darkTheme,
   lightTheme,
@@ -469,6 +471,14 @@ function getWsUrl(cwd?: string, cols?: number, rows?: number) {
 // resolveThemeSync only sees fixed themes once xterm-theme is loaded; the
 // palette menu (ensureThemesLoaded) and onMounted (applyTheme) warm the cache.
 function getXtermTheme(): Record<string, unknown> {
+  if (themeSelection.value === TERMINAL_THEME_AUTO) {
+    const appThemeBg = getAppThemeBg()
+    if (appThemeBg && allThemes.value) {
+      // auto + 已加载 + 有 App 主题：同步匹配背景色最接近的终端主题。
+      const theme = resolveAutoTheme(appThemeBg, allThemes.value, isAppDarkTheme())
+      return theme as Record<string, unknown>
+    }
+  }
   return resolveThemeSync(themeSelection.value, isAppDarkTheme()) as Record<string, unknown>
 }
 
@@ -496,7 +506,7 @@ async function ensureThemesLoaded() {
 async function applyTheme(selection: string) {
   themeSelection.value = selection
   setLocalConfig(TERMINAL_THEME_STORAGE_KEY, selection)
-  const theme = await resolveTheme(selection, isAppDarkTheme())
+  const theme = await resolveTheme(selection, isAppDarkTheme(), allThemes.value)
   tabManager.updateTheme(theme as Record<string, unknown>)
   document.documentElement.style.setProperty('--terminal-bg', theme.background || '')
 }
@@ -1134,9 +1144,9 @@ onMounted(async () => {
 
   themeObserver = new MutationObserver(() => {
     if (themeSelection.value === TERMINAL_THEME_AUTO) {
-      const theme = getXtermTheme()
-      tabManager.updateTheme(theme)
-      document.documentElement.style.setProperty('--terminal-bg', (theme.background as string | undefined) || '')
+      // App 主题变化时，auto 终端主题需重新匹配最接近的背景色主题。
+      // applyTheme 内部懒加载主题模块（缓存命中则同步返回），完成后更新 xterm。
+      applyTheme(TERMINAL_THEME_AUTO).catch(() => {})
     }
   })
   themeObserver.observe(document.documentElement, {
