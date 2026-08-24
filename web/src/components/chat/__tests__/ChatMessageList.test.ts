@@ -86,3 +86,48 @@ describe('ChatMessageList — ensure-content event pass-through', () => {
     expect(source).toContain("'ensure-content'")
   })
 })
+
+/**
+ * Tests for the force-scroll correction guard fix.
+ *
+ * Root cause: scrollToBottom's rAF and setTimeout(300) corrections both
+ * bailed when isAtBottom was false, even for force=true scrolls. During a
+ * session switch in original mode, content is lazy-loaded AFTER the initial
+ * scroll — when the async blocks arrive, the container grows and the browser
+ * keeps the old scrollTop, leaving the view pinned mid-list. The correction
+ * was skipped because a scroll event had flipped isAtBottom to false.
+ *
+ * Fix: force=true scrolls are unconditional (pin to bottom no matter what);
+ * only non-force corrections keep the isAtBottom guard (protecting manual
+ * scroll-up during streaming).
+ */
+describe('ChatMessageList — force scroll corrections are unconditional', () => {
+  it('rAF correction source no longer guards force=true with isAtBottom', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // The rAF callback must scroll on force=true even when isAtBottom is false.
+    // The source must gate on `!force && !isAtBottom.value`, not `!isAtBottom.value`.
+    expect(source).toMatch(/if \(!force && !isAtBottom\.value\) return/)
+    // Force branch must NOT contain the old unconditional guard.
+    expect(source).not.toContain('if (!messagesRef.value || !isAtBottom.value) return')
+  })
+
+  it('delayed setTimeout(300) correction for force=true drops the isAtBottom guard', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // The force-branch setTimeout body scrolls directly — no isAtBottom check.
+    // Extract the region between the setTimeout opener and the `}, 300)` closer.
+    const timerStart = source.indexOf('if (force) {')
+    const timerEnd = source.indexOf('}, 300)', timerStart)
+    const forceTimerRegion = source.slice(timerStart, timerEnd)
+    expect(forceTimerRegion).toContain('if (!messagesRef.value) return')
+    expect(forceTimerRegion).not.toContain('isAtBottom')
+  })
+
+  it('non-force rAF correction still respects isAtBottom', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // Non-force (streaming follow, render-flush) must still protect manual scroll-up.
+    expect(source).toMatch(/if \(!force && !isAtBottom\.value\) return/)
+  })
+})

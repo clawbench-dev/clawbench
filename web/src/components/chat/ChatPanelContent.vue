@@ -1002,6 +1002,12 @@ async function ensureMessageContent(msg) {
         const { blocks } = render.parseAssistantContent(full.content || '')
         msg.blocks = blocks
         if (full.files) msg.files = full.files
+        // The newly filled blocks grow the container height, but the browser
+        // keeps the old scrollTop — so a force-scrolled view (session switch
+        // back into this chat) ends up visually stuck mid-list. Re-sync once:
+        // - at bottom (session switch): isAtBottom=true → pinned back to bottom
+        // - user manually toggled original while reading: isAtBottom=false → keep position
+        scrollBottom()
     } catch (err) {
         appLog.w(TAG, 'failed to load original content', err)
     } finally {

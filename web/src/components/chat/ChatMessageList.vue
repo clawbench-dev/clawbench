@@ -475,8 +475,12 @@ function scrollToBottom(force = false) {
       // CRITICAL: only correct if the user hasn't scrolled up since we started.
       // Without this check, a rAF from a prior scrollToBottom call will override
       // the user's manual scroll-up, causing "sticky抖动" (snap-back jitter).
+      // force=true means "unconditionally pin to bottom" (session switch, message
+      // send, refresh) — async content growth (lazy-loaded original text, Mermaid,
+      // KaTeX) must still be corrected even if isAtBottom flipped false in between.
       requestAnimationFrame(() => {
-        if (!messagesRef.value || !isAtBottom.value) return
+        if (!messagesRef.value) return
+        if (!force && !isAtBottom.value) return
         const el = messagesRef.value
         const gap = el.scrollHeight - el.scrollTop - el.clientHeight
         if (gap > 0) {
@@ -484,10 +488,11 @@ function scrollToBottom(force = false) {
         }
       })
       // For force scrolls, also do a delayed re-scroll to catch async content
-      // rendering (Mermaid, KaTeX, collapse transitions) that settles later.
+      // rendering (Mermaid, KaTeX, collapse transitions, lazy original fetch)
+      // that settles later. force scrolls are unconditional — no isAtBottom guard.
       if (force) {
         setTimeout(() => {
-          if (!messagesRef.value || !isAtBottom.value) return
+          if (!messagesRef.value) return
           const el = messagesRef.value
           el.scrollTop = el.scrollHeight
         }, 300)

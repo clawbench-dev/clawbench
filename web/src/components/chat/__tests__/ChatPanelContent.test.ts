@@ -438,3 +438,36 @@ describe('ensureMessageContent behavioral contract', () => {
     expect(isShowingSummary(msg, 'original')).toBe(true) // summary stays as placeholder
   })
 })
+
+/**
+ * Tests for the lazy-original scroll re-sync fix.
+ *
+ * Root cause: in original mode, messages with a summary arrive with blocks
+ * stripped by the backend. ensureMessageContent fetches the full content
+ * asynchronously. When the blocks arrive, the container height grows but the
+ * browser keeps the old scrollTop — a force-scrolled view (session switch)
+ * ends up visually stuck mid-list. The fix re-syncs scroll once after blocks
+ * are filled.
+ */
+describe('ChatPanelContent — ensureMessageContent scroll re-sync', () => {
+  it('source calls scrollBottom() after populating msg.blocks', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // The lazy fetch must re-sync scroll right after blocks are assigned,
+    // so a force-scrolled view is pinned back to the bottom (isAtBottom=true)
+    // while a manual toggle keeps the current reading position.
+    const region = source.slice(source.indexOf('async function ensureMessageContent'), source.indexOf('async function handleRefreshSession'))
+    expect(region).toContain('msg.blocks = blocks')
+    expect(region).toMatch(/msg\.blocks = blocks[\s\S]*?scrollBottom\(\)/)
+  })
+
+  it('source calls scrollBottom() without force to respect user scroll position', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const region = source.slice(source.indexOf('async function ensureMessageContent'), source.indexOf('async function handleRefreshSession'))
+    // Non-force scrollBottom keeps isAtBottom guard in ChatMessageList:
+    // user at bottom (switch-back) → pinned; user reading earlier → position kept.
+    expect(region).toMatch(/scrollBottom\(\)/)
+    expect(region).not.toMatch(/scrollBottom\(true\)/)
+  })
+})
