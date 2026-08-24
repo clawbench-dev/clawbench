@@ -38,6 +38,24 @@ npm test                             # Vitest 前端测试
 ./build.sh --restart --restart-port=8080  # 重启并指定端口
 ```
 
+### 运维：僵尸进程清理
+
+`./scripts/kill-zombies.sh` 清理僵尸（defunct）进程及其孤儿进程树。僵尸进程无法直接 kill，只能靠父进程 reap 或杀掉父进程后由 init 收养清理。
+
+```bash
+./scripts/kill-zombies.sh                  # dry-run：列出僵尸与将要杀的进程树
+./scripts/kill-zombies.sh --kill           # 实际清理（带确认）
+./scripts/kill-zombies.sh --kill --force   # 跳过确认
+./scripts/kill-zombies.sh --port 8080      # 额外保护 8080 端口的服务器
+```
+
+**安全规则（脚本默认强制执行）：**
+
+- **绝不触碰 20000 端口主服务器** 及其完整后代树（包括 `clawbench --acp` 会话派生的 vitest/build/worker 进程）——通过 `/proc` 树形遍历识别，非 `pgrep -f` 模糊匹配
+- 僵尸父进程是 init（PID 1）时自动跳过（init 会自动 reap）
+- 杀进程树按子孙先 TERM → 再 KILL 顺序，避免留下新僵尸
+- `--kill-protected` 可显式覆盖保护（危险，谨慎使用）
+
 ## 架构
 
 ### 后端（Go）
