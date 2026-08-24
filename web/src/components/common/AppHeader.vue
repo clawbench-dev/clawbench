@@ -4,23 +4,24 @@
     <!-- Logo: hidden in APP mode -->
     <img class="header-logo" src="/logo-64.png" alt="ClawBench">
 
-    <div class="badge-capsule" :class="{ 'badge-pulse': badgePulse }" @animationend="badgePulse = false">
-      <div class="project-dropdown-wrapper" ref="dropdownRef">
+    <div class="badge-capsule" ref="capsuleRef">
+      <div class="project-dropdown-wrapper" ref="dropdownRef" :class="{ 'badge-segment-hidden': fillBadge !== null && fillBadge !== 'project', 'badge-highlight': highlightBadge === 'project', 'badge-highlight--fill': fillBadge === 'project' }" :style="highlightBadge === 'project' && fillBadge !== 'project' ? highlightShapeStyle : undefined">
         <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
           <Projector :size="12" />
           <span class="project-name">{{ projectName }}</span>
         </button>
       </div>
-      <div v-if="gitBranch" class="badge-capsule-divider"></div>
-      <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown">
+      <div v-if="gitBranch" class="badge-capsule-divider" :class="{ 'badge-segment-hidden': fillBadge !== null }"></div>
+      <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown" :class="{ 'badge-segment-hidden': fillBadge !== null && fillBadge !== 'branch', 'badge-highlight': highlightBadge === 'branch', 'badge-highlight--fill': fillBadge === 'branch' }" :style="highlightBadge === 'branch' && fillBadge !== 'branch' ? highlightShapeStyle : undefined">
         <GitBranch :size="12" class="branch-icon" />
         <span class="branch-name">{{ gitBranch }}</span>
       </div>
-      <div v-if="currentFileName || recentFilesAvailable > 0" class="badge-capsule-divider"></div>
+      <div v-if="currentFileName || recentFilesAvailable > 0" class="badge-capsule-divider" :class="{ 'badge-segment-hidden': fillBadge !== null }"></div>
       <button
         v-if="currentFileName || recentFilesAvailable > 0"
         class="current-file-badge"
-        :class="{ 'no-file': !currentFileName }"
+        :class="{ 'no-file': !currentFileName, 'badge-segment-hidden': fillBadge !== null && fillBadge !== 'file', 'badge-highlight': highlightBadge === 'file', 'badge-highlight--fill': fillBadge === 'file' }"
+        :style="highlightBadge === 'file' && fillBadge !== 'file' ? highlightShapeStyle : undefined"
         :title="currentFileName || t('appHeader.noFileOpen')"
         :disabled="recentFilesAvailable === 0"
         @click="toggleFileDropdown"
@@ -599,27 +600,139 @@ const projectName = computed(() => {
 // Git branch
 const gitBranch = computed(() => store.state.gitBranch)
 
-// Badge capsule bounce: whenever any badge content (project name, current file,
-// branch) changes, the whole capsule pulses once. `badgePulse` is a one-shot
-// flag: set false → nextTick → true re-arms the CSS animation, and the
-// @animationend handler resets it so a later change can re-trigger.
-const badgePulse = ref(false)
+// Badge capsule feedback — staged timeline on a badge segment content change
+// (project name, current file, branch):
+//   1. HIGHLIGHT_PRE_MS  the changed segment highlights (accent background)
+//   2. only when the capsule is space-constrained (its natural content width
+//      overflows the available capsule width, i.e. text would be truncated)
+//      does the segment then FILL the capsule — other segments slide shut
+//   3. FILL_MS / HIGHLIGHT_POST_MS everything expands back
+//   4. finally the highlight fades out
+// `highlightBadge` drives the accent background (always); `fillBadge` drives
+// the collapse/expand of the other segments (only on truncation).
+const capsuleRef = ref<HTMLElement | null>(null)
+const highlightBadge = ref<'project' | 'branch' | 'file' | null>(null)
+const fillBadge = ref<'project' | 'branch' | 'file' | null>(null)
+// Shape of the highlighted segment when NOT filling: 'left' → capsule-left
+// edge (round on the left), 'right' → capsule-right edge, 'none' → middle.
+const highlightRadius = ref<'left' | 'right' | 'none' | null>(null)
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
+let fillTimer: ReturnType<typeof setTimeout> | null = null
+let clearTimer: ReturnType<typeof setTimeout> | null = null
 
-function pulseBadge() {
-    badgePulse.value = false
-    nextTick(() => { badgePulse.value = true })
+const HIGHLIGHT_PRE_MS = 200
+const FILL_MS = 1000
+const HIGHLIGHT_POST_MS = 200
+const EDGE_THRESHOLD_PX = 2
+
+/** Non-fill highlight shape → border-radius: left edge → round-left pill,
+    right edge → round-right pill, middle → rectangle. Ignored when the segment
+    fills the capsule (`.badge-highlight--fill` overrides with full pill). */
+const highlightShapeStyle = computed(() => {
+    switch (highlightRadius.value) {
+        case 'left': return { borderRadius: '999px 0 0 999px' }
+        case 'right': return { borderRadius: '0 999px 999px 0' }
+        default: return { borderRadius: '0' }
+    }
+})
+
+function clearTimers() {
+    if (highlightTimer) { clearTimeout(highlightTimer); highlightTimer = null }
+    if (fillTimer) { clearTimeout(fillTimer); fillTimer = null }
+    if (clearTimer) { clearTimeout(clearTimer); clearTimer = null }
+}
+
+/** True when any badge segment's text is truncated (ellipsis) in the capsule.
+    Detected via the text spans that have overflow:hidden + text-overflow:
+    ellipsis — a truncated span has scrollWidth > clientWidth. The capsule
+    itself is a flex container without overflow:hidden, so its own
+    scrollWidth equals clientWidth even when children are clipped. */
+function capsuleOverflowing(): boolean {
+    const el = capsuleRef.value
+    if (!el) return false
+    const textSpans = el.querySelectorAll('.project-name, .branch-name, .current-file-name')
+    for (const span of textSpans) {
+        const s = span as HTMLElement
+        if (s.scrollWidth > s.clientWidth + 1) return true // +1 for rounding
+    }
+    return false
+}
+
+/** Segment DOM node for the highlighted badge (works for all three segment
+    wrappers: project-dropdown-wrapper / branch-badge / current-file-badge). */
+function highlightSegmentEl(source: 'project' | 'branch' | 'file'): HTMLElement | null {
+    const el = capsuleRef.value
+    if (!el) return null
+    const sel = source === 'project' ? '.project-dropdown-wrapper'
+        : source === 'branch' ? '.branch-badge' : '.current-file-badge'
+    return el.querySelector(sel)
+}
+
+/** Decide the highlighted segment's shape when it is NOT filling the capsule:
+    touching the capsule's left edge → round left side; right edge → round
+    right side; in the middle → rectangle. */
+function measureHighlightShape(source: 'project' | 'branch' | 'file') {
+    const capsule = capsuleRef.value
+    const seg = highlightSegmentEl(source)
+    if (!capsule || !seg) return
+    const left = seg.offsetLeft
+    const right = left + seg.offsetWidth
+    const capsuleW = capsule.clientWidth
+    if (left <= EDGE_THRESHOLD_PX) highlightRadius.value = 'left'
+    else if (right >= capsuleW - EDGE_THRESHOLD_PX) highlightRadius.value = 'right'
+    else highlightRadius.value = 'none'
+}
+
+function pulseBadge(source: 'project' | 'branch' | 'file') {
+    clearTimers()
+
+    // 1. Highlight first (accent background on the changed segment) — always.
+    highlightBadge.value = source
+
+    // 2. Then, only if the capsule is space-constrained, fill it (collapse the
+    //    other segments). Measured after the new content has rendered. Also
+    //    decide the non-fill highlight shape from the segment's position.
+    nextTick(() => {
+        measureHighlightShape(source)
+        if (capsuleOverflowing()) {
+            fillTimer = setTimeout(() => {
+                fillBadge.value = source
+                fillTimer = null
+
+                // 3. Expand back after the fill window.
+                clearTimer = setTimeout(() => {
+                    fillBadge.value = null
+                    // 4. Finally drop the highlight.
+                    highlightBadge.value = null
+                    highlightRadius.value = null
+                    clearTimer = null
+                }, FILL_MS)
+            }, HIGHLIGHT_PRE_MS)
+        }
+    })
+
+    // Safety net: ensure the highlight always resets, filled or not.
+    highlightTimer = setTimeout(() => {
+        fillBadge.value = null
+        highlightBadge.value = null
+        highlightRadius.value = null
+        highlightTimer = null
+    }, HIGHLIGHT_PRE_MS + FILL_MS + HIGHLIGHT_POST_MS)
 }
 
 watch(gitBranch, (newVal, oldVal) => {
-    if (oldVal !== undefined && newVal !== oldVal) pulseBadge()
+    if (newVal !== oldVal) pulseBadge('branch')
 })
 
 watch(() => props.currentFileName, (newVal, oldVal) => {
-    if (oldVal !== undefined && newVal !== oldVal) pulseBadge()
+    // Covers both file swaps AND opening a file when none was open
+    // (oldVal undefined → a real name), while the non-immediate watch never
+    // fires on the initial value.
+    if (newVal !== oldVal) pulseBadge('file')
 })
 
 watch(projectName, (newVal, oldVal) => {
-    if (oldVal !== undefined && newVal !== oldVal) pulseBadge()
+    if (newVal !== oldVal) pulseBadge('project')
 })
 
 function openHistory() {
@@ -862,6 +975,7 @@ onUnmounted(() => {
     document.removeEventListener('visibilitychange', onBlinkVisibilityChange)
     stopBackgroundPolling()
     stopBlinking()
+    clearTimers()
 })
 
 // Keyboard navigation (↑/↓ select, Enter confirm, Esc close) for the three
@@ -902,6 +1016,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 /* Divider between project and branch inside capsule */
 .badge-capsule-divider {
     width: 1px;
+    max-width: 1px;
     align-self: stretch;
     background: var(--border-color);
     flex-shrink: 0;
@@ -911,6 +1026,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     position: relative;
     flex: 0 1 auto;
     min-width: 0;
+    max-width: 220px;
 }
 
 .project-switch-btn {
@@ -1038,30 +1154,52 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     font-weight: 400;
 }
 
-/* Badge content change animation — the whole capsule pulses once whenever the
-   project name, current file, or git branch changes. */
-.badge-capsule.badge-pulse {
-    animation: badge-pulse 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+/* Badge segment collapse — when a segment's content changes it becomes the only
+   visible one: the other segments slide shut (max-width → 0, fade out) and
+   expand back when the highlight window ends. Runs unconditionally. */
+.badge-capsule .project-dropdown-wrapper,
+.badge-capsule .branch-badge,
+.badge-capsule .current-file-badge,
+.badge-capsule .badge-capsule-divider {
+    transition: max-width 0.3s ease, opacity 0.25s ease,
+                padding-left 0.3s ease, padding-right 0.3s ease,
+                background-color 0.3s ease, color 0.3s ease,
+                border-radius 0.3s ease;
+    overflow: hidden;
 }
 
-@keyframes badge-pulse {
-    0% {
-        transform: scale(1);
-        box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color) 50%, transparent);
-    }
-    30% {
-        transform: scale(1.18);
-        box-shadow: 0 0 12px 3px color-mix(in srgb, var(--accent-color) 40%, transparent);
-        border-color: var(--accent-color);
-    }
-    60% {
-        transform: scale(0.95);
-        box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent-color) 20%, transparent);
-    }
-    100% {
-        transform: scale(1);
-        box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color) 0%, transparent);
-    }
+.badge-capsule .badge-segment-hidden {
+    max-width: 0 !important;
+    opacity: 0;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    pointer-events: none;
+}
+
+/* Highlight — the changed segment gets an accent background with white
+   foreground (text + icon), fading in while it fills the capsule and fading
+   out when it restores. Without the fill the segment keeps its original
+   (right-angle) shape inside the capsule; only when it fills the capsule
+   (badge-highlight--fill, other segments collapsed) does it take the capsule
+   pill shape. */
+.badge-capsule .badge-highlight {
+    background: var(--accent-color) !important;
+    color: #fff;
+    border-radius: 0;
+}
+
+.badge-capsule .badge-highlight--fill {
+    border-radius: 999px;
+}
+
+.badge-capsule .badge-highlight .project-name,
+.badge-capsule .badge-highlight .branch-name,
+.badge-capsule .badge-highlight .current-file-name {
+    color: #fff;
+}
+
+.badge-capsule .badge-highlight svg {
+    color: #fff !important;
 }
 
 .branch-icon {
