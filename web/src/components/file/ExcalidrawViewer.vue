@@ -39,6 +39,7 @@ const { saveFile } = useCodeEditorSave()
 
 let contentSent = false // whether initial .excalidraw JSON was handed over
 let iframeReady = false // iframe signalled 'ready'
+let pendingContent = null // content received before the iframe signalled 'ready'
 let dirty = false // local dirty flag (kept in sync with the global getter)
 
 // Messages from the iframe are received here.
@@ -54,8 +55,13 @@ function onMessage(e) {
     switch (msg.event) {
         case 'ready':
             iframeReady = true
-            // Hand over the file content as soon as both sides are ready.
-            if (!contentSent && props.file?.content != null) {
+            // Hand over any content that arrived before the iframe was ready
+            // (the fetch may resolve before React finishes mounting), plus the
+            // initial content. Without this, the editor stays blank when the
+            // content watcher fires before 'ready'.
+            if (pendingContent != null && !contentSent) {
+                sendLoad(pendingContent)
+            } else if (props.file?.content != null && !contentSent) {
                 sendLoad(props.file.content)
             }
             break
@@ -136,13 +142,19 @@ onBeforeUnmount(() => {
     }
 })
 
-// If the file content is replaced externally (e.g. auto-refresh after the
-// iframe saved), push the fresh scene into the editor.
+// If the file content arrives (fetch resolves) or is replaced externally
+// (e.g. auto-refresh after the iframe saved), push the fresh scene into the
+// editor. Content that arrives before the iframe signals 'ready' is queued in
+// pendingContent and flushed on 'ready'.
 watch(
     () => props.file?.content,
     (content, oldContent) => {
-        if (content == null || content === oldContent || !iframeReady) return
-        sendLoad(content)
+        if (content == null || content === oldContent) return
+        if (iframeReady) {
+            sendLoad(content)
+        } else {
+            pendingContent = content
+        }
     }
 )
 

@@ -101,6 +101,28 @@ describe('ExcalidrawViewer', () => {
     expect(parsed.data.content).toBe(file.content)
   })
 
+  it('still sends the load when content arrives before the iframe is ready', async () => {
+    mockContentWindow()
+    // Mount with content initially null, then set it while iframe is not ready.
+    wrapper = mount(ExcalidrawViewer, { props: { file: { ...file, content: null } } })
+    postMessage.mockClear()
+
+    // Content arrives first (fetch resolves) — queued, not sent yet.
+    await wrapper.setProps({ file: { ...file, content: file.content } })
+    await nextTick()
+    expect(postMessage).not.toHaveBeenCalled()
+
+    // iframe signals ready afterwards — queued content must now be flushed.
+    sendFromIframe('ready')
+    await nextTick()
+
+    expect(postMessage).toHaveBeenCalledTimes(1)
+    const [payload] = postMessage.mock.calls[0]
+    const parsed = JSON.parse(payload)
+    expect(parsed.event).toBe('load')
+    expect(parsed.data.content).toBe(file.content)
+  })
+
   it('marks the file dirty when the iframe reports a change', async () => {
     wrapper = mount(ExcalidrawViewer, { props: { file } })
     const fileEditor = useFileEditor()
