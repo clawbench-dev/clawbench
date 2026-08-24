@@ -270,7 +270,9 @@ const editing = ref(false)
 const editValue = ref<unknown>(null)
 const showPassword = ref(false)
 const selectPicker = useTabDrawer('settings', { autoRestore: false })
-const themePicker = useTabDrawer('settings-theme', { autoRestore: false })
+// Same tab id as selectPicker so effectiveOpen resolves on the settings page.
+// Only one of the two drawers is used per select (themed grid vs plain list).
+const themePicker = useTabDrawer('settings', { autoRestore: false })
 
 /** Whether this select should render the theme grid picker (has per-option previews). */
 const isThemeSelect = computed(() => !!props.optionPreviews)
@@ -389,9 +391,15 @@ function handleClick() {
   if (props.type === 'switch' || props.type === 'slider' || props.type === 'info') {
     return
   }
-  // select: open BottomSheet picker
+  // select: open BottomSheet picker (theme grid when previews are provided)
   if (props.type === 'select') {
-    selectPicker.open()
+    if (isThemeSelect.value) {
+      themePicker.open()
+      selectPicker.close()
+    } else {
+      selectPicker.open()
+      themePicker.close()
+    }
     emit('editToggle', true)
     return
   }
