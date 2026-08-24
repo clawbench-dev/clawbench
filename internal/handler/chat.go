@@ -602,14 +602,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			SessionID:   sessionID,
 			ProjectPath: projectPath,
 			BackendName: backendName,
-			PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-				msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", text, files, false, T(r, "FileMessage"))
-				if err != nil {
-					slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
+			ExecuteRunWithMessage: func(msg model.ChatMessage) service.DrainResult {
+				qMsg := model.QueuedMessage{
+					QueueID:   msg.QueueID,
+					Text:      msg.Content,
+					Files:     msg.Files,
+					CreatedAt: msg.CreatedAt.Format(time.RFC3339),
 				}
-				return msgID, err
-			},
-			ExecuteRunWithMessage: func(qMsg model.QueuedMessage) service.DrainResult {
 				nextChatReq := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
 				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir)
 				return service.DrainResult{

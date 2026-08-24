@@ -28,6 +28,16 @@ func getDrainChan(sessionID string) chan struct{} {
 	return val.(chan struct{}) //nolint:errcheck // LoadOrStore always returns chan struct{}
 }
 
+// SignalDrain wakes up a waiting drain loop for a session, if any. Non-blocking:
+// if no drain loop is waiting (buffer full), the signal is dropped — the next
+// drain-loop check of the DB queue will pick the message up anyway.
+func SignalDrain(sessionID string) {
+	select {
+	case getDrainChan(sessionID) <- struct{}{}:
+	default:
+	}
+}
+
 // EnqueueMessage adds a message to the session's queue and returns the full queue.
 // It also signals the drain channel so a waiting drain loop can wake up immediately.
 func EnqueueMessage(sessionID string, msg model.QueuedMessage) []model.QueuedMessage {
@@ -39,10 +49,7 @@ func EnqueueMessage(sessionID string, msg model.QueuedMessage) []model.QueuedMes
 	entry.mu.Unlock()
 
 	// Signal drain loop — non-blocking, drop if already signaled
-	select {
-	case getDrainChan(sessionID) <- struct{}{}:
-	default:
-	}
+	SignalDrain(sessionID)
 
 	return result
 }

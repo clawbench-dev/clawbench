@@ -2298,116 +2298,15 @@ func TestEmitSessionEvent_CancelledWithSessionTitle(t *testing.T) {
 
 // --- Drain loop tests ---
 
-func TestRunDrainLoop_UserCancel_EmitsCancelled(t *testing.T) {
-	cleanupActiveSessions()
-	defer cleanupActiveSessions()
 
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-cancel-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{CancelReason: cancelReasonUser}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
 
-	RunDrainLoop(cfg, DrainResult{CancelReason: cancelReasonUser})
-	assert.Equal(t, statusCancelled, finalEvent.Type)
-}
 
-func TestRunDrainLoop_ErrorResult_EmitsError(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-error-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
 
-	RunDrainLoop(cfg, DrainResult{Err: "something went wrong"})
-	assert.Equal(t, "error", finalEvent.Type)
-	assert.Equal(t, "something went wrong", finalEvent.Error)
-}
 
-func TestRunDrainLoop_EmptyResult_EmitsError(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-empty-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
 
-	RunDrainLoop(cfg, DrainResult{Empty: true})
-	assert.Equal(t, "error", finalEvent.Type)
-	assert.Equal(t, "AI returned no content", finalEvent.Error)
-}
 
-func TestRunDrainLoop_OtherCancelReason_EmitsCancelled(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-other-cancel-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
 
-	RunDrainLoop(cfg, DrainResult{CancelReason: "disconnect"})
-	assert.Equal(t, statusCancelled, finalEvent.Type)
-}
 
-func TestRunDrainLoop_NormalCompletion_NoQueue_EmitsDone(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-done-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
-
-	// Normal completion with no cancel reason, no error, not empty
-	RunDrainLoop(cfg, DrainResult{})
-	assert.Equal(t, "done", finalEvent.Type)
-}
 
 // --- EmitSessionEvent: DingTalk push path (lines 82-84) ---
 

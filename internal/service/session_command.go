@@ -240,15 +240,8 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			SessionID:   sessionID,
 			ProjectPath: cfg.ProjectPath,
 			BackendName: cfg.BackendName,
-			PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-				msgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, sessionID, roleUser, text, files, false, "")
-				if err != nil {
-					slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
-				}
-				return msgID, err
-			},
-			ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-				cfg.Message = qMsg.Text
+			ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+				cfg.Message = msg.Content
 				nextResult := executeStreamRunShared(ctx, cfg)
 				return DrainResult{
 					CancelReason: nextResult.cancelReason,

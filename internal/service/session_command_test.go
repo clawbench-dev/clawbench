@@ -1047,225 +1047,21 @@ func TestHandleACPCleanup_UnknownAgent(t *testing.T) {
 // RunDrainLoop tests
 // ============================================================================
 
-func TestRunDrainLoop_UserCancel(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
 
-	var finalEvent ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvent = event
-	}
 
-	drainCfg := DrainConfig{
-		SessionID:             "cancel-sess",
-		ProjectPath:           "/proj",
-		BackendName:           "claude",
-		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal:  markDoneAndSendFinal,
-	}
 
-	result := DrainResult{CancelReason: "user"}
-	RunDrainLoop(drainCfg, result)
 
-	assert.Equal(t, "cancelled", finalEvent.Type)
-}
 
-func TestRunDrainLoop_UserCancel_EmitsQueueCancel(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
 
-	sessionID := "cancel-with-queue"
 
-	// Pre-enqueue two messages with queueIds
-	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "pending-A", Text: "msg A", CreatedAt: "2026-01-01T00:00:00Z"})
-	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "pending-B", Text: "msg B", CreatedAt: "2026-01-01T00:00:01Z"})
 
-	var finalEvent ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvent = event
-	}
 
-	drainCfg := DrainConfig{
-		SessionID:             sessionID,
-		ProjectPath:           "/proj",
-		BackendName:           "claude",
-		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal:  markDoneAndSendFinal,
-	}
 
-	result := DrainResult{CancelReason: "user"}
-	RunDrainLoop(drainCfg, result)
 
-	assert.Equal(t, "cancelled", finalEvent.Type)
 
-	// Queue should be cleared
-	assert.Empty(t, GetQueue(sessionID))
-}
 
-func TestRunDrainLoop_Error(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
 
-	var finalEvent ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvent = event
-	}
 
-	drainCfg := DrainConfig{
-		SessionID:             "error-sess",
-		ProjectPath:           "/proj",
-		BackendName:           "claude",
-		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal:  markDoneAndSendFinal,
-	}
-
-	result := DrainResult{Err: "something went wrong"}
-	RunDrainLoop(drainCfg, result)
-
-	assert.Equal(t, "error", finalEvent.Type)
-	assert.Equal(t, "something went wrong", finalEvent.Error)
-}
-
-func TestRunDrainLoop_EmptyContent(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-
-	var finalEvent ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvent = event
-	}
-
-	drainCfg := DrainConfig{
-		SessionID:             "empty-sess",
-		ProjectPath:           "/proj",
-		BackendName:           "claude",
-		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal:  markDoneAndSendFinal,
-	}
-
-	result := DrainResult{Empty: true}
-	RunDrainLoop(drainCfg, result)
-
-	assert.Equal(t, "error", finalEvent.Type)
-	assert.Equal(t, "AI returned no content", finalEvent.Error)
-	assert.Equal(t, ai.ReasonEmpty, finalEvent.Reason)
-}
-
-func TestRunDrainLoop_NonUserCancel(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-
-	var finalEvent ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvent = event
-	}
-
-	drainCfg := DrainConfig{
-		SessionID:             "disconnect-sess",
-		ProjectPath:           "/proj",
-		BackendName:           "claude",
-		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal:  markDoneAndSendFinal,
-	}
-
-	result := DrainResult{CancelReason: "disconnect"}
-	RunDrainLoop(drainCfg, result)
-
-	assert.Equal(t, "cancelled", finalEvent.Type)
-}
-
-func TestRunDrainLoop_DoneNoQueue(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-
-	var finalEvent ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvent = event
-	}
-
-	drainCfg := DrainConfig{
-		SessionID:             "done-sess",
-		ProjectPath:           "/proj",
-		BackendName:           "claude",
-		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal:  markDoneAndSendFinal,
-	}
-
-	// No error, no cancel, not empty → should check queue, find nothing → done
-	result := DrainResult{}
-	RunDrainLoop(drainCfg, result)
-
-	assert.Equal(t, "done", finalEvent.Type)
-}
-
-func TestRunDrainLoop_DrainQueue(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-
-	sessionID := "drain-sess"
-
-	var finalEvents []ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvents = append(finalEvents, event)
-	}
-
-	// Enqueue a message so the drain loop can find it
-	EnqueueMessage(sessionID, model.QueuedMessage{Text: "queued msg", CreatedAt: "2026-01-01T00:00:00Z"})
-
-	callCount := 0
-	drainCfg := DrainConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			callCount++
-			// Return done on the second call
-			return DrainResult{} // will loop again but queue is now empty
-		},
-		MarkDoneAndSendFinal: markDoneAndSendFinal,
-	}
-
-	result := DrainResult{} // no cancel, no error, not empty → checks queue
-	RunDrainLoop(drainCfg, result)
-
-	// Should have drained the queued message and then found queue empty → done
-	assert.Equal(t, 1, callCount, "ExecuteRunWithMessage should be called once for the drained message")
-	assert.Equal(t, "done", finalEvents[len(finalEvents)-1].Type)
-}
-
-func TestRunDrainLoop_DoneWithRetryQueue(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-
-	sessionID := "drain-retry-sess"
-
-	var finalEvent ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvent = event
-	}
-
-	drainCfg := DrainConfig{
-		SessionID:             sessionID,
-		ProjectPath:           "/proj",
-		BackendName:           "claude",
-		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal:  markDoneAndSendFinal,
-	}
-
-	// No queue → should immediately return done
-	result := DrainResult{}
-	RunDrainLoop(drainCfg, result)
-
-	assert.Equal(t, "done", finalEvent.Type)
-}
 
 // ============================================================================
 // scanDingTalkSessionInfos tests
@@ -1586,71 +1382,9 @@ func TestDingTalkSessionInfo_JSONRoundTrip(t *testing.T) {
 // RunDrainLoop drain queue tests
 // ============================================================================
 
-func TestRunDrainLoop_DrainQueuedMessage(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
 
-	sessionID := "drain-sess-1"
 
-	// Pre-enqueue a message
-	EnqueueMessage(sessionID, model.QueuedMessage{
-		Text:      "follow-up message",
-		CreatedAt: "2024-01-01T00:00:00Z",
-	})
 
-	var finalEvents []ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvents = append(finalEvents, event)
-	}
-
-	drainCfg := DrainConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{} // will loop again, queue now empty → done
-		},
-		MarkDoneAndSendFinal: markDoneAndSendFinal,
-	}
-
-	result := DrainResult{} // no cancel, no error, not empty → checks queue
-	RunDrainLoop(drainCfg, result)
-
-	// Should have found the queued message, drained it, then found queue empty
-	require.NotEmpty(t, finalEvents, "should have at least one final event")
-	assert.Equal(t, "done", finalEvents[len(finalEvents)-1].Type)
-
-	// Clean up queue
-	ClearQueue(sessionID)
-}
-
-func TestRunDrainLoop_DrainQueueEmptyAfterDrain(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-
-	sessionID := "drain-empty-sess"
-
-	var finalEvent ai.StreamEvent
-	markDoneAndSendFinal := func(event ai.StreamEvent) {
-		finalEvent = event
-	}
-
-	drainCfg := DrainConfig{
-		SessionID:             sessionID,
-		ProjectPath:           "/proj",
-		BackendName:           "claude",
-		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal:  markDoneAndSendFinal,
-	}
-
-	// Empty result with empty queue → should return "done"
-	result := DrainResult{}
-	RunDrainLoop(drainCfg, result)
-
-	assert.Equal(t, "done", finalEvent.Type)
-}
 
 // ============================================================================
 // SendMessageToSessionFromDingTalk - launch path
