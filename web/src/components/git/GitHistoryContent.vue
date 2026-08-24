@@ -713,6 +713,21 @@ watch(() => props.active, async (nowActive) => {
 })
 
 onMounted(async () => {
+  // Refresh git working-tree state (dock badge) on mount. TabPanel conditionally
+  // mounts this component the first time history is opened — at that point
+  // props.active is already true, so the props.active watch never fires and the
+  // dock badge would stay stale (e.g. a session finished while the user was
+  // elsewhere, then they open history for the first time). Refreshing on mount
+  // guarantees opening history is a reliable badge-refresh trigger.
+  // Only refresh when actually active: during a project hot-switch the whole
+  // component tree is rebuilt while the history tab is NOT the active tab, so
+  // the mount-time refresh would be a redundant duplicate of App.vue's own
+  // state sync (the props.active watch picks it up when the user later enters
+  // the tab).
+  if (props.active) {
+    store.loadGitBranch().catch(() => {})
+  }
+
   const currentProject = store.state.projectRoot
   const currentFile = props.file?.path
   const identityChanged =
