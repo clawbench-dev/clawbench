@@ -1815,10 +1815,14 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   background: var(--tterm-preview-bg, transparent);
   color: var(--tterm-preview-fg, var(--text-primary));
   font-size: 12px; text-align: left; cursor: pointer;
-  transition: background 0.1s;
+  transition: background 0.1s, box-shadow 0.1s;
 }
+/* 预览底色不变，hover 加 accent 全边框高亮 */
 @media (hover: hover) {
-  .theme-item:hover { background: var(--bg-tertiary); }
+  .theme-item:hover {
+    background: var(--tterm-preview-bg, transparent);
+    box-shadow: inset 0 0 0 1px var(--accent-color);
+  }
 }
 .theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
 .theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: 10px; border-radius: 50%; }
