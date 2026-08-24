@@ -71,6 +71,46 @@ describe('resolveFilePathDual', () => {
     it('returns null for path equal to projectRoot', () => {
       expect(resolveFilePathDual('/home/user/project', projectRoot)).toBeNull()
     })
+
+    it('resolves a Windows drive absolute path inside the project (backslash projectRoot)', () => {
+      // The backend returns projectRoot in platform-native form (E:\…) while
+      // chat annotations may use forward slashes. Both must be normalized so
+      // the prefix match works.
+      const winRoot = 'E:\\git\\vllm-input'
+      const result = resolveFilePathDual('E:/git/vllm-input/test-results/some.log', winRoot)
+      expect(result).toEqual({ primary: 'test-results/some.log', fallback: 'test-results/some.log' })
+    })
+
+    it('resolves a Windows drive absolute path inside the project (forward-slash projectRoot)', () => {
+      const result = resolveFilePathDual('E:/git/vllm-input/test-results/some.log', 'E:/git/vllm-input')
+      expect(result).toEqual({ primary: 'test-results/some.log', fallback: 'test-results/some.log' })
+    })
+
+    it('resolves a backslash Windows drive absolute path inside the project', () => {
+      const winRoot = 'E:\\git\\vllm-input'
+      const result = resolveFilePathDual('E:\\git\\vllm-input\\test-results\\some.log', winRoot)
+      expect(result).toEqual({ primary: 'test-results/some.log', fallback: 'test-results/some.log' })
+    })
+
+    it('resolves a backslash Windows drive directory path inside the project', () => {
+      // Directory path with no extension — must not be rejected by the
+      // bare-identifier check after backslash normalization.
+      const winRoot = 'E:\\git\\vllm-input'
+      const result = resolveFilePathDual('E:\\git\\vllm-input\\test-results', winRoot)
+      expect(result).toEqual({ primary: 'test-results', fallback: 'test-results' })
+    })
+
+    it('keeps a Windows drive absolute path outside the project as external', () => {
+      const winRoot = 'E:\\git\\vllm-input'
+      const result = resolveFilePathDual('D:/other/project/a.go', winRoot)
+      expect(result).toEqual({ primary: 'D:/other/project/a.go', fallback: 'D:/other/project/a.go' })
+    })
+
+    it('resolves a relative path against a Windows project root', () => {
+      const winRoot = 'E:\\git\\vllm-input'
+      const result = resolveFilePathDual('test-results/a.log', winRoot)
+      expect(result).toEqual({ primary: 'test-results/a.log', fallback: 'test-results/a.log' })
+    })
   })
 
   describe('tilde paths (single candidate)', () => {
@@ -451,6 +491,22 @@ describe('annotateFilePaths', () => {
     expect(result.detectedPaths).toContain('src/main.go')
     expect(result.html).toContain('chat-file-path')
     expect(result.html).toContain('chat-file-open-btn')
+  })
+
+  it('annotates a Windows drive path under a backslash projectRoot', () => {
+    const winRoot = 'E:\\git\\vllm-input'
+    const input = 'See E:/git/vllm-input/test-results/some.log for details'
+    const result = annotateFilePaths(input, { projectRoot: winRoot })
+    expect(result.detectedPaths).toContain('test-results/some.log')
+    expect(result.html).toContain('chat-file-path')
+    expect(result.html).toContain('chat-file-open-btn')
+  })
+
+  it('annotates a Windows drive path under a forward-slash projectRoot', () => {
+    const input = 'See E:/git/vllm-input/test-results/some.log for details'
+    const result = annotateFilePaths(input, { projectRoot: 'E:/git/vllm-input' })
+    expect(result.detectedPaths).toContain('test-results/some.log')
+    expect(result.html).toContain('chat-file-path')
   })
 
   it('annotates <a> with file:// absolute path and line range', () => {

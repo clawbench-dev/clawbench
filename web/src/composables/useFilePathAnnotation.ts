@@ -126,19 +126,24 @@ export function parseFileUri(rawInput: string): ParsedFileUri {
  * Resolve a relative path against a base directory.
  * Returns project-relative path if within project, absolute path if outside,
  * or null if resolution fails.
+ *
+ * All inputs are expected to be normalized to forward slashes.
+ * Windows drive prefixes ("E:") are preserved as the leading segment so the
+ * result stays a valid absolute drive path (e.g. "E:/git/…") instead of
+ * becoming "/E:/git/…".
  */
 function resolveRelativePathAgainstBase(path: string, baseDir: string, projectRoot: string): string | null {
-    const parts = baseDir.split('/').filter(Boolean)
+    const baseParts = baseDir.split('/').filter(Boolean)
     const segments = path.split('/')
     for (const seg of segments) {
         if (seg === '..') {
-            if (parts.length > 0) parts.pop()
+            if (baseParts.length > 0) baseParts.pop()
             else return null
         } else if (seg !== '.' && seg !== '') {
-            parts.push(seg)
+            baseParts.push(seg)
         }
     }
-    const absolutePath = '/' + parts.join('/')
+    const absolutePath = joinAbsolutePath(baseParts)
     if (projectRoot && absolutePath.startsWith(projectRoot + '/')) {
         return absolutePath.slice(projectRoot.length + 1)
     }
@@ -147,8 +152,22 @@ function resolveRelativePathAgainstBase(path: string, baseDir: string, projectRo
 }
 
 /**
+ * Join path segments into an absolute path, preserving a Windows drive-letter
+ * prefix ("E:") so "E:/git/x" stays "E:/git/x" rather than "/E:/git/x".
+ * Segments are expected to be forward-slash separated.
+ */
+function joinAbsolutePath(parts: string[]): string {
+    if (parts.length > 0 && /^[A-Za-z]:$/.test(parts[0])) {
+        return parts.join('/')
+    }
+    return '/' + parts.join('/')
+}
+
+/**
  * Resolve a relative path against projectRoot only.
  * Returns ResolveResult where primary === fallback (single candidate).
+ *
+ * projectRoot is expected to be normalized to forward slashes.
  */
 function resolveAgainstProjectRoot(path: string, projectRoot: string): ResolveResult | null {
     if (!projectRoot) return null
@@ -162,7 +181,7 @@ function resolveAgainstProjectRoot(path: string, projectRoot: string): ResolveRe
             parts.push(seg)
         }
     }
-    const absolutePath = '/' + parts.join('/')
+    const absolutePath = joinAbsolutePath(parts)
     if (absolutePath.startsWith(projectRoot + '/')) {
         const rel = absolutePath.slice(projectRoot.length + 1)
         return { primary: rel, fallback: rel }
@@ -178,10 +197,21 @@ function resolveAgainstProjectRoot(path: string, projectRoot: string): ResolveRe
  * Returns true if the path should be rejected (glob, URL, env var, bare identifier).
  */
 function shouldRejectPath(path: string): boolean {
-    if (/[*?\\[\]<>]/.test(path) || path.includes('**')) return true
+    // Note: backslash is NOT rejected — it is the Windows path separator
+    // (e.g. E:\git\...). Only glob wildcards and shell chars are rejected.
+    if (/[*?[\]<>]/.test(path) || path.includes('**')) return true
     if (/^https?:\/\//i.test(path)) return true
     if (/\$/.test(path)) return true
     return false
+}
+
+/**
+ * True for an absolute path that lies outside the project root: Unix absolute
+ * ("/a/b") or Windows drive/UNC absolute ("E:/…", "\\server\share").
+ * All inputs are expected to be forward-slash normalized.
+ */
+function isProjectExternal(p: string): boolean {
+    return p.startsWith('/') || isWindowsAbsolutePath(p)
 }
 
 /**
@@ -196,6 +226,18 @@ function shouldRejectPath(path: string): boolean {
  * When baseDir resolves to a different project-internal path, primary = baseDir result, fallback = projectRoot result.
  */
 export function resolveFilePathDual(path: string, projectRoot: string, homeDir?: string, baseDir?: string): ResolveResult | null {
+    // Normalize Windows backslashes to forward slashes so all prefix matching
+    // and segment splitting below is consistent across platforms. The backend
+    // returns absolute paths in platform-native form (E:\… on Windows), and
+    // chat annotations may carry either separator style.
+    // This must happen before the bare-identifier check below, so a Windows
+    // directory path written with backslashes (E:\git\…, no extension) is not
+    // rejected for lacking a "/" separator.
+    path = path.replace(/\\/g, '/')
+    projectRoot = projectRoot.replace(/\\/g, '/')
+    if (homeDir) homeDir = homeDir.replace(/\\/g, '/')
+    if (baseDir) baseDir = baseDir.replace(/\\/g, '/')
+
     // Reject glob patterns, URLs, env vars
     if (shouldRejectPath(path)) return null
     // Reject bare identifiers without / or file extension
@@ -214,8 +256,8 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
         return { primary: expanded, fallback: expanded }
     }
 
-    // ── Absolute path ──
-    if (path.startsWith('/')) {
+    // ── Absolute path (Unix "/" or Windows drive/UNC) ──
+    if (path.startsWith('/') || isWindowsAbsolutePath(path)) {
         if (!projectRoot) return { primary: path, fallback: path }
         if (path.startsWith(projectRoot + '/')) {
             const rel = path.slice(projectRoot.length + 1)
@@ -241,13 +283,13 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     }
 
     // Normalize baseDir: if project-relative, convert to absolute
-    const absBaseDir = baseDir.startsWith('/') ? baseDir : (projectRoot + '/' + baseDir)
+    const absBaseDir = (baseDir.startsWith('/') || isWindowsAbsolutePath(baseDir)) ? baseDir : (projectRoot + '/' + baseDir)
 
     // Compute baseDir candidate
     const baseDirResult = resolveRelativePathAgainstBase(path, absBaseDir, projectRoot)
 
     // baseDir failed or resolved to project-external absolute → projectRoot wins
-    if (!baseDirResult || baseDirResult.startsWith('/')) {
+    if (!baseDirResult || isProjectExternal(baseDirResult)) {
         return projectResult
     }
 
@@ -259,11 +301,11 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     if (!projectResult) return { primary: baseDirResult, fallback: baseDirResult }
 
     // projectResult is project-external → try stripped fallback
-    if (projectResult.primary.startsWith('/')) {
+    if (isProjectExternal(projectResult.primary)) {
         const stripped = path.replace(/^(?:\.\.\/)+/, '')
         if (stripped !== path) {
             const strippedResult = resolveAgainstProjectRoot(stripped, projectRoot)
-            if (strippedResult && !strippedResult.primary.startsWith('/')) {
+            if (strippedResult && !isProjectExternal(strippedResult.primary)) {
                 if (baseDirResult === strippedResult.primary) {
                     return strippedResult
                 }
@@ -352,7 +394,7 @@ function extractLineInfoFromText(text: string): { path: string; lineStart?: numb
 
 // ── Path detection regex & helper ───────────────────────────────────────────────
 
-const FILE_PATH_RE = /(?:~?\/[^\s<>"')\]]+(?:\/[^\s<>"')\]]+)+\.[a-zA-Z][a-zA-Z0-9]*|\.\.?\/[^\s<>"')\]]+(?:\/[^\s<>"')\]]+)*\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+)+\.[a-zA-Z][a-zA-Z0-9]*)(?::(\d+)(?:-(\d+))?)?/g
+const FILE_PATH_RE = /(?:~?\/[^\s<>"')\]]+(?:\/[^\s<>"')\]]+)+\.[a-zA-Z][a-zA-Z0-9]*|\.\.?\/[^\s<>"')\]]+(?:\/[^\s<>"')\]]+)*\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+)+\.[a-zA-Z][a-zA-Z0-9]*|[A-Za-z]:[\\/](?![\\/])[^\s<>"')\]]+(?:[\\/][^\s<>"')\]]+)*(?:\.[a-zA-Z][a-zA-Z0-9]*)?)(?::(\d+)(?:-(\d+))?)?/g
 
 /**
  * Check if a string looks like a file path that should be annotated.
@@ -415,7 +457,7 @@ export function annotateFilePaths(
         if (/^(https?:|\/\/|mailto:|tel:|#)/i.test(href)) continue
         const parsed = parseFileUri(href)
         if (!parsed.path) continue
-        const resolved = (parsed.path.startsWith('/') || !baseDir)
+        const resolved = (parsed.path.startsWith('/') || isWindowsAbsolutePath(parsed.path) || !baseDir)
             ? resolveFilePath(parsed.path, projectRoot, homeDir)
             : resolveRelativePath(parsed.path, baseDir)
         if (!resolved) continue
@@ -442,7 +484,7 @@ export function annotateFilePaths(
         code.classList.add('chat-file-path')
         code.setAttribute('data-file-path', result.primary)
         if (result.fallback !== result.primary) code.setAttribute('data-fallback-path', result.fallback)
-        if (result.primary.startsWith('/')) code.setAttribute('data-external', 'true')
+        if (result.primary.startsWith('/') || isWindowsAbsolutePath(result.primary)) code.setAttribute('data-external', 'true')
         if (lineStart) code.setAttribute('data-line-start', String(lineStart))
         if (lineEnd) code.setAttribute('data-line-end', String(lineEnd))
         code.insertAdjacentHTML('afterend', fileOpenButtonHtml(result.primary, lineStart, lineEnd, result.fallback !== result.primary ? result.fallback : undefined))
@@ -508,7 +550,7 @@ export function annotateFilePaths(
                 span.className = 'chat-file-path'
                 span.setAttribute('data-file-path', part.result.primary)
                 if (part.result.fallback !== part.result.primary) span.setAttribute('data-fallback-path', part.result.fallback)
-                if (part.result.primary.startsWith('/')) span.setAttribute('data-external', 'true')
+                if (part.result.primary.startsWith('/') || isWindowsAbsolutePath(part.result.primary)) span.setAttribute('data-external', 'true')
                 if (part.lineStart) span.setAttribute('data-line-start', String(part.lineStart))
                 if (part.lineEnd) span.setAttribute('data-line-end', String(part.lineEnd))
                 span.textContent = part.text
@@ -656,7 +698,7 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
                 el.setAttribute('data-file-path', fallback)
                 el.removeAttribute('data-fallback-path')
                 // Update external status
-                const isNowExternal = fallback.startsWith('/')
+                const isNowExternal = fallback.startsWith('/') || isWindowsAbsolutePath(fallback)
                 if (isNowExternal) {
                     el.setAttribute('data-external', 'true')
                     el.classList.add('external')
