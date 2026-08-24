@@ -390,11 +390,21 @@ function handleToggleEdit() {
 }
 
 // Confirm-and-exit edit mode before an action that would leave the current
-// file's edit view. If there are unsaved changes, CodeMirrorViewer.handleExit
-// prompts save/discard/cancel; the action only runs once edit mode has really
-// ended (save completed or changes discarded). Returns true if the action may
+// file's edit view. If there are unsaved changes, the active editor's exit
+// flow (CodeMirrorViewer.handleExit or ExcalidrawViewer.requestExit) prompts
+// save/discard/cancel; the action only runs once edit mode has really ended
+// (save completed or changes discarded). Returns true if the action may
 // proceed, false if the user cancelled or a save failed.
 async function guardExitEdit(action) {
+    // Excalidraw opens directly in the editor and never leaves "edit mode",
+    // so the CodeMirror editing/exit bookkeeping doesn't apply — just confirm
+    // the scene is saved (requestExit resolves once the write completes).
+    if (props.file?.isExcalidraw) {
+        const exited = await excalidrawViewerRef.value?.requestExit?.()
+        if (exited !== true) return false
+        action()
+        return true
+    }
     if (editing.value) {
         const exited = await cmEditorRef.value?.handleExit?.()
         if (exited !== true) return false

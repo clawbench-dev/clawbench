@@ -174,7 +174,12 @@ function handleExit() {
     // Wait for the iframe's 'save' reply so persistence completes before the
     // editor unmounts.
     return new Promise((resolve) => {
-        saveResolver = (ok) => resolve(ok)
+        saveResolver = (ok) => {
+            // A successful save means the back gesture may proceed next time
+            // (the "editing" flag consumed the first back to persist changes).
+            if (ok) fileEditor.setEditing(false)
+            resolve(ok)
+        }
         sendSaveRequest()
         // Safety timeout — never block navigation forever if the iframe is
         // unresponsive (e.g. it was killed or the message was lost).
