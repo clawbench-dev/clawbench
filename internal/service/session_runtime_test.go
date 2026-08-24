@@ -223,15 +223,29 @@ func TestCancelSession_Running_NoCancelFunc_ClearsQueue(t *testing.T) {
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
-	SetSessionRunning("session-stuck-queue", true)
-	// Enqueue a message to verify it gets cleared on force-cancel
-	EnqueueMessage("session-stuck-queue", model.QueuedMessage{Text: "hello"})
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	_, err = db.Exec(drainTestSchema)
+	require.NoError(t, err)
+	cleanup := SetDBForTest(db, db)
+	defer func() {
+		cleanup()
+		db.Close()
+	}()
 
-	result := CancelSession("session-stuck-queue")
+	sessionID := "session-stuck-queue"
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'codebuddy', 'Stuck')", sessionID)
+	require.NoError(t, err)
+
+	SetSessionRunning(sessionID, true)
+	// Enqueue a message to verify it gets cleared on force-cancel
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "hello", nil, "q-1", "")
+
+	result := CancelSession(sessionID)
 	assert.True(t, result)
-	assert.False(t, IsSessionRunning("session-stuck-queue"))
+	assert.False(t, IsSessionRunning(sessionID))
 	// Queue should be cleared
-	assert.Nil(t, GetQueue("session-stuck-queue"))
+	assert.Equal(t, 0, GetQueuedCount(sessionID))
 }
 
 func TestCancelSession_StuckThenNewMessage(t *testing.T) {

@@ -1266,7 +1266,7 @@ func TestAIChat_EnqueuePath_FilesNoDuplicate(t *testing.T) {
 	service.TrySetSessionRunning(sessionID)
 	defer func() {
 		service.SetSessionRunning(sessionID, false)
-		service.ClearQueue(sessionID)
+		service.ClearQueuedMessages(sessionID)
 	}()
 
 	// Simulate frontend sending both filePaths and files (where files already includes filePaths)
@@ -3306,7 +3306,7 @@ func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	service.TrySetSessionRunning(sessionID)
 	defer func() {
 		service.SetSessionRunning(sessionID, false)
-		service.ClearQueue(sessionID)
+		service.ClearQueuedMessages(sessionID)
 	}()
 
 	body := map[string]string{"message": "queued message", "clientId": "sender-1"}

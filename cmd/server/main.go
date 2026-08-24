@@ -146,20 +146,6 @@ func (dingtalkSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return service.IsSessionRunning(sessionID)
 }
 
-// EnqueueMessage appends a message to the session's in-memory queue.
-// Always succeeds — the underlying service.EnqueueMessage is an in-memory append.
-func (dingtalkSessionMessenger) EnqueueMessage(sessionID, message string) error {
-	service.EnqueueMessage(sessionID, model.QueuedMessage{
-		Text:      message,
-		CreatedAt: time.Now().Format(time.RFC3339),
-	})
-	return nil
-}
-
-func (dingtalkSessionMessenger) ClearQueue(sessionID string) {
-	service.ClearQueue(sessionID)
-}
-
 func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string) error {
 	return service.SendMessageToSessionFromDingTalk(sessionID, message)
 }
@@ -247,18 +233,6 @@ func (feishuSessionMessenger) ListRecentSessions(limit int) ([]common.SessionInf
 
 func (feishuSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return service.IsSessionRunning(sessionID)
-}
-
-func (feishuSessionMessenger) EnqueueMessage(sessionID, message string) error {
-	service.EnqueueMessage(sessionID, model.QueuedMessage{
-		Text:      message,
-		CreatedAt: time.Now().Format(time.RFC3339),
-	})
-	return nil
-}
-
-func (feishuSessionMessenger) ClearQueue(sessionID string) {
-	service.ClearQueue(sessionID)
 }
 
 func (feishuSessionMessenger) SendMessageToSession(sessionID, message string) error {

@@ -457,7 +457,19 @@ func CancelSession(sessionID string) bool {
 		// Force-clear the running state to unstick the session.
 		slog.Warn("CancelSession: session running but no cancel func, force-clearing",
 			slog.String("session_id", sessionID))
-		ClearQueuedMessages(sessionID)
+		// The goroutine is dead, so its RunDrainLoop cancel branch will never
+		// emit queue_cancel. Collect + clear + emit here instead.
+		queueIDs, _ := GetQueuedQueueIDs(sessionID)
+		_ = ClearQueuedMessages(sessionID)
+		if len(queueIDs) > 0 {
+			ws.EmitToSession(sessionID, ai.StreamEvent{
+				Type: "queue_cancel",
+				QueueEvent: &ai.QueueEventData{
+					SessionID: sessionID,
+					QueueIDs:  queueIDs,
+				},
+			})
+		}
 		SetSessionRunning(sessionID, false, true)
 		// Stuck session: nothing will finalize its streaming messages.
 		FinalizeOrphanedMessages(sessionID, "user")
@@ -472,7 +484,9 @@ func CancelSession(sessionID string) bool {
 	// freeing its stdin pipe. Then send ACP Cancel (with 3s timeout) so the
 	// agent can stop its turn gracefully on next stdin read.
 	sessionCancelReasons.Store(sessionID, "user")
-	ClearQueuedMessages(sessionID)
+	// NOTE: do NOT clear queued messages here — the goroutine's RunDrainLoop
+	// cancel branch collects the queueIDs, clears them and emits queue_cancel
+	// itself. Clearing first would lose the queue_cancel event.
 	cancel()
 
 	ai.GetACPConnManager().CancelTurn(sessionID)

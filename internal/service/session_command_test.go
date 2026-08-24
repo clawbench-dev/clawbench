@@ -2419,16 +2419,17 @@ func TestSendMessageToSessionFromFeishu_AlreadyRunning_EnqueuesMessage(t *testin
 	TrySetSessionRunning(sessionID)
 	defer func() {
 		SetSessionRunning(sessionID, false, true)
-		ClearQueue(sessionID)
+		ClearQueuedMessages(sessionID)
 	}()
 
 	err = SendMessageToSessionFromFeishu(sessionID, "hello from feishu")
 	assert.NoError(t, err)
 
-	// Verify message is in the in-memory queue
-	queue := GetQueue(sessionID)
-	assert.Len(t, queue, 1)
-	assert.Equal(t, "hello from feishu", queue[0].Text)
+	// Verify message is persisted and queued in DB.
+	msgs, err := GetQueuedMessages(sessionID)
+	require.NoError(t, err)
+	assert.Len(t, msgs, 1)
+	assert.Equal(t, "hello from feishu", msgs[0].Content)
 }
 
 func TestSendMessageToSessionFromFeishu_LaunchPath(t *testing.T) {
