@@ -3,6 +3,8 @@ package ai
 import (
 	"encoding/json"
 	"testing"
+
+	"clawbench/internal/model"
 )
 
 // openCodePermissionEnv injects an OPENCODE_PERMISSION value into opencode ACP
@@ -64,5 +66,52 @@ func TestOpenCodePermissionEnv_PreservesModeRestrictions(t *testing.T) {
 	}
 	if read["*.env"] != "allow" || read["*.env.*"] != "allow" {
 		t.Errorf(`"read" must allow *.env / *.env.* , got %v`, read)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// advertiseTerminalCapability — CodeBuddy background-task compatibility
+// ---------------------------------------------------------------------------
+
+func TestAdvertiseTerminalCapability_CodeBuddyHidden(t *testing.T) {
+	ResetAdvertiseTerminalForTest()
+	defer ResetAdvertiseTerminalForTest()
+
+	agent := &model.Agent{ID: "cb-agent", Backend: "codebuddy"}
+	if got := advertiseTerminalCapability(agent); got {
+		t.Error("advertiseTerminalCapability(codebuddy) = true, want false (Terminal capability must be hidden for CodeBuddy so its TaskOutput registry stays consistent)")
+	}
+}
+
+func TestAdvertiseTerminalCapability_OtherBackendsAdvertised(t *testing.T) {
+	ResetAdvertiseTerminalForTest()
+	defer ResetAdvertiseTerminalForTest()
+
+	for _, backend := range []string{"claude", "opencode", "kimi", "codex", "qoder", "copilot"} {
+		agent := &model.Agent{ID: backend + "-agent", Backend: backend}
+		if got := advertiseTerminalCapability(agent); !got {
+			t.Errorf("advertiseTerminalCapability(%q) = false, want true (Terminal capability should stay advertised)", backend)
+		}
+	}
+}
+
+func TestAdvertiseTerminalCapability_NilAgentAdvertised(t *testing.T) {
+	ResetAdvertiseTerminalForTest()
+	defer ResetAdvertiseTerminalForTest()
+
+	if got := advertiseTerminalCapability(nil); !got {
+		t.Error("advertiseTerminalCapability(nil) = false, want true (default should advertise)")
+	}
+}
+
+func TestAdvertiseTerminalCapability_TestOverrideWins(t *testing.T) {
+	// The test override must take precedence so integration tests can force
+	// either behavior for regression checks.
+	SetAdvertiseTerminalForTest(true)
+	defer ResetAdvertiseTerminalForTest()
+
+	codebuddy := &model.Agent{ID: "cb-agent", Backend: "codebuddy"}
+	if got := advertiseTerminalCapability(codebuddy); !got {
+		t.Error("test override true should force Terminal advertised even for CodeBuddy")
 	}
 }
