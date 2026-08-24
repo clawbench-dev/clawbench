@@ -376,7 +376,7 @@ onUnmounted(() => {
   left: -40%;
   width: 40%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, #22c55e, transparent);
+  background: linear-gradient(90deg, transparent, var(--color-green, #22c55e), transparent);
   animation: scan-line 2s ease-in-out infinite;
 }
 

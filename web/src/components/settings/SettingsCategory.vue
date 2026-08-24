@@ -33,6 +33,7 @@
           :type="item.type"
           :model-value="getItemValue(item)"
           :options="resolveItemOptions(item)"
+          :option-previews="item.key === 'theme' ? themePreviews : undefined"
           :min="item.min"
           :max="item.max"
           :step="item.step"
@@ -91,6 +92,7 @@ import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useDesktopDownload } from '@/composables/useDesktopDownload'
 import { downloadByUrl } from '@/utils/download'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
+import { THEMES } from '@/utils/themeMeta'
 
 const props = defineProps<{
   categoryId: string
@@ -243,6 +245,15 @@ function resolveOptionLabel(_itemKey: string, opt: { labelKey: string; value: un
   if (opt.labelKey) return t(opt.labelKey)
   return String(opt.value)
 }
+
+/** Color previews for the theme picker grid (includes a special 'auto' entry). */
+const themePreviews = computed<Record<string, { bg: string; text: string; accent: string }>>(() => {
+  const map: Record<string, { bg: string; text: string; accent: string }> = {}
+  for (const t of THEMES) map[t.id] = t.preview
+  // Auto option: neutral light/dark split handled by CSS, no real colors needed
+  map.auto = { bg: '#ffffff', text: '#1a1a2e', accent: '#888888' }
+  return map
+})
 
 function getItemValue(item: ItemSpec): unknown {
   if (item.type === 'header') return undefined

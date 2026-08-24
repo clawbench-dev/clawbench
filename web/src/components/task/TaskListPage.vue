@@ -364,7 +364,7 @@ onMounted(refresh)
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #22c55e;
+  background: var(--color-green, #22c55e);
   flex-shrink: 0;
   animation: task-running-pulse 0.8s ease-in-out infinite;
 }

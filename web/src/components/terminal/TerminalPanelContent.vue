@@ -238,7 +238,7 @@
             <component :is="autoThemeIsDark ? Moon : Sun" :size="12" class="theme-item-base-icon" />
           </button>
           <button
-            v-for="id in THEME_IDS"
+            v-for="id in SORTED_THEME_IDS"
             :key="id"
             class="theme-item"
             :class="{ active: themeSelection === id }"
@@ -295,7 +295,7 @@ import type { KeyDef } from '@/utils/terminalKeyDefs'
 import {
   TERMINAL_THEME_AUTO,
   TERMINAL_THEME_STORAGE_KEY,
-  THEME_IDS,
+  SORTED_THEME_IDS,
   formatThemeName,
   loadThemesModule,
   resolveTheme,

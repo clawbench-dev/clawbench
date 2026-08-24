@@ -26,24 +26,28 @@ export interface ThemeMeta {
 }
 
 export const THEMES: ThemeMeta[] = [
+  // 按背景亮度从浅到深排列
   { id: 'github-light',       dark: false, labelKey: 'settings.items.themeGithubLight',       statusBar: '#f8f9fa', preview: { bg: '#f8f9fa', text: '#212529', accent: '#4a90d9' } },
-  { id: 'github-dark',        dark: true,  labelKey: 'settings.items.themeGithubDark',        statusBar: '#161b22', preview: { bg: '#161b22', text: '#c9d1d9', accent: '#58a6ff' } },
-  { id: 'one-dark-pro',       dark: true,  labelKey: 'settings.items.themeOneDarkPro',        statusBar: '#21252b', preview: { bg: '#21252b', text: '#abb2bf', accent: '#61afef' } },
-  { id: 'catppuccin-mocha',   dark: true,  labelKey: 'settings.items.themeCatppuccinMocha',   statusBar: '#181825', preview: { bg: '#181825', text: '#cdd6f4', accent: '#89b4fa' } },
-  { id: 'catppuccin-latte',   dark: false, labelKey: 'settings.items.themeCatppuccinLatte',   statusBar: '#e6e9ef', preview: { bg: '#e6e9ef', text: '#4c4f69', accent: '#1e66f5' } },
-  { id: 'dracula',            dark: true,  labelKey: 'settings.items.themeDracula',           statusBar: '#21222c', preview: { bg: '#21222c', text: '#f8f8f2', accent: '#bd93f9' } },
-  { id: 'nord',               dark: true,  labelKey: 'settings.items.themeNord',              statusBar: '#202833', preview: { bg: '#202833', text: '#e6ecf4', accent: '#6cb2f0' } },
-  { id: 'tokyo-night',        dark: true,  labelKey: 'settings.items.themeTokyoNight',        statusBar: '#16161e', preview: { bg: '#16161e', text: '#c0caf5', accent: '#7aa2f7' } },
-  { id: 'solarized-dark',     dark: true,  labelKey: 'settings.items.themeSolarizedDark',     statusBar: '#0a3541', preview: { bg: '#0a3541', text: '#a0b0b4', accent: '#2e9fd8' } },
-  { id: 'solarized-light',    dark: false, labelKey: 'settings.items.themeSolarizedLight',    statusBar: '#eee8d5', preview: { bg: '#eee8d5', text: '#657b83', accent: '#268bd2' } },
-  { id: 'solarized-deep',     dark: true,  labelKey: 'settings.items.themeSolarizedDeep',     statusBar: '#15212b', preview: { bg: '#15212b', text: '#dce5ec', accent: '#3bb8e0' } },
-  { id: 'gruvbox-dark',       dark: true,  labelKey: 'settings.items.themeGruvboxDark',       statusBar: '#1d2021', preview: { bg: '#1d2021', text: '#ebdbb2', accent: '#fe8019' } },
-  { id: 'gruvbox-light',      dark: false, labelKey: 'settings.items.themeGruvboxLight',      statusBar: '#f2e5bc', preview: { bg: '#f2e5bc', text: '#3c3836', accent: '#af3a03' } },
-  { id: 'high-contrast-dark', dark: true,  labelKey: 'settings.items.themeHighContrastDark',  statusBar: '#0a0a0a', preview: { bg: '#0a0a0a', text: '#ffffff', accent: '#00ccff' } },
   { id: 'high-contrast-light',dark: false, labelKey: 'settings.items.themeHighContrastLight', statusBar: '#f5f5f5', preview: { bg: '#f5f5f5', text: '#000000', accent: '#0055cc' } },
-  { id: 'night-owl',          dark: true,  labelKey: 'settings.items.themeNightOwl',          statusBar: '#001122', preview: { bg: '#001122', text: '#d6deeb', accent: '#82aaff' } },
-  { id: 'ayu-dark',           dark: true,  labelKey: 'settings.items.themeAyuDark',           statusBar: '#0d1017', preview: { bg: '#0d1017', text: '#b3b1ad', accent: '#e6b450' } },
+  { id: 'catppuccin-latte',   dark: false, labelKey: 'settings.items.themeCatppuccinLatte',   statusBar: '#e6e9ef', preview: { bg: '#e6e9ef', text: '#4c4f69', accent: '#1e66f5' } },
+  { id: 'solarized-light',    dark: false, labelKey: 'settings.items.themeSolarizedLight',    statusBar: '#eee8d5', preview: { bg: '#eee8d5', text: '#657b83', accent: '#268bd2' } },
+  { id: 'gruvbox-light',      dark: false, labelKey: 'settings.items.themeGruvboxLight',      statusBar: '#f2e5bc', preview: { bg: '#f2e5bc', text: '#3c3836', accent: '#af3a03' } },
+  { id: 'solarized-dark',     dark: true,  labelKey: 'settings.items.themeSolarizedDark',     statusBar: '#0a3541', preview: { bg: '#0a3541', text: '#a0b0b4', accent: '#2e9fd8' } },
+  { id: 'nord',               dark: true,  labelKey: 'settings.items.themeNord',              statusBar: '#202833', preview: { bg: '#202833', text: '#e6ecf4', accent: '#6cb2f0' } },
+  { id: 'everforest-dark',    dark: true,  labelKey: 'settings.items.themeEverforestDark',    statusBar: '#22282b', preview: { bg: '#22282b', text: '#d3c6aa', accent: '#a7c080' } },
+  { id: 'one-dark-pro',       dark: true,  labelKey: 'settings.items.themeOneDarkPro',        statusBar: '#21252b', preview: { bg: '#21252b', text: '#abb2bf', accent: '#61afef' } },
+  { id: 'dracula',            dark: true,  labelKey: 'settings.items.themeDracula',           statusBar: '#21222c', preview: { bg: '#21222c', text: '#f8f8f2', accent: '#bd93f9' } },
+  { id: 'rose-pine',          dark: true,  labelKey: 'settings.items.themeRosePine',          statusBar: '#1f1d2e', preview: { bg: '#1f1d2e', text: '#e0def4', accent: '#ebbcba' } },
+  { id: 'gruvbox-dark',       dark: true,  labelKey: 'settings.items.themeGruvboxDark',       statusBar: '#1d2021', preview: { bg: '#1d2021', text: '#ebdbb2', accent: '#fe8019' } },
+  { id: 'solarized-deep',     dark: true,  labelKey: 'settings.items.themeSolarizedDeep',     statusBar: '#15212b', preview: { bg: '#15212b', text: '#dce5ec', accent: '#3bb8e0' } },
+  { id: 'github-dark',        dark: true,  labelKey: 'settings.items.themeGithubDark',        statusBar: '#161b22', preview: { bg: '#161b22', text: '#c9d1d9', accent: '#58a6ff' } },
+  { id: 'catppuccin-mocha',   dark: true,  labelKey: 'settings.items.themeCatppuccinMocha',   statusBar: '#181825', preview: { bg: '#181825', text: '#cdd6f4', accent: '#89b4fa' } },
   { id: 'vitesse-dark',       dark: true,  labelKey: 'settings.items.themeVitesseDark',       statusBar: '#181818', preview: { bg: '#181818', text: '#dbd7ca', accent: '#4d9375' } },
+  { id: 'tokyo-night',        dark: true,  labelKey: 'settings.items.themeTokyoNight',        statusBar: '#16161e', preview: { bg: '#16161e', text: '#c0caf5', accent: '#7aa2f7' } },
+  { id: 'kanagawa',           dark: true,  labelKey: 'settings.items.themeKanagawa',          statusBar: '#16161d', preview: { bg: '#16161d', text: '#dcd7ba', accent: '#7e9cd8' } },
+  { id: 'ayu-dark',           dark: true,  labelKey: 'settings.items.themeAyuDark',           statusBar: '#0d1017', preview: { bg: '#0d1017', text: '#b3b1ad', accent: '#e6b450' } },
+  { id: 'night-owl',          dark: true,  labelKey: 'settings.items.themeNightOwl',          statusBar: '#001122', preview: { bg: '#001122', text: '#d6deeb', accent: '#82aaff' } },
+  { id: 'high-contrast-dark', dark: true,  labelKey: 'settings.items.themeHighContrastDark',  statusBar: '#0a0a0a', preview: { bg: '#0a0a0a', text: '#ffffff', accent: '#00ccff' } },
 ]
 
 // ── Theme IDs ──────────────────────────────────────────────────────────────────

@@ -24,6 +24,8 @@ import {
   TERMINAL_THEME_AUTO,
   TERMINAL_THEME_STORAGE_KEY,
   THEME_IDS,
+  SORTED_THEME_IDS,
+  getThemeBackground,
   formatThemeName,
   parseHexColor,
   colorDistance,
@@ -197,5 +199,47 @@ describe('terminalThemes', () => {
     await loadThemesModule()
     expect(resolveAutoThemeSync(true).background).toBe(darkTheme.background)
     expect(resolveAutoThemeSync(false).background).toBe(lightTheme.background)
+  })
+
+  describe('SORTED_THEME_IDS', () => {
+    it('contains the same ids as THEME_IDS without duplicates', () => {
+      expect(SORTED_THEME_IDS).toHaveLength(THEME_IDS.length)
+      expect([...SORTED_THEME_IDS].sort()).toEqual([...THEME_IDS].sort())
+      expect(new Set(SORTED_THEME_IDS).size).toBe(SORTED_THEME_IDS.length)
+    })
+
+    it('orders ids from light background to dark background', () => {
+      // Known light themes must appear before known dark themes.
+      const lightOnes = ['Github', 'OneHalfLight', 'Solarized_Light', 'Tomorrow']
+      const darkOnes = ['Dracula', 'Gruvbox_Dark', 'ayu', 'deep']
+      const lightIdx = lightOnes.map(id => SORTED_THEME_IDS.indexOf(id))
+      const darkIdx = darkOnes.map(id => SORTED_THEME_IDS.indexOf(id))
+      for (const li of lightIdx) {
+        for (const di of darkIdx) {
+          expect(li).toBeGreaterThanOrEqual(0)
+          expect(di).toBeGreaterThanOrEqual(0)
+          expect(li).toBeLessThan(di)
+        }
+      }
+    })
+
+    it('is monotonically non-increasing in background luminance', () => {
+      const luminance = (hex: string): number => {
+        const [r, g, b] = parseHexColor(hex)!
+        return 0.299 * r + 0.587 * g + 0.114 * b
+      }
+      // Every known-background id must be in non-increasing luminance order.
+      for (let i = 1; i < SORTED_THEME_IDS.length; i++) {
+        const prev = getThemeBackground(SORTED_THEME_IDS[i - 1])
+        const cur = getThemeBackground(SORTED_THEME_IDS[i])
+        // `default` (no background) is always last — once reached, the rest are nulls.
+        if (cur == null) {
+          expect(prev).not.toBeNull()
+          continue
+        }
+        if (prev == null) continue
+        expect(luminance(cur)).toBeLessThanOrEqual(luminance(prev))
+      }
+    })
   })
 })

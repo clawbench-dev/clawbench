@@ -49,27 +49,27 @@ defineProps({
 }
 
 .toast-error {
-    background: color-mix(in srgb, #ef4444 78%, var(--bg-tertiary));
+    background: color-mix(in srgb, var(--color-red, #ef4444) 78%, var(--bg-tertiary));
 }
 
 [data-theme-base="dark"] .toast-error {
-    background: color-mix(in srgb, #ef4444 55%, var(--bg-tertiary));
+    background: color-mix(in srgb, var(--color-red, #ef4444) 55%, var(--bg-tertiary));
 }
 
 .toast-success {
-    background: color-mix(in srgb, #22c55e 78%, var(--bg-tertiary));
+    background: color-mix(in srgb, var(--color-success, #22c55e) 78%, var(--bg-tertiary));
 }
 
 [data-theme-base="dark"] .toast-success {
-    background: color-mix(in srgb, #22c55e 55%, var(--bg-tertiary));
+    background: color-mix(in srgb, var(--color-success, #22c55e) 55%, var(--bg-tertiary));
 }
 
 .toast-info {
-    background: color-mix(in srgb, var(--accent-color) 78%, var(--bg-tertiary));
+    background: color-mix(in srgb, var(--color-info, var(--accent-color)) 78%, var(--bg-tertiary));
 }
 
 [data-theme-base="dark"] .toast-info {
-    background: color-mix(in srgb, var(--accent-color) 55%, var(--bg-tertiary));
+    background: color-mix(in srgb, var(--color-info, var(--accent-color)) 55%, var(--bg-tertiary));
 }
 
 [data-theme-base="dark"] .toast {
