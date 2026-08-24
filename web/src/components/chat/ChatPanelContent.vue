@@ -1019,15 +1019,17 @@ async function ensureMessageContent(msg) {
 
 
 // Reload/reopen the current session from the ActionBar refresh button.
-// Delegates to session.loadHistory with immediate=true so the reload skips the
-// in-flight queue and re-fetches history + reconnects the stream (the same
-// code path switchSession uses), showing the switching overlay while loading.
+// Delegates to session.handleManualRefresh which mirrors the WS reconnect
+// resync flow (refresh runningSessions + branch on running state) but ALWAYS
+// forces a loadHistory so every refresh re-renders against the authoritative
+// server state — messages, stream subscription, mode/usage/commands all stay
+// consistent with the backend.
 const refreshingSession = ref(false)
 async function handleRefreshSession() {
   if (refreshingSession.value || !identity.currentSessionId.value) return
   refreshingSession.value = true
   try {
-    await session.loadHistory(true, true, false, false, true)
+    await session.handleManualRefresh()
   } catch (err) {
     appLog.w(TAG, 'failed to refresh session', err)
   } finally {

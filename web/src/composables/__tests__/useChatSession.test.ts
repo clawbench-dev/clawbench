@@ -3721,6 +3721,11 @@ describe('handleWsReconnect', () => {
       const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
       expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
     })
+    // Regression guard: the WS reconnect path must stay silent — it must NOT
+    // show the switching overlay (that's reserved for the manual refresh /
+    // switchSession paths via immediate=true). The shared syncSessionOnReconnect
+    // refactor must keep immediate=false for forceReload=false.
+    expect(session.switching.value).toBe(false)
 
     vi.restoreAllMocks()
   })
@@ -3790,6 +3795,216 @@ describe('handleWsReconnect', () => {
       const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
       expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
     })
+
+    vi.restoreAllMocks()
+  })
+})
+
+describe('handleManualRefresh', () => {
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(() => {
+    resetMockState()
+    resetChatSessionState()
+    resetAdditionalMocks()
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('when loading=true and session still running: force reloads history which re-subscribes the stream', async () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onConnectStream = vi.fn()
+    const onRenderUpdate = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate,
+      onScrollBottom: vi.fn(),
+      onConnectStream,
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // First fetch: loadSessionsOnce — s1 is still running.
+    // Second fetch: loadHistory — returns running:true so syncSessionState's
+    // isRunning branch re-subscribes the stream.
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's1', running: true }],
+          totalCount: 1,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's1', messages: [], total: 0, running: true,
+        }),
+      })
+
+    await session.handleManualRefresh()
+
+    // loadHistory was executed (the fetch mock above also serves the chat fetch;
+    // assert a session-scoped fetch happened) — running branch must NOT just
+    // subscribeOnly; it forces the history reload whose syncSessionState
+    // isRunning path re-subscribes the stream.
+    expect(onConnectStream).toHaveBeenCalledWith('s1', { reuseExistingStreaming: true })
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(loading.value).toBe(true)
+
+    vi.restoreAllMocks()
+  })
+
+  it('when loading=true and session no longer running: cleans up stuck loading, then forces history reload with forceNotRunning', async () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onRenderUpdate = vi.fn()
+    const onExtractScheduledTasks = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks,
+      onRenderUpdate,
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // First fetch: loadSessionsOnce — s1 NOT running.
+    // Second fetch: loadHistory — the forced reload after cleanup.
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's1', running: false }],
+          totalCount: 1,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's1', messages: [], total: 0, running: false,
+        }),
+      })
+
+    await session.handleManualRefresh()
+
+    expect(onDisconnectStream).toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState).toHaveBeenCalled()
+    expect(loading.value).toBe(false)
+    // The forced history reload must actually fire after the cleanup.
+    await vi.waitFor(() => {
+      const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: any[]) => String(c[0]).includes('/api/ai/chat?session_id=s1'))
+      expect(chatFetches.length).toBeGreaterThanOrEqual(1)
+    })
+
+    vi.restoreAllMocks()
+  })
+
+  it('when loading=false (idle): forces history reload even when the message snapshot is unchanged', async () => {
+    const loading = ref(false)
+    const onRenderUpdate = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate,
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // Step 1: establish a baseline snapshot ('snap-a') via a normal loadHistory.
+    // lastMessageSnapshot is a closure variable initialised to '' — a single
+    // handleManualRefresh would always see a *different* snapshot and could not
+    // distinguish skipIfUnchanged=false from true. Two-step setup makes the
+    // second load see newSnapshot === lastMessageSnapshot ('snap-a').
+    mockUtilsFns.buildMessageSnapshot.mockReturnValue('snap-a')
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1', messages: [{ id: 'm1' }], total: 1, running: false,
+      }),
+    })
+    await session.loadHistory(true, false, false)
+
+    // Step 2: refresh with the SAME snapshot. loadSessionsOnce (first fetch
+    // after baseline) returns s1 idle; the manual refresh must STILL fetch
+    // /api/ai/chat and re-render even though the snapshot is unchanged.
+    const fetchCallsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+    await session.handleManualRefresh()
+
+    // A manual refresh must ALWAYS fetch history and re-render, unlike the
+    // WS reconnect path which passes skipIfUnchanged=true. Even with the same
+    // snapshot the UI is refreshed against the latest server state.
+    await vi.waitFor(() => {
+      const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .slice(fetchCallsBefore)
+        .filter((c: any[]) => String(c[0]).includes('/api/ai/chat?session_id=s1'))
+      expect(chatFetches.length).toBeGreaterThanOrEqual(1)
+    })
+    await vi.waitFor(() => {
+      const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
+      expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
+    })
+
+    vi.restoreAllMocks()
+  })
+
+  it('when no currentSessionId: does nothing', async () => {
+    const options = {
+      currentSessionId: ref(''),
+      messages: ref([]),
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+
+    await session.handleManualRefresh()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
 
     vi.restoreAllMocks()
   })

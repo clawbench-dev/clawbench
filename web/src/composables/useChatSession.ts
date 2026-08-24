@@ -1038,23 +1038,58 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   /**
-   * Handle WS reconnection: resync the current session to reflect changes that
-   * occurred while disconnected. After loadSessionsOnce refreshes
-   * runningSessions:
-   * - if the session is still running, let the stream re-subscribe (no-op);
-   * - if it was streaming but finished while disconnected, clean up the stuck
-   *   loading state and reload history;
-   * - if it was idle, reload history (skipIfUnchanged) to reflect any changes.
+   * Shared resync flow for both the WS reconnect and the manual refresh button.
+   * Refreshes runningSessions from the backend, then branches on session state.
+   *
+   * forceReload:false (WS reconnect) — lightweight, silent:
+   * - still running: re-subscribe the stream in place (subscribeOnly), preserving
+   *   the existing streaming message; no history fetch.
+   * - finished while disconnected: clean up the stuck loading state, then reload
+   *   history with skipIfUnchanged=true + forceNotRunning=true.
+   * - idle: reload history with skipIfUnchanged=true (no UI churn if unchanged).
+   * No switching overlay, no input lock, queued behind any in-flight loadHistory.
+   *
+   * forceReload:true (manual refresh) — always authoritative:
+   * - still running: force a history reload whose syncSessionState isRunning
+   *   branch re-subscribes the stream (reuseExistingStreaming).
+   * - finished while disconnected: same cleanup, then force reload history.
+   * - idle: force reload history with skipIfUnchanged=false so the UI always
+   *   re-renders against the latest server state.
+   * Shows the switching overlay, locks input, and runs immediately (bypasses
+   * the loadHistory in-flight queue) so the user sees the full resync.
    */
-  async function handleWsReconnect() {
+  async function syncSessionOnReconnect(forceReload: boolean) {
     if (!currentSessionId.value) return
     // Refresh runningSessions from the backend so the current-session decision
-    // below reflects any change that happened while disconnected.
+    // below reflects any change that happened on the server side.
     await loadSessionsOnceInner()
+    const source = forceReload ? 'Manual refresh' : 'WS reconnect'
+    // A manual refresh is always authoritative: it shows the switching overlay,
+    // scrolls to bottom, skips the snapshot check (skipIfUnchanged=false), and
+    // runs immediately (bypassing the loadHistory in-flight queue). The WS
+    // reconnect path stays silent — overlay off, skipIfUnchanged=true, queued.
+    const scrollBottom = forceReload
+    const showOverlay = forceReload
+    const skipIfUnchanged = !forceReload
+    const immediate = forceReload
     if (loading.value) {
       if (runningSessions.value.has(currentSessionId.value)) {
-        // Session still running — the live stream re-subscribes on reconnect.
-        // The useChatStream watch on `connected` only re-subscribes when its
+        if (forceReload) {
+          // Still running — force a history reload. loadHistory's isRunning
+          // branch re-subscribes the stream (reuseExistingStreaming) and keeps
+          // loading=true, so the live stream is resumed from the authoritative
+          // DB state rather than merely re-subscribed in place.
+          appLog.i(TAG, `${source}: session ${currentSessionId.value} still running — force reload history + resubscribe stream`)
+          try {
+            await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, false, immediate)
+            onRenderUpdate(true)
+          } catch {
+            loading.value = false
+          }
+          return
+        }
+        // WS reconnect: the live stream re-subscribes on reconnect. The
+        // useChatStream watch on `connected` only re-subscribes when its
         // internal isStreaming is still true. If a stream watchdog timeout (or
         // an explicit disconnectStream()) already set isStreaming=false while
         // loading stayed true, that watch never fires and the session is left
@@ -1065,29 +1100,52 @@ export function useChatSession(options: UseChatSessionOptions) {
         onConnectStream(currentSessionId.value, { subscribeOnly: true })
         return
       }
-      // AI finished during the disconnection — clean up the stuck loading state
+      // AI finished while the user was away — clean up the stuck loading state
       // and reload history. forceNotRunning=true prevents loadHistory from
       // re-connecting the stream if the server's in-memory running state
       // hasn't been updated yet.
-      appLog.w(TAG, `WS reconnect: session ${currentSessionId.value} no longer running — cleaning up stuck loading state`)
+      appLog.w(TAG, `${source}: session ${currentSessionId.value} no longer running — cleaning up stuck loading state`)
       onDisconnectStream()
       forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
       loading.value = false
-      loadHistory(false, false, true, true).then(() => {
+      try {
+        await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, true, immediate)
         onRenderUpdate(true)
-      }).catch(() => {
+      } catch {
         loading.value = false
-      })
+      }
     } else {
       // Session idle — reload history to reflect changes that occurred while
-      // disconnected (AI finished a task, mode changed, etc.). skipIfUnchanged
-      // avoids UI churn when nothing changed.
-      loadHistory(false, false, true).then(() => {
+      // disconnected. skipIfUnchanged avoids UI churn when nothing changed;
+      // a manual refresh forces the reload (skipIfUnchanged=false) so the UI
+      // always re-renders against the latest server state.
+      try {
+        await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, false, immediate)
         onRenderUpdate(true)
-      }).catch(() => {
+      } catch {
         // Non-critical — keep current view on failure.
-      })
+      }
     }
+  }
+
+  /**
+   * Handle WS reconnection: resync the current session to reflect changes that
+   * occurred while disconnected. Lightweight variant — skips UI refresh when
+   * the message snapshot is unchanged, and re-subscribes a still-running stream
+   * in place.
+   */
+  async function handleWsReconnect() {
+    await syncSessionOnReconnect(false)
+  }
+
+  /**
+   * Manual refresh from the chat ActionBar refresh button. Mirrors the WS
+   * reconnect resync flow but ALWAYS forces a loadHistory so every refresh
+   * re-renders against the authoritative server state — messages, stream
+   * subscription, mode/usage/commands all stay consistent with the backend.
+   */
+  async function handleManualRefresh() {
+    await syncSessionOnReconnect(true)
   }
 
   /**
@@ -1232,6 +1290,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     onSessionEvent,
     loadSessionsOnce: loadSessionsOnceInner,
     handleWsReconnect,
+    handleManualRefresh,
     continueFromExecution,
     forkSession,
     checkContinueSession,
