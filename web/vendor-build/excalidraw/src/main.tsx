@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Excalidraw, exportToSvg } from '@excalidraw/excalidraw'
+import { Excalidraw, exportToSvg, languages } from '@excalidraw/excalidraw'
 // Required — @excalidraw/excalidraw ships its styles as a separate CSS entry
 // (@excalidraw/excalidraw/index.css). Without this import the editor renders
 // unstyled (huge icons, broken layout).
@@ -11,6 +11,19 @@ import {
   emitSave,
   emitExit,
 } from './bridge'
+
+/**
+ * Map the host app's short locale codes (e.g. "zh" / "en") to Excalidraw's
+ * full language codes (e.g. "zh-CN"). Unknown codes fall back to the first
+ * matching language prefix or Excalidraw's default (English).
+ */
+function resolveLangCode(raw: string): string {
+  const code = raw.toLowerCase()
+  if (code === 'zh' || code === 'zh-cn' || code === 'zh-hans') return 'zh-CN'
+  if (code === 'zh-tw' || code === 'zh-hant') return 'zh-TW'
+  const match = languages.find((l) => l.code.toLowerCase() === code)
+  return match ? match.code : 'en'
+}
 
 interface ExcalidrawFile {
   type?: string
@@ -86,12 +99,12 @@ function ExcalidrawHost() {
           setTheme(msg.data.theme)
         }
         if (typeof msg.data.lang === 'string' && msg.data.lang) {
-          setLangCode(msg.data.lang)
+          setLangCode(resolveLangCode(msg.data.lang))
         }
       } else if (msg.event === 'theme' && (msg.data?.theme === 'dark' || msg.data?.theme === 'light')) {
         setTheme(msg.data.theme)
       } else if (msg.event === 'lang' && typeof msg.data?.lang === 'string' && msg.data.lang) {
-        setLangCode(msg.data.lang)
+        setLangCode(resolveLangCode(msg.data.lang))
       } else if (msg.event === 'saveRequest') {
         const api = excalidrawAPI.current
         if (api) {
