@@ -23,10 +23,9 @@
 
 /* Active spinning state — applied while a refresh is in-flight.
    NOTE: the RefreshButton component takes over rotation via the Web Animations
-   API (guaranteeing whole revolutions on stop) and disables this CSS animation
-   on its own icon via inline `animation: none`. This rule only drives native
-   buttons that use the utility class directly (overflow menus, span triggers,
-   full-row triggers, ...). */
+   API and disables this CSS animation on its own icon via inline
+   `animation: none`. This rule only drives native buttons that use the utility
+   class directly (overflow menus, span triggers, full-row triggers, ...). */
 .refresh-spin--active svg {
     animation: refresh-spin 0.8s linear infinite;
 }
@@ -48,9 +47,9 @@
     100% { transform: rotate(360deg); }
 }
 
-/* Success-confirmation bounce for RefreshButton: after the spin finishes a
-   whole revolution the icon briefly swaps to a green circled check (CheckCircle2)
-   with this bounce-in, applied via inline `animation: check-in 0.4s ease-out`. */
+/* Success-confirmation bounce for RefreshButton: after the spin stops the icon
+   briefly swaps to a green circled check (CheckCircle2) with this bounce-in,
+   applied via inline `animation: check-in 0.4s ease-out`. */
 @keyframes check-in {
     0% { transform: scale(0); opacity: 0; }
     50% { transform: scale(1.3); }

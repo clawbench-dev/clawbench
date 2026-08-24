@@ -13,6 +13,7 @@
       :size="size"
       :data-confirm="showConfirm || undefined"
       :style="showConfirm ? confirmStyle : svgStyle"
+      @animationend="onCheckAnimationEnd"
     />
   </button>
 </template>
@@ -30,11 +31,15 @@ import { RefreshCw, RotateCw, RotateCcw, CheckCircle2 } from 'lucide-vue-next'
  * icon and wires the shared `refresh-spin` utility classes.
  *
  * Rotation is driven by the Web Animations API instead of a CSS `animation:
- * infinite`, so that when `loading` flips to false the icon always finishes an
- * exact whole number of revolutions — it never freezes mid-turn. Speed is
- * 0.5s per revolution; the CSS animation in refresh-spin.css only applies to
- * non-RefreshButton native buttons. After the spin completes, the icon briefly
- * swaps to a green circled check (CheckCircle2) with a bounce-in.
+ * infinite`. When `loading` flips to false the spin is cancelled immediately
+ * (no need to finish a whole revolution — the icon is about to swap to the
+ * check confirmation anyway) and the check-in bounce plays. The bounce always
+ * plays to completion: the swap-back is driven by the check-in animation's
+ * `animationend` event, with a generous fallback timer for environments where
+ * CSS animations never run.
+ * Speed is 0.5s per revolution; the CSS animation in refresh-spin.css only
+ * applies to non-RefreshButton native buttons. After the spin stops, the icon
+ * briefly swaps to a green circled check (CheckCircle2) with a bounce-in.
  *
  * Usage:
  *   <RefreshButton :loading="refreshing" title="刷新" @click="onRefresh" />
@@ -80,24 +85,36 @@ const svgStyle = computed(() => ({ animation: 'none' }))
 
 let spinAnim: Animation | null = null
 let spinAnimEl: SVGSVGElement | null = null
-let finishTimer: ReturnType<typeof setTimeout> | null = null
 
-// Success confirmation: after the spin completes a whole revolution, the icon
-// briefly swaps to a green circled check (CheckCircle2, bounce-in), then
-// reverts to the original icon.
+// Success confirmation: after the spin stops, the icon briefly swaps to a
+// green circled check (CheckCircle2, bounce-in), then reverts to the original
+// icon. The revert is driven by the check-in animation's `animationend` so the
+// bounce always plays to completion; a fallback timer covers environments
+// where CSS animations never fire (jsdom, reduced-motion).
 const CONFIRM_MS = 400
 const showConfirm = ref(false)
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 
 // Check's style overrides the inline `animation: none` (svgStyle) so the bounce
-// animation from refresh-spin.css's `check-in` keyframes can run.
+// animation from refresh-spin.css's `check-in` keyframes can run. `forwards`
+// keeps the final scale(1) pose if the fallback timer ever beats the animation.
 const confirmStyle = computed(() => ({
   color: 'var(--color-green, #16a34a)',
-  animation: 'check-in 0.4s ease-out',
+  animation: 'check-in 0.4s ease-out forwards',
 }))
 
-function clearFinishTimer() {
-  if (finishTimer) { clearTimeout(finishTimer); finishTimer = null }
+function clearConfirmTimer() {
+  if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null }
+}
+
+function onCheckAnimationEnd(e: AnimationEvent) {
+  // The listener is always attached (Vue won't (re)attach a handler that
+  // starts as `undefined`), so filter by the animation name here. Only the
+  // check-in bounce ever plays; other animationend events (e.g. from a parent
+  // animation bubbling up) are ignored.
+  if (!showConfirm.value || e.animationName !== 'check-in') return
+  clearConfirmTimer()
+  showConfirm.value = false
 }
 
 function svgEl(): SVGSVGElement | null {
@@ -105,7 +122,6 @@ function svgEl(): SVGSVGElement | null {
 }
 
 function startSpin() {
-  clearFinishTimer()
   const svg = svgEl()
   if (!svg || typeof svg.animate !== 'function') return
   // If the animation is bound to a DIFFERENT element than the currently-visible
@@ -127,56 +143,34 @@ function startSpin() {
 }
 
 /**
- * Stop spinning at an exact whole number of revolutions. We do NOT cancel the
- * animation immediately — it keeps running the remainder of the current turn
- * (minimum 50ms so the finish is perceptible) and is then cancelled exactly at
- * a 360° boundary.
+ * Stop spinning. We simply cancel the WAAPI animation right away — the icon may
+ * snap back to its base angle, but it is immediately swapped to the check
+ * confirmation, so completing a whole revolution no longer matters.
  */
 function stopSpin() {
   const anim = spinAnim
   if (!anim) return
-  clearFinishTimer()
-
-  let remain = ROTATION_MS
-  try {
-    const current = Number(anim.currentTime ?? 0)
-    const progress = (current / ROTATION_MS) % 1
-    if (Number.isFinite(progress)) {
-      // Time left until the next full revolution (progress in 0..1 of a turn)
-      remain = (1 - progress) * ROTATION_MS
-    }
-  } catch {
-    // currentTime can throw if the animation was already cancelled
-    remain = 0
-  }
-  // Guarantee at least a perceptible finishing motion and a complete turn when
-  // the load was essentially instant.
-  remain = Math.max(remain, 50)
-
-  finishTimer = setTimeout(() => {
-    finishTimer = null
-    if (spinAnim) {
-      spinAnim.cancel()
-      spinAnim = null
-    }
-    spinAnimEl = null
-    playConfirm()
-  }, remain)
+  anim.cancel()
+  spinAnim = null
+  spinAnimEl = null
+  playConfirm()
 }
 
 /**
  * Success confirmation: swap the icon to a green circled check (CheckCircle2)
- * with a bounce-in, then restore the original icon after a short window.
- * Skipped if a new refresh has already started (`loading` flipped back to true
- * → startSpin reset showConfirm).
+ * with a bounce-in, then restore the original icon after the bounce finishes
+ * (animationend) or after a fallback window. Skipped if a new refresh has
+ * already started (`loading` flipped back to true → startSpin reset showConfirm).
  */
 function playConfirm() {
   if (props.loading) return
   showConfirm.value = true
-  if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null }
+  // Fallback for environments where the check-in animation never runs: clear
+  // the Check after CONFIRM_MS anyway so the button never stays green forever.
+  clearConfirmTimer()
   confirmTimer = setTimeout(() => {
-    showConfirm.value = false
     confirmTimer = null
+    showConfirm.value = false
   }, CONFIRM_MS)
 }
 
@@ -214,8 +208,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  clearFinishTimer()
-  if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null }
+  clearConfirmTimer()
   if (spinAnim) {
     spinAnim.cancel()
     spinAnim = null

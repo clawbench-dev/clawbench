@@ -1,10 +1,12 @@
 /**
  * RefreshButton rotation tests.
  *
- * Rotation is driven by the Web Animations API (svg.animate) with a
- * "finish to the next whole revolution" policy: when `loading` flips to false
- * the animation keeps running until a 360° boundary, then is cancelled — it
- * never freezes mid-turn.
+ * Rotation is driven by the Web Animations API (svg.animate). When `loading`
+ * flips to false the animation is cancelled right away — no whole-revolution
+ * wait — and the icon swaps to the green check confirmation (check-in bounce,
+ * 0.4s). The bounce always plays to completion: the swap-back is driven by the
+ * check-in animation's `animationend`, with a fallback timer for environments
+ * where CSS animations never run (jsdom).
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -13,9 +15,10 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 
 // ── WAAPI stub ──
 // jsdom has no Web Animations API. Fake Element.prototype.animate so the
-// component can start/read/cancel animations.
+// component can start/read/cancel animations. cancel() mimics real WAAPI:
+// it nulls currentTime and records that the animation is no longer running.
 interface MockAnimation {
-  currentTime: number
+  currentTime: number | null
   cancel: ReturnType<typeof vi.fn>
   duration: number
 }
@@ -32,7 +35,7 @@ function installAnimateMock() {
   ;(Element.prototype as any).animate = animateMock.mockImplementation(function (this: Element, _keyframes: any, opts: any) {
     const anim: MockAnimation = {
       currentTime: 0,
-      cancel: vi.fn(),
+      cancel: vi.fn(() => { anim.currentTime = null }),
       duration: opts?.duration ?? 0,
     }
     animations.push(anim)
@@ -78,7 +81,7 @@ describe('RefreshButton', () => {
     expect(opts.easing).toBe('linear')
   })
 
-  it('finishes the current turn before cancelling, landing on a whole revolution', async () => {
+  it('cancels the spin immediately when loading stops (no whole-revolution wait)', async () => {
     vi.useFakeTimers()
     const wrapper = mountBtn()
     await wrapper.setProps({ loading: true })
@@ -87,64 +90,43 @@ describe('RefreshButton', () => {
     const anim = latestAnim()
     expect(anim).toBeTruthy()
 
-    // Load stops after 200ms of a 500ms turn (40% — mid-rotation)
+    // Load stops after 200ms of a 500ms turn (40% — mid-rotation). The spin is
+    // cancelled right away; nothing is scheduled to complete the remaining turn.
+    // (currentTime is set for realism only — the component no longer reads it.)
     anim!.currentTime = 200
     await wrapper.setProps({ loading: false })
     await nextTick()
 
-    // Not cancelled yet — it must finish the remaining 60% of the turn first
-    expect(anim!.cancel).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(299)
-    expect(anim!.cancel).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(1) // 300ms total: exactly the remaining time
+    expect(anim!.cancel).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1000)
     expect(anim!.cancel).toHaveBeenCalledTimes(1)
   })
 
-  it('guarantees a full revolution even for an instant load', async () => {
-    vi.useFakeTimers()
-    const wrapper = mountBtn()
-    await wrapper.setProps({ loading: true })
-    await nextTick()
-
-    const anim = latestAnim()
-    // Load was essentially instant — the animation barely progressed
-    anim!.currentTime = 5
-    await wrapper.setProps({ loading: false })
-    await nextTick()
-
-    // Remaining ~495ms (not the raw ~5ms-to-boundary), no early cancel
-    expect(anim!.cancel).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(494)
-    expect(anim!.cancel).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(1)
-    expect(anim!.cancel).toHaveBeenCalledTimes(1)
-  })
-
-  it('reuses one animation across a rapid re-toggle without leaking timers', async () => {
+  it('re-starts the spin cleanly across a rapid re-toggle', async () => {
     vi.useFakeTimers()
     const wrapper = mountBtn()
     await wrapper.setProps({ loading: true })
     await nextTick()
     expect(animateMock).toHaveBeenCalledTimes(1)
 
-    // loading false → true again quickly, before the finish timer fires
+    // loading false → true again quickly
     await wrapper.setProps({ loading: false })
     await nextTick()
     await wrapper.setProps({ loading: true })
     await nextTick()
+    await nextTick() // resolve the loading-watch's internal DOM await
 
-    // Same animation reused — no second svg.animate call, no premature cancel
-    expect(animateMock).toHaveBeenCalledTimes(1)
+    // The stopped animation was cancelled; the restart starts a fresh spin
+    expect(animateMock).toHaveBeenCalledTimes(2)
     expect(latestAnim()!.cancel).not.toHaveBeenCalled()
 
-    // Final stop still finishes the turn then cancels exactly once
+    // Final stop cancels the running spin exactly once
     await wrapper.setProps({ loading: false })
     await nextTick()
-    vi.advanceTimersByTime(600)
     expect(latestAnim()!.cancel).toHaveBeenCalledTimes(1)
   })
 
-  it('shows a green circled check confirmation after the spin finishes', async () => {
+  it('shows a green circled check confirmation as soon as the spin stops', async () => {
     vi.useFakeTimers()
     const wrapper = mountBtn()
     const confirmIcon = () => wrapper.find('svg[data-confirm="true"]')
@@ -155,50 +137,75 @@ describe('RefreshButton', () => {
     expect(confirmIcon().exists()).toBe(false)
     expect(originalIcon().exists()).toBe(true)
 
-    // Load stops mid-turn; spin finishes the whole revolution then cancels
-    latestAnim()!.currentTime = 200
+    // Load stops mid-turn → spin cancelled → check shows immediately
+    latestAnim()!.currentTime = 200 // realism only; currentTime is no longer read
     await wrapper.setProps({ loading: false })
-    await nextTick()
-    expect(confirmIcon().exists()).toBe(false) // still spinning to the boundary
-
-    vi.advanceTimersByTime(300) // reach the revolution boundary → cancel + confirm
     await nextTick()
     expect(confirmIcon().exists()).toBe(true)
 
     // Confirm icon is the green circled check (CheckCircle2 → a circle with a
-    // check path) with the bounce-in animation
+    // check path) with the bounce-in animation (forwards fill keeps the pose)
     const iconSvg = confirmIcon().element as SVGElement
     expect(iconSvg.style.color).toBe('var(--color-green, #16a34a)')
     expect(iconSvg.style.animation).toContain('check-in')
+    expect(iconSvg.style.animation).toContain('forwards')
     // CircleCheck renders a <circle> plus the check <path>, unlike the bare
     // Check icon which has no circle
     expect(iconSvg.querySelector('circle')).not.toBeNull()
 
-    // After the confirmation window the original icon comes back
-    vi.advanceTimersByTime(400)
+    // The bounce's animationend swaps the icon back to the original refresh icon.
+    // (dispatchEvent is used directly — vue-test-utils trigger() builds a plain
+    // Event whose animationName is always undefined, which the handler ignores.)
+    const animEnd = new Event('animationend')
+    ;(animEnd as any).animationName = 'check-in'
+    confirmIcon().element.dispatchEvent(animEnd)
     await nextTick()
     expect(confirmIcon().exists()).toBe(false)
     expect(originalIcon().exists()).toBe(true)
   })
 
-  it('skips the Check confirmation when a new refresh starts before the spin finishes', async () => {
+  it('reverts the check via the fallback timer when animationend never fires', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBtn()
+    const confirmIcon = () => wrapper.find('svg[data-confirm="true"]')
+    const originalIcon = () => wrapper.find('svg:not([data-confirm])')
+
+    await wrapper.setProps({ loading: true })
+    await nextTick()
+    await wrapper.setProps({ loading: false })
+    await nextTick()
+    expect(confirmIcon().exists()).toBe(true)
+
+    // jsdom never runs CSS animations → no animationend → the fallback timer
+    // clears the Check after CONFIRM_MS so the button never stays green forever
+    vi.advanceTimersByTime(399)
+    await nextTick()
+    expect(confirmIcon().exists()).toBe(true)
+    vi.advanceTimersByTime(1)
+    await nextTick()
+    expect(confirmIcon().exists()).toBe(false)
+    expect(originalIcon().exists()).toBe(true)
+  })
+
+  it('skips the Check confirmation when a new refresh starts immediately', async () => {
     vi.useFakeTimers()
     const wrapper = mountBtn()
     const confirmIcon = () => wrapper.find('svg[data-confirm="true"]')
 
     await wrapper.setProps({ loading: true })
     await nextTick()
-    latestAnim()!.currentTime = 250
+    latestAnim()!.currentTime = 250 // realism only; currentTime is no longer read
     await wrapper.setProps({ loading: false })
     await nextTick()
+    expect(confirmIcon().exists()).toBe(true)
 
-    // Immediately start a new refresh before the finish timer fired
+    // Restart resets the confirm state; the pending fallback timer (if any)
+    // later fires as a no-op and must not re-show the Check
     await wrapper.setProps({ loading: true })
     await nextTick()
     expect(confirmIcon().exists()).toBe(false)
 
-    // Spin finishes at the boundary; but loading is true again → no confirm
-    vi.advanceTimersByTime(300)
+    vi.advanceTimersByTime(1000)
     await nextTick()
     expect(confirmIcon().exists()).toBe(false)
   })
@@ -222,8 +229,6 @@ describe('RefreshButton', () => {
     await nextTick()
     latestAnim()!.currentTime = 200
     await wrapper.setProps({ loading: false })
-    await nextTick()
-    vi.advanceTimersByTime(300)
     await nextTick()
     expect(confirmIcon().exists()).toBe(true)
 
@@ -274,5 +279,42 @@ describe('RefreshButton', () => {
     expect(secondAnimSvg).toBe(renderedSvg)
     // The superseded animation was cancelled.
     expect(animations[0].cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels the spin on unmount and leaves no pending timers behind', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBtn()
+    await wrapper.setProps({ loading: true })
+    await nextTick()
+    const anim = latestAnim()!
+
+    // Stop the spin, which schedules the confirm fallback timer
+    await wrapper.setProps({ loading: false })
+    await nextTick()
+
+    wrapper.unmount()
+    expect(anim.cancel).toHaveBeenCalledTimes(1)
+    // The confirm fallback timer was cleared on unmount — no timers remain
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps spinning uninterrupted on a same-tick loading true→false→true toggle', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBtn()
+    await wrapper.setProps({ loading: true })
+    await nextTick()
+    const anim = latestAnim()!
+    expect(animateMock).toHaveBeenCalledTimes(1)
+
+    // Synchronous toggle within one tick: both prop writes queue before any
+    // flush, so the watch runs once with the latest value (true) — stopSpin
+    // never fires and the same animation keeps running, no Check flash, no
+    // restart.
+    wrapper.setProps({ loading: false })
+    wrapper.setProps({ loading: true })
+    await nextTick()
+    await nextTick()
+    expect(animateMock).toHaveBeenCalledTimes(1)
+    expect(anim.cancel).not.toHaveBeenCalled()
   })
 })
