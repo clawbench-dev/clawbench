@@ -150,7 +150,10 @@ func DetectSubtype(filename, content string) (subtype string) {
 	case strings.HasSuffix(lower, ".json") || strings.HasSuffix(lower, ".jsonc") || strings.HasSuffix(lower, ".json5"):
 		return detectSubtypeJSON(content)
 	case strings.HasSuffix(lower, ".excalidraw"):
-		return detectSubtypeExcalidraw(content)
+		// The .excalidraw extension alone is sufficient — the file is an
+		// Excalidraw scene even when empty (a brand-new blank diagram). Content
+		// sniffing would reject empty files and fall back to plain text.
+		return SubtypeExcalidraw
 	default:
 		return ""
 	}
@@ -182,19 +185,6 @@ func detectSubtypeJSON(content string) string {
 	}
 	if _, ok := root["swagger"]; ok {
 		return SubtypeOpenAPI
-	}
-	return ""
-}
-
-// detectSubtypeExcalidraw parses .excalidraw JSON content and checks for the
-// excalidraw type discriminator ("type":"excalidraw").
-func detectSubtypeExcalidraw(content string) string {
-	var root map[string]interface{}
-	if err := json.Unmarshal([]byte(content), &root); err != nil {
-		return ""
-	}
-	if typ, ok := root["type"].(string); ok && typ == "excalidraw" {
-		return SubtypeExcalidraw
 	}
 	return ""
 }

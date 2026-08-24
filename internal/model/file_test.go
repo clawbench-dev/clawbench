@@ -82,19 +82,22 @@ func TestDetectSubtype(t *testing.T) {
 		assert.Equal(t, model.SubtypeExcalidraw, got)
 	})
 
-	t.Run("Excalidraw JSON without type", func(t *testing.T) {
-		got := model.DetectSubtype("diagram.excalidraw", `{"elements":[],"appState":{}}`)
-		assert.Equal(t, "", got)
+	t.Run("Excalidraw extension suffices regardless of content", func(t *testing.T) {
+		// A brand-new blank .excalidraw file has empty content, but the
+		// extension alone must identify it as Excalidraw — otherwise it falls
+		// back to plain text and the editor never opens.
+		got := model.DetectSubtype("diagram.excalidraw", "")
+		assert.Equal(t, model.SubtypeExcalidraw, got)
 	})
 
 	t.Run("Excalidraw malformed JSON", func(t *testing.T) {
 		got := model.DetectSubtype("diagram.excalidraw", `{type: invalid}`)
-		assert.Equal(t, "", got)
+		assert.Equal(t, model.SubtypeExcalidraw, got)
 	})
 
-	t.Run("Excalidraw wrong type value", func(t *testing.T) {
-		got := model.DetectSubtype("diagram.excalidraw", `{"type":"drawio","elements":[]}`)
-		assert.Equal(t, "", got)
+	t.Run("Excalidraw case insensitive extension", func(t *testing.T) {
+		got := model.DetectSubtype("DIAGRAM.EXCALIDRAW", `{}`)
+		assert.Equal(t, model.SubtypeExcalidraw, got)
 	})
 
 	t.Run("Non YAML/JSON file", func(t *testing.T) {
