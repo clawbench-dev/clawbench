@@ -56,6 +56,8 @@ export default {
     refreshed: '已刷新',
     more: '更多',
     settings: '设置',
+    hideChat: '隐藏聊天区域',
+    showChat: '显示聊天区域',
   },
   toast: {
     portForwardAppOnly: '端口映射仅在移动端APP支持',

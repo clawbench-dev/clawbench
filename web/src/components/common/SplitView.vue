@@ -9,14 +9,14 @@
       <slot name="left" />
     </div>
     <SplitDivider
-      v-if="enabled && !collapsed"
+      v-if="enabled && !collapsed && !rightCollapsed"
       :title="title"
       :aria-value-now="ariaValueNow"
       :aria-value-min="ariaValueMin"
       :aria-value-max="ariaValueMax"
       @dragmove="onMove"
     />
-    <div class="split-view__right">
+    <div class="split-view__right" :class="{ 'split-view__right--collapsed': enabled && rightCollapsed }">
       <slot name="right" />
     </div>
   </div>
@@ -35,6 +35,7 @@ const props = withDefaults(defineProps<{
   gutterSize?: number
   title?: string
   collapsed?: boolean
+  rightCollapsed?: boolean
 }>(), {
   ratio: 0.5,
   minLeft: MIN_PANEL_WIDTH,
@@ -42,6 +43,7 @@ const props = withDefaults(defineProps<{
   gutterSize: 1,
   title: '拖动调整面板宽度',
   collapsed: false,
+  rightCollapsed: false,
 })
 
 const emit = defineEmits<{ (e: 'update:ratio', ratio: number): void }>()
@@ -57,6 +59,10 @@ watch(() => props.ratio, (r) => {
 
 const leftStyle = computed(() => {
   if (!props.enabled) return {}
+  // Right pane hidden → the left pane must take the full width. A fixed
+  // percentage width (below) would leave the right side blank, and inline
+  // width beats any CSS override — so switch to a flex-grow that fills.
+  if (props.rightCollapsed) return { flex: '1 1 auto' }
   return { width: `${internalRatio.value * 100}%` }
 })
 
@@ -137,5 +143,15 @@ onBeforeUnmount(() => {
 .split-view--active .split-view__right {
   flex: 1 1 auto;
   min-width: 320px;
+}
+/* Right (chat) pane collapsed: hide it so the left pane takes full width.
+   The left pane switches to flex-grow via its inline style (leftStyle) —
+   drop the min/max width caps that assumed the right pane is visible. */
+.split-view--active .split-view__right--collapsed {
+  display: none;
+}
+.split-view--active:has(.split-view__right--collapsed) .split-view__left {
+  min-width: 0;
+  max-width: none;
 }
 </style>

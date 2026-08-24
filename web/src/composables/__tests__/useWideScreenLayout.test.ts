@@ -12,10 +12,12 @@ import {
   resolveActivePaneOnEnter,
   setActivePane,
   setLeftCollapsed,
+  setChatCollapsed,
   computeIsWideScreen,
   WIDE_SCREEN_DOCK_TABS,
   WIDE_SCREEN_LEFT_TAB_KEY,
   WIDE_SCREEN_SPLIT_RATIO_KEY,
+  WIDE_SCREEN_CHAT_COLLAPSED_KEY,
   WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
@@ -165,6 +167,59 @@ describe('leftCollapsed (dock tab toggle)', () => {
     setLeftCollapsed(true)
     switchLeftTab('tasks')
     expect(leftCollapsed.value).toBe(true)
+  })
+})
+
+describe('chatCollapsed (dock chat toggle)', () => {
+  it('defaults to expanded (chat visible, false)', () => {
+    const { chatCollapsed } = useWideScreenLayout()
+    expect(chatCollapsed.value).toBe(false)
+  })
+
+  it('setChatCollapsed toggles the shared state and persists', () => {
+    const { chatCollapsed } = useWideScreenLayout()
+    setChatCollapsed(true)
+    expect(chatCollapsed.value).toBe(true)
+    expect(localStorage.getItem(WIDE_SCREEN_CHAT_COLLAPSED_KEY)).toBe('1')
+    setChatCollapsed(false)
+    expect(chatCollapsed.value).toBe(false)
+    expect(localStorage.getItem(WIDE_SCREEN_CHAT_COLLAPSED_KEY)).toBe('0')
+  })
+
+  it('restores persisted collapsed state on init', () => {
+    localStorage.setItem(WIDE_SCREEN_CHAT_COLLAPSED_KEY, '1')
+    _resetForTest()
+    const { chatCollapsed } = useWideScreenLayout()
+    expect(chatCollapsed.value).toBe(true)
+  })
+
+  it('resetWideScreenState resets to expanded (chat visible)', () => {
+    setChatCollapsed(true)
+    resetWideScreenState()
+    localStorage.clear() // init would otherwise restore the persisted '1'
+    _resetForTest()
+    const { chatCollapsed } = useWideScreenLayout()
+    expect(chatCollapsed.value).toBe(false)
+  })
+
+  it('hiding chat forces the left pane open (mutual exclusion)', () => {
+    // Regression: with both panes collapsed the content area would go blank.
+    const { leftCollapsed, chatCollapsed } = useWideScreenLayout()
+    setLeftCollapsed(true)
+    expect(leftCollapsed.value).toBe(true)
+    setChatCollapsed(true) // hide chat while left is collapsed
+    expect(chatCollapsed.value).toBe(true)
+    expect(leftCollapsed.value).toBe(false) // left auto-reopens
+  })
+
+  it('collapsing the left pane is a no-op while chat is hidden', () => {
+    const { leftCollapsed, chatCollapsed } = useWideScreenLayout()
+    setChatCollapsed(true)
+    setLeftCollapsed(true)
+    expect(leftCollapsed.value).toBe(false) // stays open
+    setChatCollapsed(false)
+    setLeftCollapsed(true)
+    expect(leftCollapsed.value).toBe(true) // now allowed
   })
 })
 

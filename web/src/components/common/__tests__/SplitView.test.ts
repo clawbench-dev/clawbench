@@ -113,6 +113,41 @@ describe('SplitView', () => {
     expect(left.classes()).not.toContain('split-view__left--collapsed')
   })
 
+  it('rightCollapsed=true (enabled): hides right pane and divider, left pane remains', () => {
+    wrapper = mountSplit({ enabled: true, ratio: 0.4, rightCollapsed: true })
+    expect(wrapper.find('.split-view__divider').exists()).toBe(false)
+    const right = wrapper.find('.split-view__right')
+    expect(right.classes()).toContain('split-view__right--collapsed')
+    expect(wrapper.find('.pane-left').exists()).toBe(true)
+  })
+
+  it('rightCollapsed=true (enabled): left pane fills the full width (flex-grow, no % width)', () => {
+    // Regression: a fixed percentage width would leave the right side blank —
+    // the left pane must switch to flex-grow when the right pane is hidden.
+    wrapper = mountSplit({ enabled: true, ratio: 0.4, rightCollapsed: true })
+    const left = wrapper.find('.split-view__left')
+    expect(left.attributes('style')).toContain('flex: 1 1 auto')
+    expect(left.attributes('style')).not.toContain('width: 40%')
+  })
+
+  it('rightCollapsed=false (enabled): left pane keeps the percentage width', () => {
+    wrapper = mountSplit({ enabled: true, ratio: 0.4 })
+    const left = wrapper.find('.split-view__left')
+    expect(left.attributes('style')).toContain('width: 40%')
+  })
+
+  it('rightCollapsed=true (disabled): ignored — normal split behavior', () => {
+    wrapper = mountSplit({ enabled: false, rightCollapsed: true })
+    const right = wrapper.find('.split-view__right')
+    expect(right.classes()).not.toContain('split-view__right--collapsed')
+  })
+
+  it('rightCollapsed defaults to false (right pane visible)', () => {
+    wrapper = mountSplit({ enabled: true, ratio: 0.5 })
+    expect(wrapper.find('.split-view__right').classes()).not.toContain('split-view__right--collapsed')
+    expect(wrapper.find('.split-view__divider').exists()).toBe(true)
+  })
+
   it('aria-valuenow/min/max are on the same percentage scale', async () => {
     const rect = { left: 0, width: 1000, top: 0, bottom: 0, height: 600, right: 1000, x: 0, y: 0, toJSON() {} }
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect as DOMRect)

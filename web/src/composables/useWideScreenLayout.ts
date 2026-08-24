@@ -8,6 +8,7 @@ export const WIDE_SCREEN_MIN_WIDTH = 1024
 export const WIDE_SCREEN_MIN_PHYSICAL_WIDTH = 1280
 export const WIDE_SCREEN_LEFT_TAB_KEY = 'clawbench-widescreen-left-tab'
 export const WIDE_SCREEN_SPLIT_RATIO_KEY = 'clawbench-widescreen-split-ratio'
+export const WIDE_SCREEN_CHAT_COLLAPSED_KEY = 'clawbench-widescreen-chat-collapsed'
 export const WIDE_SCREEN_DOCK_TABS = ['browse', 'view', 'history', 'tasks', 'terminal', 'proxy', 'settings']
 /**
  * Tabs that are always rendered in the wide-screen vertical dock, in order.
@@ -49,6 +50,12 @@ const activePane = ref<'left' | 'right'>('right')
  * currently-active dock tab again (VS Code-style).
  */
 const leftCollapsed = ref(false)
+/**
+ * Wide-screen right (chat) pane collapsed state. When true, the chat pane is
+ * hidden and the left pane takes the full width. Toggled by the chat button at
+ * the bottom of the wide-screen vertical dock.
+ */
+const chatCollapsed = ref(false)
 let initialized = false
 let sideEffects: ((tab: string) => void) | null = null
 let setActiveTab: ((tab: string) => void) | null = null
@@ -73,6 +80,12 @@ function initWideScreen() {
       const raw = Number(stored)
       if (Number.isFinite(raw)) splitRatio.value = normalizeRatio(raw)
     }
+  } catch {
+    // ignore
+  }
+  try {
+    const stored = localStorage.getItem(WIDE_SCREEN_CHAT_COLLAPSED_KEY)
+    if (stored !== null) chatCollapsed.value = stored === '1'
   } catch {
     // ignore
   }
@@ -103,7 +116,7 @@ function initWideScreen() {
 /** Returns the shared wide-screen state refs (initializes once). */
 export function useWideScreenLayout() {
   initWideScreen()
-  return { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed }
+  return { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed, chatCollapsed }
 }
 
 /** Ref access for useTabDrawer (init once, return only the refs it needs). */
@@ -119,7 +132,28 @@ export function setActivePane(pane: 'left' | 'right') {
 
 /** Collapse (true) or expand (false) the wide-screen left pane. */
 export function setLeftCollapsed(collapsed: boolean) {
+  // Mutual-exclusion guard: the left pane cannot be collapsed while the right
+  // (chat) pane is hidden — otherwise both panes would be display:none and the
+  // content area would go blank. When the chat pane is hidden the left pane
+  // already takes the full width, so collapsing it is a no-op anyway.
+  if (collapsed && chatCollapsed.value) return
   leftCollapsed.value = collapsed
+}
+
+/**
+ * Collapse (true, hide chat) or expand (false, show chat) the wide-screen right
+ * pane. Persisted so the chat stays hidden across reloads.
+ */
+export function setChatCollapsed(collapsed: boolean) {
+  chatCollapsed.value = collapsed
+  // Mutual-exclusion guard: hiding the chat pane forces the left pane back open
+  // so there is always at least one visible pane (see setLeftCollapsed).
+  if (collapsed) leftCollapsed.value = false
+  try {
+    localStorage.setItem(WIDE_SCREEN_CHAT_COLLAPSED_KEY, collapsed ? '1' : '0')
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -176,6 +210,7 @@ export function resetWideScreenState() {
   isWideScreen.value = false
   activePane.value = 'right'
   leftCollapsed.value = false
+  chatCollapsed.value = false
   sideEffects = null
   setActiveTab = null
 }

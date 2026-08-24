@@ -43,6 +43,12 @@
               <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(tab) }" @animationend="wideDockBadgeAnimEnd(tab)">{{ formatBadgeCount(wideDockBadgeCount(tab)) }}</span>
             </div>
           </div>
+          <!-- Chat visibility toggle pinned to the bottom of the vertical dock -->
+          <div class="wide-dock-bottom">
+            <button class="dock-btn" :class="{ active: !chatCollapsed }" @click.stop="handleWideDockChatToggle" :title="chatToggleTitle" :aria-label="chatToggleTitle" :aria-pressed="!chatCollapsed">
+              <component :is="chatCollapsed ? MessageSquareOff : MessageSquare" />
+            </button>
+          </div>
         </div>
 
         <div class="content-area" id="contentArea">
@@ -50,6 +56,7 @@
             :enabled="isWideScreen"
             :ratio="splitRatio"
             :collapsed="leftCollapsed"
+            :right-collapsed="chatCollapsed && isWideScreen"
             @update:ratio="onSplitRatioChange"
           >
             <template #left>
@@ -398,7 +405,7 @@ import { resolveThemeId, applyThemeAttributes } from '@/utils/themeMeta'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
-import { MessageSquare, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -480,6 +487,7 @@ import {
   switchLeftTab,
   setSplitRatio,
   setLeftCollapsed,
+  setChatCollapsed,
   registerWideScreenCallbacks,
   WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
@@ -586,7 +594,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
 const activeTab = ref('chat')
 
 // ── Wide-screen layout state ──
-const { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed } = useWideScreenLayout()
+const { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed, chatCollapsed } = useWideScreenLayout()
 
 const chatActive = computed(() => (isWideScreen.value ? 'chat' : activeTab.value))
 const leftPanelActive = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
@@ -600,6 +608,16 @@ const fileManagerShortcutActive = computed(() => (isWideScreen.value ? activePan
 
 function onSplitRatioChange(ratio) {
   setSplitRatio(ratio)
+}
+
+// Chat visibility toggle (wide-screen dock bottom button): hide → the chat pane
+// is removed and the left pane takes the full width; show → the split view is
+// restored. Hiding routes focus to the left pane so the user keeps working
+// there (chat shortcuts are intentionally inactive while hidden).
+function handleWideDockChatToggle() {
+  const hiding = !chatCollapsed.value
+  setChatCollapsed(hiding)
+  if (hiding) setActivePane('left')
 }
 
 // Clicking into the left pane must also move keyboard focus out of any text
@@ -619,6 +637,10 @@ function onLeftPanePointerDown() {
 // Dock active indicator — water-drop sliding highlight
 // Dynamic button count: chat, browse, view, history, [inline overflow...], [overflow btn]
 const DOCK_STEP = 46 // 34 (btn width) + 12 (gap)
+// Wide dock's .wide-dock-center top padding; kept in sync with the CSS
+// padding-top so the absolutely-positioned active indicator lines up with the
+// first button (both bottom dock and wide dock use the same constant name).
+const WIDE_DOCK_PAD_TOP = 8
 
 const dockActiveIndex = computed(() => {
   const visibleTabs = ['chat', 'browse', 'view', 'history', ...inlineOverflowTabs.value]
@@ -1542,7 +1564,10 @@ watch(isWideScreen, (val) => {
     onTabSwitch('chat')
     overflowMenuOpen.value = false
     // Focus continuity: the pane the user was working in becomes the active one.
-    setActivePane(resolveActivePaneOnEnter(activeTab.value))
+    // If the chat pane is collapsed (persisted), focus must stay on the left
+    // pane — the chat pane is invisible, so right-pane shortcuts would fire
+    // against a hidden panel.
+    setActivePane(chatCollapsed.value ? 'left' : resolveActivePaneOnEnter(activeTab.value))
     // Wide-screen: the bottom dock is hidden, so bottom-sheet drawers must sit
     // flush with the screen bottom — don't let a stale --dock-height leave a gap.
     document.documentElement.style.setProperty('--dock-height', '0px')
@@ -1663,6 +1688,8 @@ function wideDockTabIcon(tab) {
 function wideDockTabTitle(tab) {
   return wideScreenTabMeta[tab] ? t(wideScreenTabMeta[tab].titleKey) : ''
 }
+/** Chat toggle button tooltip: points at the action that will happen on click. */
+const chatToggleTitle = computed(() => (chatCollapsed.value ? t('nav.showChat') : t('nav.hideChat')))
 function wideDockBtnClass(tab) {
   return {
     // When the left pane is collapsed no dock tab is active (VS Code-style).
@@ -1707,7 +1734,10 @@ const wideDockActiveIndex = computed(() => {
   return i >= 0 ? i : 0
 })
 const wideDockIndicatorStyle = computed(() => ({
-  transform: `translateY(${wideDockActiveIndex.value * DOCK_STEP}px)`,
+  // .wide-dock-center has a top padding (v-bind WIDE_DOCK_PAD_TOP); the
+  // indicator is absolutely positioned at top:0 (padding-box origin), so
+  // offset by the same value to stay vertically centered on the first button.
+  transform: `translateY(${wideDockActiveIndex.value * DOCK_STEP + WIDE_DOCK_PAD_TOP}px)`,
 }))
 
 const isOverflowTabActive = computed(() => popupOverflowTabs.value.includes(activeTab.value))
@@ -2481,8 +2511,9 @@ onUnmounted(() => {
     flex-shrink: 0;
     width: 48px;
     display: flex;
-    align-items: flex-start;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
     background: var(--bg-primary);
     border-right: 1px solid var(--border-color);
     -webkit-tap-highlight-color: transparent;
@@ -2491,19 +2522,34 @@ onUnmounted(() => {
 
 .wide-dock-center {
     position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
     width: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 12px;
+    /* Keep in sync with the JS constant WIDE_DOCK_PAD_TOP — the absolute
+       active indicator offsets by the same value to stay centered. */
+    padding-top: v-bind(WIDE_DOCK_PAD_TOP + 'px');
     /* All tabs are always rendered inline; on a very short window the dock
        scrolls instead of collapsing buttons into a menu. */
-    max-height: 100%;
     overflow-y: auto;
     scrollbar-width: none;
 }
 .wide-dock-center::-webkit-scrollbar {
     display: none;
+}
+
+/* Bottom section of the vertical dock: chat visibility toggle. The tab group
+   (.wide-dock-center) grows and scrolls; this stays pinned at the bottom. */
+.wide-dock-bottom {
+    flex-shrink: 0;
+    margin-top: auto;
+    padding-bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 /* VS Code activity-bar style active highlight: faint translucent theme tint

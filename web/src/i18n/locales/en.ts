@@ -56,6 +56,8 @@ export default {
     refreshed: 'Refreshed',
     more: 'More',
     settings: 'Settings',
+    hideChat: 'Hide chat area',
+    showChat: 'Show chat area',
   },
   toast: {
     portForwardAppOnly: 'Port mapping is only available in the mobile app',
