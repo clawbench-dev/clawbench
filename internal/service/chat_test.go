@@ -3116,14 +3116,14 @@ func TestGetChatHistoryPaged_LimitAndBeforeID(t *testing.T) {
 	}
 
 	// Get last 2 messages with limit only (no cursor)
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 2, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 2, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 	assert.Equal(t, "msg 3", msgs[0].Content)
 	assert.Equal(t, "msg 4", msgs[1].Content)
 
 	// Get 2 messages before the last message (cursor-based)
-	msgs, _, err = service.GetChatHistoryPaged("/project", "claude", sid, 2, int(msgIDs[4]))
+	msgs, _, _, err = service.GetChatHistoryPaged("/project", "claude", sid, 2, int(msgIDs[4]))
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 	assert.Equal(t, "msg 2", msgs[0].Content)
@@ -3201,7 +3201,7 @@ func TestGetChatHistoryPaged_NoLimit(t *testing.T) {
 	assert.NoError(t, err)
 
 	// limit=0 returns all messages
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 }
@@ -3217,7 +3217,7 @@ func TestGetChatHistoryPaged_LimitOnly(t *testing.T) {
 	}
 
 	// limit=3, no cursor — should return the 3 most recent
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 3, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 3, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 3)
 	assert.Equal(t, "msg 2", msgs[0].Content) // oldest of the 3
@@ -3229,7 +3229,7 @@ func TestGetChatHistoryPaged_Empty(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "Empty Paged")
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 10, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 10, 0)
 	assert.NoError(t, err)
 	assert.Empty(t, msgs)
 }
@@ -3253,7 +3253,7 @@ func TestGetChatHistoryPaged_ReturnsQueueFields(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 
@@ -3269,6 +3269,162 @@ func TestGetChatHistoryPaged_ReturnsQueueFields(t *testing.T) {
 		}
 	}
 	assert.True(t, foundQueued, "queued message should be returned by GetChatHistoryPaged")
+}
+
+// TestAddQueuedMessage_Basic verifies that AddQueuedMessage persists a message
+// with queued=1 + queue_id, and returns a positive id.
+func TestAddQueuedMessage_Basic(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Basic")
+
+	id, err := service.AddQueuedMessage("/project", "claude", sid, "hello", nil, "pending-1", "")
+	assert.NoError(t, err)
+	assert.Greater(t, id, int64(0))
+
+	var queueID string
+	var queued, indexed int
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT queue_id, queued, indexed FROM chat_history WHERE id = ?", id,
+	).Scan(&queueID, &queued, &indexed)
+	assert.NoError(t, err)
+	assert.Equal(t, "pending-1", queueID)
+	assert.Equal(t, 1, queued, "queued message should have queued=1")
+	assert.Equal(t, 1, indexed, "queued message should be indexed=1 (skip RAG until drained)")
+}
+
+// TestAddQueuedMessage_SetsSessionTitleOnFirstMessage verifies B3: the first
+// user message updates the session title (reusing AddChatMessage's logic).
+func TestAddQueuedMessage_SetsSessionTitleOnFirstMessage(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Initial")
+
+	id, err := service.AddQueuedMessage("/project", "claude", sid, "help me fix the build", nil, "pending-1", "")
+	assert.NoError(t, err)
+	assert.Greater(t, id, int64(0))
+
+	var title string
+	err = service.UnsafeDBForTest().QueryRow("SELECT title FROM chat_sessions WHERE id = ?", sid).Scan(&title)
+	assert.NoError(t, err)
+	assert.Equal(t, "help me fix the build", title, "first user message should update session title")
+}
+
+// TestAddQueuedMessage_WithFiles verifies file attachment persistence.
+func TestAddQueuedMessage_WithFiles(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Files")
+
+	files := []model.FileEntry{{Path: "/src/a.go", IsDir: false}}
+	id, err := service.AddQueuedMessage("/project", "claude", sid, "", files, "pending-2", "")
+	assert.NoError(t, err)
+	assert.Greater(t, id, int64(0))
+
+	msgs, err := service.GetChatHistory("/project", "claude", sid)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 1)
+	assert.Len(t, msgs[0].Files, 1)
+	assert.Equal(t, "/src/a.go", msgs[0].Files[0].Path)
+}
+
+// TestAddQueuedMessage_EmptyQueueID verifies auto-generated queue_id when none provided.
+func TestAddQueuedMessage_EmptyQueueID(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue AutoID")
+
+	id, err := service.AddQueuedMessage("/project", "claude", sid, "msg", nil, "", "")
+	assert.NoError(t, err)
+
+	var queueID string
+	err = service.UnsafeDBForTest().QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", id).Scan(&queueID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, queueID, "auto-generated queue_id should not be empty")
+}
+
+// TestDequeueQueuedMessage_FIFO verifies messages are dequeued in insertion order.
+func TestDequeueQueuedMessage_FIFO(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue FIFO")
+
+	id1, _ := service.AddQueuedMessage("/project", "claude", sid, "first", nil, "q-1", "")
+	id2, _ := service.AddQueuedMessage("/project", "claude", sid, "second", nil, "q-2", "")
+	assert.Less(t, id1, id2)
+
+	msg, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "first", msg.Content)
+	assert.Equal(t, "q-1", msg.QueueID)
+
+	msg, ok, err = service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "second", msg.Content)
+	assert.Equal(t, "q-2", msg.QueueID)
+}
+
+// TestDequeueQueuedMessage_Empty verifies empty queue returns (msg, false, nil).
+func TestDequeueQueuedMessage_Empty(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Empty")
+
+	msg, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, int64(0), msg.ID)
+}
+
+// TestDequeueQueuedMessage_SetsQueuedZero verifies the row stays but queued flips to 0.
+func TestDequeueQueuedMessage_SetsQueuedZero(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Consumed")
+
+	id, _ := service.AddQueuedMessage("/project", "claude", sid, "msg", nil, "q-1", "")
+	_, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+
+	var queued int
+	err = service.UnsafeDBForTest().QueryRow("SELECT queued FROM chat_history WHERE id = ?", id).Scan(&queued)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, queued, "dequeued message should have queued=0 but stay in DB")
+
+	// Second dequeue finds nothing (the row is no longer queued).
+	_, ok, err = service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// TestDequeueQueuedMessage_WithFiles verifies file entries survive dequeue.
+func TestDequeueQueuedMessage_WithFiles(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Files2")
+
+	files := []model.FileEntry{{Path: "/src/b.go", IsDir: false}}
+	_, _ = service.AddQueuedMessage("/project", "claude", sid, "with files", files, "q-1", "")
+
+	msg, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Len(t, msg.Files, 1)
+	assert.Equal(t, "/src/b.go", msg.Files[0].Path)
+}
+
+// TestGetChatHistoryPaged_ReturnsQueuedCount verifies the queuedCount return
+// value (plan C) so the frontend can compute hasMore excluding queued messages.
+func TestGetChatHistoryPaged_ReturnsQueuedCount(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Paged QueuedCount")
+
+	// 2 normal messages + 2 queued messages.
+	_, _ = service.AddChatMessage("/project", "claude", sid, "user", "normal1", nil, false, "")
+	_, _ = service.AddChatMessage("/project", "claude", sid, "user", "normal2", nil, false, "")
+	_, _ = service.AddQueuedMessage("/project", "claude", sid, "queued1", nil, "q-1", "")
+	_, _ = service.AddQueuedMessage("/project", "claude", sid, "queued2", nil, "q-2", "")
+
+	msgs, total, queuedCount, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 4, "messages array includes queued rows")
+	assert.Equal(t, 4, total, "total includes queued rows")
+	assert.Equal(t, 2, queuedCount, "queuedCount counts queued rows")
 }
 
 // ---------- CreateSession: session_type default ----------
@@ -3785,7 +3941,7 @@ func TestGetChatHistoryPaged_SummaryStripsContent(t *testing.T) {
 	}
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", cards))
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "assistant", msgs[0].Role)
@@ -3807,7 +3963,7 @@ func TestGetChatHistoryPaged_SummaryPreservesMetadata(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", nil))
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 
@@ -3841,7 +3997,7 @@ func TestGetChatHistoryPaged_SummaryKeepsStreamingContent(t *testing.T) {
 	cards := &model.SummaryCards{TaskIDs: []int64{7}}
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", cards))
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.True(t, msgs[0].Streaming)
@@ -3861,7 +4017,7 @@ func TestGetChatHistoryPaged_SummaryKeepsEmptySummaryContent(t *testing.T) {
 	// Empty summary — the frontend omits content for summarized messages.
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "", nil))
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.NotEqual(t, "", msgs[0].Content, "messages with an empty summary must keep content so they remain visible")
