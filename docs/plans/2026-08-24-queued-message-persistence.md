@@ -26,6 +26,9 @@
 | **M3** | 崩溃后残留 queued=1 无执行策略 | **不做全局扫表自愈**；用户下次发消息触发消费或 DELETE 取消 |
 | **M4** | 排队消息污染 RAG 索引 | `AddQueuedMessage` 设 `indexed=1` 跳过索引，drain 后 `FinalizeStreamingMessage` 置 `indexed=0` |
 | **M5** | 入队启动 goroutine 需 i18n 上下文 | **复用 service 层 `executeStreamRunShared`/`LaunchSessionExecution`**（无 `r` 依赖），非 `chat.go` 版本 |
+| **D1** | B2 自愈机制实现选择（2026-08-24 拍板） | **入队后延迟复查 goroutine**（改入队路径），不碰 `RunDrainLoop` 核心循环 |
+| **D2** | 分页方案 C API（2026-08-24 拍板） | `GetChatHistoryPaged` 返回 `(messages, total, queuedCount, err)` |
+| **D3** | `POST /api/ai/chat` 去留（2026-08-24 拍板） | **彻底合并**：`POST /api/ai/chat` 发送能力删除，统一走 `/api/ai/queue`；fallback 路径改走 queue + 补 queueId |
 
 ---
 
@@ -842,34 +845,37 @@ export interface ChatMessage {
 
 ---
 
-### 阻断 5：/api/ai/chat 端点去留
+### 阻断 5：/api/ai/chat 端点去留（修订版——彻底合并）
 
-**问题**：方案说"一个发送端点统一"但未说明 `POST /api/ai/chat` 的命运。它仍被前端 `useSessionIdentity.ts` 的 fallback 路径直接调用。
+**问题**：方案说"一个发送端点统一"但未说明 `POST /api/ai/chat` 的命运。它仍被前端 `useSessionIdentity.ts:656-691` 的 fallback 路径直接调用（ChatPanel 未挂载时，`useQuoteQuestion.ts:259` 引用提问条触发）。
 
-**方案**：**保留 `POST /api/ai/chat`，但内部逻辑改为调用统一入队函数**。
+**决策（2026-08-24 用户拍板）**：**彻底合并**——`POST /api/ai/chat` 的发送能力删除，统一走 `POST /api/ai/queue`。`/api/ai/chat` 仅保留 GET（loadHistory）。
 
 ```
-POST /api/ai/chat  →  内部调用 handleUnifiedEnqueue（同 /api/ai/queue 的逻辑）
-POST /api/ai/queue →  内部调用 handleUnifiedEnqueue
+POST /api/ai/queue → handleUnifiedEnqueue（唯一发送入口）
+POST /api/ai/chat → 删除（发送能力移除，GET 保留）
 ```
 
-具体：
-- 抽取 `handleUnifiedEnqueue(w, r, projectPath, sessionID, req)` 共享函数
-- `POST /api/ai/chat` 解析请求后调用 `handleUnifiedEnqueue`，行为与 `/api/ai/queue` 完全一致
-- 前端主路径（`ChatPanelContent`）统一走 `/api/ai/queue`
-- 前端 fallback 路径（`useSessionIdentity.ts`，ChatPanel 未挂载时）继续走 `/api/ai/chat`，无需改
-- `GET /api/ai/chat` 保留（loadHistory），响应删 `queue` 字段（已无内存队列）
-
-**注意**：`POST /api/ai/chat` 请求体需补 `queueId` 字段（fallback 路径也生成 queueId），否则后端无法匹配 `drainQueueMessage` 的 queueId → 气泡合并。fallback 路径改写：
+**前端 fallback 路径改写**（`useSessionIdentity.ts:656-691`）：`identity.sendMessage` 的 fallback 从 `POST /api/ai/chat` 改为 `POST /api/ai/queue`，并生成 queueId：
 
 ```typescript
-// useSessionIdentity.ts fallback
+// useSessionIdentity.ts fallback 改写
 const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-await fetch(url, {
+await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sid)}`, {
     method: 'POST',
-    body: JSON.stringify({ message: text, queueId, filePaths: [], ... }),
+    body: JSON.stringify({
+        message: text, queueId, filePaths: [],
+        modelId: currentModelId.value || undefined,
+        thinkingEffort: currentThinkingEffort.value || undefined,
+        transport: currentTransport.value || undefined,
+        clientId: localStorage.getItem('clawbench_client_id') || undefined,
+    }),
 })
 ```
+
+**影响评估（破坏 POST /api/ai/chat 的代价）**：fallback 触发面窄（仅 ChatPanel 未挂载 + 引用提问），失败是"发送报错"而非数据损坏，且正常聊天（ChatPanel 挂载走 `_sendMessage`）完全不受影响。合并后后端只维护一个发送路径，无重复逻辑。
+
+**后端 handler 变更**：`internal/handler/chat.go` 的 `POST` 分支删除（或改为 405），`ServeChatHistory` 仅剩 GET。需检查 `main.go` 路由注册中 `POST /api/ai/chat` 的处理。
 
 ---
 
@@ -1104,9 +1110,9 @@ const hasMore = computed(() => {
 2. **Task 2**：后端——新增 `AddQueuedMessage`（复用 title/updated_at，B3；设 `indexed=1` 跳过 RAG，M4）/`DequeueQueuedMessage`（事务原子 + 区分 DB 错误，B4）/`ClearQueuedMessages`/`GetQueuedQueueIDs`/`GetQueuedMessages`/`GetQueuedCount` DB 函数 + 原子消费测试；`GetChatHistoryPaged` 返回双 count（方案 C）
 3. **Task 3**：后端——抽 `startSessionRun` 共享 goroutine 启动 + 保留 `sessionDrainChans`/`SignalDrain`/`WaitForEnqueue` 移至 `drain.go` + `drain.go` 改用 DB 消费 + 删 `PersistUser` + **drain 退出前 double-check 自愈（B2）** + 测试
 4. **Task 4**：后端——`queue.go` 整个删除；`handleQueueEnqueue`/`handleQueueGet`/`handleQueueDelete` 改用 DB；`handleUnifiedEnqueue` 抽取 + 删 `needs_start` + 测试
-5. **Task 5**：后端——`chat.go` 入队分支改 `AddQueuedMessage` + `SignalDrain`；`POST /api/ai/chat` 调用 `handleUnifiedEnqueue`；GET 响应删 `queue` 字段（先 grep Android/Electron 依赖，m7）+ 测试
+5. **Task 5**：后端——`chat.go` 入队分支改 `AddQueuedMessage` + `SignalDrain`；**`POST /api/ai/chat` 发送分支删除（彻底合并，仅留 GET）**；GET 响应删 `queue` 字段（先 grep Android/Electron 依赖，m7）+ 测试
 6. **Task 6**：后端——`SessionMessenger` 接口改签名 + `main.go` 实现改写 + `session_command.go` 改写 + `CancelSession`（三处 ClearQueue，m6）/`ForceCancelSession` 改 `ClearQueuedMessages` + 补 `queue_cancel` 发射 + 测试
 7. **Task 7**：前端——`ChatMessage` 加 `queueId`/`queued`；`chatStreamUtils` 的 `TRANSIENT_BASE` **改名 `LARGE_BASE` 保留（B1）**、`isTransientMessage` 删 `pending` 分支、保留 `afterSort`/`seq`/`generateDrainId`；`drainQueueMessage` 采用 db_id + 保留 queueId 匹配 + **`cancelPendingMessages` 扩展 queueId 匹配（B5）** + 测试
 8. **Task 8**：前端——`useChatSession` 删 `appendQueueItems`/ghost + 补 `queue_id` 匹配 pending + **`hasMore` 按方案 C 剔除排队消息** + 测试
-9. **Task 9**：前端——`chatQueueSend` 删 `needsStart`/`resubmit`；`useChatStream` 保留 `queue_cancel` handler；`useSessionIdentity` fallback 路径加 `queueId` + 测试
+9. **Task 9**：前端——`chatQueueSend` 删 `needsStart`/`resubmit`；`useChatStream` 保留 `queue_cancel` handler；**`useSessionIdentity` fallback 从 `POST /api/ai/chat` 改走 `/api/ai/queue` + 生成 queueId** + 测试
 10. **Task 10**：全量回归——`go test ./...` + `npm test` + `vue-tsc` + 排序场景 + 手动验证
