@@ -425,7 +425,6 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
     const isVideo = videoExts.some(ext => lower.endsWith(ext))
     const officeExts = ['.docx', '.xlsx', '.pptx', '.xls']
     const isOffice = officeExts.some(ext => lower.endsWith(ext))
-    const isExcalidraw = lower.endsWith('.excalidraw')
     if (isPdf) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isPdf: true }
@@ -451,11 +450,9 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         state.currentFile = { name: fileName, path, content: null, isOffice: true }
         saveOpenFile(); return true
     }
-    if (isExcalidraw) {
-        const fileName = baseName(path)
-        state.currentFile = { name: fileName, path, content: null, isExcalidraw: true }
-        saveOpenFile(); return true
-    }
+    // .excalidraw files need their JSON content (the scene), so they go
+    // through the normal fetch path below instead of short-circuiting like
+    // media. The backend returns content + subtype="excalidraw".
 
     try {
         // Absolute paths (project-external) use query parameter to avoid URL path
@@ -502,6 +499,10 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         const htmlExts = ['.html', '.htm', '.xhtml']
         if (htmlExts.some(ext => lower.endsWith(ext))) {
             data.isHtml = true
+        }
+        // Detect Excalidraw files (backend reports subtype="excalidraw")
+        if (data.subtype === 'excalidraw') {
+            data.isExcalidraw = true
         }
         // Backend may also mark as binary if the file somehow passes frontend check
         // When refreshing the same file (auto-refresh from file watcher),

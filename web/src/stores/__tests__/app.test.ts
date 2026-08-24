@@ -413,11 +413,20 @@ describe('selectFile excalidraw detection', () => {
     store.state.projectRoot = '/tmp/project'
   })
 
-  it('flags .excalidraw files without fetching content', async () => {
+  it('flags .excalidraw files based on backend subtype', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        name: 'flow.excalidraw',
+        path: '/tmp/project/flow.excalidraw',
+        content: '{"type":"excalidraw","version":2,"elements":[]}',
+        subtype: 'excalidraw',
+      }),
+    })
     const ok = await store.selectFile('/tmp/project/flow.excalidraw')
     expect(ok).toBe(true)
     expect(store.state.currentFile?.isExcalidraw).toBe(true)
-    expect(store.state.currentFile?.path).toBe('/tmp/project/flow.excalidraw')
+    expect(store.state.currentFile?.content).toContain('excalidraw')
   })
 
   it('does not flag non-excalidraw files', async () => {
