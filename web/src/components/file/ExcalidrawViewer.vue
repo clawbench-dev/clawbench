@@ -4,7 +4,7 @@
       ref="frameRef"
       class="excalidraw-frame"
       src="/vendor/excalidraw/index.html"
-      sandbox="allow-scripts allow-modals allow-downloads allow-popups"
+      sandbox="allow-scripts allow-same-origin allow-modals allow-downloads allow-popups"
     />
   </div>
 </template>

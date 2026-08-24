@@ -75,11 +75,15 @@ describe('ExcalidrawViewer', () => {
     const iframe = wrapper.find('iframe')
     expect(iframe.exists()).toBe(true)
     expect(iframe.attributes('src')).toBe('/vendor/excalidraw/index.html')
-    // Sandbox must NOT allow same-origin + scripts together (ISS-021).
+    // The Excalidraw host is a trusted first-party static build served at
+    // /vendor/excalidraw/ (same origin). It needs allow-same-origin so ES
+    // module scripts load (opaque origins are CORS-blocked) and postMessage
+    // with the parent works. Unlike the HTML preview iframe (ISS-021), this
+    // does NOT render untrusted user content.
     const sandbox = iframe.attributes('sandbox') || ''
     const tokens = sandbox.split(/\s+/).filter(Boolean)
     expect(tokens).toContain('allow-scripts')
-    expect(tokens).not.toContain('allow-same-origin')
+    expect(tokens).toContain('allow-same-origin')
   })
 
   it('sends the initial load after the iframe signals ready', async () => {

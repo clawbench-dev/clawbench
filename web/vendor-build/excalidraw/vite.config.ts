@@ -13,6 +13,10 @@ import { resolve } from 'path'
 export default defineConfig({
   plugins: [react()],
   root: '.',
+  // The host page lives under /vendor/excalidraw/, so asset URLs must be
+  // prefixed accordingly. Without this, index.html references /assets/* at the
+  // site root → 404 (and, in the sandboxed iframe, CORS-blocked).
+  base: '/vendor/excalidraw/',
   build: {
     // Output into the ROOT public/ dir (same as the main Vue build's outDir).
     // build.sh copies public/ → internal/frontend/dist → go:embed, so anything
