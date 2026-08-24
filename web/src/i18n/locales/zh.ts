@@ -559,6 +559,10 @@ export default {
       close: '关闭',
       retry: '重试',
       continue: '继续',
+      resetSession: '重置会话',
+      resetSessionConfirm: '将重启 AI 会话连接以恢复响应，聊天记录和上下文保留，确定继续？',
+      resetSessionDone: '会话已重置，正在重新发送消息',
+      resetSessionFailed: '重置会话失败',
       detailsUnavailable: '详情暂不可用',
       detailsLoadFailed: '加载失败',
       warningReasons: {

@@ -37,6 +37,7 @@
         @render-flush="$emit('render-flush')"
         @toggle-summary="$emit('toggle-summary', msg.id)"
         @resume-session="$emit('resume-session', $event)"
+        @reset-session="$emit('reset-session', $event)"
 
       />
     </div>
@@ -162,7 +163,7 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'fork-from-message'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'fork-from-message', 'reset-session'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)

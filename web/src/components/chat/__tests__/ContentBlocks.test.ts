@@ -92,6 +92,7 @@ const i18n = createI18n({
         thinkingLoadFailed: 'Failed to load thinking',
         retry: 'Retry',
         continue: 'Continue',
+        resetSession: 'Reset session',
       },
     },
     tool: { askUser: { name: 'Ask' } },
@@ -365,6 +366,50 @@ describe('ContentBlocks', () => {
         blocks: [{ type: 'warning', reason: 'parse_error', text: 'Parse error' }],
       })
       expect(wrapper.find('.warning-continue-btn').exists()).toBe(false)
+    })
+
+    it('shows reset button on empty warning and emits reset-session on click', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'empty', text: 'AI returned no content' }],
+      })
+      const btn = wrapper.find('.warning-reset-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.text()).toBe('Reset session')
+      await btn.trigger('click')
+      expect(wrapper.emitted('reset-session')).toBeTruthy()
+      expect(wrapper.emitted('reset-session')![0]).toEqual([{ reason: 'empty' }])
+    })
+
+    it('shows reset button on error block', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'error', reason: 'backend_exit', text: 'AI backend exited' }],
+      })
+      const btn = wrapper.find('.warning-reset-btn')
+      expect(btn.exists()).toBe(true)
+      await btn.trigger('click')
+      expect(wrapper.emitted('reset-session')).toBeTruthy()
+      expect(wrapper.emitted('reset-session')![0]).toEqual([{ reason: 'backend_exit' }])
+    })
+
+    it('shows reset button on severe warning (timeout)', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'timeout', text: 'Timed out' }],
+      })
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(true)
+    })
+
+    it('does not show reset button for user_cancel', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'user_cancel', text: 'Cancelled' }],
+      })
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+    })
+
+    it('does not show reset button for warning without a resetable reason', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'warning', reason: 'stderr', text: 'stderr output' }],
+      })
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
     })
   })
 

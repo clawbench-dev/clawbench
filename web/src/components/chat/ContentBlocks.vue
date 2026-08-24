@@ -115,11 +115,17 @@
       <div v-else-if="block.type === 'error'" class="chat-error-card">
         <AlertTriangle :size="14" class="error-icon" />
         <span class="error-text">{{ getWarningText(block) }}</span>
+        <button v-if="isResetableReason(block.reason)" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+          {{ t('chat.contentBlocks.resetSession') }}
+        </button>
       </div>
       <!-- Warning block: severe (disconnect/timeout/restart) renders as error-level red -->
       <div v-else-if="block.type === 'warning' && isSevereWarning(block)" class="chat-error-card">
         <AlertTriangle :size="14" class="error-icon" />
         <span class="error-text">{{ getWarningText(block) }}</span>
+        <button v-if="isResetableReason(block.reason)" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+          {{ t('chat.contentBlocks.resetSession') }}
+        </button>
       </div>
       <!-- Warning block: normal (parse errors, stderr) renders as amber -->
       <div v-else-if="block.type === 'warning'" class="chat-warning-card">
@@ -127,6 +133,9 @@
         <span class="warning-text">{{ getWarningText(block) }}</span>
         <button v-if="block.reason === 'restart'" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
           {{ t('chat.contentBlocks.continue') }}
+        </button>
+        <button v-if="isResetableReason(block.reason)" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+          {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
       <!-- Scheduled task card(s) — simplified: click navigates to Tasks tab -->
@@ -269,6 +278,14 @@ async function fetchToolCallInputForAutoExpand(block: any, msgId: string | numbe
 
 // Re-export utility functions with i18n context bound
 function getWarningText(block: any) { return getWarningTextUtil(block, t) }
+
+/** Reasons that indicate a stuck/broken agent session — showing a "reset session"
+ *  button lets the user recycle the agent connection and recover.
+ *  User-initiated cancels (user_cancel/context_cancel) are excluded. */
+const RESETABLE_REASONS = new Set(['empty', 'request_failed', 'backend_exit', 'timeout', 'parse_error', 'panic', 'disconnect'])
+function isResetableReason(reason: string | undefined): boolean {
+  return !!reason && RESETABLE_REASONS.has(reason)
+}
 function statusClass(task: any) { return statusClassUtil(task) }
 function statusLabel(task: any) { return statusLabelUtil(task, t) }
 function statusLabelSimple(task: any) { return statusLabelSimpleUtil(task, t) }
@@ -330,7 +347,7 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session', 'reset-session'])
 
 const elapsedSeconds = ref(0)
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
@@ -952,6 +969,28 @@ onUnmounted(() => {
 
 @media (hover: hover) {
   .chat-warning-card .warning-continue-btn:hover {
+    background: #d97706;
+  }
+}
+
+/* Reset-session button — same amber styling as the continue button, matching
+   the warning banner color scheme. */
+.warning-reset-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #f59e0b;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+@media (hover: hover) {
+  .warning-reset-btn:hover {
     background: #d97706;
   }
 }

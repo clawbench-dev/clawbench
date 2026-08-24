@@ -28,6 +28,7 @@
       @toggle-summary="handleToggleSummary"
       @ensure-content="(msg) => ensureMessageContent(msg)"
       @resume-session="handleResumeSession"
+      @reset-session="handleResetSession"
       @fork-from-message="handleForkFromMessage"
     />
 
@@ -1032,6 +1033,25 @@ async function handleRefreshSession() {
   } finally {
     refreshingSession.value = false
   }
+}
+
+// Reset a stuck ACP agent session: kill the connection so the next prompt
+// starts a fresh agent session, then re-send the last user message to recover.
+async function handleResetSession() {
+    const sid = identity.currentSessionId.value
+    if (!sid) return
+    const confirmed = await dialog.confirm(t('chat.contentBlocks.resetSessionConfirm'))
+    if (!confirmed) return
+    try {
+        await apiPost('/api/ai/session/reset', { sessionId: sid })
+        toast.show(t('chat.contentBlocks.resetSessionDone'), { icon: '🔄', type: 'success' })
+        // Re-send the last persisted user message so the conversation continues
+        // in the freshly-reset agent session.
+        const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user' && !m.pending)
+        if (lastUserMsg?.content) await sendMessage(lastUserMsg.content)
+    } catch {
+        toast.show(t('chat.contentBlocks.resetSessionFailed'), { icon: '⚠️', type: 'error' })
+    }
 }
 
 // Resume a session from RAG search results (direct event, no detail drawer)
