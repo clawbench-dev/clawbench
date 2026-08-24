@@ -4,7 +4,7 @@
     <!-- Logo: hidden in APP mode -->
     <img class="header-logo" src="/logo-64.png" alt="ClawBench">
 
-    <div class="badge-capsule">
+    <div class="badge-capsule" :class="{ 'badge-pulse': badgePulse }" @animationend="badgePulse = false">
       <div class="project-dropdown-wrapper" ref="dropdownRef">
         <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
           <Projector :size="12" />
@@ -12,7 +12,7 @@
         </button>
       </div>
       <div v-if="gitBranch" class="badge-capsule-divider"></div>
-      <div v-if="gitBranch" class="branch-badge" :class="{ 'branch-switch': branchAnimating }" :title="gitBranch" @click="toggleBranchDropdown" @animationend="branchAnimating = false">
+      <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown">
         <GitBranch :size="12" class="branch-icon" />
         <span class="branch-name">{{ gitBranch }}</span>
       </div>
@@ -598,14 +598,28 @@ const projectName = computed(() => {
 
 // Git branch
 const gitBranch = computed(() => store.state.gitBranch)
-const branchAnimating = ref(false)
 
-// Trigger animation when branch changes (skip initial value)
+// Badge capsule bounce: whenever any badge content (project name, current file,
+// branch) changes, the whole capsule pulses once. `badgePulse` is a one-shot
+// flag: set false → nextTick → true re-arms the CSS animation, and the
+// @animationend handler resets it so a later change can re-trigger.
+const badgePulse = ref(false)
+
+function pulseBadge() {
+    badgePulse.value = false
+    nextTick(() => { badgePulse.value = true })
+}
+
 watch(gitBranch, (newVal, oldVal) => {
-    if (oldVal !== undefined && newVal !== oldVal) {
-        branchAnimating.value = false
-        nextTick(() => { branchAnimating.value = true })
-    }
+    if (oldVal !== undefined && newVal !== oldVal) pulseBadge()
+})
+
+watch(() => props.currentFileName, (newVal, oldVal) => {
+    if (oldVal !== undefined && newVal !== oldVal) pulseBadge()
+})
+
+watch(projectName, (newVal, oldVal) => {
+    if (oldVal !== undefined && newVal !== oldVal) pulseBadge()
 })
 
 function openHistory() {
@@ -1024,12 +1038,13 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     font-weight: 400;
 }
 
-/* Branch switch animation — pulse + glow on the capsule */
-.badge-capsule:has(.branch-switch) {
-    animation: branch-pulse 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+/* Badge content change animation — the whole capsule pulses once whenever the
+   project name, current file, or git branch changes. */
+.badge-capsule.badge-pulse {
+    animation: badge-pulse 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-@keyframes branch-pulse {
+@keyframes badge-pulse {
     0% {
         transform: scale(1);
         box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color) 50%, transparent);
