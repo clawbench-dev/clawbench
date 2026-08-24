@@ -67,6 +67,8 @@ export interface ClawBenchNative {
   shareFile(path: string, mime: string): Promise<void>
   shareFiles(paths: string, mimes: string): Promise<void>
 
+  /** Optional (Electron/Android): clear the HTTP cache and hard-reload the page. Used after upgrades. */
+  reloadApp?(): void | Promise<void>
   /** Optional (Electron): show a native OS notification. Click dispatches session/task navigation. */
   nativeNotify?(title: string, body: string, nav?: NotificationNav): Promise<void>
   /** Optional (Electron/Android): sync native UI (status bar, splash) with the app theme. */

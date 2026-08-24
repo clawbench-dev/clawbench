@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   shareFile: (path: string, mime: string) => invoke('native:share-file', path, mime),
   shareFiles: (paths: string, mimes: string) => invoke('native:share-files', paths, mimes),
   nativeNotify: (title: string, body: string, nav?: unknown) => invoke('native:notify', title, body, nav),
+  reloadApp: () => invoke('native:reload-app'),
   setTheme: (theme: string) => { ipcRenderer.send('native:set-theme', theme) },
   getTheme: () => { try { return ipcRenderer.sendSync('native:get-theme') } catch { return 'dark' } },
 })

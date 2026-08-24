@@ -2815,6 +2815,22 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Clear the WebView HTTP cache and hard-reload the page.
+         * Called by the frontend after a server upgrade completes so stale
+         * old-version assets (index.html / hash chunks) are not served from cache.
+         */
+        @JavascriptInterface
+        public void reloadApp() {
+            AppLog.i(TAG, "reloadApp: clearing cache and reloading");
+            activity.runOnUiThread(() -> {
+                if (activity.webView != null) {
+                    activity.webView.clearCache(true);
+                    activity.webView.reload();
+                }
+            });
+        }
+
+        /**
          * Share a file from the ClawBench server with another app via ACTION_SEND.
          * Downloads the file to a temp directory, then creates a share intent
          * with a FileProvider content URI.
