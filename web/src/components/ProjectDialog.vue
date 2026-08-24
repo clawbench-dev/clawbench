@@ -72,6 +72,7 @@ import FileIcon from './common/FileIcon.vue'
 import JumpDirDialog from './file/JumpDirDialog.vue'
 import { useDialog } from '@/composables/useDialog.ts'
 import { store } from '@/stores/app.ts'
+import { isWindowsAbsolutePath } from '@/utils/path'
 
 const { t } = useI18n()
 const dialog = useDialog()
@@ -142,7 +143,7 @@ function onBreadcrumbNavigate(path) {
   if (!path) {
     // Navigate to root
     browseNavigate('')
-  } else if (/^[A-Za-z]:/.test(path)) {
+  } else if (isWindowsAbsolutePath(path)) {
     // Windows path from breadcrumb — normalize forward slashes to backslashes
     browseNavigate(path.replace(/\//g, '\\'))
   } else {

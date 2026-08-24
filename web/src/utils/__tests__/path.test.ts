@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitPath, baseName, dirName, toRelativePath, joinPath, isWindowsAbsolutePath } from '@/utils/path.ts'
+import { splitPath, baseName, dirName, toRelativePath, joinPath, isWindowsAbsolutePath, normalizeSlashes, isAbsolutePath, toProjectRelative } from '@/utils/path.ts'
 
 describe('splitPath', () => {
   it('splits on forward slashes', () => {
@@ -94,6 +94,70 @@ describe('isWindowsAbsolutePath', () => {
 
   it('does not match Unix absolute paths', () => {
     expect(isWindowsAbsolutePath('/home/user/a.go')).toBe(false)
+  })
+})
+
+describe('normalizeSlashes', () => {
+  it('converts backslashes to forward slashes', () => {
+    expect(normalizeSlashes('E:\\git\\vllm-input\\test-results')).toBe('E:/git/vllm-input/test-results')
+  })
+
+  it('leaves forward-slash paths unchanged', () => {
+    expect(normalizeSlashes('/home/user/a.go')).toBe('/home/user/a.go')
+  })
+
+  it('handles mixed separators', () => {
+    expect(normalizeSlashes('C:/Users\\dev')).toBe('C:/Users/dev')
+  })
+})
+
+describe('isAbsolutePath', () => {
+  it('matches Unix absolute paths', () => {
+    expect(isAbsolutePath('/home/user/a.go')).toBe(true)
+  })
+
+  it('matches Windows drive absolute paths', () => {
+    expect(isAbsolutePath('E:/git/a.go')).toBe(true)
+    expect(isAbsolutePath('E:\\git\\a.go')).toBe(true)
+  })
+
+  it('matches UNC paths', () => {
+    expect(isAbsolutePath('\\\\server\\share\\a.go')).toBe(true)
+  })
+
+  it('does not match relative paths', () => {
+    expect(isAbsolutePath('src/main.go')).toBe(false)
+    expect(isAbsolutePath('a.go')).toBe(false)
+  })
+})
+
+describe('toProjectRelative', () => {
+  it('relativizes an absolute path under the root', () => {
+    expect(toProjectRelative('E:/git/vllm-input/internal/app', 'E:/git/vllm-input')).toBe('internal/app')
+  })
+
+  it('handles backslash root and path', () => {
+    expect(toProjectRelative('E:\\git\\vllm-input\\internal\\app', 'E:\\git\\vllm-input')).toBe('internal/app')
+  })
+
+  it('is case-insensitive for drive letters', () => {
+    expect(toProjectRelative('e:/git/vllm-input/internal/app', 'E:/git/vllm-input')).toBe('internal/app')
+  })
+
+  it('returns the path unchanged when not under the root', () => {
+    expect(toProjectRelative('D:/other/dir', 'E:/git/vllm-input')).toBe('D:/other/dir')
+  })
+
+  it('returns the path unchanged when root is empty', () => {
+    expect(toProjectRelative('E:/git/a.go', '')).toBe('E:/git/a.go')
+  })
+
+  it('relativizes Unix absolute paths under the root', () => {
+    expect(toProjectRelative('/home/user/project/src/main.go', '/home/user/project')).toBe('src/main.go')
+  })
+
+  it('does not relativize a path that merely shares a prefix without boundary', () => {
+    expect(toProjectRelative('E:/git/vllm-input-other/app', 'E:/git/vllm-input')).toBe('E:/git/vllm-input-other/app')
   })
 })
 

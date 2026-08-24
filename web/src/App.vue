@@ -406,7 +406,7 @@ import Lightbox from './components/media/Lightbox.vue'
 import ChatPanelContent from './components/chat/ChatPanelContent.vue'
 import FileManagerContent from './components/file/FileManagerContent.vue'
 import FileIcon from './components/common/FileIcon.vue'
-import { baseName, dirName, isWindowsAbsolutePath } from '@/utils/path.ts'
+import { baseName, dirName, isAbsolutePath } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
@@ -1358,7 +1358,7 @@ async function handleOverlayOpenFile(payload) {
         }
     }
     // Open as file in the overlay nav stack
-    const isExternal = path.startsWith('/') || isWindowsAbsolutePath(path)
+    const isExternal = isAbsolutePath(path)
     const ok = await store.selectFile(path)
     if (ok) {
         if (lineStart) markdownViewMode.value = 'raw'

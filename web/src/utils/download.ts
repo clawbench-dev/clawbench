@@ -1,4 +1,5 @@
 import { getNative } from '@/utils/clawbenchNative'
+import { isAbsolutePath } from '@/utils/path'
 
 /**
  * Download utilities shared across all components.
@@ -8,15 +9,6 @@ import { getNative } from '@/utils/clawbenchNative'
  * - downloadFileByPath() — download a file by relative or absolute path (web/app dispatch)
  * - downloadBlob()      — download client-side content as a file (blob → <a> or native bridge)
  */
-
-/**
- * Check if a path is an absolute path (external to the project).
- * On Unix: starts with /
- * On Windows: starts with a drive letter (C:\) or UNC (\\)
- */
-function isAbsolutePath(p: string): boolean {
-    return p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.startsWith('\\\\')
-}
 
 /**
  * Build a `/api/local-file/` URL with proper path encoding.

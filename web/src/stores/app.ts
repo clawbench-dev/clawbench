@@ -2,7 +2,7 @@
 import { reactive } from 'vue'
 import { apiGet, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
-import { baseName, dirName, isWindowsAbsolutePath } from '@/utils/path.ts'
+import { baseName, dirName, isAbsolutePath, normalizeSlashes, toProjectRelative } from '@/utils/path.ts'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -350,16 +350,13 @@ async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false
     // Normalize Windows backslashes to forward slashes so currentDir and item
     // data-path attributes use a consistent separator style (the Go backend
     // returns paths via filepath.ToSlash).
-    dir = dir.replace(/\\/g, '/')
+    dir = normalizeSlashes(dir)
     // Relativize an absolute path that lies inside the current project root.
     // /api/dir resolves relative paths against the project root, so passing an
-    // absolute drive path (E:/git/…, possibly from file search or chat
-    // annotation) must be converted to project-relative first. Without this the
-    // backend rejects it (AccessDenied).
-    const root = state.projectRoot ? state.projectRoot.replace(/\\/g, '/') : ''
-    if (root && isWindowsAbsolutePath(dir) && dir.toLowerCase().startsWith(root.toLowerCase() + '/')) {
-        dir = dir.slice(root.length + 1)
-    }
+    // absolute path (E:/git/…, possibly from file search or chat annotation)
+    // must be converted to project-relative first. Without this the backend
+    // rejects it (AccessDenied).
+    dir = toProjectRelative(dir, state.projectRoot)
     // Defensive: strip leading slashes so currentDir is always a project-relative path.
     // The Go backend treats paths starting with "/" as absolute filesystem paths,
     // which causes 500 errors when they're not under configured root paths.
@@ -459,7 +456,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         // Go's ServeMux decodes back to /, making it look like a relative path.
         // Project-internal relative paths continue to use URL path encoding.
         if (!noLoading) state.fileLoading = true
-        const isAbsPath = path.startsWith('/') || isWindowsAbsolutePath(path)
+        const isAbsPath = isAbsolutePath(path)
         let url: string
         if (isAbsPath) {
             url = forceText

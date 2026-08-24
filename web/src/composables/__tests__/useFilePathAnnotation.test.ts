@@ -35,6 +35,16 @@ vi.mock('@/utils/path', () => ({
     return parts[parts.length - 1] || ''
   },
   isWindowsAbsolutePath: (p: string) => /^[A-Za-z]:[/\\]/.test(p) || p.startsWith('\\\\'),
+  normalizeSlashes: (p: string) => p.replace(/\\/g, '/'),
+  isAbsolutePath: (p: string) => p.startsWith('/') || /^[A-Za-z]:[/\\]/.test(p) || p.startsWith('\\\\'),
+  toProjectRelative: (p: string, root: string) => {
+    if (!root) return p
+    const np = p.replace(/\\/g, '/')
+    const nr = root.replace(/\\/g, '/')
+    const prefix = nr + '/'
+    if (np.toLowerCase().startsWith(prefix.toLowerCase())) return np.slice(nr.length + 1)
+    return np
+  },
 }))
 
 // Mock store

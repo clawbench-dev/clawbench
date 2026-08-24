@@ -34,6 +34,43 @@ export function isWindowsAbsolutePath(path: string): boolean {
     return /^[A-Za-z]:[/\\]/.test(path) || path.startsWith('\\\\')
 }
 
+/**
+ * Normalize Windows backslashes to forward slashes so all downstream path
+ * matching (prefix checks, segment splitting, DOM data-path attributes) uses
+ * a single separator convention. The Go backend returns absolute paths in
+ * platform-native form (E:\… on Windows), while chat annotations and user
+ * input may carry either separator style.
+ */
+export function normalizeSlashes(path: string): string {
+    return path.replace(/\\/g, '/')
+}
+
+/**
+ * True for an absolute path on any platform: Unix absolute ("/a/b") or
+ * Windows drive/UNC absolute ("E:/…", "\\server\share"). Callers that need
+ * normalized paths should pass the result of normalizeSlashes first.
+ */
+export function isAbsolutePath(path: string): boolean {
+    return path.startsWith('/') || isWindowsAbsolutePath(path)
+}
+
+/**
+ * Convert an absolute path that lies under `root` into a root-relative path.
+ * Returns the original path when it is not under the root (or root is empty).
+ * The comparison is case-insensitive for Windows drive letters, so "e:/…"
+ * matches a root of "E:/…". Inputs may use either separator style.
+ */
+export function toProjectRelative(path: string, root: string): string {
+    if (!root) return path
+    const normPath = normalizeSlashes(path)
+    const normRoot = normalizeSlashes(root)
+    const prefix = normRoot + '/'
+    if (normPath.toLowerCase().startsWith(prefix.toLowerCase())) {
+        return normPath.slice(normRoot.length + 1)
+    }
+    return normPath
+}
+
 // Get the parent directory of a path
 export function dirName(path: string): string {
     const parts = splitPath(path)

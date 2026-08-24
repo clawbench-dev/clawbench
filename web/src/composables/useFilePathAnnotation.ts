@@ -1,5 +1,5 @@
 import { escapeHtml } from '@/utils/html.ts'
-import { splitPath, dirName, isWindowsAbsolutePath } from '@/utils/path.ts'
+import { splitPath, dirName, normalizeSlashes, isAbsolutePath, toProjectRelative } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
@@ -206,15 +206,6 @@ function shouldRejectPath(path: string): boolean {
 }
 
 /**
- * True for an absolute path that lies outside the project root: Unix absolute
- * ("/a/b") or Windows drive/UNC absolute ("E:/…", "\\server\share").
- * All inputs are expected to be forward-slash normalized.
- */
-function isProjectExternal(p: string): boolean {
-    return p.startsWith('/') || isWindowsAbsolutePath(p)
-}
-
-/**
  * Resolve a file path with dual-candidate support.
  *
  * Returns a ResolveResult with:
@@ -233,10 +224,10 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     // This must happen before the bare-identifier check below, so a Windows
     // directory path written with backslashes (E:\git\…, no extension) is not
     // rejected for lacking a "/" separator.
-    path = path.replace(/\\/g, '/')
-    projectRoot = projectRoot.replace(/\\/g, '/')
-    if (homeDir) homeDir = homeDir.replace(/\\/g, '/')
-    if (baseDir) baseDir = baseDir.replace(/\\/g, '/')
+    path = normalizeSlashes(path)
+    projectRoot = normalizeSlashes(projectRoot)
+    if (homeDir) homeDir = normalizeSlashes(homeDir)
+    if (baseDir) baseDir = normalizeSlashes(baseDir)
 
     // Reject glob patterns, URLs, env vars
     if (shouldRejectPath(path)) return null
@@ -257,7 +248,7 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     }
 
     // ── Absolute path (Unix "/" or Windows drive/UNC) ──
-    if (path.startsWith('/') || isWindowsAbsolutePath(path)) {
+    if (isAbsolutePath(path)) {
         if (!projectRoot) return { primary: path, fallback: path }
         if (path.startsWith(projectRoot + '/')) {
             const rel = path.slice(projectRoot.length + 1)
@@ -283,13 +274,13 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     }
 
     // Normalize baseDir: if project-relative, convert to absolute
-    const absBaseDir = (baseDir.startsWith('/') || isWindowsAbsolutePath(baseDir)) ? baseDir : (projectRoot + '/' + baseDir)
+    const absBaseDir = isAbsolutePath(baseDir) ? baseDir : (projectRoot + '/' + baseDir)
 
     // Compute baseDir candidate
     const baseDirResult = resolveRelativePathAgainstBase(path, absBaseDir, projectRoot)
 
     // baseDir failed or resolved to project-external absolute → projectRoot wins
-    if (!baseDirResult || isProjectExternal(baseDirResult)) {
+    if (!baseDirResult || isAbsolutePath(baseDirResult)) {
         return projectResult
     }
 
@@ -301,11 +292,11 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     if (!projectResult) return { primary: baseDirResult, fallback: baseDirResult }
 
     // projectResult is project-external → try stripped fallback
-    if (isProjectExternal(projectResult.primary)) {
+    if (isAbsolutePath(projectResult.primary)) {
         const stripped = path.replace(/^(?:\.\.\/)+/, '')
         if (stripped !== path) {
             const strippedResult = resolveAgainstProjectRoot(stripped, projectRoot)
-            if (strippedResult && !isProjectExternal(strippedResult.primary)) {
+            if (strippedResult && !isAbsolutePath(strippedResult.primary)) {
                 if (baseDirResult === strippedResult.primary) {
                     return strippedResult
                 }
@@ -348,7 +339,7 @@ export const FILE_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="
  * Optionally includes line range attributes and a fallback path for dual-candidate verification.
  */
 export function fileOpenButtonHtml(resolvedPath: string, lineStart?: number, lineEnd?: number, fallbackPath?: string): string {
-    const isExternal = resolvedPath.startsWith('/') || isWindowsAbsolutePath(resolvedPath)
+    const isExternal = isAbsolutePath(resolvedPath)
     const lineAttrs = lineStart ? ` data-line-start="${lineStart}"${lineEnd ? ` data-line-end="${lineEnd}"` : ''}` : ''
     const externalClass = isExternal ? ' external' : ''
     const fallbackAttr = fallbackPath && fallbackPath !== resolvedPath ? ` data-fallback-path="${escapeHtml(fallbackPath)}"` : ''
@@ -457,7 +448,7 @@ export function annotateFilePaths(
         if (/^(https?:|\/\/|mailto:|tel:|#)/i.test(href)) continue
         const parsed = parseFileUri(href)
         if (!parsed.path) continue
-        const resolved = (parsed.path.startsWith('/') || isWindowsAbsolutePath(parsed.path) || !baseDir)
+        const resolved = (isAbsolutePath(parsed.path) || !baseDir)
             ? resolveFilePath(parsed.path, projectRoot, homeDir)
             : resolveRelativePath(parsed.path, baseDir)
         if (!resolved) continue
@@ -484,7 +475,7 @@ export function annotateFilePaths(
         code.classList.add('chat-file-path')
         code.setAttribute('data-file-path', result.primary)
         if (result.fallback !== result.primary) code.setAttribute('data-fallback-path', result.fallback)
-        if (result.primary.startsWith('/') || isWindowsAbsolutePath(result.primary)) code.setAttribute('data-external', 'true')
+        if (isAbsolutePath(result.primary)) code.setAttribute('data-external', 'true')
         if (lineStart) code.setAttribute('data-line-start', String(lineStart))
         if (lineEnd) code.setAttribute('data-line-end', String(lineEnd))
         code.insertAdjacentHTML('afterend', fileOpenButtonHtml(result.primary, lineStart, lineEnd, result.fallback !== result.primary ? result.fallback : undefined))
@@ -550,7 +541,7 @@ export function annotateFilePaths(
                 span.className = 'chat-file-path'
                 span.setAttribute('data-file-path', part.result.primary)
                 if (part.result.fallback !== part.result.primary) span.setAttribute('data-fallback-path', part.result.fallback)
-                if (part.result.primary.startsWith('/') || isWindowsAbsolutePath(part.result.primary)) span.setAttribute('data-external', 'true')
+                if (isAbsolutePath(part.result.primary)) span.setAttribute('data-external', 'true')
                 if (part.lineStart) span.setAttribute('data-line-start', String(part.lineStart))
                 if (part.lineEnd) span.setAttribute('data-line-end', String(part.lineEnd))
                 span.textContent = part.text
@@ -698,7 +689,7 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
                 el.setAttribute('data-file-path', fallback)
                 el.removeAttribute('data-fallback-path')
                 // Update external status
-                const isNowExternal = fallback.startsWith('/') || isWindowsAbsolutePath(fallback)
+                const isNowExternal = isAbsolutePath(fallback)
                 if (isNowExternal) {
                     el.setAttribute('data-external', 'true')
                     el.classList.add('external')
@@ -816,19 +807,16 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
 
     // Normalize Windows backslashes so the project-root prefix match and the
     // external-path check below work for drive-letter paths (C:\…/C:/…).
-    targetPath = targetPath.replace(/\\/g, '/')
+    targetPath = normalizeSlashes(targetPath)
 
     const finalLineStart = lineStart ?? parsed.lineStart
     const finalLineEnd = lineEnd ?? parsed.lineEnd
 
     // Normalize an absolute project path (e.g. file:///root/… or /root/…) to
     // a project-relative path so it is opened inside the current project.
-    const root = store.state.projectRoot ? store.state.projectRoot.replace(/\\/g, '/') : ''
-    if (root && targetPath.startsWith(root + '/')) {
-        targetPath = targetPath.slice(root.length + 1)
-    }
+    targetPath = toProjectRelative(targetPath, store.state.projectRoot)
 
-    const isExternal = targetPath.startsWith('/') || isWindowsAbsolutePath(targetPath)
+    const isExternal = isAbsolutePath(targetPath)
 
     if (!isExternal) {
         try {
@@ -900,20 +888,17 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
 
     // Normalize Windows backslashes to forward slashes so the project-root
     // prefix match below works for drive-letter paths (C:\…/C:/…).
-    targetPath = targetPath.replace(/\\/g, '/')
-    const root = store.state.projectRoot ? store.state.projectRoot.replace(/\\/g, '/') : ''
+    targetPath = normalizeSlashes(targetPath)
 
     // Convert an absolute project path to a project-relative one so the /api/dir
     // listing (whose relative paths resolve against the project root) can
     // navigate into its parent directory.
-    if (root && targetPath.startsWith(root + '/')) {
-        targetPath = targetPath.slice(root.length + 1)
-    }
+    targetPath = toProjectRelative(targetPath, store.state.projectRoot)
 
     // /api/dir only browses inside the project root, so external paths
     // (Unix absolute outside the project, or other drives on Windows) cannot
     // be revealed in the file manager — show the unsupported toast instead.
-    const isExternal = targetPath.startsWith('/') || isWindowsAbsolutePath(targetPath)
+    const isExternal = isAbsolutePath(targetPath)
 
     // Verify the path exists. Project-relative paths resolve against the
     // project root on the backend; external paths are stat'd directly.
