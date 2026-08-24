@@ -69,6 +69,16 @@ describe('buildSwaggerSrcdoc', () => {
     expect(result).toContain('.swagger-ui .topbar { display: none; }')
   })
 
+  it('overrides page margins to compact layout', () => {
+    const spec = '{"openapi":"3.0.0"}'
+    const result = buildSwaggerSrcdoc(spec)
+    // Wrapper should use minimal horizontal padding and no max-width cap
+    expect(result).toContain('.swagger-ui .wrapper { padding: 0 8px; max-width: none; }')
+    // Operation blocks should use tighter margins/padding
+    expect(result).toContain('.swagger-ui .opblock { margin: 0 0 10px; }')
+    expect(result).toContain('.swagger-ui .opblock .opblock-summary { padding: 7px 8px; }')
+  })
+
   it('includes inlined Swagger UI CSS', () => {
     const spec = '{"openapi":"3.0.0"}'
     const result = buildSwaggerSrcdoc(spec)
