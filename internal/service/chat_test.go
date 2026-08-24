@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
 	external_message_id TEXT DEFAULT '',
+	queue_id TEXT DEFAULT '',
+	queued INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -3230,6 +3232,43 @@ func TestGetChatHistoryPaged_Empty(t *testing.T) {
 	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 10, 0)
 	assert.NoError(t, err)
 	assert.Empty(t, msgs)
+}
+
+// TestGetChatHistoryPaged_ReturnsQueueFields verifies that queued messages are
+// returned by GetChatHistoryPaged with queueId/queued populated, so the
+// frontend can match the optimistic pending bubble to the DB row
+// (queued-message-persistence plan).
+func TestGetChatHistoryPaged_ReturnsQueueFields(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Paged Queue")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "normal", nil, false, "")
+	assert.NoError(t, err)
+
+	// Insert a queued message directly (AddChatMessage doesn't set queue fields yet).
+	_, err = service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_history (project_path, role, content, session_id, backend, queue_id, queued)
+		 VALUES (?, 'user', ?, ?, 'claude', 'pending-abc', 1)`,
+		"/project", "queued msg", sid,
+	)
+	assert.NoError(t, err)
+
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 2)
+
+	var foundQueued bool
+	for _, m := range msgs {
+		if m.Content == "queued msg" {
+			foundQueued = true
+			assert.Equal(t, "pending-abc", m.QueueID, "queued message should carry queueId")
+			assert.True(t, m.Queued, "queued message should have Queued=true")
+		} else {
+			assert.Equal(t, "", m.QueueID, "normal message should have empty queueId")
+			assert.False(t, m.Queued, "normal message should have Queued=false")
+		}
+	}
+	assert.True(t, foundQueued, "queued message should be returned by GetChatHistoryPaged")
 }
 
 // ---------- CreateSession: session_type default ----------

@@ -461,6 +461,8 @@ func setupChatTestDB(t *testing.T) *sql.DB {
 		backend TEXT NOT NULL DEFAULT 'claude',
 		streaming INTEGER NOT NULL DEFAULT 0,
 		indexed INTEGER NOT NULL DEFAULT 0,
+		queue_id TEXT DEFAULT '',
+		queued INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	if err != nil {
@@ -1103,6 +1105,8 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	backend TEXT NOT NULL DEFAULT 'claude',
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
+	queue_id TEXT DEFAULT '',
+	queued INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -2722,6 +2726,8 @@ func TestFinalizeOrphanedStreamingMessages_WriteError(t *testing.T) {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
+			queue_id TEXT DEFAULT '',
+			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`)
 		require.NoError(t, err)

@@ -23,7 +23,7 @@ import (
 // Returns full content (no stripping). Used by non-chat-panel callers (fork, RAG, etc.).
 func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC",
 		projectPath, sessionID,
 	)
 	if err != nil {
@@ -36,11 +36,15 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
+		var queueID string
+		var queued int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &queueID, &queued); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
+		msg.QueueID = queueID
+		msg.Queued = queued != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -62,8 +66,8 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 
 	if limit > 0 && beforeID > 0 {
 		// Cursor-based: load messages older than beforeID
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history
 			WHERE project_path = ? AND session_id = ? AND id < ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
@@ -78,8 +82,8 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 
 	if limit > 0 {
 		// Initial load: get the most recent (limit) messages
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history
 			WHERE project_path = ? AND session_id = ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
@@ -93,7 +97,7 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 	}
 
 	// No limit: return all messages in chronological order
-	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC`
+	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC`
 	rows, err := dbRead.Query(query, projectPath, sessionID)
 	if err != nil {
 		return messages, totalCount, err
@@ -112,11 +116,15 @@ func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error)
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
+		var queueID string
+		var queued int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &queueID, &queued); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
+		msg.QueueID = queueID
+		msg.Queued = queued != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -249,7 +257,7 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 // Returns messages in chronological order with all content blocks (text, thinking, tool_use).
 func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {

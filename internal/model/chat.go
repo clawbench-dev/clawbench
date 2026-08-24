@@ -61,6 +61,8 @@ type ChatMessage struct {
 	ProjectPath  string        `json:"projectPath,omitempty"`
 	Streaming    bool          `json:"streaming,omitempty"`
 	Indexed      bool          `json:"indexed,omitempty"`
+	QueueID      string        `json:"queueId,omitempty"` // frontend-generated queueId for optimistic bubble matching
+	Queued       bool          `json:"queued,omitempty"`  // true while the message waits for the drain loop
 	CreatedAt    time.Time     `json:"createdAt"`
 	Summary      *string       `json:"summary,omitempty"`      // reading summary (nil=not summarized, ""=too short, non-empty=summary)
 	SummaryCards *SummaryCards `json:"summaryCards,omitempty"` // structured card metadata for summary view
