@@ -427,6 +427,7 @@ import {
   numberedName,
 } from '@/utils/fileManager.ts'
 import { store } from '@/stores/app.ts'
+import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
 import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -635,7 +636,10 @@ const dialog = useDialog()
 const jumpOpen = ref(false)
 async function handleJumpConfirm(path) {
   jumpOpen.value = false
-  await store.navigateToDir(path)
+  // Jump supports files and directories, relative and absolute paths, but
+  // only inside the project root. navToFileInManager handles path
+  // normalization, existence checks and the out-of-project toast.
+  await navToFileInManager(path)
 }
 const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
 const { terminalRuntimeEnabled } = useTerminalStatus()

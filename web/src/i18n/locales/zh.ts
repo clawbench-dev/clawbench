@@ -1070,8 +1070,9 @@ export default {
     setProjectFailedDetail: '设置项目失败: {error}',
   },
   jump: {
-    title: '跳转到目录',
-    placeholder: '输入目录路径，如 src/utils',
+    title: '跳转到路径',
+    placeholder: '输入项目内路径，支持文件或目录、相对或绝对路径',
+    placeholderBrowse: '输入目录路径，如 src/utils 或 C:\\projects',
     confirm: '跳转',
     cancel: '取消',
     button: '跳转',

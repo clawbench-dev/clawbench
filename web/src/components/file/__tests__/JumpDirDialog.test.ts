@@ -72,4 +72,14 @@ describe('JumpDirDialog', () => {
     await wrapper.setProps({ open: true })
     expect((wrapper.find('input').element as HTMLInputElement).value).toBe('')
   })
+
+  it('uses the default placeholder when no placeholder prop is given', () => {
+    const wrapper = mountDialog({ open: true })
+    expect(wrapper.find('input').attributes('placeholder')).toBe('Enter a directory path, e.g. src/utils')
+  })
+
+  it('uses the provided placeholder prop override', () => {
+    const wrapper = mountDialog({ open: true, placeholder: 'Enter a path inside the project' })
+    expect(wrapper.find('input').attributes('placeholder')).toBe('Enter a path inside the project')
+  })
 })

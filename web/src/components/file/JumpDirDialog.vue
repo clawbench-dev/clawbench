@@ -6,7 +6,7 @@
         v-model="pathInput"
         class="jump-path-input"
         type="text"
-        :placeholder="t('jump.placeholder')"
+        :placeholder="placeholder || t('jump.placeholder')"
         spellcheck="false"
         @keydown.enter="doConfirm"
       />
@@ -25,6 +25,8 @@ import ModalDialog from '../common/ModalDialog.vue'
 
 const props = defineProps({
   open: Boolean,
+  /** Optional placeholder override. Defaults to the shared jump.placeholder. */
+  placeholder: String,
 })
 const emit = defineEmits(['close', 'confirm'])
 

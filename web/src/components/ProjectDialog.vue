@@ -48,7 +48,7 @@
       </div>
     </div>
 
-    <JumpDirDialog :open="jumpOpen" @close="jumpOpen = false" @confirm="handleJumpConfirm" />
+    <JumpDirDialog :open="jumpOpen" :placeholder="t('jump.placeholderBrowse')" @close="jumpOpen = false" @confirm="handleJumpConfirm" />
 
     <template #footer>
       <button class="cancel-btn" @click="$emit('close')">{{ t('common.cancel') }}</button>

@@ -1070,8 +1070,9 @@ export default {
     setProjectFailedDetail: 'Set project failed: {error}',
   },
   jump: {
-    title: 'Jump to Directory',
-    placeholder: 'Enter a directory path, e.g. src/utils',
+    title: 'Jump to path',
+    placeholder: 'Enter a path inside the project (file or directory, relative or absolute)',
+    placeholderBrowse: 'Enter a directory path, e.g. src/utils or C:\\projects',
     confirm: 'Jump',
     cancel: 'Cancel',
     button: 'Jump',

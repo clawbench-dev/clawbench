@@ -2583,12 +2583,21 @@ describe('FileManagerContent — jump to dir', () => {
   })
 
   it('navigates to dir on jump confirm', async () => {
-    mockNavigateToDir.mockResolvedValue(undefined)
+    const { store: mockStore } = await import('@/stores/app')
+    vi.mocked(mockStore.loadFiles).mockResolvedValue(undefined)
+    // batch-exists returns "dir" for the jump target; navToFileInManager then
+    // loads the containing directory via loadFiles.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ results: { 'src/utils': 'dir' } }),
+    })) as unknown as typeof fetch)
     const wrapper = mountContent()
     const vm = wrapper.vm as any
     vm.$.setupState.handleJumpConfirm('src/utils')
-    await nextTick()
-    expect(mockNavigateToDir).toHaveBeenCalledWith('src/utils')
+    await vi.waitFor(() => {
+      expect(mockStore.loadFiles).toHaveBeenCalled()
+    })
+    vi.unstubAllGlobals()
   })
 
   it('renders jump item in more dropdown when collapsed', async () => {
