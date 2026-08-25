@@ -1385,6 +1385,57 @@ describe('useChatStream', () => {
       expect(userMsgs[0].id).toBe('pending-abc')
     })
 
+    it('self-echo with MessageID>0 adopts the directly-sent bubble DB id (msg1)', () => {
+      // Regression: msg1 is sent while idle (sendMessageNow → optimistic bubble,
+      // NOT pending). The backend's user_message echo carries MessageID + the
+      // frontend queueId. The self-echo handler must adopt the DB id into the
+      // bubble (keeps old id as queueId so the reply anchor still resolves),
+      // and must NOT flip a queued (pending) bubble.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      localStorage.setItem('clawbench_client_id', 'my-device-123')
+      // msg1 bubble (directly sent, not pending); connectStream anchors reply1
+      // to it.
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-1', content: '1', blocks: [{ type: 'text', text: '1' }],
+        pending: false, seq: 10,
+      } })
+      connectStream('test-session-1')
+      const placeholder = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      expect(String(placeholder?.parentQueueId)).toBe('pending-1')
+
+      simulateWsEvent('user_message', { messageId: 42, content: '1', queueId: 'pending-1', senderClientId: 'my-device-123' })
+
+      const msg1 = options.messages.value.find((m: any) => m.role === 'user')
+      expect(msg1.id).toBe(42)          // adopted DB id
+      expect(msg1.queueId).toBe('pending-1') // old id preserved for anchor
+      expect(msg1.pending).toBeUndefined()
+      // Reply anchor still resolves (no duplicate, order msg1 → reply1).
+      const order = options.messages.value.map((m: any) => m.role === 'user' ? `u:${m.id}` : `a:${String(m.id)}`)
+      expect(order[0]).toBe('u:42')
+      expect(order[1]).toContain('a:drain-')
+      localStorage.removeItem('clawbench_client_id')
+    })
+
+    it('self-echo with MessageID>0 does NOT adopt a queued (pending) bubble', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      localStorage.setItem('clawbench_client_id', 'my-device-456')
+      // queued bubble (pending) — must stay pending until drain
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-2', content: '2', blocks: [{ type: 'text', text: '2' }],
+        pending: true, seq: 12,
+      } })
+
+      simulateWsEvent('user_message', { messageId: 99, content: '2', queueId: 'pending-2', senderClientId: 'my-device-456' })
+
+      const msg2 = options.messages.value.find((m: any) => m.role === 'user')
+      expect(msg2.id).toBe('pending-2')
+      expect(msg2.pending).toBe(true)
+      localStorage.removeItem('clawbench_client_id')
+    })
+
     it('should push to end when no streaming assistant message exists', () => {
       const options = createOptions()
 

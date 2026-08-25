@@ -247,4 +247,41 @@ describe('chat queue full-flow integration', () => {
       `user:38348 | assistant:38349 | user:38350 | assistant:drain-r1 | user:38351 | assistant:${String(r2.id)} | user:38352 | assistant:${String(r3.id)}(s)`
     )
   })
+
+  // ── Regression: db_load adopts msg1 BEFORE the user_message self-echo
+  //    arrives. The bubble is adopted via content match (db_load path), the
+  //    reply's parentQueueId must be rewritten to the new DB id so the anchor
+  //    keeps resolving. The late self-echo adopt is then a no-op (id already
+  //    numeric → findIndex by pending-1 misses).
+  it('db_load adopts msg1 first; reply anchor rewritten; late self-echo is no-op', () => {
+    let s: ChatMessage[] = []
+    // msg1 bubble + reply placeholder
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1 }) }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 2, parentQueueId: 'pending-1', createdAt: '2026-01-01T00:00:01Z' }) }])
+    // db_load arrives with msg1 row (persist lag: createdAt far apart)
+    s = run(s, [{
+      type: 'db_load', sessionRunning: true,
+      dbMessages: [
+        u({ id: 38350, content: '1', createdAt: '2026-01-01T00:01:00Z' }),
+        a({ id: 38351, content: 'reply1', streaming: true, createdAt: '2026-01-01T00:00:01Z' }),
+      ],
+    }])
+    // msg1 adopted (content match); reply1 DB streaming row merged into the
+    // live placeholder (id 38351) — no duplicate.
+    const msg1 = s.find((m) => m.role === 'user')
+    expect(msg1?.id).toBe(38350)
+    const replies = s.filter((m) => m.role === 'assistant')
+    expect(replies).toHaveLength(1)
+    expect(replies[0].id).toBe(38351)
+    // reply's parentQueueId rewritten from pending-1 → 38350
+    expect(String(replies[0].parentQueueId)).toBe('38350')
+    // order: msg1, reply1 (still streaming — live placeholder merged with id)
+    expect(display(s)).toBe('user:38350 | assistant:38351(s)')
+
+    // late self-echo adopt — bubble id already numeric, findIndex by pending-1 misses → no-op
+    const lenBefore = s.length
+    s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 38350 }])
+    expect(s.length).toBe(lenBefore)
+    expect(s.find((m) => m.role === 'user')?.id).toBe(38350)
+  })
 })
