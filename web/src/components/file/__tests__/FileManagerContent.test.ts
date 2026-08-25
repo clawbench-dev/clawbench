@@ -1876,6 +1876,10 @@ describe('FileManagerContent — create file/folder', () => {
 // ── Context menu file/dir actions ──
 
 describe('FileManagerContent — context menu actions', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('doDelete emits delete for the entry', async () => {
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true

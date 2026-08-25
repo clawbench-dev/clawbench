@@ -298,8 +298,22 @@ describe('DirBreadcrumb — copy path', () => {
     expect(mockCopyText).toHaveBeenCalledWith('/project/src/utils', expect.any(Function), expect.any(Function))
   })
 
-  it('strips leading slashes from the relative path', async () => {
-    const wrapper = mountBreadcrumb({ path: '/photos' })
+  it('copies an already-absolute path as-is (ProjectDialog)', async () => {
+    const wrapper = mountBreadcrumb({ path: '/home/user/other' })
+    await wrapper.find('.crumb-copy-btn').trigger('click')
+    expect(mockCopyText).toHaveBeenCalledWith('/home/user/other', expect.any(Function), expect.any(Function))
+  })
+
+  it('copies an already-absolute Windows path as-is (ProjectDialog)', async () => {
+    const wrapper = mountBreadcrumb({ path: 'D:\\other\\dir' })
+    await wrapper.find('.crumb-copy-btn').trigger('click')
+    expect(mockCopyText).toHaveBeenCalledWith('D:/other/dir', expect.any(Function), expect.any(Function))
+  })
+
+  it('normalizes a leading-slash project-relative path against the root', async () => {
+    // Leading slash alone is ambiguous; for ProjectDialog-style absolute input
+    // the value is preserved, while relative values combine with the root.
+    const wrapper = mountBreadcrumb({ path: 'photos' })
     await wrapper.find('.crumb-copy-btn').trigger('click')
     expect(mockCopyText).toHaveBeenCalledWith('/project/photos', expect.any(Function), expect.any(Function))
   })

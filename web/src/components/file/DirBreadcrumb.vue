@@ -31,7 +31,7 @@
 import { computed, inject, ref } from 'vue'
 import { Home, Copy } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import { splitPath, normalizeSlashes } from '@/utils/path.ts'
+import { splitPath, normalizeSlashes, isAbsolutePath } from '@/utils/path.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { store } from '@/stores/app.ts'
 import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag.ts'
@@ -57,13 +57,14 @@ function onCrumbDragStart(path, name, e) {
 function copyFullPath() {
   const value = props.path
   if (!value) return
-  // The breadcrumb's props.path is a project-relative dir; combine it with the
-  // project root so "copy path" yields an absolute path, matching the file
-  // manager's right-click "copy path" action. Falls back to the relative path
-  // when the root is unknown.
+  // props.path is either project-relative (FileManager) or already absolute
+  // (ProjectDialog browsing arbitrary dirs). Only combine with the project
+  // root for relative paths; copy absolute paths as-is (separators normalized).
+  const normValue = normalizeSlashes(value)
   const root = normalizeSlashes(store.state.projectRoot || '')
-  const rel = normalizeSlashes(value).replace(/^\/+/, '')
-  const absPath = root ? root.replace(/\/+$/, '') + '/' + rel : rel
+  const absPath = isAbsolutePath(value)
+    ? normValue
+    : root ? root.replace(/\/+$/, '') + '/' + normValue.replace(/^\/+/, '') : normValue.replace(/^\/+/, '')
   const doCopy = () => {
     copied.value = true
     setTimeout(() => { copied.value = false }, 800)
