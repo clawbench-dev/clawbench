@@ -51,20 +51,6 @@ export interface ChatMessage {
    */
   seq?: number
   /**
-   * For a streaming assistant placeholder: the sort value it should appear
-   * right AFTER (the parent user message's sort value + 0.5). This keeps a
-   * reply anchored directly below its own question, even when later messages
-   * are still pending. Absent for DB-backed and pending-user messages.
-   *
-   * DEPRECATED in favor of `parentQueueId`: afterSort is a frozen snapshot of
-   * the parent's sort value at creation time. When the parent later adopts a
-   * DB id (loadHistory), the frozen value (TRANSIENT_BASE + seq, huge) pins
-   * the reply after every DB message until the next loadHistory deletes it —
-   * the pre-refresh ordering mess. New code sets parentQueueId and resolves
-   * the parent's CURRENT sort value at sort time instead.
-   */
-  afterSort?: number
-  /**
    * Pointer anchor for a streaming/finalized reply: the queueId (or fallback
    * parent id) of the user message this reply answers. sortMessages resolves
    * the parent's CURRENT sort value dynamically, so when the parent adopts a
@@ -292,13 +278,12 @@ export function forceCleanupStreamingState(
   if (streamingMsg) {
     const hasContent = streamingMsg.content || (streamingMsg.blocks && streamingMsg.blocks.length > 0)
     delete streamingMsg.streaming
-    // NOTE: do NOT strip afterSort here. This reply is anchored to its question
-    // via afterSort (messageSortValue prefers it). The question may still be a
-    // transient string-id message, in which case dropping afterSort would make
-    // the finalized reply sort by its (possibly numeric) id — above its own
-    // still-transient question. loadHistory() replaces the whole array on
-    // 'done'/reload and rebuilds without afterSort, restoring DB order.
-    // Stripping it here would re-introduce the queued-message reply swap.
+    // The finalized reply keeps its parentQueueId anchor: its question may
+    // still be transient (string id), in which case sorting by the reply's
+    // (possibly numeric) id would place it above its own question.
+    // sortMessages resolves parentQueueId dynamically, so the reply follows
+    // its question whether transient or DB-backed. loadHistory replaces the
+    // whole array on 'done'/reload with authoritative DB order.
     // Mark all unfinished tool_use blocks as done so spinner stops.
     // Exception: PermissionApproval blocks require user interaction —
     // marking them done without a real result makes the card appear
@@ -386,42 +371,30 @@ export function isTransientMessage(m: ChatMessage): boolean {
 const TRANSIENT_BASE = Number.MAX_SAFE_INTEGER / 4
 
 /**
- * Numeric sort value for a single message. DB-backed messages sort by their
- * `id`; streaming assistants anchored to a parent use `afterSort`; other
- * transient messages use TRANSIENT_BASE + `seq`.
+ * Numeric sort value for a USER message (assistant replies are resolved by
+ * sortMessages against their parent, never through this function).
+ *
+ * - DB-backed user (numeric id): the id itself.
+ * - Queued/pending bubble (pending=true): TRANSIENT_BASE + seq — it sorts after
+ *   every DB message until queue_drain adopts its DB id.
+ * - Directly-sent bubble not yet adopted (non-pending, string id, no queue
+ *   link): this is ALWAYS the earliest message — it is a question that was sent
+ *   while no stream was running, and nothing precedes it except its own reply.
+ *   Sorting it after DB messages would push it below later queued messages that
+ *   already adopted DB ids (the reported misorder). Sort it first instead.
  */
 export function messageSortValue(m: ChatMessage): number {
-  // A message with an afterSort is a reply anchored to its parent question. It
-  // must sort immediately after that parent — even if it already holds a numeric
-  // DB id (e.g. set by stream_start) and even after it is finalized, because its
-  // parent may still be transient (string id → TRANSIENT_BASE+seq, huge).
-  // Falling back to the small numeric id here would sort the reply ABOVE its own
-  // still-transient question — the queued-message reply/first-question swap.
-  // loadHistory() rebuilds authoritative DB order once the stream ends, at which
-  // point afterSort is gone and the numeric id is correct.
-  if (typeof m.afterSort === 'number') return m.afterSort
   if (!isTransientMessage(m)) return m.id as number
-  // A NON-pending user message with a string id is a directly-sent message
-  // (sendMessageNow) whose DB id has not been adopted yet (backend did not
-  // return msgId). It is ALWAYS the earliest message — it anchors nothing and
-  // nothing anchors to it besides its own reply (which uses parentQueueId).
-  // Sorting it last (TRANSIENT_BASE+seq, huge) would push it below later
-  // queued messages that already adopted DB ids — the reported misorder
-  // (msg2/3 above msg1/reply1). Sort it first instead; loadHistory adopts the
-  // real id shortly after. Restricted to `pending-`-prefixed ids (sendMessageNow
-  // bubbles) and excludes queued/drain-created messages, which carry a queue
-  // link or a different id shape.
-  if (m.role === 'user' && !m.pending && typeof m.id === 'string' && m.id.startsWith('pending-')) return -(1e12) + (m.seq ?? 0)
+  const isDirectBubble =
+    m.role === 'user' &&
+    !m.pending &&
+    !m.queueId &&
+    !m._remote &&
+    !m['_remoteQueueId'] &&
+    typeof m.id === 'string' &&
+    m.id.startsWith('pending-')
+  if (isDirectBubble) return -(1e12) + (m.seq ?? 0)
   return TRANSIENT_BASE + (m.seq ?? 0)
-}
-
-/**
- * Sort value that places a message immediately AFTER the given parent message
- * (parent's value + 0.5). Returns undefined when there is no parent.
- */
-export function computeAfterSort(parent?: ChatMessage): number | undefined {
-  if (!parent) return undefined
-  return messageSortValue(parent) + 0.5
 }
 
 /**
@@ -454,7 +427,7 @@ export function sortMessages(messages: ChatMessage[]): void {
   // A reply anchored to a transient parent resolves to TRANSIENT_BASE+seq (huge,
   // after every DB message); once the parent adopts a DB id the SAME reply
   // resolves to the small id + 0.5 — it follows automatically, no loadHistory
-  // round-trip required (unlike the frozen afterSort snapshot it replaces).
+  // round-trip required.
   const resolve = (m: ChatMessage, depth: number): number => {
     if (depth > 4) return messageSortValue(m)
     const parentKey = (m as ChatMessage).parentQueueId
@@ -620,7 +593,7 @@ export function drainQueueMessage(
     backend: currentBackend,
     seq: nextClientSeq(),
     // Anchor to the drained message via parentQueueId (dynamic resolution in
-    // sortMessages) instead of afterSort (frozen TRANSIENT_BASE+seq snapshot).
+    // sortMessages).
     // When the parent later adopts a DB id, the reply follows automatically.
     parentQueueId: queueId || String(parent?.id ?? ''),
   }
@@ -883,11 +856,9 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
         const oldId = String(target.id)
         target.id = db.id
         idAdoption.set(oldId, db.id)
-        delete target.afterSort
         // Keep parentQueueId: the parent may still be transient (its DB id not
         // yet adopted). sortMessages resolves parentQueueId dynamically, so the
-        // reply follows the parent whether it is transient or DB-backed. Only
-        // afterSort (a frozen snapshot) is unsafe and must go.
+        // reply follows the parent whether it is transient or DB-backed.
         delete target.seq
       }
     }

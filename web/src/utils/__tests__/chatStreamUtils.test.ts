@@ -12,7 +12,6 @@ import {
   extractFileChanges,
   sortMessages,
   messageSortValue,
-  computeAfterSort,
   isTransientMessage,
   nextClientSeq,
   anchorRepliesToQuestions,
@@ -938,7 +937,7 @@ describe('drainQueueMessage', () => {
     // (and its reply) would sort above Q1/S1, whose DB ids the frontend doesn't
     // know yet, producing the queued-message display misalignment.
     const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: nextClientSeq() }
-    const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), afterSort: computeAfterSort(q1) }
+    const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), parentQueueId: String(q1.id) }
     const q2 = { role: 'user', id: 'queue-B', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true, seq: nextClientSeq() }
     const messages: any[] = [q1, s1, q2]
     sortMessages(messages)
@@ -962,7 +961,7 @@ describe('drainQueueMessage', () => {
     // queued message to the very top and pushed the earlier question+reply to the
     // bottom. The drained message must inherit a proper position.
     const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: nextClientSeq() }
-    const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), afterSort: computeAfterSort(q1) }
+    const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), parentQueueId: String(q1.id) }
     // q2 has pending=true but NO seq — exactly what enqueueAndMaybeStart pushes.
     const q2 = { role: 'user', id: 'queue-B', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true }
     const messages: any[] = [q1, s1, q2]
@@ -1018,7 +1017,7 @@ describe('sortMessages', () => {
       { role: 'assistant', id: 2, content: 'A reply' },
       parent,
       { role: 'user', id: 'queue-C', content: 'C', pending: true, seq: 2 },
-      { role: 'assistant', id: 'drain-1', content: '', streaming: true, seq: 3, afterSort: computeAfterSort(parent) },
+      { role: 'assistant', id: 'drain-1', content: '', streaming: true, seq: 3, parentQueueId: String(parent.id) },
     ] as any[]
     sortMessages(messages)
     const roles = messages.map(m => `${m.role}:${m.content}`)
@@ -1031,7 +1030,7 @@ describe('sortMessages', () => {
     // user, newer reply below newer user).
     const parentB = { role: 'user', id: 4, content: 'B' }
     const messages = [
-      { role: 'assistant', id: 5, content: 'B reply', streaming: true, seq: 4, afterSort: computeAfterSort(parentB) },
+      { role: 'assistant', id: 5, content: 'B reply', streaming: true, seq: 4, parentQueueId: String(parentB.id) },
       { role: 'assistant', id: 2, content: 'A reply' },
       { role: 'user', id: 1, content: 'A' },
       { role: 'user', id: 4, content: 'B' },
@@ -1045,10 +1044,10 @@ describe('sortMessages', () => {
     expect(idxB).toBeGreaterThan(idxA)
   })
 
-  it('anchors a streaming reply to a DB-backed parent via afterSort (id + 0.5)', () => {
+  it('anchors a streaming reply to a DB-backed parent via parentQueueId (id + 0.5)', () => {
     const parent = { role: 'user', id: 3, content: 'B' }
     const messages = [
-      { role: 'assistant', id: 4, content: 'B reply', streaming: true, seq: 9, afterSort: computeAfterSort(parent) },
+      { role: 'assistant', id: 4, content: 'B reply', streaming: true, seq: 9, parentQueueId: String(parent.id) },
       { role: 'assistant', id: 2, content: 'A reply' },
       { role: 'user', id: 1, content: 'A' },
       parent,
@@ -1059,18 +1058,23 @@ describe('sortMessages', () => {
 
   it('treats a streaming placeholder with a numeric id as transient (stays anchored) until finalized', () => {
     const parent = { role: 'user', id: 3, content: 'B' }
-    const streaming = { role: 'assistant', id: 7, content: '', streaming: true, seq: 1, afterSort: computeAfterSort(parent) }
+    const streaming = { role: 'assistant', id: 7, content: '', streaming: true, seq: 1, parentQueueId: String(parent.id) }
     expect(isTransientMessage(streaming)).toBe(true)
-    // Even though it has a numeric id (7), while streaming it must sort after
-    // its parent (3), not by id.
-    expect(messageSortValue(streaming)).toBe(messageSortValue(parent) + 0.5)
-    // Once finalized, it must STILL stay anchored via afterSort: its parent may
-    // still be transient (string id), in which case falling back to the numeric
-    // id would sort the reply above its own question. Only loadHistory (which
-    // rebuilds without afterSort) restores DB-id ordering.
+    // While streaming, sortMessages anchors it after its parent via
+    // parentQueueId — never by its numeric id.
+    const msgs1: any[] = [streaming, parent]
+    sortMessages(msgs1)
+    expect(msgs1[0]).toBe(parent)
+    expect(msgs1[1]).toBe(streaming)
+    // Once finalized, it must STILL stay anchored: its parent may still be
+    // transient (string id), in which case falling back to the numeric id
+    // would sort the reply above its own question. Only loadHistory (which
+    // rebuilds authoritative DB order) drops the anchor.
     delete streaming.streaming
-    expect(isTransientMessage(streaming)).toBe(false)
-    expect(messageSortValue(streaming)).toBe(messageSortValue(parent) + 0.5)
+    const msgs2: any[] = [streaming, parent]
+    sortMessages(msgs2)
+    expect(msgs2[0]).toBe(parent)
+    expect(msgs2[1]).toBe(streaming)
   })
 
   it('keeps a finalized reply with a numeric id anchored after its still-transient question (regression)', () => {
@@ -1078,11 +1082,11 @@ describe('sortMessages', () => {
     // finalized (streaming removed). Because its question Q1 is still transient
     // (string id → TRANSIENT_BASE+seq, huge), the reply must NOT fall back to its
     // small numeric id — that would sort it ABOVE Q1 (the observed swap). It must
-    // stay anchored via afterSort until loadHistory rebuilds everything.
+    // stay anchored via parentQueueId until loadHistory rebuilds everything.
     const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: 1 }
-    const a1 = { role: 'assistant', id: 5, content: 'A1 reply', blocks: [{ type: 'text', text: 'A1 reply' }], afterSort: computeAfterSort(q1) }
+    const a1 = { role: 'assistant', id: 5, content: 'A1 reply', blocks: [{ type: 'text', text: 'A1 reply' }], parentQueueId: String(q1.id) }
     const q2 = { role: 'user', id: 'pending-2', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true, seq: 2 }
-    const a2 = { role: 'assistant', id: 6, content: 'A2 reply', blocks: [{ type: 'text', text: 'A2 reply' }], streaming: true, afterSort: computeAfterSort(q2) }
+    const a2 = { role: 'assistant', id: 6, content: 'A2 reply', blocks: [{ type: 'text', text: 'A2 reply' }], streaming: true, parentQueueId: String(q2.id) }
     const messages: any[] = [a1, q1, q2, a2]
     sortMessages(messages)
     const contents = messages.map(m => m.content)
@@ -1095,7 +1099,7 @@ describe('sortMessages', () => {
       { role: 'user', id: 1, content: 'u1' },
       { role: 'assistant', id: 2, content: 'r1' },
       parent,
-      { role: 'assistant', id: 'drain', content: '', streaming: true, seq: 2, afterSort: computeAfterSort(parent) },
+      { role: 'assistant', id: 'drain', content: '', streaming: true, seq: 2, parentQueueId: String(parent.id) },
     ] as any[]
     const first = messages.map(m => `${m.role}:${m.content}`)
     sortMessages(messages)
@@ -1442,7 +1446,7 @@ describe('queued streaming order (integration)', () => {
     messages.push({ role: 'user', id: 'pending-1', content: '1', blocks: [], seq: nextClientSeq(), createdAt: '' })
     // connectStream 创建回复1, 锚定到消息1
     const parentIdx1 = messages.findLastIndex((m: any) => m.role === 'user')
-    messages.push({ role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true, seq: nextClientSeq(), afterSort: computeAfterSort(messages[parentIdx1]), createdAt: '' })
+    messages.push({ role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true, seq: nextClientSeq(), parentQueueId: String(messages[parentIdx1].id), createdAt: '' })
     // 发 2、3 排队
     messages.push({ role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
     messages.push({ role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
@@ -1498,7 +1502,7 @@ describe('connectStream parent anchoring', () => {
     ]
     // 模拟 connectStream 的 parent 选择：应锚到最后一个非 pending user（消息1）
     const parentUserIdx = messages.findLastIndex((m: any) => m.role === 'user' && !m.pending)
-    const reply1 = { role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true, seq: nextClientSeq(), afterSort: computeAfterSort(parentUserIdx !== -1 ? messages[parentUserIdx] : undefined), createdAt: '' }
+    const reply1 = { role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true, seq: nextClientSeq(), parentQueueId: parentUserIdx !== -1 ? String(messages[parentUserIdx].id) : undefined, createdAt: '' }
     messages.push(reply1)
     sortMessages(messages)
 

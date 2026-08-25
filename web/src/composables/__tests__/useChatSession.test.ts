@@ -1863,15 +1863,14 @@ describe('switchSession', () => {
     expect(id2).not.toBe(drainA)
   })
 
-  it('clears afterSort when adopting DB identity into a drained reply', async () => {
-    // Regression: queued replies get an afterSort computed from the transient
-    // parent value (TRANSIENT_BASE + seq, huge). If afterSort survives the
-    // loadHistory DB-identity merge, messageSortValue keeps returning the huge
-    // value and the reply sorts AFTER all DB messages — producing the wrong
-    // order: msg2, msg3, reply2, reply3 instead of msg2, reply2, msg3, reply3.
+  it('adopts DB identity into a drained reply (stale anchor cleared)', async () => {
+    // Regression: queued replies carry an anchor (afterSort in the old design,
+    // parentQueueId today) computed from the transient parent value. When the
+    // reply adopts its DB id via loadHistory, the anchor must not pin it after
+    // all DB messages — DB id order must be authoritative.
     const drainReply2 = {
       role: 'assistant', id: 'drain-reply2', content: '', blocks: [{ type: 'text', text: 'reply2' }],
-      createdAt: '2026-01-01T00:00:05Z', afterSort: 2251799813685251.5, seq: 3,
+      createdAt: '2026-01-01T00:00:05Z', seq: 3,
     }
     mockUtilsFns.parseMessages.mockReturnValue([
       { id: 1, role: 'user', content: 'msg1', blocks: [{ type: 'text', text: 'msg1' }], createdAt: '2026-01-01T00:00:00Z' },
@@ -1902,10 +1901,10 @@ describe('switchSession', () => {
     const msgs = lastSessionOptions!.messages.value as any[]
     // DB order must be authoritative: msg1, reply1, msg2, reply2.
     expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 4])
-    // The adopted reply must no longer carry the stale afterSort.
+    // The adopted reply must be the DB row (id=4), not the transient drain-*.
     const adopted = msgs.find((m: any) => m.id === 4)
     expect(adopted).toBeDefined()
-    expect(adopted.afterSort).toBeUndefined()
+    expect(adopted.content).toContain('reply2')
   })
 
   it('restores conversational order for queued replies after loadHistory', async () => {
