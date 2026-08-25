@@ -107,8 +107,10 @@ system_prompt: |
 `)
 
   // 5. Copy the pre-built Go binary to temp dir
-  // The binary is built before E2E tests run (by CI or developer)
-  const binPath = join(projectRoot, 'clawbench')
+  // The binary is built before E2E tests run (by CI or developer).
+  // E2E_SERVER_BIN overrides the binary path (e.g. a `-tags integration` build
+  // that registers the acp-mock backend).
+  const binPath = process.env.E2E_SERVER_BIN || join(projectRoot, 'clawbench')
   const tempBinPath = join(tempDir, 'clawbench')
   writeFileSync(tempBinPath, readFileSync(binPath))
   chmodSync(tempBinPath, 0o755) // Make binary executable

@@ -27,11 +27,42 @@ test.describe('Queued messages ordering', () => {
   })
 
   test('queued messages and their replies render in conversational order (live + after reload)', async ({ page }) => {
+    // Capture frontend runtime errors to diagnose failures.
+    const pageErrors: string[] = []
+    page.on('pageerror', (err) => pageErrors.push(`PAGEERROR: ${err.message}`))
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') pageErrors.push(`CONSOLE: ${msg.text()}`)
+    })
+
     // 1. Send three messages quickly. Message 1 starts AI; 2 and 3 get queued.
     await chat.sendMessage('1')
     // No waitForReply between sends — 2/3 must land while 1 is generating.
     await chat.sendMessage('2')
     await chat.sendMessage('3')
+
+    // 1b. INTERMEDIATE STATE (user-reported bug): right after reply1 appears,
+    //     messages 2/3 must STILL render below 1/reply1 — they must never jump
+    //     above. Poll until the first assistant reply exists, then check order.
+    await expect
+      .poll(async () => page.locator('.chat-message.assistant').count(), { timeout: 15000 })
+      .toBeGreaterThanOrEqual(1)
+    const midTexts = await page.locator('.chat-message').evaluateAll(
+      (els) => els.map((el) => {
+        const role = el.classList.contains('user') ? 'user' : el.classList.contains('assistant') ? 'assistant' : 'other'
+        const text = (el.textContent || '').trim().slice(0, 30)
+        return `${role}:${text}`
+      })
+    )
+    // user:1 must be first (index 0), its reply right after (index ≥1), and
+    // user:2/user:3 AFTER the reply — never above msg1/reply1.
+    expect(midTexts[0]).toContain('user:1')
+    const midIdxReply1 = midTexts.findIndex((t, i) => i > 0 && t.startsWith('assistant'))
+    expect(midIdxReply1).toBeGreaterThan(0)
+    const midIdx2 = midTexts.findIndex((t) => t.startsWith('user:2'))
+    const midIdx3 = midTexts.findIndex((t) => t.startsWith('user:3'))
+    if (midIdx2 !== -1) expect(midIdx2).toBeGreaterThan(midIdxReply1)
+    if (midIdx3 !== -1) expect(midIdx3).toBeGreaterThan(midIdxReply1)
+    if (pageErrors.length > 0) throw new Error(pageErrors.join('\n'))
 
     // 2. Wait until all three replies are done (no streaming, no pending).
     await expect
