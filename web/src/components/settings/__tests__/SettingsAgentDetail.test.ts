@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 
-const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockApiGet, mockToastShow, mockDeleteAgent, mockDefaultAgentId } = vi.hoisted(() => ({
+const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockApiGet, mockToastShow, mockDeleteAgent, mockDefaultAgentId, mockPopulateACPStateFromCache } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockPatchAgentField: vi.fn().mockResolvedValue(undefined),
@@ -9,6 +9,7 @@ const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockApiGet, mockToast
   mockToastShow: vi.fn(),
   mockDeleteAgent: vi.fn().mockResolvedValue(undefined),
   mockDefaultAgentId: { value: 'other-agent' },
+  mockPopulateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -53,6 +54,7 @@ vi.mock('@/composables/useAgents', () => ({
     deleteAgent: mockDeleteAgent,
     defaultAgentId: mockDefaultAgentId,
   }),
+  populateACPStateFromCache: mockPopulateACPStateFromCache,
 }))
 
 vi.mock('@/composables/useSettingsConfig', () => ({
@@ -115,6 +117,14 @@ describe('SettingsAgentDetail', () => {
     // The component should render SettingsItem stubs for each item
     const items = wrapper.findAllComponents({ name: 'SettingsItem' })
     expect(items.length).toBeGreaterThan(0)
+  })
+
+  it('calls loadAgents then populateACPStateFromCache on mount (Issue #404)', async () => {
+    mountDetail()
+    await vi.waitFor(() => {
+      expect(mockLoadAgents).toHaveBeenCalledWith(true)
+      expect(mockPopulateACPStateFromCache).toHaveBeenCalledWith('test-agent')
+    })
   })
 
   it('renders more items for dual-transport agent', () => {

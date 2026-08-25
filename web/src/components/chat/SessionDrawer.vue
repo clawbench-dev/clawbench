@@ -213,7 +213,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
-import { useAgents, restoreOriginalModels, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, setCLIModels, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
@@ -415,8 +415,8 @@ async function handleRefresh() {
   try {
     const data = await apiPost(`/api/agents/${props.agentId}/refresh-models`, {})
     if (data?.models) {
-      // Update agent models in memory
-      updateAgentField(props.agentId, 'models', data.models)
+      // Update agent models in memory and rebase the CLI merge baseline
+      setCLIModels(props.agentId, data.models)
       toast.show(t('chat.sessionSetting.refreshSuccess'), { icon: '✅', type: 'success', duration: 2000 })
     }
   } catch (err) {

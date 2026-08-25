@@ -101,6 +101,88 @@ func TestAgentGet(t *testing.T) {
 	assert.Contains(t, resp, "defaultAgent")
 }
 
+// TestAgentGet_ModelsNotOverriddenByACP verifies that GET /api/agents does NOT
+// replace an agent's CLI-discovered models with the ACP model list, even when
+// cached ACP state is present. The agent's models must always stay the pure
+// CLI-discovered list so the frontend can merge ACP models by ID on top of it.
+// Regression test for issue #404.
+func TestAgentGet_ModelsNotOverriddenByACP(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// claude must support ACP transport so cached ACP state is attached to it.
+	claudeAgent := model.Agents["claude"]
+	claudeAgent.AcpCommand = "claude --acp"
+	t.Cleanup(func() { claudeAgent.AcpCommand = "" })
+
+	// Seed the capability registry with ACP models (friendly display names)
+	// for the claude agent, as if an ACP session had reported them.
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels("claude", []model.AgentModel{
+		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
+		{ID: "claude-opus-4-5", Name: "Claude Opus 4.5"},
+	})
+	t.Cleanup(func() {
+		reg.UpdateModels("claude", nil)
+	})
+
+	// Inject a live ACP connection with a currently-selected model so the
+	// response's acpStates[].modelListState.currentModelId reflects it.
+	mgr := ai.GetACPConnManager()
+	mgr.CloseConnsByAgentID("claude")
+	conn := ai.NewACPConnForTest(&model.Agent{ID: "claude", Backend: "claude", AcpCommand: "claude --acp"}, "sid-404-current-model")
+	conn.SetCurrentModelID("claude-opus-4-5")
+	mgr.SetConnForTest("sid-404-current-model", conn)
+	t.Cleanup(func() {
+		mgr.CloseConn("sid-404-current-model")
+	})
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Agents []struct {
+			ID     string             `json:"id"`
+			Models []model.AgentModel `json:"models"`
+		} `json:"agents"`
+		ACPStates map[string]struct {
+			ModelList *ai.ModelListState `json:"modelListState"`
+		} `json:"acpStates"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// The agent's models must remain the CLI-discovered list (provider/model IDs),
+	// NOT the ACP friendly-name list.
+	var claude *struct {
+		ID     string             `json:"id"`
+		Models []model.AgentModel `json:"models"`
+	}
+	for i := range resp.Agents {
+		if resp.Agents[i].ID == "claude" {
+			claude = &resp.Agents[i]
+			break
+		}
+	}
+	require.NotNil(t, claude, "claude agent should be present")
+	require.Len(t, claude.Models, 1)
+	assert.Equal(t, "claude-sonnet-4-6", claude.Models[0].ID)
+	assert.Equal(t, "Claude Sonnet", claude.Models[0].Name)
+
+	// ACP model list must still be delivered separately via acpStates.
+	acpState, ok := resp.ACPStates["claude"]
+	require.True(t, ok, "claude should have cached ACP state")
+	require.NotNil(t, acpState.ModelList, "acpStates.claude.modelListState should be present")
+	require.Len(t, acpState.ModelList.Models, 2)
+	assert.Equal(t, "Claude Sonnet 4.6", acpState.ModelList.Models[0].Name)
+
+	// The live connection's current model ID must be reflected so the frontend
+	// can mark the correct default model on the merged list.
+	assert.Equal(t, "claude-opus-4-5", acpState.ModelList.CurrentModelID)
+}
+
 func TestAgentPatch_PreferredModel(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
@@ -1002,15 +1084,17 @@ func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
 	require.True(t, ok, "state should contain modelListState")
 	assert.Equal(t, "", mlState["currentModelId"]) // no session context
 
-	// Verify models were overridden by ACP model list
+	// Verify agent.models are NOT overridden by the ACP model list — they must
+	// stay the CLI-discovered list. ACP models flow through acpStates only.
 	agents, ok := resp["agents"].([]any)
 	require.True(t, ok)
 	for _, a := range agents {
 		agent := a.(map[string]any)
 		if agent["id"] == "acp-agent" {
 			models := agent["models"].([]any)
+			require.Len(t, models, 1)
 			m := models[0].(map[string]any)
-			assert.Equal(t, "acp-m1", m["id"], "models should be overridden by ACP model list")
+			assert.Equal(t, "m1", m["id"], "agent.models must stay the CLI-discovered list")
 		}
 	}
 }
@@ -1230,7 +1314,11 @@ func TestServeAgentsGet_NonACPAgentNoACPState(t *testing.T) {
 	assert.False(t, hasClaude, "CLI agent should not have ACP state")
 }
 
-func TestServeAgentsGet_ACPModelListOverridesModels(t *testing.T) {
+// TestServeAgentsGet_ACPModelListDoesNotOverrideModels verifies that cached ACP
+// models in the capability registry do NOT replace the agent's CLI-discovered
+// models in the /api/agents response. The ACP list is delivered separately via
+// acpStates[].modelListState. Regression test for issue #404.
+func TestServeAgentsGet_ACPModelListDoesNotOverrideModels(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	// Add an ACP agent with CLI-discovered models
@@ -1246,7 +1334,7 @@ func TestServeAgentsGet_ACPModelListOverridesModels(t *testing.T) {
 	model.AgentList = append(model.AgentList, acpAgent)
 	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), acpAgent))
 
-	// Inject agent-level models in the registry that should override CLI-discovered models
+	// Inject agent-level models in the registry (as if ACP had reported them)
 	ai.GetAgentCapabilityRegistry().UpdateModels("acp-ml-override", []model.AgentModel{
 		{ID: "acp-model-1", Name: "ACP Model 1", Default: true},
 		{ID: "acp-model-2", Name: "ACP Model 2"},
@@ -1261,20 +1349,29 @@ func TestServeAgentsGet_ACPModelListOverridesModels(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	// Find the agent and verify models were overridden
+	// agent.models must remain the CLI-discovered list (not overridden).
 	agents, ok := resp["agents"].([]any)
 	require.True(t, ok)
 	for _, a := range agents {
 		agent := a.(map[string]any)
 		if agent["id"] == "acp-ml-override" {
 			models := agent["models"].([]any)
-			assert.Len(t, models, 2)
+			require.Len(t, models, 1)
 			m0 := models[0].(map[string]any)
-			assert.Equal(t, "acp-model-1", m0["id"], "models should be overridden by ACP model list")
-			m1 := models[1].(map[string]any)
-			assert.Equal(t, "acp-model-2", m1["id"])
+			assert.Equal(t, "cli-model", m0["id"], "agent.models must stay the CLI-discovered list")
 		}
 	}
+
+	// ACP models must still be exposed via acpStates[].modelListState.
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok)
+	state, ok := acpStates["acp-ml-override"].(map[string]any)
+	require.True(t, ok)
+	mlState, ok := state["modelListState"].(map[string]any)
+	require.True(t, ok, "acpStates should contain modelListState")
+	mlModels, ok := mlState["models"].([]any)
+	require.True(t, ok)
+	require.Len(t, mlModels, 2)
 }
 
 // ── Duplicate agent tests ──

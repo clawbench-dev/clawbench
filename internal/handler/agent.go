@@ -147,14 +147,16 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 			s.Mode = reg.GetModeState(a.ID, "")
 			s.Effort = reg.GetThinkingEffortState(a.ID, "")
 			s.Commands = reg.GetCommands(a.ID)
-			s.ModelList = reg.GetModelListState(a.ID, "")
+			// Include the agent's currently-selected model from any live ACP
+			// connection so the frontend can mark the correct default on the
+			// merged model list. Falls back to "" when no active connection.
+			s.ModelList = reg.GetModelListState(a.ID, ai.GetACPConnManager().GetCurrentModelIDByAgentID(a.ID))
 
-			if s.ModelList != nil && len(s.ModelList.Models) > 0 {
-				// Copy the slice to avoid mutating the shared Agent object under RLock.
-				models := make([]model.AgentModel, len(s.ModelList.Models))
-				copy(models, s.ModelList.Models)
-				a.Models = models
-			}
+			// NOTE: Do NOT overwrite a.Models with s.ModelList.Models here.
+			// a.Models must always stay the pure CLI-discovered list so the
+			// frontend can merge ACP models by ID on top of it (stable display
+			// names/order). ACP models are delivered separately via
+			// acpStates[].modelListState.
 		}
 		states[a.ID] = s
 	}
@@ -763,6 +765,29 @@ func fetchACPSessions(w http.ResponseWriter, r *http.Request, agent *model.Agent
 // and re-derives display titles from transcript data when available.
 func filterAndRetitleACPSessions(sessions []acp.SessionInfo, agent *model.Agent, r *http.Request) []acp.SessionInfo {
 	if len(sessions) > 0 {
+		// Dedup by sessionId first. Agents may report the same session more
+		// than once within a single response (e.g. OpenCode's updatedAt-based
+		// cursor collides on equal timestamps, or the list changed between
+		// page fetches). Without this, duplicates leak through to the resume
+		// drawer and accumulate across infinite-scroll pages. Order of first
+		// occurrence is preserved.
+		seen := make(map[acp.SessionId]struct{}, len(sessions))
+		deduped := make([]acp.SessionInfo, 0, len(sessions))
+		for _, s := range sessions {
+			// Sessions without a real id are not dedupable; keep them all so
+			// distinct entries with missing ids are never collapsed together.
+			if s.SessionId == "" {
+				deduped = append(deduped, s)
+				continue
+			}
+			if _, ok := seen[s.SessionId]; ok {
+				continue
+			}
+			seen[s.SessionId] = struct{}{}
+			deduped = append(deduped, s)
+		}
+		sessions = deduped
+
 		acpSessionIDs := make([]string, len(sessions))
 		for i, s := range sessions {
 			acpSessionIDs[i] = string(s.SessionId)

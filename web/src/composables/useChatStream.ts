@@ -523,11 +523,11 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'model_list_update': {
         if (sessionChanged()) return
-        const mlData = payload as { models?: unknown[] }
+        const mlData = payload as { models?: unknown[]; currentModelId?: string }
         if (Array.isArray(mlData.models) && mlData.models.length > 0) {
           const aid = currentAgentId.value
           if (aid) {
-            updateACPModelList(aid, mlData.models as { id: string; name: string }[])
+            updateACPModelList(aid, mlData.models as { id: string; name: string }[], mlData.currentModelId)
           }
         }
         break

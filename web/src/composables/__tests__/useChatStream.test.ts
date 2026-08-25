@@ -1757,7 +1757,7 @@ describe('useChatStream', () => {
         expect(updateACPModelList).toHaveBeenCalledWith('test-agent-1', [
           { id: 'gpt-4', name: 'GPT-4' },
           { id: 'gpt-3.5', name: 'GPT-3.5' },
-        ])
+        ], 'gpt-4')
       })
 
       it('should not call when models is empty', async () => {
