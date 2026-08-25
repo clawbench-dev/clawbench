@@ -115,4 +115,73 @@ describe('chat queue full-flow integration', () => {
     }])
     expect(display(s)).toBe('user:1 | assistant:2')
   })
+
+  // ── User-reported bug: "reply1 done, msg2/msg3 and their replies appear
+  //    ABOVE msg1/reply1 until everything finishes; reload fixes it."
+  //    Root cause: msg1's optimistic bubble and reply1's drain-* placeholder
+  //    stay transient (huge sort values) when the background loadHistory lags,
+  //    while msg2/msg3 adopt DB ids → they sort above msg1/reply1. Also the
+  //    old createdAt±5s adoption failed under backend persist lag (>5s),
+  //    appending duplicate DB rows.
+  it('db_load with persist lag keeps every message in conversational order', () => {
+    const t0 = '2026-01-01T00:00:00Z'
+    const tLate = '2026-01-01T00:01:00Z' // backend persisted 60s after the bubble
+    let s: ChatMessage[] = []
+
+    // msg1 direct send (id=pending-1, NOT pending), reply1 placeholder
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1, createdAt: t0 }) }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 2, parentQueueId: 'pending-1', createdAt: t0 }) }])
+    s = run(s, [{ type: 'ws_content', text: 'reply1' }])
+    // msg2/msg3 queue
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 3, createdAt: t0 }) }])
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-3', content: '3', pending: true, seq: 4, createdAt: t0 }) }])
+
+    // reply1 done, background loadHistory arrives LATE (createdAt 60s later)
+    s = run(s, [{ type: 'stream_finalize' }])
+    s = run(s, [{
+      type: 'db_load', sessionRunning: false,
+      dbMessages: [
+        u({ id: 1, content: '1', createdAt: tLate }),
+        a({ id: 2, content: 'reply1', createdAt: tLate }),
+        u({ id: 3, content: '2', queueId: 'pending-2', queued: true, createdAt: tLate }),
+        u({ id: 4, content: '3', queueId: 'pending-3', queued: true, createdAt: tLate }),
+      ],
+    }])
+    // msg1 adopted (content match, persist lag immune), reply1 adopted, msg2/3
+    // still queued bubbles AFTER reply1.
+    expect(display(s)).toBe('user:1 | assistant:2 | user:pending-2(p) | user:pending-3(p)')
+
+    // drain msg2 → adopts id=3 (parent msg1 is DB-backed now)
+    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: '2', files: [], dbMessageId: 3 }])
+    s = run(s, [{ type: 'ws_content', text: 'reply2' }])
+    const r2 = s.find((m) => m.role === 'assistant' && m.streaming)!
+    r2.createdAt = tLate
+    expect(display(s)).toBe(`user:1 | assistant:2 | user:3 | assistant:${String(r2.id)}(s) | user:pending-3(p)`)
+
+    // drain msg3
+    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-3', text: '3', files: [], dbMessageId: 4 }])
+    s = run(s, [{ type: 'ws_content', text: 'reply3' }])
+    const r3 = s.find((m) => m.role === 'assistant' && m.streaming)!
+    r3.createdAt = tLate
+    expect(display(s)).toBe(
+      `user:1 | assistant:2 | user:3 | assistant:${String(r2.id)} | user:4 | assistant:${String(r3.id)}(s)`
+    )
+
+    // final db_load — reply2/3 adopted via queueId match
+    s = run(s, [{ type: 'stream_finalize' }])
+    s = run(s, [{
+      type: 'db_load', sessionRunning: false,
+      dbMessages: [
+        u({ id: 1, content: '1' }),
+        a({ id: 2, content: 'reply1', createdAt: tLate }),
+        u({ id: 3, content: '2', queueId: 'pending-2', queued: false, createdAt: tLate }),
+        a({ id: 5, content: 'reply2', queueId: 'pending-2', createdAt: tLate }),
+        u({ id: 4, content: '3', queueId: 'pending-3', queued: false, createdAt: tLate }),
+        a({ id: 6, content: 'reply3', queueId: 'pending-3', createdAt: tLate }),
+      ],
+    }])
+    const finalIds = s.map((m) => (m.role === 'assistant' ? `a${String(m.id)}` : `u${String(m.id)}`))
+    expect(finalIds).toEqual(['u1', 'a2', 'u3', 'a5', 'u4', 'a6'])
+    expect(s.some((m) => m.pending)).toBe(false)
+  })
 })

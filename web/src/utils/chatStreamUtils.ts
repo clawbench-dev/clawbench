@@ -88,6 +88,32 @@ export interface ContentEventData {
   content?: string
 }
 
+/** Extract the textual content of a message: blocks' text concat, else content. */
+export function messageText(m: ChatMessage): string {
+  if (Array.isArray(m.blocks)) {
+    const texts = m.blocks
+      .filter((b) => (b.type === 'text' || b.type === 'warning') && typeof (b as { text?: unknown }).text === 'string')
+      .map((b) => (b as { text: string }).text)
+    if (texts.length > 0) return texts.join('')
+  }
+  const c = typeof m.content === 'string' ? m.content : ''
+  if (c.startsWith('{"blocks":')) {
+    // Backend stores assistant content as a JSON blocks blob; the frontend
+    // parseMessages expands it into blocks, but messages that never passed
+    // through parseMessages (e.g. reducer internals) may keep the raw string.
+    try {
+      const parsed = JSON.parse(c) as { blocks?: Array<{ type: string; text?: string }> }
+      if (Array.isArray(parsed.blocks)) {
+        const texts = parsed.blocks
+          .filter((b) => (b.type === 'text' || b.type === 'warning') && typeof b.text === 'string')
+          .map((b) => b.text as string)
+        if (texts.length > 0) return texts.join('')
+      }
+    } catch { /* fall through to raw content */ }
+  }
+  return c
+}
+
 /** SSE event data for thinking events */
 export interface ThinkingEventData {
   text?: string
@@ -729,9 +755,14 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
 
   const anyStreaming = state.some((m) => m.role === 'assistant' && m.streaming)
   // Adopt DB identity into finalized drain-* replies only when the session is
-  // NOT running (stream ended) — while a stream is live, a createdAt collision
-  // inside the 5s window could clobber a brand-new reply.
-  const canAdoptDrains = !sessionRunning && !anyStreaming
+  // NOT running (stream ended) — the DB snapshot is then authoritative.
+  // NOTE: this deliberately does NOT check anyStreaming. finalizedDrains only
+  // contains NON-streaming placeholders (indexed with `!m.streaming`), so
+  // adopting them can never clobber a live streaming reply. Gating on
+  // anyStreaming caused a real bug: while reply3 was streaming, finalized
+  // reply1/reply2 placeholders were never adopted and their DB rows were
+  // appended as duplicates, disordering the whole queue.
+  const canAdoptDrains = !sessionRunning
   const used = new Set<ChatMessage>()
   const merged: ChatMessage[] = []
   // When a transient message adopts a DB id, replies anchored to its old id
@@ -765,21 +796,32 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
       // Adopt DB identity into an optimistic user bubble that has NO queueId —
       // e.g. a message sent via sendMessageNow (id = `pending-*`, never queued).
       // Such a bubble is not matched by id (string vs numeric) nor by queueId.
-      // Match by content; when both createdAt values are valid, additionally
-      // require ±5s proximity to avoid false positives between repeated texts.
+      // Match by content. createdAt is NOT a hard gate: the backend can persist
+      // the row seconds after the bubble was created (busy loadHistory), so a
+      // ±5s window would fail and leave the bubble transient → it sorts after
+      // every DB-backed message (misorder). Among multiple same-content
+      // candidates we prefer the one with the closest createdAt.
       const dt = db.createdAt ? new Date(db.createdAt).getTime() : 0
-      const match = state.findIndex((m) => {
-        if (m.role !== 'user') return false
-        if (m.id == null || typeof m.id !== 'string') return false
-        if (typeof m.content !== 'string' || m.content !== db.content) return false
+      const dbText = messageText(db)
+      const candidates: { m: ChatMessage; dist: number }[] = []
+      for (const m of state) {
+        if (m.role !== 'user') continue
+        if (m.id == null || typeof m.id !== 'string') continue
+        if (messageText(m) !== dbText) continue
         const pt = m.createdAt ? new Date(m.createdAt).getTime() : 0
-        if (dt !== 0 && !Number.isNaN(dt) && pt !== 0 && !Number.isNaN(pt)) {
-          return Math.abs(dt - pt) <= 5000
-        }
-        return true // one side lacks a usable createdAt — content match suffices
-      })
-      if (match !== -1) {
-        target = state[match]
+        const dist = dt !== 0 && !Number.isNaN(dt) && pt !== 0 && !Number.isNaN(pt) ? Math.abs(dt - pt) : -1
+        candidates.push({ m, dist })
+      }
+      let matchIdx = -1
+      if (candidates.length === 1) {
+        matchIdx = state.indexOf(candidates[0].m)
+      } else if (candidates.length > 1) {
+        // Prefer the newest-created candidate (dist === -1 sorts last).
+        candidates.sort((a, b) => (a.dist === -1 ? 1 : 0) - (b.dist === -1 ? 1 : 0) || a.dist - b.dist)
+        matchIdx = state.indexOf(candidates[0].m)
+      }
+      if (matchIdx !== -1) {
+        target = state[matchIdx]
         used.add(target)
         const oldId = String(target.id)
         target.id = db.id
@@ -794,17 +836,32 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
       // match — the backend records the replied-to queue on the DB row, and the
       // drain-* placeholder anchors itself with parentQueueId = that queueId.
       // This is exact and immune to createdAt drift (a long AI reply can take
-      // minutes, far beyond any ±5s window). Fall back to createdAt ±5s.
+      // minutes, far beyond any ±5s window). Fall back to content matching
+      // (finalized drain placeholders carry the same content as their DB row);
+      // createdAt is NOT a hard gate — the backend persists the row seconds
+      // after the placeholder was created, so a ±5s window would fail and the
+      // DB row would be appended as a duplicate.
       let matchIdx = -1
       if (db.queueId) {
         matchIdx = finalizedDrains.findIndex((d) => d.parentQueueId === db.queueId)
       }
       if (matchIdx === -1) {
         const dt = db.createdAt ? new Date(db.createdAt).getTime() : 0
-        matchIdx = finalizedDrains.findIndex((d) => {
+        const dbText = messageText(db)
+        const candidates: { d: ChatMessage; dist: number }[] = []
+        for (let i = 0; i < finalizedDrains.length; i++) {
+          const d = finalizedDrains[i]
+          if (messageText(d) !== dbText) continue
           const pt = d.createdAt ? new Date(d.createdAt).getTime() : 0
-          return dt !== 0 && pt !== 0 && Math.abs(dt - pt) <= 5000
-        })
+          const dist = dt !== 0 && !Number.isNaN(dt) && pt !== 0 && !Number.isNaN(pt) ? Math.abs(dt - pt) : -1
+          candidates.push({ d, dist })
+        }
+        if (candidates.length === 1) {
+          matchIdx = finalizedDrains.indexOf(candidates[0].d)
+        } else if (candidates.length > 1) {
+          candidates.sort((a, b) => (a.dist === -1 ? 1 : 0) - (b.dist === -1 ? 1 : 0) || a.dist - b.dist)
+          matchIdx = finalizedDrains.indexOf(candidates[0].d)
+        }
       }
       if (matchIdx !== -1) {
         const match = finalizedDrains[matchIdx]
