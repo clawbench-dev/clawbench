@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chatMessageReducer, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
+import { chatMessageReducer, sortMessages, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 
 /**
  * Integration test for the REAL full queued-message flow.
@@ -183,5 +183,24 @@ describe('chat queue full-flow integration', () => {
     const finalIds = s.map((m) => (m.role === 'assistant' ? `a${String(m.id)}` : `u${String(m.id)}`))
     expect(finalIds).toEqual(['u1', 'a2', 'u3', 'a5', 'u4', 'a6'])
     expect(s.some((m) => m.pending)).toBe(false)
+  })
+
+  // ── User-reported bug fallback: even when the backend does NOT return msgId
+  //    (so msg1's bubble is never adopted before msg2/msg3 adopt their DB ids),
+  //    msg1 must still sort FIRST — not after them. The `pending-`-prefixed,
+  //    non-pending user bubble is an unadopted directly-sent message and is
+  //    always the earliest message.
+  it('unadopted msg1 bubble sorts first even though msg2/msg3 adopted DB ids', () => {
+    const state: ChatMessage[] = [
+      u({ id: 'pending-abc', content: '1', seq: 1 }),
+      a({ id: 'drain-r1', content: 'reply1', seq: 2, parentQueueId: 'pending-abc' }),
+      u({ id: 38308, content: '2', seq: 3 }),
+      a({ id: 'drain-r2', content: 'reply2', seq: 4, parentQueueId: '38308' }),
+      u({ id: 38309, content: '3', seq: 5 }),
+      a({ id: 'drain-r3', content: 'reply3', seq: 6, parentQueueId: '38309' }),
+    ]
+    sortMessages(state)
+    const order = state.map((m) => (m.role === 'user' ? `u:${String(m.id)}` : `a:${String(m.id)}`))
+    expect(order).toEqual(['u:pending-abc', 'a:drain-r1', 'u:38308', 'a:drain-r2', 'u:38309', 'a:drain-r3'])
   })
 })

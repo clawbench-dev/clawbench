@@ -401,6 +401,17 @@ export function messageSortValue(m: ChatMessage): number {
   // point afterSort is gone and the numeric id is correct.
   if (typeof m.afterSort === 'number') return m.afterSort
   if (!isTransientMessage(m)) return m.id as number
+  // A NON-pending user message with a string id is a directly-sent message
+  // (sendMessageNow) whose DB id has not been adopted yet (backend did not
+  // return msgId). It is ALWAYS the earliest message — it anchors nothing and
+  // nothing anchors to it besides its own reply (which uses parentQueueId).
+  // Sorting it last (TRANSIENT_BASE+seq, huge) would push it below later
+  // queued messages that already adopted DB ids — the reported misorder
+  // (msg2/3 above msg1/reply1). Sort it first instead; loadHistory adopts the
+  // real id shortly after. Restricted to `pending-`-prefixed ids (sendMessageNow
+  // bubbles) and excludes queued/drain-created messages, which carry a queue
+  // link or a different id shape.
+  if (m.role === 'user' && !m.pending && typeof m.id === 'string' && m.id.startsWith('pending-')) return -(1e12) + (m.seq ?? 0)
   return TRANSIENT_BASE + (m.seq ?? 0)
 }
 

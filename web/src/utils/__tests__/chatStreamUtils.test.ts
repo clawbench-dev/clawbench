@@ -1439,7 +1439,7 @@ describe('queued streaming order (integration)', () => {
   it('keeps 1, reply1, 2, reply2, 3, reply3 order while draining (all transient)', () => {
     const messages: any[] = []
     // 发 1: 乐观气泡 (非 pending, string id)
-    messages.push({ role: 'user', id: 'local-1', content: '1', blocks: [], seq: nextClientSeq(), createdAt: '' })
+    messages.push({ role: 'user', id: 'pending-1', content: '1', blocks: [], seq: nextClientSeq(), createdAt: '' })
     // connectStream 创建回复1, 锚定到消息1
     const parentIdx1 = messages.findLastIndex((m: any) => m.role === 'user')
     messages.push({ role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true, seq: nextClientSeq(), afterSort: computeAfterSort(messages[parentIdx1]), createdAt: '' })
@@ -1448,7 +1448,7 @@ describe('queued streaming order (integration)', () => {
     messages.push({ role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
     sortMessages(messages)
     // 初始顺序: 1, 回复1, 2, 3
-    expect(messages.map(m => m.role + ':' + m.id).slice(0, 4)).toEqual(['user:local-1', 'assistant:stream-1', 'user:pending-2', 'user:pending-3'])
+    expect(messages.map(m => m.role + ':' + m.id).slice(0, 4)).toEqual(['user:pending-1', 'assistant:stream-1', 'user:pending-2', 'user:pending-3'])
 
     // drain 2 → 回复2
     drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-2', 4)
