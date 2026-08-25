@@ -44,6 +44,18 @@ describe('chatMessageReducer — optimistic + structural', () => {
     expect(after).toHaveLength(0)
   })
 
+  it('optimistic_remove_content removes only the matching pending message', () => {
+    const state = run(
+      [
+        u({ id: 'a', content: 'earlier', pending: true, seq: 1 }),
+        u({ id: 'b', content: 'hello', pending: true, seq: 2 }),
+      ],
+      [{ type: 'optimistic_remove_content', content: 'hello' }],
+    )
+    expect(state).toHaveLength(1)
+    expect(state[0].content).toBe('earlier')
+  })
+
   it('clear_pending removes only pending messages', () => {
     const state = run([u({ id: 1, content: 'done' }), u({ id: 'p2', pending: true, seq: 1 })], [
       { type: 'clear_pending' },

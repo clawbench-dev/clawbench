@@ -560,7 +560,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (userData.senderClientId && userData.senderClientId === myClientId) break
 
         resetStreamTimeout()
-        dispatch({ type: 'ws_user_message', data: userData })
+        dispatch({ type: 'ws_user_message', data: { ...userData, backend: currentBackend.value } })
 
         debouncedRender()
         if (isOpen.value) {

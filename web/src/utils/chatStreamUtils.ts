@@ -669,6 +669,7 @@ export type ChatMessageAction =
   // ── Optimistic / structural ──
   | { type: 'optimistic_push'; msg: ChatMessage }
   | { type: 'optimistic_remove'; id: string | number }
+  | { type: 'optimistic_remove_content'; content: string }
   | { type: 'stream_placeholder'; msg: ChatMessage }
   | { type: 'clear_pending' }
   | { type: 'remove_pending'; queueId: string }
@@ -676,7 +677,7 @@ export type ChatMessageAction =
   | { type: 'prepend_older'; olderMsgs: ChatMessage[] }
   // ── WS structural events ──
   | { type: 'ws_stream_start'; messageId: number }
-  | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string } }
+  | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; backend?: string } }
   | { type: 'ws_queue_drain'; queueId: string; text: string; files: FileEntry[]; dbMessageId?: number; backend?: string }
   | { type: 'ws_queue_cancel'; queueIds: string[] }
   | { type: 'stream_finalize' }
@@ -761,7 +762,10 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
         used.add(target)
         target.id = db.id
         delete target.afterSort
-        delete target.parentQueueId
+        // Keep parentQueueId: the parent may still be transient (its DB id not
+        // yet adopted). sortMessages resolves parentQueueId dynamically, so the
+        // reply follows the parent whether it is transient or DB-backed. Only
+        // afterSort (a frozen snapshot) is unsafe and must go.
         delete target.seq
       }
     }
@@ -839,6 +843,16 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       if (idx !== -1) state.splice(idx, 1)
       return state
     }
+    case 'optimistic_remove_content': {
+      // Remove the LAST pending user message matching the content (the one just
+      // optimistically pushed for an enqueue that failed). Content-match is the
+      // only stable key when no queueId was generated.
+      const idx = state.findLastIndex(
+        (m) => m.role === 'user' && m.pending && m.content === action.content
+      )
+      if (idx !== -1) state.splice(idx, 1)
+      return state
+    }
     case 'stream_placeholder': {
       state.push(action.msg)
       sortMessages(state)
@@ -895,6 +909,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         files: userFiles,
         createdAt: new Date().toISOString(),
         _remote: true,
+        ...(data.backend ? { backend: data.backend } : {}),
         ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
         seq: nextClientSeq(),
       } as ChatMessage)
@@ -947,6 +962,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       const sm = state.find((m) => m.role === 'assistant' && m.streaming)
       if (!sm) return state
       sm.blocks = []
+      sm.metadata = undefined
       return state
     }
     case 'ws_tool_use': {

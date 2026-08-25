@@ -120,11 +120,9 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       if (queueId) {
         dispatch({ type: 'remove_pending', queueId })
       } else {
-        // Rare path (no queueId) — content-match rollback.
-        const idx = messages.value.findLastIndex(
-          (m) => m.role === 'user' && m.pending && m.content === inputText
-        )
-        if (idx !== -1) messages.value.splice(idx, 1)
+        // Rare path (no queueId) — content-match rollback via the reducer
+        // (single write channel: never splice messages directly).
+        dispatch({ type: 'optimistic_remove_content', content: inputText })
       }
     }
 
