@@ -1408,11 +1408,25 @@ describe('anchorRepliesToQuestions', () => {
       { role: 'assistant', id: 6, content: 'reply3', queueId: 'q3' },
     ]
     const result = anchorRepliesToQuestions(msgs as any)
-    // reply2 anchored after msg2 (id 3), reply3 after msg3 (id 4)
+    // reply2 anchored to msg2 (queueId q2), reply3 to msg3 (queueId q3)
     const reply2 = result.find((m: any) => m.id === 5)
     const reply3 = result.find((m: any) => m.id === 6)
-    expect(reply2.afterSort).toBe(3.5)
-    expect(reply3.afterSort).toBe(4.5)
+    expect(reply2.parentQueueId).toBe('q2')
+    expect(reply3.parentQueueId).toBe('q3')
+  })
+
+  it('restores conversational order after anchor + sort', () => {
+    const msgs = [
+      { role: 'user', id: 1, content: 'msg1' },
+      { role: 'assistant', id: 2, content: 'reply1' },
+      { role: 'user', id: 3, content: 'msg2', queueId: 'q2' },
+      { role: 'user', id: 4, content: 'msg3', queueId: 'q3' },
+      { role: 'assistant', id: 5, content: 'reply2', queueId: 'q2' },
+      { role: 'assistant', id: 6, content: 'reply3', queueId: 'q3' },
+    ]
+    anchorRepliesToQuestions(msgs as any)
+    sortMessages(msgs as any)
+    expect((msgs as any).map((m: any) => m.id)).toEqual([1, 2, 3, 5, 4, 6])
   })
 })
 
@@ -1493,5 +1507,52 @@ describe('connectStream parent anchoring', () => {
     expect(messages[1].id).toBe('stream-1')
     expect(messages[2].id).toBe('pending-2')
     expect(messages[3].id).toBe('pending-3')
+  })
+})
+
+describe('parentQueueId dynamic anchoring', () => {
+  const callbacks = { onRenderNeeded: vi.fn(), onExtractScheduledTasks: vi.fn() }
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('queued replies follow their parent when it adopts a DB id (no loadHistory)', () => {
+    // 消息2、3 排队（父消息1 已是 DB id）。drain 时 parentIsDB=true → 消息2/3
+    // 立即采纳 DB id 4/5，回复锚定 parentQueueId。随后排序无需 loadHistory。
+    const messages: any[] = [
+      { role: 'user', id: 1, content: '1', blocks: [], createdAt: '' },
+      { role: 'assistant', id: 2, content: 'reply1', blocks: [], createdAt: '' },
+      { role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' },
+      { role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' },
+    ]
+    sortMessages(messages)
+
+    drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-reply2', 4)
+    drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-reply3', 5)
+
+    // 消息2/3 已采纳为 4/5（queueId 保留为 pending-2/pending-3），回复跟随。
+    const reply2 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-2')!
+    const reply3 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-3')!
+    expect(messages.map((m: any) => m.id)).toEqual([1, 2, 4, reply2.id, 5, reply3.id])
+  })
+
+  it('keeps conversational order for two queued messages end to end (no loadHistory)', () => {
+    const messages: any[] = []
+    // 消息1 已落库 (id=1) + 回复1 (id=2)
+    messages.push({ role: 'user', id: 1, content: '1', blocks: [], createdAt: '' })
+    messages.push({ role: 'assistant', id: 2, content: 'reply1', blocks: [], createdAt: '' })
+    // 消息2、3 排队
+    messages.push({ role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
+    messages.push({ role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
+    sortMessages(messages)
+
+    // drain 2 → 回复2（锚到 pending-2）
+    drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-reply2', 4)
+    // drain 3 → 回复3（锚到 pending-3）
+    drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-reply3', 5)
+
+    // parentIsDB=true → 消息2/3 在 drain 时已采纳 DB id 4/5。
+    // 回复必须锚定到各自问题之后，无需 loadHistory。
+    const reply2 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-2')!
+    const reply3 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-3')!
+    expect(messages.map((m: any) => m.id)).toEqual([1, 2, 4, reply2.id, 5, reply3.id])
   })
 })

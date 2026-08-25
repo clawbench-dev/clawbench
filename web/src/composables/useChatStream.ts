@@ -6,7 +6,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, cancelPendingMessages, sortMessages, nextClientSeq, computeAfterSort, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, cancelPendingMessages, sortMessages, nextClientSeq, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
@@ -190,7 +190,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           createdAt: new Date().toISOString(),
           backend: currentBackend.value,
           seq: nextClientSeq(),
-          afterSort: computeAfterSort(parentUserIdx !== -1 ? messages.value[parentUserIdx] : undefined),
+          parentQueueId: parentUserIdx !== -1 ? String(messages.value[parentUserIdx].id) : undefined,
         }
         // Always push; order is restored by sortMessages() — physical array
         // position never encodes ordering, so a newer reply can never be

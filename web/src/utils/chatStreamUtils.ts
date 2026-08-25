@@ -55,8 +55,24 @@ export interface ChatMessage {
    * right AFTER (the parent user message's sort value + 0.5). This keeps a
    * reply anchored directly below its own question, even when later messages
    * are still pending. Absent for DB-backed and pending-user messages.
+   *
+   * DEPRECATED in favor of `parentQueueId`: afterSort is a frozen snapshot of
+   * the parent's sort value at creation time. When the parent later adopts a
+   * DB id (loadHistory), the frozen value (TRANSIENT_BASE + seq, huge) pins
+   * the reply after every DB message until the next loadHistory deletes it —
+   * the pre-refresh ordering mess. New code sets parentQueueId and resolves
+   * the parent's CURRENT sort value at sort time instead.
    */
   afterSort?: number
+  /**
+   * Pointer anchor for a streaming/finalized reply: the queueId (or fallback
+   * parent id) of the user message this reply answers. sortMessages resolves
+   * the parent's CURRENT sort value dynamically, so when the parent adopts a
+   * DB id the reply follows automatically — no loadHistory needed to fix the
+   * order. Distinct from `queueId` (which marks a queued USER message) so
+   * hasMore's `!m.queueId` filter on user messages stays correct.
+   */
+  parentQueueId?: string
   /** DB-assigned queue id (backend echoes the frontend queueId for a queued
    *  message). Lets the frontend match an optimistic pending bubble to its DB
    *  row and lets queue_cancel remove pending bubbles whose id became numeric. */
@@ -386,7 +402,33 @@ export function computeAfterSort(parent?: ChatMessage): number | undefined {
  * matter how many mutations race during a stream transition.
  */
 export function sortMessages(messages: ChatMessage[]): void {
-  messages.sort((a, b) => messageSortValue(a) - messageSortValue(b))
+  // First pass: index user messages by every stable key we can anchor to —
+  // id (string or number, both normalized to string), queueId, _remoteQueueId.
+  const byKey = new Map<string, ChatMessage>()
+  for (const m of messages) {
+    if (m.role !== 'user') continue
+    if (m.id != null) byKey.set(String(m.id), m)
+    if (m.queueId) byKey.set(m.queueId, m)
+    const rq = (m as Record<string, unknown>)['_remoteQueueId']
+    if (typeof rq === 'string' && rq) byKey.set(rq, m)
+  }
+
+  // Resolve a message's sort value, following parentQueueId chains dynamically.
+  // A reply anchored to a transient parent resolves to TRANSIENT_BASE+seq (huge,
+  // after every DB message); once the parent adopts a DB id the SAME reply
+  // resolves to the small id + 0.5 — it follows automatically, no loadHistory
+  // round-trip required (unlike the frozen afterSort snapshot it replaces).
+  const resolve = (m: ChatMessage, depth: number): number => {
+    if (depth > 4) return messageSortValue(m)
+    const parentKey = (m as ChatMessage).parentQueueId
+    if (parentKey) {
+      const parent = byKey.get(parentKey)
+      if (parent && parent !== m) return resolve(parent, depth + 1) + 0.5
+    }
+    return messageSortValue(m)
+  }
+
+  messages.sort((a, b) => resolve(a, 0) - resolve(b, 0))
 }
 
 /**
@@ -396,8 +438,8 @@ export function sortMessages(messages: ChatMessage[]): void {
  * persisted (and receive their DB id) when they are enqueued — BEFORE later
  * queued messages and BEFORE the replies they eventually produce. So the raw
  * DB id order is msg2, msg3, reply2, reply3, which is not the conversational
- * order. By setting afterSort on each reply to (its question's sort value +
- * 0.5), messageSortValue places the reply directly after its question.
+ * order. By setting parentQueueId on each reply to its question's queueId,
+ * sortMessages resolves the reply directly after its question.
  *
  * Only messages whose queueId matches an existing user message are anchored;
  * every other message keeps its natural id ordering. Idempotent — safe to run
@@ -415,7 +457,7 @@ export function anchorRepliesToQuestions(messages: ChatMessage[]): ChatMessage[]
     if (!m.queueId) continue
     const q = questionByQueueId.get(m.queueId)
     if (!q) continue
-    m.afterSort = messageSortValue(q) + 0.5
+    m.parentQueueId = m.queueId
   }
   return messages
 }
@@ -535,7 +577,10 @@ export function drainQueueMessage(
     createdAt: new Date().toISOString(),
     backend: currentBackend,
     seq: nextClientSeq(),
-    afterSort: computeAfterSort(parent),
+    // Anchor to the drained message via parentQueueId (dynamic resolution in
+    // sortMessages) instead of afterSort (frozen TRANSIENT_BASE+seq snapshot).
+    // When the parent later adopts a DB id, the reply follows automatically.
+    parentQueueId: queueId || String(parent?.id ?? ''),
   }
   messages.push(newStreamingMsg)
   sortMessages(messages)
