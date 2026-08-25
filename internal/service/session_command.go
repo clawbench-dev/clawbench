@@ -190,6 +190,11 @@ type LaunchConfig struct {
 	BackendName string
 	AgentID     string
 	Message     string
+	// QueueID is the queue_id of the queued user message this execution answers
+	// (set when draining a queued message). It is recorded on the reply row so
+	// the frontend can anchor the reply to its own question when multiple
+	// queued messages interleave (DB id order ≠ conversational order).
+	QueueID string
 }
 
 // LaunchSessionExecution starts the AI execution goroutine for a session.
@@ -226,6 +231,7 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			BackendName: cfg.BackendName,
 			ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
 				cfg.Message = msg.Content
+				cfg.QueueID = msg.QueueID
 				nextResult := executeStreamRunShared(ctx, cfg)
 				return DrainResult{
 					CancelReason: nextResult.cancelReason,
@@ -711,7 +717,7 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	}
 
 	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
-	streamingMsgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(emptyContent), nil, true, "")
+	streamingMsgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(emptyContent), nil, true, "", cfg.QueueID)
 	if err != nil {
 		slog.Error("failed to create streaming message", slog.String("session", cfg.SessionID), slog.String("err", err.Error()))
 	}

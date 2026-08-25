@@ -15,6 +15,7 @@ import {
   computeAfterSort,
   isTransientMessage,
   nextClientSeq,
+  anchorRepliesToQuestions,
 } from '@/utils/chatStreamUtils.ts'
 
 describe('FILE_MODIFYING_TOOLS', () => {
@@ -1393,5 +1394,24 @@ describe('cancelPendingMessages', () => {
     const removed = cancelPendingMessages(messages, ['pending-1', 'pending-2'])
     expect(removed).toBe(2)
     expect(messages).toHaveLength(0)
+  })
+})
+
+describe('anchorRepliesToQuestions', () => {
+  it('anchors replies to their own queued question after loadHistory', () => {
+    const msgs = [
+      { role: 'user', id: 1, content: 'msg1' },
+      { role: 'assistant', id: 2, content: 'reply1' },
+      { role: 'user', id: 3, content: 'msg2', queueId: 'q2' },
+      { role: 'user', id: 4, content: 'msg3', queueId: 'q3' },
+      { role: 'assistant', id: 5, content: 'reply2', queueId: 'q2' },
+      { role: 'assistant', id: 6, content: 'reply3', queueId: 'q3' },
+    ]
+    const result = anchorRepliesToQuestions(msgs as any)
+    // reply2 anchored after msg2 (id 3), reply3 after msg3 (id 4)
+    const reply2 = result.find((m: any) => m.id === 5)
+    const reply3 = result.find((m: any) => m.id === 6)
+    expect(reply2.afterSort).toBe(3.5)
+    expect(reply3.afterSort).toBe(4.5)
   })
 })

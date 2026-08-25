@@ -390,6 +390,37 @@ export function sortMessages(messages: ChatMessage[]): void {
 }
 
 /**
+ * After loadHistory rebuilds the array from DB rows, anchor every queued
+ * reply (an assistant message whose queueId matches a queued user message) to
+ * its own question. This is required because queued user messages are
+ * persisted (and receive their DB id) when they are enqueued — BEFORE later
+ * queued messages and BEFORE the replies they eventually produce. So the raw
+ * DB id order is msg2, msg3, reply2, reply3, which is not the conversational
+ * order. By setting afterSort on each reply to (its question's sort value +
+ * 0.5), messageSortValue places the reply directly after its question.
+ *
+ * Only messages whose queueId matches an existing user message are anchored;
+ * every other message keeps its natural id ordering. Idempotent — safe to run
+ * on every loadHistory.
+ */
+export function anchorRepliesToQuestions(messages: ChatMessage[]): ChatMessage[] {
+  // Build question lookup: queueId → the queued user message carrying it.
+  const questionByQueueId = new Map<string, ChatMessage>()
+  for (const m of messages) {
+    if (m.role !== 'user') continue
+    if (m.queueId) questionByQueueId.set(m.queueId, m)
+  }
+  for (const m of messages) {
+    if (m.role !== 'assistant') continue
+    if (!m.queueId) continue
+    const q = questionByQueueId.get(m.queueId)
+    if (!q) continue
+    m.afterSort = messageSortValue(q) + 0.5
+  }
+  return messages
+}
+
+/**
  * Atomically process a queue_drain event on the messages array.
  *
  * 1. Finalizes the current streaming assistant message (removes streaming flag,

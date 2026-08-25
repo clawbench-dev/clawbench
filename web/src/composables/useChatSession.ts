@@ -10,7 +10,7 @@ import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
-import { forceCleanupStreamingState, sortMessages, type ChatMessage } from '@/utils/chatStreamUtils.ts'
+import { forceCleanupStreamingState, sortMessages, anchorRepliesToQuestions, type ChatMessage } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 
 // Module-level one-time session list load (replaces continuous polling)
@@ -224,6 +224,12 @@ export function useChatSession(options: UseChatSessionOptions) {
         m.pending = true
       }
     }
+    // Anchor queued replies to their own question: queued user messages get
+    // their DB id at enqueue time (before later queued messages and before the
+    // replies they produce), so raw id order is msg2,msg3,reply2,reply3. The
+    // backend records each reply's queue_id; recompute afterSort from it so
+    // the conversational order (msg2,reply2,msg3,reply3) is restored.
+    anchorRepliesToQuestions(messages.value as ChatMessage[])
     sortMessages(messages.value as ChatMessage[])
     totalMessages.value = (sessionData.total as number) || messages.value.length
     queuedCount.value = (sessionData.queuedCount as number) || 0

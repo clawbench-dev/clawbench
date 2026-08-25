@@ -309,7 +309,19 @@ func ExtractPlainText(content string) string {
 }
 
 // AddChatMessage adds a message to the chat history for a given project path, backend, and session.
-func AddChatMessage(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle string) (int64, error) {
+// AddChatMessage persists a chat message. The optional queueID argument (when
+// non-empty) records the queue_id of the queued user message that this reply
+// answers. The frontend uses it to anchor the reply directly after its own
+// question, because a queued user message is persisted (and gets its DB id)
+// BEFORE later queued messages, so pure id ordering cannot reconstruct the
+// conversational order (msg2, reply2, msg3, reply3) once multiple messages are
+// queued at once.
+func AddChatMessage(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle string, queueID ...string) (int64, error) {
+	replyQueueID := ""
+	if len(queueID) > 0 {
+		replyQueueID = queueID[0]
+	}
+
 	// Guard: reject messages to archived sessions
 	var isArchived int
 	if err := dbRead.QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
@@ -337,8 +349,8 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	defer tx.Rollback()
 
 	result, txErr := tx.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, files, streaming, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-		projectPath, backend, sessionID, role, content, filesJSON, streamingInt,
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, files, streaming, indexed, queue_id) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+		projectPath, backend, sessionID, role, content, filesJSON, streamingInt, replyQueueID,
 	)
 	if txErr != nil {
 		return 0, txErr
