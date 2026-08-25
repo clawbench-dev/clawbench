@@ -57,8 +57,11 @@ describe('chatMessageReducer — optimistic + structural', () => {
     expect(state[0].content).toBe('earlier')
   })
 
-  it('optimistic_adopt_id adopts DB id so the bubble sorts with DB messages', () => {
-    // A directly-sent bubble (sendMessageNow) gets its DB id back from the POST.
+  it('optimistic_adopt_id adopts DB id but keeps seq-space ordering', () => {
+    // A directly-sent bubble (sendMessageNow) learns its DB id from the
+    // user_message self-echo. It keeps its client seq (and old id as queueId)
+    // so ordering stays in seq space while the stream is live — it still sorts
+    // BEFORE a later queued message (smaller seq), and AFTER history.
     const state = run(
       [
         u({ id: 'pending-1', content: '1', seq: 1 }),
@@ -68,10 +71,11 @@ describe('chatMessageReducer — optimistic + structural', () => {
     )
     const msg1 = state.find((m) => m.role === 'user' && m.content === '1')
     expect(msg1?.id).toBe(10)
+    expect(msg1?.queueId).toBe('pending-1')
     expect(msg1?.pending).toBeUndefined()
-    expect(msg1?.seq).toBeUndefined()
-    // Sort value is now the numeric id (10), not TRANSIENT_BASE+seq.
-    expect(messageSortValue(msg1!)).toBe(10)
+    expect(msg1?.seq).toBe(1)
+    // Still in seq space: msg1 (seq 1) sorts before the queued msg2 (seq 2).
+    expect(messageSortValue(msg1!)).toBeLessThan(messageSortValue(state.find((m) => m.content === '2')!))
   })
 
   it('clear_pending removes only pending messages', () => {

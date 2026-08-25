@@ -246,16 +246,14 @@ describe('useChatStream', () => {
     })
 
     it('anchors the reply to the newest SENT user (max seq), not a physical-last history message', () => {
-      // User-reported regression: msg1 bubble (unadopted, pending-*) sorts to
-      // the FRONT, while older history messages stay after it. connectStream
-      // must anchor to msg1 (largest seq), NOT to the physical-last history
-      // message — otherwise the reply lands under a stale question.
+      // Regression: msg1 (freshly sent, has a client seq) must be the anchor —
+      // NOT the physical-last history message. History messages lack seq, so
+      // the max-seq scan finds msg1 even though it may not be the last element.
       const options = createOptions()
       options.messages.value.push(
         // history loaded from DB (no seq)
         { role: 'user', id: 38348, content: 'old', blocks: [{ type: 'text', text: 'old' }] },
         { role: 'assistant', id: 38349, content: 'old reply', blocks: [{ type: 'text', text: 'old reply' }] },
-        // msg1 freshly sent (seq set), sorts to front by the reducer
       )
       options.dispatch({ type: 'optimistic_push', msg: {
         role: 'user', id: 'pending-msg1', content: '1', blocks: [{ type: 'text', text: '1' }],
@@ -269,12 +267,12 @@ describe('useChatStream', () => {
       expect(placeholder).toBeDefined()
       // Anchor must be msg1 (the just-sent message), not the history question.
       expect(String(placeholder.parentQueueId)).toBe('pending-msg1')
-      // Order: msg1, reply, old, old-reply.
+      // Order: history, msg1, reply (msg1 is the newest message → after history).
       const order = options.messages.value.map((m: any) => m.role === 'user' ? `u:${m.content}` : `a:${m.content}`)
-      expect(order[0]).toBe('u:1')
-      expect(order[1]).toBe('a:')
-      expect(order[2]).toBe('u:old')
-      expect(order[3]).toBe('a:old reply')
+      expect(order[0]).toBe('u:old')
+      expect(order[1]).toBe('a:old reply')
+      expect(order[2]).toBe('u:1')
+      expect(order[3]).toBe('a:')
     })
 
     it('should reuse existing streaming message only when reuseExistingStreaming is set', () => {

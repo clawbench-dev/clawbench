@@ -570,9 +570,19 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string }
 
-        // Skip self-echo: if the sender is this device, we already have the optimistic message
+        // Skip self-echo: if the sender is this device, we already have the
+        // optimistic message. Still adopt its DB id from messageId — this is
+        // the ONLY reliable way to learn a directly-sent message's DB id
+        // without a backend that echoes msgId in the POST response. Without
+        // it the unadopted bubble sorts as a transient (after later queued
+        // messages that already adopted DB ids) — the ordering mess.
         const myClientId = localStorage.getItem('clawbench_client_id')
-        if (userData.senderClientId && userData.senderClientId === myClientId) break
+        if (userData.senderClientId && userData.senderClientId === myClientId) {
+          if (userData.messageId && userData.queueId) {
+            dispatch({ type: 'optimistic_adopt_id', id: userData.queueId, dbId: userData.messageId })
+          }
+          break
+        }
 
         resetStreamTimeout()
         dispatch({ type: 'ws_user_message', data: { ...userData, backend: currentBackend.value } })

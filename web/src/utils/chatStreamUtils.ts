@@ -374,26 +374,23 @@ const TRANSIENT_BASE = Number.MAX_SAFE_INTEGER / 4
  * Numeric sort value for a USER message (assistant replies are resolved by
  * sortMessages against their parent, never through this function).
  *
- * - DB-backed user (numeric id): the id itself.
- * - Queued/pending bubble (pending=true): TRANSIENT_BASE + seq — it sorts after
- *   every DB message until queue_drain adopts its DB id.
- * - Directly-sent bubble not yet adopted (non-pending, string id, no queue
- *   link): this is ALWAYS the earliest message — it is a question that was sent
- *   while no stream was running, and nothing precedes it except its own reply.
- *   Sorting it after DB messages would push it below later queued messages that
- *   already adopted DB ids (the reported misorder). Sort it first instead.
+ * - Pure DB-backed user (numeric id, no live markers): the id itself.
+ * - Live message (pending / streaming / string id / carries a queueId AND a
+ *   client seq — i.e. still part of the in-flight send pipeline): TRANSIENT_BASE
+ *   + seq, ordering purely by send order. A queued message adopts its DB id
+ *   when the drain loop starts, but that id is a persist-time artifact (larger
+ *   than history ids, yet smaller than a later message's id) — using it would
+ *   reorder messages by persist time. DB-loaded history that merely retains a
+ *   queueId (no seq) is NOT live and sorts by id.
  */
 export function messageSortValue(m: ChatMessage): number {
-  if (!isTransientMessage(m)) return m.id as number
-  const isDirectBubble =
-    m.role === 'user' &&
-    !m.pending &&
-    !m.queueId &&
-    !m._remote &&
-    !m['_remoteQueueId'] &&
-    typeof m.id === 'string' &&
-    m.id.startsWith('pending-')
-  if (isDirectBubble) return -(1e12) + (m.seq ?? 0)
+  const isLive =
+    m.pending === true ||
+    m.streaming === true ||
+    typeof m.id !== 'number' ||
+    (m.queueId != null && m.seq != null) ||
+    (m['_remoteQueueId'] != null && m.seq != null)
+  if (!isLive) return m.id as number
   return TRANSIENT_BASE + (m.seq ?? 0)
 }
 
@@ -537,21 +534,24 @@ export function drainQueueMessage(
   if (pendingIdx !== -1) {
     // Found by stable key — clear transient flags.
     //
-    // Adopt the numeric DB id ONLY when the message's parent (the preceding
-    // user question) is already in the DB-id domain. If the parent is still a
-    // transient string-id message (its DB id not yet known), adopting the id
-    // would move this drained message to the DB-id domain where it sorts ABOVE
-    // its still-transient parent and earlier replies — the queued-message
-    // display misalignment (M1). In that case keep the transient string id
-    // (queueId) + seq; loadHistory reconciles the authoritative order later.
+    // Adopt the numeric DB id. Sorting stays in seq space while streaming (the
+    // message keeps its client seq), so an adopted message still orders by
+    // send order relative to not-yet-adopted bubbles. loadHistory (idle) later
+    // clears seq and orders by DB id.
     delete messages[pendingIdx].pending
     delete messages[pendingIdx]._remote
     delete messages[pendingIdx]['_remoteQueueId']
-    const parentIsDB = messages.slice(0, pendingIdx).some((m) => m.role === 'user' && typeof m.id === 'number')
-    if (typeof dbMessageId === 'number' && dbMessageId > 0 && parentIsDB) {
+    if (typeof dbMessageId === 'number' && dbMessageId > 0 && typeof messages[pendingIdx].id !== 'number') {
+      // Adopt the DB id. A message that already carries a numeric id (e.g. a
+      // cross-device _remote that arrived persisted) keeps it — replacing would
+      // churn the v-for key. Sorting stays in seq space (client seq preserved),
+      // so an adopted message still orders by send order while the stream is
+      // live; loadHistory (idle) later drops seq and orders by DB id.
       messages[pendingIdx].queueId = String(messages[pendingIdx].id)
       messages[pendingIdx].id = dbMessageId
-      delete messages[pendingIdx].seq
+      if (typeof messages[pendingIdx].seq !== 'number') {
+        messages[pendingIdx].seq = nextClientSeq()
+      }
     } else if (messages[pendingIdx].id == null) {
       messages[pendingIdx].id = drainId || generateDrainId()
     }
@@ -960,16 +960,20 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'optimistic_adopt_id': {
-      // A directly-sent message (sendMessageNow) got its DB id back from the
-      // POST response. Adopt it immediately so the bubble sorts with the DB
-      // messages (numeric id) instead of staying transient (huge sort value)
-      // until the next loadHistory — otherwise it renders AFTER later queued
-      // messages that already adopted their DB ids (misorder).
+      // A directly-sent message (sendMessageNow) learned its DB id from the
+      // user_message self-echo (MessageID). Adopt it immediately so the bubble
+      // no longer sorts as a transient after later queued messages. Preserve
+      // the old id as queueId so replies anchored via parentQueueId keep
+      // resolving to it, and KEEP seq: sorting stays in seq space while the
+      // stream is live so this message still orders after history and before
+      // later queued messages. loadHistory (idle) later drops seq → DB id order.
       const idx = state.findIndex((m) => String(m.id) === String(action.id))
       if (idx === -1) return state
       const target = state[idx]
+      const oldId = String(target.id)
       target.id = action.dbId
-      delete target.seq
+      target.queueId = oldId
+      if (typeof target.seq !== 'number') target.seq = nextClientSeq()
       delete target.pending
       sortMessages(state)
       return state

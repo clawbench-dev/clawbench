@@ -185,22 +185,66 @@ describe('chat queue full-flow integration', () => {
     expect(s.some((m) => m.pending)).toBe(false)
   })
 
-  // ── User-reported bug fallback: even when the backend does NOT return msgId
-  //    (so msg1's bubble is never adopted before msg2/msg3 adopt their DB ids),
-  //    msg1 must still sort FIRST — not after them. The `pending-`-prefixed,
-  //    non-pending user bubble is an unadopted directly-sent message and is
-  //    always the earliest message.
-  it('unadopted msg1 bubble sorts first even though msg2/msg3 adopted DB ids', () => {
+  // ── Regression: msg1 bubble not yet adopted, msg2/msg3 already drained
+  //    (adopted DB ids but still carry queueId → seq-space sort). All live
+  //    messages sort in seq space, so msg1 (earliest seq) comes first.
+  it('unadopted msg1 bubble sorts before drained msg2/msg3 (all in seq space)', () => {
     const state: ChatMessage[] = [
       u({ id: 'pending-abc', content: '1', seq: 1 }),
       a({ id: 'drain-r1', content: 'reply1', seq: 2, parentQueueId: 'pending-abc' }),
-      u({ id: 38308, content: '2', seq: 3 }),
-      a({ id: 'drain-r2', content: 'reply2', seq: 4, parentQueueId: '38308' }),
-      u({ id: 38309, content: '3', seq: 5 }),
-      a({ id: 'drain-r3', content: 'reply3', seq: 6, parentQueueId: '38309' }),
+      u({ id: 38308, content: '2', queueId: 'pending-2', seq: 3 }),
+      a({ id: 'drain-r2', content: 'reply2', seq: 4, parentQueueId: 'pending-2' }),
+      u({ id: 38309, content: '3', queueId: 'pending-3', seq: 5 }),
+      a({ id: 'drain-r3', content: 'reply3', seq: 6, parentQueueId: 'pending-3' }),
     ]
     sortMessages(state)
     const order = state.map((m) => (m.role === 'user' ? `u:${String(m.id)}` : `a:${String(m.id)}`))
     expect(order).toEqual(['u:pending-abc', 'a:drain-r1', 'u:38308', 'a:drain-r2', 'u:38309', 'a:drain-r3'])
+  })
+
+  // ── Realistic session-with-history scenario (user-reported):
+  //    history loaded (no seq), then msg1 sent (adopted via user_message
+  //    self-echo), msg2/msg3 queued then drained. Order must be:
+  //    history, msg1, reply1, msg2, reply2, msg3, reply3 — at every stage.
+  it('with history: msg1 adopted, msg2/3 drained — conversational order at every stage', () => {
+    let s: ChatMessage[] = []
+    // history from loadHistory (DB ids, no seq, no queueId)
+    s = run(s, [{
+      type: 'db_load', sessionRunning: false,
+      dbMessages: [
+        u({ id: 38348, content: 'old' }),
+        a({ id: 38349, content: 'old reply' }),
+      ],
+    }])
+    expect(display(s)).toBe('user:38348 | assistant:38349')
+
+    // sendMessageNow('1') — bubble, then user_message self-echo adopts id 38350
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 10 }) }])
+    s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 38350 }])
+    // reply1 placeholder anchored to msg1
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 11, parentQueueId: 'pending-1' }) }])
+    // msg2/msg3 queue
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 12 }) }])
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-3', content: '3', pending: true, seq: 13 }) }])
+    // order: history, msg1, reply1, msg2(pending), msg3(pending)
+    const mid = display(s)
+    expect(mid.startsWith('user:38348 | assistant:38349 | user:38350 | assistant:drain-r1')).toBe(true)
+
+    // drain msg2 → adopts id 38351 (keeps seq space)
+    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: '2', files: [], dbMessageId: 38351 }])
+    s = run(s, [{ type: 'ws_content', text: 'reply2' }])
+    const r2 = s.find((m) => m.role === 'assistant' && m.streaming)!
+    // order: history, msg1, reply1, msg2, reply2, msg3(pending)
+    expect(display(s)).toBe(
+      `user:38348 | assistant:38349 | user:38350 | assistant:drain-r1 | user:38351 | assistant:${String(r2.id)}(s) | user:pending-3(p)`
+    )
+
+    // drain msg3
+    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-3', text: '3', files: [], dbMessageId: 38352 }])
+    s = run(s, [{ type: 'ws_content', text: 'reply3' }])
+    const r3 = s.find((m) => m.role === 'assistant' && m.streaming)!
+    expect(display(s)).toBe(
+      `user:38348 | assistant:38349 | user:38350 | assistant:drain-r1 | user:38351 | assistant:${String(r2.id)} | user:38352 | assistant:${String(r3.id)}(s)`
+    )
   })
 })
