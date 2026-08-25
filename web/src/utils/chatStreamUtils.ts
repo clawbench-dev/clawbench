@@ -734,33 +734,86 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
   const canAdoptDrains = !sessionRunning && !anyStreaming
   const used = new Set<ChatMessage>()
   const merged: ChatMessage[] = []
+  // When a transient message adopts a DB id, replies anchored to its old id
+  // (parentQueueId) would lose their anchor. Record old→new so we can rewrite
+  // them once all matches are done.
+  const idAdoption = new Map<string, string | number>()
 
   for (const db of dbMessages) {
     let target = byId.get(String(db.id))
     if (target) {
       used.add(target)
-    } else if (db.queueId && (byQueueId.has(db.queueId) || byId.has(db.queueId))) {
+    } else if (db.role === 'user' && db.queueId && (byQueueId.has(db.queueId) || byId.has(db.queueId))) {
       // Match a pending bubble by queueId. The optimistic bubble's id IS the
       // queueId (no queueId field yet); after a numeric-id adoption the queueId
       // field survives. Reuse it; keep string id so queue_drain can still find
       // it by id, but adopt DB queued state.
+      // NOTE: only USER DB rows take this path — an assistant reply row that
+      // carries the same queueId must NOT be matched against the user bubble
+      // (it would clobber the reply into the user message). Assistant rows are
+      // adopted via the drain-* branch below.
       target = byQueueId.get(db.queueId) || byId.get(db.queueId)!
       used.add(target)
       target.queued = db.queued
+      // Sync the pending flag with the DB row: queued=1 → waiting bubble;
+      // queued=false (drained) → clear pending. The OLD code only SET pending
+      // on queued=true and never cleared it, so a drained message kept showing
+      // as "waiting" during streaming until a reload fixed it.
       if (db.queued === true) target.pending = true
-    } else if (db.role === 'assistant' && canAdoptDrains) {
-      // Adopt DB identity into a finalized drain-* reply (createdAt ±5s).
-      const matchIdx = finalizedDrains.findIndex((d) => {
-        const dt = db.createdAt ? new Date(db.createdAt).getTime() : 0
-        const pt = d.createdAt ? new Date(d.createdAt).getTime() : 0
-        return dt !== 0 && pt !== 0 && Math.abs(dt - pt) <= 5000
+      else if (db.queued === false) delete target.pending
+    } else if (db.role === 'user') {
+      // Adopt DB identity into an optimistic user bubble that has NO queueId —
+      // e.g. a message sent via sendMessageNow (id = `pending-*`, never queued).
+      // Such a bubble is not matched by id (string vs numeric) nor by queueId.
+      // Match by content; when both createdAt values are valid, additionally
+      // require ±5s proximity to avoid false positives between repeated texts.
+      const dt = db.createdAt ? new Date(db.createdAt).getTime() : 0
+      const match = state.findIndex((m) => {
+        if (m.role !== 'user') return false
+        if (m.id == null || typeof m.id !== 'string') return false
+        if (typeof m.content !== 'string' || m.content !== db.content) return false
+        const pt = m.createdAt ? new Date(m.createdAt).getTime() : 0
+        if (dt !== 0 && !Number.isNaN(dt) && pt !== 0 && !Number.isNaN(pt)) {
+          return Math.abs(dt - pt) <= 5000
+        }
+        return true // one side lacks a usable createdAt — content match suffices
       })
+      if (match !== -1) {
+        target = state[match]
+        used.add(target)
+        const oldId = String(target.id)
+        target.id = db.id
+        idAdoption.set(oldId, db.id)
+        delete target.seq
+        // A never-queued message: pending stays off, queued=false.
+        target.queued = false
+        delete target.pending
+      }
+    } else if (db.role === 'assistant' && canAdoptDrains) {
+      // Adopt DB identity into a finalized drain-* reply. Prefer a queueId
+      // match — the backend records the replied-to queue on the DB row, and the
+      // drain-* placeholder anchors itself with parentQueueId = that queueId.
+      // This is exact and immune to createdAt drift (a long AI reply can take
+      // minutes, far beyond any ±5s window). Fall back to createdAt ±5s.
+      let matchIdx = -1
+      if (db.queueId) {
+        matchIdx = finalizedDrains.findIndex((d) => d.parentQueueId === db.queueId)
+      }
+      if (matchIdx === -1) {
+        const dt = db.createdAt ? new Date(db.createdAt).getTime() : 0
+        matchIdx = finalizedDrains.findIndex((d) => {
+          const pt = d.createdAt ? new Date(d.createdAt).getTime() : 0
+          return dt !== 0 && pt !== 0 && Math.abs(dt - pt) <= 5000
+        })
+      }
       if (matchIdx !== -1) {
         const match = finalizedDrains[matchIdx]
         finalizedDrains.splice(matchIdx, 1) // consume — one drain per DB row
         target = match
         used.add(target)
+        const oldId = String(target.id)
         target.id = db.id
+        idAdoption.set(oldId, db.id)
         delete target.afterSort
         // Keep parentQueueId: the parent may still be transient (its DB id not
         // yet adopted). sortMessages resolves parentQueueId dynamically, so the
@@ -784,6 +837,7 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
       if (db.queued !== undefined && target.role === 'user') {
         target.queued = db.queued
         if (db.queued === true) target.pending = true
+        else if (db.queued === false) delete target.pending
       }
       merged.push(target)
     } else if (db.role === 'assistant' && db.streaming === true && !anyStreaming) {
@@ -819,6 +873,18 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
     if (used.has(m)) continue
     const isTransient = m.pending === true || m.streaming === true || typeof m.id === 'string'
     if (isTransient) merged.push(m)
+  }
+
+  // Rewrite parentQueueId anchors whose parent adopted a DB id during this
+  // merge — otherwise a reply anchored to the old string id loses its parent
+  // and falls back to its own sort value (misordering).
+  if (idAdoption.size > 0) {
+    for (const m of merged) {
+      if (m.parentQueueId) {
+        const newId = idAdoption.get(m.parentQueueId)
+        if (newId !== undefined) m.parentQueueId = String(newId)
+      }
+    }
   }
 
   // queued=1 rows become pending bubbles.
