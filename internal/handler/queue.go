@@ -4,9 +4,13 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/ws"
 )
 
 // QueueHandler handles pending message queue operations.
@@ -59,6 +63,7 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		AgentID   string            `json:"agentId"`
 		ModelID   string            `json:"modelId"`
 		Transport string            `json:"transport"`
+		ClientID  string            `json:"clientId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
@@ -70,14 +75,26 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate file paths: reject traversal outside the project and resolve to
+	// absolute paths with isDir from os.Stat, matching the POST /api/ai/chat
+	// path. Without this the unified endpoint would persist raw (possibly
+	// malicious) paths (R3).
+	validatedFiles, ok := validateQueueFiles(w, r, projectPath, req.FilePaths, req.Files)
+	if !ok {
+		return
+	}
+
 	// Persist the message + start execution or signal the running drain loop.
-	started, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	// msgID is the persisted DB id of the message, used to broadcast a
+	// user_message event so other devices see it before it drains
+	// (cross-device sync).
+	started, msgID, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sessionID,
 		ProjectPath: info.ProjectPath,
 		BackendName: info.Backend,
 		AgentID:     req.AgentID,
 		Message:     req.Message,
-		Files:       req.Files,
+		Files:       validatedFiles,
 		QueueID:     req.QueueID,
 		ModelID:     req.ModelID,
 		Transport:   req.Transport,
@@ -87,10 +104,68 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Emit user_message to other session subscribers for cross-device sync.
+	// SenderClientID lets the sending device skip its own echo. MessageID is
+	// the real persisted DB id (> 0), matching the POST /api/ai/chat path.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID:      msgID,
+			Content:        req.Message,
+			Files:          validatedFiles,
+			SenderClientID: req.ClientID,
+			QueueID:        req.QueueID,
+		},
+	})
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"started": started,
 	})
+}
+
+// validateQueueFiles validates and resolves attached file paths for the queue
+// endpoint, mirroring the POST /api/ai/chat handler's checks: every path must
+// stay within the project (path traversal → 403) and exist (missing → 404).
+// Returns the validated file entries (absolute paths, isDir from os.Stat) and
+// ok=false when an error response has been written.
+func validateQueueFiles(w http.ResponseWriter, r *http.Request, projectPath string, filePaths []string, fileEntries []model.FileEntry) ([]model.FileEntry, bool) {
+	basePath, _ := filepath.Abs(projectPath)
+
+	// filePaths (legacy raw paths) → validated entries.
+	validated := make([]model.FileEntry, 0, len(filePaths)+len(fileEntries))
+	for _, fp := range filePaths {
+		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fp)
+		if !ok {
+			return nil, false
+		}
+		info, err := os.Stat(fAbsPath)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "FileNotFound", map[string]any{"Path": fp})
+			return nil, false
+		}
+		validated = append(validated, model.FileEntry{Path: fAbsPath, IsDir: info.IsDir()})
+	}
+
+	// files (structured entries with optional line ranges) → validated entries.
+	for _, fEntry := range fileEntries {
+		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fEntry.Path)
+		if !ok {
+			return nil, false
+		}
+		info, err := os.Stat(fAbsPath)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "FileNotFound", map[string]any{"Path": fEntry.Path})
+			return nil, false
+		}
+		validated = append(validated, model.FileEntry{
+			Path:      fAbsPath,
+			IsDir:     info.IsDir(),
+			StartLine: fEntry.StartLine,
+			EndLine:   fEntry.EndLine,
+		})
+	}
+	return validated, true
 }
 
 func handleQueueGet(w http.ResponseWriter, r *http.Request) {

@@ -4181,6 +4181,104 @@ describe('loadMoreMessages', () => {
 
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
+
+  it('refreshes queuedCount from the loadMore response (plan C)', async () => {
+    // First: loadHistory returns 2 normal messages + 5 queued → queuedCount=5.
+    mockUtilsFns.parseMessages
+      .mockReturnValueOnce([
+        { id: 50, role: 'user', content: 'hello' },
+        { id: 51, role: 'assistant', content: 'hi' },
+        { id: 52, role: 'user', content: 'q1', queueId: 'q1', queued: true },
+      ])
+      .mockReturnValueOnce([
+        { id: 42, role: 'user', content: 'older' },
+        { id: 43, role: 'assistant', content: 'older reply' },
+      ])
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'current-s1',
+          messages: [
+            { id: 50 },
+            { id: 51 },
+            { id: 52, queueId: 'q1', queued: true },
+          ],
+          total: 50,
+          queuedCount: 5,
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          messages: [{ id: 42 }, { id: 43 }],
+          total: 50,
+          queuedCount: 2,
+        }),
+      })
+
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    await session.loadHistory(true, false, false)
+    expect(session.queuedCount.value).toBe(5)
+
+    await session.loadMoreMessages()
+
+    // queuedCount must reflect the freshest response.
+    expect(session.queuedCount.value).toBe(2)
+  })
+
+  it('hasMore stays true while only queued messages are unloaded (plan C)', () => {
+    // All 40 normal messages are loaded, but 15 queued messages are still
+    // pending (they ARE in the messages array). total=55, queuedCount=15.
+    // There is no more NORMAL history to load → hasMore must be false.
+    const normal = Array.from({ length: 40 }, (_, i) => ({
+      id: i + 1, role: i % 2 === 0 ? 'user' : 'assistant', content: `m${i}`,
+    }))
+    const queued = Array.from({ length: 15 }, (_, i) => ({
+      id: 100 + i, role: 'user', content: `q${i}`, queueId: `pq${i}`, queued: true,
+    }))
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([...normal, ...queued] as any),
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+    session.totalMessages.value = 55
+    session.queuedCount.value = 15
+
+    // Non-queued loaded (40) == non-queued total (55-15=40) → no more history.
+    expect(session.hasMore.value).toBe(false)
+  })
 })
 
 // ───────────────────────────────────────────────────────────

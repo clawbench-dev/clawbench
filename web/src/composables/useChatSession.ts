@@ -385,7 +385,15 @@ export function useChatSession(options: UseChatSessionOptions) {
   // exclude them — a pending bubble is not "loaded history" (plan C).
   const queuedCount = ref(0)
   const loadingMore = ref(false)
-  const hasMore = computed(() => messages.value.length - queuedCount.value < totalMessages.value - queuedCount.value)
+  // Plan C: compare non-queued loaded messages against non-queued total.
+  // The queued messages in the messages array are pending bubbles, not loaded
+  // history. Using filter(!m.queueId) instead of `length - queuedCount` keeps
+  // the loaded count accurate even when queuedCount (a server snapshot) drifts
+  // from the rows actually present in the messages array.
+  const hasMore = computed(() => {
+    const loaded = messages.value.filter((m) => !(m as ChatMessage).queueId).length
+    return loaded < totalMessages.value - queuedCount.value
+  })
 
   const agentHeaderTitle = computed(() => makeAgentTitle(currentAgentId.value))
 
@@ -634,6 +642,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (olderMsgs.length > 0) {
         messages.value = [...olderMsgs, ...messages.value]
         totalMessages.value = data.total || totalMessages.value
+        // Refresh queuedCount from the latest response (plan C) — it may have
+        // changed since the initial load (e.g. messages drained meanwhile).
+        if (typeof data.queuedCount === 'number') {
+          queuedCount.value = data.queuedCount
+        }
         onExtractScheduledTasks(olderMsgs)
         onRenderUpdate(true)
       }

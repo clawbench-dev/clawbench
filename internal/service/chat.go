@@ -458,6 +458,56 @@ func DequeueQueuedMessage(sessionID string) (model.ChatMessage, bool, error) {
 	return msg, true, nil
 }
 
+// DequeueQueuedMessageByID atomically claims the queued message with the given
+// id (the row just inserted by AddQueuedMessage). Same transaction semantics as
+// DequeueQueuedMessage, but targets a specific row instead of "oldest first".
+// Used to consume exactly the message an execution goroutine is about to run
+// directly, so a concurrent enqueue's earlier row is left to the drain loop
+// (R1).
+func DequeueQueuedMessageByID(sessionID string, msgID int64) (model.ChatMessage, bool, error) {
+	tx, err := WriteBegin()
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+
+	var msg model.ChatMessage
+	var filesJSON sql.NullString
+	var queueID string
+	var queued int
+	err = tx.QueryRow(`
+		SELECT id, role, content, files, backend, created_at, queue_id, queued
+		FROM chat_history WHERE session_id = ? AND id = ? AND queued = 1
+	`, sessionID, msgID).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &msg.CreatedAt, &queueID, &queued)
+	if err == sql.ErrNoRows {
+		return model.ChatMessage{}, false, nil // row not queued (already claimed/cleared)
+	}
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+
+	res, err := tx.Exec("UPDATE chat_history SET queued = 0, indexed = 0 WHERE id = ? AND queued = 1", msg.ID)
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return model.ChatMessage{}, false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return model.ChatMessage{}, false, err
+	}
+
+	msg.SessionID = sessionID
+	msg.QueueID = queueID
+	msg.Queued = queued != 0
+	if filesJSON.Valid && filesJSON.String != "" {
+		msg.Files = unmarshalFilesJSON(filesJSON.String)
+	}
+	return msg, true, nil
+}
+
 // ClearQueuedMessages marks every queued message of a session as consumed
 // (queued=0). Used by session cancel/force-cancel — the rows stay in
 // chat_history as normal conversation records.

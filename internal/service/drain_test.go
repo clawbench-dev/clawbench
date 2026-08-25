@@ -3,6 +3,7 @@ package service
 import (
 	"database/sql"
 	"sync/atomic"
+	"time"
 	"testing"
 
 	"clawbench/internal/ai"
@@ -351,4 +352,29 @@ func TestDrainLoop_UserCancelWithQueueIDsOnly_IncludesOnlyNonEmptyQueueIDs(t *te
 	RunDrainLoop(cfg, DrainResult{CancelReason: cancelReasonUser})
 	assert.Equal(t, statusCancelled, finalEvent.Type)
 	assert.Equal(t, 0, GetQueuedCount(sessionID))
+}
+
+// TestWaitForEnqueue_SignaledBySignalDrain verifies a queued message signal
+// wakes WaitForEnqueue immediately (design plan: SignalDrain → WaitForEnqueue
+// returns true).
+func TestWaitForEnqueue_SignaledBySignalDrain(t *testing.T) {
+	sessionID := "drain-wait-signal"
+	started := make(chan struct{})
+	done := make(chan bool)
+	go func() {
+		close(started)
+		done <- WaitForEnqueue(sessionID, 500*time.Millisecond)
+	}()
+	<-started
+	SignalDrain(sessionID)
+	assert.True(t, <-done, "WaitForEnqueue must return true when signaled")
+}
+
+// TestWaitForEnqueue_Timeout verifies WaitForEnqueue returns false when no
+// signal arrives within the timeout.
+func TestWaitForEnqueue_Timeout(t *testing.T) {
+	sessionID := "drain-wait-timeout"
+	start := time.Now()
+	assert.False(t, WaitForEnqueue(sessionID, 50*time.Millisecond))
+	assert.GreaterOrEqual(t, time.Since(start), 40*time.Millisecond)
 }

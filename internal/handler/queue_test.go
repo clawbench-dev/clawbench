@@ -4,12 +4,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // createQueueSession creates a real session in the test DB and returns its ID.
@@ -71,9 +77,15 @@ func TestQueueHandler_Enqueue_WithFilePaths(t *testing.T) {
 	createQueueSession(t, env, sessionID)
 	defer service.ClearQueuedMessages(sessionID)
 
+	// Create real files under the project so path validation passes.
+	mainGo := filepath.Join(env.ProjectDir, "main.go")
+	utilGo := filepath.Join(env.ProjectDir, "util.go")
+	require.NoError(t, os.WriteFile(mainGo, []byte("package main"), 0o644))
+	require.NoError(t, os.WriteFile(utilGo, []byte("package util"), 0o644))
+
 	body := map[string]any{
 		"message":   "check this file",
-		"filePaths": []string{"/main.go", "/util.go"},
+		"filePaths": []string{"main.go", "util.go"},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -99,8 +111,14 @@ func TestQueueHandler_Enqueue_WithFiles(t *testing.T) {
 	createQueueSession(t, env, sessionID)
 	defer service.ClearQueuedMessages(sessionID)
 
+	// Create real files under the project so path validation passes.
+	aPng := filepath.Join(env.ProjectDir, "a.png")
+	bJpg := filepath.Join(env.ProjectDir, "b.jpg")
+	require.NoError(t, os.WriteFile(aPng, []byte("png"), 0o644))
+	require.NoError(t, os.WriteFile(bJpg, []byte("jpg"), 0o644))
+
 	body := map[string]any{
-		"files": []map[string]any{{"path": "/upload/a.png", "isDir": false}, {"path": "/upload/b.jpg", "isDir": false}},
+		"files": []map[string]any{{"path": "a.png", "isDir": false}, {"path": "b.jpg", "isDir": false}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -369,4 +387,97 @@ func TestQueueHandler_Delete_MissingProjectCookie(t *testing.T) {
 	w := callHandler(QueueHandler, req)
 
 	assertStatus(t, w, http.StatusForbidden)
+}
+
+// TestQueueHandler_Enqueue_RejectsPathTraversal verifies the unified
+// POST /api/ai/queue endpoint validates attached file paths (path traversal
+// outside the project must be rejected with 403), matching the legacy
+// POST /api/ai/chat path (R3).
+func TestQueueHandler_Enqueue_RejectsPathTraversal(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-traversal"
+	createQueueSession(t, env, sessionID)
+
+	body := map[string]any{
+		"message":   "read this",
+		"filePaths": []string{"../../../etc/passwd"},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+// TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID verifies the unified
+// POST /api/ai/queue endpoint broadcasts a user_message event carrying the
+// persisted DB message id (msgID > 0) and the sender's clientId — so other
+// devices see the new message even before it drains (cross-device sync, plan
+// 竞态 5).
+func TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-emit"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	// Set up a WS manager with a real connection so EmitToSession buffers the
+	// event (conn != nil path in broadcastToSubscription).
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	conn := newTestWSConn(t)
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(conn, &writeMu, "test-queue-client", "")
+	mgr.StreamHub().Subscribe("test-queue-client", sessionID)
+	require.NotNil(t, sub)
+
+	body := map[string]any{
+		"message":  "queue emit me",
+		"clientId": "sender-device-1",
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w)
+
+	// The handler must have broadcast user_message with the real DB id.
+	var found *ws.ServerMessage
+	assert.Eventually(t, func() bool {
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			data, ok := ev.Data.(ws.ChatStreamData)
+			if !ok || data.EventType != "user_message" {
+				continue
+			}
+			found = &ev
+			return true
+		}
+		return false
+	}, 2*time.Second, 20*time.Millisecond)
+
+	require.NotNil(t, found, "expected a user_message chat_stream event in the subscriber buffer")
+	data := found.Data.(ws.ChatStreamData)
+	payload, ok := data.Payload.(map[string]any)
+	require.True(t, ok)
+	// messageId is stored as the original int64 (the buffer holds the Go value,
+	// not JSON), so it may appear as int64 or float64 depending on marshalling.
+	msgID, _ := payload["messageId"].(int64)
+	if msgID == 0 {
+		if f, ok := payload["messageId"].(float64); ok {
+			msgID = int64(f)
+		}
+	}
+	assert.Greater(t, msgID, int64(0), "user_message must carry the real persisted DB id (msgID > 0)")
+	assert.Equal(t, "sender-device-1", payload["senderClientId"])
+	assert.Equal(t, "queue emit me", payload["content"])
+
+	service.CancelSession(sessionID)
 }

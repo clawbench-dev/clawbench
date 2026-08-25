@@ -1719,8 +1719,8 @@ func TestGetMessageByID_NotFound(t *testing.T) {
 
 // TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage verifies
 // that when a session is already running, the message is enqueued and
-// a user_message event with MessageID=0 is emitted (the enqueue path in
-// session_command.go lines 140-154).
+// a user_message event with the real persisted msgID (>0) is emitted (the
+// enqueue path in session_command.go — EnqueueAndMaybeStart returns the id).
 func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
