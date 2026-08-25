@@ -106,7 +106,11 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 		}
 
 		// Queue has next message — drain it (row already persisted with queued=0)
-		slog.Info("draining queued message", slog.String("session", cfg.SessionID), slog.String("queueId", msg.QueueID), slog.String("text", msg.Content))
+		slog.Info("drain: draining queued message",
+			slog.String("session", cfg.SessionID),
+			slog.String("queueId", msg.QueueID),
+			slog.Int64("msgId", msg.ID),
+			slog.String("text", msg.Content))
 
 		// Emit queue_drain event to WS clients
 		emitDrainEvent(cfg.SessionID, ai.StreamEvent{
@@ -120,6 +124,10 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 				Files:     msg.Files,
 			},
 		})
+		slog.Info("drain: emitted queue_drain",
+			slog.String("session", cfg.SessionID),
+			slog.String("queueId", msg.QueueID),
+			slog.Int64("msgId", msg.ID))
 
 		// Execute next stream run with the dequeued message
 		result = cfg.ExecuteRunWithMessage(msg)

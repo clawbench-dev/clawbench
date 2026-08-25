@@ -387,6 +387,12 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	}
 
 	msgID, _ = result.LastInsertId()
+	slog.Info("chat: persisted message",
+		slog.String("session", sessionID),
+		slog.String("role", role),
+		slog.Int64("msgID", msgID),
+		slog.String("queueID", replyQueueID),
+		slog.Bool("streaming", streaming))
 	return msgID, nil
 }
 
