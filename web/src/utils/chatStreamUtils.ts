@@ -696,6 +696,7 @@ export type ChatMessageAction =
   | { type: 'optimistic_push'; msg: ChatMessage }
   | { type: 'optimistic_remove'; id: string | number }
   | { type: 'optimistic_remove_content'; content: string }
+  | { type: 'optimistic_adopt_id'; id: string | number; dbId: number }
   | { type: 'stream_placeholder'; msg: ChatMessage }
   | { type: 'clear_pending' }
   | { type: 'remove_pending'; queueId: string }
@@ -974,6 +975,21 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         (m) => m.role === 'user' && m.pending && m.content === action.content
       )
       if (idx !== -1) state.splice(idx, 1)
+      return state
+    }
+    case 'optimistic_adopt_id': {
+      // A directly-sent message (sendMessageNow) got its DB id back from the
+      // POST response. Adopt it immediately so the bubble sorts with the DB
+      // messages (numeric id) instead of staying transient (huge sort value)
+      // until the next loadHistory — otherwise it renders AFTER later queued
+      // messages that already adopted their DB ids (misorder).
+      const idx = state.findIndex((m) => String(m.id) === String(action.id))
+      if (idx === -1) return state
+      const target = state[idx]
+      target.id = action.dbId
+      delete target.seq
+      delete target.pending
+      sortMessages(state)
       return state
     }
     case 'stream_placeholder': {

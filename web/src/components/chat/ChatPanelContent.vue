@@ -819,6 +819,13 @@ async function sendMessageNow(text, filePaths, files) {
         if (data.sessionId && !identity.currentSessionId.value) {
             identity.currentSessionId.value = data.sessionId
         }
+        // Direct-send path: adopt the DB id immediately so this bubble sorts
+        // with DB-backed messages instead of staying transient (huge sort
+        // value) until the next loadHistory — otherwise it renders AFTER later
+        // queued messages that already adopted their DB ids (misorder).
+        if (data.msgId && !data.running) {
+            messageStore.dispatch({ type: 'optimistic_adopt_id', id: pendingId, dbId: data.msgId })
+        }
         // Session already running — another request is in progress
         if (data.running) {
             // Session already running — the message was enqueued.

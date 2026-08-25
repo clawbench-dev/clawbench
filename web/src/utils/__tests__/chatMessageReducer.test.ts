@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   chatMessageReducer,
   mergeDbMessages,
+  messageSortValue,
   type ChatMessage,
   type ChatMessageAction,
 } from '@/utils/chatStreamUtils.ts'
@@ -54,6 +55,23 @@ describe('chatMessageReducer — optimistic + structural', () => {
     )
     expect(state).toHaveLength(1)
     expect(state[0].content).toBe('earlier')
+  })
+
+  it('optimistic_adopt_id adopts DB id so the bubble sorts with DB messages', () => {
+    // A directly-sent bubble (sendMessageNow) gets its DB id back from the POST.
+    const state = run(
+      [
+        u({ id: 'pending-1', content: '1', seq: 1 }),
+        u({ id: 'pending-2', content: '2', pending: true, seq: 2 }),
+      ],
+      [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 10 }],
+    )
+    const msg1 = state.find((m) => m.role === 'user' && m.content === '1')
+    expect(msg1?.id).toBe(10)
+    expect(msg1?.pending).toBeUndefined()
+    expect(msg1?.seq).toBeUndefined()
+    // Sort value is now the numeric id (10), not TRANSIENT_BASE+seq.
+    expect(messageSortValue(msg1!)).toBe(10)
   })
 
   it('clear_pending removes only pending messages', () => {
@@ -236,6 +254,90 @@ describe('mergeDbMessages', () => {
     const reply = merged.find((m) => m.role === 'assistant')
     expect(reply?.id).toBe(7)
   })
+
+  // ── Bug regression: db_load must CLEAR pending on a bubble whose DB row is
+  //    already drained (queued=false). The old code only SET pending on
+  //    queued=true rows and never cleared it → a drained message kept showing
+  //    as "waiting" while streaming, causing UI disorder that a reload fixed.
+  it('clears pending on a bubble whose DB row is already drained (queued=false)', () => {
+    const state = [
+      u({ id: 1, content: 'msg1' }),
+      a({ id: 2, content: 'reply1' }),
+      u({ id: 'pending-2', content: 'msg2', pending: true, queueId: 'pending-2', seq: 1 }),
+    ]
+    const merged = mergeDbMessages(state, [
+      u({ id: 1, content: 'msg1' }),
+      a({ id: 2, content: 'reply1' }),
+      // msg2 is already drained: queued=false, has a DB id
+      u({ id: 3, content: 'msg2', queueId: 'pending-2', queued: false }),
+    ], true)
+    const msg2 = merged.find((m) => m.role === 'user' && m.content === 'msg2')
+    expect(msg2?.pending).toBeUndefined()
+    expect(msg2?.id).toBe('pending-2')
+  })
+
+  // ── Realistic streaming sequence: msg2 queued while reply1 streams, then a
+  //    db_load arrives BEFORE queue_drain. The bubble must survive AND the
+  //    streaming reply must not be duplicated. After queue_drain(msg2), msg2
+  //    becomes a normal message and a new streaming placeholder appears.
+  it('full queue flow: pending bubble survives db_load, drain clears it, new placeholder appears', () => {
+    let state: ChatMessage[] = []
+    // User sends msg1 → optimistic user row (no pending)
+    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 1, content: 'msg1', seq: 1 }) }])
+    // stream_start → placeholder for reply1 anchored to msg1
+    state = run(state, [{ type: 'stream_placeholder', msg: a({ id: 'drain-1', streaming: true, seq: 2, parentQueueId: '1' }) }])
+    // While reply1 streams, user sends msg2 → optimistic pending bubble
+    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: 'msg2', pending: true, seq: 3 }) }])
+
+    // db_load arrives (e.g. triggered by has_new_messages): msg2 persisted as
+    // queued=1 (still waiting). Bubble matched by queueId, kept, pending stays.
+    state = run(state, [{
+      type: 'db_load', sessionRunning: true,
+      dbMessages: [
+        u({ id: 1, content: 'msg1' }),
+        u({ id: 3, content: 'msg2', queueId: 'pending-2', queued: true }),
+      ],
+    }])
+    const bubble = state.find((m) => m.role === 'user' && m.content === 'msg2')
+    expect(bubble?.pending).toBe(true)
+    expect(state.filter((m) => m.role === 'assistant' && m.streaming)).toHaveLength(1)
+
+    // queue_drain(msg2): reply1 finalized, msg2 becomes normal, new placeholder
+    state = run(state, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: 'msg2', files: [], dbMessageId: 3 }])
+    const msg2 = state.find((m) => m.role === 'user' && m.content === 'msg2')
+    expect(msg2?.pending).toBeUndefined()
+    // streaming reply for msg2 exists
+    const streaming = state.filter((m) => m.role === 'assistant' && m.streaming)
+    expect(streaming).toHaveLength(1)
+    // Conversational order preserved: msg1 < reply1 < msg2 < reply2(streaming).
+    // reply1 keeps its transient drain-* id while streaming (adoption deferred
+    // to idle loadHistory) — position, not id, is what matters.
+    const order = state.map((m) => (m.role === 'user' ? `u:${m.content}` : `a:${m.id}`))
+    expect(order).toEqual(['u:msg1', 'a:drain-1', 'u:msg2', `a:${streaming[0].id}`])
+  })
+
+  // ── Same as above but the db_load sees msg2 ALREADY drained (queued=false,
+  //    DB id adopted). The bubble must lose pending immediately.
+  it('full queue flow: db_load after drain clears pending bubble', () => {
+    let state: ChatMessage[] = []
+    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 1, content: 'msg1', seq: 1 }) }])
+    state = run(state, [{ type: 'stream_placeholder', msg: a({ id: 'drain-1', streaming: true, seq: 2, parentQueueId: '1' }) }])
+    state = run(state, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: 'msg2', pending: true, seq: 3 }) }])
+
+    // db_load sees msg2 already drained (queued=false, id=3)
+    state = run(state, [{
+      type: 'db_load', sessionRunning: true,
+      dbMessages: [
+        u({ id: 1, content: 'msg1' }),
+        u({ id: 3, content: 'msg2', queueId: 'pending-2', queued: false }),
+      ],
+    }])
+    const msg2 = state.find((m) => m.role === 'user' && m.content === 'msg2')
+    expect(msg2?.pending).toBeUndefined()
+  })
+})
+
+describe('mergeDbMessages', () => {
 
   it('does NOT adopt drain-* while a stream is live (defers to next idle loadHistory)', () => {
     const state = [

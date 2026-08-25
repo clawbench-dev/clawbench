@@ -508,7 +508,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	writeJSON(w, http.StatusOK, map[string]any{"started": true, "sessionId": sessionID})
+	writeJSON(w, http.StatusOK, map[string]any{"started": true, "sessionId": sessionID, "msgId": msgID})
 
 	// Create context and cancel AFTER TrySetSessionRunning succeeded, but BEFORE
 	// starting the goroutine. Registering the cancel function here (not inside the
@@ -588,7 +588,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments)
 
 		// Execute first message
-		result := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir)
+		result := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir, req.QueueID)
 
 		// Drain loop: keep executing queued messages after normal completion
 		service.RunDrainLoop(service.DrainConfig{
@@ -603,7 +603,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					CreatedAt: msg.CreatedAt.Format(time.RFC3339),
 				}
 				nextChatReq := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
-				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir)
+				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir, msg.QueueID)
 				return service.DrainResult{
 					CancelReason: nextResult.cancelReason,
 					Err:          nextResult.err,
@@ -637,6 +637,7 @@ func executeStreamRun(
 	projectPath, sessionID, backendName, agentID string,
 	chatReq ai.ChatRequest,
 	fileDir string,
+	queueID string,
 ) streamRunResult {
 	runStart := time.Now()
 	sessionTransport := service.GetSessionTransport(sessionID)
@@ -669,9 +670,16 @@ func executeStreamRun(
 		return streamRunResult{err: errMsg}
 	}
 
-	// Create streaming placeholder message in DB
+	// Create streaming placeholder message in DB. When this run answers a queued
+	// message, record its queue_id so the frontend can anchor the reply to its
+	// own question (anchorRepliesToQuestions) instead of falling back to raw DB
+	// id order (user2,user3,reply2,reply3).
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	streamingMsgID, _ := service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
+	streamingMsgID, _ := service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "", queueID)
+	slog.Info("chat: created streaming assistant placeholder",
+		slog.String("session", sessionID),
+		slog.Int64("streamingMsgID", streamingMsgID),
+		slog.String("queueID", queueID))
 
 	// Delegate event loop to SessionExecutor
 	cfg := service.RunConfig{
