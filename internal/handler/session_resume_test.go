@@ -820,6 +820,71 @@ func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
 	assert.Equal(t, "ses_00otherNativeId1234567890", first["sessionId"])
 }
 
+func TestServeACPSessions_DedupDuplicateSessionIds(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agentID := "acp-list-dedup"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Backend: "claude", Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+
+	// Register capabilities via the stable Update API (independent of the
+	// ForceUpdateIfNeeded signature changes in the working tree).
+	reg := ai.GetAgentCapabilityRegistry()
+	ls := true
+	lss := true
+	reg.Update(agentID, &ai.AgentCapability{LoadSession: &ls, ListSessions: &lss})
+
+	mgr := ai.GetACPConnManager()
+	connKey := "__list_sessions__:" + agentID
+	agent := model.Agents[agentID]
+	conn := newACPConnForHandlerTest(agent, connKey)
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest(connKey, "acp-sid-dedup")
+	// Agent returns the same sessionId multiple times within one response
+	// (e.g. unstable pagination, timestamp collisions in OpenCode's
+	// updatedAt-based cursor). The server must not leak duplicates to the UI.
+	conn.SetListSessionsFnForTest(func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
+		titleA := "Dup A"
+		titleB := "Dup B"
+		titleEmpty := "No id"
+		return []acp.SessionInfo{
+			{SessionId: "dup-session-1", Title: &titleA},
+			{SessionId: "dup-session-1", Title: &titleA},
+			{SessionId: "dup-session-2", Title: &titleB},
+			{SessionId: "dup-session-1", Title: &titleA},
+			// Sessions with an empty id are not dedupable; each one must survive.
+			{SessionId: "", Title: &titleEmpty},
+			{SessionId: "", Title: &titleEmpty},
+		}, nil, nil
+	})
+	mgr.SetConnForTest(connKey, conn)
+	defer mgr.CloseConn(connKey)
+
+	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPSessions(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	sessions, ok := resp["sessions"].([]any)
+	require.True(t, ok, "sessions should be an array")
+	require.Len(t, sessions, 4, "duplicate sessionIds within one response must be deduplicated (empty-id entries kept)")
+	first := sessions[0].(map[string]any)
+	assert.Equal(t, "dup-session-1", first["sessionId"])
+	second := sessions[1].(map[string]any)
+	assert.Equal(t, "dup-session-2", second["sessionId"])
+	third := sessions[2].(map[string]any)
+	assert.Equal(t, "", third["sessionId"])
+	fourth := sessions[3].(map[string]any)
+	assert.Equal(t, "", fourth["sessionId"])
+}
+
 // --- ServeACPLoadSession: replay path tests ---
 
 func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
