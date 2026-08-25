@@ -101,6 +101,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
             queueId,
             filePaths,
             files: allFileEntries,
+            // Required so the backend's user_message broadcast carries
+            // senderClientId and this device can skip its own echo — without
+            // it the queued message is rendered twice (pending bubble + remote
+            // duplicate).
+            clientId: localStorage.getItem('clawbench_client_id') || undefined,
           }),
         }
       )

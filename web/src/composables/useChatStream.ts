@@ -654,11 +654,15 @@ export function useChatStream(options: UseChatStreamOptions) {
         const msgId = userData.messageId || 0
         const remoteQueueId = userData.queueId || ''
 
-        // Deduplicate: skip if a message with same DB ID or same content already exists
-        // (e.g. loadHistory already loaded it from DB)
+        // Deduplicate: skip if a message with same DB ID, same queueId, or same
+        // content (non-pending) already exists. queueId match covers the
+        // self-echo case: the optimistic pending bubble (id=queueId) matches the
+        // broadcast carrying the same queueId — without it the queued message is
+        // rendered twice (pending bubble + remote duplicate).
         const alreadyExists = messages.value.some((m) => {
           if (m.role !== 'user') return false
           if (msgId > 0 && m.id === msgId) return true
+          if (remoteQueueId && (m.id === remoteQueueId || m.queueId === remoteQueueId)) return true
           if (m.content === userContent && !m.pending && !m._remote) return true
           return false
         })

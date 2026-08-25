@@ -382,6 +382,27 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
+        it('sends clientId so the backend user_message broadcast can skip self-echo', async () => {
+            // Regression: without clientId the backend broadcasts user_message
+            // with an empty senderClientId, the frontend cannot skip its own
+            // echo, and the queued message is rendered twice — once as the
+            // pending bubble and once as a remote duplicate above it.
+            localStorage.setItem('clawbench_client_id', 'device-test-1')
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, started: false }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage('session-1', 'hello', [], [], 'pending-123')
+
+            const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
+            expect(body.clientId).toBe('device-test-1')
+
+            fetchSpy.mockRestore()
+        })
+
         it('removes stale pending message on fetch error', async () => {
             // When enqueueMessage fails, the locally-pushed pending message
             // should be removed from messages.value so the user doesn't see a ghost entry.

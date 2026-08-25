@@ -1330,6 +1330,29 @@ describe('useChatStream', () => {
       expect(userMsgs).toHaveLength(2)
     })
 
+    it('should deduplicate by queueId when the pending bubble matches (self-echo)', () => {
+      // Regression: when this device enqueues a message, the backend broadcasts
+      // user_message carrying the same queueId. If the echo is not skipped, the
+      // queued message is rendered twice — once as the pending bubble and once
+      // as a remote duplicate.
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'user', id: 'pending-abc', content: 'hello', pending: true,
+        blocks: [{ type: 'text', text: 'hello' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('user_message', { messageId: 0, content: 'hello', queueId: 'pending-abc' })
+
+      // Same queueId → the remote echo is the pending bubble itself; no duplicate.
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(1)
+      expect(userMsgs[0].id).toBe('pending-abc')
+    })
+
     it('should push to end when no streaming assistant message exists', () => {
       const options = createOptions()
 
