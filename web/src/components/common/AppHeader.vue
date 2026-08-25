@@ -53,13 +53,16 @@
               <div
                 v-for="item in recentItems"
                 :key="item.path"
-                class="app-menu-item"
+                class="app-menu-item app-menu-item--stacked"
                 :class="{ active: item.path === projectRoot }"
                 @click="selectRecent(item)"
               >
                 <Projector :size="14" class="item-icon" />
-                <span class="item-label">{{ item.name }}</span>
-                <span class="item-path" @mousedown.prevent="onPathMouseDown" @click="onPathClick">{{ item.displayPath }}</span>
+                <span class="item-body">
+                  <span class="item-name">{{ item.name }}</span>
+                  <span class="item-path">{{ item.displayPath }}</span>
+                </span>
+                <HintTooltip :content="item.path" />
                 <button
                   class="item-remove-btn"
                   type="button"
@@ -91,13 +94,16 @@
             <div
               v-for="entry in recentFileEntries"
               :key="entry.path"
-              class="app-menu-item"
+              class="app-menu-item app-menu-item--stacked"
               :class="{ active: entry.path === currentFilePath }"
               @click="selectRecentFile(entry)"
             >
               <FileIcon :path="entry.path" :size="16" class="item-icon" />
-              <span class="item-label">{{ baseName(entry.path) }}</span>
-              <span class="item-path">{{ dirName(entry.path) }}</span>
+              <span class="item-body">
+                <span class="item-name">{{ baseName(entry.path) }}</span>
+                <span class="item-path">{{ dirName(entry.path) }}</span>
+              </span>
+              <HintTooltip :content="entry.path" />
               <button
                 class="item-remove-btn"
                 type="button"
@@ -217,6 +223,7 @@ import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
+import HintTooltip from '@/components/common/HintTooltip.vue'
 import ShortcutTipTicker from '@/components/common/ShortcutTipTicker.vue'
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
@@ -964,36 +971,6 @@ function onClickOutside(e: MouseEvent) {
     themeMenuOpen.value = false
 }
 
-// Track whether the path element was dragged, so click can decide to bubble or not
-let pathDragged = false
-
-function onPathMouseDown(e: MouseEvent) {
-    const el = e.currentTarget as HTMLElement
-    pathDragged = false
-    if (el.scrollWidth <= el.clientWidth) return
-    let startX = e.pageX
-    let scrollLeft = el.scrollLeft
-
-    function onMouseMove(ev: MouseEvent) {
-        const dx = ev.pageX - startX
-        if (Math.abs(dx) > 2) pathDragged = true
-        el.scrollLeft = scrollLeft - dx
-    }
-    function onMouseUp() {
-        document.removeEventListener('mousemove', onMouseMove)
-        document.removeEventListener('mouseup', onMouseUp)
-    }
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-}
-
-function onPathClick(e: MouseEvent) {
-    if (pathDragged) {
-        e.stopPropagation()
-    }
-    // If not dragged, let the click bubble up to the parent .dropdown-item's selectRecent
-}
-
 // --- Logout (APP mode) ---
 function handleLogout() {
     resourcesMenuOpen.value = false
@@ -1421,6 +1398,52 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     font-size: 12px;
 }
 
+/* Stacked (two-line) rows: name on line 1, path on line 2. Tight, compact
+   spacing — row padding is reduced and the two lines share a 3px gap. */
+.app-menu-item--stacked {
+    padding-top: 4px;
+    padding-bottom: 4px;
+    align-items: center;
+}
+
+.app-menu-item.app-menu-item--stacked .item-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.3;
+}
+
+.app-menu-item.app-menu-item--stacked .item-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.app-menu-item.app-menu-item--stacked .item-path {
+    font-size: 11px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl; /* right-align the visible tail of long paths */
+    text-align: left;
+}
+
+/* Active (current project/file) row: the stacked block above is declared later
+   than the generic `.active .item-path` rule with equal specificity, so these
+   overrides restore the white-on-accent text. */
+.app-menu-item.active.app-menu-item--stacked .item-body,
+.app-menu-item.active.app-menu-item--stacked .item-name {
+    color: #fff;
+}
+
+.app-menu-item.active.app-menu-item--stacked .item-path {
+    color: rgba(255, 255, 255, 0.6);
+}
+
 @media (hover: hover) {
   .app-menu-item:hover {
     background: var(--bg-tertiary);
@@ -1441,6 +1464,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .app-menu-item.active .item-icon,
 .app-menu-item.active .item-path {
     color: rgba(255,255,255,0.6);
+}
+
+.app-menu-item.active .item-name,
+.app-menu-item.active .item-body {
+    color: #fff;
 }
 
 .app-menu-item .item-icon {
