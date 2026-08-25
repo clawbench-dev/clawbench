@@ -132,8 +132,10 @@ system_prompt: |
     console.warn('[E2E] Warning: public/ directory not found, frontend may not be served')
   }
 
-  // 6. Start server from temp dir so it picks up our config
-  const serverProcess = spawn(tempBinPath, [`--port`, String(port)], {
+  // 6. Start server from temp dir so it picks up our config.
+  // The temp .clawbench dir is passed via --data-dir so the test server NEVER
+  // touches the developer's real database (~/.clawbench).
+  const serverProcess = spawn(tempBinPath, [`--port`, String(port), `--data-dir`, join(tempDir, '.clawbench')], {
     cwd: tempDir,
     env: {
       ...process.env,

@@ -170,9 +170,17 @@ export function useChatStream(options: UseChatStreamOptions) {
       // Ensure a streaming assistant message exists — create one if needed
       const streaming = findStreamingMsg(messages.value)
       if (!streaming) {
-        // Anchor the new placeholder right after its question (the newest user
-        // message) so it can never sort above an earlier reply.
-        const parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user')
+        // Anchor the new placeholder right after its question so it can never
+        // sort above an earlier reply. The question is the newest NON-pending
+        // user message: queued messages (pending=true) are later turns waiting
+        // for the drain loop — anchoring to one of them would push this reply
+        // (and everything before it) below the queued bubbles, producing the
+        // wrong order (msg2, msg3 above msg1, reply1). Fall back to the last
+        // user message when every user message is pending.
+        let parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user' && !m.pending)
+        if (parentUserIdx === -1) {
+          parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user')
+        }
         const newStreaming: ChatMessage = {
           role: 'assistant' as const,
           id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

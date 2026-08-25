@@ -1935,6 +1935,46 @@ describe('switchSession', () => {
     expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5, 4, 6])
   })
 
+  it('keeps queued replies anchored when some messages are still queued (mixed state)', async () => {
+    // Mid-drain state: msg2 drained (reply2 exists), msg3 still queued
+    // (pending bubble, queued=true). loadHistory must keep reply2 after msg2
+    // and msg3 as a pending bubble after reply2.
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'msg1', blocks: [{ type: 'text', text: 'msg1' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}', createdAt: '2026-01-01T00:00:01Z' },
+      { id: 3, role: 'user', content: 'msg2', queueId: 'q2', queued: false, blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:02Z' },
+      { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2', createdAt: '2026-01-01T00:00:04Z' },
+      { id: 4, role: 'user', content: 'msg3', queueId: 'q3', queued: true, blocks: [{ type: 'text', text: 'msg3' }], createdAt: '2026-01-01T00:00:03Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [
+          { id: 1, role: 'user', content: 'msg1' },
+          { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
+          { id: 3, role: 'user', content: 'msg2', queueId: 'q2' },
+          { id: 4, role: 'user', content: 'msg3', queueId: 'q3', queued: true },
+          { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2' },
+        ],
+        total: 5,
+        queuedCount: 1,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+
+    await session.loadHistory(true, false, false)
+
+    const msgs = lastSessionOptions!.messages.value as any[]
+    // reply2 (id 5) stays anchored to msg2 (id 3), msg3 (id 4) pending after it.
+    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5, 4])
+    const msg3 = msgs.find((m: any) => m.id === 4)
+    expect(msg3.pending).toBe(true)
+  })
+
   it('restores usage state from API response after switch', async () => {
     resetAdditionalMocks() // Ensure mock call records are clean
     mockClearUsageState.mockClear()

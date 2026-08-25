@@ -4473,3 +4473,59 @@ func TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine(t *testing.T) {
 	service.CancelSession(sid)
 	time.Sleep(200 * time.Millisecond)
 }
+
+// TestQueuedMessage_ReplyQueueIDAnchor verifies the backend end-to-end queue
+// flow for conversational ordering: user messages 2/3 are persisted at enqueue
+// time (queued=1), and when the drain loop answers them, the reply rows carry
+// the queue_id of the question they answer. This is what lets the frontend
+// restore the conversational order (msg2, reply2, msg3, reply3) from raw DB
+// id order (msg2, msg3, reply2, reply3).
+func TestQueuedMessage_ReplyQueueIDAnchor(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Queue Anchor")
+
+	// msg1: normal first message.
+	msg1ID, err := service.AddChatMessage("/project", "claude", sid, "user", "1", nil, false, "")
+	assert.NoError(t, err)
+	// reply1.
+	reply1ID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "reply1", nil, false, "")
+	assert.NoError(t, err)
+	// msg2, msg3 queued (persisted at enqueue time).
+	msg2ID, err := service.AddQueuedMessage("/project", "claude", sid, "2", nil, "pending-2", "")
+	assert.NoError(t, err)
+	msg3ID, err := service.AddQueuedMessage("/project", "claude", sid, "3", nil, "pending-3", "")
+	assert.NoError(t, err)
+
+	// Drain answers msg2 → its reply row must carry queue_id pending-2.
+	reply2ID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "reply2", nil, false, "", "pending-2")
+	assert.NoError(t, err)
+	// Drain answers msg3 → reply carries queue_id pending-3.
+	reply3ID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "reply3", nil, false, "", "pending-3")
+	assert.NoError(t, err)
+
+	// Raw id order is exactly the buggy order: 1, reply1, 2, 3, reply2, reply3.
+	assert.Less(t, msg1ID, reply1ID)
+	assert.Less(t, reply1ID, msg2ID)
+	assert.Less(t, msg2ID, msg3ID)
+	assert.Less(t, msg3ID, reply2ID)
+	assert.Less(t, reply2ID, reply3ID)
+
+	// Each reply records the queue_id of the question it answers.
+	var q2, q3 string
+	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", reply2ID).Scan(&q2)
+	assert.NoError(t, err)
+	assert.Equal(t, "pending-2", q2, "reply2 must record queue_id of msg2")
+	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", reply3ID).Scan(&q3)
+	assert.NoError(t, err)
+	assert.Equal(t, "pending-3", q3, "reply3 must record queue_id of msg3")
+
+	// The queued user rows keep their queue_id even after drain (queued=0).
+	var qm2, qm3 string
+	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", msg2ID).Scan(&qm2)
+	assert.NoError(t, err)
+	assert.Equal(t, "pending-2", qm2)
+	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", msg3ID).Scan(&qm3)
+	assert.NoError(t, err)
+	assert.Equal(t, "pending-3", qm3)
+}

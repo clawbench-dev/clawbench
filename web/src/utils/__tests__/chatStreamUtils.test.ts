@@ -1415,3 +1415,83 @@ describe('anchorRepliesToQuestions', () => {
     expect(reply3.afterSort).toBe(4.5)
   })
 })
+
+describe('queued streaming order (integration)', () => {
+  const callbacks = { onRenderNeeded: vi.fn(), onExtractScheduledTasks: vi.fn() }
+  beforeEach(() => { vi.clearAllMocks() })
+
+  const ids = (msgs: any[]) => msgs.map(m => String(m.id).slice(0, 12) + ':' + m.role + ':' + (m.pending ? 'P' : '') + (m.streaming ? 'S' : ''))
+
+  it('keeps 1, reply1, 2, reply2, 3, reply3 order while draining (all transient)', () => {
+    const messages: any[] = []
+    // 发 1: 乐观气泡 (非 pending, string id)
+    messages.push({ role: 'user', id: 'local-1', content: '1', blocks: [], seq: nextClientSeq(), createdAt: '' })
+    // connectStream 创建回复1, 锚定到消息1
+    const parentIdx1 = messages.findLastIndex((m: any) => m.role === 'user')
+    messages.push({ role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true, seq: nextClientSeq(), afterSort: computeAfterSort(messages[parentIdx1]), createdAt: '' })
+    // 发 2、3 排队
+    messages.push({ role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
+    messages.push({ role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
+    sortMessages(messages)
+    // 初始顺序: 1, 回复1, 2, 3
+    expect(messages.map(m => m.role + ':' + m.id).slice(0, 4)).toEqual(['user:local-1', 'assistant:stream-1', 'user:pending-2', 'user:pending-3'])
+
+    // drain 2 → 回复2
+    drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-2', 4)
+    // drain 3 → 回复3
+    drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-3', 5)
+
+    // 最终: 1, 回复1, 2, 回复2, 3, 回复3 (按 role + 内容)
+    const order = messages.map(m => m.role + ':' + String(m.content || '').slice(0, 8))
+    expect(order[0]).toBe('user:1')
+    expect(order[1]).toContain('assistant:')
+    expect(order[2]).toBe('user:2')
+    expect(order[3]).toContain('assistant:')
+    expect(order[4]).toBe('user:3')
+    expect(order[5]).toContain('assistant:')
+  })
+
+  it('keeps replies anchored when drained messages adopt DB ids (parentIsDB)', () => {
+    const messages: any[] = []
+    // 消息1 已是 DB id
+    messages.push({ role: 'user', id: 1, content: '1', blocks: [], createdAt: '' })
+    messages.push({ role: 'assistant', id: 2, content: 'reply1', blocks: [], createdAt: '' })
+    messages.push({ role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
+    messages.push({ role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
+    sortMessages(messages)
+
+    drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-2', 4)
+    drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-3', 5)
+
+    const order = messages.map(m => m.role + ':' + String(m.content || '').slice(0, 8))
+    expect(order[0]).toBe('user:1')
+    expect(order[1]).toBe('assistant:reply1')
+    expect(order[2]).toBe('user:2')
+    expect(order[3]).toContain('assistant:')
+    expect(order[4]).toBe('user:3')
+    expect(order[5]).toContain('assistant:')
+  })
+})
+
+describe('connectStream parent anchoring', () => {
+  it('anchors the streaming reply to the last NON-pending user message, not a queued one', () => {
+    // 用户快速连发 1、2、3。消息1 已发送（非 pending），2/3 排队（pending）。
+    // connectStream 创建回复1 时应锚定到消息1，而不是最后一个 user（消息3）。
+    const messages: any[] = [
+      { role: 'user', id: 'local-1', content: '1', blocks: [], seq: nextClientSeq(), createdAt: '' },
+      { role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' },
+      { role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' },
+    ]
+    // 模拟 connectStream 的 parent 选择：应锚到最后一个非 pending user（消息1）
+    const parentUserIdx = messages.findLastIndex((m: any) => m.role === 'user' && !m.pending)
+    const reply1 = { role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true, seq: nextClientSeq(), afterSort: computeAfterSort(parentUserIdx !== -1 ? messages[parentUserIdx] : undefined), createdAt: '' }
+    messages.push(reply1)
+    sortMessages(messages)
+
+    // 回复1 锚定到消息1（TB+1.5），在消息2/3 之前
+    expect(messages[0].id).toBe('local-1')
+    expect(messages[1].id).toBe('stream-1')
+    expect(messages[2].id).toBe('pending-2')
+    expect(messages[3].id).toBe('pending-3')
+  })
+})

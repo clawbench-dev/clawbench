@@ -222,7 +222,7 @@ describe('useChatStream', () => {
       expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'session-2' })
     })
 
-    it('should insert streaming assistant AFTER the newest user message (including pending)', () => {
+    it('should insert streaming assistant AFTER the newest non-pending user message', () => {
       const options = createOptions()
       options.messages.value.push(
         { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
@@ -232,15 +232,16 @@ describe('useChatStream', () => {
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
-      // DB-backed messages sort first (numeric id); transient messages follow in
-      // seq order. The streaming placeholder is anchored right after its question
-      // (the newest user message), so it can never sort above an earlier reply.
+      // The streaming reply answers A (the last non-pending user message).
+      // Queued message B (pending) is a later turn for the drain loop — the
+      // reply must NOT be pushed below it, otherwise the order becomes
+      // A, B, streaming (the queued-message reply swap).
       expect(options.messages.value[0].role).toBe('user')
       expect(options.messages.value[0].content).toBe('A')
-      expect(options.messages.value[1].role).toBe('user')
-      expect(options.messages.value[1].pending).toBe(true)
-      expect(options.messages.value[2].role).toBe('assistant')
-      expect(options.messages.value[2].streaming).toBe(true)
+      expect(options.messages.value[1].role).toBe('assistant')
+      expect(options.messages.value[1].streaming).toBe(true)
+      expect(options.messages.value[2].role).toBe('user')
+      expect(options.messages.value[2].pending).toBe(true)
     })
 
     it('should reuse existing streaming message only when reuseExistingStreaming is set', () => {
