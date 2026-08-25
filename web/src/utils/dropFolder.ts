@@ -10,8 +10,6 @@
  *     never report).
  */
 
-import { folderRelPath } from '@/utils/fileAttachmentUtils'
-
 export interface DropFile {
   file: File
   /** Directory portion relative to the drop target, e.g. "新建文件夹/src" ('' for loose files). */
@@ -63,10 +61,11 @@ async function walkEntry(
   entry: FileSystemEntry,
   files: DropFile[],
   emptyDirs: string[],
+  addFile: (file: File, relPath: string) => void,
 ): Promise<void> {
   if (entry.isFile) {
     const file = await fileFromEntry(entry as FileSystemFileEntry)
-    files.push({ file, relPath: dirOf(entry.fullPath || '') })
+    addFile(file, dirOf(entry.fullPath || ''))
     return
   }
   if (entry.isDirectory) {
@@ -77,21 +76,31 @@ async function walkEntry(
       return
     }
     for (const e of entries) {
-      await walkEntry(e, files, emptyDirs)
+      await walkEntry(e, files, emptyDirs, addFile)
     }
   }
 }
 
 /**
  * Expand a drop into files + empty directories.
- * Prefers `webkitGetAsEntry` traversal when available; otherwise falls back to
- * `dataTransfer.files` (the previous flat behavior).
+ *
+ * `webkitGetAsEntry` traversal handles folders (their nested files and empty
+ * subdirectories are invisible to `dataTransfer.files`). However, in real
+ * browser/WebView drops of *multiple loose files* the `items` list may only
+ * expose part of the selection while `dataTransfer.files` carries the complete
+ * list. Using one source exclusively drops the other, so both are merged:
+ *   - items entries are distinct dragged things → collected as-is, never deduped;
+ *   - `dataTransfer.files` entries that were already gathered from the items
+ *     traversal are skipped (same physical file appears in both sources).
  */
 export async function expandDataTransfer(dataTransfer: DataTransfer): Promise<ExpandResult> {
   const files: DropFile[] = []
   const emptyDirs: string[] = []
+  const seen = new Set<string>()
+  const topDirs = new Set<string>()
   const items = dataTransfer?.items
-  let handled = false
+
+  const keyOf = (file: File, relPath: string) => `${relPath}/${file.name}`
 
   if (items && items.length) {
     for (let i = 0; i < items.length; i++) {
@@ -99,17 +108,24 @@ export async function expandDataTransfer(dataTransfer: DataTransfer): Promise<Ex
       if (typeof item.webkitGetAsEntry === 'function') {
         const entry = item.webkitGetAsEntry()
         if (entry) {
-          handled = true
-          await walkEntry(entry, files, emptyDirs)
+          if (entry.isDirectory) topDirs.add(entry.name)
+          await walkEntry(entry, files, emptyDirs, (file, relPath) => {
+            files.push({ file, relPath })
+            seen.add(keyOf(file, relPath))
+          })
         }
       }
     }
   }
 
-  if (!handled) {
-    for (const file of Array.from(dataTransfer?.files || [])) {
-      files.push({ file, relPath: dirOf(file.webkitRelativePath || '') || folderRelPath(file) })
-    }
+  // dataTransfer.files always lists the full selection. Skip folder placeholders
+  // (a 0-byte File named after a dropped directory that Chrome/Electron include)
+  // and entries already gathered from the items traversal.
+  for (const file of Array.from(dataTransfer?.files || [])) {
+    if (file.size === 0 && topDirs.has(file.name)) continue
+    const rel = dirOf(file.webkitRelativePath || '')
+    if (seen.has(keyOf(file, rel))) continue
+    files.push({ file, relPath: rel })
   }
 
   return { files, emptyDirs }
