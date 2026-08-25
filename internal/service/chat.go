@@ -258,7 +258,11 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 
 // GetMessagesBySessionID fetches all messages for a session by session_id alone.
 // Unlike GetChatHistory, this does not require projectPath or backend — session_id is globally unique.
-// Returns messages in chronological order with all content blocks (text, thinking, tool_use).
+// Returns messages in chronological order. NOTE: assistant messages that have a
+// reading summary are returned with content stripped to an empty blocks array
+// (see enrichMessagesWithSummaries) to save bandwidth. Callers that need the
+// real content blocks — e.g. push previews, fork context — must use
+// GetAssistantRawContents instead.
 // Excludes queued messages — callers (fork context, summarization, recent preview)
 // want completed history, not messages still waiting for the drain loop (M4).
 func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
@@ -271,6 +275,37 @@ func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 	}
 	defer rows.Close()
 	return scanMessages(rows, sessionID)
+}
+
+// GetAssistantRawContents returns the raw (unmodified) content JSON of the
+// most recent finalized assistant messages in a session, newest first
+// (ORDER BY id DESC LIMIT previewAssistantContentLimit). Unlike
+// GetMessagesBySessionID it does NOT go through scanMessages, whose
+// enrichMessagesWithSummaries replaces the content of summarized non-streaming
+// assistant messages with a stripped view (summarizeContentForView) to save
+// bandwidth. Callers that need the real content blocks — e.g. push notification
+// previews — must use this function.
+func GetAssistantRawContents(sessionID string) ([]string, error) {
+	rows, err := dbRead.Query(
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND queued = 0 ORDER BY id DESC LIMIT ?",
+		sessionID, previewAssistantContentLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var contents []string
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return nil, err
+		}
+		contents = append(contents, content)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return contents, nil
 }
 
 // unmarshalFilesJSON deserializes a files JSON column value, supporting both

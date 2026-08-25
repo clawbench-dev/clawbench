@@ -892,6 +892,97 @@ func TestGetSessionResponsePreview_OneOverMaxRunes(t *testing.T) {
 	assert.Equal(t, strings.Repeat("一二三四", responsePreviewMaxRunes/4)+"…", result)
 }
 
+// --- regression: push preview must not be emptied by summary enrichment ---
+
+func TestGetSessionResponsePreviewRaw_IgnoresSummaryStripping(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	// Assistant message with a real text block after the last tool_use
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", Name: "Bash", ID: "call_1", Status: "success", Done: true},
+		{Type: "text", Text: "修复完成，测试全部通过"},
+	}
+	contentJSON, _ := json.Marshal(map[string]any{"blocks": blocks})
+	insertTestMessage(t, db, "session-preview-summary", "user", "问题")
+	var asstID int64
+	require.NoError(t, db.QueryRow(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-preview-summary', 'claude', 0) RETURNING id",
+		string(contentJSON)).Scan(&asstID))
+
+	// Insert a reading summary for the assistant message — this causes
+	// GetMessagesBySessionID to strip content to empty blocks.
+	_, err := db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', ?, '修复完成，测试全部通过')", asstID)
+	require.NoError(t, err)
+
+	// getSessionResponsePreviewRaw must still see the original blocks.
+	raw := getSessionResponsePreviewRaw("session-preview-summary")
+	assert.Equal(t, "修复完成，测试全部通过", raw)
+
+	// GetMessagesBySessionID keeps its bandwidth-optimized stripping behavior.
+	messages, err := GetMessagesBySessionID("session-preview-summary")
+	require.NoError(t, err)
+	var stripped string
+	for _, m := range messages {
+		if m.Role == "assistant" {
+			stripped = m.Content
+		}
+	}
+	var parsed struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stripped), &parsed))
+	assert.Empty(t, parsed.Blocks, "GetMessagesBySessionID should still strip content to empty blocks")
+}
+
+func TestGetAssistantRawContents_ReturnsUnmodifiedContent(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	contentJSON, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{
+		{Type: "text", Text: "原始内容"},
+	}})
+	insertTestMessage(t, db, "session-raw-1", "user", "问题")
+	insertTestMessage(t, db, "session-raw-1", "assistant", string(contentJSON))
+	// Streaming assistant message must be excluded
+	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-raw-1', 'claude', 1)", `{"blocks":[{"type":"text","text":"流式中"}]}`)
+	require.NoError(t, err)
+	// Queued assistant message must be excluded
+	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, queued) VALUES ('/test', 'assistant', ?, 'session-raw-1', 'claude', 1)", `{"blocks":[{"type":"text","text":"排队中"}]}`)
+	require.NoError(t, err)
+
+	contents, err := GetAssistantRawContents("session-raw-1")
+	require.NoError(t, err)
+	assert.Len(t, contents, 1, "only the finalized assistant message is returned")
+	assert.Equal(t, string(contentJSON), contents[0])
+
+	raw := getSessionResponsePreviewRaw("session-raw-1")
+	assert.Equal(t, "原始内容", raw)
+}
+
+// TestGetSessionResponsePreviewRaw_SkipsInvalidAndEmptyBlocks verifies the
+// newest-first walk skips non-JSON content and empty blocks, falling back to an
+// older assistant message that has real text.
+func TestGetSessionResponsePreviewRaw_SkipsInvalidAndEmptyBlocks(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	// Oldest assistant message: real answer
+	goodContent, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{
+		{Type: "text", Text: "真实回答"},
+	}})
+	insertTestMessage(t, db, "session-skip-1", "user", "问题")
+	insertTestMessage(t, db, "session-skip-1", "assistant", string(goodContent))
+	// Newer assistant message: non-JSON content — must be skipped
+	insertTestMessage(t, db, "session-skip-1", "assistant", "纯文本不是JSON")
+	// Newest assistant message: valid JSON but empty blocks — must be skipped
+	emptyBlocks, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{}})
+	insertTestMessage(t, db, "session-skip-1", "assistant", string(emptyBlocks))
+
+	raw := getSessionResponsePreviewRaw("session-skip-1")
+	assert.Equal(t, "真实回答", raw)
+}
+
 // --- emitSessionEvent with response preview ---
 
 func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
@@ -2311,16 +2402,6 @@ func TestEmitSessionEvent_CancelledWithSessionTitle(t *testing.T) {
 }
 
 // --- Drain loop tests ---
-
-
-
-
-
-
-
-
-
-
 
 // --- EmitSessionEvent: DingTalk push path (lines 82-84) ---
 

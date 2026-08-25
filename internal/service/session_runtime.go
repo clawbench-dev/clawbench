@@ -41,6 +41,12 @@ var (
 // responsePreviewMaxRunes is an alias for model.ResponsePreviewMaxRunes for local use.
 const responsePreviewMaxRunes = model.ResponsePreviewMaxRunes
 
+// previewAssistantContentLimit caps how many most-recent assistant messages are
+// loaded when extracting a response preview. A preview only needs the latest few
+// replies; 20 is far beyond any realistic "last text block" lookback while
+// bounding memory on very long sessions with large tool outputs.
+const previewAssistantContentLimit = 20
+
 // EmitSessionEvent broadcasts a session_update event to connected clients.
 // toolName and toolInput are optional and only used for "permission_pending" status.
 func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolNameAndInput ...string) {
@@ -197,20 +203,23 @@ func getSessionResponsePreview(sessionID string) string {
 // Used when both Markdown and plain-text previews are needed, so that
 // StripMarkdown operates on the full text before each variant is truncated.
 func getSessionResponsePreviewRaw(sessionID string) string {
-	messages, err := GetMessagesBySessionID(sessionID)
+	// Read raw assistant contents directly from chat_history. GetMessagesBySessionID
+	// cannot be used here: enrichMessagesWithSummaries strips heavy content from
+	// summarized non-streaming assistant messages (summarizeContentForView replaces
+	// blocks with an empty array), which would make every push preview empty once
+	// a reading summary exists for the last message.
+	// Contents are newest-first; walk forward to find the most recent message
+	// that yields a preview.
+	contents, err := GetAssistantRawContents(sessionID)
 	if err != nil {
 		slog.Debug("session_event: failed to get messages for preview", "session_id", sessionID, "error", err)
 		return ""
 	}
-	// Walk backwards to find the last assistant message
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != "assistant" {
-			continue
-		}
+	for _, raw := range contents {
 		var content struct {
 			Blocks []model.ContentBlock `json:"blocks"`
 		}
-		if err := json.Unmarshal([]byte(messages[i].Content), &content); err != nil {
+		if err := json.Unmarshal([]byte(raw), &content); err != nil {
 			continue
 		}
 		if preview := extractPreviewFromBlocksRaw(content.Blocks); preview != "" {
