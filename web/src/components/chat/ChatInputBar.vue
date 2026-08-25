@@ -102,6 +102,9 @@
           @paste="onPaste"
           @focus="onTextareaFocus"
           @blur="onTextareaBlur"
+          @touchstart="onTextareaTouchStart"
+          @touchend="onTextareaTouchEnd"
+          @touchcancel="onTextareaTouchCancel"
           ></textarea>
         <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
           <!-- Empty input: green lightning (quick-menu shortcut) -->
@@ -288,6 +291,7 @@ import { useToast } from '@/composables/useToast'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useVoiceInput } from '@/composables/useVoiceInput'
 import { useChatRecommendation } from '@/composables/useChatRecommendation'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 
@@ -382,10 +386,19 @@ const settingsDrawer = useTabDrawer('chat')
 const placeholderIndex = ref(0)
 let placeholderTimer = null
 
+// `!isPC` = mobile surface (Android/iOS app, phone/tablet browser, iPadOS) —
+// exactly where the swipe-history gesture is available, so its hint is shown
+// only there.
+const { isPC } = usePlatformDetect()
+
 // The candidate hints cycle when the textarea is empty, unfocused, and not in queue/upload mode.
+// The plain "type a message" hint is omitted — it's implied by the empty input box.
 // When quickSendItems exist, the cycle includes the quick-send tip; otherwise it's skipped.
 const placeholderHints = computed(() => {
-  const hints = [t('chat.input.placeholder')]
+  const hints = []
+  if (!isPC.value) {
+    hints.push(t('chat.input.placeholderSwipeHistory'))
+  }
   if (quickSendItems.value.length > 0) {
     hints.push(t('chat.input.placeholderQuickSend'))
   }
@@ -705,12 +718,14 @@ watch(inputText, () => {
   const shouldShowAt = text.startsWith('@')
     && !text.includes(' ')
     && atMenuItems.value.length > 0
-  if (shouldShowAt && !showAtMenu.value) atMenuIndex.value = 0
-  showAtMenu.value = shouldShowAt
   // Slash command menu
   const shouldShowSlash = text.startsWith('/')
     && !text.includes(' ')
     && slashMenuItems.value.length > 0
+  // A history entry loaded by ArrowUp/ArrowDown must not pop the menu.
+  if (historyNavSuppressMenu) return
+  if (shouldShowAt && !showAtMenu.value) atMenuIndex.value = 0
+  showAtMenu.value = shouldShowAt
   if (shouldShowSlash && !showSlashMenu.value) slashMenuIndex.value = 0
   showSlashMenu.value = shouldShowSlash
 })
@@ -796,9 +811,174 @@ function handleMenuKeydown(e) {
   return false
 }
 
+// ── Input history navigation (ArrowUp/ArrowDown) ──────────
+// Per-session, in-memory only. Derived from the session's persisted user
+// messages (excludes pending optimistic bubbles and queued messages, matching
+// the server-side user-message index source), newest first.
+const historyInputs = computed(() => {
+  const msgs = props.messages || []
+  const list = []
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i]
+    if (m.role !== 'user' || m.pending || m.queued) continue
+    const text = typeof m.content === 'string' ? m.content.trim() : ''
+    if (text) list.push(text)
+  }
+  return list
+})
+
+// Navigation position. -1 = not navigating (fresh input). Valid positions walk
+// the history from newest (0) to oldest (len-1).
+const historyIndex = ref(-1)
+// Input text captured when entering history navigation, so ArrowDown can return
+// to what the user was typing before they browsed history.
+const historyDraft = ref('')
+// Suppress the @ / slash autocomplete menus while history navigation replaces
+// the input programmatically (a history entry starting with @ or / must not
+// pop the menu).
+let historyNavSuppressMenu = false
+
+function resetInputHistory() {
+  historyIndex.value = -1
+  historyDraft.value = ''
+}
+
+function textareaCursorRow(el) {
+  const text = el.value
+  const pos = el.selectionStart ?? text.length
+  let row = 0
+  for (let i = 0; i < pos; i++) {
+    if (text[i] === '\n') row++
+  }
+  return row
+}
+
+// Shared history step used by both ArrowUp/ArrowDown and horizontal swipe on the
+// textarea. `isUp` = newer → older (ArrowUp / swipe left), `false` = older →
+// newer (ArrowDown / swipe right). `isGesture` skips the keyboard-only multiline
+// caret guard (a swipe has no caret to protect). Returns true when the
+// navigation consumed the event.
+function stepHistory(isUp, isGesture = false) {
+  const el = textareaRef.value
+  if (!el) return false
+  const text = inputText.value
+  const rows = (text.match(/\n/g) || []).length + 1
+  // In a multiline input, ArrowUp navigates history only from the first row and
+  // ArrowDown only from the last row; elsewhere the arrows move the caret. A
+  // swipe gesture has no caret conflict, so this guard applies to keyboard only.
+  if (!isGesture && rows > 1) {
+    const row = textareaCursorRow(el)
+    if (isUp && row > 0) return false
+    if (!isUp && row < rows - 1) return false
+  }
+  if (historyInputs.value.length === 0) return false
+
+  const applyHistoryText = (text) => {
+    historyNavSuppressMenu = true
+    inputText.value = text
+    // Reset the caret to the end so the multiline guard's cursor-row check
+    // (selectionStart-based) never reads a stale position from the old text.
+    const ta = textareaRef.value
+    if (ta) {
+      const end = text.length
+      ta.setSelectionRange(end, end)
+    }
+  }
+  if (isUp) {
+    // From fresh input (or while editing a history entry), capture the current
+    // text once so ArrowDown can restore it.
+    if (historyIndex.value === -1 && text.trim()) {
+      historyDraft.value = text
+    }
+    historyIndex.value = Math.min(historyIndex.value + 1, historyInputs.value.length - 1)
+    applyHistoryText(historyInputs.value[historyIndex.value])
+  } else {
+    historyIndex.value -= 1
+    if (historyIndex.value < 0) {
+      // Back to the fresh input: restore the captured draft if any.
+      applyHistoryText(historyDraft.value)
+      resetInputHistory()
+    } else {
+      applyHistoryText(historyInputs.value[historyIndex.value])
+    }
+  }
+  nextTick(() => {
+    historyNavSuppressMenu = false
+  })
+  return true
+}
+
+function handleHistoryKeydown(e) {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return false
+  // Vertical swipe style: single step per gesture, but keyboard arrows must not
+  // accidentally trigger on a repeat-held key while navigating within a
+  // multiline textarea — the multiline guard in stepHistory handles that.
+  if (!stepHistory(e.key === 'ArrowUp')) return false
+  e.preventDefault()
+  return true
+}
+
+// ── Horizontal swipe history navigation (touch on the textarea, inactive only) ──
+// When the textarea is NOT focused, left/right swipes step the input history
+// (left = newer → older, right = older → newer). An inactive textarea has no
+// caret/scroll conflicts, so horizontal swipe is a clean, low-conflict gesture.
+// While focused, the keyboard ArrowUp/ArrowDown history navigation applies
+// instead (swipes are left untouched so the input keeps native touch behavior).
+const SWIPE_HISTORY_THRESHOLD = 60 // px horizontal
+const SWIPE_HISTORY_MAX_DURATION = 400 // ms
+
+let swipeStartX = 0
+let swipeStartY = 0
+let swipeStartTime = 0
+
+function resetSwipeGesture() {
+  swipeStartX = 0
+  swipeStartY = 0
+  swipeStartTime = 0
+}
+
+function onTextareaTouchStart(e) {
+  if (props.inputDisabled) return
+  // Only the inactive textarea is a swipe surface; while focused the input
+  // keeps native touch behavior (caret placement, text scroll).
+  if (isTextareaFocused.value) return
+  const touch = e.touches[0]
+  if (!touch) return
+  if (e.touches.length !== 1) {
+    resetSwipeGesture()
+    return
+  }
+  swipeStartX = touch.clientX
+  swipeStartY = touch.clientY
+  swipeStartTime = Date.now()
+}
+
+function onTextareaTouchEnd(e) {
+  const touch = e.changedTouches[0]
+  if (!touch) return
+  const deltaX = touch.clientX - swipeStartX
+  const deltaY = touch.clientY - swipeStartY
+  const duration = Date.now() - swipeStartTime
+  resetSwipeGesture()
+  if (duration > SWIPE_HISTORY_MAX_DURATION) return
+  // Horizontal-dominant only: ignore vertical swipes (|deltaY| >= |deltaX|) so
+  // scrolling the message list keeps working naturally.
+  if (Math.abs(deltaY) >= Math.abs(deltaX)) return
+  if (Math.abs(deltaX) < SWIPE_HISTORY_THRESHOLD) return
+  // Swipe left = newer → older (deltaX < 0), swipe right = older → newer.
+  // Gesture path skips the keyboard-only multiline caret guard.
+  stepHistory(deltaX < 0, true)
+}
+
+function onTextareaTouchCancel() {
+  resetSwipeGesture()
+}
+
 function onTextareaKeydown(e) {
   // Menu keyboard navigation takes priority
   if (handleMenuKeydown(e)) return
+  // Input history navigation (ArrowUp/ArrowDown), only when the input is active
+  if (handleHistoryKeydown(e)) return
   // Default: Enter (without modifier) sends
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault()
@@ -833,6 +1013,9 @@ function handleStopClick() {
 const draftCache = new Map()
 
 watch(() => props.currentSessionId, (newId, oldId) => {
+  // History navigation is per-session: a session switch must start fresh from
+  // the new session's newest history entry.
+  resetInputHistory()
   // Save draft from the old session
   if (oldId) {
     const text = inputText.value
@@ -1116,6 +1299,8 @@ function clearInput() {
   if (props.currentSessionId) {
     draftCache.delete(props.currentSessionId)
   }
+  // A new message starts fresh history navigation from the newest entry.
+  resetInputHistory()
 }
 
 /** Save current input text to draft cache without clearing it (called before session switch). */

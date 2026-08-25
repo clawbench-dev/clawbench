@@ -232,6 +232,7 @@ export default {
       placeholderQuickSend: 'Tap ⚡ to quick send message →',
       placeholderAtCommand: "Type {'@'} for built-in commands",
       placeholderCommand: "Type {'@'} or {'/'} for commands",
+      placeholderSwipeHistory: 'Swipe left/right to browse history input',
       send: 'Send',
       enqueue: 'Enqueue',
       quickMenu: 'Quick commands',

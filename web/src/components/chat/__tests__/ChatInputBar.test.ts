@@ -12,6 +12,7 @@ import { ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'
 import { apiGet } from '@/utils/api'
+import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
 
@@ -39,6 +40,7 @@ const i18n = createI18n({
           placeholder: 'Type a message...',
           placeholderCommand: 'Command',
           placeholderQuickSend: 'Quick send',
+          placeholderSwipeHistory: 'Swipe history',
           placeholderQueue: 'Queue',
           clearInput: 'Clear',
           quickMenu: 'Quick',
@@ -1226,6 +1228,299 @@ describe('ChatInputBar', () => {
       await modeChip.trigger('mouseup')
       expect(mockToggleAutoApprove).toHaveBeenCalledWith(false)
       vi.useRealTimers()
+    })
+  })
+
+  describe('input history navigation', () => {
+    const HISTORY = [
+      { id: 1, role: 'user', content: 'first message' },
+      { id: 2, role: 'assistant', content: 'reply 1' },
+      { id: 3, role: 'user', content: 'second message' },
+      { id: 4, role: 'user', content: '  padded message  ' },
+    ]
+
+    async function pressArrow(wrapper: ReturnType<typeof mountBar>, key: string) {
+      await wrapper.find('.chat-textarea').trigger('keydown', { key })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+    }
+
+    it('ArrowUp walks history newest-first and ArrowDown walks back', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('second message')
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('first message')
+      // At the oldest entry, further ArrowUp stays put
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('first message')
+      // ArrowDown walks back toward the newest
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('second message')
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ArrowDown from the newest entry restores the original draft and resets navigation', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      wrapper.vm.inputText = 'draft in progress'
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('draft in progress')
+      // Navigation is reset: the next ArrowUp starts from the newest entry again
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ArrowDown from fresh non-empty input clears it', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      wrapper.vm.inputText = 'typing'
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('')
+      wrapper.unmount()
+    })
+
+    it('ignores ArrowUp when there is no user history', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: [] })
+      wrapper.vm.inputText = 'nothing before'
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowUp')
+      // Text is untouched (no history to navigate)
+      expect(wrapper.vm.inputText).toBe('nothing before')
+      wrapper.unmount()
+    })
+
+    it('excludes pending and queued messages from history', async () => {
+      const wrapper = mountBar({
+        currentSessionId: 's1',
+        messages: [
+          { id: 1, role: 'user', content: 'confirmed message' },
+          { id: 2, role: 'user', content: 'still pending', pending: true },
+          { id: 3, role: 'user', content: 'still queued', queued: true },
+        ],
+      })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('confirmed message')
+      wrapper.unmount()
+    })
+
+    it('clears input history navigation state after a send', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      // Simulate the send flow: clearInput is invoked by the parent after sending
+      wrapper.vm.clearInput()
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowUp')
+      // Navigation restarted from the newest history entry
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('does not navigate history while an @ or slash menu is open', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      // Open the @ menu by typing @ — menu keydown handles ArrowUp
+      wrapper.vm.inputText = '@'
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowUp')
+      // Input stays '@' (menu consumed the key, history did not run)
+      expect(wrapper.vm.inputText).toBe('@')
+      wrapper.unmount()
+    })
+
+    it('loading a history entry starting with @ does not pop the @ menu', async () => {
+      const wrapper = mountBar({
+        currentSessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: '@chatsearch query' }],
+      })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('@chatsearch query')
+      expect(wrapper.vm.showAtMenu).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('resets navigation state when switching sessions', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      await pressArrow(wrapper, 'ArrowUp')
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('second message')
+      // Switch to another session — navigation must restart from its newest entry
+      await wrapper.setProps({ currentSessionId: 's2' })
+      await wrapper.setProps({ messages: [{ id: 1, role: 'user', content: 'other session msg' }] })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('other session msg')
+      wrapper.unmount()
+    })
+
+    it('navigates history from the first row only when the input is multiline', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      wrapper.vm.inputText = 'line one\nline two'
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      // Cursor on the second row: ArrowUp must move the caret, not navigate history
+      ta.element.setSelectionRange(9, 9) // after 'line two'
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('line one\nline two')
+      // Cursor on the first row: ArrowUp navigates history
+      ta.element.setSelectionRange(0, 0)
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('swipe left/right on the inactive textarea steps history one entry per gesture', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      const swipe = async (dir: 'left' | 'right') => {
+        // Touch coordinates: start centered, end 100px left/right
+        await ta.trigger('touchstart', {
+          touches: [{ clientX: 200, clientY: 100 }],
+        })
+        await ta.trigger('touchend', {
+          changedTouches: [{ clientX: dir === 'left' ? 100 : 300, clientY: 100 }],
+        })
+        await flushPromises()
+        await wrapper.vm.$nextTick()
+      }
+      // Swipe left → newest history entry
+      await swipe('left')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      // Swipe left again → older
+      await swipe('left')
+      expect(wrapper.vm.inputText).toBe('second message')
+      // Swipe right → back toward newest
+      await swipe('right')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      // Swipe right past the newest → restore the (empty) draft, navigation resets
+      await swipe('right')
+      expect(wrapper.vm.inputText).toBe('')
+      // Next swipe left starts from the newest entry again
+      await swipe('left')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ignores vertical or short swipes on the inactive textarea', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      // Vertical swipe (dominant y) must not navigate
+      await ta.trigger('touchstart', { touches: [{ clientX: 100, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 100, clientY: 300 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      // Too-short horizontal swipe must not navigate
+      await ta.trigger('touchstart', { touches: [{ clientX: 100, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 130, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      wrapper.unmount()
+    })
+
+    it('swipe does nothing when there is no user history', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: [] })
+      const ta = wrapper.find('.chat-textarea')
+      wrapper.vm.inputText = 'fresh'
+      await wrapper.vm.$nextTick()
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('fresh')
+      wrapper.unmount()
+    })
+
+    it('swipe navigates even with a multiline draft (no caret guard on gestures)', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      // Multiline draft + caret on the last row (a state that would block the
+      // keyboard ArrowUp path but must not block the swipe path).
+      wrapper.vm.inputText = 'line one\nline two'
+      await wrapper.vm.$nextTick()
+      ta.element.setSelectionRange(9, 9) // last row
+      // Swipe left → history navigation must still fire
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('shows the swipe-history hint in the placeholder only on mobile surfaces', async () => {
+      // PC: swipe hint must NOT be in the rotating placeholder hints
+      _setIsPCForTest(true)
+      let wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).not.toContain('Swipe history')
+      wrapper.unmount()
+      // Mobile (non-PC): swipe hint must be present
+      _setIsPCForTest(false)
+      wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).toContain('Swipe history')
+      wrapper.unmount()
+    })
+
+    it('does not swipe-navigate while the textarea is focused', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      // Focus the textarea (activated state)
+      ta.element.dispatchEvent(new Event('focus'))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.isTextareaFocused).toBe(true)
+      // Swipe left on the focused input must not navigate history
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      // Blur back to inactive — swipe works again
+      ta.element.dispatchEvent(new Event('blur'))
+      await wrapper.vm.$nextTick()
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ignores multi-touch gestures on the textarea', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      await ta.trigger('touchstart', {
+        touches: [
+          { clientX: 100, clientY: 200 },
+          { clientX: 140, clientY: 220 },
+        ],
+      })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 100, clientY: 80 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      wrapper.unmount()
+    })
+
+    it('ignores swipes when the input is disabled', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY, inputDisabled: true })
+      const ta = wrapper.find('.chat-textarea')
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      wrapper.unmount()
     })
   })
 

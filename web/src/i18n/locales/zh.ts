@@ -232,6 +232,7 @@ export default {
       placeholderQuickSend: '点击⚡快捷发送消息 →',
       placeholderAtCommand: "输入 {'@'} 执行内置命令",
       placeholderCommand: "输入 {'@'} 或 {'/'} 执行命令",
+      placeholderSwipeHistory: '左右滑动切换历史输入',
       send: '发送',
       enqueue: '加入队列',
       quickMenu: '快捷指令',
