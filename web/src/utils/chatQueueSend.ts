@@ -1,16 +1,14 @@
 /**
- * Shared "enqueue while generating, resubmit on needs_start" orchestration.
+ * Shared "enqueue while generating" orchestration.
  *
  * Both the normal input path (ChatPanelContent.sendMessage) and the
  * AskUserQuestion-card path (ChatPanelContent.handleToolSendMessage) enqueue a
- * user message while the AI is still generating. This helper centralizes that
- * logic so both paths get identical handling of the needs_start race: when the
- * backend dequeues the message because the session was no longer running, the
- * message is resubmitted as a fresh chat instead of being silently lost (which
- * would leave no assistant placeholder and no loading indicator).
+ * user message while the AI is still generating. The backend handles the
+ * "session not running" race internally (EnqueueAndMaybeStart's B2 self-heal),
+ * so no needs_start/resubmit round-trip is needed on the frontend.
  *
- * Side effects (pushing the message, rendering, enqueueing, resubmitting) are
- * injected as callbacks so the orchestration is pure and unit-testable.
+ * Side effects (pushing the message, rendering, enqueueing) are injected as
+ * callbacks so the orchestration is pure and unit-testable.
  */
 
 import { dedupeFiles, type FileEntry } from '@/utils/fileAttachmentUtils'
@@ -36,14 +34,6 @@ export interface PendingUserMessage {
   seq?: number
 }
 
-/** Result of the backend enqueue call (mirrors POST /api/ai/queue). */
-export interface EnqueueResult {
-  needsStart: boolean
-  message?: string
-  filePaths?: string[]
-  files?: FileEntry[]
-}
-
 export interface EnqueueAndMaybeStartOptions {
   sessionId: string
   text: string
@@ -58,19 +48,17 @@ export interface EnqueueAndMaybeStartOptions {
     attachedFiles: FileEntry[],
     pendingFiles: FileEntry[],
     queueId: string,
-  ) => Promise<EnqueueResult>
-  resubmit: (text: string, filePaths: string[], files: FileEntry[]) => Promise<void>
+  ) => Promise<void>
 }
 
 /**
- * Push a pending user message, enqueue it for delivery, and — if the backend
- * returned needs_start — resubmit it as a fresh chat so the reply is not lost.
- * Returns the queueId of the pushed pending message.
+ * Push a pending user message and enqueue it for delivery. Returns the queueId
+ * of the pushed pending message. The backend persists the message (queued=1)
+ * and either starts an execution or lets the running drain loop pick it up.
  */
 export async function enqueueAndMaybeStart(opts: EnqueueAndMaybeStartOptions): Promise<string> {
   const queueId = opts.queueId || generateQueueId()
   const allFiles = dedupeFiles([...opts.pendingFiles, ...opts.attachedFiles])
-  const filePaths = opts.attachedFiles.map(f => f.path)
 
   opts.pushMessage({
     role: 'user',
@@ -84,10 +72,7 @@ export async function enqueueAndMaybeStart(opts: EnqueueAndMaybeStartOptions): P
   })
   opts.onPendingRendered?.()
 
-  const result = await opts.enqueue(opts.sessionId, opts.text, opts.attachedFiles, opts.pendingFiles, queueId)
-  if (result.needsStart) {
-    await opts.resubmit(result.message || opts.text, result.filePaths || filePaths, result.files || allFiles)
-  }
+  await opts.enqueue(opts.sessionId, opts.text, opts.attachedFiles, opts.pendingFiles, queueId)
 
   return queueId
 }

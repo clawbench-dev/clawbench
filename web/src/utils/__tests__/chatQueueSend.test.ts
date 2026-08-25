@@ -11,8 +11,7 @@ function makeOpts(overrides: Partial<EnqueueAndMaybeStartOptions> = {}): Enqueue
     pendingFiles: [],
     pushMessage: vi.fn(),
     onPendingRendered: vi.fn(),
-    enqueue: vi.fn().mockResolvedValue({ needsStart: false }),
-    resubmit: vi.fn().mockResolvedValue(undefined),
+    enqueue: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
 }
@@ -80,36 +79,10 @@ describe('enqueueAndMaybeStart', () => {
     expect(queueId).toMatch(/^pending-/)
   })
 
-  it('does NOT resubmit when needsStart is false', async () => {
+  it('enqueues the message for delivery', async () => {
     const opts = makeOpts()
     await enqueueAndMaybeStart(opts)
-    expect(opts.resubmit).not.toHaveBeenCalled()
-  })
-
-  it('resubmits with the backend-returned message and files when needsStart is true', async () => {
-    const attached: FileEntry[] = [{ path: '/a', isDir: false }]
-    const opts = makeOpts({
-      attachedFiles: attached,
-      enqueue: vi.fn().mockResolvedValue({
-        needsStart: true,
-        message: 'resubmitted text',
-        filePaths: ['/a'],
-        files: [{ path: '/a', isDir: false }],
-      }),
-    })
-    await enqueueAndMaybeStart(opts)
-    expect(opts.resubmit).toHaveBeenCalledTimes(1)
-    expect(opts.resubmit).toHaveBeenCalledWith('resubmitted text', ['/a'], [{ path: '/a', isDir: false }])
-  })
-
-  it('falls back to original text and computed files when needsStart result lacks them', async () => {
-    const attached: FileEntry[] = [{ path: '/a', isDir: false }]
-    const opts = makeOpts({
-      attachedFiles: attached,
-      enqueue: vi.fn().mockResolvedValue({ needsStart: true }),
-    })
-    await enqueueAndMaybeStart(opts)
-    expect(opts.resubmit).toHaveBeenCalledWith('hello', ['/a'], [{ path: '/a', isDir: false }])
+    expect(opts.enqueue).toHaveBeenCalledTimes(1)
   })
 
   it('honors a caller-provided queueId instead of generating one', async () => {

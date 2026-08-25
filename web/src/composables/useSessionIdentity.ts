@@ -674,16 +674,19 @@ export function useSessionIdentity() {
         }
       }
       const url = sid
-        ? `/api/ai/chat?session_id=${encodeURIComponent(sid)}`
+        ? `/api/ai/queue?session_id=${encodeURIComponent(sid)}`
         : null
       if (!url) {
         appLog.e(TAG, 'sendMessage: no session ID available, cannot send')
         return
       }
+      // Fallback uses the unified enqueue endpoint (D3). Generate a queueId so
+      // the backend can match the optimistic bubble to the DB row at drain.
+      const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, filePaths: [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
+        body: JSON.stringify({ message: text, queueId, filePaths: [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
       })
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to send message:', err)

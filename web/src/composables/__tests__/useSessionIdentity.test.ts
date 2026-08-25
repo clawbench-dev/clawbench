@@ -1148,7 +1148,7 @@ describe('useSessionIdentity', () => {
 
             // Should NOT have sent POST to /api/ai/chat (no session_id available)
             const chatPostCalls = mockFetch.mock.calls.filter(
-                (call: any[]) => call[0]?.includes?.('/api/ai/chat') && call[1]?.method === 'POST'
+                (call: any[]) => call[0]?.includes?.('/api/ai/queue') && call[1]?.method === 'POST'
             )
             expect(chatPostCalls.length).toBe(0)
 
