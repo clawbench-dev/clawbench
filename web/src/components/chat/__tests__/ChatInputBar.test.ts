@@ -1264,7 +1264,7 @@ describe('ChatInputBar', () => {
       expect(btn.attributes('disabled')).toBeUndefined()
     })
 
-    it('disables compact button when /compact command not available', async () => {
+    it('keeps compact button enabled even when /compact command not available', async () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/help', description: 'Show help' }]
@@ -1274,7 +1274,7 @@ describe('ChatInputBar', () => {
       await wrapper.vm.$nextTick()
       const btn = wrapper.find('.usage-popup-compact-btn')
       expect(btn.exists()).toBe(true)
-      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.attributes('disabled')).toBeUndefined()
     })
 
     it('shows compact button with command name without slash prefix', async () => {
@@ -1290,7 +1290,7 @@ describe('ChatInputBar', () => {
       expect(btn.attributes('disabled')).toBeUndefined()
     })
 
-    it('disables compact button when not ACP transport', async () => {
+    it('keeps compact button enabled even when not ACP transport', async () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
@@ -1300,7 +1300,7 @@ describe('ChatInputBar', () => {
       await wrapper.vm.$nextTick()
       const btn = wrapper.find('.usage-popup-compact-btn')
       expect(btn.exists()).toBe(true)
-      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.attributes('disabled')).toBeUndefined()
     })
 
     it('clicking compact button emits send with /compact', async () => {

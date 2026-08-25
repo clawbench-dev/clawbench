@@ -232,7 +232,7 @@
             <span class="usage-popup-value">${{ contextCost.toFixed(2) }} {{ contextCurrency || 'USD' }}</span>
           </div>
           <div class="usage-popup-compact">
-            <button class="usage-popup-compact-btn" :disabled="inputDisabled || !hasCompactCommand || !isACPTransport" @click.stop="handleCompact(); showUsagePopup = false" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
+            <button class="usage-popup-compact-btn" @click.stop="handleCompact(); showUsagePopup = false" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
               <Minimize2 :size="13" />
               {{ t('chat.sessionInfo.compact') }}
             </button>
@@ -371,8 +371,6 @@ const usageColor = computed(() => {
   if (pct >= 75) return '#eab308'
   return '#22c55e'
 })
-const hasCompactCommand = computed(() => availableCommands.value.some(cmd => cmd.name === '/compact' || cmd.name === 'compact'))
-
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
