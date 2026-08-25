@@ -2470,3 +2470,69 @@ func TestSendMessageToSessionFromFeishu_AddChatMessageFails(t *testing.T) {
 	err = SendMessageToSessionFromFeishu(sessionID, "this will fail")
 	assert.Error(t, err, "should return error when message persistence fails")
 }
+
+// mockQueueBackend returns a successful stream (content + done) for every prompt,
+// so a full LaunchSessionExecution + drain cycle can run end-to-end.
+type mockQueueBackend struct{}
+
+func (m *mockQueueBackend) Name() string { return "mock-queue" }
+func (m *mockQueueBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	ch := make(chan ai.StreamEvent, 4)
+	ch <- ai.StreamEvent{Type: "content", Content: "ok"}
+	ch <- ai.StreamEvent{Type: "done"}
+	close(ch)
+	return ch, nil
+}
+
+// TestDrainWritesReplyQueueID runs a real LaunchSessionExecution cycle: message 1
+// executes directly, message 2 is enqueued and drained by the loop. The reply to
+// message 2 must carry message 2's queue_id so the frontend can anchor it.
+func TestDrainWritesReplyQueueID(t *testing.T) {
+	ai.RegisterBackend("mock-queue", func() ai.AIBackend { return &mockQueueBackend{} })
+
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	model.Agents["mock-agent"] = &model.Agent{ID: "mock-agent", Backend: "cli", Command: "echo"}
+	defer func() { model.Agents = origAgents }()
+
+	sid := "queue-reply-qid"
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'mock-queue', 'Q', 'mock-agent')", sid)
+	require.NoError(t, err)
+
+	// Message 1 executes directly.
+	started, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+		SessionID:   sid,
+		ProjectPath: "/test",
+		BackendName: "mock-queue",
+		AgentID:     "mock-agent",
+		Message:     "1",
+		QueueID:     "pending-1",
+	})
+	require.NoError(t, err)
+	assert.True(t, started, "first message should start the session")
+
+	// Wait for message 1's turn to finish (session stops after draining empty queue).
+	require.Eventually(t, func() bool { return !IsSessionRunning(sid) }, 10*time.Second, 50*time.Millisecond)
+
+	// Message 2 enqueued now (session idle) — starts a new run.
+	started2, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+		SessionID:   sid,
+		ProjectPath: "/test",
+		BackendName: "mock-queue",
+		AgentID:     "mock-agent",
+		Message:     "2",
+		QueueID:     "pending-2",
+	})
+	require.NoError(t, err)
+	assert.True(t, started2)
+	require.Eventually(t, func() bool { return !IsSessionRunning(sid) }, 10*time.Second, 50*time.Millisecond)
+
+	// The reply to message 2 (the LATEST assistant row) must carry queue_id pending-2.
+	var qid string
+	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sid).Scan(&qid)
+	assert.NoError(t, err, "assistant reply row should exist")
+	assert.Equal(t, "pending-2", qid, "drain reply must record the consumed message's queue_id")
+}

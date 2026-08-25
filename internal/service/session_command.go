@@ -313,6 +313,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 			BackendName: cfg.BackendName,
 			AgentID:     cfg.AgentID,
 			Message:     cfg.Message,
+			QueueID:     cfg.QueueID,
 		})
 		return true, msgID, nil
 	}
@@ -338,6 +339,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 					BackendName: cfg.BackendName,
 					AgentID:     cfg.AgentID,
 					Message:     cfg.Message,
+					QueueID:     cfg.QueueID,
 				})
 			}
 		}
