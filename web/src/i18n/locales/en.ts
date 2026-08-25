@@ -813,6 +813,8 @@ export default {
       copy: 'Copy',
       cut: 'Cut',
       paste: 'Paste',
+      copyPath: 'Copy path',
+      pathCopied: 'Path copied',
       newFile: 'New file',
       newFolder: 'New folder',
       newFileInDir: 'New file in {name}',

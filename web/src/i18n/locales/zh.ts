@@ -813,6 +813,8 @@ export default {
       copy: '复制',
       cut: '剪切',
       paste: '粘贴',
+      copyPath: '拷贝路径',
+      pathCopied: '路径已拷贝',
       newFile: '新建文件',
       newFolder: '新建文件夹',
       newFileInDir: '在 {name} 内新建文件',
@@ -1082,7 +1084,7 @@ export default {
     confirm: '跳转',
     cancel: '取消',
     button: '跳转',
-    copyPath: '复制路径',
+    copyPath: '拷贝路径',
   },
   search: {
     title: '文件内容搜索',
