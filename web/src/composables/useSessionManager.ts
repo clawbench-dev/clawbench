@@ -5,6 +5,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
+import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 
 const TAG = 'SessionManager'
 
@@ -20,6 +21,8 @@ const TAG = 'SessionManager'
 export interface UseSessionManagerOptions {
   // Core state refs (owned by ChatPanel)
   messages: Ref<Record<string, unknown>[]>
+  /** Single write channel for the messages array (chatMessageReducer). */
+  dispatch: (action: ChatMessageAction) => void
   loading: Ref<boolean>
 
   // Session operations (from useChatSession)
@@ -47,6 +50,7 @@ export interface UseSessionManagerOptions {
 export function useSessionManager(options: UseSessionManagerOptions) {
   const {
     messages,
+    dispatch,
     loading,
     switchSessionCore,
     createSessionCore,
@@ -68,9 +72,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   /** Remove all pending messages from messages.value */
   function clearPendingMessages() {
-    for (let i = messages.value.length - 1; i >= 0; i--) {
-      if (messages.value[i].pending) messages.value.splice(i, 1)
-    }
+    dispatch({ type: 'clear_pending' })
   }
 
   /** Enqueue a message for later delivery while AI is generating.
@@ -114,11 +116,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       }
     } catch {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
-      // On enqueue failure, remove the pending message we just added
+      // On enqueue failure, remove the pending message we just added.
       if (queueId) {
-        const idx = messages.value.findIndex((m) => m.id === queueId && m.pending)
-        if (idx !== -1) messages.value.splice(idx, 1)
+        dispatch({ type: 'remove_pending', queueId })
       } else {
+        // Rare path (no queueId) — content-match rollback.
         const idx = messages.value.findLastIndex(
           (m) => m.role === 'user' && m.pending && m.content === inputText
         )
@@ -140,9 +142,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         `/api/ai/queue?session_id=${encodeURIComponent(sessionId)}&queueId=${encodeURIComponent(queueId)}`,
         { method: 'DELETE' }
       )
-      // Remove from local messages
-      const idx = messages.value.findIndex((m) => m.id === queueId && m.pending)
-      if (idx !== -1) messages.value.splice(idx, 1)
+      // Remove from local messages via the reducer.
+      dispatch({ type: 'remove_pending', queueId })
     } catch {
       toast.show(gt('session.removeFailed'), { icon: '⚠️', type: 'error' })
     }

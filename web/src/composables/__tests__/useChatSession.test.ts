@@ -342,6 +342,7 @@ vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
 // ── Import after mocks ──
 
 import { useChatSession, loadSessionsOnce, resetChatSessionState } from '@/composables/useChatSession'
+import { chatMessageReducer } from '@/utils/chatStreamUtils.ts'
 
 // Get direct references to the mocked functions from useSessionIdentity
 const mockUpdateUsageState = vi.hoisted(() => vi.fn())
@@ -356,6 +357,7 @@ function createSessionInternal() {
   const options = {
     currentSessionId: ref('current-s1'),
     messages: ref([]),
+    dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
     loading: ref(false),
     inputDisabled: ref(false),
     blockTasks: {},
@@ -681,6 +683,7 @@ describe('onSessionEvent', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -779,6 +782,7 @@ describe('onSessionEvent', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -808,6 +812,7 @@ describe('onSessionEvent', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -842,6 +847,7 @@ describe('onSessionEvent', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -873,6 +879,7 @@ describe('onSessionEvent', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -903,6 +910,7 @@ describe('onSessionEvent', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -937,6 +945,7 @@ describe('onSessionEvent', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -996,6 +1005,7 @@ describe('onSessionEvent', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -1054,6 +1064,7 @@ describe('onSessionEvent', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages,
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -1536,6 +1547,7 @@ describe('switchSession', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled,
       blockTasks: {},
@@ -2093,6 +2105,7 @@ describe('switchSession', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled,
       blockTasks: {},
@@ -2505,6 +2518,7 @@ describe('loadHistory', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -2563,6 +2577,7 @@ describe('loadHistory', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -2617,6 +2632,7 @@ describe('loadHistory', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -2656,6 +2672,7 @@ describe('loadHistory', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -2690,6 +2707,7 @@ describe('loadHistory', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -2800,6 +2818,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId: ref('old-s1'),
       messages,
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: { task1: true },
@@ -2895,6 +2914,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -2951,6 +2971,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId: ref('old'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks,
@@ -2998,6 +3019,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId: ref('old'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3051,6 +3073,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId,
       messages: ref([{ id: 'old-msg' }] as any[]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3083,6 +3106,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3118,6 +3142,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled,
       blockTasks: {},
@@ -3173,6 +3198,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3223,6 +3249,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3261,6 +3288,7 @@ describe('createSession', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled,
       blockTasks: {},
@@ -3309,11 +3337,12 @@ describe('createSession', () => {
         json: () => Promise.resolve({ sessions: [], totalCount: 1 }),
       })
 
+    const currentSessionId = ref('old-session')
     const messages = ref([{ id: 1, role: 'user', content: 'old message' }] as any[])
-    const currentSessionId = ref('old-s1')
     const options = {
       currentSessionId,
       messages,
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3405,6 +3434,7 @@ describe('archiveSession', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3467,6 +3497,7 @@ describe('archiveSession', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3498,6 +3529,7 @@ describe('archiveSession', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3566,6 +3598,7 @@ describe('handleWsReconnect', () => {
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3624,6 +3657,7 @@ describe('handleWsReconnect', () => {
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3668,6 +3702,7 @@ describe('handleWsReconnect', () => {
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3722,6 +3757,7 @@ describe('handleWsReconnect', () => {
     const options = {
       currentSessionId: ref(''),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3751,6 +3787,7 @@ describe('handleWsReconnect', () => {
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3808,6 +3845,7 @@ describe('handleManualRefresh', () => {
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3862,6 +3900,7 @@ describe('handleManualRefresh', () => {
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3915,6 +3954,7 @@ describe('handleManualRefresh', () => {
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -3971,6 +4011,7 @@ describe('handleManualRefresh', () => {
     const options = {
       currentSessionId: ref(''),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -4220,6 +4261,7 @@ describe('loadMoreMessages', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -4258,6 +4300,7 @@ describe('loadMoreMessages', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([{ id: 1, role: 'user' }]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -4285,6 +4328,7 @@ describe('loadMoreMessages', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([{ id: 1, role: 'user' }]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -4346,6 +4390,7 @@ describe('loadMoreMessages', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -4383,6 +4428,7 @@ describe('loadMoreMessages', () => {
     const options = {
       currentSessionId: ref('current-s1'),
       messages: ref([...normal, ...queued] as any),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -4836,6 +4882,7 @@ describe('loadHistory race protection', () => {
     const options = {
       currentSessionId,
       messages,
+      dispatch: (action: any) => { messages.value = chatMessageReducer(messages.value, action) },
       loading,
       inputDisabled: ref(false),
       blockTasks: {},
@@ -4912,6 +4959,7 @@ describe('loadHistory race protection', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -5010,6 +5058,7 @@ describe('loadHistory session_id recovery', () => {
     const options = {
       currentSessionId,
       messages,
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -5055,6 +5104,7 @@ describe('loadHistory session_id recovery', () => {
     const options = {
       currentSessionId,
       messages,
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},
@@ -5097,6 +5147,7 @@ describe('loadHistory session_id recovery', () => {
     const options = {
       currentSessionId,
       messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
       blockTasks: {},

@@ -10,7 +10,7 @@ import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
-import { forceCleanupStreamingState, sortMessages, anchorRepliesToQuestions, type ChatMessage } from '@/utils/chatStreamUtils.ts'
+import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 
 // Module-level one-time session list load (replaces continuous polling)
@@ -61,6 +61,8 @@ export function resetChatSessionState(): void {
 export interface UseChatSessionOptions {
   currentSessionId: Ref<string>
   messages: Ref<Array<Record<string, unknown>>>
+  /** Single write channel for the messages array (chatMessageReducer). */
+  dispatch: (action: ChatMessageAction) => void
   loading: Ref<boolean>
   inputDisabled: Ref<boolean>
   blockTasks: Record<string, unknown>
@@ -81,6 +83,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   const {
     currentSessionId,
     messages,
+    dispatch,
     loading,
     inputDisabled,
     blockTasks,
@@ -137,100 +140,16 @@ export function useChatSession(options: UseChatSessionOptions) {
       expandedTools.value = {}
     }
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
-    const prevMessages = messages.value
     const parsed = parseMessages(rawMsgs, onParseAssistantContent, messages.value, isRunning)
 
-    // Adopt DB data into recently-finalized streaming messages (drain-* IDs).
-    // When a stream ends, _forceCleanupStreamingState removes the streaming flag
-    // but the message still has its ephemeral drain-* id. loadHistory returns the
-    // same message with a numeric DB id. Replacing the object changes the v-for
-    // key from 'db-drain-*' to 'db-{number}', causing Vue to destroy and
-    // recreate the entire ChatMessageItem component tree — a costly DOM rebuild
-    // that creates the multi-second lag the user sees between content appearing
-    // and the meta bar / file-changes banner showing up.
-    //
-    // Instead, merge the DB fields into the existing object and reuse it.
-    // This keeps the v-for key stable and avoids the DOM rebuild.
-    // Match by: same role + createdAt within 5s + the drain-* id pattern.
-    // Only match non-streaming assistant messages (streaming=true means the
-    // session is still running and loadHistory is reconnecting, not finalizing).
-    const drainPrefix = 'drain-'
-    const recentlyFinalized = new Map<number, Record<string, unknown>>()
-    for (let i = prevMessages.length - 1; i >= 0; i--) {
-      const prev = prevMessages[i]
-      if (prev.role !== 'assistant') continue
-      if (prev.streaming) continue  // still streaming — don't adopt
-      const prevId = prev.id
-      if (typeof prevId !== 'string' || !prevId.startsWith(drainPrefix)) continue
-      recentlyFinalized.set(i, prev)
-    }
-
-    // Race guard (adf6c9e6): 'done' now unlocks the UI and runs loadHistory in
-    // the background. If the user sends a new message before that loadHistory
-    // arrives, a NEW streaming assistant message (drain-*) coexists with the just-
-    // finalized one. Adopting DB fields while a stream is live is unsafe: the
-    // new message's createdAt can fall inside the 5s tolerance of a DB row and get
-    // merged into (clobbered by) the wrong object. Skip the whole merge while any
-    // assistant message is currently streaming — the DB identity is adopted by the
-    // next loadHistory that runs after the stream ends.
-    if (!messages.value.some((m) => m.role === 'assistant' && m.streaming)) {
-      for (let pi = 0; pi < parsed.length; pi++) {
-        const newMsg = parsed[pi]
-        if (newMsg.role !== 'assistant') continue
-        if (typeof newMsg.id !== 'number') continue
-        const newCreatedAt = newMsg.createdAt as string | undefined
-        if (!newCreatedAt) continue
-        // Find a matching recently-finalized message
-        for (const [prevIdx, prevMsg] of recentlyFinalized) {
-          const prevCreatedAt = prevMsg.createdAt as string | undefined
-          if (!prevCreatedAt) continue
-          // Match by createdAt within 5 seconds tolerance
-          const prevTime = new Date(prevCreatedAt).getTime()
-          const newTime = new Date(newCreatedAt).getTime()
-          if (Math.abs(prevTime - newTime) > 5000) continue
-          // Merge DB fields into the existing object to preserve Vue component identity
-          prevMsg.id = newMsg.id
-          // Drop the transient afterSort anchor: it was computed from the
-          // parent's TRANSIENT_BASE+seq value while the reply was still a
-          // drain-* placeholder. With a real DB id the reply must sort by id
-          // (messageSortValue prefers afterSort whenever present, so a stale
-          // huge value would pin this reply after every DB message — wrong
-          // order like msg2,msg3,reply2,reply3).
-          delete prevMsg.afterSort
-          if (newMsg.summary) prevMsg.summary = newMsg.summary
-          if (newMsg.summaryCards) prevMsg.summaryCards = newMsg.summaryCards
-          if (newMsg.metadata && !prevMsg.metadata) prevMsg.metadata = newMsg.metadata
-          // Replace the parsed message with the reused existing object
-          parsed[pi] = prevMsg
-          recentlyFinalized.delete(prevIdx)
-          break
-        }
-      }
-    }
-
-    messages.value = parsed
-    // Queued messages are real chat_history rows now (queued=1, queue_id set).
-    // Mark them pending so the UI shows a waiting bubble, and preserve the
-    // queueId for drain/cancel matching. parseMessages already rebuilt the
-    // array from the authoritative DB response, so no appendQueueItems /
-    // ghost-pending reconciliation is needed — the rows are the truth.
-    //
-    // Only queued=true rows are pending. A drained row keeps its queue_id
-    // (needed for queue_cancel matching) but has queued=false — it is a normal
-    // conversation message and must NOT show a waiting bubble (regression: the
-    // old `|| m.queueId` condition marked every completed user message pending).
-    for (const m of messages.value as ChatMessage[]) {
-      if (m.role === 'user' && m.queued === true) {
-        m.pending = true
-      }
-    }
-    // Anchor queued replies to their own question: queued user messages get
-    // their DB id at enqueue time (before later queued messages and before the
-    // replies they produce), so raw id order is msg2,msg3,reply2,reply3. The
-    // backend records each reply's queue_id; recompute afterSort from it so
-    // the conversational order (msg2,reply2,msg3,reply3) is restored.
-    anchorRepliesToQuestions(messages.value as ChatMessage[])
-    sortMessages(messages.value as ChatMessage[])
+    // Merge DB rows into the current array via the reducer (single write
+    // channel). mergeDbMessages:
+    //   - reuses objects by id (v-for keys stable → no DOM rebuild lag)
+    //   - matches pending bubbles by queueId (they are NEVER wiped)
+    //   - keeps streaming placeholders (NEVER wiped while a stream is live)
+    //   - adopts DB identity into finalized drain-* replies (when idle)
+    //   - marks queued=true rows as pending; anchors + sorts
+    dispatch({ type: 'db_load', dbMessages: parsed as ChatMessage[], sessionRunning: isRunning })
     totalMessages.value = (sessionData.total as number) || messages.value.length
     queuedCount.value = (sessionData.queuedCount as number) || 0
 
@@ -653,7 +572,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       const data = await resp.json()
       const olderMsgs = parseMessages(data.messages || [], onParseAssistantContent, undefined, data.running)
       if (olderMsgs.length > 0) {
-        messages.value = [...olderMsgs, ...messages.value]
+        dispatch({ type: 'prepend_older', olderMsgs: olderMsgs as ChatMessage[] })
         totalMessages.value = data.total || totalMessages.value
         // Refresh queuedCount from the latest response (plan C) — it may have
         // changed since the initial load (e.g. messages drained meanwhile).
@@ -683,7 +602,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     // Start the new session's message list fresh. In-flight (queued/streaming)
     // messages belong to the PREVIOUS session and must not be carried over by
     // syncSessionState's in-flight merge into the new session.
-    messages.value = []
+    dispatch({ type: 'clear' })
     // Clear stale blockAskQuestions from previous session
     Object.keys(blockTasks).forEach(k => delete blockTasks[k])
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
@@ -751,7 +670,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     // switchSession also clears messages, but it runs after the async POST —
     // the gap between clearSessionIdentity('') and switchSession is the
     // window where the recovery path can load old messages.
-    messages.value = []
+    dispatch({ type: 'clear' })
     try {
       const body = agentId ? { agentId } : {}
       const resp = await fetch('/api/ai/sessions', {

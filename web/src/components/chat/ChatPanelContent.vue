@@ -180,6 +180,7 @@ import { useChatStream } from '@/composables/useChatStream.ts'
 import { useChatSession, loadSessionsOnce } from '@/composables/useChatSession.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useSessionManager } from '@/composables/useSessionManager.ts'
+import { createChatMessageStore } from '@/composables/useChatMessageStore.ts'
 import { useAcpSession } from '@/composables/useAcpSession'
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
@@ -188,7 +189,7 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, isShowingSummary } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
-import { nextClientSeq, sortMessages } from '@/utils/chatStreamUtils.ts'
+import { nextClientSeq } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { buildMultiQuoteMessage, relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
@@ -227,6 +228,7 @@ const identity = useSessionIdentity()
 const agentsComposable = useAgents()
 const { agents: agentsList, getAgent, getAgentBackend, getAgentName } = agentsComposable
 const messages = ref([])
+const messageStore = createChatMessageStore(messages)
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
 const renderedMessages = computed(() => messages.value)
 const inputDisabled = ref(false)
@@ -351,6 +353,7 @@ const toolUpdateFetchDebounce = new Map()
 const session = useChatSession({
   currentSessionId: identity.currentSessionId,
   messages,
+  dispatch: messageStore.dispatch,
   loading,
   inputDisabled,
   blockTasks: render.blockTasks,
@@ -399,9 +402,7 @@ function onStreamEnd(reason) {
     store.loadGitBranch().catch(() => {})
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
-    for (let i = messages.value.length - 1; i >= 0; i--) {
-      if (messages.value[i].pending) messages.value.splice(i, 1)
-    }
+    messageStore.dispatch({ type: 'clear_pending' })
     // Restore screen lock — output was cancelled, no TTS will play
     autoSpeech.onOutputEndNoSpeech()
     // Refresh git state — agent may have modified files before cancellation
@@ -428,6 +429,7 @@ watch(loading, (newVal, oldVal) => {
 
 const stream = useChatStream({
   messages,
+  dispatch: messageStore.dispatch,
   currentSessionId: identity.currentSessionId,
   currentBackend: identity.currentBackend,
   loading,
@@ -500,6 +502,7 @@ const { stagedQuotes, removeStagedQuote, clearAll, removeAttachedFileByPath } = 
 
 const manager = useSessionManager({
   messages,
+  dispatch: messageStore.dispatch,
   loading,
   switchSessionCore: session.switchSession,
   createSessionCore: session.createSession,
@@ -744,7 +747,7 @@ async function sendMessage(text) {
          text: inputText || '',
          attachedFiles: capturedAttached,
          pendingFiles: capturedPending,
-         pushMessage: (msg) => messages.value.push(msg),
+         pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
          onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
          enqueue: (sid, text, attached, pending, qid) => manager.enqueueMessage(sid, text, attached, pending, qid),
        })
@@ -772,17 +775,17 @@ async function sendMessageNow(text, filePaths, files) {
     // the message gets enqueued. This avoids in-place ID mutation (v-for key
     // instability) and ensures the backend receives queueId for precise matching.
     const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    messages.value.push({
-        role: 'user',
-        id: pendingId,
-        content: text || '',
-        blocks: text ? [{ type: 'text', text: text || '' }] : [],
-        filePath: filePaths.length > 0 ? filePaths[0] : '',
-        files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-        createdAt: new Date().toISOString(),
-        seq: nextClientSeq()
-    })
-    sortMessages(messages.value)
+    const optimisticMsg = {
+      role: 'user',
+      id: pendingId,
+      content: text || '',
+      blocks: text ? [{ type: 'text', text: text || '' }] : [],
+      filePath: filePaths.length > 0 ? filePaths[0] : '',
+      files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+      createdAt: new Date().toISOString(),
+      seq: nextClientSeq(),
+    }
+    messageStore.dispatch({ type: 'optimistic_push', msg: optimisticMsg })
 
     render.updateRenderedContents()
     loading.value = true
@@ -844,12 +847,7 @@ async function sendMessageNow(text, filePaths, files) {
         }
     } catch (err) {
         // Remove the optimistically pushed user message on failure
-        const localIdx = messages.value.findLastIndex(
-            (m) => m.role === 'user' && m.id === pendingId
-        )
-        if (localIdx !== -1) {
-            messages.value.splice(localIdx, 1)
-        }
+        messageStore.dispatch({ type: 'optimistic_remove', id: pendingId })
         stream.disconnectStream()
         loading.value = false
         // Restore screen lock on send failure — output won't proceed
@@ -874,7 +872,7 @@ async function handleToolSendMessage(text) {
         text,
         attachedFiles: [],
         pendingFiles: [],
-        pushMessage: (msg) => messages.value.push(msg),
+        pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
         onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
         enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
       })

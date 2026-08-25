@@ -510,13 +510,18 @@ export function drainQueueMessage(
   // 2. Find the queued user message by its STABLE key — the queueId that the
   //    frontend generated and sent to the backend, and which the backend echoes
   //    back in queue_drain. No content guessing: identity is the key.
+  //
+  //    Three-channel OR match, robust against loadHistory having replaced the
+  //    bubble with its DB row (id becomes numeric, but queueId field survives):
+  //      m.id === queueId          → optimistic bubble (string id = queueId)
+  //      m.queueId === queueId     → bubble already adopted a numeric DB id
+  //      m['_remoteQueueId']       → cross-device remote user message
   let pendingIdx = -1
   if (queueId) {
-    pendingIdx = messages.findIndex((m) => m.role === 'user' && (m.pending || m._remote) && m.id === queueId)
-  }
-  if (pendingIdx === -1 && queueId) {
-    // Cross-device: the remote user message stores the same queueId in _remoteQueueId.
-    pendingIdx = messages.findIndex((m) => m.role === 'user' && m._remote && m['_remoteQueueId'] === queueId)
+    pendingIdx = messages.findIndex(
+      (m) => m.role === 'user' && (m.pending || m._remote) &&
+        (m.id === queueId || m.queueId === queueId || (m as Record<string, unknown>)['_remoteQueueId'] === queueId)
+    )
   }
 
   if (pendingIdx !== -1) {
@@ -642,4 +647,367 @@ export function resolveEffectiveMsgId(
   originalMsgId: number | string,
 ): number | string {
   return liveBlock ? (overlayMsgId ?? originalMsgId) : originalMsgId
+}
+
+// ─────────────────────────────────────────────────────────────
+// chatMessageReducer — single write channel for the messages array.
+//
+// Every mutation of the chat message list (optimistic pushes, WS events,
+// loadHistory DB merges, enqueue/cancel) flows through this pure reducer.
+// Components and composables only collect events and dispatch(action); they
+// never touch the array directly. This eliminates the multi-writer races that
+// previously corrupted streaming state (a loadHistory full-replace wiping
+// optimistic bubbles / streaming placeholders, queue_drain failing to match a
+// bubble that was replaced by its DB row, etc.).
+//
+// The reducer is a pure function (state, action) => state: fully unit-testable
+// by feeding action sequences and asserting the resulting array.
+// ─────────────────────────────────────────────────────────────
+
+/** Action that mutates the chat message list. */
+export type ChatMessageAction =
+  // ── Optimistic / structural ──
+  | { type: 'optimistic_push'; msg: ChatMessage }
+  | { type: 'optimistic_remove'; id: string | number }
+  | { type: 'stream_placeholder'; msg: ChatMessage }
+  | { type: 'clear_pending' }
+  | { type: 'remove_pending'; queueId: string }
+  | { type: 'clear' }
+  | { type: 'prepend_older'; olderMsgs: ChatMessage[] }
+  // ── WS structural events ──
+  | { type: 'ws_stream_start'; messageId: number }
+  | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string } }
+  | { type: 'ws_queue_drain'; queueId: string; text: string; files: FileEntry[]; dbMessageId?: number; backend?: string }
+  | { type: 'ws_queue_cancel'; queueIds: string[] }
+  | { type: 'stream_finalize' }
+  // ── WS block-level (in-place blocks mutation, same array reference) ──
+  | { type: 'ws_content'; text: string }
+  | { type: 'ws_thinking'; text: string; key?: string }
+  | { type: 'ws_thinking_done' }
+  | { type: 'ws_content_reset' }
+  | { type: 'ws_tool_use'; data: ToolUseEventData }
+  | { type: 'ws_tool_result'; data: ToolUseEventData }
+  | { type: 'ws_metadata'; metadata: Record<string, unknown> }
+  | { type: 'ws_warning'; text: string; reason?: string }
+  // ── DB merge (loadHistory) ──
+  | { type: 'db_load'; dbMessages: ChatMessage[]; sessionRunning: boolean }
+
+function findBlockByTypeBackward(blocks: ContentBlock[], type: string): ContentBlock | undefined {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i].type === type) return blocks[i]
+    if (blocks[i].type === 'tool_use') return undefined
+  }
+  return undefined
+}
+
+/**
+ * Merge loadHistory DB rows into the existing state WITHOUT wiping transient
+ * messages. Rules per DB row (iterated id ASC):
+ *  1. Matches an existing message by id        → reuse object, merge fields
+ *     (object identity preserved → v-for keys stable).
+ *  2. Matches a pending bubble by queueId      → reuse bubble, mark pending per
+ *     queued flag; keep its string id (don't prematurely adopt the numeric id —
+ *     queue_drain still matches by id).
+ *  3. Matches a finalized drain-* reply        → adopt DB numeric id (only when
+ *     no assistant message is streaming, to avoid clobbering a live reply).
+ *  4. Otherwise                                → append as a new object.
+ * Transient messages (pending/streaming/drain-* string ids) not covered by any
+ * DB row are KEPT. Non-transient state without a DB row is dropped.
+ */
+export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[], sessionRunning: boolean): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>()
+  const byQueueId = new Map<string, ChatMessage>()
+  const finalizedDrains: ChatMessage[] = []
+  for (const m of state) {
+    if (m.id != null) byId.set(String(m.id), m)
+    if (m.queueId) byQueueId.set(m.queueId, m)
+    if (m.role === 'assistant' && !m.streaming && typeof m.id === 'string' && m.id.startsWith('drain-')) {
+      finalizedDrains.push(m)
+    }
+  }
+
+  const anyStreaming = state.some((m) => m.role === 'assistant' && m.streaming)
+  // Adopt DB identity into finalized drain-* replies only when the session is
+  // NOT running (stream ended) — while a stream is live, a createdAt collision
+  // inside the 5s window could clobber a brand-new reply.
+  const canAdoptDrains = !sessionRunning && !anyStreaming
+  const used = new Set<ChatMessage>()
+  const merged: ChatMessage[] = []
+
+  for (const db of dbMessages) {
+    let target = byId.get(String(db.id))
+    if (target) {
+      used.add(target)
+    } else if (db.queueId && (byQueueId.has(db.queueId) || byId.has(db.queueId))) {
+      // Match a pending bubble by queueId. The optimistic bubble's id IS the
+      // queueId (no queueId field yet); after a numeric-id adoption the queueId
+      // field survives. Reuse it; keep string id so queue_drain can still find
+      // it by id, but adopt DB queued state.
+      target = byQueueId.get(db.queueId) || byId.get(db.queueId)!
+      used.add(target)
+      target.queued = db.queued
+      if (db.queued === true) target.pending = true
+    } else if (db.role === 'assistant' && canAdoptDrains) {
+      // Adopt DB identity into a finalized drain-* reply (createdAt ±5s).
+      const matchIdx = finalizedDrains.findIndex((d) => {
+        const dt = db.createdAt ? new Date(db.createdAt).getTime() : 0
+        const pt = d.createdAt ? new Date(d.createdAt).getTime() : 0
+        return dt !== 0 && pt !== 0 && Math.abs(dt - pt) <= 5000
+      })
+      if (matchIdx !== -1) {
+        const match = finalizedDrains[matchIdx]
+        finalizedDrains.splice(matchIdx, 1) // consume — one drain per DB row
+        target = match
+        used.add(target)
+        target.id = db.id
+        delete target.afterSort
+        delete target.parentQueueId
+        delete target.seq
+      }
+    }
+
+    if (target) {
+      // Merge DB fields into the existing object (identity preserved).
+      if (db.summary) target.summary = db.summary
+      if (db.summaryCards) target.summaryCards = db.summaryCards
+      if (db.metadata && !target.metadata) target.metadata = db.metadata
+      if (db.cancelled) target.cancelled = db.cancelled
+      if (db.files) target.files = db.files
+      if (!target.content && db.content) target.content = db.content
+      if (target.blocks == null || target.blocks.length === 0) {
+        if (db.blocks) target.blocks = db.blocks
+      }
+      if (db.queued !== undefined && target.role === 'user') {
+        target.queued = db.queued
+        if (db.queued === true) target.pending = true
+      }
+      merged.push(target)
+    } else if (db.role === 'assistant' && db.streaming === true && !anyStreaming) {
+      // The DB snapshot contains a streaming=1 row but we have no live
+      // placeholder yet (or the placeholder was replaced) — append it as-is.
+      merged.push({ ...db })
+    } else if (db.role === 'assistant' && db.streaming === true && anyStreaming) {
+      // The DB snapshot's streaming row is the SAME message as our live
+      // placeholder (the stream is reconnecting to a live turn). Merge the DB
+      // identity (id) into the existing placeholder instead of appending a
+      // duplicate or wiping the live object.
+      const live = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (live) {
+        used.add(live)
+        if (typeof db.id === 'number') live.id = db.id
+        merged.push(live)
+      } else {
+        merged.push({ ...db })
+      }
+    } else {
+      // Any other unmatched row (history messages, final replies, queued user
+      // rows) is appended as a new object. A finalized drain-* reply keeps its
+      // transient identity until the next idle loadHistory adopts the DB id —
+      // the DB row appears alongside it in the meantime (transient duplicate,
+      // reconciled by the next idle loadHistory).
+      merged.push({ ...db })
+    }
+  }
+
+  // Keep transient state not covered by DB rows (pending bubbles, streaming
+  // placeholders, drain-* replies awaiting adoption).
+  for (const m of state) {
+    if (used.has(m)) continue
+    const isTransient = m.pending === true || m.streaming === true || typeof m.id === 'string'
+    if (isTransient) merged.push(m)
+  }
+
+  // queued=1 rows become pending bubbles.
+  for (const m of merged) {
+    if (m.role === 'user' && m.queued === true) m.pending = true
+  }
+  anchorRepliesToQuestions(merged)
+  sortMessages(merged)
+  return merged
+}
+
+/** The chat message reducer. Returns the next state array. */
+export function chatMessageReducer(state: ChatMessage[], action: ChatMessageAction): ChatMessage[] {
+  switch (action.type) {
+    case 'optimistic_push': {
+      state.push(action.msg)
+      sortMessages(state)
+      return state
+    }
+    case 'optimistic_remove': {
+      const idx = state.findIndex((m) => String(m.id) === String(action.id))
+      if (idx !== -1) state.splice(idx, 1)
+      return state
+    }
+    case 'stream_placeholder': {
+      state.push(action.msg)
+      sortMessages(state)
+      return state
+    }
+    case 'clear_pending': {
+      for (let i = state.length - 1; i >= 0; i--) {
+        if (state[i].pending) state.splice(i, 1)
+      }
+      return state
+    }
+    case 'remove_pending': {
+      for (let i = state.length - 1; i >= 0; i--) {
+        const m = state[i]
+        if (m.pending && (String(m.id) === action.queueId || m.queueId === action.queueId)) {
+          state.splice(i, 1)
+        }
+      }
+      return state
+    }
+    case 'clear':
+      return []
+    case 'prepend_older': {
+      state.unshift(...action.olderMsgs)
+      sortMessages(state)
+      return state
+    }
+    case 'ws_stream_start': {
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (sm) sm.id = action.messageId
+      return state
+    }
+    case 'ws_user_message': {
+      const data = action.data
+      const myClientId = typeof localStorage !== 'undefined' ? localStorage.getItem('clawbench_client_id') : null
+      if (data.senderClientId && data.senderClientId === myClientId) return state
+      const userContent = data.content || ''
+      const userFiles: FileEntry[] = (data.files || []).map((f) => typeof f === 'string' ? { path: f, isDir: false } : f)
+      const msgId = data.messageId || 0
+      const remoteQueueId = data.queueId || ''
+      const alreadyExists = state.some((m) => {
+        if (m.role !== 'user') return false
+        if (msgId > 0 && m.id === msgId) return true
+        if (remoteQueueId && (m.id === remoteQueueId || m.queueId === remoteQueueId)) return true
+        if (m.content === userContent && !m.pending && !m._remote) return true
+        return false
+      })
+      if (alreadyExists) return state
+      state.push({
+        role: 'user',
+        id: msgId > 0 ? msgId : `remote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content: userContent,
+        blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+        files: userFiles,
+        createdAt: new Date().toISOString(),
+        _remote: true,
+        ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
+        seq: nextClientSeq(),
+      } as ChatMessage)
+      sortMessages(state)
+      return state
+    }
+    case 'ws_queue_drain': {
+      drainQueueMessage(
+        state, action.queueId, action.text, action.files, action.backend || '',
+        { onRenderNeeded: () => {}, onExtractScheduledTasks: () => {} },
+        undefined, action.dbMessageId,
+      )
+      return state
+    }
+    case 'ws_queue_cancel': {
+      cancelPendingMessages(state, action.queueIds)
+      return state
+    }
+    case 'stream_finalize': {
+      forceCleanupStreamingState(state, { onRenderNeeded: () => {} })
+      return state
+    }
+    // ── Block-level: mutate the streaming message's blocks in place ──
+    case 'ws_content': {
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (!sm) return state
+      const blocks = sm.blocks!
+      const existingText = findBlockByTypeBackward(blocks, 'text')
+      if (existingText) existingText.text += action.text
+      else blocks.push({ type: 'text', text: action.text })
+      return state
+    }
+    case 'ws_thinking': {
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (!sm) return state
+      const blocks = sm.blocks!
+      const existing = findBlockByTypeBackward(blocks, 'thinking')
+      if (existing) existing.text += action.text
+      else blocks.push({ type: 'thinking', text: action.text, ...(action.key ? { _key: action.key } : {}) })
+      return state
+    }
+    case 'ws_thinking_done': {
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (!sm || !sm.blocks) return state
+      const existing = findBlockByTypeBackward(sm.blocks, 'thinking')
+      if (existing) existing.done = true
+      return state
+    }
+    case 'ws_content_reset': {
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (!sm) return state
+      sm.blocks = []
+      return state
+    }
+    case 'ws_tool_use': {
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (!sm) return state
+      const data = action.data
+      const blocks = sm.blocks!
+      const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
+      if (existing) {
+        if (data.input && Object.keys(data.input).length > 0) existing.input = data.input
+        if (data.name) existing.name = data.name
+        if (data.status !== undefined) existing.status = data.status
+        if (data.summary !== undefined) existing.summary = data.summary
+        if (data.display_name !== undefined) existing.display_name = data.display_name
+        if (data.file_path !== undefined) existing.file_path = data.file_path
+        if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
+        if (data.done) existing.done = true
+      } else {
+        blocks.push({
+          type: 'tool_use',
+          name: data.name,
+          id: data.id,
+          input: data.input,
+          done: data.done ?? false,
+          ...(data.status ? { status: data.status } : {}),
+          ...(data.summary ? { summary: data.summary } : {}),
+          ...(data.display_name ? { display_name: data.display_name } : {}),
+          ...(data.file_path ? { file_path: data.file_path } : {}),
+          ...(data.duration_ms !== undefined ? { duration_ms: data.duration_ms } : {}),
+        } as ContentBlock)
+      }
+      return state
+    }
+    case 'ws_tool_result': {
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (!sm || !sm.blocks) return state
+      const data = action.data
+      const block = sm.blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
+      if (block) {
+        if (data.name) block.name = data.name
+        if (data.status !== undefined) block.status = data.status
+        block.done = true
+        if (data.duration_ms !== undefined) block.duration_ms = data.duration_ms
+      }
+      return state
+    }
+    case 'ws_metadata': {
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (sm) sm.metadata = action.metadata
+      return state
+    }
+    case 'ws_warning': {
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (!sm) return state
+      sm.blocks!.push({ type: 'warning', text: action.text, ...(action.reason ? { reason: action.reason } : {}) })
+      return state
+    }
+    case 'db_load': {
+      return mergeDbMessages(state, action.dbMessages, action.sessionRunning)
+    }
+    default:
+      return state
+  }
 }

@@ -6,7 +6,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, cancelPendingMessages, sortMessages, nextClientSeq, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, nextClientSeq, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
@@ -15,6 +15,8 @@ const TAG = 'ChatStream'
 
 export interface UseChatStreamOptions {
   messages: Ref<ChatMessage[]>
+  /** Single write channel for the messages array (chatMessageReducer). */
+  dispatch: (action: ChatMessageAction) => void
   currentSessionId: Ref<string>
   currentBackend: Ref<string>
   loading: Ref<boolean>
@@ -38,6 +40,7 @@ export interface UseChatStreamOptions {
 export function useChatStream(options: UseChatStreamOptions) {
   const {
     messages,
+    dispatch,
     currentSessionId,
     currentBackend,
     loading,
@@ -192,11 +195,8 @@ export function useChatStream(options: UseChatStreamOptions) {
           seq: nextClientSeq(),
           parentQueueId: parentUserIdx !== -1 ? String(messages.value[parentUserIdx].id) : undefined,
         }
-        // Always push; order is restored by sortMessages() — physical array
-        // position never encodes ordering, so a newer reply can never be
-        // spliced above an older one.
-        messages.value.push(newStreaming)
-        sortMessages(messages.value)
+        // Single write channel: the reducer pushes + re-sorts.
+        dispatch({ type: 'stream_placeholder', msg: newStreaming })
         thinkingBlockCounter = 0
         onRenderNeeded()
       } else if ((streaming as ChatMessage).fromDB) {
@@ -226,54 +226,36 @@ export function useChatStream(options: UseChatStreamOptions) {
     switch (csData.event_type) {
       case 'stream_start': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (sm && payload.message_id) {
-          sm.id = payload.message_id as number
+        if (payload.message_id) {
+          dispatch({ type: 'ws_stream_start', messageId: payload.message_id as number })
         }
         break
       }
 
       case 'content_reset': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        sm.blocks = []
-        sm.streamingText = ''
-        sm.metadata = undefined
+        if (!findStreamingMsg(messages.value)) return
+        dispatch({ type: 'ws_content_reset' })
         onRenderNeeded()
         break
       }
 
       case 'content': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
+        if (!findStreamingMsg(messages.value)) return
         resetStreamTimeout()
         const contentData = payload as unknown as ContentEventData
-        const blocks = sm.blocks!
-        const existingText = findLastBlockOfType(blocks, 'text')
-        if (existingText) {
-          existingText.text += contentData.content ?? ''
-        } else {
-          blocks.push({ type: 'text', text: contentData.content ?? '' })
-        }
+        dispatch({ type: 'ws_content', text: contentData.content ?? '' })
         debouncedRender()
         break
       }
 
       case 'thinking': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
+        if (!findStreamingMsg(messages.value)) return
         resetStreamTimeout()
         const thinkingData = payload as unknown as ThinkingEventData
-        const blocks = sm.blocks!
-        const existingThinking = findLastBlockOfType(blocks, 'thinking')
-        if (existingThinking) {
-          existingThinking.text += thinkingData.text ?? ''
-        } else {
-          blocks.push({ type: 'thinking', text: thinkingData.text ?? '', _key: `thinking-${thinkingBlockCounter++}` })
-        }
+        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}` })
         debouncedRender()
         if (isOpen.value) {
           onScrollBottom()
@@ -283,103 +265,42 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'thinking_done': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        const blocks = sm.blocks!
-        for (let i = blocks.length - 1; i >= 0; i--) {
-          if (blocks[i].type === 'thinking') {
-            blocks[i].done = true
-            break
-          }
-        }
+        if (!findStreamingMsg(messages.value)) return
+        dispatch({ type: 'ws_thinking_done' })
         onRenderNeeded()
         break
       }
 
       case 'tool_use': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
+        if (!findStreamingMsg(messages.value)) return
         resetStreamTimeout()
         const data = payload as unknown as ToolUseEventData
-        const blocks = sm.blocks!
-        const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
+        dispatch({ type: 'ws_tool_use', data })
+        // Side effects that depend on the block's updated state.
+        const smAfter = findStreamingMsg(messages.value)
+        const blocksAfter = smAfter?.blocks || []
+        const existing = blocksAfter.find((b) => b.type === 'tool_use' && b.id === data.id)
         if (data.done) {
-          if (existing) {
-            if (data.input && Object.keys(data.input).length > 0) {
-              existing.input = data.input
-            }
-            existing.done = true
-            if (data.status !== undefined) existing.status = data.status
-            if (data.summary !== undefined) existing.summary = data.summary
-            if (data.display_name !== undefined) existing.display_name = data.display_name
-            if (data.file_path !== undefined) existing.file_path = data.file_path
-            if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
-          } else {
-            const newBlock: ContentBlock = {
-              type: 'tool_use', name: data.name!, id: data.id!, done: true,
-              status: data.status || '',
-            }
-            if (data.input && Object.keys(data.input).length > 0) {
-              newBlock.input = data.input
-            }
-            if (data.summary) newBlock.summary = data.summary
-            if (data.display_name) newBlock.display_name = data.display_name
-            if (data.file_path) newBlock.file_path = data.file_path
-            if (data.duration_ms !== undefined) newBlock.duration_ms = data.duration_ms
-            blocks.push(newBlock)
-          }
           toolUseWatchdog.clear(data.id!)
-
           if (data.name && FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
             const filePath = data.file_path || existing?.file_path
             if (filePath) {
               onFileModified(filePath)
             }
           }
-        } else {
-          if (existing) {
-            if (data.input && Object.keys(data.input).length > 0) {
-              existing.input = data.input
-            }
-            if (data.name) existing.name = data.name
-            if (data.status !== undefined) existing.status = data.status
-            if (data.summary !== undefined) existing.summary = data.summary
-            if (data.display_name !== undefined) existing.display_name = data.display_name
-            if (data.file_path !== undefined) existing.file_path = data.file_path
-            // Progress event: reset the stall watchdog so long-running tools
-            // that keep emitting updates are never falsely marked done.
-            // Check the event's name (may be more up-to-date than the block's).
-            if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
-              toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
-                if (!existing.done) {
-                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
-                  existing.done = true
-                  onRenderNeeded()
-                }
-              })
-            }
-          } else {
-            const newBlock: ContentBlock = {
-              type: 'tool_use', name: data.name!, id: data.id!, done: false,
-              status: data.status || '',
-            }
-            if (data.input && Object.keys(data.input).length > 0) {
-              newBlock.input = data.input
-            }
-            if (data.summary) newBlock.summary = data.summary
-            if (data.display_name) newBlock.display_name = data.display_name
-            if (data.file_path) newBlock.file_path = data.file_path
-            blocks.push(newBlock)
-            if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
-              toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
-                if (!newBlock.done) {
-                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
-                  newBlock.done = true
-                  onRenderNeeded()
-                }
-              })
-            }
+        } else if (!data.done) {
+          // Progress event: reset the stall watchdog so long-running tools
+          // that keep emitting updates are never falsely marked done.
+          if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
+            const block = existing || blocksAfter[blocksAfter.length - 1]
+            toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
+              if (block && !block.done) {
+                appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
+                block.done = true
+                onRenderNeeded()
+              }
+            })
           }
         }
         if (onToolUpdate && data.id) {
@@ -393,18 +314,10 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'tool_result': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
+        if (!findStreamingMsg(messages.value)) return
         resetStreamTimeout()
         const data = payload as unknown as ToolUseEventData
-        const blocks = sm.blocks!
-        const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
-        if (existing) {
-          if (data.name) existing.name = data.name
-          if (data.status !== undefined) existing.status = data.status
-          existing.done = true
-          if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
-        }
+        dispatch({ type: 'ws_tool_result', data })
         toolUseWatchdog.clear(data.id!)
         onRenderNeeded()
         if (onToolResult && data.id) {
@@ -418,10 +331,9 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'metadata': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
+        if (!findStreamingMsg(messages.value)) return
         resetStreamTimeout()
-        sm.metadata = payload as Record<string, unknown>
+        dispatch({ type: 'ws_metadata', metadata: payload as Record<string, unknown> })
         break
       }
 
@@ -548,17 +460,10 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'warning': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
+        if (!findStreamingMsg(messages.value)) return
         resetStreamTimeout()
         const warningData = payload as { text?: string; reason?: string }
-        if (sm.streamingText) {
-          sm.blocks!.push({ type: 'text', text: sm.streamingText as string })
-          sm.streamingText = ''
-        }
-        const warningBlock: ContentBlock = { type: 'warning', text: warningData.text }
-        if (warningData.reason) warningBlock.reason = warningData.reason
-        sm.blocks!.push(warningBlock)
+        dispatch({ type: 'ws_warning', text: warningData.text || '', reason: warningData.reason })
         if (isOpen.value) {
           onRenderNeeded()
         }
@@ -655,43 +560,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (userData.senderClientId && userData.senderClientId === myClientId) break
 
         resetStreamTimeout()
-        const userContent = userData.content || ''
-        const userFiles: FileEntry[] = [
-          ...(userData.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-        ]
-        const msgId = userData.messageId || 0
-        const remoteQueueId = userData.queueId || ''
-
-        // Deduplicate: skip if a message with same DB ID, same queueId, or same
-        // content (non-pending) already exists. queueId match covers the
-        // self-echo case: the optimistic pending bubble (id=queueId) matches the
-        // broadcast carrying the same queueId — without it the queued message is
-        // rendered twice (pending bubble + remote duplicate).
-        const alreadyExists = messages.value.some((m) => {
-          if (m.role !== 'user') return false
-          if (msgId > 0 && m.id === msgId) return true
-          if (remoteQueueId && (m.id === remoteQueueId || m.queueId === remoteQueueId)) return true
-          if (m.content === userContent && !m.pending && !m._remote) return true
-          return false
-        })
-        if (alreadyExists) break
-
-        const newMsg: ChatMessage = {
-          role: 'user',
-          id: msgId > 0 ? msgId : `remote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          content: userContent,
-          blocks: userContent ? [{ type: 'text', text: userContent }] : [],
-          files: userFiles,
-          createdAt: new Date().toISOString(),
-          _remote: true,
-          backend: currentBackend.value,
-          ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
-          seq: nextClientSeq(),
-        }
-
-        // Always push; sortMessages() restores authoritative order.
-        messages.value.push(newMsg)
-        sortMessages(messages.value)
+        dispatch({ type: 'ws_user_message', data: userData })
 
         debouncedRender()
         if (isOpen.value) {
@@ -705,21 +574,17 @@ export function useChatStream(options: UseChatStreamOptions) {
         const drainData = payload as unknown as QueueEventData
         const eventSessionId = drainData.sessionId || sessionId
 
-        const beforeLen = messages.value.length
-        const beforeStreamingCount = messages.value.filter((m) => m.streaming).length
-
         if (eventSessionId === currentSessionId.value) {
           const drainText = drainData.text || ''
           const drainFiles: FileEntry[] = [
             ...(drainData.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
             ...(drainData.filePaths || []).map(p => ({ path: p, isDir: false })),
           ]
-          drainQueueMessage(
-            messages.value, drainData.queueId || '', drainText, drainFiles, currentBackend.value,
-            { onRenderNeeded, onExtractScheduledTasks },
-            undefined,
-            drainData.messageId || undefined
-          )
+          const beforeLen = messages.value.length
+          const beforeStreamingCount = messages.value.filter((m) => m.streaming).length
+          dispatch({ type: 'ws_queue_drain', queueId: drainData.queueId || '', text: drainText, files: drainFiles, dbMessageId: drainData.messageId || undefined, backend: currentBackend.value })
+          // Extract scheduled tasks from the newly added message(s).
+          onExtractScheduledTasks?.(messages.value)
 
           const afterLen = messages.value.length
           const afterStreamingCount = messages.value.filter((m) => m.streaming).length
@@ -737,8 +602,11 @@ export function useChatStream(options: UseChatStreamOptions) {
         const cancelData = payload as { sessionId?: string; queueIds?: string[] }
         const eventSessionId = cancelData.sessionId || sessionId
         if (eventSessionId !== currentSessionId.value) break
-        const removed = cancelPendingMessages(messages.value, cancelData.queueIds || [])
-        appLog.d(TAG, `[queue_cancel] sid=${eventSessionId.slice(0,8)} removed ${removed} pending msgs with queueIds: ${cancelData.queueIds?.join(',') || 'none'}`)
+        const ids = cancelData.queueIds || []
+        const before = messages.value.length
+        dispatch({ type: 'ws_queue_cancel', queueIds: ids })
+        const removed = before - messages.value.length
+        appLog.d(TAG, `[queue_cancel] sid=${eventSessionId.slice(0,8)} removed ${removed} pending msgs with queueIds: ${ids.join(',') || 'none'}`)
         onRenderNeeded()
         break
       }

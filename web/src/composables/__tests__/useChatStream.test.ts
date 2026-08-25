@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
 import { useChatStream } from '@/composables/useChatStream'
-import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS } from '@/utils/chatStreamUtils'
+import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS, chatMessageReducer } from '@/utils/chatStreamUtils'
 
 // ── Timer leak prevention ──
 
@@ -125,6 +125,7 @@ function createOptions(overrides: Record<string, any> = {}) {
   const messages = ref<any[]>([])
   return {
     messages,
+    dispatch: (action: any) => { messages.value = chatMessageReducer(messages.value, action) },
     currentSessionId: ref('test-session-1'),
     currentBackend: ref('test-backend'),
     loading: ref(false),
@@ -2323,12 +2324,13 @@ describe('useChatStream', () => {
 
       simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'queue-B', text: 'B', messageId: 3 })
 
-      // Previous assistant finalized, queued message keeps its transient string id.
+      // Previous assistant finalized, queued message adopts its DB id (parent
+      // message A is DB-backed → parentIsDB=true).
       const aReply = options.messages.value.find((m: any) => m.content === 'A reply')
       expect(aReply.streaming).toBeUndefined()
       const b = options.messages.value.find((m: any) => m.content === 'B')
       expect(b.pending).toBeUndefined()
-      expect(b.id).toBe('queue-B')
+      expect(b.id).toBe(3)
       // A new streaming placeholder exists for B's reply.
       const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
       expect(streaming.length).toBe(1)

@@ -38,6 +38,7 @@ vi.mock('vue', async () => {
 })
 
 import { useSessionManager } from '@/composables/useSessionManager'
+import { chatMessageReducer } from '@/utils/chatStreamUtils'
 
 function createMockOptions() {
     const messages = ref<any[]>([])
@@ -52,6 +53,7 @@ function createMockOptions() {
     const scrollBottom = vi.fn()
     return {
         messages, loading,
+        dispatch: (action: any) => { messages.value = chatMessageReducer(messages.value, action) },
         switchSessionCore, createSessionCore, archiveSessionCore, destroySessionCore,
         continueFromExecutionCore: vi.fn().mockResolvedValue(true),
         forkSessionCore: vi.fn().mockResolvedValue(true),
