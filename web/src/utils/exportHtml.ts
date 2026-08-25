@@ -4,16 +4,14 @@
  * Pipeline:
  * 1. Clone the .markdown-body DOM
  * 2. Inline images via /api/file/batch-base64
- * 3. Inline CSS via stylesheet serialization (preserve var() for theme switching)
- * 4. Handle failed Mermaid diagrams
- * 5. Render Mermaid for both light + dark themes (dual-theme SVGs)
- * 6. Build TOC (floating button + right drawer)
- * 7. Add code block copy/wrap interaction JS
- * 8. Add theme toggle button (light ↔ dark)
- * 9. Assemble complete HTML document
+ * 3. Handle failed Mermaid diagrams (keeps the already-rendered theme SVG)
+ * 4. Inline CSS via stylesheet serialization (current theme variables only)
+ * 5. Build TOC (floating button + right drawer)
+ * 6. Add code block copy/wrap interaction JS
+ * 7. Assemble complete HTML document using the current app theme
  */
 
-import { getMermaid } from './lazyMermaid.ts'
+import { isDarkTheme } from '@/utils/themeMeta'
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -156,11 +154,26 @@ async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; exte
 
 /**
  * Collect and serialize CSS rules that apply to .markdown-body and its descendants.
- * Preserves var() references and exports both light + dark theme variable blocks
- * so the exported HTML supports theme toggling via data-theme attribute.
+ *
+ * The exported document is static (no theme switching), so only the CSS variable
+ * block for the CURRENT theme is exported, not all 26 themes. Rules are matched
+ * by selector: rules targeting markdown-body/its widgets, the exported `:root`,
+ * and the current theme's `[data-theme="..."]` block.
  */
 function serializeCss(_markdownBodyEl: HTMLElement): string {
     const rules: string[] = []
+    const themeId = document.documentElement.getAttribute('data-theme') || 'github-light'
+
+    // Selector for the current theme's CSS variable block. Match both quoted
+    // and unquoted forms — CSSOM serializes [data-theme=github-dark] to
+    // [data-theme="github-dark"] in real browsers, but jsdom and minified CSS
+    // may keep either form. Anchor the theme id at a value boundary so a
+    // prefix theme (e.g. "nord") does not also match its longer sibling
+    // ("nord-light").
+    const currentThemeRe = new RegExp(`data-theme=['"]?${escapeRegExp(themeId)}(?=['"\\s\\]]|$)`)
+
+    // Whether a selector refers to the current theme's variable block.
+    const isCurrentThemeBlock = (sel: string): boolean => currentThemeRe.test(sel)
 
     for (const sheet of Array.from(document.styleSheets)) {
         let cssRules: CSSRuleList
@@ -175,12 +188,13 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
             if (rule instanceof CSSStyleRule) {
                 const sel = rule.selectorText
                 // Include rules that target markdown-body or its descendants,
-                // :root custom property blocks, or theme variable blocks
+                // the exported :root block, the current theme's variable block,
+                // or hljs rules (wrapped by [data-hljs-theme="..."]).
                 if (
                     sel.includes('.markdown-body') ||
                     sel === ':root' ||
-                    sel.startsWith('[data-theme') ||
-                    sel.startsWith('[data-theme-base') ||
+                    isCurrentThemeBlock(sel) ||
+                    sel.includes('[data-hljs-theme') ||
                     sel.includes('.markdown-content') ||
                     sel.includes('.hljs') ||
                     sel.includes('.katex') ||
@@ -219,11 +233,13 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
                 ) {
                     let text = rule.cssText
 
-                    // Rewrite [data-hljs-theme="light"] → [data-theme-base="light"]
-                    // Rewrite [data-hljs-theme="dark"]  → [data-theme-base="dark"]
-                    // This allows hljs overrides to respond to the theme toggle
-                    text = text.replace(/\[data-hljs-theme="light"\]/g, '[data-theme-base="light"]')
-                    text = text.replace(/\[data-hljs-theme="dark"\]/g, '[data-theme-base="dark"]')
+                    // hljs styles are loaded for both light + dark via
+                    // [data-hljs-theme="light"/"dark"] (see hljsThemeWrapper vite
+                    // plugin). The exported doc is single-theme, so normalize the
+                    // selector to the exported base attribute so the current
+                    // theme's hljs colors apply. Match quoted/unquoted forms.
+                    text = text.replace(/\[data-hljs-theme=["']?light["']?\]/g, '[data-theme-base="light"]')
+                    text = text.replace(/\[data-hljs-theme=["']?dark["']?\]/g, '[data-theme-base="dark"]')
 
                     rules.push(text)
                 }
@@ -246,8 +262,8 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
                         const sel = inner.selectorText
                         if (sel.includes('.markdown-body') || sel.includes('.hljs') || sel.includes('.katex')) {
                             let text = inner.cssText
-                            text = text.replace(/\[data-hljs-theme="light"\]/g, '[data-theme-base="light"]')
-                            text = text.replace(/\[data-hljs-theme="dark"\]/g, '[data-theme-base="dark"]')
+                            text = text.replace(/\[data-hljs-theme=["']?light["']?\]/g, '[data-theme-base="light"]')
+                            text = text.replace(/\[data-hljs-theme=["']?dark["']?\]/g, '[data-theme-base="dark"]')
                             innerRules.push(text)
                         }
                     } else if (inner instanceof CSSKeyframesRule) {
@@ -303,109 +319,11 @@ function handleFailedMermaid(clone: HTMLElement): void {
     }
 }
 
-// ─── Dual-theme Mermaid rendering ─────────────────────────────────────────────
-
-/**
- * Render Mermaid diagrams for both light and dark themes so the exported HTML
- * can switch themes without needing the Mermaid JS library.
- *
- * For each div.mermaid that has a rendered SVG:
- * 1. Extract the Mermaid source from data-mermaid attribute
- * 2. Render the SVG for the OPPOSITE theme using mermaid.render()
- * 3. Wrap both SVGs in a container with .mermaid-light / .mermaid-dark classes
- *
- * CSS rules then show/hide the correct version based on [data-theme-base].
- */
-async function renderDualThemeMermaid(clone: HTMLElement): Promise<void> {
-    const currentThemeBase = document.documentElement.getAttribute('data-theme-base') || 'light'
-    const oppositeTheme = currentThemeBase === 'dark' ? 'default' : 'dark'
-
-    const mermaidBlocks = Array.from(clone.querySelectorAll('div.mermaid'))
-    if (mermaidBlocks.length === 0) return
-
-    const mermaid = await getMermaid()
-
-    // Re-initialize mermaid with the opposite theme for rendering
-    // Keep securityLevel:'loose' so ER diagrams etc. can use <foreignObject>
-    // for HTML labels (we sanitize via DOMPurify below to strip scripts/iframes)
-    mermaid.initialize({
-        startOnLoad: false,
-        theme: oppositeTheme,
-        securityLevel: 'loose',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    })
-
-    let mermaidCounter = 0
-
-    try {
-        for (const block of mermaidBlocks) {
-            // Only process blocks that have a rendered SVG
-            const existingSvg = block.querySelector('svg')
-            if (!existingSvg) continue
-
-            // Get the Mermaid source text
-            const source = (block as HTMLElement).dataset.mermaid
-            if (!source) continue
-
-            try {
-                // Render with the opposite theme (counter-based ID to avoid collisions)
-                const id = `mermaid-export-${mermaidCounter++}`
-                const result = await mermaid.render(id, source)
-
-                // Create a wrapper div with both theme versions
-                const wrapper = clone.ownerDocument.createElement('div')
-                wrapper.className = 'mermaid-dual'
-
-                // Current theme SVG — insert directly (content is from trusted
-                // Mermaid renderer; we already stripped <script>/<iframe> from clone)
-                const currentDiv = clone.ownerDocument.createElement('div')
-                currentDiv.className = currentThemeBase === 'dark' ? 'mermaid-dark' : 'mermaid-light'
-                currentDiv.innerHTML = existingSvg.outerHTML
-
-                // Opposite theme SVG — also insert directly, then strip
-                // <script> and <iframe> to prevent execution in standalone HTML
-                const oppositeDiv = clone.ownerDocument.createElement('div')
-                oppositeDiv.className = oppositeTheme === 'dark' ? 'mermaid-dark' : 'mermaid-light'
-                oppositeDiv.innerHTML = result.svg
-                for (const s of Array.from(oppositeDiv.querySelectorAll('script'))) s.remove()
-                for (const f of Array.from(oppositeDiv.querySelectorAll('iframe'))) f.remove()
-
-                wrapper.appendChild(currentDiv)
-                wrapper.appendChild(oppositeDiv)
-
-                // Add expand icon for lightbox (real DOM element)
-                const expandIcon = clone.ownerDocument.createElement('span')
-                expandIcon.className = 'lightbox-expand-icon'
-                wrapper.appendChild(expandIcon)
-
-                block.parentNode?.replaceChild(wrapper, block)
-            } catch {
-                // Failed to render opposite theme — keep only the current theme SVG
-                // Mermaid v11 inserts an error SVG + wrapper div into document.body
-                // (not the clone) before throwing — remove them
-                const orphanId = `mermaid-export-${mermaidCounter - 1}`
-                const orphan = document.getElementById(orphanId)
-                if (orphan) orphan.remove()
-                const orphanDiv = document.getElementById(`d${orphanId}`)
-                if (orphanDiv) orphanDiv.remove()
-            }
-        }
-    } finally {
-        // Always restore mermaid to the current app theme
-        mermaid.initialize({
-            startOnLoad: false,
-            theme: currentThemeBase === 'dark' ? 'dark' : 'default',
-            securityLevel: 'loose',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        })
-    }
-}
-
 // ─── TOC generation ────────────────────────────────────────────────────────────
 
 /**
  * Build self-contained TOC HTML + JS for the exported document.
- * Uses var() references so colors respond to theme changes.
+ * Uses var() references so colors come from the exported theme variables.
  */
 function buildToc(clone: HTMLElement): { tocButtonHtml: string; tocDrawerHtml: string; tocCss: string; tocJs: string } {
     // Extract headings from the cloned DOM
@@ -476,7 +394,6 @@ function buildToc(clone: HTMLElement): { tocButtonHtml: string; tocDrawerHtml: s
     const tocCss = `
 .fab-btn { position: fixed; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.12); display: flex; align-items: center; justify-content: center; padding: 0; }
 .fab-btn:hover { color: var(--accent-color); }
-#theme-toggle { bottom: 68px; right: 20px; z-index: 1000; }
 #toc-toggle { bottom: 20px; right: 20px; z-index: 1000; }
 #toc-drawer { position: fixed; right: 0; top: 0; height: 100%; width: 280px; background: var(--bg-primary); border-left: 1px solid var(--border-color); box-shadow: -2px 0 12px rgba(0,0,0,0.08); transform: translateX(100%); transition: transform 0.3s ease; z-index: 999; overflow-y: auto; padding: 16px 8px; box-sizing: border-box; }
 .toc-drawer-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; padding: 0 8px; color: var(--text-primary); }
@@ -596,6 +513,11 @@ function escapeHtml(text: string): string {
         .replace(/"/g, '&quot;')
 }
 
+/** Escape a string for safe use inside a RegExp. */
+function escapeRegExp(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 // ─── Main export function ─────────────────────────────────────────────────────
 
 export async function exportRenderedHtml(options: ExportOptions): Promise<ExportResult> {
@@ -644,10 +566,7 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
     // 3. Handle failed Mermaid diagrams
     handleFailedMermaid(clone)
 
-    // 3b. Render Mermaid for both light + dark themes
-    await renderDualThemeMermaid(clone)
-
-    // 4. Serialize CSS from stylesheets (preserves var() for theme switching)
+    // 4. Serialize CSS from stylesheets (current theme variables only)
     const css = serializeCss(markdownBodyEl)
 
     // 5. Build TOC
@@ -687,8 +606,8 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
     document.addEventListener('click', function(e) {
         var expandIcon = e.target.closest('.lightbox-expand-icon');
         if (expandIcon) {
-            // Check if the expand icon is inside a mermaid/mermaid-dual container
-            var mermaidContainer = expandIcon.closest('.mermaid, .mermaid-dual');
+            // Check if the expand icon is inside a mermaid container
+            var mermaidContainer = expandIcon.closest('.mermaid');
             if (mermaidContainer) {
                 var svg = mermaidContainer.querySelector('svg');
                 if (svg) { e.preventDefault(); openLightbox(svg.outerHTML, true); }
@@ -707,46 +626,23 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
     const title = escapeHtml(fileName.replace(/\.md$/i, ''))
     const bodyContent = clone.outerHTML
 
-    // Use light theme base as default for exported HTML
-    const currentAppTheme = 'light'
-
-    // Theme toggle button (sun/moon icon)
-    const themeToggleHtml = `<button id="theme-toggle" class="fab-btn" title="Toggle theme"><svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>`
-
-    // Theme toggle JS (localStorage restore is in <head> script to avoid FOWT)
-    const themeToggleJs = `
-(function() {
-    var btn = document.getElementById('theme-toggle');
-    var moonIcon = document.getElementById('theme-icon-moon');
-    var sunIcon = document.getElementById('theme-icon-sun');
-    updateIcon();
-    btn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        var current = document.documentElement.getAttribute('data-theme-base') || 'light';
-        var next = current === 'dark' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme-base', next);
-        localStorage.setItem('exported-html-theme', next);
-        updateIcon();
-    });
-    function updateIcon() {
-        var isDark = (document.documentElement.getAttribute('data-theme-base') || 'light') === 'dark';
-        moonIcon.style.display = isDark ? 'none' : 'block';
-        sunIcon.style.display = isDark ? 'block' : 'none';
-    }
-})();`
+    // Use the CURRENT app theme for the exported document. The theme CSS
+    // variables are scoped to [data-theme="<id>"], so both attributes are
+    // required for the markdown styles (tables, code blocks, etc.) to resolve.
+    const currentThemeId = document.documentElement.getAttribute('data-theme') || 'github-light'
+    const currentThemeBase = document.documentElement.getAttribute('data-theme-base') || (isDarkTheme(currentThemeId) ? 'dark' : 'light')
 
     const html = `<!DOCTYPE html>
-<html lang="en" data-theme-base="${currentAppTheme}">
+<html lang="en" data-theme="${escapeHtml(currentThemeId)}" data-theme-base="${escapeHtml(currentThemeBase)}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
-<script>/* Restore saved theme before CSS renders to prevent flash */(function(){var t=localStorage.getItem('exported-html-theme');if(t)document.documentElement.setAttribute('data-theme-base',t)})()</script>
 <style>
 /* ─── Universal box-sizing reset (matches app base.css) ─── */
 *, *::before, *::after { box-sizing: border-box; }
 
-/* ─── Theme variables + markdown styles (preserves var() for theme switching) ─── */
+/* ─── Theme variables + markdown styles (current theme) ─── */
 ${css}
 
 /* ─── Base reset with theme colors ─── */
@@ -764,14 +660,6 @@ body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'S
 /* ─── Mermaid error ─── */
 .mermaid-error { border: 1px dashed var(--border-color); padding: 12px; margin: 8px 0; border-radius: 6px; color: var(--text-muted); font-size: 13px; }
 
-/* ─── Dual-theme Mermaid: show/hide based on data-theme ─── */
-.mermaid-dual { background: var(--bg-secondary); padding: 20px; border-radius: var(--radius-md); margin: 1em 0; overflow-x: auto; }
-.mermaid-dual svg { max-width: 100%; height: auto; }
-.mermaid-dual .mermaid-light { display: block; }
-.mermaid-dual .mermaid-dark { display: none; }
-[data-theme-base="dark"] .mermaid-dual .mermaid-light { display: none; }
-[data-theme-base="dark"] .mermaid-dual .mermaid-dark { display: block; }
-
 /* ─── Copied feedback text ─── */
 .copied-feedback { font-size: 11px; color: var(--accent-color); }
 
@@ -784,10 +672,10 @@ ${tocCss}
 .markdown-body .lightbox-img-wrap .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; cursor: pointer; z-index: 2; pointer-events: auto; }
 @media (hover: hover) { .markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon { display: flex; align-items: center; justify-content: center; } }
 .markdown-body .lightbox-img-wrap .lightbox-expand-icon::after { content: '\\2922'; font-size: 14px; line-height: 1; }
-.markdown-body .mermaid, .markdown-body .mermaid-dual { position: relative; }
-.markdown-body .mermaid .lightbox-expand-icon, .markdown-body .mermaid-dual .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; font-size: 14px; line-height: 24px; text-align: center; cursor: pointer; z-index: 2; align-items: center; justify-content: center; }
-.markdown-body .mermaid .lightbox-expand-icon::after, .markdown-body .mermaid-dual .lightbox-expand-icon::after { content: '\\2922'; }
-@media (hover: hover) { .markdown-body .mermaid:hover .lightbox-expand-icon, .markdown-body .mermaid-dual:hover .lightbox-expand-icon { display: flex; } }
+.markdown-body .mermaid { position: relative; }
+.markdown-body .mermaid .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; font-size: 14px; line-height: 24px; text-align: center; cursor: pointer; z-index: 2; align-items: center; justify-content: center; }
+.markdown-body .mermaid .lightbox-expand-icon::after { content: '\\2922'; }
+@media (hover: hover) { .markdown-body .mermaid:hover .lightbox-expand-icon { display: flex; } }
 
 /* ─── Lightbox overlay ─── */
 .export-lightbox { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
@@ -797,12 +685,10 @@ ${tocCss}
 </style>
 </head>
 <body>
-${themeToggleHtml}
 ${tocButtonHtml}
 ${tocDrawerHtml}
 ${bodyContent}
 <script>
-${themeToggleJs}
 ${tocJs}
 ${codeBlockJs}
 ${lightboxJs}
