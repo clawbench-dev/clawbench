@@ -254,6 +254,11 @@ type EnqueueStartConfig struct {
 	Message     string
 	Files       []model.FileEntry
 	QueueID     string
+	// ModelID / Transport are persisted to the session so the drain loop's
+	// buildChatRequestFromQueue uses the user's choices, not agent defaults
+	// (parity with the POST /api/ai/chat path).
+	ModelID   string
+	Transport string
 }
 
 // EnqueueAndMaybeStart is the unified enqueue entry point (POST /api/ai/queue).
@@ -269,14 +274,28 @@ type EnqueueStartConfig struct {
 // session is no longer running, it takes over and starts the execution itself
 // so the queued message is never silently lost.
 func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, err error) {
+	// Persist model/transport selection so the drain loop uses the user's
+	// choices (parity with the POST /api/ai/chat handler).
+	if cfg.ModelID != "" {
+		UpdateSessionModel(cfg.SessionID, cfg.ModelID)
+	}
+	if cfg.Transport != "" {
+		UpdateSessionTransport(cfg.SessionID, cfg.Transport)
+	}
+
 	_, err = AddQueuedMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, cfg.Message, cfg.Files, cfg.QueueID, "")
 	if err != nil {
 		return false, err
 	}
 
 	if TrySetSessionRunning(cfg.SessionID) {
-		// Session was idle — start execution now; the drain loop inside will
-		// consume the queue (including this message).
+		// Session was idle — the message we just queued is the FIRST one and must
+		// NOT be consumed twice. executeStreamRunShared runs cfg.Message directly,
+		// so dequeue the row we just inserted (it would otherwise be picked up
+		// again by the drain loop's DequeueQueuedMessage, executing it twice).
+		consumeFirstQueuedMessage(cfg.SessionID)
+		// Start execution now; the drain loop inside will consume the REST of
+		// the queue (any messages beyond the first).
 		LaunchSessionExecution(LaunchConfig{
 			SessionID:   cfg.SessionID,
 			ProjectPath: cfg.ProjectPath,
@@ -301,6 +320,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, err error) {
 		// consuming our message — take over and start execution ourselves.
 		if !IsSessionRunning(cfg.SessionID) {
 			if TrySetSessionRunning(cfg.SessionID) {
+				consumeFirstQueuedMessage(cfg.SessionID)
 				LaunchSessionExecution(LaunchConfig{
 					SessionID:   cfg.SessionID,
 					ProjectPath: cfg.ProjectPath,
@@ -312,6 +332,22 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, err error) {
 		}
 	}()
 	return false, nil
+}
+
+// consumeFirstQueuedMessage dequeues the first queued message of a session.
+// Called right before LaunchSessionExecution when the execution will run the
+// first message directly (executeStreamRunShared with cfg.Message): the row
+// was already queued=1, and without dequeuing it here the drain loop would
+// pick it up a second time and execute it twice.
+func consumeFirstQueuedMessage(sessionID string) {
+	if _, ok, derr := DequeueQueuedMessage(sessionID); derr != nil {
+		// Not fatal — the drain loop will retry the dequeue. Log and continue.
+		slog.Warn("enqueue: failed to consume first queued message",
+			slog.String("session", sessionID), slog.String("error", derr.Error()))
+	} else if !ok {
+		slog.Warn("enqueue: expected to consume first queued message but queue empty",
+			slog.String("session", sessionID))
+	}
 }
 
 // handleSessionPanic recovers from panics in the session goroutine.

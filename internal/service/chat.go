@@ -158,9 +158,10 @@ func GetFinalizedMessageCount(sessionID string) int {
 
 // GetUserMessageIndex returns lightweight {id, content, files, createdAt} for all user messages
 // in a session, ordered by id ASC. Used for the user message index navigation feature.
+// Excludes queued messages — a pending bubble is not a navigable history turn yet.
 func GetUserMessageIndex(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, content, files, created_at FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 ORDER BY id ASC",
+		"SELECT id, content, files, created_at FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND queued = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -258,9 +259,11 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 // GetMessagesBySessionID fetches all messages for a session by session_id alone.
 // Unlike GetChatHistory, this does not require projectPath or backend — session_id is globally unique.
 // Returns messages in chronological order with all content blocks (text, thinking, tool_use).
+// Excludes queued messages — callers (fork context, summarization, recent preview)
+// want completed history, not messages still waiting for the drain loop (M4).
 func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE session_id = ? AND streaming = 0 AND queued = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -430,7 +433,10 @@ func DequeueQueuedMessage(sessionID string) (model.ChatMessage, bool, error) {
 		return model.ChatMessage{}, false, err // real DB error — retry, don't exit
 	}
 
-	res, err := tx.Exec("UPDATE chat_history SET queued = 0 WHERE id = ? AND queued = 1", msg.ID)
+	// Claim the row: flip queued=0 and reset indexed=0 so the drained user
+	// message becomes a normal conversation record eligible for RAG indexing
+	// (it was set indexed=1 at enqueue to skip indexing while still queued — M4).
+	res, err := tx.Exec("UPDATE chat_history SET queued = 0, indexed = 0 WHERE id = ? AND queued = 1", msg.ID)
 	if err != nil {
 		return model.ChatMessage{}, false, err
 	}

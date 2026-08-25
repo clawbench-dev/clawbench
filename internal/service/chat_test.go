@@ -4120,7 +4120,8 @@ func TestReplaceSessionHistory_RollbackRestoresHistory(t *testing.T) {
 
 // TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine verifies that when the
 // session is not running, EnqueueAndMaybeStart starts an AI execution goroutine
-// (which drains the queued message).
+// (which drains the queued message). B1: the first message is consumed by
+// consumeFirstQueuedMessage so the drain loop does NOT execute it a second time.
 func TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine(t *testing.T) {
 	db := setupDB(t)
 	_ = db
@@ -4137,9 +4138,10 @@ func TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, started, "should start a goroutine when session not running")
 
-	// Message should be persisted as queued (or already drained by goroutine).
-	count := service.GetQueuedCount(sid)
-	assert.LessOrEqual(t, count, 1)
+	// B1 regression: the first message is consumed synchronously by
+	// consumeFirstQueuedMessage (the goroutine runs it via cfg.Message), so the
+	// DB queue must be empty — the drain loop would otherwise dequeue it again.
+	assert.Equal(t, 0, service.GetQueuedCount(sid), "first message must be consumed, not left queued for double execution")
 
 	// Clean up: cancel the session to kill the started goroutine, then wait
 	// for it to fully unwind BEFORE the test DB is torn down (otherwise the

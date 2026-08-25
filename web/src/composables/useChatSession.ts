@@ -207,8 +207,13 @@ export function useChatSession(options: UseChatSessionOptions) {
     // queueId for drain/cancel matching. parseMessages already rebuilt the
     // array from the authoritative DB response, so no appendQueueItems /
     // ghost-pending reconciliation is needed — the rows are the truth.
+    //
+    // Only queued=true rows are pending. A drained row keeps its queue_id
+    // (needed for queue_cancel matching) but has queued=false — it is a normal
+    // conversation message and must NOT show a waiting bubble (regression: the
+    // old `|| m.queueId` condition marked every completed user message pending).
     for (const m of messages.value as ChatMessage[]) {
-      if (m.role === 'user' && (m.queued || m.queueId)) {
+      if (m.role === 'user' && m.queued === true) {
         m.pending = true
       }
     }

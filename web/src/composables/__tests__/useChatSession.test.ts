@@ -1705,6 +1705,46 @@ describe('switchSession', () => {
     expect(queueIds).toContain('pending-b2')
   })
 
+  it('does NOT mark a drained message pending when queued=false but queueId lingers (B2)', async () => {
+    // B2 regression: DequeueQueuedMessage flips queued=0 but keeps queue_id.
+    // A drained message arrives with queueId set and queued=false — it is a
+    // normal conversation message and must NOT show a waiting bubble.
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'A' },
+      { id: 2, role: 'assistant', content: 'A reply' },
+      { id: 3, role: 'user', content: 'drained B', queueId: 'pending-b1', queued: false },
+      { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [
+          { id: 1, role: 'user', content: 'A' },
+          { id: 2, role: 'assistant', content: 'A reply' },
+          { id: 3, role: 'user', content: 'drained B', queueId: 'pending-b1', queued: false },
+          { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
+        ],
+        total: 4,
+        queuedCount: 1,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+
+    await session.loadHistory(true, false, false)
+
+    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
+    // Only the truly queued message (queued=true) is pending; the drained one
+    // (queued=false, queueId lingers) is a normal message.
+    expect(pending).toHaveLength(1)
+    expect(pending[0].content).toBe('queued C')
+    const drainedB = lastSessionOptions!.messages.value.find((m: any) => m.content === 'drained B')
+    expect(drainedB.pending).toBeUndefined()
+  })
+
   it('does NOT carry the old session\u2019s queued messages into a new session on switch', async () => {
     // Regression: syncSessionState merges in-flight messages across a reload,
     // but a session SWITCH must start fresh — otherwise the old session's

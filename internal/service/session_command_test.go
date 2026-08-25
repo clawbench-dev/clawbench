@@ -1751,7 +1751,8 @@ func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *test
 	assert.NoError(t, err)
 
 	// Verify message IS persisted to DB with queued=1 (enqueue-path now persists).
-	messages, err := GetMessagesBySessionID(sessionID)
+	// GetMessagesBySessionID excludes queued rows (M4), so query the queue directly.
+	messages, err := GetQueuedMessages(sessionID)
 	require.NoError(t, err)
 	assert.Len(t, messages, 1, "enqueue path should persist user message to DB")
 	assert.True(t, messages[0].Queued, "persisted message should be queued=1")

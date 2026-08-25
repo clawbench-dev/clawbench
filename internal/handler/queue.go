@@ -79,6 +79,8 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		Message:     req.Message,
 		Files:       req.Files,
 		QueueID:     req.QueueID,
+		ModelID:     req.ModelID,
+		Transport:   req.Transport,
 	})
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")

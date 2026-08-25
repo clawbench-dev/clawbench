@@ -145,6 +145,4 @@ func (m *mockMessenger) ListRecentSessions(limit int) ([]SessionInfo, error) {
 }
 
 func (m *mockMessenger) IsSessionRunning(sessionID string) bool    { return m.running[sessionID] }
-func (m *mockMessenger) EnqueueMessage(string, string) error       { return nil }
-func (m *mockMessenger) ClearQueue(string)                         {}
 func (m *mockMessenger) SendMessageToSession(string, string) error { return nil }

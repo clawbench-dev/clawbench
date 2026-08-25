@@ -259,11 +259,10 @@ func (m *mockSessionMessengerWithErr) IsSessionRunning(sessionID string) bool {
 	return false
 }
 
-func (m *mockSessionMessengerWithErr) EnqueueMessage(sessionID, message string) error { return nil }
-func (m *mockSessionMessengerWithErr) ClearQueue(sessionID string)                    {}
 func (m *mockSessionMessengerWithErr) SendMessageToSession(sessionID, message string) error {
 	return nil
 }
+
 
 // mockSessionMessenger implements SessionMessenger for testing.
 type mockSessionMessenger struct {
