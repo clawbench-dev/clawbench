@@ -44,7 +44,7 @@ test.describe('Queued messages ordering', () => {
     //     messages 2/3 must STILL render below 1/reply1 — they must never jump
     //     above. Poll until the first assistant reply exists, then check order.
     await expect
-      .poll(async () => page.locator('.chat-message.assistant').count(), { timeout: 15000 })
+      .poll(async () => page.locator('.chat-message.assistant').count(), { timeout: 20000 })
       .toBeGreaterThanOrEqual(1)
     const midTexts = await page.locator('.chat-message').evaluateAll(
       (els) => els.map((el) => {
@@ -63,6 +63,28 @@ test.describe('Queued messages ordering', () => {
     if (midIdx2 !== -1) expect(midIdx2).toBeGreaterThan(midIdxReply1)
     if (midIdx3 !== -1) expect(midIdx3).toBeGreaterThan(midIdxReply1)
     if (pageErrors.length > 0) throw new Error(pageErrors.join('\n'))
+
+    // 1c. Repeated order checks WHILE streaming is still in progress (slow
+    //     reply). Every snapshot must keep user:2/user:3 below 1/reply1.
+    for (let i = 0; i < 4; i++) {
+      const texts = await page.locator('.chat-message').evaluateAll(
+        (els) => els.map((el) => {
+          const role = el.classList.contains('user') ? 'user' : el.classList.contains('assistant') ? 'assistant' : 'other'
+          const text = (el.textContent || '').trim().slice(0, 30)
+          return `${role}:${text}`
+        })
+      )
+      if (texts.length >= 3) {
+        expect(texts[0]).toContain('user:1')
+        const r1 = texts.findIndex((t, idx) => idx > 0 && t.startsWith('assistant'))
+        const u2 = texts.findIndex((t) => t.startsWith('user:2'))
+        const u3 = texts.findIndex((t) => t.startsWith('user:3'))
+        if (r1 !== -1 && u2 !== -1) expect(u2).toBeGreaterThan(r1)
+        if (r1 !== -1 && u3 !== -1) expect(u3).toBeGreaterThan(r1)
+      }
+      if (pageErrors.length > 0) throw new Error(pageErrors.join('\n'))
+      await page.waitForTimeout(400)
+    }
 
     // 2. Wait until all three replies are done (no streaming, no pending).
     await expect
