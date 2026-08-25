@@ -180,7 +180,21 @@ export function useChatStream(options: UseChatStreamOptions) {
         // (and everything before it) below the queued bubbles, producing the
         // wrong order (msg2, msg3 above msg1, reply1). Fall back to the last
         // user message when every user message is pending.
-        let parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user' && !m.pending)
+        // NOTE: prefer the user message with the largest seq (monotonic send
+        // order) — sorting moves an unadopted msg1 bubble to the front, so the
+        // newest user is not necessarily the last physical element. Messages
+        // without a seq (DB-loaded history) are excluded unless nothing else.
+        let parentUserIdx = -1
+        let parentUserSeq = -1
+        messages.value.forEach((m, i) => {
+          if (m.role !== 'user') return
+          if (m.pending) return
+          if (m.seq == null) return
+          if (m.seq > parentUserSeq) { parentUserSeq = m.seq; parentUserIdx = i }
+        })
+        if (parentUserIdx === -1) {
+          parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user' && !m.pending)
+        }
         if (parentUserIdx === -1) {
           parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user')
         }
@@ -195,6 +209,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           seq: nextClientSeq(),
           parentQueueId: parentUserIdx !== -1 ? String(messages.value[parentUserIdx].id) : undefined,
         }
+        appLog.d(TAG, `[connectStream] create placeholder id=${newStreaming.id} parentQueueId=${newStreaming.parentQueueId} reuse=${!!options?.reuseExistingStreaming} subscribeOnly=${!!options?.subscribeOnly}`)
         // Single write channel: the reducer pushes + re-sorts.
         dispatch({ type: 'stream_placeholder', msg: newStreaming })
         thinkingBlockCounter = 0
@@ -582,6 +597,12 @@ export function useChatStream(options: UseChatStreamOptions) {
           ]
           const beforeLen = messages.value.length
           const beforeStreamingCount = messages.value.filter((m) => m.streaming).length
+          // Diagnostic: what pending/string-id bubbles exist before this drain.
+          const bubbleSummary = messages.value
+            .filter((m) => m.pending || typeof m.id === 'string')
+            .map((m) => `[${String(m.id)}${m.queueId ? '/q=' + m.queueId : ''}${m.pending ? '/P' : ''}]`)
+            .join(' ')
+          appLog.d(TAG, `[queue_drain] before: ${bubbleSummary}`)
           dispatch({ type: 'ws_queue_drain', queueId: drainData.queueId || '', text: drainText, files: drainFiles, dbMessageId: drainData.messageId || undefined, backend: currentBackend.value })
           // Extract scheduled tasks from the newly added message(s).
           onExtractScheduledTasks?.(messages.value)
