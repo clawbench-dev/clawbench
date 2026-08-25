@@ -293,6 +293,98 @@ func TestMigrateAddsExternalMessageID(t *testing.T) {
 	assert.Contains(t, columns, "external_message_id", "chat_history should have external_message_id column")
 }
 
+// TestMigrateAddsQueueColumns verifies that InitDB's schema migration adds the
+// queue_id and queued columns to chat_history for queued-message persistence
+// (queued-message-persistence plan). Old databases (without the columns) must
+// be upgraded; new databases must include them in CREATE TABLE.
+func TestMigrateAddsQueueColumns(t *testing.T) {
+	// ── Old database: pre-create chat_history without queue columns ──
+	t.Run("existing database gets queue columns via ALTER", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		origBinDir := model.BinDir
+		origDataDir := model.DataDir
+		model.BinDir = tmpDir
+		model.DataDir = filepath.Join(tmpDir, ".clawbench")
+		defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+		origDB := UnsafeDBForTest()
+		origDBRead := dbRead
+		defer func() { db = origDB; dbRead = origDBRead }()
+
+		require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+		oldDB, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+		require.NoError(t, err)
+		_, err = oldDB.Exec(`CREATE TABLE chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_path TEXT NOT NULL, role TEXT NOT NULL,
+			content TEXT NOT NULL, session_id TEXT,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			streaming INTEGER NOT NULL DEFAULT 0,
+			indexed INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`)
+		require.NoError(t, err)
+		require.NoError(t, oldDB.Close())
+
+		require.NoError(t, InitDB())
+		defer CloseDB()
+
+		columns := getTableColumns(t, UnsafeDBForTest(), "chat_history")
+		assert.Contains(t, columns, "queue_id", "chat_history should have queue_id column")
+		assert.Contains(t, columns, "queued", "chat_history should have queued column")
+	})
+
+	// ── New database: CREATE TABLE includes queue columns ──
+	t.Run("new database includes queue columns in CREATE TABLE", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		origBinDir := model.BinDir
+		origDataDir := model.DataDir
+		model.BinDir = tmpDir
+		model.DataDir = filepath.Join(tmpDir, ".clawbench")
+		defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+		origDB := UnsafeDBForTest()
+		origDBRead := dbRead
+		defer func() { db = origDB; dbRead = origDBRead }()
+
+		require.NoError(t, InitDB())
+		defer CloseDB()
+
+		columns := getTableColumns(t, UnsafeDBForTest(), "chat_history")
+		assert.Contains(t, columns, "queue_id", "new chat_history should have queue_id column")
+		assert.Contains(t, columns, "queued", "new chat_history should have queued column")
+
+		// Defaults: queue_id defaults to empty string, queued defaults to 0.
+		var queueIDDefault, queuedDefault string
+		row := UnsafeDBForTest().QueryRow(`SELECT dflt_value FROM pragma_table_info('chat_history') WHERE name='queued'`)
+		require.NoError(t, row.Scan(&queuedDefault))
+		assert.Equal(t, "0", queuedDefault, "queued column should default to 0")
+		_ = queueIDDefault
+	})
+
+	// ── Idempotent: re-running InitDB must not error on existing columns ──
+	t.Run("migration is idempotent across InitDB reruns", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		origBinDir := model.BinDir
+		origDataDir := model.DataDir
+		model.BinDir = tmpDir
+		model.DataDir = filepath.Join(tmpDir, ".clawbench")
+		defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+		origDB := UnsafeDBForTest()
+		origDBRead := dbRead
+		defer func() { db = origDB; dbRead = origDBRead }()
+
+		require.NoError(t, InitDB())
+		require.NoError(t, InitDB())
+		defer CloseDB()
+
+		columns := getTableColumns(t, UnsafeDBForTest(), "chat_history")
+		assert.Contains(t, columns, "queue_id")
+		assert.Contains(t, columns, "queued")
+	})
+}
+
 // getIndexes returns a set of index names from sqlite_master.
 func getIndexes(t *testing.T, db *sql.DB) map[string]bool {
 	t.Helper()

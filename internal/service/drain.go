@@ -24,14 +24,11 @@ type DrainConfig struct {
 	ProjectPath string
 	BackendName string
 
-	// PersistUser persists the drained user message to DB.
-	// Returns the message ID and any error.
-	PersistUser func(text string, files []model.FileEntry) (int64, error)
-
 	// ExecuteRunWithMessage runs one AI stream execution for the given queued message.
-	// The drain loop calls this after persisting the user message and sending
-	// the queue_drain event.
-	ExecuteRunWithMessage func(qMsg model.QueuedMessage) DrainResult
+	// The drain loop calls this after dequeuing the message from DB and sending
+	// the queue_drain event. The message is a ChatMessage with queued=0 (already
+	// claimed) and QueueID preserved.
+	ExecuteRunWithMessage func(msg model.ChatMessage) DrainResult
 
 	// MarkDoneAndSendFinal sends the terminal event (done/cancelled/error).
 	MarkDoneAndSendFinal func(event ai.StreamEvent)
@@ -43,21 +40,16 @@ func emitDrainEvent(sessionID string, event ai.StreamEvent) {
 }
 
 // RunDrainLoop runs the complete drain loop after an initial stream execution.
-// It checks terminal conditions, dequeues messages, and executes them.
-// The loop continues until the queue is empty or a terminal condition is met.
+// It checks terminal conditions, dequeues messages from chat_history (queued=1),
+// and executes them. The loop continues until the queue is empty or a terminal
+// condition is met.
 func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 	for {
 		// Check terminal conditions
 		if result.CancelReason == cancelReasonUser {
 			// Collect queue IDs before clearing for queue_cancel event
-			queue := GetQueue(cfg.SessionID)
-			queueIDs := make([]string, 0, len(queue))
-			for _, qm := range queue {
-				if qm.QueueID != "" {
-					queueIDs = append(queueIDs, qm.QueueID)
-				}
-			}
-			ClearQueue(cfg.SessionID)
+			queueIDs, _ := GetQueuedQueueIDs(cfg.SessionID)
+			_ = ClearQueuedMessages(cfg.SessionID)
 
 			// Emit queue_cancel so frontend can immediately remove pending messages
 			if len(queueIDs) > 0 {
@@ -86,13 +78,25 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 			return
 		}
 
-		// Normal completion — check queue for next message
-		qMsg, ok := DequeueMessage(cfg.SessionID)
+		// Normal completion — check DB queue for next message
+		msg, ok, err := DequeueQueuedMessage(cfg.SessionID)
+		if err != nil {
+			// Real DB error — don't exit as if empty (would silently lose the
+			// message). Brief retry window, then check queue again.
+			slog.Error("drain: dequeue failed", slog.String("session", cfg.SessionID), slog.String("error", err.Error()))
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
 		if !ok {
 			// Wait for enqueue signal instead of blind sleep
 			ok = WaitForEnqueue(cfg.SessionID, 100*time.Millisecond)
 			if ok {
-				qMsg, ok = DequeueMessage(cfg.SessionID)
+				msg, ok, err = DequeueQueuedMessage(cfg.SessionID)
+				if err != nil {
+					slog.Error("drain: dequeue failed", slog.String("session", cfg.SessionID), slog.String("error", err.Error()))
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
 			}
 		}
 		if !ok {
@@ -101,29 +105,35 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 			return
 		}
 
-		// Queue has next message — drain it atomically
-		slog.Info("draining queued message", slog.String("session", cfg.SessionID), slog.String("queueId", qMsg.QueueID), slog.String("text", qMsg.Text))
-
-		// Persist user message to DB
-		msgID, _ := cfg.PersistUser(qMsg.Text, qMsg.Files)
+		// Queue has next message — drain it (row already persisted with queued=0)
+		slog.Info("draining queued message", slog.String("session", cfg.SessionID), slog.String("queueId", msg.QueueID), slog.String("text", msg.Content))
 
 		// Emit queue_drain event to WS clients
-		remainingQueue := GetQueue(cfg.SessionID)
 		emitDrainEvent(cfg.SessionID, ai.StreamEvent{
 			Type: "queue_drain",
 			QueueEvent: &ai.QueueEventData{
 				SessionID: cfg.SessionID,
-				QueueID:   qMsg.QueueID,
-				Text:      qMsg.Text,
-				MessageID: msgID,
-				FilePaths: qMsg.FilePaths,
-				Files:     qMsg.Files,
-				Queue:     remainingQueue,
+				QueueID:   msg.QueueID,
+				Text:      msg.Content,
+				MessageID: msg.ID,
+				FilePaths: filePathsFromFiles(msg.Files),
+				Files:     msg.Files,
 			},
 		})
 
 		// Execute next stream run with the dequeued message
-		result = cfg.ExecuteRunWithMessage(qMsg)
+		result = cfg.ExecuteRunWithMessage(msg)
 		// Loop continues
 	}
+}
+
+// filePathsFromFiles extracts the file paths from FileEntry list for the
+// queue_drain event payload (the frontend drains by queueId; filePaths keep
+// the legacy field populated).
+func filePathsFromFiles(files []model.FileEntry) []string {
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.Path)
+	}
+	return paths
 }

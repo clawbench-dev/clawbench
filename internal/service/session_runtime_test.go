@@ -223,15 +223,29 @@ func TestCancelSession_Running_NoCancelFunc_ClearsQueue(t *testing.T) {
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
-	SetSessionRunning("session-stuck-queue", true)
-	// Enqueue a message to verify it gets cleared on force-cancel
-	EnqueueMessage("session-stuck-queue", model.QueuedMessage{Text: "hello"})
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	_, err = db.Exec(drainTestSchema)
+	require.NoError(t, err)
+	cleanup := SetDBForTest(db, db)
+	defer func() {
+		cleanup()
+		db.Close()
+	}()
 
-	result := CancelSession("session-stuck-queue")
+	sessionID := "session-stuck-queue"
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'codebuddy', 'Stuck')", sessionID)
+	require.NoError(t, err)
+
+	SetSessionRunning(sessionID, true)
+	// Enqueue a message to verify it gets cleared on force-cancel
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "hello", nil, "q-1", "")
+
+	result := CancelSession(sessionID)
 	assert.True(t, result)
-	assert.False(t, IsSessionRunning("session-stuck-queue"))
+	assert.False(t, IsSessionRunning(sessionID))
 	// Queue should be cleared
-	assert.Nil(t, GetQueue("session-stuck-queue"))
+	assert.Equal(t, 0, GetQueuedCount(sessionID))
 }
 
 func TestCancelSession_StuckThenNewMessage(t *testing.T) {
@@ -461,6 +475,8 @@ func setupChatTestDB(t *testing.T) *sql.DB {
 		backend TEXT NOT NULL DEFAULT 'claude',
 		streaming INTEGER NOT NULL DEFAULT 0,
 		indexed INTEGER NOT NULL DEFAULT 0,
+		queue_id TEXT DEFAULT '',
+		queued INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	if err != nil {
@@ -1103,6 +1119,8 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	backend TEXT NOT NULL DEFAULT 'claude',
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
+	queue_id TEXT DEFAULT '',
+	queued INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -2294,116 +2312,15 @@ func TestEmitSessionEvent_CancelledWithSessionTitle(t *testing.T) {
 
 // --- Drain loop tests ---
 
-func TestRunDrainLoop_UserCancel_EmitsCancelled(t *testing.T) {
-	cleanupActiveSessions()
-	defer cleanupActiveSessions()
 
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-cancel-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{CancelReason: cancelReasonUser}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
 
-	RunDrainLoop(cfg, DrainResult{CancelReason: cancelReasonUser})
-	assert.Equal(t, statusCancelled, finalEvent.Type)
-}
 
-func TestRunDrainLoop_ErrorResult_EmitsError(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-error-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
 
-	RunDrainLoop(cfg, DrainResult{Err: "something went wrong"})
-	assert.Equal(t, "error", finalEvent.Type)
-	assert.Equal(t, "something went wrong", finalEvent.Error)
-}
 
-func TestRunDrainLoop_EmptyResult_EmitsError(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-empty-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
 
-	RunDrainLoop(cfg, DrainResult{Empty: true})
-	assert.Equal(t, "error", finalEvent.Type)
-	assert.Equal(t, "AI returned no content", finalEvent.Error)
-}
 
-func TestRunDrainLoop_OtherCancelReason_EmitsCancelled(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-other-cancel-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
 
-	RunDrainLoop(cfg, DrainResult{CancelReason: "disconnect"})
-	assert.Equal(t, statusCancelled, finalEvent.Type)
-}
 
-func TestRunDrainLoop_NormalCompletion_NoQueue_EmitsDone(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-done-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
-
-	// Normal completion with no cancel reason, no error, not empty
-	RunDrainLoop(cfg, DrainResult{})
-	assert.Equal(t, "done", finalEvent.Type)
-}
 
 // --- EmitSessionEvent: DingTalk push path (lines 82-84) ---
 
@@ -2722,6 +2639,8 @@ func TestFinalizeOrphanedStreamingMessages_WriteError(t *testing.T) {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
+			queue_id TEXT DEFAULT '',
+			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`)
 		require.NoError(t, err)

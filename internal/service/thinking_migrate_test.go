@@ -39,6 +39,8 @@ func setupTestDBForThinkingMigration(t *testing.T) func() {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
+			queue_id TEXT DEFAULT '',
+			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS chat_thinking (

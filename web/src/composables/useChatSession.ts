@@ -10,9 +10,8 @@ import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
-import { forceCleanupStreamingState, sortMessages, nextClientSeq, type ChatMessage } from '@/utils/chatStreamUtils.ts'
+import { forceCleanupStreamingState, sortMessages, type ChatMessage } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
-import type { FileEntry } from '@/utils/fileAttachmentUtils'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
@@ -96,28 +95,6 @@ export function useChatSession(options: UseChatSessionOptions) {
   } = options
 
   const toast = useToast()
-
-  // ── Queue restore helper ──
-  // Append pending messages from the backend queue field to messages.value.
-  // The queue lives in-memory (not in DB), so parseMessages won't include them.
-  // Since parseMessages just replaced messages.value, there are no stale
-  // pending messages to clear — just append from the authoritative backend queue.
-  function appendQueueItems(queueData: Array<Record<string, unknown>> | undefined) {
-    if (!queueData) return
-    for (const item of queueData) {
-      const itemFiles = [...(item.files as FileEntry[] || []).map((f: FileEntry) => typeof f === 'string' ? { path: f, isDir: false } : f), ...(item.filePaths as string[] || []).map((p: string) => ({ path: p, isDir: false }))]
-      messages.value.push({
-        role: 'user',
-        id: item.queueId || `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        content: item.text || '',
-        blocks: item.text ? [{ type: 'text', text: item.text as string }] : [],
-        files: itemFiles,
-        createdAt: item.createdAt || new Date().toISOString(),
-        pending: true,
-        seq: nextClientSeq(),
-      })
-    }
-  }
 
   // ── Session state sync helper ──
   // Shared logic for syncing session identity, available modes/commands/plan,
@@ -225,84 +202,24 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
 
     messages.value = parsed
-    appendQueueItems(sessionData.queue as Array<Record<string, unknown>> | undefined)
-    // Preserve in-flight queued user messages across the reload. parseMessages
-    // only rebuilds DB-backed messages; appendQueueItems covers the backend
-    // queue, but a stale/empty queue field would otherwise drop an optimistic
-    // message and break the exact queueId matching at drain time. Only
-    // still-pending messages with a string (queue) id are merged back, and the
-    // final array is deduplicated by id (syncSessionState may run in both the
-    // recovery and main paths, so this must be idempotent).
+    // Queued messages are real chat_history rows now (queued=1, queue_id set).
+    // Mark them pending so the UI shows a waiting bubble, and preserve the
+    // queueId for drain/cancel matching. parseMessages already rebuilt the
+    // array from the authoritative DB response, so no appendQueueItems /
+    // ghost-pending reconciliation is needed — the rows are the truth.
     //
-    // A pending message that survived appendQueueItems but is NOT in the new
-    // array (its queueId is absent from the backend queue) has already been
-    // drained (dequeue removes it before queue_drain/done fire). If the DB also
-    // holds a persisted message with the same identity, this pending is a ghost
-    // — its queue_drain was missed while the client was offline/backgrounded,
-    // and no future event can clear it. Merging it back would re-create a stale
-    // "queued" bubble until a manual refresh.
-    //
-    // Identity = text content when present, otherwise attached file paths
-    // (file-only messages have empty content, e.g. image attachments).
-    const filePathsOf = (m: Record<string, unknown>): string[] =>
-      ((m.files as FileEntry[] | undefined) || []).map((f) => typeof f === 'string' ? f : f.path)
-    const sameIdentity = (a: Record<string, unknown>, b: Record<string, unknown>): boolean => {
-      const aContent = (a.content || '') as string
-      const bContent = (b.content || '') as string
-      if (aContent || bContent) return aContent === bContent && aContent.length > 0
-      // Both empty content — compare by attached file paths (order-insensitive).
-      const aPaths = filePathsOf(a).slice().sort().join('|')
-      const bPaths = filePathsOf(b).slice().sort().join('|')
-      return aPaths.length > 0 && aPaths === bPaths
-    }
-    // Time tolerance for the ghost-drain guard: a drained pending's DB row keeps
-    // roughly the send-time createdAt, so the persisted twin must be close. A
-    // later repeat turn with identical text is a different message and is newer.
-    const GHOST_DRAIN_TIME_TOLERANCE_MS = 5000
-    const parseMsgTime = (createdAt: unknown): number | null => {
-      if (typeof createdAt !== 'string' || !createdAt) return null
-      const t = new Date(createdAt).getTime()
-      return Number.isNaN(t) ? null : t
-    }
-    for (const prev of prevMessages) {
-      if (prev.role !== 'user' || !prev.pending) continue
-      if (typeof prev.id !== 'string') continue
-      if (messages.value.some((m) => m.role === 'user' && m.id === prev.id)) continue
-      // Gone from the queue (no longer in the new array). Drop only if the DB
-      // already persisted this identity — otherwise keep it conservatively.
-      //
-      // A pending message that genuinely drained is persisted at roughly the same
-      // createdAt it was sent. A later, still-queued turn with the SAME text is a
-      // different message whose createdAt is noticeably newer than the earlier
-      // persisted row. Without a time constraint, the identity-only match would
-      // wrongly drop the still-queued repeat when the backend's queue field is
-      // stale/empty. So require the persisted twin to be time-close to the pending
-      // (only applied when both timestamps are present, keeping pre-timestamp
-      // optimistic messages on the conservative legacy path).
-      const prevTime = parseMsgTime(prev.createdAt)
-      const persistedSameIdentity = messages.value.some((m) => {
-        if (m.role !== 'user' || m.pending || m._remote || m._drain) return false
-        if (!sameIdentity(prev, m)) return false
-        const mTime = parseMsgTime(m.createdAt)
-        if (prevTime && mTime && Math.abs(prevTime - mTime) > GHOST_DRAIN_TIME_TOLERANCE_MS) return false
-        return true
-      })
-      if (persistedSameIdentity) {
-        appLog.d(TAG, `syncSessionState: dropping drained ghost pending queueId=${String(prev.id).slice(0, 20)} text="${((prev.content || '') as string).slice(0, 40)}" files=${filePathsOf(prev).length}`)
-        continue
+    // Only queued=true rows are pending. A drained row keeps its queue_id
+    // (needed for queue_cancel matching) but has queued=false — it is a normal
+    // conversation message and must NOT show a waiting bubble (regression: the
+    // old `|| m.queueId` condition marked every completed user message pending).
+    for (const m of messages.value as ChatMessage[]) {
+      if (m.role === 'user' && m.queued === true) {
+        m.pending = true
       }
-      messages.value.push(prev)
     }
-    const seenPending = new Set<string | number>()
-    messages.value = messages.value.filter((m) => {
-      if (m.role === 'user' && m.pending && typeof m.id === 'string') {
-        if (seenPending.has(m.id)) return false
-        seenPending.add(m.id)
-      }
-      return true
-    })
     sortMessages(messages.value as ChatMessage[])
     totalMessages.value = (sessionData.total as number) || messages.value.length
+    queuedCount.value = (sessionData.queuedCount as number) || 0
 
     // ── Identity sync ──
     const returnedId = (sessionData.sessionId as string) || ''
@@ -463,8 +380,20 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // Pagination state
   const totalMessages = ref(0)
+  // Number of queued (still waiting for the drain loop) messages in this
+  // session. They are real DB rows counted in totalMessages, so hasMore must
+  // exclude them — a pending bubble is not "loaded history" (plan C).
+  const queuedCount = ref(0)
   const loadingMore = ref(false)
-  const hasMore = computed(() => messages.value.length < totalMessages.value)
+  // Plan C: compare non-queued loaded messages against non-queued total.
+  // The queued messages in the messages array are pending bubbles, not loaded
+  // history. Using filter(!m.queueId) instead of `length - queuedCount` keeps
+  // the loaded count accurate even when queuedCount (a server snapshot) drifts
+  // from the rows actually present in the messages array.
+  const hasMore = computed(() => {
+    const loaded = messages.value.filter((m) => !(m as ChatMessage).queueId).length
+    return loaded < totalMessages.value - queuedCount.value
+  })
 
   const agentHeaderTitle = computed(() => makeAgentTitle(currentAgentId.value))
 
@@ -713,6 +642,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (olderMsgs.length > 0) {
         messages.value = [...olderMsgs, ...messages.value]
         totalMessages.value = data.total || totalMessages.value
+        // Refresh queuedCount from the latest response (plan C) — it may have
+        // changed since the initial load (e.g. messages drained meanwhile).
+        if (typeof data.queuedCount === 'number') {
+          queuedCount.value = data.queuedCount
+        }
         onExtractScheduledTasks(olderMsgs)
         onRenderUpdate(true)
       }
@@ -1277,6 +1211,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     // UI state — local to this instance
     agentHeaderTitle,
     totalMessages,
+    queuedCount,
     hasMore,
     loadingMore,
     switching,

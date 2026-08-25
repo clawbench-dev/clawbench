@@ -156,44 +156,28 @@ func sendMessageToSessionFromPush(sessionID, message string) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	if !TrySetSessionRunning(sessionID) {
-		// Session already running — enqueue the message (not yet persisted to DB)
-		EnqueueMessage(sessionID, model.QueuedMessage{
-			Text:      message,
-			CreatedAt: time.Now().Format(time.RFC3339),
-		})
-		// Emit user_message for cross-device sync (messageId=0 because not yet persisted)
-		ws.EmitToSession(sessionID, ai.StreamEvent{
-			Type: "user_message",
-			UserMessage: &ai.UserMessageData{
-				MessageID: 0,
-				Content:   message,
-			},
-		})
-		return nil
+	// Persist the message + start execution or signal the running drain loop.
+	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally.
+	// msgID is the persisted DB id — used to emit a user_message event carrying
+	// the real id (not 0) for cross-device sync.
+	_, msgID, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+		SessionID:   sessionID,
+		ProjectPath: info.ProjectPath,
+		BackendName: info.Backend,
+		AgentID:     info.AgentID,
+		Message:     message,
+	})
+	if err != nil {
+		return err
 	}
 
-	// Session not running — persist user message and launch execution
-	msgID, err := AddChatMessage(info.ProjectPath, info.Backend, sessionID, roleUser, message, nil, false, info.Title)
-	if err != nil {
-		SetSessionRunning(sessionID, false, true) // rollback running state; skipEvent — session never actually started
-		return fmt.Errorf("persist message: %w", err)
-	}
-	// Emit user_message for cross-device sync
+	// Emit user_message for cross-device sync. MessageID is the persisted DB id.
 	ws.EmitToSession(sessionID, ai.StreamEvent{
 		Type: "user_message",
 		UserMessage: &ai.UserMessageData{
 			MessageID: msgID,
 			Content:   message,
 		},
-	})
-
-	LaunchSessionExecution(LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: info.ProjectPath,
-		BackendName: info.Backend,
-		AgentID:     info.AgentID,
-		Message:     message,
 	})
 
 	return nil
@@ -240,15 +224,8 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			SessionID:   sessionID,
 			ProjectPath: cfg.ProjectPath,
 			BackendName: cfg.BackendName,
-			PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-				msgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, sessionID, roleUser, text, files, false, "")
-				if err != nil {
-					slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
-				}
-				return msgID, err
-			},
-			ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-				cfg.Message = qMsg.Text
+			ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+				cfg.Message = msg.Content
 				nextResult := executeStreamRunShared(ctx, cfg)
 				return DrainResult{
 					CancelReason: nextResult.cancelReason,
@@ -263,6 +240,129 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			Empty:        result.empty,
 		})
 	}()
+}
+
+// EnqueueStartConfig carries the parameters for EnqueueAndMaybeStart.
+type EnqueueStartConfig struct {
+	SessionID   string
+	ProjectPath string
+	BackendName string
+	AgentID     string
+	Message     string
+	Files       []model.FileEntry
+	QueueID     string
+	// ModelID / Transport are persisted to the session so the drain loop's
+	// buildChatRequestFromQueue uses the user's choices, not agent defaults
+	// (parity with the POST /api/ai/chat path).
+	ModelID   string
+	Transport string
+}
+
+// EnqueueAndMaybeStart is the unified enqueue entry point (POST /api/ai/queue).
+// It persists the message to chat_history (queued=1), then:
+//   - if the session is NOT running, starts an AI execution goroutine that
+//     drains the queue (returns started=true);
+//   - if the session IS running, signals the existing drain loop (returns
+//     started=false).
+//
+// B2 self-healing: a race exists where the drain loop has just decided to exit
+// (WaitForEnqueue timed out) while the session is still marked running. The
+// delayed recheck goroutine below watches this window: 100ms later, if the
+// session is no longer running, it takes over and starts the execution itself
+// so the queued message is never silently lost.
+// EnqueueAndMaybeStart persists the message and starts/notifies execution.
+// It returns started=true when a new execution goroutine was launched (the
+// session was idle), plus the persisted DB message id (msgID, >0) so callers
+// can emit a user_message event carrying the real id for cross-device sync.
+func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, err error) {
+	// Persist model/transport selection so the drain loop uses the user's
+	// choices (parity with the POST /api/ai/chat handler).
+	if cfg.ModelID != "" {
+		UpdateSessionModel(cfg.SessionID, cfg.ModelID)
+	}
+	if cfg.Transport != "" {
+		UpdateSessionTransport(cfg.SessionID, cfg.Transport)
+	}
+
+	msgID, err = AddQueuedMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, cfg.Message, cfg.Files, cfg.QueueID, "")
+	if err != nil {
+		return false, 0, err
+	}
+
+	if TrySetSessionRunning(cfg.SessionID) {
+		// Session was idle — the message we just queued is the FIRST one and must
+		// NOT be consumed twice. executeStreamRunShared runs cfg.Message directly,
+		// so dequeue the row we just inserted (it would otherwise be picked up
+		// again by the drain loop's DequeueQueuedMessage, executing it twice).
+		//
+		// Consume BY ID: a concurrent enqueue may have slipped an earlier row
+		// into the queue between our insert and the TrySetSessionRunning claim,
+		// and that earlier row belongs to the drain loop, not to this execution.
+		consumeQueuedMessageByID(cfg.SessionID, msgID)
+		// Start execution now; the drain loop inside will consume the REST of
+		// the queue (any messages beyond the first).
+		LaunchSessionExecution(LaunchConfig{
+			SessionID:   cfg.SessionID,
+			ProjectPath: cfg.ProjectPath,
+			BackendName: cfg.BackendName,
+			AgentID:     cfg.AgentID,
+			Message:     cfg.Message,
+		})
+		return true, msgID, nil
+	}
+
+	// Session is running — the drain loop will pick the message up. Signal it.
+	SignalDrain(cfg.SessionID)
+
+	// B2 self-heal: delayed recheck for the drain-loop exit race.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		// Defensive: if the DB has been torn down (test cleanup), do nothing.
+		if !DBReady() {
+			return
+		}
+		// If the session is no longer running, the drain loop exited without
+		// consuming our message — take over and start execution ourselves.
+		if !IsSessionRunning(cfg.SessionID) {
+			if TrySetSessionRunning(cfg.SessionID) {
+				consumeQueuedMessageByID(cfg.SessionID, msgID)
+				LaunchSessionExecution(LaunchConfig{
+					SessionID:   cfg.SessionID,
+					ProjectPath: cfg.ProjectPath,
+					BackendName: cfg.BackendName,
+					AgentID:     cfg.AgentID,
+					Message:     cfg.Message,
+				})
+			}
+		}
+	}()
+	return false, msgID, nil
+}
+
+// consumeQueuedMessageByID dequeues the specific queued message identified by
+// msgID (the row just inserted by AddQueuedMessage). Called right before
+// LaunchSessionExecution when the execution will run cfg.Message directly: the
+// row is still queued=1, and without dequeuing it here the drain loop would
+// pick it up a second time and execute it twice.
+//
+// Consuming by ID (instead of "first queued") is required because a concurrent
+// enqueue can insert an earlier row between our AddQueuedMessage and the
+// TrySetSessionRunning claim (R1). Dequeueing "the first" would claim that
+// other message while we run our own — leaving it queued for a double
+// execution, or (in the symmetric race) dropping it entirely.
+func consumeQueuedMessageByID(sessionID string, msgID int64) {
+	if msgID <= 0 {
+		slog.Warn("enqueue: invalid msgID for consume", slog.String("session", sessionID))
+		return
+	}
+	if _, ok, derr := DequeueQueuedMessageByID(sessionID, msgID); derr != nil {
+		// Not fatal — the drain loop will retry the dequeue. Log and continue.
+		slog.Warn("enqueue: failed to consume queued message",
+			slog.String("session", sessionID), slog.Int64("msgID", msgID), slog.String("error", derr.Error()))
+	} else if !ok {
+		slog.Warn("enqueue: expected to consume queued message but row not queued",
+			slog.String("session", sessionID), slog.Int64("msgID", msgID))
+	}
 }
 
 // handleSessionPanic recovers from panics in the session goroutine.

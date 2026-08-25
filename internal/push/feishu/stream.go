@@ -185,31 +185,10 @@ func (m *Manager) handleSessionCommand(ctx context.Context, openID, shortID, msg
 
 	sessionLabel := common.FormatSessionLabel(sessionID, sessionTitle)
 
-	if sessionMessenger.IsSessionRunning(sessionID) {
-		if err := sessionMessenger.EnqueueMessage(sessionID, msg); err != nil {
-			slog.Warn("feishu: enqueue message failed", "error", err, "session_id", sessionID)
-			_ = m.SendPostMessage(ctx, openID, "错误", "消息入队失败: "+err.Error())
-			return
-		}
-		// Verify the session still has a consumer
-		if !sessionMessenger.IsSessionRunning(sessionID) {
-			slog.Info("feishu: session ended after enqueue, falling back to send", "session_id", sessionID)
-			sessionMessenger.ClearQueue(sessionID)
-			if err := sessionMessenger.SendMessageToSession(sessionID, msg); err != nil {
-				slog.Warn("feishu: fallback send failed", "error", err, "session_id", sessionID)
-				_ = m.SendPostMessage(ctx, openID, "错误", "发送消息失败: "+err.Error())
-				return
-			}
-			_ = m.SendPostMessage(ctx, openID, "消息已发送",
-				fmt.Sprintf("已发送到会话 %s，AI 正在处理", sessionLabel))
-			return
-		}
-		slog.Info("feishu: message enqueued to running session", "session_id", sessionID, "msg", msg)
-		_ = m.SendPostMessage(ctx, openID, "消息已发送",
-			fmt.Sprintf("已发送到运行中的会话 %s", sessionLabel))
-		return
-	}
-
+	// SendMessageToSession routes through the unified enqueue path
+	// (EnqueueAndMaybeStart): running sessions get the message queued for the
+	// drain loop, non-running sessions start execution. The B2 self-heal inside
+	// handles the drain-loop exit race, so no IsSessionRunning branching here.
 	if err := sessionMessenger.SendMessageToSession(sessionID, msg); err != nil {
 		slog.Warn("feishu: send message to session failed", "error", err, "session_id", sessionID)
 		_ = m.SendPostMessage(ctx, openID, "错误", "发送消息失败: "+err.Error())

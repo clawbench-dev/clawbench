@@ -74,13 +74,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   }
 
   /** Enqueue a message for later delivery while AI is generating.
-   *  Returns the enqueue result which may contain `needs_start` if the
-   *  session is no longer running (race condition: user enqueues right
-   *  as AI finishes). The caller should resubmit via sendMessageNow.
+   *  The backend persists the message (queued=1) and either starts an execution
+   *  or lets the running drain loop pick it up (B2 self-heal handles the
+   *  session-ended race), so no needs_start resubmit is needed.
    *
    *  IMPORTANT: sessionId MUST be captured by the caller BEFORE any async
    *  boundary. */
-  async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<{ needsStart: boolean; queueId?: string; message?: string; filePaths?: string[]; files?: FileEntry[] }> {
+  async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<void> {
     const inputText = text !== undefined ? text : ''
     const filePaths = attachedFiles.map(f => f.path)
     const allFileEntries: FileEntry[] = [
@@ -104,30 +104,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
           }),
         }
       )
-      const data = await resp.json()
-
-      // Race condition fix: backend detected session is not running and
-      // dequeued the message. The frontend must resubmit as a new chat.
-      if (data.needs_start) {
-        // Remove the pending message from messages.value by queueId
-        if (queueId) {
-          const idx = messages.value.findIndex((m) => m.id === queueId && m.pending)
-          if (idx !== -1) messages.value.splice(idx, 1)
-        } else {
-          // Fallback for callers without queueId
-          const idx = messages.value.findLastIndex(
-            (m) => m.role === 'user' && m.pending && m.content === (data.message || inputText)
-          )
-          if (idx !== -1) messages.value.splice(idx, 1)
-        }
-        scrollBottom(true)
-        return {
-          needsStart: true,
-          queueId,
-          message: data.message || inputText,
-          filePaths: data.filePaths || filePaths,
-          files: data.files || allFileEntries,
-        }
+      if (!resp.ok) {
+        throw new Error(`enqueue failed: ${resp.status}`)
       }
     } catch {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
@@ -144,7 +122,6 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     }
 
     scrollBottom(true)
-    return { needsStart: false }
   }
 
   /** Remove a pending message by its queueId.

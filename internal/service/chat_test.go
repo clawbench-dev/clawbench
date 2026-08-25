@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -32,6 +34,8 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
 	external_message_id TEXT DEFAULT '',
+	queue_id TEXT DEFAULT '',
+	queued INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -3114,14 +3118,14 @@ func TestGetChatHistoryPaged_LimitAndBeforeID(t *testing.T) {
 	}
 
 	// Get last 2 messages with limit only (no cursor)
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 2, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 2, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 	assert.Equal(t, "msg 3", msgs[0].Content)
 	assert.Equal(t, "msg 4", msgs[1].Content)
 
 	// Get 2 messages before the last message (cursor-based)
-	msgs, _, err = service.GetChatHistoryPaged("/project", "claude", sid, 2, int(msgIDs[4]))
+	msgs, _, _, err = service.GetChatHistoryPaged("/project", "claude", sid, 2, int(msgIDs[4]))
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 	assert.Equal(t, "msg 2", msgs[0].Content)
@@ -3199,7 +3203,7 @@ func TestGetChatHistoryPaged_NoLimit(t *testing.T) {
 	assert.NoError(t, err)
 
 	// limit=0 returns all messages
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 }
@@ -3215,7 +3219,7 @@ func TestGetChatHistoryPaged_LimitOnly(t *testing.T) {
 	}
 
 	// limit=3, no cursor — should return the 3 most recent
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 3, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 3, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 3)
 	assert.Equal(t, "msg 2", msgs[0].Content) // oldest of the 3
@@ -3227,9 +3231,392 @@ func TestGetChatHistoryPaged_Empty(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "Empty Paged")
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 10, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 10, 0)
 	assert.NoError(t, err)
 	assert.Empty(t, msgs)
+}
+
+// TestGetChatHistoryPaged_ReturnsQueueFields verifies that queued messages are
+// returned by GetChatHistoryPaged with queueId/queued populated, so the
+// frontend can match the optimistic pending bubble to the DB row
+// (queued-message-persistence plan).
+func TestGetChatHistoryPaged_ReturnsQueueFields(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Paged Queue")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "normal", nil, false, "")
+	assert.NoError(t, err)
+
+	// Insert a queued message directly (AddChatMessage doesn't set queue fields yet).
+	_, err = service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_history (project_path, role, content, session_id, backend, queue_id, queued)
+		 VALUES (?, 'user', ?, ?, 'claude', 'pending-abc', 1)`,
+		"/project", "queued msg", sid,
+	)
+	assert.NoError(t, err)
+
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 2)
+
+	var foundQueued bool
+	for _, m := range msgs {
+		if m.Content == "queued msg" {
+			foundQueued = true
+			assert.Equal(t, "pending-abc", m.QueueID, "queued message should carry queueId")
+			assert.True(t, m.Queued, "queued message should have Queued=true")
+		} else {
+			assert.Equal(t, "", m.QueueID, "normal message should have empty queueId")
+			assert.False(t, m.Queued, "normal message should have Queued=false")
+		}
+	}
+	assert.True(t, foundQueued, "queued message should be returned by GetChatHistoryPaged")
+}
+
+// TestAddQueuedMessage_Basic verifies that AddQueuedMessage persists a message
+// with queued=1 + queue_id, and returns a positive id.
+func TestAddQueuedMessage_Basic(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Basic")
+
+	id, err := service.AddQueuedMessage("/project", "claude", sid, "hello", nil, "pending-1", "")
+	assert.NoError(t, err)
+	assert.Greater(t, id, int64(0))
+
+	var queueID string
+	var queued, indexed int
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT queue_id, queued, indexed FROM chat_history WHERE id = ?", id,
+	).Scan(&queueID, &queued, &indexed)
+	assert.NoError(t, err)
+	assert.Equal(t, "pending-1", queueID)
+	assert.Equal(t, 1, queued, "queued message should have queued=1")
+	assert.Equal(t, 1, indexed, "queued message should be indexed=1 (skip RAG until drained)")
+}
+
+// TestAddQueuedMessage_SetsSessionTitleOnFirstMessage verifies B3: the first
+// user message updates the session title (reusing AddChatMessage's logic).
+func TestAddQueuedMessage_SetsSessionTitleOnFirstMessage(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Initial")
+
+	id, err := service.AddQueuedMessage("/project", "claude", sid, "help me fix the build", nil, "pending-1", "")
+	assert.NoError(t, err)
+	assert.Greater(t, id, int64(0))
+
+	var title string
+	err = service.UnsafeDBForTest().QueryRow("SELECT title FROM chat_sessions WHERE id = ?", sid).Scan(&title)
+	assert.NoError(t, err)
+	assert.Equal(t, "help me fix the build", title, "first user message should update session title")
+}
+
+// TestAddQueuedMessage_WithFiles verifies file attachment persistence.
+func TestAddQueuedMessage_WithFiles(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Files")
+
+	files := []model.FileEntry{{Path: "/src/a.go", IsDir: false}}
+	id, err := service.AddQueuedMessage("/project", "claude", sid, "", files, "pending-2", "")
+	assert.NoError(t, err)
+	assert.Greater(t, id, int64(0))
+
+	msgs, err := service.GetChatHistory("/project", "claude", sid)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 1)
+	assert.Len(t, msgs[0].Files, 1)
+	assert.Equal(t, "/src/a.go", msgs[0].Files[0].Path)
+}
+
+// TestAddQueuedMessage_EmptyQueueID verifies auto-generated queue_id when none provided.
+func TestAddQueuedMessage_EmptyQueueID(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue AutoID")
+
+	id, err := service.AddQueuedMessage("/project", "claude", sid, "msg", nil, "", "")
+	assert.NoError(t, err)
+
+	var queueID string
+	err = service.UnsafeDBForTest().QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", id).Scan(&queueID)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, queueID, "auto-generated queue_id should not be empty")
+}
+
+// TestDequeueQueuedMessage_FIFO verifies messages are dequeued in insertion order.
+func TestDequeueQueuedMessage_FIFO(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue FIFO")
+
+	id1, _ := service.AddQueuedMessage("/project", "claude", sid, "first", nil, "q-1", "")
+	id2, _ := service.AddQueuedMessage("/project", "claude", sid, "second", nil, "q-2", "")
+	assert.Less(t, id1, id2)
+
+	msg, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "first", msg.Content)
+	assert.Equal(t, "q-1", msg.QueueID)
+
+	msg, ok, err = service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "second", msg.Content)
+	assert.Equal(t, "q-2", msg.QueueID)
+}
+
+// TestDequeueQueuedMessage_Empty verifies empty queue returns (msg, false, nil).
+func TestDequeueQueuedMessage_Empty(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Empty")
+
+	msg, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, int64(0), msg.ID)
+}
+
+// TestDequeueQueuedMessage_SetsQueuedZero verifies the row stays but queued flips to 0.
+func TestDequeueQueuedMessage_SetsQueuedZero(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Consumed")
+
+	id, _ := service.AddQueuedMessage("/project", "claude", sid, "msg", nil, "q-1", "")
+	_, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+
+	var queued int
+	err = service.UnsafeDBForTest().QueryRow("SELECT queued FROM chat_history WHERE id = ?", id).Scan(&queued)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, queued, "dequeued message should have queued=0 but stay in DB")
+
+	// Second dequeue finds nothing (the row is no longer queued).
+	_, ok, err = service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// TestDequeueQueuedMessage_WithFiles verifies file entries survive dequeue.
+func TestDequeueQueuedMessage_WithFiles(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Files2")
+
+	files := []model.FileEntry{{Path: "/src/b.go", IsDir: false}}
+	_, _ = service.AddQueuedMessage("/project", "claude", sid, "with files", files, "q-1", "")
+
+	msg, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Len(t, msg.Files, 1)
+	assert.Equal(t, "/src/b.go", msg.Files[0].Path)
+}
+
+// TestGetChatHistoryPaged_ReturnsQueuedCount verifies the queuedCount return
+// value (plan C) so the frontend can compute hasMore excluding queued messages.
+func TestGetChatHistoryPaged_ReturnsQueuedCount(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Paged QueuedCount")
+
+	// 2 normal messages + 2 queued messages.
+	_, _ = service.AddChatMessage("/project", "claude", sid, "user", "normal1", nil, false, "")
+	_, _ = service.AddChatMessage("/project", "claude", sid, "user", "normal2", nil, false, "")
+	_, _ = service.AddQueuedMessage("/project", "claude", sid, "queued1", nil, "q-1", "")
+	_, _ = service.AddQueuedMessage("/project", "claude", sid, "queued2", nil, "q-2", "")
+
+	msgs, total, queuedCount, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 4, "messages array includes queued rows")
+	assert.Equal(t, 4, total, "total includes queued rows")
+	assert.Equal(t, 2, queuedCount, "queuedCount counts queued rows")
+}
+
+// TestGetChatHistoryPaged_HasMoreWithQueued reproduces the plan-C scenario:
+// 50 history messages + 15 queued, initial load limit=40 returns the 40 newest
+// (25 history + 15 queued). The frontend computes hasMore from the dual count:
+// non-queued loaded (25) < non-queued total (50) → true (more history to load).
+// The single-count formula (messages.length < total) would also be true here,
+// but the dual count is what makes the arithmetic correct when queued rows are
+// interleaved with history.
+func TestGetChatHistoryPaged_HasMoreWithQueued(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Paged HasMore")
+
+	// 50 normal history messages.
+	for i := 0; i < 50; i++ {
+		_, err := service.AddChatMessage("/project", "claude", sid, "user", fmt.Sprintf("hist-%d", i), nil, false, "")
+		assert.NoError(t, err)
+	}
+	// 15 queued messages appended last (newest).
+	for i := 0; i < 15; i++ {
+		_, err := service.AddQueuedMessage("/project", "claude", sid, fmt.Sprintf("queued-%d", i), nil, fmt.Sprintf("q-%d", i), "")
+		assert.NoError(t, err)
+	}
+
+	msgs, total, queuedCount, err := service.GetChatHistoryPaged("/project", "claude", sid, 40, 0)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 40, "initial load returns newest 40 rows")
+	assert.Equal(t, 65, total, "total counts history + queued")
+	assert.Equal(t, 15, queuedCount)
+
+	// Plan-C frontend formula: non-queued loaded < non-queued total.
+	nonQueuedLoaded := 0
+	for _, m := range msgs {
+		if !m.Queued {
+			nonQueuedLoaded++
+		}
+	}
+	assert.Equal(t, 25, nonQueuedLoaded, "40 newest = 25 history + 15 queued")
+	assert.True(t, nonQueuedLoaded < total-queuedCount, "hasMore must be true: 25 < 50")
+}
+
+// TestDequeueQueuedMessage_Atomic_NoDoubleConsume verifies two goroutines
+// dequeuing concurrently never consume the same row (WriteBegin + conditional
+// UPDATE under the write mutex).
+func TestDequeueQueuedMessage_Atomic_NoDoubleConsume(t *testing.T) {
+	db := setupDB(t)
+	// Single connection so the :memory: database is shared across goroutines.
+	db.SetMaxOpenConns(1)
+	sid := helperCreateSession(t, "/project", "claude", "Queue Atomic")
+
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "only-msg", nil, "q-1", "")
+	assert.NoError(t, err)
+
+	results := make([]bool, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, ok, derr := service.DequeueQueuedMessage(sid)
+			assert.NoError(t, derr)
+			results[i] = ok
+		}(i)
+	}
+	wg.Wait()
+
+	consumed := 0
+	for _, ok := range results {
+		if ok {
+			consumed++
+		}
+	}
+	assert.Equal(t, 1, consumed, "exactly one goroutine may claim the row")
+
+	// Second dequeue finds nothing.
+	_, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// TestDequeueQueuedMessage_DBError_NotEmptyQueue verifies a real DB error
+// (distinct from sql.ErrNoRows / empty queue) is surfaced to the caller so the
+// drain loop retries instead of treating it as "queue empty" and silently
+// dropping the message (B4). A closed DB yields such an error.
+func TestDequeueQueuedMessage_DBError_NotEmptyQueue(t *testing.T) {
+	db := setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Queue DBError")
+
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "persisted msg", nil, "q-1", "")
+	assert.NoError(t, err)
+
+	// Close the DB underneath — the next dequeue must return a real error,
+	// NOT (false, nil) which the drain loop would treat as "empty".
+	require.NoError(t, db.Close())
+
+	_, ok, derr := service.DequeueQueuedMessage(sid)
+	assert.False(t, ok, "must not report a successful dequeue")
+	assert.Error(t, derr, "a real DB error must be surfaced, not swallowed as empty")
+}
+
+// TestQueuedMessage_PersistsAcrossRestart verifies a queued message survives a
+// simulated restart (fresh DB handle over the same file): the row is still
+// queued=1 and discoverable via GetQueuedMessages.
+func TestQueuedMessage_PersistsAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(schema)
+	require.NoError(t, err)
+	cleanup := service.SetDBForTest(db, db)
+	t.Cleanup(func() {
+		cleanup()
+		db.Close()
+	})
+
+	sid := helperCreateSession(t, "/project", "claude", "Queue Restart")
+
+	_, err = service.AddQueuedMessage("/project", "claude", sid, "before restart", nil, "q-restart", "")
+	assert.NoError(t, err)
+
+	// Simulate restart: close the DB and reopen the same file.
+	service.SetDBForTest(nil, nil)
+	require.NoError(t, db.Close())
+
+	db2, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	db2.SetMaxOpenConns(1)
+	cleanup2 := service.SetDBForTest(db2, db2)
+	t.Cleanup(func() {
+		cleanup2()
+		db2.Close()
+	})
+
+	msgs, err := service.GetQueuedMessages(sid)
+	assert.NoError(t, err)
+	require.Len(t, msgs, 1, "queued message must survive restart")
+	assert.Equal(t, "before restart", msgs[0].Content)
+	assert.True(t, msgs[0].Queued)
+}
+
+// TestQueuedMessage_DrainedAfterRestart verifies a queued message left over
+// from before a restart can be consumed by the drain loop afterwards.
+func TestQueuedMessage_DrainedAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(schema)
+	require.NoError(t, err)
+	cleanup := service.SetDBForTest(db, db)
+	t.Cleanup(func() {
+		cleanup()
+		db.Close()
+	})
+
+	sid := helperCreateSession(t, "/project", "claude", "Queue Restart Drain")
+
+	_, err = service.AddQueuedMessage("/project", "claude", sid, "stale queued", nil, "q-stale", "")
+	assert.NoError(t, err)
+
+	// Simulate restart.
+	service.SetDBForTest(nil, nil)
+	require.NoError(t, db.Close())
+
+	db2, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	db2.SetMaxOpenConns(1)
+	cleanup2 := service.SetDBForTest(db2, db2)
+	t.Cleanup(func() {
+		cleanup2()
+		db2.Close()
+	})
+
+	// Drain the leftover message after restart.
+	msg, ok, err := service.DequeueQueuedMessage(sid)
+	assert.NoError(t, err)
+	assert.True(t, ok, "leftover queued message must be consumable after restart")
+	assert.Equal(t, "stale queued", msg.Content)
+
+	// The row must now be queued=0 in the DB (msg.Queued reflects the value
+	// read BEFORE the claim UPDATE).
+	var queued int
+	err = service.UnsafeDBForTest().QueryRow("SELECT queued FROM chat_history WHERE id = ?", msg.ID).Scan(&queued)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, queued, "drained row flips queued=0")
 }
 
 // ---------- CreateSession: session_type default ----------
@@ -3746,7 +4133,7 @@ func TestGetChatHistoryPaged_SummaryStripsContent(t *testing.T) {
 	}
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", cards))
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "assistant", msgs[0].Role)
@@ -3768,7 +4155,7 @@ func TestGetChatHistoryPaged_SummaryPreservesMetadata(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", nil))
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 
@@ -3802,7 +4189,7 @@ func TestGetChatHistoryPaged_SummaryKeepsStreamingContent(t *testing.T) {
 	cards := &model.SummaryCards{TaskIDs: []int64{7}}
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", cards))
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.True(t, msgs[0].Streaming)
@@ -3822,7 +4209,7 @@ func TestGetChatHistoryPaged_SummaryKeepsEmptySummaryContent(t *testing.T) {
 	// Empty summary — the frontend omits content for summarized messages.
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "", nil))
 
-	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.NotEqual(t, "", msgs[0].Content, "messages with an empty summary must keep content so they remain visible")
@@ -3921,4 +4308,168 @@ func TestReplaceSessionHistory_RollbackRestoresHistory(t *testing.T) {
 	var content string
 	require.NoError(t, db.QueryRow("SELECT content FROM chat_history WHERE session_id = ?", sid).Scan(&content))
 	assert.Equal(t, "old", content)
+}
+
+// TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine verifies that when the
+// session is not running, EnqueueAndMaybeStart starts an AI execution goroutine
+// (which drains the queued message). B1: the first message is consumed by
+// consumeFirstQueuedMessage so the drain loop does NOT execute it a second time.
+func TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Enqueue Start")
+
+	// Verify running state becomes true (goroutine started).
+	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+		SessionID:   sid,
+		ProjectPath: "/project",
+		BackendName: "claude",
+		Message:     "hello",
+		QueueID:     "pending-1",
+	})
+	assert.NoError(t, err)
+	assert.True(t, started, "should start a goroutine when session not running")
+
+	// B1 regression: the first message is consumed synchronously by
+	// consumeFirstQueuedMessage (the goroutine runs it via cfg.Message), so the
+	// DB queue must be empty — the drain loop would otherwise dequeue it again.
+	assert.Equal(t, 0, service.GetQueuedCount(sid), "first message must be consumed, not left queued for double execution")
+
+	// Clean up: cancel the session to kill the started goroutine, then wait
+	// for it to fully unwind BEFORE the test DB is torn down (otherwise the
+	// goroutine's deferred cleanup touches a nil DB).
+	service.CancelSession(sid)
+	time.Sleep(200 * time.Millisecond)
+}
+
+// TestEnqueueAndMaybeStart_FirstMessageRace_PreservesEarlierQueued verifies
+// the R1 race: when an earlier message is already queued (queued=1) and the
+// session is still marked idle, EnqueueAndMaybeStart (acting as the "winner"
+// that claims the session) must consume ITS OWN freshly-inserted row, NOT the
+// pre-existing queued row. Dequeueing the pre-existing row while running its
+// own message would leave the earlier message queued for double-execution
+// (or, in the symmetric race, dropped entirely).
+func TestEnqueueAndMaybeStart_FirstMessageRace_PreservesEarlierQueued(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Enqueue Race")
+
+	// Earlier message already queued (e.g. from a previous enqueue whose drain
+	// loop exited — the exact B2 window). Session still NOT running.
+	earlierID, err := service.AddQueuedMessage("/project", "claude", sid, "earlier", nil, "pending-earlier", "")
+	assert.NoError(t, err)
+	assert.Greater(t, earlierID, int64(0))
+
+	// EnqueueAndMaybeStart wins the idle-session claim and runs "current"
+	// directly via cfg.Message. It must consume only its own row.
+	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+		SessionID:   sid,
+		ProjectPath: "/project",
+		BackendName: "claude",
+		Message:     "current",
+		QueueID:     "pending-current",
+	})
+	assert.NoError(t, err)
+	assert.True(t, started, "session was idle, should start")
+
+	// The current message is executed directly (consumed). The EARLIER queued
+	// message must remain queued — the drain loop inside the started goroutine
+	// is responsible for consuming it.
+	msgs, err := service.GetQueuedMessages(sid)
+	assert.NoError(t, err)
+	require.Len(t, msgs, 1, "earlier message must still be queued, only current consumed")
+	assert.Equal(t, "earlier", msgs[0].Content)
+	assert.Equal(t, "pending-earlier", msgs[0].QueueID)
+
+	// Clean up: cancel to kill the started goroutine, then wait for unwind.
+	service.CancelSession(sid)
+	time.Sleep(200 * time.Millisecond)
+}
+
+// TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss verifies the R1
+// race under real concurrency: two messages enqueued concurrently on an idle
+// session. Exactly one EnqueueAndMaybeStart wins TrySetSessionRunning. The
+// winner's message is executed directly (consumeQueuedMessageByID) and the
+// loser's message must either stay queued for the drain loop OR be picked up
+// by the B2 self-heal — but never lost and never executed twice.
+func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
+	db := setupDB(t)
+	// Single connection so the :memory: SQLite database is shared across all
+	// goroutines (each pooled connection otherwise gets its own private
+	// in-memory database, hiding rows written by other connections).
+	db.SetMaxOpenConns(1)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Enqueue Concurrent")
+
+	var wg sync.WaitGroup
+	startedFlags := make([]bool, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+				SessionID:   sid,
+				ProjectPath: "/project",
+				BackendName: "claude",
+				Message:     fmt.Sprintf("msg-%d", i),
+				QueueID:     fmt.Sprintf("pending-%d", i),
+			})
+			assert.NoError(t, err)
+			startedFlags[i] = started
+		}(i)
+	}
+	wg.Wait()
+
+	// Exactly one of the two must have started a goroutine.
+	startedCount := 0
+	for _, s := range startedFlags {
+		if s {
+			startedCount++
+		}
+	}
+	assert.Equal(t, 1, startedCount, "exactly one enqueue should win the idle claim")
+
+	// Both messages must exist in the DB — no message may be lost. queuedCount
+	// may be 0 or 1 depending on whether the B2 self-heal goroutine (scheduled
+	// 100ms later) already claimed the loser after the winner's goroutine
+	// failed to start (unsupported backend in tests).
+	msgs, err := service.GetChatHistory("/project", "claude", sid)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 2, "both enqueued messages must be present in DB")
+
+	// Clean up: cancel kills the running session and the B2 self-heal window.
+	service.CancelSession(sid)
+	time.Sleep(300 * time.Millisecond)
+}
+
+// TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine verifies that when the
+// session is already running, EnqueueAndMaybeStart does NOT start a second
+// goroutine — it signals the existing drain loop instead.
+func TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Enqueue Running")
+
+	// Mark session as already running.
+	service.SetSessionRunning(sid, true)
+
+	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+		SessionID:   sid,
+		ProjectPath: "/project",
+		BackendName: "claude",
+		Message:     "hello",
+		QueueID:     "pending-2",
+	})
+	assert.NoError(t, err)
+	assert.False(t, started, "should NOT start a goroutine when session already running")
+
+	// Message should be queued in DB (drain loop will pick it up).
+	assert.Equal(t, 1, service.GetQueuedCount(sid))
+
+	// Clean up: cancel kills the running session AND prevents the B2
+	// self-heal goroutine (scheduled 100ms later) from starting a new one.
+	// Wait for the self-heal window to pass so its goroutine can unwind
+	// before the test DB is torn down.
+	service.CancelSession(sid)
+	time.Sleep(200 * time.Millisecond)
 }

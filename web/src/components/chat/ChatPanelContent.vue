@@ -735,10 +735,10 @@ async function sendMessage(text) {
        resetQuotePin()
        inputBarRef.value?.clearInput()
        clearPendingFiles()
-       // Push a pending user message, enqueue it, and resubmit on needs_start.
-       // Shared with the AskUserQuestion-card path so both get identical
-       // needs_start handling (avoids silently dropping the message, which would
-       // leave no assistant placeholder and no loading indicator).
+       // Push a pending user message and enqueue it. The backend handles the
+       // "session not running" race internally (B2 self-heal), so no
+       // needs_start/resubmit round-trip is needed here. Shared with the
+       // AskUserQuestion-card path for identical enqueue behavior.
        await enqueueAndMaybeStart({
          sessionId: identity.currentSessionId.value,
          text: inputText || '',
@@ -747,7 +747,6 @@ async function sendMessage(text) {
          pushMessage: (msg) => messages.value.push(msg),
          onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
          enqueue: (sid, text, attached, pending, qid) => manager.enqueueMessage(sid, text, attached, pending, qid),
-         resubmit: (text, filePaths, files) => sendMessageNow(text, filePaths, files),
        })
        return
      }
@@ -868,11 +867,8 @@ async function sendMessageNow(text, filePaths, files) {
 async function handleToolSendMessage(text) {
     if (!text) return
     if (loading.value) {
-      // Shared with the normal input path: push a pending user message, enqueue
-      // it, and resubmit on needs_start. Previously this path fired the enqueue
-      // without awaiting/checking needs_start, so when the backend dequeued the
-      // answer (session no longer running) it was silently lost — leaving no
-      // assistant placeholder and no loading indicator.
+      // Shared with the normal input path: push a pending user message and
+      // enqueue it. The backend's B2 self-heal handles the session-ended race.
       await enqueueAndMaybeStart({
         sessionId: identity.currentSessionId.value,
         text,
@@ -881,7 +877,6 @@ async function handleToolSendMessage(text) {
         pushMessage: (msg) => messages.value.push(msg),
         onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
         enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
-        resubmit: (msg, filePaths, files) => sendMessageNow(msg, filePaths, files),
       })
     } else {
       await sendMessage(text)

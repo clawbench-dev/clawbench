@@ -201,6 +201,27 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 				return fmt.Errorf("failed to add external_message_id column: %w", err)
 			}
 		}
+
+		// chat_history.queue_id / queued — queued-message persistence.
+		// queue_id stores the frontend-generated queueId for matching queued
+		// messages to optimistic pending bubbles; queued=1 marks a message that
+		// is still waiting for the drain loop to consume it. The drain loop
+		// flips queued=0 when it picks the message up (the row stays as a
+		// normal conversation record).
+		var hasQueueID int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='queue_id'").Scan(&hasQueueID)
+		if hasQueueID == 0 {
+			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN queue_id TEXT DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add queue_id column: %w", err)
+			}
+		}
+		var hasQueued int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='queued'").Scan(&hasQueued)
+		if hasQueued == 0 {
+			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN queued INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return fmt.Errorf("failed to add queued column: %w", err)
+			}
+		}
 	}
 
 	// Pre-migration: rename chat_sessions.deleted to archived.
@@ -230,6 +251,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			external_message_id TEXT DEFAULT '',
+			queue_id TEXT DEFAULT '',
+			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (

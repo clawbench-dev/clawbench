@@ -158,7 +158,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		totalCount := 0
-		messages, totalCount, err := service.GetChatHistoryPaged(projectPath, sessionBackend, sessionID, limit, beforeID)
+		queuedCount := 0
+		messages, totalCount, queuedCount, err := service.GetChatHistoryPaged(projectPath, sessionBackend, sessionID, limit, beforeID)
 		// Use cached session info from earlier lookup, or fetch if not yet available
 		// (e.g. when session was found via GetLatestSessionID or newly created).
 		// This avoids an extra DB query for the common case of switching to an existing session.
@@ -242,16 +243,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Include the in-memory queue so the frontend can show pending messages
-		// without a separate fetchQueue call. This eliminates the race where
-		// loadHistory replaces messages.value and erases pending messages.
-		queue := service.GetQueue(sessionID)
+		// queuedCount tells the frontend how many messages are still waiting for
+		// the drain loop, so it can compute hasMore without counting them as
+		// loaded history. The queued messages themselves are returned in the
+		// messages array (they are real chat_history rows with queued=1).
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "queue": queue, "replayPending": replayPending})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "queuedCount": queuedCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "queue": queue, "replayPending": replayPending})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "queuedCount": queuedCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
 		return
 	}
 
@@ -460,22 +461,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent concurrent sessions for the same session ID
 	if !service.TrySetSessionRunning(sessionID) {
-		// Session already running — enqueue the message
-		qMsg := model.QueuedMessage{
-			QueueID:   req.QueueID,
-			Text:      req.Message,
-			FilePaths: allFilePaths,
-			Files:     allFiles,
-			CreatedAt: time.Now().Format(time.RFC3339),
+		// Session already running — enqueue the message to DB (queued=1).
+		// The running drain loop picks it up via DequeueQueuedMessage.
+		_, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
+			return
 		}
-		queueState := service.EnqueueMessage(sessionID, qMsg)
-
-		// Frontend pushes pending message optimistically — no queue_queued event needed.
-		// The EnqueueMessage signals the drain channel so the running goroutine
-		// wakes up immediately if it's waiting for queued messages.
+		service.SignalDrain(sessionID)
 
 		// Emit user_message to other session subscribers for cross-device sync.
-		// MessageID=0 because the message is not yet persisted (it's in the queue).
 		// SenderClientID allows the sending device to skip its own echo.
 		ws.EmitToSession(sessionID, ai.StreamEvent{
 			Type: "user_message",
@@ -491,7 +486,6 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"running": true,
 			"queued":  true,
-			"queue":   queueState,
 		})
 		return
 	}
@@ -601,14 +595,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			SessionID:   sessionID,
 			ProjectPath: projectPath,
 			BackendName: backendName,
-			PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-				msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", text, files, false, T(r, "FileMessage"))
-				if err != nil {
-					slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
+			ExecuteRunWithMessage: func(msg model.ChatMessage) service.DrainResult {
+				qMsg := model.QueuedMessage{
+					QueueID:   msg.QueueID,
+					Text:      msg.Content,
+					Files:     msg.Files,
+					CreatedAt: msg.CreatedAt.Format(time.RFC3339),
 				}
-				return msgID, err
-			},
-			ExecuteRunWithMessage: func(qMsg model.QueuedMessage) service.DrainResult {
 				nextChatReq := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
 				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir)
 				return service.DrainResult{

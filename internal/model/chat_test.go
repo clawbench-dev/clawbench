@@ -411,4 +411,42 @@ func TestChatMessageSummaryCardsMarshal(t *testing.T) {
 	}
 }
 
+// TestChatMessageQueueFieldsMarshal verifies that a queued message carries its
+// queueId and queued flags in the JSON payload so the frontend can match the
+// optimistic pending bubble to the DB row (queued-message-persistence plan).
+func TestChatMessageQueueFieldsMarshal(t *testing.T) {
+	m := ChatMessage{ID: 42, Role: "user", Content: "hello", QueueID: "pending-abc", Queued: true}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if obj["queueId"] != "pending-abc" {
+		t.Fatalf("queueId missing or wrong: %v", obj["queueId"])
+	}
+	if obj["queued"] != true {
+		t.Fatalf("queued missing or wrong: %v", obj["queued"])
+	}
+
+	// A non-queued message must omit both fields (omitempty).
+	m2 := ChatMessage{ID: 43, Role: "assistant", Content: "reply"}
+	raw2, err := json.Marshal(m2)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var obj2 map[string]any
+	if err := json.Unmarshal(raw2, &obj2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := obj2["queueId"]; ok {
+		t.Fatalf("queueId should be omitted for non-queued message: %v", obj2["queueId"])
+	}
+	if _, ok := obj2["queued"]; ok {
+		t.Fatalf("queued should be omitted for non-queued message: %v", obj2["queued"])
+	}
+}
+
 func strPtr(s string) *string { return &s }

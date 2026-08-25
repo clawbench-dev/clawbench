@@ -592,14 +592,12 @@ describe('drainQueueMessage', () => {
     const messages: any[] = []
     drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks, 'drain-test-123')
     expect(messages[0].id).toBe('drain-test-123')
-    expect(messages[0]._drain).toBe(true)
   })
 
   it('auto-generates drain ID when not provided', () => {
     const messages: any[] = []
     drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks)
     expect(messages[0].id).toMatch(/^drain-\d+-[a-z0-9]+$/)
-    expect(messages[0]._drain).toBe(true)
   })
 
   it('drain ID does not collide with DB numeric IDs', () => {
@@ -607,7 +605,7 @@ describe('drainQueueMessage', () => {
       { role: 'user', id: 42, content: 'DB user msg', blocks: [{ type: 'text', text: 'DB user msg' }] },
     ]
     drainQueueMessage(messages, '', 'new msg', [], 'codebuddy', callbacks)
-    const drainMsg = messages.find((m: any) => m._drain === true)
+    const drainMsg = messages.find((m: any) => m.role === 'user' && m.content === 'new msg')
     expect(drainMsg).toBeDefined()
     expect(typeof drainMsg.id).toBe('string')
     expect(drainMsg.id.startsWith('drain-')).toBe(true)
@@ -620,18 +618,18 @@ describe('drainQueueMessage', () => {
       { role: 'user', id: 'local-1700000000000', content: 'optimistic msg', blocks: [{ type: 'text', text: 'optimistic msg' }] },
     ]
     drainQueueMessage(messages, '', 'drained msg', [], 'codebuddy', callbacks)
-    const drainMsg = messages.find((m: any) => m._drain === true)
+    const drainMsg = messages.find((m: any) => m.role === 'user' && m.content === 'drained msg')
     expect(drainMsg.id.startsWith('drain-')).toBe(true)
     expect(drainMsg.id.startsWith('local-')).toBe(false)
   })
 
-  it('_drain marker enables loadHistory self-cleaning', () => {
+  it('drain pushes a user message that loadHistory later replaces with DB rows', () => {
     const messages: any[] = []
     drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks)
-    expect(messages[0]._drain).toBe(true)
-    expect(messages[0].id.startsWith('drain-')).toBe(true)
+    expect(messages[0].role).toBe('user')
+    expect(messages[0].content).toBe('hello')
 
-    // Simulate loadHistory: replace with DB messages (numeric IDs, no _drain)
+    // Simulate loadHistory: replace with DB messages (numeric IDs)
     const dbMessages = [
       { role: 'user', id: 1, content: 'hello', blocks: [{ type: 'text', text: 'hello' }] },
       { role: 'assistant', id: 2, content: 'response', blocks: [{ type: 'text', text: 'response' }] },
@@ -639,12 +637,11 @@ describe('drainQueueMessage', () => {
     messages.length = 0
     messages.push(...dbMessages)
 
-    // _drain marker and drain- ID are gone — self-cleaning
-    expect(messages.every(m => !m._drain)).toBe(true)
+    // DB rows carry numeric ids — authoritative order
     expect(messages.every(m => typeof m.id === 'number')).toBe(true)
   })
 
-  it('loadHistory race: alreadyExists returns false for DB message with different ID', () => {
+  it('loadHistory race: DB message with different ID coexists with drained message', () => {
     const drainId = 'drain-1700000000000-abc123'
     const messages: any[] = [
       { role: 'user', id: 42, content: 'hello', blocks: [{ type: 'text', text: 'hello' }] },
@@ -656,7 +653,6 @@ describe('drainQueueMessage', () => {
     expect(userMsgs).toHaveLength(2)
     expect(userMsgs[0].id).toBe(42)           // DB
     expect(userMsgs[1].id).toBe(drainId)      // drain
-    expect(userMsgs[1]._drain).toBe(true)
   })
 
   it('skips push when same drainId already exists (idempotent)', () => {
@@ -671,26 +667,23 @@ describe('drainQueueMessage', () => {
 
   // ── dbMessageId parameter (queue_drain carries DB message ID) ──
 
-  it('keeps drained messages transient (string id) — does not adopt numeric DB id', () => {
+  it('adopts numeric DB id for a drained message when dbMessageId is provided', () => {
     const messages: any[] = [
       { role: 'assistant', content: 'reply', blocks: [], streaming: true },
     ]
     drainQueueMessage(messages, '', 'B', [], 'claude', callbacks, undefined, 42)
     const userMsg = messages.find(m => m.role === 'user' && m.content === 'B')
     expect(userMsg).toBeDefined()
-    // The numeric dbMessageId is NOT adopted mid-stream — the message stays in
-    // the client seq-order domain (string id) so it sorts correctly among the
-    // still-transient in-flight messages. loadHistory reconciles the DB id later.
-    expect(typeof userMsg.id).toBe('string')
-    expect(userMsg.id).not.toBe(42)
-    expect(userMsg._drain).toBe(true)
+    // The numeric dbMessageId IS adopted — the message is now a normal
+    // chat_history row ordered by its DB id.
+    expect(userMsg.id).toBe(42)
   })
 
-  it('uses a string drain id (transient) even when dbMessageId is provided', () => {
+  it('uses drain id (string) only when dbMessageId is not provided', () => {
     const messages: any[] = [
       { role: 'assistant', content: 'reply', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, '', 'B', [], 'claude', callbacks, 'drain-custom', 99)
+    drainQueueMessage(messages, '', 'B', [], 'claude', callbacks, 'drain-custom', undefined)
     const userMsg = messages.find(m => m.role === 'user' && m.content === 'B')
     expect(userMsg.id).toBe('drain-custom')
   })
@@ -724,7 +717,7 @@ describe('drainQueueMessage', () => {
       { role: 'user', id: 'queue-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, '', 'hello', [], 'claude', callbacks)
+    drainQueueMessage(messages, 'queue-1', 'hello', [], 'claude', callbacks)
     // No duplicate user message — the existing pending one had its flag cleared
     const userMsgs = messages.filter(m => m.role === 'user')
     expect(userMsgs).toHaveLength(1)
@@ -732,13 +725,16 @@ describe('drainQueueMessage', () => {
     expect(userMsgs[0].content).toBe('hello')
   })
 
-  it('keeps the found pending message transient (string id) — does not adopt DB id', () => {
+  it('keeps the found pending message transient (string id) when parent is still transient', () => {
     const messages: any[] = [
       { role: 'user', id: 'queue-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, '', 'hello', [], 'claude', callbacks, undefined, 42)
+    drainQueueMessage(messages, 'queue-1', 'hello', [], 'claude', callbacks, undefined, 42)
     const userMsg = messages.find(m => m.role === 'user')
+    // Parent (none before it) is not DB-backed, so the drained message keeps
+    // its transient string id (queueId) to avoid sorting above earlier
+    // still-transient messages (M1).
     expect(userMsg.id).toBe('queue-1')
     expect(userMsg.pending).toBeUndefined()
   })
@@ -764,11 +760,10 @@ describe('drainQueueMessage', () => {
       { role: 'user', id: 'queue-2', content: 'yes', blocks: [{ type: 'text', text: 'yes' }], pending: true },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, '', 'yes', [], 'claude', callbacks)
-    // First pending message has flag cleared, second still pending
-    const userMsgs = messages.filter(m => m.role === 'user')
-    expect(userMsgs[0].pending).toBeUndefined()
-    expect(userMsgs[1].pending).toBe(true)
+    drainQueueMessage(messages, 'queue-1', 'yes', [], 'claude', callbacks)
+    // First pending message (queue-1) has flag cleared, second (queue-2) still pending
+    expect(messages.find((m: any) => m.id === 'queue-1').pending).toBeUndefined()
+    expect(messages.find((m: any) => m.id === 'queue-2').pending).toBe(true)
   })
 
   // ── queueId matching ──
@@ -797,39 +792,38 @@ describe('drainQueueMessage', () => {
     expect(messages.find((m: any) => m.id === 'pending-B').pending).toBeUndefined()
   })
 
-  it('falls back to content match when queueId not provided', () => {
+  it('matches pending message by queueId (content match not needed)', () => {
     const messages: any[] = [
       { role: 'user', id: 'pending-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, '', 'hello', [], 'claude', callbacks)
+    drainQueueMessage(messages, 'pending-1', 'hello', [], 'claude', callbacks)
     const userMsg = messages.find(m => m.role === 'user')
     expect(userMsg.pending).toBeUndefined()
   })
 
   // ── _remote message matching (cross-device sync) ──
 
-  it('finds _remote message by content and clears flag instead of pushing duplicate', () => {
+  it('finds _remote message by _remoteQueueId and clears flag instead of pushing duplicate', () => {
     const messages: any[] = [
-      { role: 'user', id: 'remote-1700000000000-abc', content: 'from phone', blocks: [{ type: 'text', text: 'from phone' }], _remote: true },
+      { role: 'user', id: 'remote-1700000000000-abc', content: 'from phone', blocks: [{ type: 'text', text: 'from phone' }], _remote: true, _remoteQueueId: 'remote-q-1' },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, '', 'from phone', [], 'codebuddy', callbacks, undefined, 42)
+    drainQueueMessage(messages, 'remote-q-1', 'from phone', [], 'codebuddy', callbacks, undefined, 42)
     const userMsgs = messages.filter(m => m.role === 'user')
     expect(userMsgs).toHaveLength(1)
     expect(userMsgs[0]._remote).toBeUndefined()
-    expect(userMsgs[0].id).toBe('remote-1700000000000-abc')
   })
 
   it('preserves a numeric id on a drained cross-device _remote message (no key churn)', () => {
     // A _remote message that arrived already persisted in the DB carries a real
-    // numeric id. On drain it must be KEPT — stringifying it (db-<n> →
-    // db-drain-…) would churn the v-for key and drop per-bubble render state.
+    // numeric id. On drain it must be KEPT — replacing it would churn the v-for
+    // key and drop per-bubble render state.
     const messages: any[] = [
-      { role: 'user', id: 42, content: 'from phone', blocks: [{ type: 'text', text: 'from phone' }], _remote: true },
+      { role: 'user', id: 42, content: 'from phone', blocks: [{ type: 'text', text: 'from phone' }], _remote: true, _remoteQueueId: 'remote-q-1' },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, '', 'from phone', [], 'codebuddy', callbacks, undefined, 99)
+    drainQueueMessage(messages, 'remote-q-1', 'from phone', [], 'codebuddy', callbacks, undefined, 99)
     const userMsgs = messages.filter(m => m.role === 'user')
     expect(userMsgs).toHaveLength(1)
     expect(userMsgs[0]._remote).toBeUndefined()
@@ -858,8 +852,7 @@ describe('drainQueueMessage', () => {
       { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true, seq: 1 },
       { role: 'user', id: 'queue-C', content: 'C', blocks: [{ type: 'text', text: 'C' }], pending: true, seq: 2 },
     ]
-    drainQueueMessage(messages, '', 'B', [], 'claude', callbacks)
-    // Streaming assistant for B should be right after user_B, before user_C
+    drainQueueMessage(messages, 'queue-B', 'B', [], 'claude', callbacks)
     expect(messages[2].role).toBe('user')
     expect(messages[2].content).toBe('B')
     expect(messages[2].pending).toBeUndefined()
@@ -893,11 +886,11 @@ describe('drainQueueMessage', () => {
     sortMessages(messages)
     const result = drainQueueMessage(messages, 'queue-B', 'B', [], 'claude', callbacks, undefined, 3)
 
-    // The queued bubble was updated in place (no duplicate); it keeps its
-    // transient string id (queueId) so ordering stays consistent mid-stream.
+    // The queued bubble was updated in place (no duplicate) and adopts the
+    // numeric DB id (parent A is DB-backed, so the DB-id domain is safe).
     const bUsers = messages.filter(m => m.role === 'user' && m.content === 'B')
     expect(bUsers).toHaveLength(1)
-    expect(bUsers[0].id).toBe('queue-B')
+    expect(bUsers[0].id).toBe(3)
     expect(bUsers[0].pending).toBeUndefined()
 
     // The previous assistant (A reply) was finalized.
