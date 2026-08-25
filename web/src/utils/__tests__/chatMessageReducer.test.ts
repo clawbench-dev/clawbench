@@ -78,6 +78,19 @@ describe('chatMessageReducer — optimistic + structural', () => {
     expect(messageSortValue(msg1!)).toBeLessThan(messageSortValue(state.find((m) => m.content === '2')!))
   })
 
+  it('optimistic_adopt_id does NOT adopt a pending (queued) bubble', () => {
+    // A queued message is still waiting for the drain loop; the drain event
+    // carries its authoritative id and clears pending. Adopting early would
+    // flip it to a normal message (losing the "queuing" UI state).
+    const state = run(
+      [{ id: 'pending-2', role: 'user', content: '2', pending: true, seq: 2 } as ChatMessage],
+      [{ type: 'optimistic_adopt_id', id: 'pending-2', dbId: 10 }],
+    )
+    const msg2 = state.find((m) => m.content === '2')
+    expect(msg2?.id).toBe('pending-2')
+    expect(msg2?.pending).toBe(true)
+  })
+
   it('clear_pending removes only pending messages', () => {
     const state = run([u({ id: 1, content: 'done' }), u({ id: 'p2', pending: true, seq: 1 })], [
       { type: 'clear_pending' },

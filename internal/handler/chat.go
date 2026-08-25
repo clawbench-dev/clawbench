@@ -497,7 +497,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Emit user_message to other session subscribers for cross-device sync.
-	// SenderClientID allows the sending device to skip its own echo.
+	// SenderClientID allows the sending device to skip its own echo; QueueID is
+	// the frontend-generated id so the sender can adopt this message's DB id
+	// from MessageID (its optimistic bubble carries the same id).
 	ws.EmitToSession(sessionID, ai.StreamEvent{
 		Type: "user_message",
 		UserMessage: &ai.UserMessageData{
@@ -505,6 +507,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			Content:        req.Message,
 			Files:          allFiles,
 			SenderClientID: req.ClientID,
+			QueueID:        req.QueueID,
 		},
 	})
 

@@ -967,9 +967,13 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // resolving to it, and KEEP seq: sorting stays in seq space while the
       // stream is live so this message still orders after history and before
       // later queued messages. loadHistory (idle) later drops seq → DB id order.
+      // A PENDING bubble is a queued message still waiting for the drain loop —
+      // it must NOT be adopted here (the drain carries the authoritative id and
+      // clears pending). Adopting early would flip it to a normal message.
       const idx = state.findIndex((m) => String(m.id) === String(action.id))
       if (idx === -1) return state
       const target = state[idx]
+      if (target.pending) return state
       const oldId = String(target.id)
       target.id = action.dbId
       target.queueId = oldId
