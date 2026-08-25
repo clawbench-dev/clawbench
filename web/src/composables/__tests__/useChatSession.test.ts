@@ -1851,6 +1851,51 @@ describe('switchSession', () => {
     expect(id2).not.toBe(drainA)
   })
 
+  it('clears afterSort when adopting DB identity into a drained reply', async () => {
+    // Regression: queued replies get an afterSort computed from the transient
+    // parent value (TRANSIENT_BASE + seq, huge). If afterSort survives the
+    // loadHistory DB-identity merge, messageSortValue keeps returning the huge
+    // value and the reply sorts AFTER all DB messages — producing the wrong
+    // order: msg2, msg3, reply2, reply3 instead of msg2, reply2, msg3, reply3.
+    const drainReply2 = {
+      role: 'assistant', id: 'drain-reply2', content: '', blocks: [{ type: 'text', text: 'reply2' }],
+      createdAt: '2026-01-01T00:00:05Z', afterSort: 2251799813685251.5, seq: 3,
+    }
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'msg1', blocks: [{ type: 'text', text: 'msg1' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}', createdAt: '2026-01-01T00:00:01Z' },
+      { id: 3, role: 'user', content: 'msg2', blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:04Z' },
+      { id: 4, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', createdAt: '2026-01-01T00:00:05Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [
+          { id: 1, role: 'user', content: 'msg1' },
+          { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
+          { id: 3, role: 'user', content: 'msg2' },
+          { id: 4, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}' },
+        ],
+        total: 4,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = [drainReply2]
+
+    await session.loadHistory(true, false, false)
+
+    const msgs = lastSessionOptions!.messages.value as any[]
+    // DB order must be authoritative: msg1, reply1, msg2, reply2.
+    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 4])
+    // The adopted reply must no longer carry the stale afterSort.
+    const adopted = msgs.find((m: any) => m.id === 4)
+    expect(adopted).toBeDefined()
+    expect(adopted.afterSort).toBeUndefined()
+  })
+
   it('restores usage state from API response after switch', async () => {
     resetAdditionalMocks() // Ensure mock call records are clean
     mockClearUsageState.mockClear()

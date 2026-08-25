@@ -190,6 +190,13 @@ export function useChatSession(options: UseChatSessionOptions) {
           if (Math.abs(prevTime - newTime) > 5000) continue
           // Merge DB fields into the existing object to preserve Vue component identity
           prevMsg.id = newMsg.id
+          // Drop the transient afterSort anchor: it was computed from the
+          // parent's TRANSIENT_BASE+seq value while the reply was still a
+          // drain-* placeholder. With a real DB id the reply must sort by id
+          // (messageSortValue prefers afterSort whenever present, so a stale
+          // huge value would pin this reply after every DB message — wrong
+          // order like msg2,msg3,reply2,reply3).
+          delete prevMsg.afterSort
           if (newMsg.summary) prevMsg.summary = newMsg.summary
           if (newMsg.summaryCards) prevMsg.summaryCards = newMsg.summaryCards
           if (newMsg.metadata && !prevMsg.metadata) prevMsg.metadata = newMsg.metadata
