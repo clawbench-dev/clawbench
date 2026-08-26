@@ -3,21 +3,31 @@
     <div v-if="visible && quoteData" ref="barRef" class="quote-question-bar">
 
       <!-- Collapsed row (mobile): quoted snippet (single-line) + add action.
-           Clicking the quote area expands the input box and the quote together. -->
+           Clicking the quote area expands the input box and the quote together.
+           Copy button floats absolutely at the snippet's top-right. -->
       <div v-if="!expanded" class="quote-bar-row" @click="expand()" @pointerdown="onRowPointerDown">
         <div class="qq-quoted-snippet qq-quoted-snippet--inline">
           <span class="qq-quoted-text">{{ displayQuoteText }}</span>
+          <button class="qq-copy-btn" :class="{ 'is-copied': copied }" @click.stop="handleCopyQuote" :title="copied ? t('common.copied') : t('common.copy')" :aria-label="copied ? t('common.copied') : t('common.copy')">
+            <Check v-if="copied" :size="14" />
+            <Copy v-else :size="14" />
+          </button>
         </div>
         <button class="quote-bar-add" @click.stop="handleAdd" :title="t('quoteBar.addToChat')" :aria-label="t('quoteBar.addToChat')">
           <Plus :size="14" />
         </button>
       </div>
 
-      <!-- Expanded: quoted snippet (full) + input -->
+      <!-- Expanded: quoted snippet (full) + input.
+           Copy button floats absolutely at the snippet's top-right. -->
       <div v-else class="quote-bar-expanded">
         <!-- Quoted snippet — fully shown when expanded -->
         <div class="qq-quoted-snippet">
           <span class="qq-quoted-text qq-quoted-text--expanded">{{ displayQuoteText }}</span>
+          <button class="qq-copy-btn" :class="{ 'is-copied': copied }" @click.stop="handleCopyQuote" :title="copied ? t('common.copied') : t('common.copy')" :aria-label="copied ? t('common.copied') : t('common.copy')">
+            <Check v-if="copied" :size="14" />
+            <Copy v-else :size="14" />
+          </button>
         </div>
 
         <!-- Input -->
@@ -50,10 +60,11 @@
 </template>
 
 <script setup>
-import { XCircle, Plus, Send } from 'lucide-vue-next'
+import { XCircle, Plus, Send, Copy, Check } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
+import { copyText } from '@/utils/clipboard.ts'
 
 const { t } = useI18n()
 
@@ -67,6 +78,8 @@ const expanded = ref(false)
 const inputText = ref('')
 const inputRef = ref(null)
 const barRef = ref(null)
+const copied = ref(false)
+let copyTimer = null
 
 // Quote text: single-line preview while collapsed, full text once expanded.
 const displayQuoteText = computed(() => {
@@ -84,6 +97,8 @@ function onVisibleChange(val) {
   if (!val) {
     expanded.value = false
     inputText.value = ''
+    copied.value = false
+    clearTimeout(copyTimer)
   }
 }
 
@@ -124,6 +139,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onPointerDown, true)
   document.removeEventListener('keydown', onKeyDown, true)
+  clearTimeout(copyTimer)
 })
 
 async function expand() {
@@ -169,7 +185,19 @@ function handleAdd() {
   inputText.value = ''
 }
 
-defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, inputText })
+// Copy the quoted text to the clipboard. Shows a brief Check feedback on the
+// button. @click.stop keeps the collapsed row's expand() from firing.
+function handleCopyQuote() {
+  const text = props.quoteData?.text || ''
+  if (!text) return
+  copyText(text, () => {
+    copied.value = true
+    clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => { copied.value = false }, 1500)
+  })
+}
+
+defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, inputText, copied, handleCopyQuote })
 </script>
 
 <style scoped>
@@ -225,6 +253,36 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   }
 }
 
+/* Copy button — floats at the snippet's top-right, overlaying the text.
+   position:absolute keeps it out of the text flow (see .qq-quoted-snippet). */
+.qq-copy-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: color-mix(in srgb, var(--bg-tertiary) 80%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+@media (hover: hover) {
+  .qq-copy-btn:hover {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
+  }
+}
+
+.qq-copy-btn.is-copied {
+  color: #22c55e;
+}
+
 /* ===== Expanded panel ===== */
 .quote-bar-expanded {
   display: flex;
@@ -233,8 +291,9 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   padding: 8px 10px;
 }
 
-/* Quoted snippet block */
+/* Quoted snippet block — relative so the floating copy button anchors here */
 .qq-quoted-snippet {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 5px;
@@ -255,7 +314,8 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   border-radius: 0;
 }
 
-/* Quote text: single line by default; expand on click to show full content */
+/* Quote text: single line by default; expand on click to show full content.
+   Right padding keeps the text clear of the floating copy button. */
 .qq-quoted-text {
   font-size: 12px;
   line-height: 1.5;
@@ -263,6 +323,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-right: 26px;
 }
 
 .qq-quoted-text--expanded {
