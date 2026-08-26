@@ -792,6 +792,46 @@ describe('onSessionEvent', () => {
   // loading.value stays true. The session_update 'completed' event should
   // clean up the stuck loading state.
 
+  it('loadHistory with 403 AccessDenied clears stale sessionId and recovers without toast', async () => {
+    // Cross-project race: switching back to project A while an in-flight
+    // loadHistory for project B's session (S_B) reaches the backend with
+    // cookie=A → 403 AccessDenied. Should silently clear the stale sessionId
+    // and re-run recovery instead of showing an error toast.
+    let fetchCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation(() => {
+      fetchCalls++
+      if (fetchCalls === 1) {
+        // First call: the cross-project stale request → 403
+        return Promise.resolve({
+          ok: false,
+          status: 403,
+          json: () => Promise.resolve({ error: '访问被拒绝', msgKey: 'AccessDenied' }),
+        })
+      }
+      // Second call: recovery without session_id → returns a valid session
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 'current-s1', messages: [], total: 0, running: false }),
+      })
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'stale-sB'
+    session.currentSessionId.value = 'stale-sB'
+
+    await session.loadHistory(false, false, true, true, true)
+
+    // Recovery fetch fired (no session_id) and identity was recovered
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.not.stringContaining('session_id=stale-sB'),
+        expect.any(Object)
+      )
+    })
+    expect(session.currentSessionId.value).toBe('current-s1')
+    expect(mockToastFn).not.toHaveBeenCalled()
+  })
+
   it('resets loading to false when session completes while loading=true (safety net)', () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()

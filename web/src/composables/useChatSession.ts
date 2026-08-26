@@ -496,6 +496,22 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (loadHistorySeq !== mySeq) { return }
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}))
+        // Cross-project race: a loadHistory for a session that belongs to
+        // another project (e.g. a stale request in flight while the project
+        // cookie switched back) gets 403 AccessDenied. This is a normal
+        // consequence of switching projects — clear the stale sessionId and
+        // recover silently instead of showing an error toast.
+        if (resp.status === 403 && errData.msgKey === 'AccessDenied' && currentSessionId.value) {
+          appLog.w(TAG, 'loadHistory: session belongs to another project, clearing stale sessionId and recovering')
+          currentSessionId.value = ''
+          loadHistoryInProgress = false
+          resolveDeferred!()
+          loadHistoryDeferred = null
+          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning, immediate }
+          pendingReload = null
+          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning, next.immediate), 0)
+          return
+        }
         // If the session was deleted (404 + SessionNotFound), clear stale
         // currentSessionId and recover by re-triggering loadHistory (which
         // will use the recovery path to auto-select the latest available
