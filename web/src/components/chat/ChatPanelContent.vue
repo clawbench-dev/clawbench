@@ -917,7 +917,10 @@ function showMetadata(msg) {
     metadataModal.value.createdAt = msg.createdAt || ''
     metadataModal.value.relatedFile = (msg.files && msg.files.length > 0) ? msg.files[0].path || msg.files[0] : ''
     metadataModal.value.messageId = msg.id || null
-    metadataModal.value.sessionId = msg.sessionId || ''
+    // Streaming/finalized placeholders don't carry a sessionId (created
+    // client-side). Fall back to the current session so the detail modal
+    // always shows one.
+    metadataModal.value.sessionId = msg.sessionId || identity.currentSessionId.value || ''
     metadataModal.value.ftsIndexed = false
     metadataModal.value.vecIndexed = false
     metadataDrawer.open()

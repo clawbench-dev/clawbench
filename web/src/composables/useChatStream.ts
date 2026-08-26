@@ -453,14 +453,12 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         disconnectStream()
         const errorData = payload as unknown as ErrorEventData
-        // Set error block on streaming message immediately so user sees the
-        // error without waiting for loadHistory REST round-trip.
-        const sm = findStreamingMsg(messages.value)
-        if (sm) {
-          const errorBlock: ContentBlock = { type: 'error', text: errorData?.error || 'Unknown error' }
-          if (errorData?.reason) errorBlock.reason = errorData.reason
-          sm.blocks = [errorBlock]
-        }
+        // Set the error block via the reducer's single write channel so the UI
+        // updates immediately. The reducer attaches it to the live streaming
+        // assistant, or to the last assistant when the stream already ended
+        // (backend crash after done) — so the user never needs a reload to see
+        // it.
+        dispatch({ type: 'ws_error', text: errorData?.error || 'Unknown error', reason: errorData?.reason })
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
         loading.value = false
         onStreamEnd?.('error')

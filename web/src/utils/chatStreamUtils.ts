@@ -691,6 +691,7 @@ export type ChatMessageAction =
   | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; backend?: string } }
   | { type: 'ws_queue_drain'; queueId: string; text: string; files: FileEntry[]; dbMessageId?: number; backend?: string }
   | { type: 'ws_queue_cancel'; queueIds: string[] }
+  | { type: 'ws_error'; text: string; reason?: string }
   | { type: 'stream_finalize' }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
   | { type: 'ws_content'; text: string }
@@ -1078,6 +1079,37 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       const existing = findBlockByTypeBackward(blocks, 'thinking')
       if (existing) existing.text += action.text
       else blocks.push({ type: 'thinking', text: action.text, ...(action.key ? { _key: action.key } : {}) })
+      return state
+    }
+    case 'ws_error': {
+      // Display an error block. Prefer the live streaming assistant; when the
+      // stream already ended (findStreamingMsg is null — e.g. a backend crash
+      // after the last 'done'), append the error to the LAST assistant message
+      // so the user sees it immediately instead of only after a reload.
+      const errorBlock: ContentBlock = { type: 'error', text: action.text || 'Unknown error' }
+      if (action.reason) errorBlock.reason = action.reason
+      const sm = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (sm) {
+        sm.blocks = [errorBlock]
+        return state
+      }
+      for (let i = state.length - 1; i >= 0; i--) {
+        const m = state[i]
+        if (m.role === 'assistant') {
+          if (!m.blocks) m.blocks = []
+          // Replace empty/placeholder blocks with the error; otherwise append.
+          const hasContent = m.blocks.some((b) => b.type === 'text' && (b as { text?: string }).text)
+          if (!hasContent && !m.streaming) m.blocks = [errorBlock]
+          else m.blocks.push(errorBlock)
+          return state
+        }
+      }
+      // No assistant message at all — create one.
+      state.push({
+        role: 'assistant', id: generateDrainId(), content: '', blocks: [errorBlock],
+        streaming: false, seq: nextClientSeq(),
+      })
+      sortMessages(state)
       return state
     }
     case 'ws_thinking_done': {

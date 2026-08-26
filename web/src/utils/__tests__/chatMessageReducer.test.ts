@@ -376,4 +376,38 @@ describe('mergeDbMessages', () => {
     const merged = mergeDbMessages(state, [u({ id: 1, content: '1' })], true)
     expect(merged.some((m) => m.streaming)).toBe(true)
   })
+
+  it('ws_error replaces live streaming blocks with the error block', () => {
+    const state = run(
+      [a({ id: 'drain-1', content: 'partial', blocks: [{ type: 'text', text: 'partial' }], streaming: true, seq: 1 })],
+      [{ type: 'ws_error', text: 'backend crashed', reason: 'backend_exit' }],
+    )
+    const sm = state.find((m) => m.role === 'assistant')
+    expect(sm?.blocks).toEqual([{ type: 'error', text: 'backend crashed', reason: 'backend_exit' }])
+    expect(sm?.streaming).toBe(true) // flag cleared later by forceCleanup
+  })
+
+  it('ws_error with no streaming assistant appends to the last assistant (no reload needed)', () => {
+    // Regression: after the stream ended (done), a backend crash emits an error
+    // event but there is no live streaming placeholder — the error must still
+    // surface immediately on the last assistant instead of only after reload.
+    const state = run(
+      [
+        u({ id: 1, content: 'q1' }),
+        a({ id: 2, content: 'reply1', blocks: [{ type: 'text', text: 'reply1' }] }),
+      ],
+      [{ type: 'ws_error', text: 'peer disconnected', reason: 'backend_exit' }],
+    )
+    const lastAssistant = state[state.length - 1]
+    expect(lastAssistant.role).toBe('assistant')
+    expect(lastAssistant.blocks).toContainEqual({ type: 'error', text: 'peer disconnected', reason: 'backend_exit' })
+  })
+
+  it('ws_error creates an assistant message when none exists', () => {
+    const state = run(
+      [u({ id: 1, content: 'q1' })],
+      [{ type: 'ws_error', text: 'boom', reason: 'backend_exit' }],
+    )
+    expect(state.some((m) => m.role === 'assistant' && (m.blocks ?? []).some((b) => b.type === 'error'))).toBe(true)
+  })
 })
