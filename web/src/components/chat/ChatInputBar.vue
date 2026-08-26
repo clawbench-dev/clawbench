@@ -1317,6 +1317,16 @@ function clearInput() {
   resetInputHistory()
 }
 
+/** Restore the input text after a failed send, including its draft entry.
+ *  Used when a message could not be delivered (network down / 5xx) — the text
+ *  must not silently disappear. */
+function restoreInput(text) {
+  inputText.value = text ?? ''
+  if (props.currentSessionId && text) {
+    draftCache.set(props.currentSessionId, text)
+  }
+}
+
 /** Save current input text to draft cache without clearing it (called before session switch). */
 function saveDraft() {
   if (props.currentSessionId) {
@@ -1521,6 +1531,7 @@ watch(() => props.loading, (val) => {
 
 defineExpose({
   clearInput,
+  restoreInput,
   saveDraft,
   clearInputPreserveDraft,
   clearRecommendation,

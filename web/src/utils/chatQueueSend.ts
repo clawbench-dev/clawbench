@@ -48,13 +48,17 @@ export interface EnqueueAndMaybeStartOptions {
     attachedFiles: FileEntry[],
     pendingFiles: FileEntry[],
     queueId: string,
-  ) => Promise<void>
+  ) => Promise<boolean>
 }
 
 /**
  * Push a pending user message and enqueue it for delivery. Returns the queueId
  * of the pushed pending message. The backend persists the message (queued=1)
  * and either starts an execution or lets the running drain loop pick it up.
+ *
+ * Throws when the enqueue call fails (rejects, or resolves with `false` — the
+ * signal enqueueMessage returns when it swallowed a fetch error). Callers
+ * should restore the input box on failure so the user's text isn't lost.
  */
 export async function enqueueAndMaybeStart(opts: EnqueueAndMaybeStartOptions): Promise<string> {
   const queueId = opts.queueId || generateQueueId()
@@ -72,7 +76,10 @@ export async function enqueueAndMaybeStart(opts: EnqueueAndMaybeStartOptions): P
   })
   opts.onPendingRendered?.()
 
-  await opts.enqueue(opts.sessionId, opts.text, opts.attachedFiles, opts.pendingFiles, queueId)
+  const ok = await opts.enqueue(opts.sessionId, opts.text, opts.attachedFiles, opts.pendingFiles, queueId)
+  if (ok === false) {
+    throw new Error('enqueue failed')
+  }
 
   return queueId
 }

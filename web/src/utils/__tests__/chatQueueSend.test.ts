@@ -99,4 +99,32 @@ describe('enqueueAndMaybeStart', () => {
     await enqueueAndMaybeStart(opts)
     expect(opts.onPendingRendered).toHaveBeenCalledTimes(1)
   })
+
+  it('propagates enqueue failure so the caller can restore the input text', async () => {
+    // Regression: when the enqueue request fails (network down, 5xx), the
+    // caller must be able to detect the failure and restore the input box.
+    // If enqueueAndMaybeStart swallowed the error, the message would be lost
+    // silently while the input stays cleared.
+    const opts = makeOpts({
+      enqueue: vi.fn().mockRejectedValue(new Error('network down')),
+    })
+    await expect(enqueueAndMaybeStart(opts)).rejects.toThrow('network down')
+  })
+
+  it('throws when the enqueue call resolves with false (request failed)', async () => {
+    // enqueueMessage swallows its own fetch errors and reports them by
+    // returning false. enqueueAndMaybeStart must turn that into a throw so
+    // the caller's try/catch restores the input box.
+    const opts = makeOpts({
+      enqueue: vi.fn().mockResolvedValue(false),
+    })
+    await expect(enqueueAndMaybeStart(opts)).rejects.toThrow()
+  })
+
+  it('resolves normally when the enqueue call resolves with true', async () => {
+    const opts = makeOpts({
+      enqueue: vi.fn().mockResolvedValue(true),
+    })
+    await expect(enqueueAndMaybeStart(opts)).resolves.toMatch(/^pending-/)
+  })
 })

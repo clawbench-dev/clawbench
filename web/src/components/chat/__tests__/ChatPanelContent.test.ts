@@ -471,3 +471,33 @@ describe('ChatPanelContent — ensureMessageContent scroll re-sync', () => {
     expect(region).not.toMatch(/scrollBottom\(true\)/)
   })
 })
+
+// ── Failed-send input restore ──
+// When a message send fails (network disconnected / HTTP 5xx), the input box
+// must NOT stay cleared — the text is restored so the user can retry.
+
+describe('ChatPanelContent — failed send keeps input text', () => {
+  async function sourceRegion(start: string, end: string) {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    return source.slice(source.indexOf(start), source.indexOf(end))
+  }
+
+  it('captures inputText before clearing and restores it in the send catch block', async () => {
+    const region = await sourceRegion('async function sendMessage(text)', 'async function sendMessageNow(text, filePaths, files)')
+    // The current input text must be remembered so the catch path can restore it.
+    expect(region).toMatch(/(?:let|const)\s+inputText\s*=/)
+    // The direct-send failure path must restore the captured text instead of
+    // leaving the box empty.
+    expect(region).toMatch(/catch\s*(?:\([^)]*\))?\s*\{[\s\S]*?restoreInput\(inputText\)/)
+  })
+
+  it('restores input text when the enqueue request fails', async () => {
+    const region = await sourceRegion('async function sendMessage(text)', 'async function sendMessageNow(text, filePaths, files)')
+    // In the queue path, enqueueMessage returns false on failure — the input
+    // must then be restored with the captured text.
+    expect(region).toMatch(/enqueueAndMaybeStart\(/)
+    expect(region).toMatch(/restoreInput\(inputText\)/)
+    expect(region).toMatch(/enqueueMessage/)
+  })
+})

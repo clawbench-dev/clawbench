@@ -82,7 +82,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
    *
    *  IMPORTANT: sessionId MUST be captured by the caller BEFORE any async
    *  boundary. */
-  async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<void> {
+  async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<boolean> {
     const inputText = text !== undefined ? text : ''
     const filePaths = attachedFiles.map(f => f.path)
     const allFileEntries: FileEntry[] = [
@@ -124,9 +124,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         // (single write channel: never splice messages directly).
         dispatch({ type: 'optimistic_remove_content', content: inputText })
       }
+      // Report failure so callers can restore the input box (a failed enqueue
+      // must not leave the user's typed text cleared).
+      return false
     }
 
     scrollBottom(true)
+    return true
   }
 
   /** Remove a pending message by its queueId.

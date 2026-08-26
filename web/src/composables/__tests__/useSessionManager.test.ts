@@ -459,6 +459,52 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
+        it('returns false when the enqueue request fails', async () => {
+            // ChatPanelContent relies on the boolean to know whether the message
+            // actually got enqueued — when it fails it must restore the input
+            // text instead of leaving it cleared.
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'))
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.enqueueMessage('session-1', 'hello')
+
+            expect(result).toBe(false)
+
+            fetchSpy.mockRestore()
+        })
+
+        it('returns false when the backend responds with an error status', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: false,
+                status: 500,
+                json: () => Promise.resolve({}),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.enqueueMessage('session-1', 'hello')
+
+            expect(result).toBe(false)
+
+            fetchSpy.mockRestore()
+        })
+
+        it('returns true when the enqueue request succeeds', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, queue: [] }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.enqueueMessage('session-1', 'hello')
+
+            expect(result).toBe(true)
+
+            fetchSpy.mockRestore()
+        })
+
         it('calls scrollBottom after enqueue', async () => {
             const opts = createMockOptions()
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({

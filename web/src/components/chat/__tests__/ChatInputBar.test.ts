@@ -505,6 +505,40 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.hasDraft('sess-1')).toBe(false)
   })
 
+  it('restoreInput restores the cleared text after a failed send', async () => {
+    // When a message send fails (network down / 5xx), the parent clears the
+    // input before the request and must be able to put the text back.
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'hello world'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.saveDraft()
+    // Simulate a send: parent calls clearInput() (deletes draft too), then
+    // the request fails and the parent calls restoreInput().
+    wrapper.vm.clearInput()
+    expect(wrapper.vm.inputText).toBe('')
+    wrapper.vm.restoreInput('hello world')
+    expect(wrapper.vm.inputText).toBe('hello world')
+  })
+
+  it('restoreInput also restores the draft cache entry', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'draft text'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.clearInput()
+    expect(wrapper.vm.hasDraft('sess-1')).toBe(false)
+    wrapper.vm.restoreInput('draft text')
+    // clearInput() deleted the draft; restoreInput must re-create it so a
+    // session switch afterwards does not lose the recovered text.
+    expect(wrapper.vm.getDraft('sess-1')).toBe('draft text')
+  })
+
+  it('restoreInput with empty text does not recreate a draft', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.restoreInput('')
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.vm.hasDraft('sess-1')).toBe(false)
+  })
+
   it('draft is preserved across session switches via watcher', async () => {
     // Test the saveDraft + watcher integration:
     // The watcher saves draft for old session and restores for new session.

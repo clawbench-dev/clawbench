@@ -742,15 +742,21 @@ async function sendMessage(text) {
        // "session not running" race internally (B2 self-heal), so no
        // needs_start/resubmit round-trip is needed here. Shared with the
        // AskUserQuestion-card path for identical enqueue behavior.
-       await enqueueAndMaybeStart({
-         sessionId: identity.currentSessionId.value,
-         text: inputText || '',
-         attachedFiles: capturedAttached,
-         pendingFiles: capturedPending,
-         pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
-         onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
-         enqueue: (sid, text, attached, pending, qid) => manager.enqueueMessage(sid, text, attached, pending, qid),
-       })
+       try {
+         await enqueueAndMaybeStart({
+           sessionId: identity.currentSessionId.value,
+           text: inputText || '',
+           attachedFiles: capturedAttached,
+           pendingFiles: capturedPending,
+           pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
+           onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
+           enqueue: (sid, text, attached, pending, qid) => manager.enqueueMessage(sid, text, attached, pending, qid),
+         })
+       } catch {
+         // Enqueue failed (network down / 5xx) — the message was not delivered.
+         // Restore the input so the user's text isn't lost.
+         inputBarRef.value?.restoreInput(inputText || '')
+       }
        return
      }
 
@@ -766,7 +772,13 @@ async function sendMessage(text) {
     inputBarRef.value?.clearInput()
     clearPendingFiles()
 
-    await sendMessageNow(inputText, filePaths, allFiles)
+    try {
+      await sendMessageNow(inputText, filePaths, allFiles)
+    } catch {
+      // Send failed (network down / 5xx) — the message was not delivered.
+      // Restore the input so the user's text isn't lost.
+      inputBarRef.value?.restoreInput(inputText)
+    }
 }
 
 /** Actually send a message to the backend (no queue check). */
@@ -864,6 +876,9 @@ async function sendMessageNow(text, filePaths, files) {
         if (err.msgKey === 'SessionBackendNotFound' || err.msgKey === 'SessionNotFound') {
             identity.currentSessionId.value = ''
         }
+        // Re-throw so callers (sendMessage) can restore the input box — a
+        // failed send must not silently swallow the user's typed text.
+        throw err
     }
 }
 
@@ -874,15 +889,21 @@ async function handleToolSendMessage(text) {
     if (loading.value) {
       // Shared with the normal input path: push a pending user message and
       // enqueue it. The backend's B2 self-heal handles the session-ended race.
-      await enqueueAndMaybeStart({
-        sessionId: identity.currentSessionId.value,
-        text,
-        attachedFiles: [],
-        pendingFiles: [],
-        pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
-        onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
-        enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
-      })
+      // On failure, enqueueMessage already shows the toast and rolls back the
+      // pending message — nothing to restore here (no input box involved).
+      try {
+        await enqueueAndMaybeStart({
+          sessionId: identity.currentSessionId.value,
+          text,
+          attachedFiles: [],
+          pendingFiles: [],
+          pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
+          onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
+          enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
+        })
+      } catch {
+        /* failure already surfaced by enqueueMessage */
+      }
     } else {
       await sendMessage(text)
     }
