@@ -13,6 +13,8 @@ export interface CompletionPopoverItem {
     summary: string
     /** 最近一条用户消息纯文本（单行省略号展示） */
     userMessage?: string
+    /** 项目显示名（仅跨项目弹窗提供，本项目为空） */
+    projectName?: string
     kind: 'session' | 'task'
     projectPath?: string
     taskId?: string

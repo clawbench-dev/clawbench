@@ -869,6 +869,13 @@ const removeTaskHandler = onEvent((event, data) => {
     }
 })
 
+// 取路径 basename 作为项目显示名（跨项目弹窗用）
+function projectBaseName(path) {
+    const trimmed = (path || '').replace(/[\\/]+$/, '')
+    const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+    return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
+}
+
 // AI 完成弹窗：任何会话/定时任务完成时，若用户当前未在查看该会话，入队弹出。
 // 后端 session_update/task_update 的 completed 事件已携带 session_title 与
 // response_preview（Markdown 原文）；useGlobalEvents 已按事件 ID 全局去重。
@@ -878,6 +885,9 @@ const removeCompletionHandler = onEvent((event, data) => {
     if (event !== 'session_update' && event !== 'task_update') return
     const sessionId = data.session_id
     if (!sessionId || sessionId === sessionIdentity.currentSessionId.value) return
+    // 跨项目才展示项目名/路径（本项目不加）——判断弹窗会话项目与当前项目是否相同
+    const isSameProject = !data.project_path || data.project_path === store.state.projectRoot
+    const projectName = isSameProject ? '' : projectBaseName(data.project_path || '')
     if (event === 'task_update') {
         completionPopover.push({
             sessionId,
@@ -886,6 +896,7 @@ const removeCompletionHandler = onEvent((event, data) => {
             summary: data.response_preview || '',
             userMessage: data.last_user_message || '',
             projectPath: data.project_path,
+            projectName,
             taskId: data.task_id,
             executionId: data.execution_id,
         })
@@ -897,6 +908,7 @@ const removeCompletionHandler = onEvent((event, data) => {
             summary: data.response_preview || '',
             userMessage: data.last_user_message || '',
             projectPath: data.project_path,
+            projectName,
         })
     }
 })

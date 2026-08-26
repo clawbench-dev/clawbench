@@ -71,6 +71,22 @@ describe('CompletionPopover', () => {
         expect(document.querySelector('.completion-popover-user-msg')).toBeFalsy()
     })
 
+    it('renders the project name and path when provided', () => {
+        mockState.active = ref(makeItem({ projectName: 'my-app', projectPath: '/home/user/my-app' }))
+        mountPopover()
+
+        const el = document.querySelector('.completion-popover-project')!
+        expect(el.textContent).toContain('my-app')
+        expect(el.textContent).toContain('/home/user/my-app')
+    })
+
+    it('hides the project row when projectName is empty (same project)', () => {
+        mockState.active = ref(makeItem({ projectName: '', projectPath: '' }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-popover-project')).toBeFalsy()
+    })
+
     it('renders the summary as markdown HTML', () => {
         mockState.active = ref(makeItem({ summary: '**加粗摘要**' }))
         mountPopover()

@@ -14,6 +14,7 @@
               <CornerDownLeft :size="14" />
             </span>
           </div>
+          <div v-if="active.projectName" class="completion-popover-project" :title="active.projectPath || active.projectName">📁 {{ active.projectName }}{{ active.projectPath ? ' · ' + active.projectPath : '' }}</div>
           <div v-if="active.userMessage" class="completion-popover-user-msg" :title="active.userMessage">💬 {{ active.userMessage }}</div>
           <div class="completion-popover-summary markdown-body" v-html="summaryHtml" @click="handleSummaryClick"></div>
         </div>
@@ -140,6 +141,17 @@ function handleSummaryClick(event: MouseEvent): void {
     text-overflow: ellipsis;
     margin-bottom: 4px;
     opacity: 0.9;
+}
+
+.completion-popover-project {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-tertiary, var(--text-secondary, var(--text-primary)));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+    opacity: 0.85;
 }
 
 .completion-popover-summary {
