@@ -372,14 +372,19 @@ const TRANSIENT_BASE = Number.MAX_SAFE_INTEGER / 4
  *   than history ids, yet smaller than a later message's id) — using it would
  *   reorder messages by persist time. DB-loaded history that merely retains a
  *   queueId (no seq) is NOT live and sorts by id.
+ *
+ *   A cross-device remote message that already carries a numeric DB id
+ *   (user_message MessageID) sorts by id — its `_remoteQueueId` must NOT pull
+ *   it into seq space, otherwise it interleaves with local seq by receive order
+ *   instead of by DB id. Remote messages with a string id (MessageID absent)
+ *   are covered by the `typeof m.id !== 'number'` branch.
  */
 export function messageSortValue(m: ChatMessage): number {
   const isLive =
     m.pending === true ||
     m.streaming === true ||
     typeof m.id !== 'number' ||
-    (m.queueId != null && m.seq != null) ||
-    (m['_remoteQueueId'] != null && m.seq != null)
+    (m.queueId != null && m.seq != null)
   if (!isLive) return m.id as number
   return TRANSIENT_BASE + (m.seq ?? 0)
 }
@@ -750,6 +755,13 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
     let target = byId.get(String(db.id))
     if (target) {
       used.add(target)
+      // The DB row is the authoritative identity for this message. Clear the
+      // transient cross-device markers so the message is treated as a plain
+      // DB-backed row (sorts by id, no drain/_remote matching side effects).
+      if (target.role === 'user') {
+        delete (target as Record<string, unknown>)['_remoteQueueId']
+        delete (target as Record<string, unknown>)['_remote']
+      }
     } else if (db.role === 'user' && db.queueId && (byQueueId.has(db.queueId) || byId.has(db.queueId))) {
       // Match a pending bubble by queueId. The optimistic bubble's id IS the
       // queueId (no queueId field yet); after a numeric-id adoption the queueId
@@ -955,9 +967,11 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // user_message self-echo (MessageID). Adopt it immediately so the bubble
       // no longer sorts as a transient after later queued messages. Preserve
       // the old id as queueId so replies anchored via parentQueueId keep
-      // resolving to it, and KEEP seq: sorting stays in seq space while the
-      // stream is live so this message still orders after history and before
-      // later queued messages. loadHistory (idle) later drops seq → DB id order.
+      // resolving to it, and DROP seq: a directly-sent message's DB id IS its
+      // real conversational position (send order = persist order), so it must
+      // sort by id alongside history — NOT in seq space (where it would
+      // interleave with queued/remote messages by client receive order).
+      // loadHistory (idle) later reconciles the authoritative DB order.
       // A PENDING bubble is a queued message still waiting for the drain loop —
       // it must NOT be adopted here (the drain carries the authoritative id and
       // clears pending). Adopting early would flip it to a normal message.
@@ -968,7 +982,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       const oldId = String(target.id)
       target.id = action.dbId
       target.queueId = oldId
-      if (typeof target.seq !== 'number') target.seq = nextClientSeq()
+      delete target.seq
       delete target.pending
       sortMessages(state)
       return state

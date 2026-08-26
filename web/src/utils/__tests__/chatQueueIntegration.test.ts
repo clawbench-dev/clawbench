@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chatMessageReducer, sortMessages, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
+import { chatMessageReducer, sortMessages, messageSortValue, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 
 /**
  * Integration test for the REAL full queued-message flow.
@@ -283,5 +283,45 @@ describe('chat queue full-flow integration', () => {
     s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 38350 }])
     expect(s.length).toBe(lenBefore)
     expect(s.find((m) => m.role === 'user')?.id).toBe(38350)
+  })
+
+  // ── Cross-device: phone sends a message while browser also sends one. The
+  //    phone message arrives as a user_message remote (numeric DB id); the
+  //    browser message is adopted via self-echo. Both must sort by DB id —
+  //    never by client receive order (seq), which would interleave them wrong.
+  it('cross-device remote message and local message sort by DB id, not receive order', () => {
+    let s: ChatMessage[] = []
+    // history
+    s = run(s, [{ type: 'db_load', sessionRunning: false, dbMessages: [
+      u({ id: 1, content: 'q1' }), a({ id: 2, content: 'r1' }),
+      u({ id: 3, content: 'q2' }), a({ id: 4, content: 'r2' }),
+    ] }])
+    // phone sends (DB id 7) → remote user_message with numeric id
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 7, content: 'from phone', senderClientId: 'phone', queueId: 'pending-phone', backend: 'codebuddy' } }])
+    const phone = s.find((m) => m.content === 'from phone')
+    expect(phone?.id).toBe(7)
+    expect(phone?._remote).toBe(true)
+    // numeric id remote must sort by id, NOT TRANSIENT_BASE+seq
+    expect(messageSortValue(phone!)).toBe(7)
+    // browser sends its own msg (DB id 5) → adopted via self-echo
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-local', content: 'from browser', seq: 1 }) }])
+    s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-local', dbId: 5 }])
+    // Correct DB order: local(5) then phone(7) — not receive order.
+    expect(display(s)).toBe('user:1 | assistant:2 | user:3 | assistant:4 | user:5 | user:7')
+  })
+
+  // ── Cross-device: db_load adopts the remote message (byId), clearing its
+  //    transient _remote markers so it stays a plain DB row.
+  it('db_load clears _remote markers on an adopted remote message', () => {
+    let s: ChatMessage[] = []
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 9, content: 'from phone', senderClientId: 'phone', queueId: 'pending-phone', backend: 'codebuddy' } }])
+    s = run(s, [{ type: 'db_load', sessionRunning: false, dbMessages: [
+      u({ id: 1, content: 'q1' }), a({ id: 2, content: 'r1' }),
+      u({ id: 9, content: 'from phone' }),
+    ] }])
+    const phone = s.find((m) => m.content === 'from phone')
+    expect(phone?._remote).toBeUndefined()
+    expect((phone as any)?._remoteQueueId).toBeUndefined()
+    expect(phone?.id).toBe(9)
   })
 })
