@@ -53,6 +53,16 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolNameAnd
 	emitSessionEvent(sessionID, status, hasNewMessages, true, toolNameAndInput...)
 }
 
+// EmitSessionEventWSOnly broadcasts a session_update event to connected clients
+// WITHOUT producing a push notification or storing a pending push event. Used by
+// the terminal-completion path: normal completion already sends its own push via
+// EmitSessionPushNotification, but still needs the global WS broadcast so every
+// client (including ones that missed the stream-level "done" event) can clear the
+// session's running flag.
+func EmitSessionEventWSOnly(sessionID, status string, hasNewMessages bool) {
+	emitSessionEvent(sessionID, status, hasNewMessages, false)
+}
+
 // emitSessionEvent is EmitSessionEvent with an explicit push control. Callers
 // that manage their own terminal-push guard (e.g. CancelSession) pass pushEnabled
 // based on whether they won the guard, so a duplicate "cancelled" push is avoided

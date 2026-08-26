@@ -942,6 +942,18 @@ export default {
       externalChange: 'This file was modified elsewhere. Reload it?',
       reload: 'Reload',
       keepChanges: 'Keep current content',
+      searchPanel: {
+        find: 'Find',
+        replace: 'Replace',
+        next: 'Next',
+        previous: 'Previous',
+        all: 'All',
+        matchCase: 'Match case',
+        regexp: 'Regexp',
+        byWord: 'By word',
+        replaceAll: 'Replace all',
+        close: 'Close',
+      },
     },
     overlay: {
       back: 'Back',

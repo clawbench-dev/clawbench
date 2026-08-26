@@ -289,6 +289,26 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(quoteMocks.showBar).not.toHaveBeenCalled()
   })
 
+  it('does not show quote question while the search panel is open', async () => {
+    const wrapper = mountViewer({ content: 'alpha beta\nalpha gamma', file: { path: '/p/main.go' } })
+    await sleep(80)
+    // Open the built-in search panel, then move the selection onto a match
+    // (as findNext does when navigating results).
+    wrapper.vm.openSearch()
+    await sleep(50)
+    const view = wrapper.vm.getView()
+    view.dispatch({ selection: { anchor: 0, head: 5 } })
+    await sleep(700) // debounce 200ms + showBar 400ms — must not fire
+    expect(quoteMocks.showBar).not.toHaveBeenCalled()
+    // Closing the panel restores normal quote behavior.
+    const { closeSearchPanel } = await import('@codemirror/search')
+    closeSearchPanel(view)
+    await sleep(50)
+    view.dispatch({ selection: { anchor: 0, head: 5 } })
+    await sleep(700)
+    expect(quoteMocks.showBar).toHaveBeenCalledTimes(1)
+  })
+
   it('getView returns the raw (non-reactive-proxied) EditorView', async () => {
     const wrapper = mountViewer({ content: 'const a = 1\n', editable: true })
     await sleep(80)
@@ -473,6 +493,48 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     wrapper.vm.openSearch()
     await sleep(50)
     expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull()
+  })
+
+  it('localizes the search panel text according to the app locale', async () => {
+    // English locale: the search field placeholder comes from CodeMirror's
+    // phrase("Find") and falls back to the English default.
+    const enWrapper = mountViewer({ editable: true, language: 'javascript', content: 'const a = 1\n' })
+    await sleep(80)
+    enWrapper.vm.openSearch()
+    await sleep(50)
+    const enInput = document.querySelector<HTMLInputElement>('.cm-viewer .cm-search input[name="search"]')
+    expect(enInput).toBeTruthy()
+    expect(enInput!.placeholder).toBe('Find')
+    enWrapper.unmount()
+    await sleep(30)
+
+    // zh locale: the phrases facet must translate the panel labels.
+    const zhI18n = createI18n({
+      legacy: false,
+      locale: 'zh',
+      messages: {
+        zh: { file: { editor: { save: '保存', saving: '保存中', cancel: '取消', dirty: '未保存' } } },
+        en: { file: { editor: { save: 'Save', saving: 'Saving', cancel: 'Cancel', dirty: 'Unsaved' } } },
+      },
+    })
+    const zhWrapper = mount(CodeMirrorViewer, {
+      props: { content: 'const a = 1\n', language: 'javascript', editable: true },
+      global: { plugins: [zhI18n] },
+      attachTo: document.body,
+    })
+    await sleep(80)
+    zhWrapper.vm.openSearch()
+    await sleep(50)
+    const zhInput = document.querySelector<HTMLInputElement>('.cm-viewer .cm-search input[name="search"]')
+    expect(zhInput).toBeTruthy()
+    expect(zhInput!.placeholder).toBe('查找')
+    // Button labels are translated as well.
+    const zhButtons = [...document.querySelectorAll('.cm-viewer .cm-search .cm-button')]
+      .map((b) => b.textContent?.trim())
+      .filter(Boolean)
+    expect(zhButtons).toContain('下一个')
+    expect(zhButtons).toContain('上一个')
+    zhWrapper.unmount()
   })
 
   // ── Tab indent handling (indentWithTab) ──

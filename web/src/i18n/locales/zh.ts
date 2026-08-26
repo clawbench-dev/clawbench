@@ -942,6 +942,18 @@ export default {
       externalChange: '该文件已在别处被修改。是否重新加载？',
       reload: '重新加载',
       keepChanges: '保留当前内容',
+      searchPanel: {
+        find: '查找',
+        replace: '替换',
+        next: '下一个',
+        previous: '上一个',
+        all: '全部',
+        matchCase: '区分大小写',
+        regexp: '正则',
+        byWord: '全词匹配',
+        replaceAll: '全部替换',
+        close: '关闭',
+      },
     },
     overlay: {
       back: '返回',

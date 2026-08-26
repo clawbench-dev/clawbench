@@ -565,6 +565,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			// which handles push. Skip for error: no meaningful push content.
 			if event.Type == "done" {
 				service.EmitSessionPushNotification(sessionID, "completed")
+				// Broadcast the terminal status to ALL clients (not just the
+				// session's StreamHub subscribers). Clients that missed the
+				// stream-level "done" (WS blip, another device, scheduled run)
+				// rely on this to clear the session's running flag.
+				service.EmitSessionEventWSOnly(sessionID, "completed", false)
 			}
 		}
 		// Mark ACP connection as idle when the session goroutine exits.

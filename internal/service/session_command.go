@@ -221,6 +221,9 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			// which handles push. Skip for error: no meaningful push content.
 			if event.Type == eventTypeDone {
 				EmitSessionPushNotification(sessionID, statusCompleted)
+				// Global WS broadcast so all clients (even ones that missed the
+				// stream "done") clear the session's running flag.
+				emitSessionEvent(sessionID, statusCompleted, false, false)
 			}
 		}
 

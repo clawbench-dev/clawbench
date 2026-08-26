@@ -1069,6 +1069,36 @@ func TestEmitSessionEvent_NilManager(t *testing.T) {
 	})
 }
 
+// EmitSessionEventWSOnly broadcasts the session_update event to all WS clients
+// but must NOT produce a push notification (that's handled separately by the
+// completion path's EmitSessionPushNotification).
+func TestEmitSessionEventWSOnly_BroadcastNoPush(t *testing.T) {
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-wsonly", "")
+	_ = sub
+
+	EmitSessionEventWSOnly("session-ws-only-1", "completed", false)
+
+	buffered := sub.GetBufferedEvents()
+	if len(buffered) == 0 {
+		t.Fatal("expected at least one buffered event")
+	}
+	data, ok := buffered[0].Data.(*ws.SessionUpdateData)
+	if !ok {
+		t.Fatal("expected SessionUpdateData")
+	}
+	assert.Equal(t, "completed", data.Status)
+	assert.Equal(t, "session-ws-only-1", data.SessionID)
+}
+
 // --- CancelSession with bad cancel type ---
 
 func TestCancelSession_BadCancelType(t *testing.T) {
