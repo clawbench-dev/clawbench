@@ -534,6 +534,7 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 			if responsePreviewRaw != "" {
 				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 			}
+			data.LastUserMessage = GetLastUserMessagePlain(sessionID)
 		}
 	}
 	// For running tasks, include task name as session title

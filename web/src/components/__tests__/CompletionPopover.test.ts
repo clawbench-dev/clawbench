@@ -52,6 +52,25 @@ describe('CompletionPopover', () => {
         expect(el.textContent).toContain('修复登录 bug')
     })
 
+    it('renders the last user message as a single line', () => {
+        mockState.active = ref(makeItem({ userMessage: '请帮我修复登录 bug' }))
+        mountPopover()
+
+        const el = document.querySelector('.completion-popover-user-msg')!
+        expect(el.textContent).toContain('请帮我修复登录 bug')
+        const styles = window.getComputedStyle(el)
+        expect(styles.textOverflow).toBe('ellipsis')
+        expect(styles.overflow).toBe('hidden')
+        expect(styles.whiteSpace).toBe('nowrap')
+    })
+
+    it('hides the user message row when empty', () => {
+        mockState.active = ref(makeItem({ userMessage: '' }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-popover-user-msg')).toBeFalsy()
+    })
+
     it('renders the summary as markdown HTML', () => {
         mockState.active = ref(makeItem({ summary: '**加粗摘要**' }))
         mountPopover()

@@ -884,6 +884,7 @@ const removeCompletionHandler = onEvent((event, data) => {
             kind: 'task',
             title: data.session_title || '未命名任务',
             summary: data.response_preview || '',
+            userMessage: data.last_user_message || '',
             projectPath: data.project_path,
             taskId: data.task_id,
             executionId: data.execution_id,
@@ -894,6 +895,7 @@ const removeCompletionHandler = onEvent((event, data) => {
             kind: 'session',
             title: data.session_title || '未命名会话',
             summary: data.response_preview || '',
+            userMessage: data.last_user_message || '',
             projectPath: data.project_path,
         })
     }

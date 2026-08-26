@@ -92,6 +92,8 @@ func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled
 		if responsePreviewRaw != "" {
 			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 		}
+		// Include the last user message so clients can show it alongside the reply
+		data.LastUserMessage = GetLastUserMessagePlain(sessionID)
 	}
 
 	// Include toolName and toolInput for permission_pending events
@@ -209,8 +211,7 @@ func getSessionResponsePreview(sessionID string) string {
 	return truncatePreview(getSessionResponsePreviewRaw(sessionID))
 }
 
-// getSessionResponsePreviewRaw returns the un-truncated preview text.
-// Used when both Markdown and plain-text previews are needed, so that
+// getSessionResponsePreviewRaw returns the un-truncated preview text.// Used when both Markdown and plain-text previews are needed, so that
 // StripMarkdown operates on the full text before each variant is truncated.
 func getSessionResponsePreviewRaw(sessionID string) string {
 	// Read raw assistant contents directly from chat_history. GetMessagesBySessionID
@@ -260,6 +261,30 @@ func truncatePreview(text string) string {
 		return string([]rune(text)[:responsePreviewMaxRunes]) + "…"
 	}
 	return text
+}
+
+// GetLastUserMessagePlain returns the plain-text content of the most recent
+// non-streaming, non-queued user message in a session. Used to include a
+// "last user message" line in completion popovers/notifications alongside the
+// AI's response preview. Returns "" when no such message exists.
+func GetLastUserMessagePlain(sessionID string) string {
+	if dbRead == nil || sessionID == "" {
+		return ""
+	}
+	var content string
+	err := dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND queued = 0 ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&content)
+	if err != nil {
+		// sql.ErrNoRows → no user message yet; other errors → treat as unavailable
+		return ""
+	}
+	plain := ExtractPlainText(content)
+	if plain == "" {
+		return ""
+	}
+	return truncatePreview(plain)
 }
 
 // IsSessionRunning checks if a session is currently running.

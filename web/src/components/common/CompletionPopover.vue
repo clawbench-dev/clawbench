@@ -14,6 +14,7 @@
               <CornerDownLeft :size="14" />
             </span>
           </div>
+          <div v-if="active.userMessage" class="completion-popover-user-msg" :title="active.userMessage">💬 {{ active.userMessage }}</div>
           <div class="completion-popover-summary markdown-body" v-html="summaryHtml" @click="handleSummaryClick"></div>
         </div>
       </Transition>
@@ -128,6 +129,17 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-open:hover {
     opacity: 1;
     background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.completion-popover-user-msg {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-secondary, var(--text-primary));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+    opacity: 0.9;
 }
 
 .completion-popover-summary {

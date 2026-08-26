@@ -11,6 +11,8 @@ export interface CompletionPopoverItem {
     title: string
     /** Markdown 原文，组件内用 renderMarkdownHtml 渲染 */
     summary: string
+    /** 最近一条用户消息纯文本（单行省略号展示） */
+    userMessage?: string
     kind: 'session' | 'task'
     projectPath?: string
     taskId?: string

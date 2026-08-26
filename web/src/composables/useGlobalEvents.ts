@@ -25,6 +25,7 @@ interface ServerEvent {
         session_title?: string
         response_preview?: string
         response_preview_plain?: string // Markdown-stripped preview for Android/browser notifications
+        last_user_message?: string // plain-text preview of the most recent user message (completed only)
         tool_name?: string
         project_path?: string
     }

@@ -33,6 +33,7 @@ type SessionUpdateData struct {
 	HasNewMessages       bool   `json:"has_new_messages"`
 	ResponsePreview      string `json:"response_preview,omitempty"`       // preview of AI's final reply with Markdown (for DingTalk)
 	ResponsePreviewPlain string `json:"response_preview_plain,omitempty"` // Markdown-stripped preview (for Android/browser notifications)
+	LastUserMessage      string `json:"last_user_message,omitempty"`      // plain-text preview of the most recent user message (completed only)
 	SessionTitle         string `json:"session_title,omitempty"`
 	ProjectPath          string `json:"project_path,omitempty"`
 	ToolName             string `json:"tool_name,omitempty"`  // tool name requesting approval (permission_pending only)
@@ -49,6 +50,7 @@ type TaskUpdateData struct {
 	SessionTitle         string `json:"session_title,omitempty"`          // task name for push notification
 	ResponsePreview      string `json:"response_preview,omitempty"`       // preview with Markdown (for DingTalk)
 	ResponsePreviewPlain string `json:"response_preview_plain,omitempty"` // Markdown-stripped preview (for Android/browser notifications)
+	LastUserMessage      string `json:"last_user_message,omitempty"`      // plain-text preview of the most recent user message (completed only)
 }
 
 // ChatStreamData wraps a chat streaming event for WS delivery.
