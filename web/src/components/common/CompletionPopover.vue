@@ -8,14 +8,18 @@
       <Transition name="completion-popover">
         <div class="completion-popover">
           <div class="completion-popover-header">
-            <span class="completion-popover-icon">🤖</span>
+            <span class="completion-popover-icon"><Bot :size="14" /></span>
             <span class="completion-popover-title" :title="active.title">{{ active.title || '未命名会话' }}</span>
             <span class="completion-popover-open" role="button" :aria-label="openLabel" :title="openLabel" @click="openSession">
-              <CornerDownLeft :size="14" />
+              <CornerDownLeft :size="16" />
             </span>
           </div>
-          <div v-if="active.projectName" class="completion-popover-project" :title="active.projectPath || active.projectName">📁 {{ active.projectName }}{{ active.projectPath ? ' · ' + active.projectPath : '' }}</div>
-          <div v-if="active.userMessage" class="completion-popover-user-msg" :title="active.userMessage">💬 {{ active.userMessage }}</div>
+          <div v-if="active.projectName" class="completion-popover-project" :title="active.projectPath || active.projectName">
+            <Folder :size="12" /> {{ active.projectName }}{{ active.projectPath ? ' · ' + active.projectPath : '' }}
+          </div>
+          <div v-if="active.userMessage" class="completion-popover-user-msg" :title="active.userMessage">
+            <MessageSquare :size="12" /> {{ active.userMessage }}
+          </div>
           <div class="completion-popover-summary markdown-body" v-html="summaryHtml" @click="handleSummaryClick"></div>
         </div>
       </Transition>
@@ -25,7 +29,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CornerDownLeft } from 'lucide-vue-next'
+import { CornerDownLeft, Bot, Folder, MessageSquare } from 'lucide-vue-next'
 import { useCompletionPopover } from '@/composables/useCompletionPopover'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader'
@@ -119,31 +123,26 @@ function handleSummaryClick(event: MouseEvent): void {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-secondary, var(--text-primary));
-    opacity: 0.75;
-    padding: 4px;
-    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    color: #fff;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
+    transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 .completion-popover-open:hover {
-    opacity: 1;
-    background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+    opacity: 0.85;
+    transform: scale(1.05);
 }
 
+.completion-popover-project,
 .completion-popover-user-msg {
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--text-secondary, var(--text-primary));
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-bottom: 4px;
-    opacity: 0.9;
-}
-
-.completion-popover-project {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     font-size: 12px;
     line-height: 1.4;
     color: var(--text-tertiary, var(--text-secondary, var(--text-primary)));
@@ -151,7 +150,7 @@ function handleSummaryClick(event: MouseEvent): void {
     overflow: hidden;
     text-overflow: ellipsis;
     margin-bottom: 4px;
-    opacity: 0.85;
+    opacity: 0.9;
 }
 
 .completion-popover-summary {
