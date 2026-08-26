@@ -271,6 +271,7 @@ import { useI18n } from 'vue-i18n'
 import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Loader2, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
+import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -292,6 +293,7 @@ import { useFileUpload } from '@/composables/useFileUpload'
 import { useVoiceInput } from '@/composables/useVoiceInput'
 import { useChatRecommendation } from '@/composables/useChatRecommendation'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { useChatContext } from '@/composables/useChatContext'
 import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 
@@ -814,7 +816,8 @@ function handleMenuKeydown(e) {
 // ── Input history navigation (ArrowUp/ArrowDown) ──────────
 // Per-session, in-memory only. Derived from the session's persisted user
 // messages (excludes pending optimistic bubbles and queued messages, matching
-// the server-side user-message index source), newest first.
+// the server-side user-message index source), newest first. Each entry carries
+// both the text and the attached files so a history restore can rebuild both.
 const historyInputs = computed(() => {
   const msgs = props.messages || []
   const list = []
@@ -822,7 +825,8 @@ const historyInputs = computed(() => {
     const m = msgs[i]
     if (m.role !== 'user' || m.pending || m.queued) continue
     const text = typeof m.content === 'string' ? m.content.trim() : ''
-    if (text) list.push(text)
+    const files = Array.isArray(m.files) ? m.files : []
+    if (text) list.push({ text, files })
   }
   return list
 })
@@ -830,9 +834,9 @@ const historyInputs = computed(() => {
 // Navigation position. -1 = not navigating (fresh input). Valid positions walk
 // the history from newest (0) to oldest (len-1).
 const historyIndex = ref(-1)
-// Input text captured when entering history navigation, so ArrowDown can return
-// to what the user was typing before they browsed history.
-const historyDraft = ref('')
+// Input state captured when entering history navigation, so ArrowDown can return
+// to what the user was typing (text + attachments) before they browsed history.
+const historyDraft = ref({ text: '', files: [] })
 // Suppress the @ / slash autocomplete menus while history navigation replaces
 // the input programmatically (a history entry starting with @ or / must not
 // pop the menu).
@@ -840,7 +844,7 @@ let historyNavSuppressMenu = false
 
 function resetInputHistory() {
   historyIndex.value = -1
-  historyDraft.value = ''
+  historyDraft.value = { text: '', files: [] }
 }
 
 function textareaCursorRow(el) {
@@ -873,22 +877,32 @@ function stepHistory(isUp, isGesture = false) {
   }
   if (historyInputs.value.length === 0) return false
 
-  const applyHistoryText = (text) => {
+  const chatContext = useChatContext()
+  const applyHistoryText = (entry) => {
     historyNavSuppressMenu = true
-    inputText.value = text
+    inputText.value = entry.text
+    // Restore the entry's attached files: replace the current attachments with
+    // the history message's files (normalized, in case legacy string entries
+    // are present).
+    chatContext.attachedFiles.value = (entry.files || [])
+      .map(f => normalizeFileEntry(f))
+      .filter(f => f && f.path)
     // Reset the caret to the end so the multiline guard's cursor-row check
     // (selectionStart-based) never reads a stale position from the old text.
     const ta = textareaRef.value
     if (ta) {
-      const end = text.length
+      const end = entry.text.length
       ta.setSelectionRange(end, end)
     }
   }
   if (isUp) {
     // From fresh input (or while editing a history entry), capture the current
-    // text once so ArrowDown can restore it.
-    if (historyIndex.value === -1 && text.trim()) {
-      historyDraft.value = text
+    // text and attachments once so ArrowDown can restore them.
+    if (historyIndex.value === -1 && (text.trim() || chatContext.attachedFiles.value.length > 0)) {
+      historyDraft.value = {
+        text,
+        files: chatContext.attachedFiles.value.slice(),
+      }
     }
     historyIndex.value = Math.min(historyIndex.value + 1, historyInputs.value.length - 1)
     applyHistoryText(historyInputs.value[historyIndex.value])

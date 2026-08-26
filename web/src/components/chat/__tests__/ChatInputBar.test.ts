@@ -99,9 +99,10 @@ vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: vi.fn() }),
 }))
 
+const mockAttachedFilesValue = { value: [] }
 vi.mock('@/composables/useChatContext.ts', () => ({
   useChatContext: () => ({
-    attachedFiles: [],
+    attachedFiles: mockAttachedFilesValue,
     addAttachedFile: vi.fn(),
     removeAttachedFile: vi.fn(),
     hasAttachedFile: () => false,
@@ -203,7 +204,7 @@ vi.mock('@/utils/path.ts', () => ({
 vi.mock('@/utils/fileAttachmentUtils.ts', () => ({
   isImageFile: () => false,
   isUploadPath: () => false,
-  normalizeFileEntry: (f: any) => f,
+  normalizeFileEntry: (f: any) => (typeof f === 'string' ? { path: f, isDir: false } : { path: f?.path || '', isDir: f?.isDir ?? false, startLine: f?.startLine, endLine: f?.endLine }),
 }))
 
 vi.mock('@/utils/fileManager.ts', () => ({
@@ -1469,6 +1470,51 @@ describe('ChatInputBar', () => {
       _setIsPCForTest(false)
       wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
       expect(wrapper.vm.placeholderHints).toContain('Swipe history')
+      wrapper.unmount()
+    })
+
+    it('restores the message attachments when navigating history', async () => {
+      const withFiles = [
+        { id: 1, role: 'user', content: 'msg with files', files: [
+          { path: '/src/a.ts', isDir: false, startLine: 1, endLine: 10 },
+          '/src/b.ts',
+        ] },
+        { id: 2, role: 'assistant', content: 'reply' },
+        { id: 3, role: 'user', content: 'plain msg' },
+      ]
+      const wrapper = mountBar({ currentSessionId: 's1', messages: withFiles })
+      // ArrowUp → newest user message (plain msg, no files) — attachments cleared
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('plain msg')
+      expect(mockAttachedFilesValue.value).toEqual([])
+      // ArrowUp → older message with files — attachments restored (normalized)
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('msg with files')
+      expect(mockAttachedFilesValue.value).toEqual([
+        { path: '/src/a.ts', isDir: false, startLine: 1, endLine: 10 },
+        { path: '/src/b.ts', isDir: false },
+      ])
+      // ArrowDown back to the fresh input — attachments cleared again
+      await pressArrow(wrapper, 'ArrowDown')
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(mockAttachedFilesValue.value).toEqual([])
+      wrapper.unmount()
+    })
+
+    it('restores the draft attachments when returning from history navigation', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      // User has text + attachments typed, then browses history
+      wrapper.vm.inputText = 'draft text'
+      mockAttachedFilesValue.value = [{ path: '/draft.ts', isDir: false }]
+      await wrapper.vm.$nextTick()
+      // ArrowUp → history entry replaces text + attachments
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      expect(mockAttachedFilesValue.value).toEqual([])
+      // ArrowDown back to the fresh input → draft text + attachments restored
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('draft text')
+      expect(mockAttachedFilesValue.value).toEqual([{ path: '/draft.ts', isDir: false }])
       wrapper.unmount()
     })
 
