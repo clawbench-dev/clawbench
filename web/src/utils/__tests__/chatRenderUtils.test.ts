@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   rewriteImageUrls,
+  wrapInlineSvgs,
   convertAudioLinks,
   convertVideoLinks,
   parseAskQuestionContent,
@@ -741,6 +742,57 @@ describe('AUDIO_EXTENSIONS', () => {
 
   it('all extensions are lowercase', () => {
     expect(AUDIO_EXTENSIONS.every(ext => ext === ext.toLowerCase())).toBe(true)
+  })
+})
+
+// ─── wrapInlineSvgs ──────────────────────────────────────────────────────────
+
+describe('wrapInlineSvgs', () => {
+  it('wraps a bare inline svg in a lightbox wrapper with expand icon', () => {
+    const html = '<p>hello</p><svg viewBox="0 0 100 50"><rect></rect></svg>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('<span class="lightbox-svg-wrap">')
+    expect(result).toContain('<svg viewBox="0 0 100 50" class="lightbox-svg">')
+    expect(result).toContain('<span class="lightbox-expand-icon"></span>')
+    expect(result).toContain('</svg>')
+    expect(result).toMatch(/<\/svg><span class="lightbox-expand-icon"><\/span><\/span>$/)
+  })
+
+  it('preserves existing class attribute on the svg', () => {
+    const html = '<svg class="icon" viewBox="0 0 10 10"><path></path></svg>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('<svg class="lightbox-svg icon"')
+  })
+
+  it('is idempotent — does not re-wrap an already wrapped svg', () => {
+    const once = wrapInlineSvgs('<svg viewBox="0 0 1 1"><rect></rect></svg>')
+    const twice = wrapInlineSvgs(once)
+    expect(twice).toBe(once)
+  })
+
+  it('does not wrap svg inside a pre.mermaid code block', () => {
+    // At the string-rendering stage, mermaid is still a <pre> code block —
+    // the svg is produced later by mermaid.ts at the DOM level and already
+    // gets its own expand icon there.
+    const html = '<pre class="mermaid">graph TD; A-->B</pre>'
+    expect(wrapInlineSvgs(html)).toBe(html)
+  })
+
+  it('passes through html with no svg unchanged', () => {
+    const html = '<p>just <strong>text</strong></p>'
+    expect(wrapInlineSvgs(html)).toBe(html)
+  })
+
+  it('wraps multiple inline svgs independently', () => {
+    const html = '<svg viewBox="0 0 1 1"><rect></rect></svg><p>x</p><svg viewBox="0 0 2 2"><circle></circle></svg>'
+    const result = wrapInlineSvgs(html)
+    expect(result.match(/class="lightbox-svg-wrap"/g)).toHaveLength(2)
+  })
+
+  it('handles empty svg content', () => {
+    const result = wrapInlineSvgs('<svg viewBox="0 0 1 1"></svg>')
+    expect(result).toContain('lightbox-svg-wrap')
+    expect(result).toContain('lightbox-expand-icon')
   })
 })
 

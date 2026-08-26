@@ -2,7 +2,7 @@ import { marked, katex, DOMPurify } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
 import { annotateCodeBlockHeaders, annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
-import { rewriteImageUrls, convertAudioLinks, convertVideoLinks, getThumbWidth } from '@/utils/chatRenderUtils.ts'
+import { rewriteImageUrls, wrapInlineSvgs, convertAudioLinks, convertVideoLinks, getThumbWidth } from '@/utils/chatRenderUtils.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { annotateCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
@@ -384,6 +384,7 @@ export function renderMarkdown(
         const { isPC } = usePlatformDetect()
 
         html = rewriteImageUrls(html, projectRoot, getThumbWidth(isPC.value))
+        html = wrapInlineSvgs(html)
         html = convertAudioLinks(html, projectRoot)
         html = convertVideoLinks(html, projectRoot)
 

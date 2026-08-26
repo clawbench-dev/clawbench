@@ -348,47 +348,6 @@ function handleCopyMessage() {
   vertical-align: middle;
 }
 
-/* Lightbox image wrapper — positions the expand icon overlay */
-.chat-message .lightbox-img-wrap {
-  position: relative;
-  display: inline-block;
-}
-
-.chat-message .lightbox-img-wrap .lightbox-img {
-  cursor: default;
-}
-
-/* Expand icon — top-right corner, visible on hover (PC mode) */
-.chat-message .lightbox-img-wrap .lightbox-expand-icon {
-  display: none;
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  cursor: pointer;
-  z-index: 2;
-  pointer-events: auto;
-}
-
-@media (hover: hover) {
-  .chat-message .lightbox-img-wrap:hover .lightbox-expand-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-}
-
-/* Use a simple "+" character as the expand icon (no SVG dependency in HTML strings) */
-.chat-message .lightbox-img-wrap .lightbox-expand-icon::after {
-  content: '⤢';
-  font-size: 14px;
-  line-height: 1;
-}
-
 /* ── Message content wrapper ── */
 .msg-content-wrapper {
   position: relative;
@@ -1115,6 +1074,61 @@ function handleCopyMessage() {
   max-width: 100%;
   max-height: 184px;
   height: auto;
+}
+
+/* ── Lightbox: raster image wrapper — positions the expand icon overlay ──
+   These must be NON-scoped: the image/svg markup arrives via v-html, so the
+   injected elements carry no data-v-* attribute and scoped styles never match. */
+.chat-message .lightbox-img-wrap,
+.chat-message .lightbox-svg-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.chat-message .lightbox-img-wrap .lightbox-img {
+  cursor: default;
+}
+
+/* Expand icon — top-right corner, visible on hover (PC mode) */
+.chat-message .lightbox-img-wrap .lightbox-expand-icon,
+.chat-message .lightbox-svg-wrap .lightbox-expand-icon {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+@media (hover: hover) {
+  .chat-message .lightbox-img-wrap:hover .lightbox-expand-icon,
+  .chat-message .lightbox-svg-wrap:hover .lightbox-expand-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* Use a simple "expand" character as the icon (no SVG dependency in HTML strings) */
+.chat-message .lightbox-img-wrap .lightbox-expand-icon::after,
+.chat-message .lightbox-svg-wrap .lightbox-expand-icon::after {
+  content: '⤢';
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Inline SVG thumbnail (non-mermaid) — constrained like the mermaid preview */
+.chat-message .lightbox-svg-wrap svg.lightbox-svg {
+  max-width: 200px;
+  max-height: 200px;
+  height: auto;
+  border-radius: 6px;
 }
 
 /* ── Audio player in chat (non-scoped for v-html penetration) ── */

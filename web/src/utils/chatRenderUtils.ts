@@ -99,6 +99,33 @@ export function isThumbExtension(path: string): boolean {
 }
 
 /**
+ * Wrap bare inline <svg> elements (returned directly by the AI, not rendered
+ * from markdown image syntax) in a lightbox wrapper so they get the same
+ * "view" affordance as raster images: a top-right expand icon on hover.
+ *
+ * Runs on the rendered HTML string before mermaid diagrams are produced —
+ * at this stage mermaid is still a <pre> code block (no svg), and mermaid.ts
+ * later adds its own expand icon at the DOM level. The wrapper marks the svg
+ * with a .lightbox-svg class so repeated application is idempotent.
+ */
+export function wrapInlineSvgs(html: string): string {
+  return html.replace(/<svg([^>]*)>[\s\S]*?<\/svg>/gi, (match) => {
+    // Idempotency: skip SVGs we already wrapped — the wrapper adds the
+    // .lightbox-svg marker class to the svg's own opening tag.
+    const openTag = match.match(/^<svg[^>]*>/i)?.[0] || ''
+    if (/class="[^"]*\blightbox-svg\b[^"]*"/i.test(openTag)) return match
+    const m = match.match(/^(<svg[^>]*>)([\s\S]*)(<\/svg>)$/)
+    if (!m) return match
+    const [, opening, inner, closeTag] = m
+    // Add the lightbox-svg marker class, preserving any existing class
+    const tagged = /class="/i.test(opening)
+      ? opening.replace(/class="/i, 'class="lightbox-svg ')
+      : opening.replace('>', ' class="lightbox-svg">')
+    return `<span class="lightbox-svg-wrap">${tagged}${inner}${closeTag}<span class="lightbox-expand-icon"></span></span>`
+  })
+}
+
+/**
  * Build a thumbnail URL for a project-relative, already-segment-encoded path.
  * The URL is kept stable (no cache-buster) so the backend's ETag/Last-Modified
  * revalidation returns fresh content as soon as the source file changes.
