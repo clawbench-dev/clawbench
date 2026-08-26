@@ -81,8 +81,8 @@ function handleSummaryClick(event: MouseEvent): void {
     width: 100%;
     background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
     color: var(--text-primary);
-    border-radius: 14px;
-    padding: 10px 14px;
+    border-radius: 12px;
+    padding: 8px 10px;
     box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
     border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
     -webkit-tap-highlight-color: transparent;
@@ -94,7 +94,7 @@ function handleSummaryClick(event: MouseEvent): void {
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .completion-popover-icon {
