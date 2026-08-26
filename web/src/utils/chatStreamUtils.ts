@@ -539,19 +539,20 @@ export function drainQueueMessage(
     if (typeof dbMessageId === 'number' && dbMessageId > 0 && typeof messages[pendingIdx].id !== 'number') {
       // Adopt the DB id. A message that already carries a numeric id (e.g. a
       // cross-device _remote that arrived persisted) keeps it — replacing would
-      // churn the v-for key. Sorting stays in seq space (client seq preserved),
-      // so an adopted message still orders by send order while the stream is
-      // live; loadHistory (idle) later drops seq and orders by DB id.
+      // churn the v-for key. Drop seq so the message moves to the id domain
+      // (sorts by DB id) like every other adopted message — keeps the sort
+      // space uniform so direct-sent, queued and remote messages never
+      // interleave by client receive order. Replies anchored via parentQueueId
+      // resolve dynamically and stay with their parent. loadHistory (idle)
+      // later reconciles the authoritative DB order.
       messages[pendingIdx].queueId = String(messages[pendingIdx].id)
       messages[pendingIdx].id = dbMessageId
+      delete messages[pendingIdx].seq
+    } else if (messages[pendingIdx].id == null) {
+      messages[pendingIdx].id = drainId || generateDrainId()
       if (typeof messages[pendingIdx].seq !== 'number') {
         messages[pendingIdx].seq = nextClientSeq()
       }
-    } else if (messages[pendingIdx].id == null) {
-      messages[pendingIdx].id = drainId || generateDrainId()
-    }
-    if (typeof messages[pendingIdx].seq !== 'number') {
-      messages[pendingIdx].seq = nextClientSeq()
     }
   } else if (userContent) {
     // Defensive: the queued message wasn't found by its key (its optimistic
@@ -758,9 +759,12 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
       // The DB row is the authoritative identity for this message. Clear the
       // transient cross-device markers so the message is treated as a plain
       // DB-backed row (sorts by id, no drain/_remote matching side effects).
+      // Preserve the queueId from the DB row (if any) — a still-queued remote
+      // message must keep matching the later queue_drain by queueId.
       if (target.role === 'user') {
         delete (target as Record<string, unknown>)['_remoteQueueId']
         delete (target as Record<string, unknown>)['_remote']
+        if (db.queueId && !target.queueId) target.queueId = db.queueId
       }
     } else if (db.role === 'user' && db.queueId && (byQueueId.has(db.queueId) || byId.has(db.queueId))) {
       // Match a pending bubble by queueId. The optimistic bubble's id IS the

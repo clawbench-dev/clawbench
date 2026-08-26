@@ -324,4 +324,42 @@ describe('chat queue full-flow integration', () => {
     expect((phone as any)?._remoteQueueId).toBeUndefined()
     expect(phone?.id).toBe(9)
   })
+
+  // ── Regression: interleaving direct-sent and queued messages. All adopted
+  //    messages must sort by DB id (single id domain), so a drained queued
+  //    message (id 11) never jumps above a later direct message (id 12).
+  it('direct→queued→direct interleaving sorts all adopted messages by DB id', () => {
+    let s: ChatMessage[] = []
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1 }) }])
+    s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 10 }]) // direct, adopted
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 2 }) }]) // queued
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-3', content: '3', seq: 3 }) }])
+    s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-3', dbId: 12 }]) // direct, adopted
+    // drain queued msg2 → id 11, must sort between 10 and 12
+    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: '2', files: [], dbMessageId: 11 }])
+    const msg2 = s.find((m) => m.content === '2')
+    expect(msg2?.id).toBe(11)
+    expect(msg2?.seq).toBeUndefined() // drained → id domain
+    const userIds = s.filter((m) => m.role === 'user').map((m) => String(m.id))
+    expect(userIds).toEqual(['10', '11', '12'])
+  })
+
+  // ── Regression: a remote queued message gets a db_load BEFORE its drain.
+  //    db_load must clear _remote markers but keep queueId so the later
+  //    queue_drain still matches (otherwise it stays pending forever and the
+  //    drain creates a duplicate reply).
+  it('remote queued message survives db_load and still matches the later drain', () => {
+    let s: ChatMessage[] = []
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 3, content: 'from phone', senderClientId: 'phone', queueId: 'pending-phone', backend: 'codebuddy' } }])
+    s = run(s, [{ type: 'db_load', sessionRunning: false, dbMessages: [
+      u({ id: 3, content: 'from phone', queueId: 'pending-phone', queued: true }),
+    ] }])
+    const after = s.find((m) => m.content === 'from phone')
+    expect((after as any)?._remoteQueueId).toBeUndefined()
+    expect(after?.queueId).toBe('pending-phone') // drain anchor preserved
+    // drain arrives — must match by queueId
+    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-phone', text: 'from phone', files: [], dbMessageId: 3 }])
+    const drained = s.find((m) => m.content === 'from phone')
+    expect(drained?.pending).toBeUndefined()
+  })
 })

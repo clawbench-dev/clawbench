@@ -731,11 +731,12 @@ describe('drainQueueMessage', () => {
     ]
     drainQueueMessage(messages, 'queue-1', 'hello', [], 'claude', callbacks, undefined, 42)
     const userMsg = messages.find(m => m.role === 'user')
-    // The drained message adopts its DB id. It keeps its client seq so sorting
-    // stays in seq space while the stream is live (no parent-state dependency).
+    // The drained message adopts its DB id and moves to the id domain (seq
+    // dropped) — like every other adopted message, so the sort space stays
+    // uniform and adopted messages never interleave by client seq.
     expect(userMsg.id).toBe(42)
     expect(userMsg.pending).toBeUndefined()
-    expect(userMsg.seq).toBe(1)
+    expect(userMsg.seq).toBeUndefined()
   })
 
   it('falls back to push when no matching pending message found', () => {
@@ -928,39 +929,40 @@ describe('drainQueueMessage', () => {
     expect(messages.filter(m => m.role === 'user')).toHaveLength(3)
   })
 
-  it('keeps an earlier still-transient question above a later drained queued message (regression)', () => {
-    // Real-flow scenario: Q1 was sent while idle, so it is a plain optimistic
-    // push with a string id (NOT pending) and its reply S1 is streaming. Q2 was
-    // enqueued while S1 was generating, so it is pending. When Q2 is drained,
-    // the drained message must NOT be moved to the DB-id domain — otherwise it
-    // (and its reply) would sort above Q1/S1, whose DB ids the frontend doesn't
-    // know yet, producing the queued-message display misalignment.
+  it('keeps conversational order when a drained queued message and a direct message are both adopted', () => {
+    // Real-flow: Q1 was sent while idle (plain optimistic push, string id),
+    // its reply S1 is streaming. Q2 was enqueued while S1 generated. In the
+    // live stream Q1's DB id arrives via self-echo BEFORE Q2 is drained (the
+    // user_message emit precedes the queue_drain). Both adopted messages move
+    // to the id domain → sorted by DB id → Q1(1) before Q2(3).
     const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: nextClientSeq() }
     const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), parentQueueId: String(q1.id) }
     const q2 = { role: 'user', id: 'queue-B', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true, seq: nextClientSeq() }
     const messages: any[] = [q1, s1, q2]
     sortMessages(messages)
 
+    // Q1 adopted via self-echo (id=1), Q2 drained (id=3) — both move to id domain.
+    // optimistic_adopt_id preserves old id as queueId so the reply anchor lives.
+    q1.id = 1
+    q1.queueId = 'pending-1'
+    delete q1.seq
     const s2 = drainQueueMessage(messages, 'queue-B', 'Q2', [], 'claude', callbacks, undefined, 3)
     s2!.blocks!.push({ type: 'text', text: 'S2 reply' })
     sortMessages(messages)
 
     const contents = messages.map(m => m.content || (m.blocks || []).map((b: any) => b.text || '').join(''))
     expect(contents).toEqual(['Q1', 'S1 reply', 'Q2', 'S2 reply'])
-    // Q2 adopts its DB id but keeps its client seq — it stays in seq space,
-    // so it still sorts after Q1/S1 (earlier seqs) while the stream is live.
     const q2After = messages.find((m: any) => m.content === 'Q2')
     expect(q2After.id).toBe(3)
     expect(q2After.pending).toBeUndefined()
-    expect(typeof q2After.seq).toBe('number')
+    expect(q2After.seq).toBeUndefined()
   })
 
   it('keeps the earlier question above an enqueued message that lacks a seq (regression)', () => {
     // Real enqueue path (enqueueAndMaybeStart) pushes the pending message WITHOUT
-    // a `seq`. messageSortValue treats a missing seq as 0 → TRANSIENT_BASE + 0,
-    // which sorts ABOVE every other transient message (seq >= 1). This sent the
-    // queued message to the very top and pushed the earlier question+reply to the
-    // bottom. The drained message must inherit a proper position.
+    // a `seq`. Q1's DB id arrives via self-echo before Q2 is drained (emit
+    // precedes drain), so both adopted messages end up in the id domain and
+    // sort by DB id. The drained message must inherit a proper position.
     const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: nextClientSeq() }
     const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), parentQueueId: String(q1.id) }
     // q2 has pending=true but NO seq — exactly what enqueueAndMaybeStart pushes.
@@ -968,6 +970,10 @@ describe('drainQueueMessage', () => {
     const messages: any[] = [q1, s1, q2]
     sortMessages(messages)
 
+    // Q1 adopted via self-echo (id=1, old id kept as queueId).
+    q1.id = 1
+    q1.queueId = 'pending-1'
+    delete q1.seq
     const s2 = drainQueueMessage(messages, 'queue-B', 'Q2', [], 'claude', callbacks, undefined, 3)
     s2!.blocks!.push({ type: 'text', text: 'S2 reply' })
     sortMessages(messages)
@@ -1453,6 +1459,12 @@ describe('queued streaming order (integration)', () => {
     sortMessages(messages)
     // 初始顺序: 1, 回复1, 2, 3
     expect(messages.map(m => m.role + ':' + m.id).slice(0, 4)).toEqual(['user:pending-1', 'assistant:stream-1', 'user:pending-2', 'user:pending-3'])
+
+    // 消息1 被 self-echo 采纳 (id=1, 旧 id 保留为 queueId) — user_message emit
+    // 先于 queue_drain，所以 drain 前消息1 必已采纳。
+    messages[0].id = 1
+    messages[0].queueId = 'pending-1'
+    delete messages[0].seq
 
     // drain 2 → 回复2
     drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-2', 4)
