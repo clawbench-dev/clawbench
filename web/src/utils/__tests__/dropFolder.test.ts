@@ -218,4 +218,50 @@ describe('expandDataTransfer (webkitGetAsEntry traversal)', () => {
     const result = await expandDataTransfer(dt)
     expect(result.files).toHaveLength(2)
   })
+
+  it('collects every file when the live DataTransfer is cleared after the first await', async () => {
+    // Browsers clear the live DataTransfer collections as soon as the drop
+    // handler yields (e.g. across await). A static fake array would not expose
+    // this: the file callback below drains the collections before resolving,
+    // mimicking "cleared after the first yield". expandDataTransfer must
+    // snapshot entries synchronously, otherwise the later files are lost.
+    const f1 = new File(['1'], 'a.txt', { type: 'text/plain' })
+    const f2 = new File(['2'], 'b.txt', { type: 'text/plain' })
+    const f3 = new File(['3'], 'c.txt', { type: 'text/plain' })
+
+    let drained = false
+    const drain = () => { drained = true }
+
+    const rawItems = [
+      { kind: 'file', webkitGetAsEntry: () => mkLiveEntry(f1) },
+      { kind: 'file', webkitGetAsEntry: () => mkLiveEntry(f2) },
+      { kind: 'file', webkitGetAsEntry: () => mkLiveEntry(f3) },
+    ]
+    const rawFiles = [f1, f2, f3]
+    // Live collection: after `drain()` is called (first async yield), every
+    // read returns nothing — like the browser clearing the DataTransfer.
+    const liveList = (raw: unknown[]) => ({
+      get length() { return drained ? 0 : raw.length },
+      0: raw[0], 1: raw[1], 2: raw[2],
+    })
+    // `entry.file()` is async in the real browser; resolving it marks the
+    // point where the handler has yielded and the collections get cleared.
+    function mkLiveEntry(file: File) {
+      return {
+        isFile: true,
+        isDirectory: false,
+        name: file.name,
+        fullPath: `/${file.name}`,
+        file: (cb: (f: File) => void) => {
+          drain()
+          cb(file)
+        },
+      }
+    }
+
+    const dt = { items: liveList(rawItems), files: liveList(rawFiles) } as unknown as DataTransfer
+    const result = await expandDataTransfer(dt)
+    expect(result.files).toHaveLength(3)
+    expect(result.files.map((f) => f.file.name).sort()).toEqual(['a.txt', 'b.txt', 'c.txt'])
+  })
 })

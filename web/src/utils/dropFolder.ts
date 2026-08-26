@@ -92,36 +92,48 @@ async function walkEntry(
  *   - items entries are distinct dragged things → collected as-is, never deduped;
  *   - `dataTransfer.files` entries that were already gathered from the items
  *     traversal are skipped (same physical file appears in both sources).
+ *
+ * IMPORTANT: all entries/files must be snapshot synchronously. The DataTransfer
+ * collections are live and the browser clears them as soon as the drop handler
+ * yields to the event loop (e.g. across `await`), so nothing may be read from
+ * `dataTransfer` after the first `await`.
  */
 export async function expandDataTransfer(dataTransfer: DataTransfer): Promise<ExpandResult> {
   const files: DropFile[] = []
   const emptyDirs: string[] = []
   const seen = new Set<string>()
   const topDirs = new Set<string>()
+
+  // Sync snapshot: `webkitGetAsEntry()` is sync, so collect every entry up
+  // front. File objects are snapshots too — safe to read after the handler
+  // yields even though the DataTransfer list itself is cleared.
+  const entries: FileSystemEntry[] = []
   const items = dataTransfer?.items
-
-  const keyOf = (file: File, relPath: string) => `${relPath}/${file.name}`
-
-  if (items && items.length) {
+  if (items) {
     for (let i = 0; i < items.length; i++) {
       const item = items[i]
       if (typeof item.webkitGetAsEntry === 'function') {
         const entry = item.webkitGetAsEntry()
-        if (entry) {
-          if (entry.isDirectory) topDirs.add(entry.name)
-          await walkEntry(entry, files, emptyDirs, (file, relPath) => {
-            files.push({ file, relPath })
-            seen.add(keyOf(file, relPath))
-          })
-        }
+        if (entry) entries.push(entry)
       }
     }
+  }
+  const fileList = Array.from(dataTransfer?.files || [])
+
+  const keyOf = (file: File, relPath: string) => `${relPath}/${file.name}`
+
+  for (const entry of entries) {
+    if (entry.isDirectory) topDirs.add(entry.name)
+    await walkEntry(entry, files, emptyDirs, (file, relPath) => {
+      files.push({ file, relPath })
+      seen.add(keyOf(file, relPath))
+    })
   }
 
   // dataTransfer.files always lists the full selection. Skip folder placeholders
   // (a 0-byte File named after a dropped directory that Chrome/Electron include)
   // and entries already gathered from the items traversal.
-  for (const file of Array.from(dataTransfer?.files || [])) {
+  for (const file of fileList) {
     if (file.size === 0 && topDirs.has(file.name)) continue
     const rel = dirOf(file.webkitRelativePath || '')
     if (seen.has(keyOf(file, rel))) continue
