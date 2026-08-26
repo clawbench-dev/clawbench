@@ -954,16 +954,25 @@ export function useChatSession(options: UseChatSessionOptions) {
           }
           return
         }
-        // WS reconnect: the live stream re-subscribes on reconnect. The
-        // useChatStream watch on `connected` only re-subscribes when its
-        // internal isStreaming is still true. If a stream watchdog timeout (or
-        // an explicit disconnectStream()) already set isStreaming=false while
-        // loading stayed true, that watch never fires and the session is left
-        // stuck on the loading spinner with no live stream and no history
-        // reload. Explicitly re-subscribe (subscribeOnly, so the existing
-        // streaming message is preserved) to guarantee the stream is resumed
-        // regardless of isStreaming.
-        onConnectStream(currentSessionId.value, { subscribeOnly: true })
+        // WS reconnect (e.g. app resumed from background): the live stream
+        // re-subscribes on reconnect. The useChatStream watch on `connected`
+        // only re-subscribes when its internal isStreaming is still true. If a
+        // stream watchdog timeout (or an explicit disconnectStream()) already
+        // set isStreaming=false while loading stayed true, that watch never
+        // fires and the session is left stuck on the loading spinner with no
+        // live stream and no history reload. Explicitly reload history AND
+        // re-subscribe (loadHistory's isRunning branch uses reuseExistingStreaming
+        // to preserve the live placeholder) so the UI gets the authoritative
+        // full message list — while the app was away, other devices/sessions
+        // may have added messages the local array never received. skipIfUnchanged
+        // keeps this silent (no UI churn when nothing changed).
+        appLog.i(TAG, `${source}: session ${currentSessionId.value} still running — reload history + resubscribe stream`)
+        try {
+          await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, false, immediate)
+          onRenderUpdate(true)
+        } catch {
+          loading.value = false
+        }
         return
       }
       // AI finished while the user was away — clean up the stuck loading state

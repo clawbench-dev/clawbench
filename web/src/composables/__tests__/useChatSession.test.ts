@@ -3649,7 +3649,7 @@ describe('handleWsReconnect', () => {
     vi.restoreAllMocks()
   })
 
-  it('when loading=true and session still running: re-subscribes the stream (subscribeOnly) so loading cannot deadlock', async () => {
+  it('when loading=true and session still running: reloads history and resubscribes so loading cannot deadlock', async () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onConnectStream = vi.fn()
@@ -3672,24 +3672,45 @@ describe('handleWsReconnect', () => {
     }
     const session = useChatSession(options)
 
-    // Mock loadSessionsOnce to include s1 in runningSessions
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        sessions: [{ id: 's1', running: true }],
-        totalCount: 1,
-      }),
+    // Reset the module-level sessions-load dedup so loadSessionsOnce refetches.
+    resetChatSessionState()
+
+    // Mock fetch by URL: sessions list (runningSessions) vs history.
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: true }], totalCount: 1 }),
+        })
+      }
+      // loadHistory fetch — running session returns streaming row
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's1',
+          messages: [
+            { id: 1, role: 'user', content: 'q1', createdAt: '2026-01-01T00:00:00Z' },
+            { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"r1"}]}', streaming: true, createdAt: '2026-01-01T00:00:01Z' },
+          ],
+          running: true,
+          total: 2,
+        }),
+      })
     })
 
     await session.handleWsReconnect()
 
     // The still-running branch must NOT rely solely on the useChatStream
-    // connected-watch (which requires isStreaming === true). It explicitly
-    // re-subscribes with subscribeOnly so a watchdog-disconnected stream is
-    // guaranteed to resume and the loading spinner can never stay stuck.
-    expect(onConnectStream).toHaveBeenCalledWith('s1', { subscribeOnly: true })
+    // connected-watch (which requires isStreaming === true). It must reload
+    // the FULL history (so messages produced while the app was in background /
+    // on other devices appear) and re-subscribe the stream — preserving the
+    // existing streaming placeholder (reuseExistingStreaming) so no duplicate
+    // empty segment is opened and the loading spinner can never stay stuck.
+    expect(onConnectStream).toHaveBeenCalledWith('s1', { reuseExistingStreaming: true })
     expect(onDisconnectStream).not.toHaveBeenCalled()
     expect(loading.value).toBe(true)
+    // A full history fetch must have been issued (not just a stream resume).
+    expect(globalThis.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/ai/chat?'), expect.any(Object))
 
     vi.restoreAllMocks()
   })
