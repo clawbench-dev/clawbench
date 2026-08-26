@@ -355,7 +355,7 @@ func TestServeACPLoadSession_ExistingACPSessionHardDeleted(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession capability in the registry
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	// Insert an existing session for the ACP session ID
 	_, err := service.UnsafeDBForTest().Exec(
@@ -408,7 +408,7 @@ func TestServeACPLoadSession_LoadSessionFails_GenericError(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession capability so the handler proceeds past the check
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	// "echo" is not a real ACP agent — GetOrCreateConnForLoad will fail
 	// with a generic spawn error (not "Resource not found")
@@ -481,7 +481,7 @@ func TestServeACPLoadSession_SessionMetadataBeforeLoad(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession capability
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/acp-load", map[string]string{
 		"agentId":      agentID,
@@ -548,7 +548,7 @@ func TestServeACPSessions_LoadSessionOnlyNotListSessions(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession=true but ListSessions=false
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -570,7 +570,7 @@ func TestServeACPSessions_ListSessionsSuccess(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register both capabilities
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	// Inject a mock alive connection that the handler will find via GetConnByAgentID
 	mgr := ai.GetACPConnManager()
@@ -614,7 +614,7 @@ func TestServeACPSessions_ListSessionsWithCursor(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	mgr := ai.GetACPConnManager()
 	connKey := "__list_sessions__:" + agentID
@@ -650,7 +650,7 @@ func TestServeACPSessions_ListSessionsError(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	mgr := ai.GetACPConnManager()
 	connKey := "__list_sessions__:" + agentID
@@ -682,7 +682,7 @@ func TestServeACPSessions_FilterExistingSessions(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	// Pre-create a CB session for one of the ACP sessions
 	_, err := service.UnsafeDBForTest().Exec(
@@ -736,7 +736,7 @@ func TestServeACPSessions_DiskScanFallback(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession=true but ListSessions=false (the codebuddy situation).
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	// Register a stub disk scanner for the test backend.
 	ai.ListSessionsFromDiskRegister(testBackend, func(a *model.Agent, cwd string) ([]acp.SessionInfo, error) {
@@ -777,7 +777,7 @@ func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	// A session whose raw backend id (e.g. opencode ses_...) is stored only in
 	// external_session_id — source_session_id stays NULL (the common case).
@@ -899,7 +899,7 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession capability
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	// Set up mock connection that will be returned by getOrCreateConnForLoad
 	mgr := ai.GetACPConnManager()
@@ -995,7 +995,7 @@ func TestServeACPLoadSession_ReplayPersistsToolCalls(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]
@@ -1083,7 +1083,7 @@ func TestServeACPLoadSession_SuccessWithEmptyReplay(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]
@@ -1137,7 +1137,7 @@ func TestServeACPLoadSession_SuccessNilClient(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]
@@ -1181,7 +1181,7 @@ func TestServeACPLoadSession_ReplayWithTitleTruncation(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]
@@ -1256,7 +1256,7 @@ func TestServeACPLoadSession_ReplayTitleSkipsInjectedSystemBlock(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]

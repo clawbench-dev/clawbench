@@ -235,7 +235,7 @@ func TestRegistry_ForceUpdateIfNeeded_Delegates(t *testing.T) {
 	models := []model.AgentModel{{ID: "m1"}}
 	cmds := []AvailableCommandInfo{{Name: "init"}}
 	cfg := &ConfigOptionState{ConfigID: "mode"}
-	applied := reg.ForceUpdateIfNeeded("a1", modes, efforts, models, cmds, cfg, false, false)
+	applied := reg.ForceUpdateIfNeeded("a1", modes, efforts, models, cmds, cfg, false, false, false)
 	assert.True(t, applied)
 
 	got := reg.Get("a1")
@@ -637,7 +637,7 @@ func TestRegistry_ForceUpdateIfNeeded_WithLoadListSession(t *testing.T) {
 	models := []model.AgentModel{{ID: "m1"}}
 	cmds := []AvailableCommandInfo{{Name: "init"}}
 	cfg := &ConfigOptionState{ConfigID: "mode"}
-	applied := reg.ForceUpdateIfNeeded("a1", modes, efforts, models, cmds, cfg, true, true)
+	applied := reg.ForceUpdateIfNeeded("a1", modes, efforts, models, cmds, cfg, true, true, true)
 	assert.True(t, applied)
 
 	got := reg.Get("a1")
@@ -647,11 +647,43 @@ func TestRegistry_ForceUpdateIfNeeded_WithLoadListSession(t *testing.T) {
 	assert.True(t, *got.LoadSession)
 	require.NotNil(t, got.ListSessions)
 	assert.True(t, *got.ListSessions)
+	require.NotNil(t, got.PromptImage)
+	assert.True(t, *got.PromptImage)
+}
+
+// TestRegistry_ForceUpdateIfNeeded_CarriesPromptImage is a regression test for
+// the bug where ForceUpdate (a full struct overwrite) wiped the PromptImage
+// flag set at spawnLocked, because ForceUpdateIfNeeded constructed an
+// AgentCapability without it. The production sequence is:
+//
+//	spawnLocked → UpdatePromptImage(id, true)
+//	NewSession  → applyExtractedState → ForceUpdateIfNeeded(...)
+//
+// After both steps, GetPromptImage must still return true.
+func TestRegistry_ForceUpdateIfNeeded_CarriesPromptImage(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+
+	// Step 1: spawnLocked sets the Initialize-reported image capability.
+	reg.UpdatePromptImage("a1", true)
+	assert.True(t, reg.GetPromptImage("a1"))
+
+	// Step 2: first NewSession triggers a full capability refresh.
+	applied := reg.ForceUpdateIfNeeded("a1", []ModeDef{{ID: "ask"}}, nil, nil, nil, nil, true, true, true)
+	assert.True(t, applied)
+
+	// The PromptImage flag must survive the full overwrite.
+	assert.True(t, reg.GetPromptImage("a1"), "PromptImage must survive ForceUpdateIfNeeded (full overwrite)")
+
+	// Step 3: a respawned process refreshes again with the real value.
+	reg.MarkStale("a1")
+	reg.UpdatePromptImage("a1", true)
+	reg.ForceUpdateIfNeeded("a1", nil, nil, nil, nil, nil, true, false, true)
+	assert.True(t, reg.GetPromptImage("a1"))
 }
 
 func TestRegistry_ForceUpdateIfNeeded_DefaultsFalse(t *testing.T) {
 	reg := resetGlobalRegistryForTest(t)
-	applied := reg.ForceUpdateIfNeeded("a1", nil, nil, nil, nil, nil, false, false)
+	applied := reg.ForceUpdateIfNeeded("a1", nil, nil, nil, nil, nil, false, false, false)
 	assert.True(t, applied)
 
 	got := reg.Get("a1")
@@ -662,6 +694,58 @@ func TestRegistry_ForceUpdateIfNeeded_DefaultsFalse(t *testing.T) {
 	if got.ListSessions != nil {
 		assert.False(t, *got.ListSessions)
 	}
+}
+
+// ── PromptImage capability ──────────────────────────────────────────────────
+
+func TestAgentCapability_HasData_WithPromptImage(t *testing.T) {
+	v := true
+	c := &AgentCapability{PromptImage: &v}
+	assert.True(t, c.HasData())
+}
+
+func TestRegistry_GetPromptImage(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	t.Run("NoCapability", func(t *testing.T) {
+		assert.False(t, reg.GetPromptImage("missing"))
+	})
+	t.Run("UnknownDefaultsFalse", func(t *testing.T) {
+		// Capability not yet set → treated as unsupported (protocol default)
+		reg.Update("a1", &AgentCapability{AvailableModes: []ModeDef{{ID: "code"}}})
+		assert.False(t, reg.GetPromptImage("a1"))
+	})
+	t.Run("True", func(t *testing.T) {
+		v := true
+		reg.Update("a2", &AgentCapability{PromptImage: &v})
+		assert.True(t, reg.GetPromptImage("a2"))
+	})
+	t.Run("False", func(t *testing.T) {
+		v := false
+		reg.Update("a3", &AgentCapability{PromptImage: &v})
+		assert.False(t, reg.GetPromptImage("a3"))
+	})
+}
+
+func TestRegistry_UpdatePromptImage(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.Update("a1", &AgentCapability{AvailableModes: []ModeDef{{ID: "code"}}})
+	assert.False(t, reg.GetPromptImage("a1"))
+
+	reg.UpdatePromptImage("a1", true)
+	assert.True(t, reg.GetPromptImage("a1"))
+
+	reg.UpdatePromptImage("a1", false)
+	assert.False(t, reg.GetPromptImage("a1"))
+}
+
+func TestRegistry_Merge_PreservesPromptImage(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	v := true
+	reg.Update("a1", &AgentCapability{PromptImage: &v, AvailableModes: []ModeDef{{ID: "code"}}})
+
+	// Merge with a non-PromptImage field — PromptImage must be preserved
+	reg.Update("a1", &AgentCapability{AvailableCommands: []AvailableCommandInfo{{Name: "init"}}})
+	assert.True(t, reg.GetPromptImage("a1"))
 }
 
 // ── Singleton behavior ──────────────────────────────────────────────────────

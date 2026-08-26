@@ -13,18 +13,24 @@ type ChatRequest struct {
 	SessionID              string
 	WorkDir                string
 	SystemPrompt           string
-	Model                  string // per-request model override (empty = use global default)
-	Command                string // optional: custom command path for the AI backend CLI
-	AgentID                string // agent ID for logging and persistence
-	ThinkingEffort         string // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
-	Mode                   string // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
-	Resume                 bool   // If true, resume an existing session instead of creating new
-	ScheduledExecution     bool   // If true, this is a scheduled task execution — skill-level anti-recursion block
-	HasAttachments         bool   // If true, the user message carries file attachments (triggers media rules injection)
-	AssistantMessageCount  int    // Number of finalized assistant messages in the session (0 for new sessions). Used for logging and periodic summary logic.
-	HasConversationHistory bool   // True if the session has any messages in DB (user + assistant, finalized + streaming). Drives shouldNewSessionFallback: true blocks silent fallback to NewSession on recovery failure (amnesia prevention). Differs from AssistantMessageCount: a session with only an in-flight user prompt has AssistantMessageCount=0 but HasConversationHistory=true.
-	ForkContext            string // Formatted history from parent session, injected on fork's first message so the AI has context
+	Model                  string                  // per-request model override (empty = use global default)
+	Command                string                  // optional: custom command path for the AI backend CLI
+	AgentID                string                  // agent ID for logging and persistence
+	ThinkingEffort         string                  // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
+	Mode                   string                  // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
+	Resume                 bool                    // If true, resume an existing session instead of creating new
+	ScheduledExecution     bool                    // If true, this is a scheduled task execution — skill-level anti-recursion block
+	HasAttachments         bool                    // If true, the user message carries file attachments (triggers media rules injection)
+	AssistantMessageCount  int                     // Number of finalized assistant messages in the session (0 for new sessions). Used for logging and periodic summary logic.
+	HasConversationHistory bool                    // True if the session has any messages in DB (user + assistant, finalized + streaming). Drives shouldNewSessionFallback: true blocks silent fallback to NewSession on recovery failure (amnesia prevention). Differs from AssistantMessageCount: a session with only an in-flight user prompt has AssistantMessageCount=0 but HasConversationHistory=true.
+	ForkContext            string                  // Formatted history from parent session, injected on fork's first message so the AI has context
+	Images                 []model.ImageAttachment // Inline images for multimodal ACP prompts. Only ACP backends that advertise the image prompt capability consume these.
 }
+
+// ImageAttachment carries an inline image for a multimodal ACP prompt.
+// Alias of model.ImageAttachment to avoid a circular dependency between
+// the ai and model packages (ai imports model).
+type ImageAttachment = model.ImageAttachment
 
 // ShouldInjectSystemPrompt determines whether the system prompt should be injected
 // into the user prompt for CLI backends that lack a --system-prompt flag.

@@ -34,6 +34,7 @@ type AgentCapability struct {
 	LoadSession              *bool // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
 	ListSessions             *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
 	DeleteSession            *bool // SessionCapabilities.Delete != nil from ACP Initialize (nil = not yet set)
+	PromptImage              *bool // PromptCapabilities.Image from ACP Initialize (nil = not yet set). True when the agent accepts ContentBlock::Image in prompts.
 	UpdatedAt                time.Time
 
 	// AvailableOptions stores selectable options by category for categories
@@ -61,6 +62,7 @@ func (c *AgentCapability) HasData() bool {
 		c.LoadSession != nil ||
 		c.ListSessions != nil ||
 		c.DeleteSession != nil ||
+		c.PromptImage != nil ||
 		len(c.AvailableOptions) > 0
 }
 
@@ -143,6 +145,12 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 	if src.ListSessions != nil {
 		existing.ListSessions = src.ListSessions
 	}
+	if src.DeleteSession != nil {
+		existing.DeleteSession = src.DeleteSession
+	}
+	if src.PromptImage != nil {
+		existing.PromptImage = src.PromptImage
+	}
 	if len(src.AvailableOptions) > 0 {
 		if existing.AvailableOptions == nil {
 			existing.AvailableOptions = make(map[string][]SelectOptionDef, len(src.AvailableOptions))
@@ -194,6 +202,11 @@ func (r *AgentCapabilityRegistry) UpdateDeleteSession(agentID string, val bool) 
 	r.Update(agentID, &AgentCapability{DeleteSession: &val})
 }
 
+// UpdatePromptImage updates only the PromptImage capability flag.
+func (r *AgentCapabilityRegistry) UpdatePromptImage(agentID string, val bool) {
+	r.Update(agentID, &AgentCapability{PromptImage: &val})
+}
+
 // ForceUpdate replaces all capability fields for an agent (full overwrite, not merge)
 // and persists to DB asynchronously. Used when a new agent process establishes its
 // first session — the ACP response is the authoritative source of truth.
@@ -238,7 +251,10 @@ func (r *AgentCapabilityRegistry) MarkStale(agentID string) {
 // response and calls ForceUpdate. This is the single entry point for full capability
 // refresh — called once when an ACP connection first establishes a session.
 // The update is synchronous on the registry but DB persistence is async.
-func (r *AgentCapabilityRegistry) ForceUpdateIfNeeded(agentID string, modes []ModeDef, efforts []ThinkingEffortDef, models []model.AgentModel, cmds []AvailableCommandInfo, configState *ConfigOptionState, loadSession, listSessions bool) bool {
+// promptImage carries the agent's PromptCapabilities.Image flag from Initialize —
+// it is not part of the session response, so the caller must pass it through
+// from the registry (which ForceUpdate would otherwise wipe with the full overwrite).
+func (r *AgentCapabilityRegistry) ForceUpdateIfNeeded(agentID string, modes []ModeDef, efforts []ThinkingEffortDef, models []model.AgentModel, cmds []AvailableCommandInfo, configState *ConfigOptionState, loadSession, listSessions, promptImage bool) bool {
 	return r.ForceUpdate(agentID, &AgentCapability{
 		AvailableModes:           modes,
 		AvailableThinkingEfforts: efforts,
@@ -247,6 +263,7 @@ func (r *AgentCapabilityRegistry) ForceUpdateIfNeeded(agentID string, modes []Mo
 		ConfigOptionState:        configState,
 		LoadSession:              &loadSession,
 		ListSessions:             &listSessions,
+		PromptImage:              &promptImage,
 	})
 }
 
@@ -364,6 +381,16 @@ func (r *AgentCapabilityRegistry) GetDeleteSession(agentID string) bool {
 	defer r.mu.RUnlock()
 	agentCap, ok := r.caps[agentID]
 	return ok && agentCap != nil && agentCap.DeleteSession != nil && *agentCap.DeleteSession
+}
+
+// GetPromptImage returns whether the agent supports ContentBlock::Image in prompts.
+// Returns false when the capability is unknown (nil), matching the protocol's
+// default of treating omitted capabilities as unsupported.
+func (r *AgentCapabilityRegistry) GetPromptImage(agentID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agentCap, ok := r.caps[agentID]
+	return ok && agentCap != nil && agentCap.PromptImage != nil && *agentCap.PromptImage
 }
 
 // HasAvailableModes checks whether an agent has available modes in the registry.

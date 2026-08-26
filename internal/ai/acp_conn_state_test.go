@@ -2,7 +2,10 @@ package ai
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -886,6 +889,523 @@ func TestBuildPromptBlocks_SlashCommandWithForkContext(t *testing.T) {
 	// Fork context is prepended, so the slash command is no longer at the start
 	assert.Contains(t, blocks[0].Text.Text, "history here")
 	assert.Contains(t, blocks[0].Text.Text, "/compact")
+}
+
+// ---------------------------------------------------------------------------
+// extractImagesFromPrompt / stripImagePathsFromTag tests
+// ---------------------------------------------------------------------------
+
+func TestImageExtOf(t *testing.T) {
+	assert.Equal(t, "image/png", imageExtOf("/abs/path/pic.png"))
+	assert.Equal(t, "image/jpeg", imageExtOf("/abs/path/pic.jpg"))
+	assert.Equal(t, "image/jpeg", imageExtOf("/abs/path/pic.JPEG"))
+	assert.Equal(t, "image/svg+xml", imageExtOf("diagram.svg"))
+	assert.Equal(t, "", imageExtOf("/abs/path/readme.md"))
+	assert.Equal(t, "", imageExtOf("/abs/path/noext"))
+}
+
+func TestIsLineRange(t *testing.T) {
+	assert.True(t, isLineRange("10"))
+	assert.True(t, isLineRange("10-20"))
+	assert.True(t, isLineRange("2024")) // single line number (fileEntryLabel "path:10")
+	assert.False(t, isLineRange(""))
+	assert.False(t, isLineRange("abc"))
+	assert.False(t, isLineRange("path.png"))
+	// Malformed / non-range inputs must NOT be treated as ranges.
+	assert.False(t, isLineRange("5-"))
+	assert.False(t, isLineRange("5--7"))
+	assert.False(t, isLineRange("10-20-30"))
+	assert.False(t, isLineRange("-"))
+	assert.False(t, isLineRange("a-1"))
+	assert.False(t, isLineRange("10a"))
+}
+
+// writeTestImage creates a tiny real image file (any bytes) and returns its path.
+func writeTestImage(t *testing.T, dir, name string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(p, []byte("fake-image-content"), 0o644))
+	return p
+}
+
+func TestExtractImagesFromPrompt_CurrentFileTag(t *testing.T) {
+	dir := t.TempDir()
+	pic := writeTestImage(t, dir, "pic.png")
+	notes := filepath.Join(dir, "notes.txt")
+	require.NoError(t, os.WriteFile(notes, []byte("text"), 0o644))
+
+	// Mixed tag: png is extracted, .txt stays in the prompt text.
+	prompt := fmt.Sprintf("[Current file: %s, %s]\nlook at this", pic, notes)
+	clean, images := extractImagesFromPrompt(prompt, dir, nil)
+	assert.Equal(t, fmt.Sprintf("[Current file: %s]\nlook at this", notes), clean)
+	require.Len(t, images, 1)
+	assert.Equal(t, pic, images[0].Path)
+	assert.Equal(t, "image/png", images[0].MimeType)
+}
+
+func TestExtractImagesFromPrompt_UploadedFilesTag(t *testing.T) {
+	// Uploaded image is relative to workDir; all entries are images so the
+	// whole tag is removed.
+	proj := t.TempDir()
+	a := writeTestImage(t, proj, "a.png")
+	b := writeTestImage(t, proj, "b.jpg")
+
+	prompt := "[User uploaded 2 file(s): a.png, b.jpg]\nanalyze"
+	clean, images := extractImagesFromPrompt(prompt, proj, nil)
+	assert.Equal(t, "analyze", strings.TrimSpace(clean))
+	require.Len(t, images, 2)
+	assert.Equal(t, a, images[0].Path)
+	assert.Equal(t, "image/png", images[0].MimeType)
+	assert.Equal(t, b, images[1].Path)
+	assert.Equal(t, "image/jpeg", images[1].MimeType)
+}
+
+func TestExtractImagesFromPrompt_MixedUploadedAndNonImage(t *testing.T) {
+	proj := t.TempDir()
+	a := writeTestImage(t, proj, "a.png")
+	csv := filepath.Join(proj, "data.csv")
+	require.NoError(t, os.WriteFile(csv, []byte("c"), 0o644))
+
+	prompt := "[User uploaded 2 file(s): a.png, data.csv]\nhi"
+	clean, images := extractImagesFromPrompt(prompt, proj, nil)
+	// Non-image entry remains, count updated from 2 → 1.
+	assert.Equal(t, "[User uploaded 1 file(s): data.csv]\nhi", clean)
+	require.Len(t, images, 1)
+	assert.Equal(t, a, images[0].Path)
+}
+
+func TestExtractImagesFromPrompt_NoImagesLeavesPromptUntouched(t *testing.T) {
+	prompt := "[Current file: /a/main.go]\nrefactor"
+	clean, images := extractImagesFromPrompt(prompt, "", nil)
+	assert.Equal(t, prompt, clean)
+	assert.Len(t, images, 0)
+}
+
+func TestExtractImagesFromPrompt_NoTags(t *testing.T) {
+	prompt := "just text"
+	clean, images := extractImagesFromPrompt(prompt, "", nil)
+	assert.Equal(t, "just text", clean)
+	assert.Len(t, images, 0)
+}
+
+func TestExtractImagesFromPrompt_AppendsExtraImages(t *testing.T) {
+	extra := []ImageAttachment{{Data: "base64data", MimeType: "image/png"}}
+	clean, images := extractImagesFromPrompt("hello", "", extra)
+	assert.Equal(t, "hello", clean)
+	require.Len(t, images, 1)
+	assert.Equal(t, "base64data", images[0].Data)
+}
+
+func TestExtractImagesFromPrompt_Deduplicates(t *testing.T) {
+	dir := t.TempDir()
+	pic := writeTestImage(t, dir, "pic.png")
+
+	prompt := fmt.Sprintf("[Current file: %s]\n[Current file: %s]\nhi", pic, pic)
+	_, images := extractImagesFromPrompt(prompt, dir, nil)
+	require.Len(t, images, 1, "same image path in multiple tags should deduplicate")
+}
+
+func TestExtractImagesFromPrompt_TagWithoutTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	pic := writeTestImage(t, dir, "pic.png")
+
+	// Tag is not followed by a newline — must still be removed entirely.
+	prompt := fmt.Sprintf("[Current file: %s]hi", pic)
+	clean, images := extractImagesFromPrompt(prompt, dir, nil)
+	assert.Equal(t, "hi", clean)
+	require.Len(t, images, 1)
+	assert.Equal(t, pic, images[0].Path)
+}
+
+func TestExtractImagesFromPrompt_CurrentDirectoryTagUntouched(t *testing.T) {
+	dir := t.TempDir()
+	pic := writeTestImage(t, dir, "pic.png")
+
+	// Directory tags are not image candidates and must round-trip unchanged.
+	prompt := fmt.Sprintf("[Current directory: %s]\n[Current file: %s]\nhi", filepath.Join(dir, "src"), pic)
+	clean, images := extractImagesFromPrompt(prompt, dir, nil)
+	assert.Equal(t, fmt.Sprintf("[Current directory: %s]\nhi", filepath.Join(dir, "src")), clean)
+	require.Len(t, images, 1)
+}
+
+func TestExtractImagesFromPrompt_LineRangeSuffix(t *testing.T) {
+	dir := t.TempDir()
+	pic := writeTestImage(t, dir, "pic.png")
+
+	// Image path with a line-range suffix ("path:10-20") must have the suffix
+	// stripped for the resolved path.
+	prompt := fmt.Sprintf("[Current file: %s:10-20]\nhi", pic)
+	clean, images := extractImagesFromPrompt(prompt, dir, nil)
+	assert.Equal(t, "hi", clean)
+	require.Len(t, images, 1)
+	assert.Equal(t, pic, images[0].Path)
+	assert.Equal(t, "image/png", images[0].MimeType)
+}
+
+func TestExtractImagesFromPrompt_MultipleMixedTags(t *testing.T) {
+	dir := t.TempDir()
+	pic := writeTestImage(t, dir, "pic.png")
+	main := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(main, []byte("package main"), 0o644))
+	shot := writeTestImage(t, dir, "shot.jpeg")
+
+	prompt := fmt.Sprintf("[Current file: %s, %s]\n[User uploaded 1 file(s): %s]\nanalyze", pic, main, shot)
+	clean, images := extractImagesFromPrompt(prompt, dir, nil)
+	assert.Equal(t, fmt.Sprintf("[Current file: %s]\nanalyze", main), clean)
+	require.Len(t, images, 2)
+	assert.Equal(t, pic, images[0].Path)
+	assert.Equal(t, shot, images[1].Path)
+}
+
+func TestExtractImagesFromPrompt_MissingFileKeepsReference(t *testing.T) {
+	// A path that does not exist cannot be inlined — the entry must stay in
+	// the prompt text so the user's file reference is preserved.
+	prompt := "[Current file: /nonexistent/missing.png]\nhi"
+	clean, images := extractImagesFromPrompt(prompt, "", nil)
+	assert.Equal(t, prompt, clean, "missing image file should leave the prompt untouched")
+	assert.Len(t, images, 0)
+}
+
+func TestExtractImagesFromPrompt_OversizedFileKeepsReference(t *testing.T) {
+	dir := t.TempDir()
+	bigPath := filepath.Join(dir, "big.png")
+	require.NoError(t, os.WriteFile(bigPath, make([]byte, maxInlineImageBytes+1), 0o644))
+
+	prompt := fmt.Sprintf("[Current file: %s]\nhi", bigPath)
+	clean, images := extractImagesFromPrompt(prompt, dir, nil)
+	assert.Equal(t, prompt, clean, "oversized image file should leave the prompt untouched")
+	assert.Len(t, images, 0)
+}
+
+func TestImageInlineable(t *testing.T) {
+	dir := t.TempDir()
+	okPath := filepath.Join(dir, "ok.png")
+	require.NoError(t, os.WriteFile(okPath, []byte("x"), 0o644))
+	assert.True(t, imageInlineable(okPath))
+	assert.False(t, imageInlineable(filepath.Join(dir, "missing.png")))
+
+	bigPath := filepath.Join(dir, "big.png")
+	require.NoError(t, os.WriteFile(bigPath, make([]byte, maxInlineImageBytes+1), 0o644))
+	assert.False(t, imageInlineable(bigPath))
+
+	// A directory named like an image must NOT be treated as inlineable.
+	dirImg := filepath.Join(dir, "assets.png")
+	require.NoError(t, os.Mkdir(dirImg, 0o755))
+	assert.False(t, imageInlineable(dirImg))
+}
+
+// TestExtractImagesFromPrompt_PathTraversalBlocked verifies that image paths
+// escaping workDir ("..") are NOT extracted — a crafted prompt must not cause
+// reading files outside the project (security boundary).
+func TestExtractImagesFromPrompt_PathTraversalBlocked(t *testing.T) {
+	proj := t.TempDir()
+	// Secret image outside the project.
+	outside := t.TempDir()
+	secret := writeTestImage(t, outside, "secret.png")
+
+	// Traversal entry pointing at the outside file.
+	rel, err := filepath.Rel(proj, secret)
+	require.NoError(t, err)
+
+	prompt := fmt.Sprintf("[User uploaded 1 file(s): %s]\nhi", rel)
+	clean, images := extractImagesFromPrompt(prompt, proj, nil)
+	// Path stays in the text prompt, not extracted.
+	assert.Equal(t, prompt, clean)
+	assert.Len(t, images, 0, "path escaping workDir must not be extracted")
+}
+
+// TestExtractImagesFromPrompt_AbsolutePathOutsideWorkDirBlocked verifies that an
+// absolute image path outside workDir is not extracted.
+func TestExtractImagesFromPrompt_AbsolutePathOutsideWorkDirBlocked(t *testing.T) {
+	proj := t.TempDir()
+	outside := t.TempDir()
+	secret := writeTestImage(t, outside, "secret.png")
+
+	prompt := fmt.Sprintf("[Current file: %s]\nhi", secret)
+	clean, images := extractImagesFromPrompt(prompt, proj, nil)
+	assert.Equal(t, prompt, clean)
+	assert.Len(t, images, 0, "absolute path outside workDir must not be extracted")
+}
+
+// TestExtractImagesFromPrompt_NoWorkDirBlocksAbsolutePath verifies that with no
+// workDir, absolute image paths are not read (no containment possible).
+func TestExtractImagesFromPrompt_NoWorkDirBlocksAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	pic := writeTestImage(t, dir, "pic.png")
+
+	prompt := fmt.Sprintf("[Current file: %s]\nhi", pic)
+	clean, images := extractImagesFromPrompt(prompt, "", nil)
+	assert.Equal(t, prompt, clean)
+	assert.Len(t, images, 0, "without workDir no absolute path should be read")
+}
+
+// TestExtractImagesFromPrompt_DirectoryNamedAsImageKeptInPrompt verifies that a
+// directory with an image-like name is not stripped from the prompt text.
+func TestExtractImagesFromPrompt_DirectoryNamedAsImageKeptInPrompt(t *testing.T) {
+	dir := t.TempDir()
+	dirImg := filepath.Join(dir, "assets.png")
+	require.NoError(t, os.Mkdir(dirImg, 0o755))
+	notes := filepath.Join(dir, "notes.txt")
+	require.NoError(t, os.WriteFile(notes, []byte("n"), 0o644))
+
+	prompt := fmt.Sprintf("[Current file: %s, %s]\nhi", dirImg, notes)
+	clean, images := extractImagesFromPrompt(prompt, dir, nil)
+	// Both entries stay (dir isn't an inlineable image).
+	assert.Equal(t, prompt, clean)
+	assert.Len(t, images, 0)
+}
+
+// TestExtractImagesFromPrompt_FirstTagNoImages_StillScansLaterTag verifies that
+// when the first same-kind tag has no images, a later same-kind tag is still
+// processed (M3 regression).
+func TestExtractImagesFromPrompt_FirstTagNoImages_StillScansLaterTag(t *testing.T) {
+	dir := t.TempDir()
+	pic := writeTestImage(t, dir, "pic.png")
+	main := filepath.Join(dir, "main.go")
+	require.NoError(t, os.WriteFile(main, []byte("package main"), 0o644))
+
+	prompt := fmt.Sprintf("[Current file: %s]\n[Current file: %s]\nhi", main, pic)
+	clean, images := extractImagesFromPrompt(prompt, dir, nil)
+	// First tag (main.go, no image) stays; second tag (pic.png) is stripped.
+	assert.Equal(t, fmt.Sprintf("[Current file: %s]\nhi", main), clean)
+	require.Len(t, images, 1)
+	assert.Equal(t, pic, images[0].Path)
+}
+
+// TestExtractImagesFromPrompt_EmptyPrompt verifies empty input is a no-op.
+func TestExtractImagesFromPrompt_EmptyPrompt(t *testing.T) {
+	clean, images := extractImagesFromPrompt("", "", nil)
+	assert.Equal(t, "", clean)
+	assert.Len(t, images, 0)
+}
+
+// TestImageWithinWorkDir tests the containment helper directly.
+func TestImageWithinWorkDir(t *testing.T) {
+	proj := t.TempDir()
+	inside := writeTestImage(t, proj, "in.png")
+	assert.True(t, imageWithinWorkDir(inside, proj))
+
+	outside := t.TempDir()
+	secret := writeTestImage(t, outside, "secret.png")
+	assert.False(t, imageWithinWorkDir(secret, proj))
+
+	// Traversal.
+	assert.False(t, imageWithinWorkDir(filepath.Join(proj, "..", "x.png"), proj))
+	// Empty workDir.
+	assert.False(t, imageWithinWorkDir(inside, ""))
+}
+
+func TestBuildPromptBlocks_WithInlineImageTag_ProducesImageBlock(t *testing.T) {
+	// Create a real tiny PNG so the file read path is exercised.
+	dir := t.TempDir()
+	pngPath := filepath.Join(dir, "pic.png")
+	require.NoError(t, os.WriteFile(pngPath, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00}, 0o644))
+
+	agent := &model.Agent{ID: "test-build-prompt-imgtag", Backend: "acp-stdio", AcpCommand: "echo"}
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	// Agent must advertise the image prompt capability for extraction to run.
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdatePromptImage(agent.ID, true)
+
+	req := ChatRequest{
+		Prompt:  fmt.Sprintf("[Current file: %s]\n这是什么", pngPath),
+		WorkDir: dir,
+	}
+	blocks := backend.buildPromptBlocks(req)
+	require.Len(t, blocks, 2)
+
+	// Text block must no longer mention the image path.
+	require.NotNil(t, blocks[0].Text)
+	assert.NotContains(t, blocks[0].Text.Text, "pic.png")
+	assert.Contains(t, blocks[0].Text.Text, "这是什么")
+
+	// Image block carries base64-encoded content and the source path as the URI
+	// so the agent can reference the original file instead of persisting a temp copy.
+	require.NotNil(t, blocks[1].Image)
+	assert.Equal(t, "image/png", blocks[1].Image.MimeType)
+	decoded, err := base64.StdEncoding.DecodeString(blocks[1].Image.Data)
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00}, decoded)
+	require.NotNil(t, blocks[1].Image.Uri)
+	absPath, aerr := filepath.Abs(pngPath)
+	require.NoError(t, aerr)
+	assert.Equal(t, absPath, *blocks[1].Image.Uri)
+}
+
+// TestBuildImageBlock_SetsUriPath verifies that a Path-based image gets its
+// absolute path attached via the uri field (used by CodeBuddy to avoid
+// persisting the base64 payload to a temp directory and presenting a duplicate
+// image).
+func TestBuildImageBlock_SetsUriPath(t *testing.T) {
+	dir := t.TempDir()
+	pngPath := writeTestImage(t, dir, "pic.png")
+
+	block, ok := buildImageBlock(ImageAttachment{Path: pngPath, MimeType: "image/png"})
+	require.True(t, ok)
+	require.NotNil(t, block.Image)
+	require.NotNil(t, block.Image.Uri)
+	absPath, err := filepath.Abs(pngPath)
+	require.NoError(t, err)
+	assert.Equal(t, absPath, *block.Image.Uri)
+}
+
+// TestBuildImageBlock_DataOnly_NoUri verifies that a Data-based image
+// (no local path) does not set a uri.
+func TestBuildImageBlock_DataOnly_NoUri(t *testing.T) {
+	block, ok := buildImageBlock(ImageAttachment{Data: "aGVsbG8=", MimeType: "image/png"})
+	require.True(t, ok)
+	require.NotNil(t, block.Image)
+	assert.Nil(t, block.Image.Uri)
+}
+
+// TestBuildImageBlock_ExplicitURIPreserved verifies that an explicit URI wins
+// over a derived path.
+func TestBuildImageBlock_ExplicitURIPreserved(t *testing.T) {
+	dir := t.TempDir()
+	pngPath := writeTestImage(t, dir, "pic.png")
+
+	explicit := "https://example.com/x.png"
+	block, ok := buildImageBlock(ImageAttachment{Path: pngPath, MimeType: "image/png", URI: explicit})
+	require.True(t, ok)
+	require.NotNil(t, block.Image)
+	require.NotNil(t, block.Image.Uri)
+	assert.Equal(t, explicit, *block.Image.Uri)
+}
+
+func TestBuildPromptBlocks_NoImageCapability_LeavesPromptUntouched(t *testing.T) {
+	// When the agent does NOT advertise the image capability, image paths stay
+	// in the text prompt (the user's file reference is preserved).
+	dir := t.TempDir()
+	pngPath := filepath.Join(dir, "pic.png")
+	require.NoError(t, os.WriteFile(pngPath, []byte("fake png"), 0o644))
+
+	agent := &model.Agent{ID: "test-build-prompt-noimgcap", Backend: "acp-stdio", AcpCommand: "echo"}
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdatePromptImage(agent.ID, false) // agent reports no image support
+
+	prompt := fmt.Sprintf("[Current file: %s]\n这是什么", pngPath)
+	req := ChatRequest{Prompt: prompt, WorkDir: dir}
+	blocks := backend.buildPromptBlocks(req)
+	require.Len(t, blocks, 1)
+	require.NotNil(t, blocks[0].Text)
+	assert.Contains(t, blocks[0].Text.Text, "pic.png")
+	assert.NotContains(t, blocks[0].Text.Text, "System Instructions")
+}
+
+func TestBuildPromptBlocks_SlashCommandSkipsImageExtraction(t *testing.T) {
+	agent := &model.Agent{ID: "test-slash-imgtag", Backend: "acp-stdio", AcpCommand: "echo"}
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	req := ChatRequest{Prompt: "/compact", Images: []ImageAttachment{{Data: "abc", MimeType: "image/png"}}}
+	blocks := backend.buildPromptBlocks(req)
+	require.Len(t, blocks, 1)
+	require.NotNil(t, blocks[0].Text)
+	assert.Equal(t, "/compact", blocks[0].Text.Text)
+}
+
+func TestBuildPromptBlocks_ExtraImagesAppended(t *testing.T) {
+	agent := &model.Agent{ID: "test-build-prompt-extra", Backend: "acp-stdio", AcpCommand: "echo"}
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdatePromptImage(agent.ID, true)
+
+	req := ChatRequest{
+		Prompt: "看图",
+		Images: []ImageAttachment{
+			{Data: "aGVsbG8=", MimeType: "image/png"},
+			{Data: "d29ybGQ=", MimeType: "image/jpeg", URI: "file:///x.jpg"},
+		},
+	}
+	blocks := backend.buildPromptBlocks(req)
+	require.Len(t, blocks, 3)
+	require.NotNil(t, blocks[0].Text)
+	assert.Contains(t, blocks[0].Text.Text, "看图")
+	require.NotNil(t, blocks[1].Image)
+	assert.Equal(t, "aGVsbG8=", blocks[1].Image.Data)
+	assert.Equal(t, "image/png", blocks[1].Image.MimeType)
+	require.NotNil(t, blocks[2].Image)
+	assert.Equal(t, "image/jpeg", blocks[2].Image.MimeType)
+	require.NotNil(t, blocks[2].Image.Uri)
+	assert.Equal(t, "file:///x.jpg", *blocks[2].Image.Uri)
+}
+
+// TestBuildPromptBlocks_CumulativeImageBudgetDropsOversized verifies that when
+// the cumulative base64 size of multiple images would exceed the total budget,
+// later images are dropped (single-image limit is enforced separately).
+func TestBuildPromptBlocks_CumulativeImageBudgetDropsOversized(t *testing.T) {
+	agent := &model.Agent{ID: "test-build-prompt-budget", Backend: "acp-stdio", AcpCommand: "echo"}
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdatePromptImage(agent.ID, true)
+
+	// One large image just under the total budget.
+	big := make([]byte, (maxInlineImageBytesTotal*3)/4-1)
+	req := ChatRequest{
+		Prompt: "看",
+		Images: []ImageAttachment{
+			{Data: base64.StdEncoding.EncodeToString(big), MimeType: "image/png"},
+			{Data: "c21hbGw=", MimeType: "image/png"},
+		},
+	}
+	blocks := backend.buildPromptBlocks(req)
+	require.Len(t, blocks, 2, "second image must be dropped when cumulative budget exceeded")
+	require.NotNil(t, blocks[1].Image)
+	// First (large) image kept; second dropped.
+	assert.Equal(t, base64.StdEncoding.EncodeToString(big), blocks[1].Image.Data)
+}
+
+func TestEstimateImageSize(t *testing.T) {
+	// Data-based: exact base64 length.
+	sz, ok := estimateImageSize(ImageAttachment{Data: "abcd", MimeType: "image/png"})
+	require.True(t, ok)
+	assert.Equal(t, 4, sz)
+
+	// Path-based: ~4/3 of file size.
+	dir := t.TempDir()
+	p := writeTestImage(t, dir, "pic.png")
+	sz, ok = estimateImageSize(ImageAttachment{Path: p, MimeType: "image/png"})
+	assert.True(t, ok)
+	info, err := os.Stat(p)
+	require.NoError(t, err)
+	assert.Equal(t, int((info.Size()*4+2)/3), sz)
+
+	// Missing path: not known.
+	_, ok = estimateImageSize(ImageAttachment{Path: "/nonexistent/x.png", MimeType: "image/png"})
+	assert.False(t, ok)
+
+	// Empty: not known.
+	_, ok = estimateImageSize(ImageAttachment{MimeType: "image/png"})
+	assert.False(t, ok)
+}
+
+func TestBuildImageBlock_MissingDataOrMime(t *testing.T) {
+	_, ok := buildImageBlock(ImageAttachment{Path: "", Data: "", MimeType: "image/png"})
+	assert.False(t, ok)
+	_, ok = buildImageBlock(ImageAttachment{Path: "", Data: "abc", MimeType: ""})
+	assert.False(t, ok)
+}
+
+func TestBuildImageBlock_UnreadablePath(t *testing.T) {
+	_, ok := buildImageBlock(ImageAttachment{Path: "/nonexistent/nope.png", MimeType: "image/png"})
+	assert.False(t, ok)
+}
+
+func TestBuildImageBlock_OversizedFile(t *testing.T) {
+	dir := t.TempDir()
+	bigPath := filepath.Join(dir, "big.png")
+	require.NoError(t, os.WriteFile(bigPath, make([]byte, maxInlineImageBytes+1), 0o644))
+	_, ok := buildImageBlock(ImageAttachment{Path: bigPath, MimeType: "image/png"})
+	assert.False(t, ok)
 }
 
 // TestEmitPromptResponseUsage_NilCachedState verifies that emitting a

@@ -211,6 +211,17 @@ type QueuedMessage struct {
 	CreatedAt string      `json:"createdAt"`
 }
 
+// ImageAttachment carries an inline image for a multimodal ACP prompt.
+// Either Path (local file path, read at prompt-build time) or Data
+// (base64-encoded image bytes) may be set. MimeType is required and
+// describes the image type (e.g. "image/png").
+type ImageAttachment struct {
+	Path     string `json:"path,omitempty"` // local file path; backend reads it into Data
+	Data     string `json:"data,omitempty"` // base64-encoded image bytes
+	MimeType string `json:"mimeType"`
+	URI      string `json:"uri,omitempty"` // optional source reference
+}
+
 // ContentBlock represents a typed block within an assistant message's content.
 // Stored as JSON in the chat_history.content column.
 type ContentBlock struct {
