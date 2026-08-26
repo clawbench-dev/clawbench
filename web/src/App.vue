@@ -394,6 +394,7 @@
     </Teleport>
 
     <ToastNotification :toast="toast" />
+    <CompletionPopover />
     <DialogOverlay />
   </div>
 </template>
@@ -430,6 +431,7 @@ import UpgradePromptOverlay from './components/UpgradePromptOverlay.vue'
 import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
+import CompletionPopover from './components/common/CompletionPopover.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
 import SessionSidebar from './components/session/SessionSidebar.vue'
@@ -467,6 +469,7 @@ import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
+import { useCompletionPopover } from './composables/useCompletionPopover'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
 import { useUpgrade } from './composables/useUpgrade'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
@@ -510,7 +513,7 @@ const TAG = 'ClawBench'
 const projectKey = ref('initial')
 const switchingProject = ref(false)
 
-async function hotSwitchProject(newProjectPath, pendingSessionId) {
+async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav) {
   // ── Phase 1: Fade out ──
   switchingProject.value = true
   await nextTick()
@@ -547,6 +550,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   resetTaskTabState()
   resetTabDrawerState()
   resetAllCrudLists()
+  completionPopover.reset()
   fileNav.closeOverlay()
   activeTab.value = 'chat'
 
@@ -576,7 +580,20 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   if (isAppMode.value) syncToNative().catch(() => {})
 
   // ── Phase 7: Handle cross-project pending navigation ──
-  if (pendingSessionId) {
+  if (pendingTaskNav) {
+    // Task navigation: ensure tasks loaded, then open the task settings + exec detail
+    try {
+      await loadTasks()
+    } catch {
+      // Proceed anyway — the task list may already be populated
+    }
+    switchTab('tasks')
+    navigateToTaskSettings(Number(pendingTaskNav.taskId))
+    if (pendingTaskNav.executionId) {
+      // openExecDetail without execData will auto-fetch from API via refreshExecDetail
+      openExecDetail(pendingTaskNav.executionId)
+    }
+  } else if (pendingSessionId) {
     // Watch for session identity to be ready instead of polling
     const stopWatch = watch(
       () => sessionIdentity.currentSessionId.value,
@@ -737,16 +754,10 @@ function handleOpenTask(e) {
   }
 
   if (projectPath && projectPath !== store.state.projectRoot) {
-    // Cross-project: switch project, store pending task navigation, then reload
+    // Cross-project: hot switch without page reload (same as session navigation)
     appLog.d(TAG, 'cross-project navigation, switching to', projectPath)
-    localStorage.setItem('clawbenchPendingNav', JSON.stringify({ taskId, executionId }))
-    fetch('/api/project', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: projectPath }),
-    }).then(() => {
-      window.location.reload()
-    }).catch(() => {
+    hotSwitchProject(projectPath, null, { taskId, executionId }).catch(() => {
+      // If project switch fails, try same-project switch as fallback
       appLog.w(TAG, 'project switch failed, falling back to same-project switch')
       navigateToTask()
     })
@@ -855,6 +866,36 @@ const { onEvent, init: initGlobalEvents, destroy: destroyGlobalEvents } = useGlo
 const removeTaskHandler = onEvent((event, data) => {
     if (event === 'task_update') {
         onTaskEvent(data)
+    }
+})
+
+// AI 完成弹窗：任何会话/定时任务完成时，若用户当前未在查看该会话，入队弹出。
+// 后端 session_update/task_update 的 completed 事件已携带 session_title 与
+// response_preview（Markdown 原文）；useGlobalEvents 已按事件 ID 全局去重。
+const completionPopover = useCompletionPopover()
+const removeCompletionHandler = onEvent((event, data) => {
+    if (!data || data.status !== 'completed') return
+    if (event !== 'session_update' && event !== 'task_update') return
+    const sessionId = data.session_id
+    if (!sessionId || sessionId === sessionIdentity.currentSessionId.value) return
+    if (event === 'task_update') {
+        completionPopover.push({
+            sessionId,
+            kind: 'task',
+            title: data.session_title || '未命名任务',
+            summary: data.response_preview || '',
+            projectPath: data.project_path,
+            taskId: data.task_id,
+            executionId: data.execution_id,
+        })
+    } else {
+        completionPopover.push({
+            sessionId,
+            kind: 'session',
+            title: data.session_title || '未命名会话',
+            summary: data.response_preview || '',
+            projectPath: data.project_path,
+        })
     }
 })
 
@@ -2260,6 +2301,8 @@ onUnmounted(() => {
     activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()
+    removeCompletionHandler()
+    completionPopover.reset()
     window.removeEventListener('clawbench-reconnect', handleReconnect)
     destroyGlobalEvents()
     window.removeEventListener('open-file-manager', handleOpenFileManager)

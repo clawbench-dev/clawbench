@@ -473,6 +473,10 @@ export default {
       userCancelled: 'Cancelled by user',
       errorPrefix: 'Error:',
     },
+    popover: {
+      openSession: 'Open session',
+      openTask: 'Open task',
+    },
     session: {
       aiDialog: 'AI Chat',
       refresh: 'Refresh session list',

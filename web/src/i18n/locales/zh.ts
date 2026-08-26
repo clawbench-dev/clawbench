@@ -473,6 +473,10 @@ export default {
       userCancelled: '用户已中断',
       errorPrefix: '错误:',
     },
+    popover: {
+      openSession: '打开会话',
+      openTask: '打开任务',
+    },
     session: {
       aiDialog: 'AI 对话',
       refresh: '刷新会话列表',
