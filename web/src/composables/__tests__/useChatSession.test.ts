@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
+import { _clearBuffer as _clearLogBuffer } from '@/utils/appLog'
 
 // ── Timer leak prevention ──
 
@@ -28,6 +29,9 @@ afterEach(() => {
     clearInterval(id)
   }
   pendingIntervals.length = 0
+  // Drop buffered appLog entries so the 50-entry flush never fires mid-test,
+  // which would otherwise consume a fetch mock with a POST to /api/client-log.
+  _clearLogBuffer()
 })
 
 // ── Hoisted mock state (plain objects, no Vue imports needed) ──
@@ -283,6 +287,12 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     mockIdentity.autoApprove = false
     if (upcomingSessionId !== undefined) {
       mockState.currentSessionId = upcomingSessionId
+      // Also keep the current test's options `currentSessionId` ref in sync so
+      // the session-identity guard in syncSessionState sees the same id the
+      // request was made for — mirroring the singleton ref in the real app.
+      if (typeof lastSessionOptions !== 'undefined' && lastSessionOptions?.currentSessionId) {
+        lastSessionOptions.currentSessionId.value = upcomingSessionId
+      }
     }
   }),
   updateUsageState: mockUpdateUsageState,
@@ -351,6 +361,11 @@ const mockClearUsageState = vi.hoisted(() => vi.fn())
 // ── Helpers ──
 
 // Module-level options ref so tests can access messages.value etc.
+// Also read by the mocked clearSessionIdentity to keep the current test's
+// `currentSessionId` options ref in sync with the session being switched to.
+// WARNING: this points at the LAST test's options — any test that triggers
+// clearSessionIdentity must set `lastSessionOptions = options` (all switch/
+// create/archive tests do) or it will mutate a stale previous test's ref.
 let lastSessionOptions: ReturnType<typeof createSessionInternal>['options'] | null = null
 
 function createSessionInternal() {
@@ -697,6 +712,7 @@ describe('onSessionEvent', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
@@ -796,6 +812,7 @@ describe('onSessionEvent', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
@@ -826,6 +843,7 @@ describe('onSessionEvent', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'cancelled' })
@@ -861,6 +879,7 @@ describe('onSessionEvent', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
@@ -893,6 +912,7 @@ describe('onSessionEvent', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // A DIFFERENT session completes while we're loading
@@ -924,6 +944,7 @@ describe('onSessionEvent', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'permission_pending' })
@@ -959,6 +980,7 @@ describe('onSessionEvent', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
@@ -1019,6 +1041,7 @@ describe('onSessionEvent', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Mock fetch to return running=true (simulating race condition where
@@ -1078,6 +1101,7 @@ describe('onSessionEvent', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Mock fetch to return an assistant message with streaming=1 AND running=true
@@ -1561,6 +1585,7 @@ describe('switchSession', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     await session.switchSession('s2')
@@ -1654,7 +1679,7 @@ describe('switchSession', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [
           { id: 1, role: 'user', content: 'A' },
           { id: 2, role: 'assistant', content: 'A reply' },
@@ -1693,7 +1718,7 @@ describe('switchSession', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [
           { id: 1, role: 'user', content: 'A' },
           { id: 2, role: 'assistant', content: 'A reply' },
@@ -1730,7 +1755,7 @@ describe('switchSession', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [
           { id: 1, role: 'user', content: 'A' },
           { id: 2, role: 'assistant', content: 'A reply' },
@@ -1791,7 +1816,7 @@ describe('switchSession', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [{ id: 1, role: 'user', content: 'A' }],
         total: 1,
         running: false,
@@ -1835,7 +1860,7 @@ describe('switchSession', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [
           { id: 1, role: 'user', content: 'question A' },
           { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply A"}]}' },
@@ -1881,7 +1906,7 @@ describe('switchSession', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [
           { id: 1, role: 'user', content: 'msg1' },
           { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
@@ -1923,7 +1948,7 @@ describe('switchSession', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [
           { id: 1, role: 'user', content: 'msg1' },
           { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
@@ -1960,7 +1985,7 @@ describe('switchSession', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [
           { id: 1, role: 'user', content: 'msg1' },
           { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
@@ -2118,6 +2143,7 @@ describe('switchSession', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.switchSession('s2')
 
@@ -2380,7 +2406,7 @@ describe('loadHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         sessionTitle: 'Test Session',
         backend: 'claude',
         agentId: 'agent1',
@@ -2409,7 +2435,7 @@ describe('loadHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         running: false,
@@ -2445,7 +2471,7 @@ describe('loadHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [{ id: 'm1' }],
         total: 1,
         running: false,
@@ -2471,7 +2497,7 @@ describe('loadHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [{ id: 'm1' }],
         total: 1,
         running: false,
@@ -2485,7 +2511,7 @@ describe('loadHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [{ id: 'm1' }, { id: 'm2' }],
         total: 2,
         running: true,
@@ -2531,6 +2557,7 @@ describe('loadHistory', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.loadHistory(true, false, false)
 
@@ -2565,7 +2592,7 @@ describe('loadHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [{ id: 'm1' }, { id: 'm2' }],
         total: 2,
         running: false,
@@ -2590,6 +2617,7 @@ describe('loadHistory', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.loadHistory(true, false, false)
 
@@ -2597,7 +2625,7 @@ describe('loadHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }],
         total: 3,
         running: false,
@@ -2616,7 +2644,7 @@ describe('loadHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         backend: 'claude',
@@ -2645,6 +2673,7 @@ describe('loadHistory', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.loadHistory(true, false, false)
 
@@ -2653,14 +2682,14 @@ describe('loadHistory', () => {
     // reconnecting to the SAME live stream — must reuse the existing streaming
     // message so connectStream doesn't finalize it and open a duplicate empty
     // "outputting" segment (regression for the split-reply bug).
-    expect(onConnectStream).toHaveBeenCalledWith('s1', { reuseExistingStreaming: true })
+    expect(onConnectStream).toHaveBeenCalledWith('current-s1', { reuseExistingStreaming: true })
   })
 
   it('when data.running=false: sets loading=false', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         running: false,
@@ -2685,6 +2714,7 @@ describe('loadHistory', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.loadHistory(true, false, false)
 
@@ -2695,7 +2725,7 @@ describe('loadHistory', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         running: false,
@@ -2720,6 +2750,7 @@ describe('loadHistory', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.loadHistory(true, false, false)
 
@@ -2831,6 +2862,7 @@ describe('createSession', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.createSession('agent2')
 
@@ -2927,6 +2959,7 @@ describe('createSession', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.createSession('agent3')
 
@@ -2984,6 +3017,7 @@ describe('createSession', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.createSession()
 
@@ -3032,6 +3066,7 @@ describe('createSession', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.createSession()
 
@@ -3086,6 +3121,7 @@ describe('createSession', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     await session.createSession()
@@ -3119,6 +3155,7 @@ describe('createSession', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.createSession()
 
@@ -3155,6 +3192,7 @@ describe('createSession', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.createSession('agent1')
 
@@ -3211,6 +3249,7 @@ describe('createSession', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.createSession()
 
@@ -3262,6 +3301,7 @@ describe('createSession', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.createSession()
 
@@ -3301,6 +3341,7 @@ describe('createSession', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.createSession()
 
@@ -3355,6 +3396,7 @@ describe('createSession', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Start createSession — it will block on the POST
@@ -3447,6 +3489,7 @@ describe('archiveSession', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.archiveSession('s1', 'claude')
 
@@ -3510,6 +3553,7 @@ describe('archiveSession', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.archiveSession('s1', 'claude')
 
@@ -3542,6 +3586,7 @@ describe('archiveSession', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.archiveSession('s2', 'claude')
 
@@ -3611,6 +3656,7 @@ describe('handleWsReconnect', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Mock loadSessionsOnce to NOT include s1 in runningSessions
@@ -3670,6 +3716,7 @@ describe('handleWsReconnect', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Reset the module-level sessions-load dedup so loadSessionsOnce refetches.
@@ -3736,6 +3783,7 @@ describe('handleWsReconnect', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // First call: loadSessionsOnce. Second call: loadHistory.
@@ -3791,6 +3839,7 @@ describe('handleWsReconnect', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     await session.handleWsReconnect()
@@ -3821,6 +3870,7 @@ describe('handleWsReconnect', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Mock loadSessionsOnce: s1 is NOT running
@@ -3879,6 +3929,7 @@ describe('handleManualRefresh', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // First fetch: loadSessionsOnce — s1 is still running.
@@ -3934,6 +3985,7 @@ describe('handleManualRefresh', () => {
       onDisconnectStream,
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // First fetch: loadSessionsOnce — s1 NOT running.
@@ -3988,6 +4040,7 @@ describe('handleManualRefresh', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Step 1: establish a baseline snapshot ('snap-a') via a normal loadHistory.
@@ -4045,6 +4098,7 @@ describe('handleManualRefresh', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     const fetchSpy = vi.fn()
     globalThis.fetch = fetchSpy
@@ -4081,7 +4135,7 @@ describe('syncModelFromData', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         backend: 'codebuddy',
@@ -4106,7 +4160,7 @@ describe('syncModelFromData', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         backend: 'codebuddy',
@@ -4133,7 +4187,7 @@ describe('syncModelFromData', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         backend: 'codebuddy',
@@ -4175,7 +4229,7 @@ describe('syncUsageFromData', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         backend: 'claude',
@@ -4190,14 +4244,14 @@ describe('syncUsageFromData', () => {
     const session = createSession()
     await session.loadHistory(true, false, false)
 
-    expect(mockUpdateUsageState).toHaveBeenCalledWith(100000, 200000, 2.5, 'EUR', 's1', undefined, undefined)
+    expect(mockUpdateUsageState).toHaveBeenCalledWith(100000, 200000, 2.5, 'EUR', 'current-s1', undefined, undefined)
   })
 
   it('does not call updateUsageState when usageState is missing', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         running: false,
@@ -4214,7 +4268,7 @@ describe('syncUsageFromData', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1',
+        sessionId: 'current-s1',
         messages: [],
         total: 0,
         running: false,
@@ -4295,6 +4349,7 @@ describe('loadMoreMessages', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Load initial messages
@@ -4334,6 +4389,7 @@ describe('loadMoreMessages', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     session.loadingMore.value = true
 
@@ -4362,6 +4418,7 @@ describe('loadMoreMessages', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     session.hasMore.value = false
 
@@ -4424,6 +4481,7 @@ describe('loadMoreMessages', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     await session.loadHistory(true, false, false)
@@ -4462,6 +4520,7 @@ describe('loadMoreMessages', () => {
       onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     session.totalMessages.value = 55
     session.queuedCount.value = 15
@@ -4896,7 +4955,7 @@ describe('loadHistory race protection', () => {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [] }) })
     })
 
-    const currentSessionId = ref('current-s1')
+    const currentSessionId = ref('s2')
     const messages = ref([])
     const loading = ref(false)
     const options = {
@@ -4916,6 +4975,7 @@ describe('loadHistory race protection', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Start first loadHistory (slow, won't resolve yet)
@@ -4993,6 +5053,7 @@ describe('loadHistory race protection', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
 
     // Start a slow loadHistory
@@ -5092,6 +5153,7 @@ describe('loadHistory session_id recovery', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.loadHistory(true, false, false)
 
@@ -5138,6 +5200,7 @@ describe('loadHistory session_id recovery', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.loadHistory(true, false, false)
 
@@ -5149,7 +5212,7 @@ describe('loadHistory session_id recovery', () => {
     expect(currentSessionId.value).toBe('')
   })
 
-  it('logs warning when backend returns different sessionId than requested', async () => {
+  it('rejects a stale response whose sessionId differs from the requested session', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
@@ -5157,8 +5220,8 @@ describe('loadHistory session_id recovery', () => {
         sessionTitle: 'Wrong Session',
         backend: 'claude',
         agentId: 'agent1',
-        messages: [],
-        total: 0,
+        messages: [{ id: 1, role: 'user', content: 'stale', createdAt: '2026-01-01T00:00:00Z' }],
+        total: 1,
         running: false,
       }),
     })
@@ -5181,14 +5244,14 @@ describe('loadHistory session_id recovery', () => {
         onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
+    lastSessionOptions = options
     const session = useChatSession(options)
     await session.loadHistory(true, false, false)
 
-    // Should have logged a warning about mismatch
-    expect(warnSpy).toHaveBeenCalledWith(
-      '[ChatSession]',
-      expect.stringContaining('session ID mismatch')
-    )
+    // The stale response must be rejected entirely: currentSessionId stays on
+    // the requested session and no old messages leak into it.
+    expect(currentSessionId.value).toBe('current-s1')
+    expect(options.messages.value).toEqual([])
   })
 
     it('deduplicates concurrent calls (shares single in-flight request)', async () => {

@@ -117,6 +117,26 @@ export function useChatSession(options: UseChatSessionOptions) {
     const isRunning = forceNotRunning ? false : !!sessionData.running
     const isReplayPending = !!sessionData.replayPending && !forceNotRunning
 
+    // ── Session identity guard ──
+    // A stale loadHistory response (e.g. for a session the user just switched
+    // away from) must NEVER leak into the current session's message list. This
+    // is the root cause of the "new session shows old session's messages" bug:
+    // the db_load dispatch below previously ran BEFORE this check, so a
+    // mismatched response already contaminated messages (and overwrote
+    // currentSessionId) by the time the mismatch was merely logged.
+    //
+    // - Recovery path: currentSessionId is set to the response's sessionId
+    //   right before this call, so requestedId === returnedId (no false reject).
+    // - Main path: currentSessionId equals the requested session_id, so a
+    //   mismatch here means the response is stale — discard it entirely without
+    //   touching messages, identity, or the change-detection snapshot.
+    const returnedId = (sessionData.sessionId as string) || ''
+    const requestedId = currentSessionId.value
+    if (returnedId && requestedId && returnedId !== requestedId) {
+      appLog.w(TAG, `syncSessionState: rejecting stale response for ${returnedId} (current is ${requestedId})`)
+      return { synced: false, keepInputDisabled: false }
+    }
+
     // ── Change detection ──
     const newSnapshot = buildMessageSnapshot(rawMsgs)
     if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && !isRunning) {
@@ -154,11 +174,6 @@ export function useChatSession(options: UseChatSessionOptions) {
     queuedCount.value = (sessionData.queuedCount as number) || 0
 
     // ── Identity sync ──
-    const returnedId = (sessionData.sessionId as string) || ''
-    const requestedId = currentSessionId.value
-    if (returnedId && requestedId && returnedId !== requestedId) {
-      appLog.w(TAG, `loadHistory: session ID mismatch (requested=${requestedId}, returned=${returnedId})`)
-    }
     currentSessionId.value = returnedId
     currentSessionTitle.value = (sessionData.sessionTitle as string) || ''
     currentBackend.value = (sessionData.backend as string) || ''
