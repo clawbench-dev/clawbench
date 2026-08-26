@@ -139,6 +139,18 @@ function handleSummaryClick(event: MouseEvent): void {
     word-break: break-word;
 }
 
+/* 覆盖全局 .markdown-body 规则：卡片已有自身 padding，去掉重复 padding；
+   消除最后一个子元素（段落/列表）的底部 margin，避免文字结束后残留空隙 */
+.completion-popover-summary.markdown-body {
+    padding: 0;
+    flex: none;
+}
+
+.completion-popover-summary.markdown-body > :last-child,
+.completion-popover-summary.markdown-body > :last-child > :last-child {
+    margin-bottom: 0;
+}
+
 .completion-popover-enter-active,
 .completion-popover-leave-active {
     transition: opacity 0.25s ease, transform 0.25s ease;
