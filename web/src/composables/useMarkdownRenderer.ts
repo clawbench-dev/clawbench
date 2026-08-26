@@ -384,7 +384,6 @@ export function renderMarkdown(
         const { isPC } = usePlatformDetect()
 
         html = rewriteImageUrls(html, projectRoot, getThumbWidth(isPC.value))
-        html = wrapInlineSvgs(html)
         html = convertAudioLinks(html, projectRoot)
         html = convertVideoLinks(html, projectRoot)
 
@@ -402,6 +401,12 @@ export function renderMarkdown(
         detectedSHAs = shas
 
         html = annotateLocalhostUrls(html)
+
+        // MUST run after all <a href>-anchored regex steps (audio/video links,
+        // path/commit/localhost annotations). Wrapping an inline <svg> in a
+        // <span> breaks those regexes' structural matches across its content,
+        // so any markup they would inject inside the svg must already be in place.
+        html = wrapInlineSvgs(html)
     }
 
     return { html, detectedPaths, detectedSHAs }

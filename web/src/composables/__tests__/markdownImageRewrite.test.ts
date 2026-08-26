@@ -63,4 +63,31 @@ describe('renderMarkdown relative image handling', () => {
     const r = renderMarkdown('<img src="javascript:alert(1)" alt="x">', {})
     expect(r.html).not.toContain('javascript:')
   })
+
+  it('wraps inline svg in lightbox wrapper (full pipeline)', () => {
+    const r = renderMarkdown('<svg viewBox="0 0 10 10"><rect></rect></svg>', {})
+    expect(r.html).toContain('class="lightbox-svg-wrap"')
+    expect(r.html).toContain('class="lightbox-svg"')
+    expect(r.html).toContain('class="lightbox-expand-icon"')
+  })
+
+  it('keeps file-path annotation intact and does not wrap the UI button svg (B1 regression)', () => {
+    // wrapInlineSvgs must run AFTER annotation steps, so paths inside an
+    // inline svg are still annotated. The annotation button's lucide icon
+    // svg must NOT be wrapped in a lightbox wrapper.
+    const r = renderMarkdown('<svg viewBox="0 0 10 10"><text>src/main.go</text></svg>', {})
+    expect(r.html).toContain('chat-file-path')
+    expect(r.html).toContain('data-file-path="src/main.go"')
+    // Exactly one lightbox-svg-wrap: the content svg, not the button icon
+    expect(r.html.match(/class="lightbox-svg-wrap"/g)).toHaveLength(1)
+    // The button keeps its raw svg child (no wrapper span injected inside)
+    expect(r.html).toMatch(/<button class="chat-file-open-btn"[\s\S]*?<svg viewBox="0 0 24 24"[\s\S]*?<\/svg><\/button>/)
+  })
+
+  it('wraps nested inline svg through full pipeline without corruption', () => {
+    const r = renderMarkdown('<svg viewBox="0 0 10 10"><g><svg viewBox="0 0 5 5"><rect></rect></svg></g></svg>', {})
+    expect(r.html).toContain('lightbox-svg-wrap')
+    // Inner svg must still be balanced (no mangled tags)
+    expect(r.html).toMatch(/<svg viewBox="0 0 5 5"[\s\S]*?<\/svg>/)
+  })
 })

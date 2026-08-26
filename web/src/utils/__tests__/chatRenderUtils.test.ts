@@ -761,7 +761,7 @@ describe('wrapInlineSvgs', () => {
   it('preserves existing class attribute on the svg', () => {
     const html = '<svg class="icon" viewBox="0 0 10 10"><path></path></svg>'
     const result = wrapInlineSvgs(html)
-    expect(result).toContain('<svg class="lightbox-svg icon"')
+    expect(result).toContain('<svg class="icon lightbox-svg"')
   })
 
   it('is idempotent — does not re-wrap an already wrapped svg', () => {
@@ -793,6 +793,52 @@ describe('wrapInlineSvgs', () => {
     const result = wrapInlineSvgs('<svg viewBox="0 0 1 1"></svg>')
     expect(result).toContain('lightbox-svg-wrap')
     expect(result).toContain('lightbox-expand-icon')
+  })
+
+  it('wraps nested svg as one unit (balanced close tag)', () => {
+    const html = '<svg viewBox="0 0 10 10"><g><svg viewBox="0 0 5 5"><rect></rect></svg></g></svg>'
+    const result = wrapInlineSvgs(html)
+    // The outer svg is wrapped; the inner one keeps its own balanced structure
+    expect(result).toContain('<span class="lightbox-svg-wrap"><svg viewBox="0 0 10 10" class="lightbox-svg"><g><svg viewBox="0 0 5 5"><rect></rect></svg></g></svg><span class="lightbox-expand-icon"></span></span>')
+    // Exactly one wrapper and one expand icon
+    expect(result.match(/class="lightbox-svg-wrap"/g)).toHaveLength(1)
+    expect(result.match(/class="lightbox-expand-icon"/g)).toHaveLength(1)
+  })
+
+  it('handles single-quoted class attribute', () => {
+    const html = '<svg class=\'icon\' viewBox="0 0 10 10"><path></path></svg>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('class=\'icon lightbox-svg\'')
+    // Idempotent on the single-quoted output
+    const twice = wrapInlineSvgs(result)
+    expect(twice).toBe(result)
+  })
+
+  it('leaves unclosed svg untouched', () => {
+    const html = '<p>text</p><svg viewBox="0 0 1 1"><rect></rect>'
+    expect(wrapInlineSvgs(html)).toBe(html)
+  })
+
+  it('handles svg with attributes containing > after sanitize encoding', () => {
+    const html = '<svg data-x="a&gt;b" viewBox="0 0 1 1"><rect></rect></svg>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toContain('class="lightbox-svg"')
+    expect(result).toContain('data-x="a&gt;b"')
+  })
+
+  it('does not wrap svg inside a button (pipeline-injected UI icon)', () => {
+    const html = '<button class="chat-file-open-btn" data-file-path="src/main.go"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M1 1"></path></svg></button>'
+    const result = wrapInlineSvgs(html)
+    expect(result).toBe(html)
+  })
+
+  it('wraps a content svg but not a UI svg in the same html', () => {
+    const html = '<svg viewBox="0 0 10 10"><text>src/main.go</text></svg><button class="chat-file-open-btn"><svg viewBox="0 0 24 24"><path></path></svg></button>'
+    const result = wrapInlineSvgs(html)
+    // Content svg wrapped
+    expect(result).toContain('lightbox-svg-wrap')
+    // UI svg inside the button left untouched
+    expect(result).toContain('<button class="chat-file-open-btn"><svg viewBox="0 0 24 24"><path></path></svg></button>')
   })
 })
 
