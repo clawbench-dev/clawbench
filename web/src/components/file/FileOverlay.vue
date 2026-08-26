@@ -47,7 +47,7 @@
         :open="searchOpen"
         :file="currentFile"
         :view-mode="markdownViewMode"
-        @close="emit('toggleSearch')"
+        @close="emit('closeSearch')"
         @jump="emit('jump', $event)"
       />
 
@@ -86,7 +86,7 @@ const emit = defineEmits([
   'delete', 'showDetails', 'openGitHistory',
   'toggleToc', 'toggleSearch', 'toggleView', 'refresh',
   'jump', 'jumpPage', 'closeGitHistory', 'openFile',
-  'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal',
+  'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'closeSearch',
 ])
 
 const contentRef = ref(null)

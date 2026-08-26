@@ -109,6 +109,7 @@
                       @open-git-history="openFileHistory"
                       @toggle-toc="tocDrawer.toggle()"
                       @toggle-search="currentFile?.content && openFileSearch()"
+                      @close-search="searchDrawer.close()"
                       @toggle-view="markdownViewMode = markdownViewMode === 'rendered' ? 'raw' : 'rendered'"
                       @refresh="handleRefresh"
                       @jump="scrollToLine"
