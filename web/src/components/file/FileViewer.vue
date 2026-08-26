@@ -18,7 +18,7 @@
       @show-details="emit('showDetails')"
       @open-git-history="emit('openGitHistory')"
       @toggle-toc="emit('toggleToc')"
-      @toggle-search="emit('toggleSearch')"
+      @toggle-search="handleToggleSearch"
       @open-as-text="handleOpenAsText"
       @toggle-word-wrap="toggleWordWrap"
       @toggle-line-numbers="toggleLineNumbers"
@@ -169,6 +169,7 @@
         />
         <CodeMirrorViewer
           v-else
+          ref="cmEditorRef"
           :file="file"
           :content="file.content"
           language="xml"
@@ -188,6 +189,7 @@
         />
         <div v-else class="raw-content-viewer">
           <CodeMirrorViewer
+            ref="cmEditorRef"
             :file="file"
             :content="file.content"
             :language="rawFileLanguage"
@@ -319,6 +321,19 @@ const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'p
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
 const isHtml = computed(() => fileType.value?.isHtml || false)
 const isOpenapi = computed(() => props.file?.subtype === 'openapi')
+// Whether the current view is rendered by CodeMirrorViewer. Code/plain text is
+// always CodeMirror. Markdown uses the SearchDrawer only for the rendered
+// preview; raw source view and editing are CodeMirror. HTML/OpenAPI rendered
+// views (iframe/ReDoc) fall back to the SearchDrawer as well. Media/binary/
+// oversized/errored files never render CodeMirror.
+const isCodeMirrorView = computed(() => {
+    if (!props.file || props.file.isExcalidraw) return false
+    if (props.file.isImage || props.file.isAudio || props.file.isVideo || props.file.isPdf || props.file.isOffice) return false
+    if (props.file.isBinary || props.file.tooLarge || props.file.error) return false
+    if (isMarkdown.value) return editing.value || props.markdownViewMode !== 'rendered'
+    if (isHtml.value || isOpenapi.value) return props.markdownViewMode !== 'rendered'
+    return true
+})
 const loading = ref(false)
 const contentRef = ref(null)
 const pdfPreviewRef = ref(null)
@@ -375,6 +390,26 @@ async function handleSaveAndExit(content) {
     const ok = await saveFile(props.file?.path || '', content)
     if (ok) {
         editing.value = false
+    }
+}
+
+function handleToggleSearch() {
+    // CodeMirror-rendered views (code, markdown raw/editing) use CodeMirror's
+    // own search panel; only the rendered markdown preview has no editor to
+    // search, so it falls back to the SearchDrawer bottom sheet.
+    if (isCodeMirrorView.value) {
+        cmEditorRef.value?.openSearch?.()
+    } else {
+        emit('toggleSearch')
+    }
+}
+
+function focusSearchInput() {
+    // Focus (not toggle) the active search UI. CodeMirror views open the
+    // editor's own search panel; the rendered markdown preview is focused by
+    // the SearchDrawer (via FileOverlay forwarding) — nothing to do here.
+    if (isCodeMirrorView.value) {
+        cmEditorRef.value?.openSearch?.()
     }
 }
 
@@ -821,6 +856,7 @@ function handleShareExternal() {
 defineExpose({
     pdfOutline,
     pdfScrollToPage,
+    focusSearchInput,
 })
 </script>
 

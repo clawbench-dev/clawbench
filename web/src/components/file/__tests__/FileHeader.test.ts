@@ -268,15 +268,12 @@ describe('FileHeader', () => {
 
   it('emits toggleToc when toc button is clicked', async () => {
     const wrapper = mountHeader({ file: { name: 'main.ts', path: '/tmp/main.ts', content: 'code' } })
-    // Find the TOC button specifically (it has the List icon, after the recent files button)
-    const allBtns = wrapper.findAll('.header-actions .file-header-btn')
-    // First button is recent files, second should be TOC or search
-    const tocBtn = allBtns.length > 1 ? allBtns[1] : null
-    if (tocBtn && tocBtn.exists()) {
-      await tocBtn.trigger('click')
-      const emitted = wrapper.emitted()
-      expect(emitted['toggleToc'] || emitted['toggleSearch']).toBeTruthy()
-    }
+    // Locate the TOC button by its title (the button order varies with the
+    // inline/collapsed toolbar split). Code files with content always show TOC.
+    const tocBtn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'TOC')
+    expect(tocBtn).toBeTruthy()
+    await tocBtn!.trigger('click')
+    expect(wrapper.emitted('toggleToc')).toBeTruthy()
   })
 
   it('adds file to chat context when attach button is clicked', async () => {
@@ -351,9 +348,9 @@ describe('FileHeader', () => {
       expect(ids).not.toContain('wordWrap')
       expect(ids).not.toContain('lineNumbers')
       expect(ids).not.toContain('toggleView')
-      // PDF keeps TOC and search
+      // PDF keeps TOC but has no search (no text content)
       expect(ids).toContain('toc')
-      expect(ids).toContain('search')
+      expect(ids).not.toContain('search')
     })
 
     it('shows code toolbar items for text files', async () => {
@@ -433,6 +430,31 @@ describe('FileHeader', () => {
       // When editing from rendered, effectiveViewMode is 'raw', so exportHtml should not be in toolbar
       const ids = vm.$.setupState.toolbarInlineIds
       expect(ids).not.toContain('exportHtml')
+    })
+
+    it('shows the search button for any file with text content', async () => {
+      // Rendered markdown preview keeps the SearchDrawer button
+      const rendered = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
+      expect((rendered.vm as any).$.setupState.hasSearch).toBe(true)
+      expect((rendered.vm as any).$.setupState.toolbarInlineIds).toContain('search')
+
+      // Editing from rendered markdown → CodeMirror source → button still shown
+      // (clicking opens CodeMirror's own search panel)
+      const editing = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: true })
+      expect((editing.vm as any).$.setupState.hasSearch).toBe(true)
+
+      // Source view of markdown → CodeMirror raw → button still shown
+      const source = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'source', editing: false })
+      expect((source.vm as any).$.setupState.hasSearch).toBe(true)
+
+      // Plain code file → CodeMirror → button still shown
+      const code = mountHeader({ file: { name: 'main.ts', path: '/tmp/main.ts', content: 'const x = 1' }, viewMode: 'source' })
+      expect((code.vm as any).$.setupState.hasSearch).toBe(true)
+    })
+
+    it('hides the search button for media files without text content', () => {
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
+      expect((wrapper.vm as any).$.setupState.hasSearch).toBe(false)
     })
   })
 })

@@ -108,7 +108,7 @@
                       @show-details="detailsDrawer.open()"
                       @open-git-history="openFileHistory"
                       @toggle-toc="tocDrawer.toggle()"
-                      @toggle-search="currentFile?.content && searchDrawer.toggle()"
+                      @toggle-search="currentFile?.content && openFileSearch()"
                       @toggle-view="markdownViewMode = markdownViewMode === 'rendered' ? 'raw' : 'rendered'"
                       @refresh="handleRefresh"
                       @jump="scrollToLine"
@@ -1246,6 +1246,26 @@ const theme = ref(resolveThemeId(_rawTheme))
 const dirEntries = computed(() => store.state.dirEntries)
 const currentDir = computed(() => store.state.currentDir)
 const currentFile = computed(() => store.state.currentFile)
+// The view pane is a CodeMirror-rendered file (code, markdown raw/editing)
+// when it's not the rendered markdown/HTML/OpenAPI preview. Such views use
+// CodeMirror's built-in search; only rendered previews need the SearchDrawer.
+const isCodeMirrorFileView = computed(() => {
+    const f = currentFile.value
+    // content === '' (new empty file) still renders CodeMirror; only
+    // null/undefined (media/binary/not-loaded) excludes it.
+    if (!f || typeof f.content !== 'string' || f.isExcalidraw) return false
+    if (f.isImage || f.isAudio || f.isVideo || f.isPdf || f.isOffice) return false
+    if (f.isBinary || f.tooLarge || f.error) return false
+    const ft = getFileType(f.name || '')
+    if (ft.isMarkdown) {
+        const editing = fileEditor.isEditing()
+        return editing || markdownViewMode.value !== 'rendered'
+    }
+    if (ft.isHtml || f.subtype === 'openapi') {
+        return markdownViewMode.value !== 'rendered'
+    }
+    return true
+})
 const { entries: recentFileEntries } = useRecentFiles()
 const recentFilesCount = computed(() => recentFileEntries.value.length)
 const projectRoot = computed(() => store.state.projectRoot)
@@ -1274,6 +1294,7 @@ function handleJumpPdfPage(pageNum) {
 watch(() => currentFile.value, (file, prevFile) => {
     tocDrawer.close()
     detailsDrawer.close()
+    searchDrawer.close()
     markdownViewMode.value = 'rendered'
     // When the open file is closed while the user is on the file-view tab,
     // fall back to the file manager tab automatically.
@@ -2173,6 +2194,17 @@ function openFileViewSearchDrawer() {
     searchDrawer.open()
   }
 }
+
+// Route the view-pane search request. CodeMirror-rendered files (code,
+// markdown raw/editing) use CodeMirror's built-in search panel; only the
+// rendered markdown preview opens the SearchDrawer bottom sheet.
+function openFileSearch() {
+  if (isCodeMirrorFileView.value) {
+    fileOverlayRef.value?.focusSearchInput()
+  } else {
+    openFileViewSearchDrawer()
+  }
+}
 function handleCtrlF(e) {
     if (!(e.ctrlKey || e.metaKey) || e.key !== 'f') return
     // Skip when focus is in input/textarea/contenteditable/terminal
@@ -2193,7 +2225,7 @@ function handleCtrlF(e) {
             openBrowseSearchDrawer()
         } else if (panelIsActive('view')) {
             e.preventDefault()
-            openFileViewSearchDrawer()
+            openFileSearch()
         }
         // Left pane focused on a non-searchable tab → native Ctrl+F
     } else if (activeTab.value === 'chat') {
@@ -2204,7 +2236,7 @@ function handleCtrlF(e) {
         openBrowseSearchDrawer()
     } else if (activeTab.value === 'view') {
         e.preventDefault()
-        openFileViewSearchDrawer()
+        openFileSearch()
     }
     // Other tabs: don't preventDefault — let browser handle Ctrl+F natively
 }

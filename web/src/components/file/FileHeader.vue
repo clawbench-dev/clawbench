@@ -327,11 +327,14 @@ const hasToc = computed(() => {
     return true
 })
 
-// Search requires file.content — PDF/Office/Excalidraw don't have usable text, hide (not disable) search
+// Search button for any file with searchable text. For the rendered markdown
+// preview it opens the SearchDrawer bottom sheet; for CodeMirror-rendered
+// views (code, markdown raw/editing, HTML/OpenAPI raw) it opens CodeMirror's
+// own search panel. Media/binary files without content have no search.
 const hasSearch = computed(() => {
     if (!props.file) return false
     if (props.file.isPdf || props.file.isOffice || props.file.isExcalidraw) return false
-    return hasToc.value
+    return hasTextContent.value
 })
 
 // Show reset-zoom button for zoomable file types (PDF, PPT)

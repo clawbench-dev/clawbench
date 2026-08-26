@@ -26,7 +26,8 @@ import { ref, shallowRef, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state'
 import { EditorView, lineNumbers, Decoration, gutter, GutterMarker, keymap } from '@codemirror/view'
-import { defaultKeymap, historyKeymap, history, undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap, history, indentWithTab, undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
+import { search, searchKeymap, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
@@ -148,6 +149,7 @@ const wrapCompartment = new Compartment()
 const overlayCompartment = new Compartment()
 const jumpFlashCompartment = new Compartment()
 const completionCompartment = new Compartment()
+const searchCompartment = new Compartment()
 
 // Gutter markers for diff markers (M/D/+), clickable to open the diff drawer.
 class DiffGutterMarker extends GutterMarker {
@@ -389,7 +391,20 @@ function buildAllExtensions() {
         codeMirrorTheme,
         syntaxHighlighting(codeHighlightStyle),
         history(),
-        keymap.of([{ key: 'Mod-s', run: handleSaveShortcut, preventDefault: true }, ...defaultKeymap, ...historyKeymap]),
+        // Tab/Space indent handling. CodeMirror 6 leaves Tab unbound by default,
+        // so without indentWithTab the browser's native tab traversal swallows
+        // the key while editing. It is a no-op in read-only mode (indentMore
+        // returns false), and autocomplete's Tab (choose candidate) still takes
+        // precedence while the completion popup is open.
+        keymap.of([{ key: 'Mod-s', run: handleSaveShortcut, preventDefault: true }, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+        searchCompartment.of([
+            search({ top: true }),
+            // Mod-f/Mod-g/Mod-Shift-g/Mod-Alt-g are bound here; the global
+            // Ctrl+F handler in App.vue skips contenteditable targets, so
+            // inside the editor these take precedence and never collide.
+            keymap.of(searchKeymap),
+            highlightSelectionMatches(),
+        ]),
         interactionExtension,
         selectionExtension,
         editStateExtension,
@@ -553,6 +568,13 @@ function handleRedo() {
     if (view.value) redo(view.value)
 }
 
+// Open the built-in CodeMirror search panel programmatically (used by the
+// toolbar search button and the global Ctrl+F routing). The search extension
+// is always mounted, so this works in both browse and edit mode.
+function openSearch() {
+    if (view.value) openSearchPanel(view.value)
+}
+
 // Ctrl/Cmd+S save shortcut (Mod = Ctrl on Windows/Linux, Cmd on Mac). Mirrors
 // the save button: only when editing, dirty, and not already saving.
 function handleSaveShortcut() {
@@ -591,7 +613,7 @@ async function handleExit() {
     return false
 }
 
-defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, isDirty: () => dirty.value })
+defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, isDirty: () => dirty.value, openSearch })
 </script>
 
 <style scoped>
@@ -843,5 +865,59 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 .cm-viewer .cm-completionMatchedText {
   color: var(--accent-color);
   font-weight: 600;
+}
+
+/* Search panel (built-in @codemirror/search) — match the app's dark theme */
+.cm-viewer .cm-search {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+}
+.cm-viewer .cm-search input {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 2px 6px;
+  outline: none;
+}
+.cm-viewer .cm-search input:focus {
+  border-color: var(--accent-color);
+}
+.cm-viewer .cm-search button {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.cm-viewer .cm-search button:hover {
+  background: var(--bg-quaternary, var(--bg-tertiary));
+  border-color: var(--accent-color);
+}
+.cm-viewer .cm-search button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cm-viewer .cm-search label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.cm-viewer .cm-search [name='close'] {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.cm-viewer .cm-search [name='close']:hover {
+  color: var(--text-primary);
+}
+.cm-viewer .cm-textfield-autofill {
+  color-scheme: dark;
 }
 </style>
