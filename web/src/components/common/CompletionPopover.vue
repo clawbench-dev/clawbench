@@ -10,8 +10,9 @@
           <div class="completion-popover-header">
             <span class="completion-popover-icon">🤖</span>
             <span class="completion-popover-title" :title="active.title">{{ active.title || '未命名会话' }}</span>
-            <span class="completion-popover-open" role="button" :aria-label="openLabel" :title="openLabel" @click="openSession">↗</span>
-            <span class="completion-popover-close" role="button" aria-label="关闭" title="关闭" @click="dismiss">✕</span>
+            <span class="completion-popover-open" role="button" :aria-label="openLabel" :title="openLabel" @click="openSession">
+              <CornerDownLeft :size="14" />
+            </span>
           </div>
           <div class="completion-popover-summary markdown-body" v-html="summaryHtml" @click="handleSummaryClick"></div>
         </div>
@@ -22,6 +23,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { CornerDownLeft } from 'lucide-vue-next'
 import { useCompletionPopover } from '@/composables/useCompletionPopover'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader'
@@ -110,21 +112,20 @@ function handleSummaryClick(event: MouseEvent): void {
     text-overflow: ellipsis;
 }
 
-.completion-popover-open,
-.completion-popover-close {
+.completion-popover-open {
     flex-shrink: 0;
-    font-size: 13px;
-    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     color: var(--text-secondary, var(--text-primary));
     opacity: 0.75;
-    padding: 3px 5px;
+    padding: 4px;
     border-radius: 6px;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
 
-.completion-popover-open:hover,
-.completion-popover-close:hover {
+.completion-popover-open:hover {
     opacity: 1;
     background: color-mix(in srgb, var(--text-primary) 12%, transparent);
 }

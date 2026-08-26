@@ -84,11 +84,12 @@ describe('CompletionPopover', () => {
         expect(styles.whiteSpace).toBe('nowrap')
     })
 
-    it('renders an open-session icon button', () => {
+    it('renders an open-session icon button and no close button', () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
         expect(document.querySelector('.completion-popover-open')).toBeTruthy()
+        expect(document.querySelector('.completion-popover-close')).toBeFalsy()
     })
 
     it('clicking the open button dispatches clawbench-open-session for session kind', () => {
@@ -134,19 +135,6 @@ describe('CompletionPopover', () => {
 
         expect(dispatchSpy).not.toHaveBeenCalled()
         expect(mockState.dismiss).not.toHaveBeenCalled()
-    })
-
-    it('clicking the close button hides the popover without navigating', () => {
-        mockState.active = ref(makeItem())
-        mountPopover()
-
-        const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
-
-        const closeBtn = document.querySelector('.completion-popover-close')!
-        closeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-
-        expect(dispatchSpy).not.toHaveBeenCalled()
-        expect(mockState.dismiss).toHaveBeenCalledTimes(1)
     })
 
     it('clicking outside the card (on the backdrop) hides without navigating', () => {
