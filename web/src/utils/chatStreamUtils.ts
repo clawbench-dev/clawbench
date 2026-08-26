@@ -355,16 +355,6 @@ export function nextClientSeq(): number {
 }
 
 /**
- * A message is "transient" when its ordering is not yet governed by the DB:
- * it is still pending, still streaming, or has a string id (no DB row).
- * Such messages are ordered by their client sort value and always sort after
- * every DB-backed message (which carry a numeric auto-increment id).
- */
-export function isTransientMessage(m: ChatMessage): boolean {
-  return m.pending === true || m.streaming === true || typeof m.id !== 'number'
-}
-
-/**
  * Base offset for transient messages, high enough that every transient message
  * sorts after any plausible DB auto-increment id.
  */

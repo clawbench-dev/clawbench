@@ -12,7 +12,6 @@ import {
   extractFileChanges,
   sortMessages,
   messageSortValue,
-  isTransientMessage,
   nextClientSeq,
   anchorRepliesToQuestions,
 } from '@/utils/chatStreamUtils.ts'
@@ -1061,7 +1060,6 @@ describe('sortMessages', () => {
   it('treats a streaming placeholder with a numeric id as transient (stays anchored) until finalized', () => {
     const parent = { role: 'user', id: 3, content: 'B' }
     const streaming = { role: 'assistant', id: 7, content: '', streaming: true, seq: 1, parentQueueId: String(parent.id) }
-    expect(isTransientMessage(streaming)).toBe(true)
     // While streaming, sortMessages anchors it after its parent via
     // parentQueueId — never by its numeric id.
     const msgs1: any[] = [streaming, parent]
@@ -1471,7 +1469,7 @@ describe('queued streaming order (integration)', () => {
     expect(order[5]).toContain('assistant:')
   })
 
-  it('keeps replies anchored when drained messages adopt DB ids (parentIsDB)', () => {
+  it('keeps replies anchored when drained messages adopt DB ids', () => {
     const messages: any[] = []
     // 消息1 已是 DB id
     messages.push({ role: 'user', id: 1, content: '1', blocks: [], createdAt: '' })
@@ -1480,6 +1478,7 @@ describe('queued streaming order (integration)', () => {
     messages.push({ role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
     sortMessages(messages)
 
+    // drain 采纳 DB id（4/5），但保留 seq → 仍在 seq 域，回复锚定不受影响
     drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-2', 4)
     drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-3', 5)
 
@@ -1521,8 +1520,8 @@ describe('parentQueueId dynamic anchoring', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
   it('queued replies follow their parent when it adopts a DB id (no loadHistory)', () => {
-    // 消息2、3 排队（父消息1 已是 DB id）。drain 时 parentIsDB=true → 消息2/3
-    // 立即采纳 DB id 4/5，回复锚定 parentQueueId。随后排序无需 loadHistory。
+    // 消息2、3 排队（父消息1 已是 DB id）。drain 时消息2/3 无条件采纳 DB id
+    // 4/5（保留 seq → 仍在 seq 域），回复锚定 parentQueueId。排序无需 loadHistory。
     const messages: any[] = [
       { role: 'user', id: 1, content: '1', blocks: [], createdAt: '' },
       { role: 'assistant', id: 2, content: 'reply1', blocks: [], createdAt: '' },
@@ -1555,7 +1554,7 @@ describe('parentQueueId dynamic anchoring', () => {
     // drain 3 → 回复3（锚到 pending-3）
     drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-reply3', 5)
 
-    // parentIsDB=true → 消息2/3 在 drain 时已采纳 DB id 4/5。
+    // 消息2/3 在 drain 时采纳 DB id 4/5（保留 seq → seq 域排序）。
     // 回复必须锚定到各自问题之后，无需 loadHistory。
     const reply2 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-2')!
     const reply3 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-3')!
