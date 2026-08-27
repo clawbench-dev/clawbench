@@ -124,6 +124,15 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
   },
+  floatingStatusWindow: {
+    key: '',
+    format: 'raw',
+    sideEffect(value: boolean) {
+      try {
+        getNative()?.setFloatingWindowEnabled?.(!!value)
+      } catch { /* not in app mode */ }
+    },
+  },
   sortField: {
     key: '',
     format: 'raw',
@@ -260,6 +269,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   recentFilesCount: 10,
   headerShortcutTips: true,
   notificationSound: true,
+  floatingStatusWindow: false,
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -426,6 +436,13 @@ export function useSettingsConfig() {
     } catch { /* not in app mode */ }
   }
 
+  /** Sync the local floating-status-window preference to Android native. */
+  function syncFloatingWindowToNative() {
+    try {
+      getNative()?.setFloatingWindowEnabled?.(!!localConfig.floatingStatusWindow)
+    } catch { /* not in app mode */ }
+  }
+
   async function loadConfig() {
     try {
       const data = await apiGet<Record<string, unknown>>('/api/config')
@@ -435,6 +452,8 @@ export function useSettingsConfig() {
     }
     // Sync push_mode to Android native after server config loads
     syncPushModeToNative()
+    // Sync floating status window preference to Android native
+    syncFloatingWindowToNative()
   }
 
   async function patchConfig(changes: Record<string, unknown>): Promise<{ needsRestart: boolean; changedColdFields: string[]; warnings: string[] }> {

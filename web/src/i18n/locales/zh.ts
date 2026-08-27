@@ -1706,6 +1706,8 @@ export default {
       notificationSoundSection: '提示音',
       notificationSound: '任务完成提示音',
       notificationSoundDesc: '任务完成或需要审批时播放提示音和振动（关闭可避免中断蓝牙耳机音乐）',
+      floatingStatusWindow: '桌面悬浮状态窗',
+      floatingStatusWindowDesc: '主界面在后台时，桌面显示会话运行状态胶囊（需系统悬浮窗权限）',
       pushMode: '推送模式',
       pushModeDesc: '选择接收通知的方式',
       pushModeNative: '原生推送',
