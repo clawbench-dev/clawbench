@@ -884,7 +884,10 @@ const removeCompletionHandler = onEvent((event, data) => {
     if (!data || data.status !== 'completed') return
     if (event !== 'session_update' && event !== 'task_update') return
     const sessionId = data.session_id
-    if (!sessionId || sessionId === sessionIdentity.currentSessionId.value) return
+    if (!sessionId) return
+    // 聊天界面在前台激活且正是当前会话时，用户正看着结果，不弹；
+    // 否则（看别的 Tab、或完成的是其他会话）都弹。
+    if (activeTab.value === 'chat' && sessionId === sessionIdentity.currentSessionId.value) return
     // 跨项目才展示项目名/路径（本项目不加）——判断弹窗会话项目与当前项目是否相同
     const isSameProject = !data.project_path || data.project_path === store.state.projectRoot
     const projectName = isSameProject ? '' : projectBaseName(data.project_path || '')
