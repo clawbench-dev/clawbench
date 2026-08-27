@@ -2,7 +2,6 @@ package com.clawbench.app;
 
 import android.animation.ObjectAnimator;
 import android.content.Context;
-import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
@@ -28,8 +27,21 @@ public class FloatingStatusView extends FrameLayout {
     private static final int COLOR_CANCELLED = 0xFF9E9E9E; // gray
     private static final int COLOR_UNKNOWN = 0x00000000; // transparent
 
+    // Layout / animation constants.
+    private static final int BG_COLOR = 0xEEFFFFFF;
+    private static final int TEXT_COLOR = 0xFF333333;
+    private static final int CORNER_RADIUS_DP = 18;
+    private static final int PADDING_H_DP = 12;
+    private static final int PADDING_V_DP = 6;
+    private static final int DOT_SIZE_DP = 10;
+    private static final int DOT_MARGIN_END_DP = 6;
+    private static final int TEXT_SIZE_SP = 12;
+    private static final int PULSE_MS = 200;
+
     private final View statusDot;
     private final TextView labelView;
+    private final ObjectAnimator pulseAnimX;
+    private final ObjectAnimator pulseAnimY;
     private float density = 1f;
 
     public FloatingStatusView(Context context) {
@@ -38,10 +50,10 @@ public class FloatingStatusView extends FrameLayout {
 
         // Background: rounded capsule, light translucent.
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xEEFFFFFF);
-        bg.setCornerRadius(dp(18));
+        bg.setColor(BG_COLOR);
+        bg.setCornerRadius(dp(CORNER_RADIUS_DP));
         setBackground(bg);
-        setPadding(dp(12), dp(6), dp(12), dp(6));
+        setPadding(dp(PADDING_H_DP), dp(PADDING_V_DP), dp(PADDING_H_DP), dp(PADDING_V_DP));
 
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -51,23 +63,30 @@ public class FloatingStatusView extends FrameLayout {
         GradientDrawable dot = new GradientDrawable();
         dot.setShape(GradientDrawable.OVAL);
         dot.setColor(COLOR_UNKNOWN);
-        dot.setSize(dp(10), dp(10));
+        dot.setSize(dp(DOT_SIZE_DP), dp(DOT_SIZE_DP));
         statusDot.setBackground(dot);
-        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(10), dp(10));
-        dotLp.setMargins(0, 0, dp(6), 0);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(DOT_SIZE_DP), dp(DOT_SIZE_DP));
+        dotLp.setMargins(0, 0, dp(DOT_MARGIN_END_DP), 0);
         row.addView(statusDot, dotLp);
 
         labelView = new TextView(context);
-        labelView.setTextSize(12);
+        labelView.setTextSize(TEXT_SIZE_SP);
         labelView.setSingleLine(true);
         labelView.setMaxLines(1);
         labelView.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        labelView.setTextColor(Color.parseColor("#FF333333"));
+        labelView.setTextColor(TEXT_COLOR);
         labelView.setIncludeFontPadding(false);
         row.addView(labelView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         addView(row, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
+
+        // Single pair of animators reused on every pulse; cancel-then-start avoids
+        // stacking concurrent animations (visual jitter + object leaks).
+        pulseAnimX = ObjectAnimator.ofFloat(statusDot, "scaleX", 1f, 1.25f, 1f);
+        pulseAnimX.setDuration(PULSE_MS);
+        pulseAnimY = ObjectAnimator.ofFloat(statusDot, "scaleY", 1f, 1.25f, 1f);
+        pulseAnimY.setDuration(PULSE_MS);
     }
 
     /** Map an event to its capsule label text. Pure: no instance fields, no framework deps. */
@@ -161,12 +180,10 @@ public class FloatingStatusView extends FrameLayout {
 
     /** Pulse the status dot (scale 1 → 1.25 → 1, 200ms each way). */
     public void pulse() {
-        ObjectAnimator animX = ObjectAnimator.ofFloat(statusDot, "scaleX", 1f, 1.25f, 1f);
-        animX.setDuration(200);
-        ObjectAnimator animY = ObjectAnimator.ofFloat(statusDot, "scaleY", 1f, 1.25f, 1f);
-        animY.setDuration(200);
-        animX.start();
-        animY.start();
+        pulseAnimX.cancel();
+        pulseAnimY.cancel();
+        pulseAnimX.start();
+        pulseAnimY.start();
     }
 
     private int dp(int value) {
