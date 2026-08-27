@@ -267,9 +267,11 @@ function handleSummaryClick(event: MouseEvent): void {
 }
 
 /* 覆盖全局 .markdown-body 规则：卡片已有自身 padding，去掉重复 padding；
-   消除最后一个子元素（段落/列表）的底部 margin，避免文字结束后残留空隙 */
+   只清左右下，保留顶部——分隔线的 padding-top: 8px 需生效 */
 .completion-popover-summary.markdown-body {
-    padding: 0;
+    padding-left: 0;
+    padding-right: 0;
+    padding-bottom: 0;
     flex: none;
 }
 

@@ -998,10 +998,10 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	insertTestMessage(t, db, "session-emit-1", "assistant", string(contentJSON))
 
 	// Insert a session row so GetSessionProjectPath can look it up
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
-		"session-emit-1", "/home/user/test-project", "codebuddy", "Test Session")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
+		"session-emit-1", "/home/user/test-project", "codebuddy", "Test Session", "agent-1")
 	require.NoError(t, err)
 
 	// Set up ws manager and a subscriber to capture the event
@@ -1029,6 +1029,7 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	assert.Equal(t, "**加粗**和`代码`以及[链接](http://example.com)", data.ResponsePreview)
 	assert.Equal(t, "加粗和代码以及链接", data.ResponsePreviewPlain)
 	assert.Equal(t, "/home/user/test-project", data.ProjectPath)
+	assert.Equal(t, "agent-1", data.AgentID)
 }
 
 func TestEmitSessionEvent_RunningNoPreview(t *testing.T) {
@@ -1167,6 +1168,13 @@ func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
+	// Insert a session row with an agent so the event carries agent_id
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
+		"session-task-1", "/home/user/project", "codebuddy", "test task", "task-agent-1")
+	require.NoError(t, err)
+
 	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
@@ -1191,6 +1199,7 @@ func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 	assert.Equal(t, "session-task-1", data.SessionID)
 	assert.Equal(t, "/home/user/project", data.ProjectPath)
 	assert.Equal(t, "test task", data.SessionTitle)
+	assert.Equal(t, "task-agent-1", data.AgentID)
 }
 
 func TestEmitTaskEvent_EmptyOptionalFields(t *testing.T) {

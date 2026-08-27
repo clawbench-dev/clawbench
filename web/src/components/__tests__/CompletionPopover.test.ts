@@ -12,9 +12,21 @@ const mockState = {
     dismiss: vi.fn(),
 }
 
+const { mockGetAgentBackend } = vi.hoisted(() => ({
+    mockGetAgentBackend: vi.fn(() => ''),
+}))
+
 vi.mock('@/composables/useCompletionPopover', () => ({
     useCompletionPopover: () => mockState,
 }))
+
+vi.mock('@/composables/useAgents', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/composables/useAgents')>()
+    return {
+        ...actual,
+        useAgents: () => ({ ...actual.useAgents(), getAgentBackend: mockGetAgentBackend }),
+    }
+})
 
 function makeItem(overrides = {}) {
     return {
@@ -33,6 +45,7 @@ describe('CompletionPopover', () => {
         vi.clearAllMocks()
         mockState.active = ref(null)
         mockState.queue = ref([])
+        mockGetAgentBackend.mockReturnValue('')
     })
 
     function mountPopover() {
@@ -118,6 +131,23 @@ describe('CompletionPopover', () => {
         expect(transitionEl.parentElement).toBe(backdrop)
         // The Transition wraps exactly one conditional element (the card)
         expect(transitionEl.querySelectorAll('.completion-popover')).toHaveLength(1)
+    })
+
+    it('renders the agent backend icon when agentId resolves', () => {
+        mockGetAgentBackend.mockReturnValue('codebuddy')
+        mockState.active = ref(makeItem({ agentId: 'cb-1' }))
+        mountPopover()
+
+        expect(mockGetAgentBackend).toHaveBeenCalledWith('cb-1')
+        expect(document.querySelector('.agent-icon-svg')).toBeTruthy()
+    })
+
+    it('skips the agent icon when agentId is unknown or missing', () => {
+        mockGetAgentBackend.mockReturnValue('')
+        mockState.active = ref(makeItem({ agentId: 'unknown-agent' }))
+        mountPopover()
+
+        expect(document.querySelector('.agent-icon-svg')).toBeFalsy()
     })
 
     it('renders the summary as markdown HTML', () => {
