@@ -529,10 +529,18 @@ export function drainQueueMessage(
   //      m.id === queueId          → optimistic bubble (string id = queueId)
   //      m.queueId === queueId     → bubble already adopted a numeric DB id
   //      m['_remoteQueueId']       → cross-device remote user message
+  //
+  //    The match deliberately does NOT require (m.pending || m._remote). A
+  //    loadHistory snapshot that arrived between the backend persisting the
+  //    drained row (queued=0) and this queue_drain WS event clears the bubble's
+  //    pending flag (mergeDbMessages keeps the string id for pending bubbles),
+  //    so gating on pending would miss it and fall back to pushing a SECOND
+  //    user message — the reported "AAA" duplicate. queueId is the stable
+  //    identity; pending/_remote are UI state, not identity.
   let pendingIdx = -1
   if (queueId) {
     pendingIdx = messages.findIndex(
-      (m) => m.role === 'user' && (m.pending || m._remote) &&
+      (m) => m.role === 'user' &&
         (m.id === queueId || m.queueId === queueId || (m as Record<string, unknown>)['_remoteQueueId'] === queueId)
     )
   }
@@ -734,6 +742,9 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string): ContentB
  * Transient messages (pending/streaming/drain-* string ids) not covered by any
  * DB row are KEPT. Non-transient state without a DB row is dropped.
  */
+// sessionRunning 参数因向后兼容保留在签名中（db_load action 类型和调用方
+// useChatSession 都传递它），但 mergeDbMessages 已不再依赖它：adopt 决策由
+// DB 行的 streaming/queued 状态驱动，而非会话整体运行标志。
 export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[], _sessionRunning: boolean): ChatMessage[] {
   const byId = new Map<string, ChatMessage>()
   const byQueueId = new Map<string, ChatMessage>()
@@ -785,9 +796,7 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
       // for its queue_drain (pending) from a directly-sent one (never pending).
       const wasPending = target.pending === true
       // Sync the pending flag with the DB row: queued=1 → waiting bubble;
-      // queued=false (drained) → clear pending. The OLD code only SET pending
-      // on queued=true and never cleared it, so a drained message kept showing
-      // as "waiting" during streaming until a reload fixed it.
+      // queued=false (drained) → clear pending.
       if (db.queued === true) target.pending = true
       else if (db.queued === false) delete target.pending
       // A NON-pending bubble (a directly-sent message that already finished,
@@ -891,21 +900,32 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
       // snapshot does NOT contain a streaming=1 row that it could belong to
       // (that would mean the placeholder is genuinely the live turn and must
       // stay untouched — handled by the streaming branch below).
+      //
+      // The adopt is gated on IDENTITY, not just "there is a live placeholder":
+      // the placeholder must either be empty (a fresh placeholder with no real
+      // content to lose) or anchored to the same question this DB row answers
+      // (parentQueueId === db.queueId). Without this, a content-full live
+      // placeholder could be collapsed into an unrelated finalized row (e.g.
+      // two replies in flight), silently dropping real AI output.
       if (matchIdx === -1) {
         const hasDbStreamingRow = dbMessages.some((r) => r.role === 'assistant' && r.streaming === true)
         if (!hasDbStreamingRow) {
           const live = state.find((m) => m.role === 'assistant' && m.streaming)
           if (live) {
-            // Finalize the placeholder and adopt the DB id. Never adopt a
-            // placeholder that content-matches a DIFFERENT finalized row (that
-            // row would have consumed it above).
-            delete live.streaming
-            used.add(live)
-            const oldId = String(live.id)
-            live.id = db.id
-            idAdoption.set(oldId, db.id)
-            delete live.seq
-            target = live
+            const liveHasContent = messageText(live) !== '' || (live.blocks ?? []).length > 0
+            const anchoredSame = !!db.queueId && live.parentQueueId === db.queueId
+            if (!liveHasContent || anchoredSame) {
+              // Finalize the placeholder and adopt the DB id. Never adopt a
+              // placeholder that content-matches a DIFFERENT finalized row (that
+              // row would have consumed it above).
+              delete live.streaming
+              used.add(live)
+              const oldId = String(live.id)
+              live.id = db.id
+              idAdoption.set(oldId, db.id)
+              delete live.seq
+              target = live
+            }
           }
         }
       }

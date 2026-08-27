@@ -1622,6 +1622,38 @@ describe('duplicate message root causes (regression)', () => {
     expect(userBs[0].id).toBe(3)
   })
 
+  it('RC1b: pending STRING-ID bubble whose pending was cleared by a DB snapshot is still matched by queue_drain (no fallback duplicate)', () => {
+    // The queued bubble still carries its optimistic string id (pending-B);
+    // a DB snapshot merged in between cleared pending (queued=0) but kept the
+    // string id (pending bubbles are not adopted early). The later queue_drain
+    // must match it by id — the old (m.pending || m._remote) gate missed it
+    // and pushed a SECOND user message (the reported "AAA" duplicate).
+    let s: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
+      { role: 'user', id: 'pending-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true, queueId: 'pending-B', seq: 1 },
+    ]
+    // DB snapshot: B already drained (queued=false, DB id=3) before queue_drain.
+    s = chatMessageReducer(s, {
+      type: 'db_load', sessionRunning: true,
+      dbMessages: [
+        { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }], queueId: 'pending-A' },
+        { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
+        { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', queued: false },
+      ],
+    } as any)
+    // Bubble survives with its string id (still awaiting the drain).
+    const bubble = s.find((m: any) => m.content === 'B')
+    expect(bubble.id).toBe('pending-B')
+    expect(bubble.pending).toBeUndefined()
+
+    // queue_drain arrives — must match the string-id bubble, no duplicate.
+    s = chatMessageReducer(s, { type: 'ws_queue_drain', queueId: 'pending-B', text: 'B', files: [], dbMessageId: 3 } as any)
+    const userBs = s.filter((m: any) => m.role === 'user' && m.content === 'B')
+    expect(userBs).toHaveLength(1)
+    expect(userBs[0].id).toBe(3)
+  })
+
   it('RC2: a finalized drain-* reply placeholder must be adopted by its DB row even when the snapshot came in AFTER the queue_drain', () => {
     // The live path created a drain-* reply anchored to queueId 'pending-B'.
     const messages: any[] = [
@@ -1874,6 +1906,30 @@ describe('duplicate message root causes (regression)', () => {
     // replyA not duplicated; replyB keeps streaming.
     expect(s.some((m: any) => m.role === 'assistant' && m.id === 'drain-rA')).toBe(false)
     expect(s.filter((m: any) => m.role === 'assistant' && m.streaming)).toHaveLength(1)
+  })
+
+  it('adoptLive safety: a content-full live placeholder anchored elsewhere is NOT collapsed into an unrelated finalized row', () => {
+    // A live streaming placeholder holds substantial content but is anchored to
+    // a DIFFERENT question than the finalized DB row. It must never be
+    // collapsed into that row (that would silently drop real AI output).
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'user', id: 2, content: 'B', blocks: [{ type: 'text', text: 'B' }] },
+      // Live reply for B with real content.
+      { role: 'assistant', id: 'drain-live-B', content: '', blocks: [{ type: 'text', text: 'actual long reply to B' }], streaming: true, parentQueueId: '2', seq: 5 },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'user', id: 2, content: 'B', blocks: [{ type: 'text', text: 'B' }] },
+      // Finalized row for A's reply (no queueId, different anchor).
+      { role: 'assistant', id: 9, content: 'reply to A', blocks: [{ type: 'text', text: 'reply to A' }], createdAt: '2026-01-01T00:00:01Z' },
+    ]
+    const merged = mergeDbMessages(messages, dbMsgs as any, true)
+    // The live B-reply placeholder must survive with its content intact.
+    const live = merged.find((m: any) => m.id === 'drain-live-B')
+    expect(live).toBeDefined()
+    expect(live.streaming).toBe(true)
+    expect((live.blocks || []).some((b: any) => b.text === 'actual long reply to B')).toBe(true)
   })
 })
 
