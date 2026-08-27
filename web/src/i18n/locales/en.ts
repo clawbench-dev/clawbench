@@ -1706,6 +1706,8 @@ export default {
       notificationSoundSection: 'Alert Sound',
       notificationSound: 'Task Completion Sound',
       notificationSoundDesc: 'Play alert sound and vibration when tasks complete or need approval (disable to avoid interrupting Bluetooth audio)',
+      floatingStatusWindow: 'Floating Status Window',
+      floatingStatusWindowDesc: 'Show a floating status capsule on screen when the app is in background (requires overlay permission)',
       pushMode: 'Push Mode',
       pushModeDesc: 'Choose how to receive notifications',
       pushModeNative: 'Native Push',

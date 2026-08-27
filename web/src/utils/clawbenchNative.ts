@@ -15,6 +15,10 @@ export interface ClawBenchNative {
   showServerDialog(): void
   openSession(sessionId: string): void
   setNativePushEnabled(enabled: boolean): void
+  /** Enable/disable the floating session status window (Android; no-op on desktop). */
+  setFloatingWindowEnabled(enabled: boolean): void
+  /** Read the persisted floating status window state (Android; no-op on desktop). */
+  getFloatingWindowEnabled(): boolean
   updateLastSeenEventId(id: string): void
   setKeepScreenOn(on: boolean): void
   log(level: string, tag: string, msg: string): void

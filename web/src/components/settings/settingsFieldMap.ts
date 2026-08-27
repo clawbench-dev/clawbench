@@ -203,6 +203,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   ],
   notification: [
     { type: 'item', spec: { labelKey: 'settings.items.notificationSound', descriptionKey: 'settings.items.notificationSoundDesc', key: 'notificationSound', type: 'switch', source: 'local', sectionHeader: 'settings.items.notificationSoundSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.notificationSoundSection' } },
     { type: 'panel', config: {
       panelId: 'push',
       entrySelector: {
