@@ -150,7 +150,7 @@ function handleSummaryClick(event: MouseEvent): void {
     width: 100%;
     background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
     color: var(--text-primary);
-    border-radius: 12px;
+    border-radius: 0;
     padding: 8px 10px;
     box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
     border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
@@ -195,7 +195,7 @@ function handleSummaryClick(event: MouseEvent): void {
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 50%;
+    border-radius: 0;
     background: var(--accent-color);
     color: #fff;
     cursor: pointer;
@@ -253,7 +253,7 @@ function handleSummaryClick(event: MouseEvent): void {
     padding: 4px 6px 4px 8px;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: 0;
 }
 
 .completion-popover-input:focus-within {
@@ -291,7 +291,7 @@ function handleSummaryClick(event: MouseEvent): void {
     background: var(--accent-color);
     color: #fff;
     border: none;
-    border-radius: 6px;
+    border-radius: 0;
     cursor: pointer;
     transition: opacity 0.15s;
 }
