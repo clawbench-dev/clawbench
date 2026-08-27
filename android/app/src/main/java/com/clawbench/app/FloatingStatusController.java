@@ -57,7 +57,8 @@ public class FloatingStatusController {
 
     private FloatingStatusView view;
     private WindowManager.LayoutParams params;
-    private boolean windowShowing;
+    private volatile boolean windowShowing;
+    private volatile boolean destroyed;
     private volatile boolean hasActive;
     private volatile boolean appForeground;
     private volatile boolean userDismissed;
@@ -203,8 +204,12 @@ public class FloatingStatusController {
 
     /** Remove the window and cancel all pending callbacks. Any thread. */
     public void destroy() {
+        destroyed = true;
         postToUi(() -> {
             cancelPendingHide();
+            if (view != null) {
+                view.animate().cancel();
+            }
             hideWindow();
             view = null;
             params = null;
@@ -214,6 +219,9 @@ public class FloatingStatusController {
     // --- UI-thread window management ---
 
     private void postToUi(Runnable r) {
+        if (destroyed) {
+            return;
+        }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             r.run();
         } else {
@@ -223,6 +231,10 @@ public class FloatingStatusController {
 
     private void ensureWindow() {
         if (windowShowing) {
+            // A fade may be in flight (alpha < 1); cancel it and restore full
+            // opacity so a fresh active event makes the window reappear.
+            view.animate().cancel();
+            view.setAlpha(1f);
             return;
         }
         if (!canDrawOverlays()) {
@@ -457,7 +469,7 @@ public class FloatingStatusController {
         if (measured <= 0) {
             return;
         }
-        if (params.x == screenWidth() - edgeMarginPx) {
+        if (params.x >= screenWidth() - capsuleWidthPx - edgeMarginPx) {
             int snapped = snapX(screenWidth(), measured, edgeMarginPx, true);
             if (snapped != params.x) {
                 params.x = snapped;

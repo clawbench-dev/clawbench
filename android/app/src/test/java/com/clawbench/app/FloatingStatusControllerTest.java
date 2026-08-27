@@ -37,6 +37,11 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
+    public void isActiveStatus_sessionFailed_false() {
+        assertFalse(FloatingStatusController.isActiveStatus("session_update", "failed"));
+    }
+
+    @Test
     public void isActiveStatus_taskRunning_true() {
         assertTrue(FloatingStatusController.isActiveStatus("task_update", "running"));
     }
