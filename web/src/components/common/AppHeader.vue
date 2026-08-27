@@ -1655,6 +1655,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .theme-picker { padding: 0; min-width: 160px; }
 .theme-picker-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 5px 10px 4px; border-bottom: 1px solid var(--border-color); }
 .theme-picker-list { max-height: 300px; overflow-y: auto; }
+.theme-item + .theme-item { border-top: 1px solid var(--border-color); }
 .theme-item {
   display: flex; align-items: center; gap: 6px;
   width: 100%; padding: 5px 10px; border: none; border-radius: 0;
