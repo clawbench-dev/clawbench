@@ -19,6 +19,12 @@ export interface ExportOptions {
     markdownBodyEl: HTMLElement
     filePath: string
     fileName: string
+    /**
+     * Current UI locale ('zh' | 'en' | ...). Used to localize the interactive
+     * labels embedded in the exported standalone HTML (copy feedback, TOC
+     * title, word-wrap tooltips). Falls back to 'en' when omitted.
+     */
+    locale?: string
 }
 
 /** One image that could not be embedded into the exported HTML. */
@@ -325,8 +331,8 @@ function handleFailedMermaid(clone: HTMLElement): void {
  * Build self-contained TOC HTML + JS for the exported document.
  * Uses var() references so colors come from the exported theme variables.
  */
-function buildToc(clone: HTMLElement): { tocButtonHtml: string; tocDrawerHtml: string; tocCss: string; tocJs: string } {
-    // Extract headings from the cloned DOM
+function buildToc(clone: HTMLElement, locale: string): { tocButtonHtml: string; tocDrawerHtml: string; tocCss: string; tocJs: string } {
+    // Headings
     const headings = Array.from(clone.querySelectorAll('h1, h2, h3, h4, h5, h6')) as HTMLHeadingElement[]
     if (headings.length === 0) return { tocButtonHtml: '', tocDrawerHtml: '', tocCss: '', tocJs: '' }
 
@@ -349,6 +355,9 @@ function buildToc(clone: HTMLElement): { tocButtonHtml: string; tocDrawerHtml: s
 
     if (entries.length === 0) return { tocButtonHtml: '', tocDrawerHtml: '', tocCss: '', tocJs: '' }
 
+    const isZh = locale === 'zh'
+    const tocTitle = isZh ? '目录' : 'Table of Contents'
+
     // Build TOC list HTML
     const tocItemsHtml = entries.map(e => {
         const indent = (e.level - 1) * 16
@@ -356,10 +365,10 @@ function buildToc(clone: HTMLElement): { tocButtonHtml: string; tocDrawerHtml: s
     }).join('\n')
 
     // Floating button (inline SVG list icon) — uses CSS class for theme-aware colors
-    const tocButtonHtml = `<button id="toc-toggle" class="fab-btn" title="Table of Contents"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>`
+    const tocButtonHtml = `<button id="toc-toggle" class="fab-btn" title="${tocTitle}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>`
 
     // TOC drawer
-    const tocDrawerHtml = `<div id="toc-drawer"><div class="toc-drawer-title">Table of Contents</div>${tocItemsHtml}</div>`
+    const tocDrawerHtml = `<div id="toc-drawer"><div class="toc-drawer-title">${tocTitle}</div>${tocItemsHtml}</div>`
 
     // TOC JS — fix: use contains() check on the button element (not === target)
     const tocJs = `
@@ -411,7 +420,11 @@ function buildToc(clone: HTMLElement): { tocButtonHtml: string; tocDrawerHtml: s
  * Table blocks: .table-block-wrapper with .table-block-copy-btn/.table-block-wrap-btn
  * Both use data-action="copy"/"wrap" pattern from useCodeBlockHeader.ts.
  */
-function buildCodeBlockJs(): string {
+function buildCodeBlockJs(locale: string): string {
+    const isZh = locale === 'zh'
+    const copiedText = isZh ? '已复制' : 'Copied'
+    const wrapOnText = isZh ? '自动换行已开启' : 'Word wrap on'
+    const wrapOffText = isZh ? '自动换行已关闭' : 'Word wrap off'
     return `
 (function() {
     document.addEventListener('click', function(e) {
@@ -434,7 +447,7 @@ function buildCodeBlockJs(): string {
                 wrapper.classList.toggle('word-wrap');
                 codeBtn.classList.toggle('is-wrapped');
                 var isWrapped = wrapper.classList.contains('word-wrap');
-                codeBtn.setAttribute('title', isWrapped ? 'Word wrap on' : 'Word wrap off');
+                codeBtn.setAttribute('title', isWrapped ? '${wrapOnText}' : '${wrapOffText}');
             }
             return;
         }
@@ -457,7 +470,7 @@ function buildCodeBlockJs(): string {
                 wrapper.classList.toggle('word-wrap');
                 tableBtn.classList.toggle('is-wrapped');
                 var isWrapped = wrapper.classList.contains('word-wrap');
-                tableBtn.setAttribute('title', isWrapped ? 'Word wrap on' : 'Word wrap off');
+                tableBtn.setAttribute('title', isWrapped ? '${wrapOnText}' : '${wrapOffText}');
             }
             return;
         }
@@ -477,9 +490,9 @@ function buildCodeBlockJs(): string {
         }
         var orig = btn.innerHTML;
         var origTitle = btn.getAttribute('title') || '';
-        btn.innerHTML = '<span class="copied-feedback">Copied!</span>';
+        btn.innerHTML = '<span class="copied-feedback">${copiedText}</span>';
         btn.classList.add('is-copied');
-        btn.setAttribute('title', 'Copied');
+        btn.setAttribute('title', '${copiedText}');
         setTimeout(function() {
             btn.innerHTML = orig;
             btn.classList.remove('is-copied');
@@ -522,6 +535,11 @@ function escapeRegExp(text: string): string {
 
 export async function exportRenderedHtml(options: ExportOptions): Promise<ExportResult> {
     const { markdownBodyEl, fileName } = options
+
+    // Current UI locale — used to localize labels embedded in the exported
+    // standalone HTML (copy feedback, TOC title, word-wrap tooltips).
+    const locale = options.locale || 'en'
+    const isZh = locale === 'zh'
 
     // 1. Clone DOM
     const clone = markdownBodyEl.cloneNode(true) as HTMLElement
@@ -570,10 +588,10 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
     const css = serializeCss(markdownBodyEl)
 
     // 5. Build TOC
-    const { tocButtonHtml, tocDrawerHtml, tocCss, tocJs } = buildToc(clone)
+    const { tocButtonHtml, tocDrawerHtml, tocCss, tocJs } = buildToc(clone, locale)
 
     // 6. Build code block interaction JS
-    const codeBlockJs = buildCodeBlockJs()
+    const codeBlockJs = buildCodeBlockJs(locale)
 
     // 7. Lightbox JS for exported HTML — opens full-screen image/SVG viewer
     const lightboxJs = `
@@ -633,7 +651,7 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
     const currentThemeBase = document.documentElement.getAttribute('data-theme-base') || (isDarkTheme(currentThemeId) ? 'dark' : 'light')
 
     const html = `<!DOCTYPE html>
-<html lang="en" data-theme="${escapeHtml(currentThemeId)}" data-theme-base="${escapeHtml(currentThemeBase)}">
+<html lang="${isZh ? 'zh-CN' : 'en'}" data-theme="${escapeHtml(currentThemeId)}" data-theme-base="${escapeHtml(currentThemeBase)}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

@@ -299,7 +299,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 import { getNative } from '@/utils/clawbenchNative'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { isAppMode } = useAppMode()
 const toast = useToast()
 const { drawerMarkerType, drawerCharDiff, drawerDiffLines, closeDrawer } = useDiffDrawer()
@@ -818,6 +818,7 @@ async function handleExportHtml() {
             markdownBodyEl,
             filePath: props.file.path,
             fileName: props.file.name,
+            locale: locale.value,
         })
         const htmlName = props.file.name.replace(/\.md$/i, '.html')
         downloadBlob(result.html, htmlName, 'text/html')

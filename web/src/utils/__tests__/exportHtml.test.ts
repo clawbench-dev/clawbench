@@ -680,6 +680,44 @@ describe('exportRenderedHtml', () => {
     expect(result.html).not.toContain('toc-drawer')
   })
 
+  it('localizes TOC title, copy feedback and word-wrap labels for zh locale', async () => {
+    const el = createElement('<h1 id="intro">Introduction</h1><pre><code>const a = 1</code></pre>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+      locale: 'zh',
+    })
+    el.remove()
+
+    expect(result.html).toContain('<html lang="zh-CN"')
+    expect(result.html).toContain('目录')
+    expect(result.html).toContain('已复制')
+    expect(result.html).toContain('自动换行已开启')
+    expect(result.html).toContain('自动换行已关闭')
+    // English labels must NOT leak into zh exports
+    expect(result.html).not.toContain('Table of Contents')
+    expect(result.html).not.toContain('Copied!')
+    expect(result.html).not.toContain('Word wrap on')
+  })
+
+  it('keeps English labels by default and when locale is en', async () => {
+    const el = createElement('<h1 id="intro">Introduction</h1><pre><code>const a = 1</code></pre>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+      locale: 'en',
+    })
+    el.remove()
+
+    expect(result.html).toContain('<html lang="en"')
+    expect(result.html).toContain('Table of Contents')
+    expect(result.html).toContain('Copied')
+    expect(result.html).toContain('Word wrap on')
+    expect(result.html).not.toContain('目录')
+  })
+
   it('does not include headings without IDs in TOC', async () => {
     const el = createElement('<h1>No ID heading</h1><h2 id="has-id">Has ID</h2>')
     const result = await exportRenderedHtml({

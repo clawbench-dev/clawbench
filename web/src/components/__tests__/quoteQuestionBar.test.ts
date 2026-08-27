@@ -18,6 +18,10 @@ const i18n = createI18n({
   locale: 'en',
   messages: {
     en: {
+      common: {
+        copy: 'Copy',
+        copied: 'Copied',
+      },
       quoteBar: {
         chat: 'Chat',
         clear: 'Clear',
@@ -141,7 +145,6 @@ describe('QuoteQuestionBar component', () => {
           Plus: true,
           Send: true,
           Copy: true,
-          Check: true,
         },
       },
     })
@@ -369,6 +372,18 @@ describe('QuoteQuestionBar component', () => {
     })
     // Clicking copy must not expand the collapsed bar
     expect(wrapper.vm.expanded).toBe(false)
+  })
+
+  it('shows copied text on the button after copying', async () => {
+    const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
+    await wrapper.find('.quote-bar-row .qq-copy-btn').trigger('click')
+    await vi.waitFor(() => {
+      expect(wrapper.vm.copied).toBe(true)
+    })
+    await nextTick()
+    const copyBtn = wrapper.find('.quote-bar-row .qq-copy-btn')
+    expect(copyBtn.text()).toBe('Copied')
+    expect(copyBtn.classes()).toContain('is-copied')
   })
 
   it('does not emit add when the copy button is clicked', async () => {

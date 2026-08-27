@@ -9,7 +9,7 @@
         <div class="qq-quoted-snippet qq-quoted-snippet--inline">
           <span class="qq-quoted-text">{{ displayQuoteText }}</span>
           <button class="qq-copy-btn" :class="{ 'is-copied': copied }" @click.stop="handleCopyQuote" :title="copied ? t('common.copied') : t('common.copy')" :aria-label="copied ? t('common.copied') : t('common.copy')">
-            <Check v-if="copied" :size="14" />
+            <span v-if="copied" class="qq-copied-text">{{ t('common.copied') }}</span>
             <Copy v-else :size="14" />
           </button>
         </div>
@@ -25,7 +25,7 @@
         <div class="qq-quoted-snippet">
           <span class="qq-quoted-text qq-quoted-text--expanded">{{ displayQuoteText }}</span>
           <button class="qq-copy-btn" :class="{ 'is-copied': copied }" @click.stop="handleCopyQuote" :title="copied ? t('common.copied') : t('common.copy')" :aria-label="copied ? t('common.copied') : t('common.copy')">
-            <Check v-if="copied" :size="14" />
+            <span v-if="copied" class="qq-copied-text">{{ t('common.copied') }}</span>
             <Copy v-else :size="14" />
           </button>
         </div>
@@ -60,7 +60,7 @@
 </template>
 
 <script setup>
-import { XCircle, Plus, Send, Copy, Check } from 'lucide-vue-next'
+import { XCircle, Plus, Send, Copy } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
@@ -254,7 +254,9 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 }
 
 /* Copy button — floats at the snippet's top-right, overlaying the text.
-   position:absolute keeps it out of the text flow (see .qq-quoted-snippet). */
+   position:absolute keeps it out of the text flow (see .qq-quoted-snippet).
+   Width is auto so the "已复制" feedback text fits; min-width keeps the
+   icon-only idle state square. */
 .qq-copy-btn {
   position: absolute;
   top: 2px;
@@ -262,9 +264,9 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  min-width: 24px;
   height: 24px;
-  padding: 0;
+  padding: 0 4px;
   border: none;
   background: color-mix(in srgb, var(--bg-tertiary) 80%, transparent);
   color: var(--text-secondary);
@@ -279,8 +281,16 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   }
 }
 
+/* Copied feedback state — shows "已复制" text (same pattern as ChatMessageItem) */
 .qq-copy-btn.is-copied {
-  color: #22c55e;
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+.qq-copied-text {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 /* ===== Expanded panel ===== */
