@@ -1781,6 +1781,7 @@ public class MainActivity extends AppCompatActivity {
         setIntent(intent);
         handleShareIntent(intent);
         handleNotificationIntent(intent);
+        handleFloatingSessionIntent(intent);
     }
 
     /**

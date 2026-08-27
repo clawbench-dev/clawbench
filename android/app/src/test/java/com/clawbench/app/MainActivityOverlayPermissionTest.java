@@ -226,6 +226,25 @@ public class MainActivityOverlayPermissionTest {
                 "s-notif", intent.getStringExtra("session_id"));
     }
 
+    @Test
+    public void onNewIntent_withSessionId_dispatchesToWebView() throws Exception {
+        // MainActivity is singleTask; a floating-capsule deep link with
+        // FLAG_ACTIVITY_REORDER_TO_FRONT lands in onNewIntent when the activity is
+        // already alive. The session id must reach the frontend, not be dropped.
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(activity, "webView", mockWebView);
+        Intent intent = new Intent().putExtra("session_id", "s-onnewintent");
+
+        invokeMethod(activity, "onNewIntent", Intent.class, intent);
+
+        verify(mockWebView).evaluateJavascript(contains("s-onnewintent"), any());
+        // onNewIntent calls setIntent(intent), so handleFloatingSessionIntent's
+        // removeExtra targets the very intent delivered here and prevents
+        // re-dispatch on the next onResume.
+        assertNull("session_id extra must be removed from the onNewIntent intent",
+                intent.getStringExtra("session_id"));
+    }
+
     // --- Helper methods ---
 
     @SuppressWarnings("unchecked")
