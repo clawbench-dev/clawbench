@@ -917,10 +917,47 @@ async function handleLoadMore() {
     const el = messageListRef.value?.messagesRef
     if (!el) return
     const oldScrollHeight = el.scrollHeight
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    const wasAtBottom = distFromBottom < 100
+    // When not at the bottom, anchor the viewport to the first visible message
+    // instead of relying on the pure scrollHeight delta — prepended content plus
+    // async growth (Mermaid, lazy original text) can shift the delta and drift
+    // the view. Same anchoring idea as ChatMessageList's array-replacement watch.
+    let anchorKey = ''
+    let anchorOffset = 0
+    if (!wasAtBottom) {
+      const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+      const containerRect = el.getBoundingClientRect()
+      for (const item of items) {
+        const rect = item.getBoundingClientRect()
+        if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
+          anchorKey = item.getAttribute('data-msg-key') || ''
+          anchorOffset = rect.top - containerRect.top
+          break
+        }
+      }
+    }
     await session.loadMoreMessages()
     // Wait for DOM update + one frame for async rendering (Mermaid, KaTeX)
     await nextTick()
     await new Promise(resolve => requestAnimationFrame(resolve))
+    if (wasAtBottom) {
+      el.scrollTop = el.scrollHeight
+      return
+    }
+    if (anchorKey) {
+      const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+      for (const item of items) {
+        if (item.getAttribute('data-msg-key') === anchorKey) {
+          const rect = item.getBoundingClientRect()
+          const containerRect = el.getBoundingClientRect()
+          const desiredTop = containerRect.top + anchorOffset
+          el.scrollTop += rect.top - desiredTop
+          return
+        }
+      }
+    }
+    // Fallback: anchor message gone — scrollHeight delta
     const newScrollHeight = el.scrollHeight
     el.scrollTop = newScrollHeight - oldScrollHeight
 }
