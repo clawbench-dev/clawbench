@@ -1517,6 +1517,61 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Request the SYSTEM_ALERT_WINDOW overlay permission for the desktop floating
+     * status window. Launches the system "display over other apps" settings screen
+     * when the permission is not yet granted; the result is re-checked on the next
+     * onResume() (where syncFloatingController in BackgroundService covers creation).
+     */
+    void requestOverlayPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            AppLog.i(TAG, "FloatingWindow: requesting overlay permission");
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                AppLog.w(TAG, "FloatingWindow: failed to open overlay permission settings", e);
+            }
+        } else {
+            AppLog.d(TAG, "FloatingWindow: overlay permission already granted");
+        }
+    }
+
+    /**
+     * Bring the main activity to the front from the desktop floating status window
+     * (capsule tap). Static so BackgroundService can invoke it without an activity
+     * reference. Carries the tapped session id as a deep link for the frontend.
+     */
+    public static void launchFromFloatingWindow(String sessionId) {
+        Context ctx = null;
+        if (instance != null) {
+            ctx = instance.getApplicationContext();
+        } else {
+            BackgroundService svc = BackgroundService.getInstance();
+            if (svc != null) {
+                ctx = svc.getApplicationContext();
+            }
+        }
+        if (ctx == null) {
+            AppLog.w(TAG, "FloatingWindow: no context available for launch");
+            return;
+        }
+        Intent launchIntent = new Intent(ctx, MainActivity.class);
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                | Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (sessionId != null && !sessionId.isEmpty()) {
+            launchIntent.putExtra("session_id", sessionId);
+        }
+        try {
+            ctx.startActivity(launchIntent);
+        } catch (SecurityException e) {
+            // Android 10+ background-activity-start restriction can reject the
+            // launch; SYSTEM_ALERT_WINDOW is an official exemption but log anyway.
+            AppLog.w(TAG, "FloatingWindow: launch blocked by background start restriction", e);
+        }
+    }
+
+    /**
      * Show the login page for server configuration.
      * Replaces the old AlertDialog-based server dialog with the
      * static HTML login page that matches the web UI style.
@@ -1666,8 +1721,37 @@ public class MainActivity extends AppCompatActivity {
         AppLog.i(TAG, "MainActivity: onResume intent=" + intent
                 + ", action=" + (intent != null ? intent.getAction() : "null")
                 + ", extras=" + (intent != null ? intent.getExtras() : "null"));
+        handleFloatingSessionIntent(intent);
         handleNotificationIntent(intent);
         redispatchPendingNavigation();
+    }
+
+    /**
+     * Handle a session deep link coming from the desktop floating status window
+     * (capsule tap). When the intent carries a bare session_id extra (no
+     * event_type/task_id — those are notification intents handled by
+     * handleNotificationIntent), forward the session id to the frontend so it can
+     * navigate to that chat session. The extra is removed after consumption to
+     * avoid re-dispatching on subsequent onResume calls.
+     */
+    void handleFloatingSessionIntent(Intent intent) {
+        if (intent == null) return;
+        String sessionId = intent.getStringExtra("session_id");
+        if (sessionId == null || sessionId.isEmpty()) return;
+        // Skip notification intents — they carry event_type/task_id markers and are
+        // handled by handleNotificationIntent (clawbench-open-session event).
+        if (intent.hasExtra("task_id") || intent.hasExtra("event_type")) return;
+        AppLog.i(TAG, "MainActivity: floating session deep link, sessionId=" + sessionId);
+        if (webView != null) {
+            String escaped = sessionId.replace("\\", "\\\\").replace("'", "\\'");
+            webView.evaluateJavascript(
+                "window.ClawBenchNativeHandleSessionId && window.ClawBenchNativeHandleSessionId('" + escaped + "')",
+                null
+            );
+        } else {
+            AppLog.w(TAG, "MainActivity: webView is null, floating session deep link dropped");
+        }
+        intent.removeExtra("session_id");
     }
 
     /**
@@ -3229,6 +3313,32 @@ public class MainActivity extends AppCompatActivity {
         public void setNativePushEnabled(boolean enabled) {
             AppLog.i(TAG, "JSBridge: setNativePushEnabled=" + enabled);
             BackgroundService.setNativePushEnabled(activity, enabled);
+        }
+
+        /**
+         * Enable or disable the desktop floating status window from the WebView
+         * settings UI. Persisted through BackgroundService; takes effect on the
+         * running service immediately when it is alive. When enabling, also asks
+         * for the SYSTEM_ALERT_WINDOW overlay permission if it isn't granted yet.
+         */
+        @JavascriptInterface
+        public void setFloatingWindowEnabled(boolean enabled) {
+            AppLog.i(TAG, "JSBridge: setFloatingWindowEnabled=" + enabled);
+            BackgroundService.setFloatingWindowEnabled(activity, enabled);
+            if (enabled) {
+                // The JS bridge runs on a WebView thread — hop to the UI thread
+                // before startActivity for the permission settings screen.
+                activity.runOnUiThread(activity::requestOverlayPermission);
+            }
+        }
+
+        /**
+         * Check whether the desktop floating status window is currently enabled.
+         * Used by the WebView to read the initial state on settings page load.
+         */
+        @JavascriptInterface
+        public boolean isFloatingWindowEnabled() {
+            return BackgroundService.isFloatingWindowEnabled(activity);
         }
 
         /**

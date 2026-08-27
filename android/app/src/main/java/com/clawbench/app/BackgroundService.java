@@ -696,23 +696,10 @@ public class BackgroundService extends Service {
         // Initialize the desktop floating status window controller (opt-in feature).
         // Created here so it lives exactly as long as this Service instance.
         floatingOnTap = () -> {
-            // Tap-to-open: bring the main activity to the front.
-            Context ctx = getApplicationContext();
-            Intent launchIntent = new Intent(ctx, MainActivity.class);
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                    | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                    | Intent.FLAG_ACTIVITY_NEW_TASK);
-            String sid = floatingSessionId;
-            if (!sid.isEmpty()) {
-                launchIntent.putExtra("session_id", sid);
-            }
-            try {
-                ctx.startActivity(launchIntent);
-            } catch (SecurityException e) {
-                // Android 10+ background-activity-start restriction can reject
-                // the launch; log and keep the service alive for a later tap.
-                AppLog.w(TAG, "FloatingWindow: tap-to-open blocked by background start restriction", e);
-            }
+            // Tap-to-open: bring the main activity to the front (deep-linked to the
+            // most recently seen session). Delegated to MainActivity so the launch
+            // intent construction stays in one place.
+            MainActivity.launchFromFloatingWindow(floatingSessionId);
         };
         syncFloatingController();
 
