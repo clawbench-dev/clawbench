@@ -96,6 +96,7 @@ public class BackgroundService extends Service {
     private static final String KEY_BATTERY_OPT_REQUESTED = "battery_opt_requested";
     private static final String KEY_LAST_SEEN_EVENT_ID = "last_seen_event_id";
     private static final String KEY_NATIVE_PUSH_ENABLED = "native_push_enabled";
+    private static final String KEY_FLOATING_WINDOW_ENABLED = "floating_window_enabled";
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
@@ -212,6 +213,14 @@ public class BackgroundService extends Service {
     // Must be static so startNativeEventWs() can set it before the Service is created.
     private static volatile boolean nativeWsNeeded = false;
 
+    // Desktop floating status window controller. Non-static: tied to this
+    // Service instance's lifecycle. Created in onCreate() when the floating
+    // window feature is enabled, destroyed in onDestroy(). Null otherwise.
+    private FloatingStatusController floatingController;
+    // Most recently seen session_id from session_update/task_update events,
+    // passed to MainActivity when the floating capsule is tapped.
+    private volatile String floatingSessionId = "";
+
     // Event ID dedup (mirrors frontend processedEventIds pattern)
     // Uses Collections.synchronizedSet with LinkedHashSet for atomic eviction:
     // LinkedHashSet maintains insertion order, so we can remove the oldest
@@ -306,6 +315,28 @@ public class BackgroundService extends Service {
             cancelPendingEventsWork(context);
         }
         AppLog.i(TAG, "NativePush: set enabled=" + enabled);
+    }
+
+    /**
+     * Check whether the desktop floating status window feature is enabled.
+     * Defaults to false — this is an opt-in feature.
+     */
+    public static boolean isFloatingWindowEnabled(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_FLOATING_WINDOW_ENABLED, false);
+    }
+
+    /**
+     * Enable or disable the desktop floating status window feature.
+     * The change takes effect the next time the Service is created
+     * (the controller is created in onCreate()).
+     */
+    public static void setFloatingWindowEnabled(Context context, boolean enabled) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_FLOATING_WINDOW_ENABLED, enabled)
+                .apply();
+        AppLog.i(TAG, "FloatingWindow: set enabled=" + enabled);
     }
 
     /**
@@ -632,6 +663,25 @@ public class BackgroundService extends Service {
         // Restore previously saved ports (from before Service was killed)
         restoreForwardedPorts();
 
+        // Initialize the desktop floating status window controller (opt-in feature).
+        // Created here so it lives exactly as long as this Service instance.
+        if (isFloatingWindowEnabled(this)) {
+            floatingController = new FloatingStatusController(this, () -> {
+                // Tap-to-open: bring the main activity to the front.
+                Context ctx = getApplicationContext();
+                Intent launchIntent = new Intent(ctx, MainActivity.class);
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        | Intent.FLAG_ACTIVITY_NEW_TASK);
+                String sid = floatingSessionId;
+                if (sid != null && !sid.isEmpty()) {
+                    launchIntent.putExtra("session_id", sid);
+                }
+                ctx.startActivity(launchIntent);
+            });
+            AppLog.i(TAG, "FloatingWindow: controller initialized");
+        }
+
         // NOTE: Do NOT call stopSelf() here even if forwardedPorts is empty!
         // The Service may have been started by startForegroundService(ADD_PORT)
         // and the ADD_PORT intent hasn't been delivered yet (onStartCommand comes
@@ -753,6 +803,10 @@ public class BackgroundService extends Service {
         }
         cancelPingRampUp();
         stopNativeEventWs();
+        if (floatingController != null) {
+            floatingController.destroy();
+            floatingController = null;
+        }
         stopConnectionMonitor();
         releaseWifiLock();
         releaseWakeLock();
@@ -2082,6 +2136,11 @@ public class BackgroundService extends Service {
         nativeWsIntentionalStop = false;
         nativeWsReconnectAttempt = 0;
 
+        // App is going to background — the floating status window may appear.
+        if (floatingController != null) {
+            floatingController.setAppForeground(false);
+        }
+
         // Build native client_id from ANDROID_ID (stable across service restarts)
         if (nativeClientId == null) {
             String androidId = android.provider.Settings.Secure.getString(
@@ -2175,6 +2234,11 @@ public class BackgroundService extends Service {
         nativeWsActive = false;
         nativeWsNeeded = false;
         stopWsPingLoop();
+
+        // App is returning to the foreground — hide the floating status window.
+        if (floatingController != null) {
+            floatingController.setAppForeground(true);
+        }
         // Cancel any pending reconnect
         if (wsReconnectHandler != null && wsReconnectRunnable != null) {
             wsReconnectHandler.removeCallbacks(wsReconnectRunnable);
@@ -2296,6 +2360,20 @@ public class BackgroundService extends Service {
                         return;
                     }
                     addProcessedEventId(eventId);
+                }
+
+                // Track the most recent session_id so a floating-capsule tap can
+                // deep-link back into the right session.
+                String sid = data.optString("session_id", "");
+                if (!sid.isEmpty()) {
+                    floatingSessionId = sid;
+                }
+
+                // Dispatch session/task events to the floating status controller
+                // (runs after ack + dedup so WS replay never re-renders it).
+                if (floatingController != null
+                        && ("session_update".equals(event) || "task_update".equals(event))) {
+                    floatingController.handleEvent(event, data);
                 }
 
                 // Only notify for terminal states and permission pending
