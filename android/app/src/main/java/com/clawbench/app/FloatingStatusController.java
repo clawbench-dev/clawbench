@@ -42,6 +42,8 @@ public class FloatingStatusController {
     private static final long TERMINAL_SHOW_MS = 3000;
     private static final long FADE_MS = 300;
     private static final int EDGE_MARGIN_DP = 8;
+    /** Fallback capsule width estimate (dp) used before the view is measured. */
+    private static final int DEFAULT_CAPSULE_WIDTH_DP = 120;
     /** Drag opacity while moving. */
     private static final float DRAG_ALPHA = 0.85f;
 
@@ -51,14 +53,14 @@ public class FloatingStatusController {
     private final Handler handler;
     private final SharedPreferences prefs;
     private final int edgeMarginPx;
+    private final int capsuleWidthPx;
 
     private FloatingStatusView view;
     private WindowManager.LayoutParams params;
     private boolean windowShowing;
-    private boolean hasActive;
-    private boolean appForeground;
-    private boolean userDismissed;
-    private Runnable terminalHideRunnable;
+    private volatile boolean hasActive;
+    private volatile boolean appForeground;
+    private volatile boolean userDismissed;
     private Runnable fadeHideRunnable;
 
     // Drag bookkeeping.
@@ -92,6 +94,19 @@ public class FloatingStatusController {
         return !appForeground && hasActive && !userDismissed;
     }
 
+    /**
+     * Compute the window x coordinate (left edge, gravity TOP|START) snapped to
+     * the left or right edge of the screen with the given margin. Clamps so the
+     * capsule right edge never exceeds the screen. Pure: no framework deps.
+     */
+    public static int snapX(int screenWidth, int viewWidth, int margin, boolean right) {
+        if (right) {
+            int x = screenWidth - viewWidth - margin;
+            return x < margin ? margin : x;
+        }
+        return margin;
+    }
+
     public FloatingStatusController(Context context, Runnable onTap) {
         this.context = context.getApplicationContext();
         this.onTap = onTap;
@@ -100,6 +115,8 @@ public class FloatingStatusController {
         this.prefs = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         this.touchSlop = ViewConfiguration.get(this.context).getScaledTouchSlop();
         this.edgeMarginPx = Math.round(EDGE_MARGIN_DP
+                * this.context.getResources().getDisplayMetrics().density);
+        this.capsuleWidthPx = Math.round(DEFAULT_CAPSULE_WIDTH_DP
                 * this.context.getResources().getDisplayMetrics().density);
     }
 
@@ -165,7 +182,19 @@ public class FloatingStatusController {
     /** Mark the window user-dismissed for the rest of this lifecycle. Any thread. */
     public void setUserDismissed(boolean dismissed) {
         userDismissed = dismissed;
-        postToUi(this::hideWindow);
+        postToUi(() -> {
+            if (dismissed) {
+                cancelPendingHide();
+                hideWindow();
+            } else if (shouldShow(appForeground, hasActive, false)) {
+                // Re-evaluate: un-dismissing should restore the window if conditions hold.
+                cancelPendingHide();
+                ensureWindow();
+                if (view != null) {
+                    view.pulse();
+                }
+            }
+        });
     }
 
     public boolean isWindowShowing() {
@@ -209,6 +238,9 @@ public class FloatingStatusController {
             }
             windowManager.addView(view, params);
             windowShowing = true;
+            // Ensure right-edge placement accounts for the real capsule width now
+            // that the view is laid out (no-op when a saved position is in effect).
+            snapRightEdgeIfNeeded();
             view.setAlpha(1f);
             view.pulse();
             AppLog.i(TAG, "floating window shown at x=" + params.x + " y=" + params.y);
@@ -253,10 +285,6 @@ public class FloatingStatusController {
     }
 
     private void cancelPendingHide() {
-        if (terminalHideRunnable != null) {
-            handler.removeCallbacks(terminalHideRunnable);
-            terminalHideRunnable = null;
-        }
         if (fadeHideRunnable != null) {
             handler.removeCallbacks(fadeHideRunnable);
             fadeHideRunnable = null;
@@ -264,15 +292,15 @@ public class FloatingStatusController {
     }
 
     private void scheduleTerminalHide() {
-        terminalHideRunnable = () -> {
-            terminalHideRunnable = null;
+        fadeHideRunnable = () -> {
+            fadeHideRunnable = null;
             if (shouldShow(appForeground, hasActive, userDismissed)) {
                 // A newer active event superseded the terminal display.
                 return;
             }
             hideWithFade();
         };
-        handler.postDelayed(terminalHideRunnable, TERMINAL_SHOW_MS);
+        handler.postDelayed(fadeHideRunnable, TERMINAL_SHOW_MS);
     }
 
     private boolean canDrawOverlays() {
@@ -292,8 +320,8 @@ public class FloatingStatusController {
                 flags,
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
-        // Default: right edge, vertically centered (fallback when no saved pos).
-        lp.x = screenWidth() - edgeMarginPx;
+        // Default: right edge (estimate before view is measured), vertically centered.
+        lp.x = snapX(screenWidth(), capsuleWidthPx, edgeMarginPx, true);
         lp.y = screenHeight() / 2;
         return lp;
     }
@@ -301,16 +329,17 @@ public class FloatingStatusController {
     private void restorePosition(WindowManager.LayoutParams lp) {
         // Ratio-based persistence is robust to screen size changes; clamp to
         // screen bounds so the capsule can never be dragged fully off-screen.
+        int maxX = maxCapsuleX();
         float ratioX = prefs.getFloat(KEY_RATIO_X, -1f);
         float ratioY = prefs.getFloat(KEY_RATIO_Y, -1f);
         if (ratioX >= 0f && ratioY >= 0f) {
-            lp.x = clamp(Math.round(ratioX * screenWidth()), edgeMarginPx, screenWidth());
+            lp.x = clamp(Math.round(ratioX * screenWidth()), edgeMarginPx, maxX);
             lp.y = clamp(Math.round(ratioY * screenHeight()), 0, screenHeight() - minCapsuleHeight());
         } else {
             int savedX = prefs.getInt(KEY_X, -1);
             int savedY = prefs.getInt(KEY_Y, -1);
             if (savedX >= 0 && savedY >= 0) {
-                lp.x = clamp(savedX, edgeMarginPx, screenWidth());
+                lp.x = clamp(savedX, edgeMarginPx, maxX);
                 lp.y = clamp(savedY, 0, screenHeight() - minCapsuleHeight());
             }
         }
@@ -379,7 +408,7 @@ public class FloatingStatusController {
         int width = screenWidth();
         // Snap to nearest left/right edge with a small margin.
         boolean toLeft = params.x < width / 2;
-        params.x = toLeft ? edgeMarginPx : width - edgeMarginPx;
+        params.x = snapX(width, capsuleWidth(), edgeMarginPx, !toLeft);
         params.y = clamp(params.y, 0, screenHeight() - minCapsuleHeight());
         try {
             windowManager.updateViewLayout(view, params);
@@ -400,6 +429,46 @@ public class FloatingStatusController {
 
     private int minCapsuleHeight() {
         return Math.round(36f * context.getResources().getDisplayMetrics().density);
+    }
+
+    /** Real capsule width when measured, otherwise the default estimate. */
+    private int capsuleWidth() {
+        if (view != null && view.getMeasuredWidth() > 0) {
+            return view.getMeasuredWidth();
+        }
+        return capsuleWidthPx;
+    }
+
+    /** Largest left-edge x that keeps the capsule fully on-screen. */
+    private int maxCapsuleX() {
+        return Math.max(edgeMarginPx, screenWidth() - capsuleWidth() - edgeMarginPx);
+    }
+
+    /**
+     * If the window sits at the right-edge default placement (x == screen - margin
+     * with no persisted position), re-snap it so the right edge lands inside the
+     * screen using the real measured capsule width.
+     */
+    private void snapRightEdgeIfNeeded() {
+        if (view == null || params == null || !windowShowing) {
+            return;
+        }
+        int measured = view.getMeasuredWidth();
+        if (measured <= 0) {
+            return;
+        }
+        if (params.x == screenWidth() - edgeMarginPx) {
+            int snapped = snapX(screenWidth(), measured, edgeMarginPx, true);
+            if (snapped != params.x) {
+                params.x = snapped;
+                try {
+                    windowManager.updateViewLayout(view, params);
+                } catch (IllegalArgumentException e) {
+                    AppLog.w(TAG, "snapRightEdgeIfNeeded updateViewLayout failed", e);
+                }
+                AppLog.d(TAG, "right-edge default snapped to x=" + params.x);
+            }
+        }
     }
 
     private static int clamp(int value, int min, int max) {

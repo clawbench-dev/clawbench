@@ -2,6 +2,7 @@ package com.clawbench.app;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -81,5 +82,29 @@ public class FloatingStatusControllerTest {
     @Test
     public void shouldShow_foregroundNoActiveDismissed_false() {
         assertFalse(FloatingStatusController.shouldShow(true, false, true));
+    }
+
+    // --- snapX ---
+
+    @Test
+    public void snapX_rightEdge_accountsForViewWidth() {
+        assertEquals(300 - 120 - 8, FloatingStatusController.snapX(300, 120, 8, true));
+    }
+
+    @Test
+    public void snapX_leftEdge_returnsMargin() {
+        assertEquals(8, FloatingStatusController.snapX(300, 120, 8, false));
+    }
+
+    @Test
+    public void snapX_rightEdge_wideViewClampsToMargin() {
+        // View wider than screen - margin would push the left edge negative;
+        // clamp keeps it on-screen at the margin.
+        assertEquals(8, FloatingStatusController.snapX(100, 200, 8, true));
+    }
+
+    @Test
+    public void snapX_rightEdge_exactlyFits() {
+        assertEquals(8, FloatingStatusController.snapX(136, 120, 8, true));
     }
 }
