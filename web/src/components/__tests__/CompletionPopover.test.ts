@@ -87,6 +87,23 @@ describe('CompletionPopover', () => {
         expect(document.querySelector('.completion-popover-project')).toBeFalsy()
     })
 
+    it('animates with Android-notification style slide-down enter transition', () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        // jsdom cannot observe <Transition> class lifecycle, so assert the
+        // injected stylesheet contains the Android-notification style slide-down.
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        expect(cssText).toContain('.completion-popover-enter-from')
+        expect(cssText).toContain('translateY(-120%)')
+        expect(cssText).toContain('cubic-bezier(0.4, 0, 0.2, 1)')
+    })
+
     it('renders the summary as markdown HTML', () => {
         mockState.active = ref(makeItem({ summary: '**加粗摘要**' }))
         mountPopover()

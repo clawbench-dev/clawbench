@@ -174,14 +174,18 @@ function handleSummaryClick(event: MouseEvent): void {
     margin-bottom: 0;
 }
 
-.completion-popover-enter-active,
+/* Android 通知风格：从顶部滑下 + 淡入（标准缓动曲线），离开反向滑回 */
+.completion-popover-enter-active {
+    transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 .completion-popover-leave-active {
-    transition: opacity 0.25s ease, transform 0.25s ease;
+    transition: opacity 0.2s ease-in, transform 0.2s ease-in;
 }
 
 .completion-popover-enter-from,
 .completion-popover-leave-to {
     opacity: 0;
-    transform: translateY(-12px);
+    transform: translateY(-120%);
 }
 </style>

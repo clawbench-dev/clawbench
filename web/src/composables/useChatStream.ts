@@ -50,7 +50,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     onMessage,
     onOpen,
     isOpen,
-    onToast,
     onNotification,
     onStreamEnd,
     onFileModified,
@@ -384,7 +383,9 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (!isOpen.value) {
           const lastMsg = messages.value[messages.value.length - 1]
           if (lastMsg?.role === 'assistant') {
-            onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
+            // In-app toast bubble removed — the completion popover now covers
+            // this case (shown when the chat view is not in the foreground).
+            // Keep the system notification for when the app is backgrounded.
             onNotification(gt('chat.stream.aiReplied'), {
               body: gt('chat.stream.clickToViewReply'),
               onClick: () => onOpen()

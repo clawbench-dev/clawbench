@@ -922,7 +922,7 @@ describe('useChatStream', () => {
       expect(options.onStreamEnd).not.toHaveBeenCalled()
     })
 
-    it('should call onToast and onNotification when isOpen=false on done', async () => {
+    it('should NOT call onToast but still call onNotification when isOpen=false on done', async () => {
       const options = createOptions({ isOpen: ref(false) })
       const { connectStream } = useChatStream(options)
 
@@ -933,9 +933,10 @@ describe('useChatStream', () => {
       simulateWsEvent('done', {})
 
       await vi.waitFor(() => {
-        expect(options.onToast).toHaveBeenCalled()
+        expect(options.onNotification).toHaveBeenCalled()
       })
-      expect(options.onNotification).toHaveBeenCalled()
+      // Completion popover replaced the in-app toast bubble — no onToast
+      expect(options.onToast).not.toHaveBeenCalled()
     })
 
     it('should call onRenderNeeded(true) after loadHistory resolves to re-render Mermaid on final DOM', async () => {
