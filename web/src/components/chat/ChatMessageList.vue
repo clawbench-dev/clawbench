@@ -18,7 +18,7 @@
       </Transition>
     </div>
 
-    <div class="chat-messages-list">
+    <div class="chat-messages-list" :key="currentSessionId || 'no-session'">
       <div v-if="messages.length === 0" class="chat-empty">
       <template v-if="agents && agents.length === 0">
         <Bot :size="40" class="no-agents-icon" />
