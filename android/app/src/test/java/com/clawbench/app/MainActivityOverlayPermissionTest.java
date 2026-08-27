@@ -37,7 +37,8 @@ import static org.mockito.Mockito.verify;
  * 3. launchFromFloatingWindow(String) — the static entry point the floating capsule
  *    tap uses to bring the main activity to the front with a session deep link.
  * 4. The activity consumes a session_id intent extra and hands it to the frontend
- *    via webView.evaluateJavascript (window.ClawBenchNativeHandleSessionId).
+ *    via handleNotificationIntent → webView.evaluateJavascript
+ *    (clawbench-open-session CustomEvent).
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
@@ -170,19 +171,22 @@ public class MainActivityOverlayPermissionTest {
     }
 
     // =====================================================
-    // session_id deep link: MainActivity consumes the extra → frontend JS
+    // session_id deep link: routed through handleNotificationIntent → frontend JS
+    // (clawbench-open-session CustomEvent)
     // =====================================================
 
     @Test
-    public void handleFloatingSessionIntent_withSessionId_dispatchesToWebView() throws Exception {
+    public void handleNotificationIntent_withSessionId_dispatchesOpenSessionEvent() throws Exception {
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(activity, "webView", mockWebView);
         Intent intent = new Intent().putExtra("session_id", "s-float-2");
 
-        invokeMethod(activity, "handleFloatingSessionIntent", Intent.class, intent);
+        invokeMethod(activity, "handleNotificationIntent", Intent.class, intent);
 
-        // The session_id must reach the frontend via evaluateJavascript so it can
-        // navigate to the right chat session.
+        // A bare session_id intent (floating capsule deep link, no task_id /
+        // event_type) must reach the frontend as a clawbench-open-session event
+        // so it can navigate to the right chat session.
+        verify(mockWebView).evaluateJavascript(contains("clawbench-open-session"), any());
         verify(mockWebView).evaluateJavascript(contains("s-float-2"), any());
         // The consumed extra must be removed to prevent re-dispatch.
         assertNull("session_id extra must be removed after consumption",
@@ -190,55 +194,57 @@ public class MainActivityOverlayPermissionTest {
     }
 
     @Test
-    public void handleFloatingSessionIntent_nullWebView_doesNotThrow() throws Exception {
+    public void handleNotificationIntent_nullWebView_doesNotThrow() throws Exception {
         setField(activity, "webView", null);
         Intent intent = new Intent().putExtra("session_id", "s-float-3");
 
-        invokeMethod(activity, "handleFloatingSessionIntent", Intent.class, intent);
+        invokeMethod(activity, "handleNotificationIntent", Intent.class, intent);
         // Should not throw.
     }
 
     @Test
-    public void handleFloatingSessionIntent_emptySessionId_doesNotDispatch() throws Exception {
+    public void handleNotificationIntent_emptySessionId_doesNotDispatch() throws Exception {
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(activity, "webView", mockWebView);
         Intent intent = new Intent().putExtra("session_id", "");
 
-        invokeMethod(activity, "handleFloatingSessionIntent", Intent.class, intent);
+        invokeMethod(activity, "handleNotificationIntent", Intent.class, intent);
 
         verify(mockWebView, org.mockito.Mockito.never()).evaluateJavascript(any(), any());
     }
 
     @Test
-    public void handleFloatingSessionIntent_notificationIntent_skipped() throws Exception {
-        // Notification intents carry event_type/task_id and are handled by
-        // handleNotificationIntent — the floating handler must not steal them.
+    public void handleNotificationIntent_taskIntent_dispatchesOpenTaskEvent() throws Exception {
+        // Task intents carry task_id and are handled by the task branch — they must
+        // dispatch clawbench-open-task, never clawbench-open-session.
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(activity, "webView", mockWebView);
         Intent intent = new Intent()
                 .putExtra("session_id", "s-notif")
-                .putExtra("event_type", "session_update");
+                .putExtra("task_id", "t-notif");
 
-        invokeMethod(activity, "handleFloatingSessionIntent", Intent.class, intent);
+        invokeMethod(activity, "handleNotificationIntent", Intent.class, intent);
 
-        verify(mockWebView, org.mockito.Mockito.never()).evaluateJavascript(any(), any());
-        assertEquals("notification session_id must be left for handleNotificationIntent",
-                "s-notif", intent.getStringExtra("session_id"));
+        verify(mockWebView).evaluateJavascript(contains("clawbench-open-task"), any());
+        verify(mockWebView, org.mockito.Mockito.never())
+                .evaluateJavascript(contains("clawbench-open-session"), any());
     }
 
     @Test
     public void onNewIntent_withSessionId_dispatchesToWebView() throws Exception {
         // MainActivity is singleTask; a floating-capsule deep link with
         // FLAG_ACTIVITY_REORDER_TO_FRONT lands in onNewIntent when the activity is
-        // already alive. The session id must reach the frontend, not be dropped.
+        // already alive. The session id must reach the frontend via the shared
+        // handleNotificationIntent channel (clawbench-open-session), not be dropped.
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(activity, "webView", mockWebView);
         Intent intent = new Intent().putExtra("session_id", "s-onnewintent");
 
         invokeMethod(activity, "onNewIntent", Intent.class, intent);
 
+        verify(mockWebView).evaluateJavascript(contains("clawbench-open-session"), any());
         verify(mockWebView).evaluateJavascript(contains("s-onnewintent"), any());
-        // onNewIntent calls setIntent(intent), so handleFloatingSessionIntent's
+        // onNewIntent calls setIntent(intent), so handleNotificationIntent's
         // removeExtra targets the very intent delivered here and prevents
         // re-dispatch on the next onResume.
         assertNull("session_id extra must be removed from the onNewIntent intent",

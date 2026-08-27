@@ -1721,37 +1721,8 @@ public class MainActivity extends AppCompatActivity {
         AppLog.i(TAG, "MainActivity: onResume intent=" + intent
                 + ", action=" + (intent != null ? intent.getAction() : "null")
                 + ", extras=" + (intent != null ? intent.getExtras() : "null"));
-        handleFloatingSessionIntent(intent);
         handleNotificationIntent(intent);
         redispatchPendingNavigation();
-    }
-
-    /**
-     * Handle a session deep link coming from the desktop floating status window
-     * (capsule tap). When the intent carries a bare session_id extra (no
-     * event_type/task_id — those are notification intents handled by
-     * handleNotificationIntent), forward the session id to the frontend so it can
-     * navigate to that chat session. The extra is removed after consumption to
-     * avoid re-dispatching on subsequent onResume calls.
-     */
-    void handleFloatingSessionIntent(Intent intent) {
-        if (intent == null) return;
-        String sessionId = intent.getStringExtra("session_id");
-        if (sessionId == null || sessionId.isEmpty()) return;
-        // Skip notification intents — they carry event_type/task_id markers and are
-        // handled by handleNotificationIntent (clawbench-open-session event).
-        if (intent.hasExtra("task_id") || intent.hasExtra("event_type")) return;
-        AppLog.i(TAG, "MainActivity: floating session deep link, sessionId=" + sessionId);
-        if (webView != null) {
-            String escaped = sessionId.replace("\\", "\\\\").replace("'", "\\'");
-            webView.evaluateJavascript(
-                "window.ClawBenchNativeHandleSessionId && window.ClawBenchNativeHandleSessionId('" + escaped + "')",
-                null
-            );
-        } else {
-            AppLog.w(TAG, "MainActivity: webView is null, floating session deep link dropped");
-        }
-        intent.removeExtra("session_id");
     }
 
     /**
@@ -1781,7 +1752,6 @@ public class MainActivity extends AppCompatActivity {
         setIntent(intent);
         handleShareIntent(intent);
         handleNotificationIntent(intent);
-        handleFloatingSessionIntent(intent);
     }
 
     /**
@@ -1972,7 +1942,7 @@ public class MainActivity extends AppCompatActivity {
             intent.removeExtra("session_id");
             intent.removeExtra("project_path");
             AppLog.i(TAG, "MainActivity: cleared intent extras to prevent re-dispatch");
-        } else if (sessionId != null) {
+        } else if (sessionId != null && !sessionId.isEmpty()) {
             // Session notification: navigate to chat session
             AppLog.i(TAG, "MainActivity: handleNotificationIntent - session_id found, dispatching navigation");
             try {
