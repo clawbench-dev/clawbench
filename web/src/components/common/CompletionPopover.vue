@@ -21,6 +21,20 @@
             <MessageSquare :size="12" /> {{ active.userMessage }}
           </div>
           <div class="completion-popover-summary markdown-body" v-html="summaryHtml" @click="handleSummaryClick"></div>
+          <div class="completion-popover-input">
+            <textarea
+              ref="inputRef"
+              v-model="inputText"
+              class="completion-popover-textarea"
+              rows="1"
+              :placeholder="inputPlaceholder"
+              @keydown.enter.exact.prevent="handleSend"
+              @input="autoResizeTextarea"
+            />
+            <button class="completion-popover-send" :class="{ disabled: !canSend }" @click="handleSend" :title="gt('chat.popover.send')" :aria-label="gt('chat.popover.send')">
+              <Send :size="14" />
+            </button>
+          </div>
         </div>
       </Transition>
     </div>
@@ -28,12 +42,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { CornerDownLeft, Bot, Folder, MessageSquare } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { CornerDownLeft, Bot, Folder, MessageSquare, Send } from 'lucide-vue-next'
 import { useCompletionPopover } from '@/composables/useCompletionPopover'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader'
 import { gt } from '@/composables/useLocale'
+import { canSendInput } from '@/utils/quoteQuestionUtils'
 
 const { active, dismiss } = useCompletionPopover()
 
@@ -41,12 +56,60 @@ const openLabel = computed(() => active.value?.kind === 'task'
     ? gt('chat.popover.openTask')
     : gt('chat.popover.openSession'))
 
+const inputPlaceholder = computed(() => active.value?.kind === 'task'
+    ? gt('chat.popover.replyTask')
+    : gt('chat.popover.replySession'))
+
 // 基础 Markdown 渲染（轻量路径：跳过路径/commit 注解与 KaTeX，与流式文本同款）
 const summaryHtml = computed(() => {
     const summary = active.value?.summary || ''
     if (!summary) return ''
     return renderMarkdownHtml(summary, { skipEnhancements: true, skipKatex: true })
 })
+
+// ── 快捷输入框 ──
+const inputText = ref('')
+const inputRef = ref<HTMLTextAreaElement | null>(null)
+const sending = ref(false)
+
+const canSend = computed(() => canSendInput(inputText.value) && !sending.value)
+
+// 弹窗切换时重置输入框
+watch(active, () => {
+    inputText.value = ''
+    sending.value = false
+})
+
+function autoResizeTextarea(): void {
+    const el = inputRef.value
+    if (!el) return
+    el.style.height = 'auto'
+    const computedStyle = getComputedStyle(el)
+    const lineHeight = parseFloat(computedStyle.lineHeight) || 20
+    const paddingTop = parseFloat(computedStyle.paddingTop) || 0
+    const paddingBottom = parseFloat(computedStyle.paddingBottom) || 0
+    const maxContentHeight = lineHeight * 3
+    el.style.height = Math.min(el.scrollHeight, maxContentHeight + paddingTop + paddingBottom) + 'px'
+}
+
+// 发送到弹窗对应的会话，发送后关闭弹窗
+async function handleSend(): Promise<void> {
+    const item = active.value
+    const text = inputText.value.trim()
+    if (!item || !text || sending.value) return
+    sending.value = true
+    try {
+        const url = `/api/ai/chat?session_id=${encodeURIComponent(item.sessionId)}`
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text }),
+        })
+        dismiss()
+    } catch {
+        sending.value = false
+    }
+}
 
 // 仅通过"打开会话"按钮进入导航（点击卡片本体不导航）
 function openSession(): void {
@@ -94,6 +157,13 @@ function handleSummaryClick(event: MouseEvent): void {
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     overflow: hidden;
+}
+
+/* PC 模式加宽通知栏，避免过窄难看 */
+@media (min-width: 768px) {
+    .completion-popover {
+        max-width: min(680px, 92vw);
+    }
 }
 
 .completion-popover-header {
@@ -172,6 +242,63 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-summary.markdown-body > :last-child,
 .completion-popover-summary.markdown-body > :last-child > :last-child {
     margin-bottom: 0;
+}
+
+/* 快捷输入框 */
+.completion-popover-input {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    margin-top: 6px;
+    padding: 4px 6px 4px 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.completion-popover-input:focus-within {
+    border-color: var(--accent-color);
+}
+
+.completion-popover-textarea {
+    flex: 1;
+    min-width: 0;
+    padding: 3px 0;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 18px;
+    outline: none;
+    resize: none;
+    overflow-y: auto;
+    max-height: calc(18px * 3);
+    font-family: inherit;
+}
+
+.completion-popover-textarea::placeholder {
+    color: var(--text-muted);
+}
+
+.completion-popover-send {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: var(--accent-color);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.completion-popover-send.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 /* Android 通知风格：从顶部滑下 + 淡入（标准缓动曲线），离开反向滑回 */

@@ -476,6 +476,9 @@ export default {
     popover: {
       openSession: '打开会话',
       openTask: '打开任务',
+      replySession: '回复该会话…',
+      replyTask: '回复该任务…',
+      send: '发送',
     },
     session: {
       aiDialog: 'AI 对话',

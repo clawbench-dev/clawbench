@@ -86,9 +86,11 @@ func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled
 
 	var responsePreviewRaw string
 	if status == "completed" {
-		// Include response preview for DingTalk (Markdown) and Android/browser (plain text)
+		// Include response preview for the completion popover (full, untruncated —
+		// the frontend scrolls it). The plain-text variant stays truncated for
+		// push notifications.
 		responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
-		data.ResponsePreview = truncatePreview(responsePreviewRaw)
+		data.ResponsePreview = responsePreviewRaw
 		if responsePreviewRaw != "" {
 			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 		}

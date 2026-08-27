@@ -227,4 +227,52 @@ describe('CompletionPopover', () => {
         expect(dispatchSpy).not.toHaveBeenCalled()
         expect(mockState.dismiss).not.toHaveBeenCalled()
     })
+
+    it('renders a quick-reply input box', () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        expect(document.querySelector('.completion-popover-textarea')).toBeTruthy()
+        expect(document.querySelector('.completion-popover-send')).toBeTruthy()
+    })
+
+    it('sends the message to the session and dismisses on send click', async () => {
+        mockState.active = ref(makeItem({ sessionId: 's42' }))
+        mountPopover()
+
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true })
+        globalThis.fetch = fetchMock
+
+        const textarea = document.querySelector('.completion-popover-textarea') as HTMLTextAreaElement
+        textarea.value = '继续说说'
+        textarea.dispatchEvent(new Event('input'))
+
+        const sendBtn = document.querySelector('.completion-popover-send')!
+        sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/chat?session_id=s42'),
+                expect.objectContaining({
+                    method: 'POST',
+                    body: expect.stringContaining('继续说说'),
+                })
+            )
+            expect(mockState.dismiss).toHaveBeenCalledTimes(1)
+        })
+    })
+
+    it('does not send when input is empty', () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const fetchMock = vi.fn()
+        globalThis.fetch = fetchMock
+
+        const sendBtn = document.querySelector('.completion-popover-send')!
+        sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+        expect(fetchMock).not.toHaveBeenCalled()
+        expect(mockState.dismiss).not.toHaveBeenCalled()
+    })
 })

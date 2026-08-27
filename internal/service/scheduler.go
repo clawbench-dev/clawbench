@@ -530,7 +530,7 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 		}
 		if sessionID != "" {
 			responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
-			data.ResponsePreview = truncatePreview(responsePreviewRaw)
+			data.ResponsePreview = responsePreviewRaw
 			if responsePreviewRaw != "" {
 				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 			}

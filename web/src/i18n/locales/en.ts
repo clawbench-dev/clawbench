@@ -476,6 +476,9 @@ export default {
     popover: {
       openSession: 'Open session',
       openTask: 'Open task',
+      replySession: 'Reply to this conversation…',
+      replyTask: 'Reply to this task…',
+      send: 'Send',
     },
     session: {
       aiDialog: 'AI Chat',
