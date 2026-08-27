@@ -220,6 +220,9 @@ public class BackgroundService extends Service {
     // Most recently seen session_id from session_update/task_update events,
     // passed to MainActivity when the floating capsule is tapped.
     private volatile String floatingSessionId = "";
+    // Shared tap-to-open callback reused by every controller instance
+    // (onCreate and syncFloatingController both create controllers).
+    private Runnable floatingOnTap;
 
     // Event ID dedup (mirrors frontend processedEventIds pattern)
     // Uses Collections.synchronizedSet with LinkedHashSet for atomic eviction:
@@ -328,8 +331,9 @@ public class BackgroundService extends Service {
 
     /**
      * Enable or disable the desktop floating status window feature.
-     * The change takes effect the next time the Service is created
-     * (the controller is created in onCreate()).
+     * Takes effect immediately when the service is running: enabling creates
+     * the controller, disabling destroys it. Otherwise the change applies on
+     * the next service creation.
      */
     public static void setFloatingWindowEnabled(Context context, boolean enabled) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -337,6 +341,32 @@ public class BackgroundService extends Service {
                 .putBoolean(KEY_FLOATING_WINDOW_ENABLED, enabled)
                 .apply();
         AppLog.i(TAG, "FloatingWindow: set enabled=" + enabled);
+        BackgroundService svc = instance;
+        if (svc != null && isRunning) {
+            svc.syncFloatingController();
+        }
+    }
+
+    /**
+     * Align the floating controller with the persisted enable flag.
+     * Creates the controller when the feature is enabled (hidden while the
+     * main activity is foreground), destroys it when disabled. Called from
+     * onCreate() and whenever the toggle changes while the service is running.
+     */
+    private void syncFloatingController() {
+        boolean enabled = isFloatingWindowEnabled(this);
+        if (enabled && floatingController == null) {
+            floatingController = new FloatingStatusController(this, floatingOnTap);
+            // Only show the capsule while the app is in the background.
+            if (MainActivity.isForeground) {
+                floatingController.setAppForeground(true);
+            }
+            AppLog.i(TAG, "FloatingWindow: controller initialized");
+        } else if (!enabled && floatingController != null) {
+            floatingController.destroy();
+            floatingController = null;
+            AppLog.i(TAG, "FloatingWindow: controller destroyed (toggle off)");
+        }
     }
 
     /**
@@ -665,22 +695,26 @@ public class BackgroundService extends Service {
 
         // Initialize the desktop floating status window controller (opt-in feature).
         // Created here so it lives exactly as long as this Service instance.
-        if (isFloatingWindowEnabled(this)) {
-            floatingController = new FloatingStatusController(this, () -> {
-                // Tap-to-open: bring the main activity to the front.
-                Context ctx = getApplicationContext();
-                Intent launchIntent = new Intent(ctx, MainActivity.class);
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        | Intent.FLAG_ACTIVITY_NEW_TASK);
-                String sid = floatingSessionId;
-                if (sid != null && !sid.isEmpty()) {
-                    launchIntent.putExtra("session_id", sid);
-                }
+        floatingOnTap = () -> {
+            // Tap-to-open: bring the main activity to the front.
+            Context ctx = getApplicationContext();
+            Intent launchIntent = new Intent(ctx, MainActivity.class);
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    | Intent.FLAG_ACTIVITY_NEW_TASK);
+            String sid = floatingSessionId;
+            if (!sid.isEmpty()) {
+                launchIntent.putExtra("session_id", sid);
+            }
+            try {
                 ctx.startActivity(launchIntent);
-            });
-            AppLog.i(TAG, "FloatingWindow: controller initialized");
-        }
+            } catch (SecurityException e) {
+                // Android 10+ background-activity-start restriction can reject
+                // the launch; log and keep the service alive for a later tap.
+                AppLog.w(TAG, "FloatingWindow: tap-to-open blocked by background start restriction", e);
+            }
+        };
+        syncFloatingController();
 
         // NOTE: Do NOT call stopSelf() here even if forwardedPorts is empty!
         // The Service may have been started by startForegroundService(ADD_PORT)
@@ -807,6 +841,7 @@ public class BackgroundService extends Service {
             floatingController.destroy();
             floatingController = null;
         }
+        floatingOnTap = null;
         stopConnectionMonitor();
         releaseWifiLock();
         releaseWakeLock();
@@ -2129,17 +2164,19 @@ public class BackgroundService extends Service {
      * MUST be called from a background thread (network I/O).
      */
     private void startNativeEventWs(String serverUrl) {
+        // App is going to background — the floating status window may appear.
+        // Run this BEFORE the nativeWsActive early-return guard so a re-start
+        // while the WS is already active still syncs foreground state.
+        if (floatingController != null) {
+            floatingController.setAppForeground(false);
+        }
+
         if (nativeWsActive) {
             AppLog.d(TAG, "NativeWS: already active, skipping");
             return;
         }
         nativeWsIntentionalStop = false;
         nativeWsReconnectAttempt = 0;
-
-        // App is going to background — the floating status window may appear.
-        if (floatingController != null) {
-            floatingController.setAppForeground(false);
-        }
 
         // Build native client_id from ANDROID_ID (stable across service restarts)
         if (nativeClientId == null) {
@@ -2371,9 +2408,15 @@ public class BackgroundService extends Service {
 
                 // Dispatch session/task events to the floating status controller
                 // (runs after ack + dedup so WS replay never re-renders it).
-                if (floatingController != null
-                        && ("session_update".equals(event) || "task_update".equals(event))) {
-                    floatingController.handleEvent(event, data);
+                // Isolated in its own try/catch so a controller exception cannot
+                // swallow the notification/cursor logic below.
+                try {
+                    if (floatingController != null
+                            && ("session_update".equals(event) || "task_update".equals(event))) {
+                        floatingController.handleEvent(event, data);
+                    }
+                } catch (Exception e) {
+                    AppLog.w(TAG, "FloatingWindow: handleEvent failed", e);
                 }
 
                 // Only notify for terminal states and permission pending

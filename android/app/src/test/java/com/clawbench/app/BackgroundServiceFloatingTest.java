@@ -105,6 +105,40 @@ public class BackgroundServiceFloatingTest {
                 BackgroundService.isFloatingWindowEnabled(appContext));
     }
 
+    @Test
+    public void setFloatingWindowEnabled_true_whileRunning_createsController() throws Exception {
+        // Service is "running" (instance + isRunning set in setUp).
+        setField(service, "floatingController", null);
+
+        BackgroundService.setFloatingWindowEnabled(appContext, true);
+
+        assertNotNull("toggle on while running should create the controller immediately",
+                getField(service, "floatingController"));
+    }
+
+    @Test
+    public void setFloatingWindowEnabled_false_whileRunning_destroysController() throws Exception {
+        FloatingStatusController controller = mock(FloatingStatusController.class);
+        setField(service, "floatingController", controller);
+
+        BackgroundService.setFloatingWindowEnabled(appContext, false);
+
+        verify(controller).destroy();
+        assertNull("toggle off while running should destroy and null the controller",
+                getField(service, "floatingController"));
+    }
+
+    @Test
+    public void setFloatingWindowEnabled_true_whenServiceNotRunning_doesNotCreateController() throws Exception {
+        setStaticField("instance", null);
+        setStaticField("isRunning", false);
+
+        BackgroundService.setFloatingWindowEnabled(appContext, true);
+
+        assertNull("toggle on with no running service should only persist prefs",
+                getField(service, "floatingController"));
+    }
+
     // =====================================================
     // floatingController field
     // =====================================================
@@ -143,6 +177,28 @@ public class BackgroundServiceFloatingTest {
 
         assertNull("onCreate should NOT create floatingController when disabled",
                 getField(service, "floatingController"));
+    }
+
+    @Test
+    public void syncFloatingController_enabledWithForegroundActivity_createsHiddenController() throws Exception {
+        // The main activity is foreground: the controller must be created in a
+        // state that won't show the capsule (appForeground=true, set via the
+        // background-only creation path in syncFloatingController).
+        java.lang.reflect.Field fg = MainActivity.class.getDeclaredField("isForeground");
+        fg.setAccessible(true);
+        fg.set(null, true);
+        try {
+            setField(service, "floatingController", null);
+            BackgroundService.setFloatingWindowEnabled(appContext, true);
+
+            Object controller = getField(service, "floatingController");
+            assertNotNull("syncFloatingController should create the controller when enabled",
+                    controller);
+            assertFalse("controller must not be window-showing while activity is foreground",
+                    ((FloatingStatusController) controller).isWindowShowing());
+        } finally {
+            fg.set(null, false);
+        }
     }
 
     @Test

@@ -205,7 +205,10 @@ public class FloatingStatusController {
     /** Remove the window and cancel all pending callbacks. Any thread. */
     public void destroy() {
         destroyed = true;
-        postToUi(() -> {
+        // Bypass postToUi's destroyed guard here: the guard must drop event
+        // runnables, but it must NOT drop our own teardown, otherwise the
+        // window is never removed from the WindowManager.
+        Runnable cleanup = () -> {
             cancelPendingHide();
             if (view != null) {
                 view.animate().cancel();
@@ -213,7 +216,12 @@ public class FloatingStatusController {
             hideWindow();
             view = null;
             params = null;
-        });
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            cleanup.run();
+        } else {
+            handler.post(cleanup);
+        }
     }
 
     // --- UI-thread window management ---
@@ -222,10 +230,20 @@ public class FloatingStatusController {
         if (destroyed) {
             return;
         }
-        if (Looper.myLooper() == Looper.getMainLooper()) {
+        Runnable guarded = () -> {
+            // Re-check at execution time: a runnable queued before destroy()
+            // (e.g. a handleEvent posted from the native WS thread) executes
+            // AFTER destroy()'s synchronous cleanup on the main thread, and
+            // must not resurrect the window via ensureWindow().
+            if (destroyed) {
+                return;
+            }
             r.run();
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            guarded.run();
         } else {
-            handler.post(r);
+            handler.post(guarded);
         }
     }
 
