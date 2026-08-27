@@ -535,6 +535,7 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 			}
 			data.LastUserMessage = GetLastUserMessagePlain(sessionID)
+			data.AgentID = GetSessionAgentID(sessionID)
 		}
 	}
 	// For running tasks, include task name as session title

@@ -15,6 +15,8 @@ export interface CompletionPopoverItem {
     userMessage?: string
     /** 项目显示名（仅跨项目弹窗提供，本项目为空） */
     projectName?: string
+    /** 运行会话/任务的 agent id（渲染后端图标用） */
+    agentId?: string
     kind: 'session' | 'task'
     projectPath?: string
     taskId?: string

@@ -96,6 +96,8 @@ func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled
 		}
 		// Include the last user message so clients can show it alongside the reply
 		data.LastUserMessage = GetLastUserMessagePlain(sessionID)
+		// Include the agent so clients can render the backend icon
+		data.AgentID = GetSessionAgentID(sessionID)
 	}
 
 	// Include toolName and toolInput for permission_pending events

@@ -8,17 +8,21 @@
       <Transition name="completion-popover-card" appear>
         <div :key="active.sessionId + active.kind" class="completion-popover">
           <div class="completion-popover-header">
-            <span class="completion-popover-icon"><Bot :size="14" /></span>
+            <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-popover-icon" />
             <span class="completion-popover-title" :title="active.title">{{ active.title || '未命名会话' }}</span>
             <span class="completion-popover-open" role="button" :aria-label="openLabel" :title="openLabel" @click="openSession">
-              <CornerDownLeft :size="16" />
+              <Search :size="15" />
             </span>
           </div>
-          <div v-if="active.projectName" class="completion-popover-project" :title="active.projectPath || active.projectName">
-            <Folder :size="12" /> {{ active.projectName }}{{ active.projectPath ? ' · ' + active.projectPath : '' }}
+          <div v-if="active.projectName" class="completion-popover-meta">
+            <span class="completion-popover-project" :title="active.projectPath || active.projectName">
+              <Folder :size="11" /> {{ active.projectName }}{{ active.projectPath ? ' · ' + active.projectPath : '' }}
+            </span>
           </div>
-          <div v-if="active.userMessage" class="completion-popover-user-msg" :title="active.userMessage">
-            <MessageSquare :size="12" /> {{ active.userMessage }}
+          <div v-if="active.userMessage" class="completion-popover-meta">
+            <span class="completion-popover-user-msg" :title="active.userMessage">
+              <MessageSquare :size="11" /> {{ active.userMessage }}
+            </span>
           </div>
           <div class="completion-popover-summary markdown-body" v-html="summaryHtml" @click="handleSummaryClick"></div>
           <div class="completion-popover-input">
@@ -43,14 +47,23 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { CornerDownLeft, Bot, Folder, MessageSquare, Send } from 'lucide-vue-next'
+import { Search, Folder, MessageSquare, Send } from 'lucide-vue-next'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useCompletionPopover } from '@/composables/useCompletionPopover'
+import { useAgents } from '@/composables/useAgents'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader'
 import { gt } from '@/composables/useLocale'
 import { canSendInput } from '@/utils/quoteQuestionUtils'
 
 const { active, dismiss } = useCompletionPopover()
+const { getAgentBackend } = useAgents()
+
+const agentBackend = computed(() => {
+    const agentId = active.value?.agentId
+    if (!agentId) return ''
+    return getAgentBackend(agentId)
+})
 
 const openLabel = computed(() => active.value?.kind === 'task'
     ? gt('chat.popover.openTask')
@@ -169,20 +182,24 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-header {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
+    gap: 8px;
+    margin-bottom: 6px;
 }
 
 .completion-popover-icon {
-    font-size: 14px;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .completion-popover-title {
     flex: 1;
     min-width: 0;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
+    line-height: 1.4;
+    color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -195,7 +212,7 @@ function handleSummaryClick(event: MouseEvent): void {
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 0;
+    border-radius: 50%;
     background: var(--accent-color);
     color: #fff;
     cursor: pointer;
@@ -208,28 +225,45 @@ function handleSummaryClick(event: MouseEvent): void {
     transform: scale(1.05);
 }
 
+/* 元信息行（项目、用户消息）：小号、弱化，与正文形成层次 */
+.completion-popover-meta {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    margin-bottom: 4px;
+    padding-left: 2px;
+}
+
 .completion-popover-project,
 .completion-popover-user-msg {
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--text-tertiary, var(--text-secondary, var(--text-primary)));
+    min-width: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-tertiary, var(--text-secondary));
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    margin-bottom: 4px;
-    opacity: 0.9;
+    opacity: 0.85;
 }
 
 .completion-popover-summary {
     max-height: 40vh;
     overflow-y: auto;
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.6;
     color: var(--text-secondary, var(--text-primary));
     word-break: break-word;
+    padding-top: 2px;
+}
+
+/* 有元信息行时，正文用细分隔线分层 */
+.completion-popover-meta + .completion-popover-summary {
+    border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+    padding-top: 8px;
+    margin-top: 2px;
 }
 
 /* 覆盖全局 .markdown-body 规则：卡片已有自身 padding，去掉重复 padding；
