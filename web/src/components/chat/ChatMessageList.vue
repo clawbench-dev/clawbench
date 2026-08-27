@@ -18,7 +18,7 @@
       </Transition>
     </div>
 
-    <div class="chat-messages-list" :key="currentSessionId || 'no-session'">
+    <div class="chat-messages-list" :key="listKey">
       <div v-if="messages.length === 0" class="chat-empty">
       <template v-if="agents && agents.length === 0">
         <Bot :size="40" class="no-agents-icon" />
@@ -185,6 +185,32 @@ const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTab
 // How many older messages are not yet loaded
 const remainingCount = computed(() => {
   return computeRemainingCount(props.hasMore, props.totalMessages, props.messages.length)
+})
+
+/**
+ * DOM reconciliation key for the message list container.
+ *
+ * Combines session identity with a structural snapshot of message IDs so
+ * that Vue unmounts and rebuilds the entire message list whenever the
+ * authoritative DB replaces the array (loadHistory / rebuildFromDb drops
+ * transient bubbles).  Without this, a transient message whose id changes
+ * from string (pending-xxx) to numeric (DB id) can leave a stale DOM node
+ * behind because Vue's diff sees a key change on a sibling but may not
+ * correctly prune the old element in certain WebView/GPU compositor states.
+ *
+ * - First segment: session id (switches force full rebuild on session change).
+ * - Second segment: count of messages (catches shrink/grow).
+ * - Third segment: first + last message id (catches array replacement with
+ *   same count, e.g. loadHistory adopting all transient messages).
+ *
+ * The key is intentionally cheap (string concat) and only changes on structural
+ * events, so streaming text updates (same array, same ids) do NOT re-mount.
+ */
+const listKey = computed(() => {
+  const msgs = props.messages || []
+  const first = msgs[0]?.id ?? ''
+  const last = msgs[msgs.length - 1]?.id ?? ''
+  return `${props.currentSessionId || 'no-session'}|${msgs.length}|${first}|${last}`
 })
 
 // "All loaded" brief hint: shown for 2s after a user-initiated load-more completes with no more.

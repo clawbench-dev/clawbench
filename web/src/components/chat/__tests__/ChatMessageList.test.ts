@@ -141,3 +141,38 @@ describe('ChatMessageList — force pin is guarded by user scrolling', () => {
     expect(source).toContain("scrollOwner.value = val ? 'programmatic' : 'idle'")
   })
 })
+
+/**
+ * Tests for the DOM reconciliation key fix (listKey).
+ *
+ * Root cause: when a transient message's id changes from string (pending-xxx)
+ * to numeric (DB id) — e.g. after loadHistory or queue_drain — the v-for key
+ * changes but Vue's patch may leave a stale DOM node behind in certain WebView
+ * /GPU compositor states. This produces the "duplicate message" visual artifact
+ * that survives refresh (because the data layer is clean) and only clears on
+ * app restart (because restart recreates the DOM from scratch).
+ *
+ * Fix: the .chat-messages-list container now uses a structural key
+ * (listKey) that changes whenever the message array is replaced or reshuffled
+ * by rebuildFromDb, forcing Vue to unmount and remount the entire list.
+ */
+describe('ChatMessageList — DOM reconciliation key (listKey)', () => {
+  it('uses a structural listKey instead of bare session id', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // The container key must reference listKey, not the raw session id
+    expect(source).toContain(':key="listKey"')
+    expect(source).not.toContain(":key=\"currentSessionId || 'no-session'\"")
+  })
+
+  it('listKey includes session id, message count, and first/last message id', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // listKey must be a computed that concatenates these segments
+    expect(source).toContain('const listKey = computed')
+    expect(source).toContain('props.currentSessionId')
+    expect(source).toContain('msgs.length')
+    expect(source).toContain('msgs[0]?.id')
+    expect(source).toContain('msgs[msgs.length - 1]?.id')
+  })
+})
