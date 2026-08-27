@@ -1185,6 +1185,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	go func() {
 		<-ctx.Done()
 		slog.Info("received shutdown signal, draining connections...")
+		// Force a final flush of every actively streaming session BEFORE draining
+		// HTTP connections: a restart mid-stream then keeps all but the last few
+		// hundred ms of AI output (including thinking) instead of losing the tail.
+		service.FlushStreamingNow()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
