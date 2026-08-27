@@ -99,9 +99,25 @@ describe('CompletionPopover', () => {
                 catch { return '' }
             })
             .join('\n')
-        expect(cssText).toContain('.completion-popover-enter-from')
+        expect(cssText).toContain('.completion-popover-card-enter-from')
         expect(cssText).toContain('translateY(-120%)')
         expect(cssText).toContain('cubic-bezier(0.4, 0, 0.2, 1)')
+    })
+
+    it('wraps the card in a Transition inside the static backdrop (animation layer guard)', () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        // The card must be a direct child of a <Transition> that sits inside the
+        // backdrop — this layer structure is what makes enter/leave animations
+        // actually play. Regression guard for the animation-layer fix.
+        const backdrop = document.querySelector('.completion-popover-backdrop')!
+        const card = document.querySelector('.completion-popover')!
+        const transitionEl = card.parentElement!
+        // Card's direct parent is the Transition's rendered slot root
+        expect(transitionEl.parentElement).toBe(backdrop)
+        // The Transition wraps exactly one conditional element (the card)
+        expect(transitionEl.querySelectorAll('.completion-popover')).toHaveLength(1)
     })
 
     it('renders the summary as markdown HTML', () => {

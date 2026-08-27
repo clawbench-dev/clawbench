@@ -1,12 +1,12 @@
 <template>
   <Teleport to="body">
-    <Transition name="completion-popover">
-      <div
-        v-if="active"
-        class="completion-popover-backdrop"
-        @click.self="dismiss"
-      >
-        <div class="completion-popover">
+    <div
+      v-if="active"
+      class="completion-popover-backdrop"
+      @click.self="dismiss"
+    >
+      <Transition name="completion-popover-card" appear>
+        <div :key="active.sessionId + active.kind" class="completion-popover">
           <div class="completion-popover-header">
             <span class="completion-popover-icon"><Bot :size="14" /></span>
             <span class="completion-popover-title" :title="active.title">{{ active.title || '未命名会话' }}</span>
@@ -36,8 +36,8 @@
             </button>
           </div>
         </div>
-      </div>
-    </Transition>
+      </Transition>
+    </div>
   </Teleport>
 </template>
 
@@ -301,17 +301,17 @@ function handleSummaryClick(event: MouseEvent): void {
     cursor: not-allowed;
 }
 
-/* Android 通知风格：从顶部滑下 + 淡入（标准缓动曲线），离开反向滑回 */
-.completion-popover-enter-active {
+/* Android 通知风格：卡片从顶部滑下 + 淡入（标准缓动曲线），离开反向滑回 */
+.completion-popover-card-enter-active {
     transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.completion-popover-leave-active {
+.completion-popover-card-leave-active {
     transition: opacity 0.2s ease-in, transform 0.2s ease-in;
 }
 
-.completion-popover-enter-from,
-.completion-popover-leave-to {
+.completion-popover-card-enter-from,
+.completion-popover-card-leave-to {
     opacity: 0;
     transform: translateY(-120%);
 }
