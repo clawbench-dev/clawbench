@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -765,6 +766,151 @@ func TestServeACPSessions_DiskScanFallback(t *testing.T) {
 	assert.Equal(t, "disk-session-1", first["sessionId"])
 	assert.Equal(t, env.ProjectDir, first["cwd"])
 	assert.Equal(t, "磁盘会话", first["title"])
+}
+
+func TestServeACPSessions_MergesDiskSessionsIntoACPFirstPage(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const testBackend = "disk-augment-backend"
+	agentID := "acp-disk-augment"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Backend: testBackend, Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
+
+	updatedRPC := "2026-08-27T10:00:00Z"
+	updatedDisk := "2026-08-27T11:00:00Z"
+	ai.ListSessionsFromDiskRegister(testBackend, func(a *model.Agent, cwd string) ([]acp.SessionInfo, error) {
+		assert.Equal(t, env.ProjectDir, cwd)
+		return []acp.SessionInfo{
+			{SessionId: "shared-session", Cwd: cwd, UpdatedAt: &updatedRPC},
+			{SessionId: "disk-only-session", Cwd: cwd, UpdatedAt: &updatedDisk},
+		}, nil
+	})
+	defer ai.ListSessionsFromDiskRegister(testBackend, nil)
+
+	connKey := agentID + ":"
+	conn := ai.NewACPConnForTest(model.Agents[agentID], connKey)
+	conn.SetAliveForTest()
+	conn.SetListSessionsFnForTest(func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
+		return []acp.SessionInfo{
+			{SessionId: "rpc-only-session", Cwd: env.ProjectDir, UpdatedAt: &updatedRPC},
+			{SessionId: "shared-session", Cwd: env.ProjectDir, UpdatedAt: &updatedRPC},
+		}, nil, nil
+	})
+	mgr := ai.GetACPConnManager()
+	mgr.SetConnForTest(connKey, conn)
+	defer mgr.CloseConn(connKey)
+
+	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPSessions(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Sessions []struct {
+			SessionID string `json:"sessionId"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Sessions, 3)
+	assert.Equal(t, "disk-only-session", resp.Sessions[0].SessionID)
+	assert.Equal(t, "rpc-only-session", resp.Sessions[1].SessionID)
+	assert.Equal(t, "shared-session", resp.Sessions[2].SessionID)
+}
+
+func TestServeACPSessions_FallsBackToDiskWhenACPListFails(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const testBackend = "disk-error-fallback-backend"
+	agentID := "acp-disk-error-fallback"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Backend: testBackend, Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
+
+	ai.ListSessionsFromDiskRegister(testBackend, func(a *model.Agent, cwd string) ([]acp.SessionInfo, error) {
+		return []acp.SessionInfo{{SessionId: "disk-recovered-session", Cwd: cwd}}, nil
+	})
+	defer ai.ListSessionsFromDiskRegister(testBackend, nil)
+
+	connKey := agentID + ":"
+	conn := ai.NewACPConnForTest(model.Agents[agentID], connKey)
+	conn.SetAliveForTest()
+	conn.SetListSessionsFnForTest(func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
+		return nil, nil, errors.New("session/list unavailable")
+	})
+	mgr := ai.GetACPConnManager()
+	mgr.SetConnForTest(connKey, conn)
+	defer mgr.CloseConn(connKey)
+
+	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPSessions(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "disk-recovered-session")
+}
+
+func TestACPDiskDiscoveryToLoadSessionIntegration(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agentID := "disk-discovery-load"
+	discoveredID := "00000000-0000-4000-8000-000000000099"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Name: "Disk Discovery Load", Backend: "claude", Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
+
+	ai.ListSessionsFromDiskRegister("claude", func(a *model.Agent, cwd string) ([]acp.SessionInfo, error) {
+		return []acp.SessionInfo{{SessionId: acp.SessionId(discoveredID), Cwd: cwd}}, nil
+	})
+	defer ai.ListSessionsFromDiskRegister("claude", nil)
+
+	listReq := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	listReq = withProjectCookie(listReq, env.ProjectDir)
+	listRecorder := httptest.NewRecorder()
+	ServeACPSessions(listRecorder, listReq)
+	require.Equal(t, http.StatusOK, listRecorder.Code)
+
+	var listResp struct {
+		Sessions []struct {
+			SessionID string `json:"sessionId"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(listRecorder.Body.Bytes(), &listResp))
+	require.Len(t, listResp.Sessions, 1)
+
+	mockConn := ai.NewACPConnForTest(model.Agents[agentID], "disk-discovery-load-mock")
+	mockConn.SetAliveForTest()
+	mockConn.SetClientForTest(ai.NewClawBenchACPClient())
+	var loadedID string
+	origFn := getOrCreateConnForLoad
+	getOrCreateConnForLoad = func(ctx context.Context, agent *model.Agent, clawbenchSID, acpSID, cwd string) (*ai.ACPConn, error) {
+		loadedID = acpSID
+		ai.GetACPConnManager().SetConnForTest(clawbenchSID, mockConn)
+		return mockConn, nil
+	}
+	defer func() { getOrCreateConnForLoad = origFn }()
+
+	body := fmt.Sprintf(`{"agentId":%q,"acpSessionId":%q}`, agentID, listResp.Sessions[0].SessionID)
+	loadReq := httptest.NewRequest(http.MethodPost, "/api/ai/session/acp-load", strings.NewReader(body))
+	loadReq.Header.Set("Content-Type", "application/json")
+	withProjectCookie(loadReq, env.ProjectDir)
+	loadRecorder := httptest.NewRecorder()
+	ServeACPLoadSession(loadRecorder, loadReq)
+
+	require.Equal(t, http.StatusOK, loadRecorder.Code)
+	assert.Equal(t, discoveredID, loadedID)
+	assert.Contains(t, loadRecorder.Body.String(), "sessionId")
 }
 
 func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {

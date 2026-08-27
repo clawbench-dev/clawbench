@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -733,22 +735,39 @@ func acpSessionsCapCheck(w http.ResponseWriter, r *http.Request, loadSession, li
 // false an error response was written.
 func fetchACPSessions(w http.ResponseWriter, r *http.Request, agent *model.Agent, agentID string, conn *ai.ACPConn, listSessions bool, cursor string) ([]acp.SessionInfo, *string, bool) {
 	if listSessions {
-		if conn == nil {
-			slog.Warn("handler: failed to spawn ACP connection for ListSessions", "agent", agentID)
-			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "ServiceUnavailable")
+		if conn != nil {
+			var cursorPtr *string
+			if cursor != "" {
+				cursorPtr = &cursor
+			}
+			sessions, nextCursor, err := conn.ListSessions(r.Context(), cursorPtr)
+			if err == nil {
+				if cursor == "" && ai.HasListSessionsFromDisk(agent.Backend) {
+					cwd := middleware.GetProjectFromCookie(r)
+					diskSessions, diskErr := ai.ListSessionsFromDisk(agent, cwd)
+					if diskErr != nil {
+						slog.Warn("handler: on-disk ListSessions augmentation failed",
+							"agent", agentID, "error", diskErr)
+					} else {
+						sessions = mergeACPSessions(sessions, diskSessions)
+					}
+				}
+				return sessions, nextCursor, true
+			}
+			slog.Warn("handler: ACP ListSessions failed; trying on-disk fallback",
+				"agent", agentID, "error", err)
+		} else {
+			slog.Warn("handler: failed to spawn ACP connection for ListSessions; trying on-disk fallback",
+				"agent", agentID)
+		}
+		if !ai.HasListSessionsFromDisk(agent.Backend) || cursor != "" {
+			if conn == nil {
+				writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "ServiceUnavailable")
+			} else {
+				writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			}
 			return nil, nil, false
 		}
-		var cursorPtr *string
-		if cursor != "" {
-			cursorPtr = &cursor
-		}
-		sessions, nextCursor, err := conn.ListSessions(r.Context(), cursorPtr)
-		if err != nil {
-			slog.Error("handler: ListSessions failed", "agent", agentID, "error", err)
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return nil, nil, false
-		}
-		return sessions, nextCursor, true
 	}
 
 	cwd := middleware.GetProjectFromCookie(r)
@@ -759,6 +778,39 @@ func fetchACPSessions(w http.ResponseWriter, r *http.Request, agent *model.Agent
 		return nil, nil, false
 	}
 	return sessions, nil, true
+}
+
+func mergeACPSessions(primary, fallback []acp.SessionInfo) []acp.SessionInfo {
+	seen := make(map[string]struct{}, len(primary)+len(fallback))
+	merged := make([]acp.SessionInfo, 0, len(primary)+len(fallback))
+	for _, group := range [][]acp.SessionInfo{primary, fallback} {
+		for _, session := range group {
+			id := string(session.SessionId)
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			merged = append(merged, session)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return acpSessionUpdatedAt(merged[i]).After(acpSessionUpdatedAt(merged[j]))
+	})
+	return merged
+}
+
+func acpSessionUpdatedAt(session acp.SessionInfo) time.Time {
+	if session.UpdatedAt == nil {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, *session.UpdatedAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 // filterAndRetitleACPSessions removes sessions already loaded into ClawBench

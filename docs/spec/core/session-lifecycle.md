@@ -2,6 +2,26 @@
 
 聊天会话从用户发送第一条消息开始创建，经历执行、排队、取消、完成等状态，最终被归档（软删除）或物理删除（Destroy）。定时任务的执行结果可以续接为新的交互式会话，继承原始对话上下文。理解会话的生命周期是理解系统运行时行为的关键——大多数用户交互都围绕"当前会话"展开，而 service 层的会话管理是整个系统的运行时核心。
 
+## Codex 项目级历史会话发现
+
+Codex Agent 优先使用 ACP `session/list`，并在第一页合并本地
+`CODEX_HOME/sessions`（默认 `~/.codex/sessions`）扫描结果。ACP 列举不可用
+或在分页开始前失败时，自动使用本地扫描兜底。恢复时不转换会话 ID，直接将
+`session_meta.payload.id` 作为 Codex thread ID 传给 ACP `LoadSession`。
+
+本地扫描器仅在 JSONL 文件头部读取恢复所需的 `id`、`cwd` 和时间戳，并只返回
+规范化后 `cwd` 与当前项目一致的会话。Windows 盘符大小写、正反斜杠、尾斜杠
+以及 `.`/`..` 差异均会规范化比较；损坏或缺字段的文件会记录警告并跳过，不会
+导致列表接口整体失败。
+
+扫描按最新日期优先，单次最多检查 10,000 个 rollout 文件并返回 200 条匹配
+会话，避免无界遍历。当前不解析 Codex 压缩的 `.jsonl.zst` 历史文件，此类会话
+仍依赖优先级更高的 ACP 列举。Codex 数据目录非默认位置时需设置 `CODEX_HOME`。
+
+排障时应确认：ClawBench 当前项目与 `session_meta.payload.cwd` 指向同一目录；
+rollout 首条有效记录是 `session_meta`；若列表可见但恢复失败，升级 Codex 与
+`codex-acp`，并确认 ACP `LoadSession` 接受该原始 thread ID。
+
 ## 流程图
 
 ### 会话主生命周期

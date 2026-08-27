@@ -95,18 +95,39 @@ const backendId = computed(() => getAgentBackend(props.agentId))
 const backendDisplayName = computed(() => getBackendDisplayName(backendId.value))
 const drawerTitle = computed(() => t('chat.acpSession.resumeTitle', { agent: backendDisplayName.value }))
 
-function trimTrailingSlash(p: string): string {
-  return p.replace(/\/+$/, '')
+function normalizeProjectPath(p: string): string {
+  const normalized = p.trim().replace(/\\/g, '/')
+  const isUnc = normalized.startsWith('//')
+  const isWindows = isUnc || /^[A-Za-z]:\//.test(normalized)
+  const parts: string[] = []
+  for (const part of normalized.split('/')) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      parts.pop()
+    } else {
+      parts.push(part)
+    }
+  }
+  let result = parts.join('/')
+  if (isUnc) result = `//${result}`
+  else if (normalized.startsWith('/')) result = `/${result}`
+  if (isWindows) result = result.toLowerCase()
+  return result.replace(/\/+$/, '')
 }
 
+const displayableSessions = computed(() => {
+  if (backendId.value !== 'codex') return acpSessions.value
+  return acpSessions.value.filter((session) => session.title.trim() !== '')
+})
+
 const sessionsInCurrentProject = computed(() => {
-  const root = trimTrailingSlash(store.state.projectRoot || '')
+  const root = normalizeProjectPath(store.state.projectRoot || '')
   if (!root) return []
-  return acpSessions.value.filter((s) => trimTrailingSlash(s.cwd || '') === root)
+  return displayableSessions.value.filter((s) => normalizeProjectPath(s.cwd || '') === root)
 })
 
 const hiddenOtherProjectCount = computed(
-  () => acpSessions.value.length - sessionsInCurrentProject.value.length
+  () => displayableSessions.value.length - sessionsInCurrentProject.value.length
 )
 
 const filteredSessions = computed(() => {

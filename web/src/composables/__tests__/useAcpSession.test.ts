@@ -120,6 +120,33 @@ describe('useAcpSession', () => {
       expect(acpSessions.value).toHaveLength(2)
     })
 
+    it('deduplicates sessions repeated on later ACP pages', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ sessionId: 's1', title: 'First' }],
+            nextCursor: 'cursor-1',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [
+              { sessionId: 's1', title: 'Repeated' },
+              { sessionId: 's2', title: 'Second' },
+            ],
+            nextCursor: null,
+          }),
+        })
+
+      const { acpSessions, loadAcpSessions } = useAcpSession({ currentAgentId })
+      await loadAcpSessions()
+      await loadAcpSessions(undefined, true)
+
+      expect(acpSessions.value.map((session) => session.sessionId)).toEqual(['s1', 's2'])
+    })
+
     it('handles fetch exception gracefully', async () => {
       mockFetch.mockRejectedValue(new Error('network error'))
 
