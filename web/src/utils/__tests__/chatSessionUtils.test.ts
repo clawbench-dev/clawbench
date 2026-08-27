@@ -231,6 +231,48 @@ describe('parseMessages', () => {
     expect(result[0].blocks).toEqual([{ type: 'text', text: 42 }])
   })
 
+  it('unwraps bare content-array JSON user messages', () => {
+    const msgs = [
+      { role: 'user', content: JSON.stringify([{ type: 'text', text: '数组用户消息' }]) },
+    ]
+    const result = parseMessages(msgs, mockParser)
+    expect(result[0].blocks).toEqual([{ type: 'text', text: '数组用户消息' }])
+  })
+
+  it('unwraps ACP notification wrapper JSON user messages', () => {
+    const msgs = [
+      { role: 'user', content: JSON.stringify({ content: { text: '通知用户消息', type: 'text' }, messageId: 'm1', sessionUpdate: 'user_message_chunk' }) },
+    ]
+    const result = parseMessages(msgs, mockParser)
+    expect(result[0].blocks).toEqual([{ type: 'text', text: '通知用户消息' }])
+  })
+
+  it('unwraps nested ACP notification in a text block of user messages', () => {
+    const msgs = [
+      {
+        role: 'user',
+        content: JSON.stringify({
+          blocks: [
+            {
+              text: JSON.stringify({ content: { text: '嵌套消息', type: 'text' }, messageId: 'm1', sessionUpdate: 'user_message_chunk' }),
+              type: 'text',
+            },
+          ],
+        }),
+      },
+    ]
+    const result = parseMessages(msgs, mockParser)
+    expect(result[0].blocks).toEqual([{ type: 'text', text: '嵌套消息' }])
+  })
+
+  it('keeps user message with blocks already parsed intact', () => {
+    const msgs = [
+      { role: 'user', content: '原内容', blocks: [{ type: 'text', text: '已解析' }] },
+    ]
+    const result = parseMessages(msgs, mockParser)
+    expect(result[0].blocks).toEqual([{ type: 'text', text: '已解析' }])
+  })
+
   // ── parseMessages: showingSummary only stores the user's explicit preference ──
   // The field stays undefined until the user toggles; parseMessages preserves an
   // existing preference but never derives a default boolean. The render decision

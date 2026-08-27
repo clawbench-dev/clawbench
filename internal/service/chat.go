@@ -16,7 +16,6 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
-	"clawbench/internal/summarize"
 )
 
 // GetChatHistory retrieves all chat messages for a given project path, backend, and session.
@@ -323,24 +322,174 @@ func unmarshalFilesJSON(raw string) []model.FileEntry {
 	return nil
 }
 
-// ExtractPlainText extracts plain text from content that may be block-format JSON
-// (e.g. {"blocks":[{"type":"text","text":"hello"}]}) or plain text.
-// Returns the original content unchanged if it's not block-format JSON.
+// ExtractPlainText extracts plain text from message content, handling every
+// storage format the system has produced. Content is stored in several shapes
+// depending on the source (normal chat vs ACP session sync/replay) and on
+// historical bugs that embedded raw JSON into text fields, so this function
+// must not assume a single format.
+//
+// Recognized shapes:
+//   - Plain text (e.g. "hello world") → returned unchanged.
+//   - Block-format JSON ({"blocks":[{"type":"text","text":"..."}]}) → text of
+//     all text blocks joined with "\n\n".
+//   - Nested dirty data: a text block whose text field is itself a JSON string
+//     (e.g. an ACP notification JSON or a content array serialized into text).
+//     Recursively unwraps until real text is found.
+//   - Bare content-array JSON ([{"type":"text","text":"..."}]).
+//   - ACP notification wrapper ({"content":{"text":"hi","type":"text"},...,
+//     "sessionUpdate":"user_message_chunk"}).
+//
+// Returns the original content unchanged for plain text or unrecognized JSON;
+// returns "" for recognized wrappers (blocks/array/ACP notification) that
+// carry no extractable text, so callers can distinguish "no content" from
+// "not a wrapper" — matching the frontend extractPlainText semantics.
 func ExtractPlainText(content string) string {
-	if !strings.HasPrefix(content, `{"blocks":`) {
+	if content == "" {
 		return content
 	}
-	var wrapper struct {
-		Blocks []model.ContentBlock `json:"blocks"`
-	}
-	if json.Unmarshal([]byte(content), &wrapper) != nil {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
 		return content
 	}
-	text := summarize.ExtractTextFromBlocks(wrapper.Blocks)
-	if text == "" {
+	// Fast path: not JSON at all → plain text.
+	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
 		return content
 	}
-	return text
+
+	var raw any
+	if json.Unmarshal([]byte(trimmed), &raw) != nil {
+		return content
+	}
+	text := extractTextFromValue(raw)
+	if strings.TrimSpace(text) != "" {
+		return text
+	}
+	if isKnownContentWrapper(raw) {
+		return ""
+	}
+	return content
+}
+
+// isKnownContentWrapper reports whether the decoded JSON is a content wrapper
+// owned by this system: a blocks array, a bare content array, an ACP
+// notification, or a standalone content block.
+func isKnownContentWrapper(v any) bool {
+	switch val := v.(type) {
+	case []any:
+		return true
+	case map[string]any:
+		_, hasBlocks := val["blocks"]
+		_, hasSessionUpdate := val["sessionUpdate"]
+		_, hasText := val["text"]
+		return hasBlocks || hasSessionUpdate || hasText
+	default:
+		return false
+	}
+}
+
+// extractTextFromAny attempts to extract plain text from a JSON-encoded string
+// of any known shape. Returns (text, false) when the input isn't a recognized
+// JSON wrapper or yields no text.
+func extractTextFromAny(encoded string) (string, bool) {
+	var raw any
+	if json.Unmarshal([]byte(encoded), &raw) != nil {
+		return "", false
+	}
+	return extractTextFromValue(raw), true
+}
+
+// extractTextFromValue recursively walks decoded JSON and pulls out the first
+// meaningful text it can find, unwrapping known wrapper shapes:
+//
+//   - a JSON object with a "blocks" array (block-format content);
+//   - a JSON object with "content" + "sessionUpdate" (an ACP notification that
+//     was accidentally stored as text — historical dirty data);
+//   - a JSON object with a "text" key (content-block text, possibly itself a
+//     nested JSON string);
+//   - a JSON array whose elements are text blocks / strings.
+//
+// This mirrors the block semantics of the rest of the system: only "text"
+// content is meaningful for user-facing plain text; thinking/tool_use blocks
+// are skipped.
+func extractTextFromValue(v any) string {
+	switch val := v.(type) {
+	case string:
+		// A string may itself be an embedded JSON serialization (historical
+		// dirty data). Unwrap it; otherwise return as-is.
+		trimmed := strings.TrimSpace(val)
+		if trimmed != "" && (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) {
+			if inner, ok := extractTextFromAny(trimmed); ok && strings.TrimSpace(inner) != "" {
+				return inner
+			}
+		}
+		return val
+	case map[string]any:
+		// 1. {"blocks":[...]} — standard block content.
+		if blocks, ok := val["blocks"]; ok {
+			if arr, isArr := blocks.([]any); isArr {
+				return joinExtractedTexts(extractTextsFromArray(arr))
+			}
+		}
+		// 2. ACP notification wrapper: {"content":{"text":"hi","type":"text"},...}.
+		//    Historical bug stored the whole ACP notification JSON as text.
+		if _, isAcp := val["sessionUpdate"]; isAcp {
+			if contentVal, ok := val["content"]; ok {
+				if s := extractTextFromValue(contentVal); s != "" {
+					return s
+				}
+			}
+		}
+		// 3. {"text":"..."} — a content block serialized by itself, or a text
+		//    field inside a wrapper that wasn't matched above.
+		if textVal, ok := val["text"]; ok {
+			if s := extractTextFromValue(textVal); s != "" {
+				return s
+			}
+		}
+		// 4. {"type":"text","text":"..."} maps already handled by #3; other
+		//    object shapes (e.g. metadata) yield nothing.
+		return ""
+	case []any:
+		return joinExtractedTexts(extractTextsFromArray(val))
+	default:
+		return ""
+	}
+}
+
+// extractTextsFromArray extracts text from each element of a JSON array,
+// honoring the same "text only" semantics as block rendering. Each element may
+// be a content block ({"type":"text","text":"..."}), a plain string, or a
+// nested wrapper.
+func extractTextsFromArray(arr []any) []string {
+	var texts []string
+	for _, el := range arr {
+		switch elem := el.(type) {
+		case map[string]any:
+			typ, _ := elem["type"].(string)
+			if typ != "" && typ != "text" {
+				// thinking/tool_use/warning blocks don't carry user text.
+				continue
+			}
+			if s := extractTextFromValue(elem); s != "" {
+				texts = append(texts, s)
+			}
+		case string:
+			if s := extractTextFromValue(elem); s != "" {
+				texts = append(texts, s)
+			}
+		default:
+			if s := extractTextFromValue(el); s != "" {
+				texts = append(texts, s)
+			}
+		}
+	}
+	return texts
+}
+
+// joinExtractedTexts joins multiple extracted texts with the same separator the
+// rest of the system uses for multi-block content.
+func joinExtractedTexts(texts []string) string {
+	return strings.Join(texts, "\n\n")
 }
 
 // AddChatMessage adds a message to the chat history for a given project path, backend, and session.

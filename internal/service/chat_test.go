@@ -417,13 +417,71 @@ func TestExtractPlainText_BlockJSONWithToolUse(t *testing.T) {
 
 func TestExtractPlainText_BlockJSONNoText(t *testing.T) {
 	content := `{"blocks":[{"type":"tool_use","name":"read","input":{}}]}`
-	// No text blocks → return original content
-	assert.Equal(t, content, service.ExtractPlainText(content))
+	// Recognized wrapper with no text blocks → empty string (no user-facing text)
+	assert.Equal(t, "", service.ExtractPlainText(content))
 }
 
 func TestExtractPlainText_InvalidJSON(t *testing.T) {
 	content := `{"blocks":invalid}`
 	assert.Equal(t, content, service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_NestedACPNotificationJSON(t *testing.T) {
+	// Historical dirty data: the whole ACP notification was serialized into the
+	// text field of a text block. Must unwrap to the real user text.
+	content := `{"blocks":[{"text":"{\"content\":{\"text\":\"hi\",\"type\":\"text\"},\"messageId\":\"85d9b9a9-00a4-4ea1-8abe-0d0ef6bc2426\",\"sessionUpdate\":\"user_message_chunk\"}","type":"text"}]}`
+	assert.Equal(t, "hi", service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_NestedACPNotificationChinese(t *testing.T) {
+	content := `{"blocks":[{"text":"{\"content\":{\"text\":\"你好\",\"type\":\"text\"},\"messageId\":\"c6d0b19a-5847-46f5-adce-5abb4f950b72\",\"sessionUpdate\":\"user_message_chunk\"}","type":"text"}]}`
+	assert.Equal(t, "你好", service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_BareContentArray(t *testing.T) {
+	// ACP content array serialized directly as the message content.
+	content := `[{"type":"text","text":"hello from array"},{"type":"image","image":{}}]`
+	assert.Equal(t, "hello from array", service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_BareContentArrayStrings(t *testing.T) {
+	content := `["part one", "part two"]`
+	assert.Equal(t, "part one\n\npart two", service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_ACPNotificationDirect(t *testing.T) {
+	// Whole ACP notification stored directly as content.
+	content := `{"content":{"text":"直接存的通知","type":"text"},"messageId":"abc","sessionUpdate":"user_message_chunk"}`
+	assert.Equal(t, "直接存的通知", service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_BlocksWithWhitespacePrefix(t *testing.T) {
+	// JSON with leading whitespace/newline should still be unwrapped.
+	content := "{\n  \"blocks\": [{\"type\": \"text\", \"text\": \"换行格式\"}]\n}"
+	assert.Equal(t, "换行格式", service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_BlocksEmptyTextKeepsOriginal(t *testing.T) {
+	content := `{"blocks":[{"type":"text","text":"","input":null,"done":false}]}`
+	// Recognized wrapper with empty text → empty string (no user-facing text)
+	assert.Equal(t, "", service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_PlainTextJSONLikeKeepsOriginal(t *testing.T) {
+	// User typed something that starts with { but isn't a known wrapper.
+	content := `{"foo": "bar"}`
+	assert.Equal(t, content, service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_NonJSONArrayKeepsOriginal(t *testing.T) {
+	content := "[PWA] Service Worker skipped"
+	assert.Equal(t, content, service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_BlocksWithThinkingOnlyKeepsOriginal(t *testing.T) {
+	content := `{"blocks":[{"type":"thinking","text":"inner thought"}]}`
+	// Recognized wrapper with no text block → empty string
+	assert.Equal(t, "", service.ExtractPlainText(content))
 }
 
 func TestAddChatMessage_AutoTitleBlockFormat(t *testing.T) {

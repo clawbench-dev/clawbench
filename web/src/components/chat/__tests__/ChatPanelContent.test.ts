@@ -292,12 +292,13 @@ describe('parseMessages', () => {
 
   it('parses user message with block-format content', () => {
     // parseMessages calls onParseAssistantContent for {"blocks":...} content,
-    // which returns the parsed blocks. The mock parser wraps the raw string
-    // as a text block, so the result reflects the mock's behavior.
+    // then recursively unwraps nested JSON serializations inside text blocks
+    // so a block-format string never renders as a literal JSON string.
     const raw = [{ id: '1', role: 'user', content: '{"blocks":[{"type":"text","text":"Hi"}]}' }]
     const result = parseMessages(raw, mockParser)
-    // mockParser treats the whole JSON string as content text
-    expect(result[0].blocks).toEqual([{ type: 'text', text: '{"blocks":[{"type":"text","text":"Hi"}]}' }])
+    // mockParser wraps the raw string as a text block; unwrapTextBlocks then
+    // extracts the real text "Hi" instead of showing the JSON string.
+    expect(result[0].blocks).toEqual([{ type: 'text', text: 'Hi' }])
   })
 
   it('creates text block for plain user message', () => {

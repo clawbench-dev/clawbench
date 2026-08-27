@@ -43,6 +43,43 @@ func TestGroupLoadSessionReplay_CapturesMessageID(t *testing.T) {
 	assert.Equal(t, u2, msgs[2].extMsgID)
 }
 
+func TestGroupLoadSessionReplay_UserChunkNestedJSONUnwrapped(t *testing.T) {
+	// A user chunk whose text field is itself an ACP notification JSON (as seen
+	// in dirty data from early sync versions) must be unwrapped to the real
+	// user text — never stored as a literal JSON string.
+	client := ai.NewClawBenchACPClient()
+	nested := `{"content":{"text":"这是真实的用户消息","type":"text"},"messageId":"m1","sessionUpdate":"user_message_chunk"}`
+	client.SetLoadSessionBufForTest([]acp.SessionNotification{
+		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+			MessageId: strPtr("m1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: nested}},
+		}}},
+	})
+
+	msgs := groupLoadSessionReplay(client)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "user", msgs[0].role)
+	assert.NotContains(t, msgs[0].content, "user_message_chunk", "stored content must not contain the raw ACP notification")
+	assert.Contains(t, msgs[0].content, "这是真实的用户消息")
+}
+
+func TestGroupLoadSessionReplay_UserChunkContentArrayUnwrapped(t *testing.T) {
+	// A user chunk whose text field is a serialized content array.
+	client := ai.NewClawBenchACPClient()
+	nested := `[{"type":"text","text":"数组里的用户消息"}]`
+	client.SetLoadSessionBufForTest([]acp.SessionNotification{
+		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+			MessageId: strPtr("m2"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: nested}},
+		}}},
+	})
+
+	msgs := groupLoadSessionReplay(client)
+	require.Len(t, msgs, 1)
+	assert.Contains(t, msgs[0].content, "数组里的用户消息")
+	// The stored block must contain the unwrapped user text, not the literal
+	// serialized array as a text block.
+	assert.NotContains(t, msgs[0].content, `"text":"[{\"type\"`)
+}
+
 func TestServeACPSyncSession_NoAcpSession(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

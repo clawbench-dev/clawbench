@@ -2,6 +2,7 @@
  * Pure functions extracted from useChatSession composable.
  * These have no Vue reactivity dependencies and can be tested in isolation.
  */
+import { extractPlainText } from '@/utils/userMsgIndexUtils'
 
 /**
  * Build a lightweight fingerprint of messages for change detection.
@@ -70,12 +71,23 @@ export function parseMessages(
       // User messages should never have streaming flag — strip if present
       if (msg.streaming) delete msg.streaming
       if (!msg.blocks) {
-        // User messages may be plain text or block-format JSON (e.g. from ACP LoadSession).
-        // If content starts with {"blocks":, parse it the same way as assistant messages.
+        // User messages may be plain text or JSON (e.g. from ACP LoadSession
+        // sync/replay). Three shapes exist:
+        //   - {"blocks":[...]} block format → parse into blocks directly.
+        //   - Bare content-array / ACP notification wrapper JSON → unwrap to
+        //     plain text so it never renders as a literal JSON string.
+        //   - Plain text → wrapped in a single text block.
         const contentStr = typeof msg.content === 'string' ? msg.content : null
         if (contentStr && contentStr.startsWith('{"blocks":')) {
           const { blocks } = onParseAssistantContent(contentStr)
-          msg.blocks = blocks
+          // Unwrap nested JSON serializations embedded in text blocks (dirty
+          // data from early sync versions or certain ACP agents), regardless
+          // of whether the parser does it.
+          msg.blocks = unwrapTextBlocks(Array.isArray(blocks) ? blocks : [])
+        } else if (contentStr && (contentStr.trim().startsWith('{') || contentStr.trim().startsWith('['))) {
+          // Unwrap any other JSON wrapper shape (content array, ACP
+          // notification, nested dirty data) to its real text.
+          msg.blocks = msg.content ? [{ type: 'text', text: extractPlainText(contentStr) }] : []
         } else {
           msg.blocks = msg.content ? [{ type: 'text', text: msg.content }] : []
         }
@@ -86,6 +98,22 @@ export function parseMessages(
 }
 
 export type MessageDisplayMode = 'summary' | 'original'
+
+/**
+ * Unwrap nested JSON serializations embedded in a message's text blocks.
+ * Historical sync data (or certain ACP agents) stored a serialized JSON string
+ * (e.g. an ACP notification) inside a text block's `text` field; without this
+ * the block would render as a literal JSON string.
+ */
+export function unwrapTextBlocks(blocks: Record<string, unknown>[]): Record<string, unknown>[] {
+  if (!Array.isArray(blocks)) return blocks
+  return blocks.map(b => {
+    if (b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string') {
+      return { ...b, text: extractPlainText(b.text) }
+    }
+    return b
+  })
+}
 
 /**
  * Decide whether a message should render its summary view.

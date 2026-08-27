@@ -85,9 +85,16 @@ func groupLoadSessionReplay(client *ai.ClawBenchACPClient) []replayMessage {
 		}
 
 		if n.Update.UserMessageChunk != nil {
-			if text := n.Update.UserMessageChunk.Content.Text; text != nil && text.Text != "" {
+			// Extract the user's text from the chunk. Most agents send a plain
+			// text block; some (or historical data) wrap the text in a nested
+			// JSON serialization (e.g. an ACP notification or content array).
+			// ExtractPlainText unwraps every known shape, so a nested JSON
+			// never leaks into storage as a literal JSON string.
+			if text := n.Update.UserMessageChunk.Content.Text; text != nil {
 				if cleaned := filterSystemPromptText(text.Text); cleaned != "" {
-					ai.AccumulateBlock(&blocks, ai.StreamEvent{Type: strContent, Content: cleaned})
+					if plain := service.ExtractPlainText(cleaned); plain != "" {
+						ai.AccumulateBlock(&blocks, ai.StreamEvent{Type: strContent, Content: plain})
+					}
 				}
 			}
 			continue
