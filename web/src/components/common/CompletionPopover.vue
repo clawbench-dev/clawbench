@@ -1,11 +1,11 @@
 <template>
   <Teleport to="body">
-    <div
-      v-if="active"
-      class="completion-popover-backdrop"
-      @click.self="dismiss"
-    >
-      <Transition name="completion-popover">
+    <Transition name="completion-popover">
+      <div
+        v-if="active"
+        class="completion-popover-backdrop"
+        @click.self="dismiss"
+      >
         <div class="completion-popover">
           <div class="completion-popover-header">
             <span class="completion-popover-icon"><Bot :size="14" /></span>
@@ -36,8 +36,8 @@
             </button>
           </div>
         </div>
-      </Transition>
-    </div>
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
