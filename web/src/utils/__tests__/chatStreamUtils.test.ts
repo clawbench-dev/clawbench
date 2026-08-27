@@ -14,7 +14,7 @@ import {
   messageSortValue,
   nextClientSeq,
   anchorRepliesToQuestions,
-  mergeDbMessages,
+  rebuildFromDb,
   messageText,
   chatMessageReducer,
 } from '@/utils/chatStreamUtils.ts'
@@ -1581,29 +1581,22 @@ describe('parentQueueId dynamic anchoring', () => {
 //
 // Reported: AA-reply, BB-reply renders as AAA-replyB-reply, refresh button
 // (loadHistory) cannot fix it, only app restart does. DB is clean — the
-// duplicates live in the in-memory array, and mergeDbMessages (the merge path
-// used by refresh) is unable to converge them away.
+// duplicates live in the in-memory array.
 //
-// Root cause 1: a queued user message whose DB row snapshot arrived BEFORE its
-// queue_drain event has pending cleared by mergeDbMessages (queued=0). The
-// drain then fails the (pending || _remote) match and falls back to pushing a
-// SECOND user message — same content, different id.
-//
-// Root cause 2: mergeDbMessages keeps BOTH the transient drain-* placeholder
-// and the DB row when their queueIds/anchors disagree, so a loadHistory cannot
-// adopt the placeholder into its DB row — the duplicate persists forever.
-//
-// Root cause 3: when the same queued message is drained twice (double queue_drain
-// delivery), a DB-load snapshot that adopted a DIFFERENT numeric id in between
-// makes the first drain miss and push a fallback duplicate.
+// The fix: db_load now REBUILDS the array from the authoritative DB snapshot
+// (rebuildFromDb), keeping only the live streaming placeholder, pending queued
+// bubbles and adopted _remote rows. Every loadHistory converges to exactly what
+// an app restart would show — so the refresh button behaves like a restart.
 describe('duplicate message root causes (regression)', () => {
   const callbacks = { onRenderNeeded: vi.fn(), onExtractScheduledTasks: vi.fn() }
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('RC1: DB snapshot (queued=0) before queue_drain clears pending → drain must still match the bubble, not push a duplicate', () => {
-    // Simulate the state right after a loadHistory merged a snapshot in which
+  it('RC1: DB snapshot (queued=0) before queue_drain → drain matches by queueId, no duplicate', () => {
+    // Simulate the state right after a loadHistory rebuilt a snapshot in which
     // the backend already flipped queued=0 (the drain claimed the row but the
-    // queue_drain WS event arrived after the REST response).
+    // queue_drain WS event arrived after the REST response). The bubble was
+    // dropped by the rebuild (queued=false, no pending) and its DB row (id=3)
+    // is present — a late queue_drain must not add a third copy.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
@@ -1612,86 +1605,72 @@ describe('duplicate message root causes (regression)', () => {
     ]
     sortMessages(messages)
 
-    // queue_drain arrives. The bubble exists (id=3, queueId='pending-B') but
-    // is NOT pending/_remote anymore because mergeDbMessages cleared it.
     drainQueueMessage(messages, 'pending-B', 'B', [], 'claude', callbacks, undefined, 3)
 
     const userBs = messages.filter((m: any) => m.role === 'user' && m.content === 'B')
-    // The drained message must be matched by queueId — NO fallback duplicate.
     expect(userBs).toHaveLength(1)
     expect(userBs[0].id).toBe(3)
   })
 
-  it('RC1b: pending STRING-ID bubble whose pending was cleared by a DB snapshot is still matched by queue_drain (no fallback duplicate)', () => {
-    // The queued bubble still carries its optimistic string id (pending-B);
-    // a DB snapshot merged in between cleared pending (queued=0) but kept the
-    // string id (pending bubbles are not adopted early). The later queue_drain
-    // must match it by id — the old (m.pending || m._remote) gate missed it
-    // and pushed a SECOND user message (the reported "AAA" duplicate).
+  it('RC1b: a queued bubble that a rebuild DROPPED (queued=0) cannot be re-created by a late queue_drain', () => {
+    // The bubble existed as pending; a rebuild saw its DB row already drained
+    // (queued=false) and dropped the transient bubble (it is not in the DB as
+    // a pending row). The late queue_drain must not resurrect it.
     let s: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
       { role: 'user', id: 'pending-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true, queueId: 'pending-B', seq: 1 },
     ]
-    // DB snapshot: B already drained (queued=false, DB id=3) before queue_drain.
+    // Rebuild: B's DB row is queued=false → the pending bubble is dropped, the
+    // DB row is authoritative.
     s = chatMessageReducer(s, {
-      type: 'db_load', sessionRunning: true,
+      type: 'db_load',
       dbMessages: [
         { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }], queueId: 'pending-A' },
         { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
         { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', queued: false },
       ],
     } as any)
-    // Bubble survives with its string id (still awaiting the drain).
-    const bubble = s.find((m: any) => m.content === 'B')
-    expect(bubble.id).toBe('pending-B')
-    expect(bubble.pending).toBeUndefined()
+    expect(s.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
+    expect(s.find((m: any) => m.content === 'B')!.id).toBe(3)
 
-    // queue_drain arrives — must match the string-id bubble, no duplicate.
+    // Late queue_drain — no duplicate.
     s = chatMessageReducer(s, { type: 'ws_queue_drain', queueId: 'pending-B', text: 'B', files: [], dbMessageId: 3 } as any)
-    const userBs = s.filter((m: any) => m.role === 'user' && m.content === 'B')
-    expect(userBs).toHaveLength(1)
-    expect(userBs[0].id).toBe(3)
+    expect(s.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
   })
 
-  it('RC2: a finalized drain-* reply placeholder must be adopted by its DB row even when the snapshot came in AFTER the queue_drain', () => {
-    // The live path created a drain-* reply anchored to queueId 'pending-B'.
+  it('RC2: rebuild discards an orphaned finalized drain-* reply; the DB row is the single source of truth', () => {
+    // A finalized drain-* placeholder that has no DB row must be dropped — the
+    // DB is authoritative and does not know it.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      { role: 'user', id: 'pending-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B' },
+      { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', queued: false },
+      // Orphan placeholder — not in the DB.
       { role: 'assistant', id: 'drain-xyz', content: '', blocks: [{ type: 'text', text: 'B reply' }], parentQueueId: 'pending-B' },
     ]
     sortMessages(messages)
-    // B's reply finalized (streaming removed) — placeholder stays as drain-*.
-    delete (messages.find((m: any) => m.id === 'drain-xyz') as any).streaming
-
-    // loadHistory returns the DB snapshot. The assistant reply row carries
-    // queue_id = 'pending-B' (the backend records the replied-to queue).
     const dbMsgs: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
       { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', queued: false },
       { role: 'assistant', id: 4, content: '', blocks: [{ type: 'text', text: 'B reply' }], queueId: 'pending-B' },
     ]
-    const merged = mergeDbMessages(messages, dbMsgs as any, false)
+    const merged = rebuildFromDb(messages, dbMsgs as any)
 
-    // The drain-* reply placeholder must be adopted into DB row id=4 — NOT
-    // left as a duplicate alongside it.
+    // Exactly one B reply — the DB row (id=4). The orphan is gone.
     const replies = merged.filter((m: any) => m.role === 'assistant' && (m.content === 'B reply' || (m.blocks || []).some((b: any) => b.type === 'text' && b.text === 'B reply')))
     expect(replies).toHaveLength(1)
     expect(replies[0].id).toBe(4)
   })
 
-  it('RC3: re-running mergeDbMessages on an already-merged array (refresh) never duplicates, and converges duplicates away', () => {
-    // Simulate the corrupted in-memory array: B appears TWICE (transient
-    // drain-* user + DB row). A refresh (loadHistory → mergeDbMessages) must
-    // converge: keep only the DB-backed row.
+  it('RC3: rebuild converges a corrupted array (duplicate user message) to the DB truth', () => {
+    // Corrupted in-memory array: B appears TWICE (leftover transient + DB row).
+    // A refresh (rebuildFromDb) must drop the leftover — the DB row is the
+    // only real message.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      // drain-dup: leftover transient bubble from a raced queue_drain fallback
-      // push — created in the SAME moment as its DB row (id=3) below.
       { role: 'user', id: 'drain-dup', content: 'B', blocks: [{ type: 'text', text: 'B' }], _drain: true, createdAt: '2026-01-01T00:00:00Z' },
       { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', createdAt: '2026-01-01T00:00:01Z' },
       { role: 'assistant', id: 4, content: 'B reply', blocks: [{ type: 'text', text: 'B reply' }] },
@@ -1702,16 +1681,30 @@ describe('duplicate message root causes (regression)', () => {
       { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', queued: false, createdAt: '2026-01-01T00:00:01Z' },
       { role: 'assistant', id: 4, content: 'B reply', blocks: [{ type: 'text', text: 'B reply' }] },
     ]
-    const merged = mergeDbMessages(messages, dbMsgs as any, false)
+    const merged = rebuildFromDb(messages, dbMsgs as any)
 
     const userBs = merged.filter((m: any) => m.role === 'user' && m.content === 'B')
     expect(userBs).toHaveLength(1)
     expect(userBs[0].id).toBe(3)
   })
 
-  it('RC3c: two GENUINELY distinct identical-text user messages are never merged (createdAt far apart)', () => {
+  it('RC3b: repeated rebuild (second refresh) is idempotent — no growth', () => {
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
+      { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', queued: false },
+      { role: 'assistant', id: 4, content: 'B reply', blocks: [{ type: 'text', text: 'B reply' }] },
+    ]
+    const merged1 = rebuildFromDb([], dbMsgs as any)
+    const merged2 = rebuildFromDb(merged1, dbMsgs as any)
+    expect(merged1).toHaveLength(4)
+    expect(merged2).toHaveLength(4)
+    expect(merged2.map((m: any) => m.id)).toEqual([1, 2, 3, 4])
+  })
+
+  it('RC3c: two GENUINELY distinct identical-text user messages keep their own DB rows', () => {
     // User sent "build" twice, minutes apart. Both are real messages with their
-    // own DB rows. The self-heal must NOT collapse them.
+    // own DB rows. Rebuild must keep both — no content heuristic collapses them.
     const messages: any[] = [
       { role: 'user', id: 'pending-build1', content: 'build', blocks: [{ type: 'text', text: 'build' }], createdAt: '2026-01-01T00:00:00Z' },
       { role: 'user', id: 'pending-build2', content: 'build', blocks: [{ type: 'text', text: 'build' }], createdAt: '2026-01-01T05:00:00Z' },
@@ -1720,42 +1713,26 @@ describe('duplicate message root causes (regression)', () => {
       { role: 'user', id: 10, content: 'build', blocks: [{ type: 'text', text: 'build' }], createdAt: '2026-01-01T00:00:01Z' },
       { role: 'user', id: 11, content: 'build', blocks: [{ type: 'text', text: 'build' }], createdAt: '2026-01-01T05:00:01Z' },
     ]
-    const merged = mergeDbMessages(messages, dbMsgs as any, false)
+    const merged = rebuildFromDb(messages, dbMsgs as any)
     const userBuilds = merged.filter((m: any) => m.role === 'user' && m.content === 'build')
-    // Both DB rows kept; the far-away transient bubble (build1) whose row is
-    // matched by the queueId/content path should be adopted or dropped — but
-    // there must be exactly ONE 'build' per moment, never two merged into one.
-    expect(userBuilds.length).toBeGreaterThanOrEqual(2)
+    // Both DB rows kept (the transient bubbles are dropped — not in DB).
+    expect(userBuilds).toHaveLength(2)
+    expect(userBuilds.map((m: any) => m.id)).toEqual([10, 11])
   })
 
-  it('RC3d: a _remote cross-device bubble is never dropped by the content+time self-heal', () => {
-    // A remote device sent "build" (no DB id yet, _remote). A local DB row with
-    // the same text and close createdAt exists for an unrelated LOCAL message —
-    // the remote bubble must survive (it adopts its own identity later).
+  it('RC3d: a _remote bubble is preserved when its DB row is in the snapshot', () => {
+    // A remote device's message persisted as a DB row; the _remote bubble must
+    // be adopted (cleared of _remote markers) rather than duplicated.
     const messages: any[] = [
-      { role: 'user', id: 10, content: 'build', blocks: [{ type: 'text', text: 'build' }], createdAt: '2026-01-01T00:00:00Z' },
       { role: 'user', id: 'remote-1', content: 'build', blocks: [{ type: 'text', text: 'build' }], createdAt: '2026-01-01T00:00:01Z', _remote: true, _remoteQueueId: 'remote-q-1' },
     ]
     const dbMsgs: any[] = [
-      { role: 'user', id: 10, content: 'build', blocks: [{ type: 'text', text: 'build' }], createdAt: '2026-01-01T00:00:00Z' },
+      { role: 'user', id: 10, content: 'build', blocks: [{ type: 'text', text: 'build' }], createdAt: '2026-01-01T00:00:01Z' },
     ]
-    const merged = mergeDbMessages(messages, dbMsgs as any, false)
-    expect(merged.some((m: any) => m._remote)).toBe(true)
-    expect(merged.some((m: any) => m.id === 'remote-1')).toBe(true)
-  })
-
-  it('RC3b: repeated mergeDbMessages (second refresh) is idempotent — no growth', () => {
-    const dbMsgs: any[] = [
-      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
-      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', queued: false },
-      { role: 'assistant', id: 4, content: 'B reply', blocks: [{ type: 'text', text: 'B reply' }] },
-    ]
-    const merged1 = mergeDbMessages([], dbMsgs as any, false)
-    const merged2 = mergeDbMessages(merged1, dbMsgs as any, false)
-    expect(merged1).toHaveLength(4)
-    expect(merged2).toHaveLength(4)
-    expect(merged2.map((m: any) => m.id)).toEqual([1, 2, 3, 4])
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    expect(merged).toHaveLength(1)
+    expect(merged[0].id).toBe(10)
+    expect((merged[0] as any)._remote).toBeUndefined()
   })
 
   it('RC4: queue_drain double-delivery with an in-between DB snapshot must not duplicate the user message', () => {
@@ -1770,19 +1747,18 @@ describe('duplicate message root causes (regression)', () => {
     drainQueueMessage(messages, 'pending-B', 'B', [], 'claude', callbacks, undefined, 3)
     expect(messages.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
 
-    // A DB snapshot in between (bubble adopted id=3, pending cleared).
+    // A rebuild in between (bubble adopted id=3, pending cleared).
     const dbMsgs: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
       { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', queued: false },
     ]
-    const merged = mergeDbMessages(messages, dbMsgs as any, true)
-    // Still one B.
-    expect(merged.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
+    const rebuilt = rebuildFromDb(messages, dbMsgs as any)
+    expect(rebuilt.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
 
     // Second (duplicate) queue_drain for the same message.
-    drainQueueMessage(merged, 'pending-B', 'B', [], 'claude', callbacks, undefined, 3)
-    expect(merged.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
+    drainQueueMessage(rebuilt, 'pending-B', 'B', [], 'claude', callbacks, undefined, 3)
+    expect(rebuilt.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
   })
 
   // ── The reported user scenario, end to end ──
@@ -1791,13 +1767,10 @@ describe('duplicate message root causes (regression)', () => {
   //
   // Sequence: user sends A (direct) → replyA streams → done(A) → user queues B
   // while replyB streams → session is STILL running → user hits the refresh
-  // button → loadHistory → mergeDbMessages(sessionRunning=true).
+  // button → loadHistory → db_load (rebuildFromDb).
   //
-  // OLD behavior: canAdoptDrains = !sessionRunning gated ALL drain-* adoption
-  // off while a later turn streamed, so the finalized replyA placeholder
-  // (drain-rA) was never adopted into its DB row (id=2) — the DB row was
-  // appended alongside it, and refresh could never converge the duplicate.
-  // Only an app restart (array rebuilt from DB) cleared it.
+  // The rebuild keeps the live replyB placeholder (matched to its DB streaming
+  // row) and the DB rows for everything else — exactly what a restart shows.
   it('reported scenario: refresh while a LATER turn streams must not duplicate an earlier finalized reply', () => {
     const aMsg = (id: unknown, content: string, extra: Record<string, unknown> = {}): any =>
       ({ role: 'assistant', id, content: '', blocks: content ? [{ type: 'text', text: content }] : [], createdAt: '2026-01-01T00:00:01Z', ...extra })
@@ -1819,9 +1792,9 @@ describe('duplicate message root causes (regression)', () => {
     // Sanity: exactly two assistant messages before the refresh.
     expect(s.filter((m) => m.role === 'assistant')).toHaveLength(2)
 
-    // Refresh → db_load with the authoritative DB snapshot (sessionRunning=true).
+    // Refresh → db_load with the authoritative DB snapshot.
     s = chatMessageReducer(s, {
-      type: 'db_load', sessionRunning: true,
+      type: 'db_load',
       dbMessages: [
         uMsg(1, 'A', { queueId: 'pending-A', createdAt: '2026-01-01T00:00:05Z' }),
         aMsg(2, 'reply A', { createdAt: '2026-01-01T00:00:01Z' }),
@@ -1830,8 +1803,8 @@ describe('duplicate message root causes (regression)', () => {
       ],
     } as any)
 
-    // Still exactly two assistant messages — replyA adopted into id=2, NOT
-    // duplicated as drain-rA + id=2.
+    // Exactly two assistant messages — replyA is the DB row (id=2), replyB is
+    // the preserved live placeholder, and no drain-rA duplicate remains.
     const assistants = s.filter((m) => m.role === 'assistant')
     expect(assistants).toHaveLength(2)
     expect(s.some((m) => m.role === 'assistant' && m.id === 'drain-rA')).toBe(false)
@@ -1839,7 +1812,7 @@ describe('duplicate message root causes (regression)', () => {
     expect(s.filter((m) => m.role === 'assistant' && m.streaming)).toHaveLength(1)
   })
 
-  it('reported scenario: refresh must also converge a user-message duplicate created by a raced queue_drain', () => {
+  it('reported scenario: refresh converges a user-message duplicate created by a raced queue_drain', () => {
     // Corrupted in-memory state after a missed self-echo + raced drain:
     // user message A exists as a leftover string-id bubble AND as its DB row.
     const messages: any[] = [
@@ -1852,7 +1825,7 @@ describe('duplicate message root causes (regression)', () => {
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }], createdAt: '2026-01-01T00:00:05Z' },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], createdAt: '2026-01-01T00:00:06Z' },
     ]
-    const merged = mergeDbMessages(messages, dbMsgs as any, false)
+    const merged = rebuildFromDb(messages, dbMsgs as any)
     const userAs = merged.filter((m: any) => m.role === 'user' && m.content === 'A')
     expect(userAs).toHaveLength(1)
     expect(userAs[0].id).toBe(1)
@@ -1879,7 +1852,7 @@ describe('duplicate message root causes (regression)', () => {
 
     // Refresh → db_load while replyB streams.
     s = chatMessageReducer(s, {
-      type: 'db_load', sessionRunning: true,
+      type: 'db_load',
       dbMessages: [
         uMsg(1, 'A', { queueId: 'pending-A', createdAt: '2026-01-01T00:00:01Z' }),
         aMsg(2, 'reply A', { createdAt: '2026-01-01T00:00:01Z' }),
@@ -1889,14 +1862,15 @@ describe('duplicate message root causes (regression)', () => {
       ],
     } as any)
 
-    // Exactly 3 user messages (A adopted id=1, B id=3, C stays pending) and
-    // exactly 2 assistant messages (replyA id=2, replyB streaming) — no
-    // duplicates, no orphans.
+    // Exactly 3 user messages (A id=1, B id=3, C stays pending) and exactly 2
+    // assistant messages (replyA id=2, replyB streaming) — no duplicates, no
+    // orphans. A's optimistic bubble is dropped (no pending flag, self-echo
+    // lost) and the DB row id=1 is authoritative — same as a restart.
     const users = s.filter((m) => m.role === 'user')
     const assistants = s.filter((m) => m.role === 'assistant')
     expect(users).toHaveLength(3)
     expect(assistants).toHaveLength(2)
-    // A (non-pending, lost self-echo) adopted its DB id on refresh.
+    // A is the DB row.
     const userA = users.find((m: any) => m.content === 'A')
     expect(userA.id).toBe(1)
     expect(userA.pending).toBeUndefined()
@@ -1908,10 +1882,11 @@ describe('duplicate message root causes (regression)', () => {
     expect(s.filter((m: any) => m.role === 'assistant' && m.streaming)).toHaveLength(1)
   })
 
-  it('adoptLive safety: a content-full live placeholder anchored elsewhere is NOT collapsed into an unrelated finalized row', () => {
-    // A live streaming placeholder holds substantial content but is anchored to
-    // a DIFFERENT question than the finalized DB row. It must never be
-    // collapsed into that row (that would silently drop real AI output).
+  it('live placeholder with content whose DB streaming row is absent is dropped (done missed → DB finalized row is truth)', () => {
+    // The live placeholder holds content but the DB snapshot has NO streaming
+    // row for it (its done was missed, or the snapshot predates it). The DB is
+    // authoritative — the placeholder is dropped; the finalized DB row (if
+    // present) is what the user sees, exactly as a restart would.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'user', id: 2, content: 'B', blocks: [{ type: 'text', text: 'B' }] },
@@ -1924,12 +1899,56 @@ describe('duplicate message root causes (regression)', () => {
       // Finalized row for A's reply (no queueId, different anchor).
       { role: 'assistant', id: 9, content: 'reply to A', blocks: [{ type: 'text', text: 'reply to A' }], createdAt: '2026-01-01T00:00:01Z' },
     ]
-    const merged = mergeDbMessages(messages, dbMsgs as any, true)
-    // The live B-reply placeholder must survive with its content intact.
-    const live = merged.find((m: any) => m.id === 'drain-live-B')
-    expect(live).toBeDefined()
-    expect(live.streaming).toBe(true)
-    expect((live.blocks || []).some((b: any) => b.text === 'actual long reply to B')).toBe(true)
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    // No streaming row in the snapshot → the live placeholder is dropped.
+    expect(merged.some((m: any) => m.id === 'drain-live-B')).toBe(false)
+    // The finalized DB row is the only assistant message.
+    const assistants = merged.filter((m: any) => m.role === 'assistant')
+    expect(assistants).toHaveLength(1)
+    expect(assistants[0].id).toBe(9)
+  })
+
+  it('live placeholder is dropped when its done was missed and the DB has no streaming row for it', () => {
+    // The done event was lost: DB has finalized the reply (no streaming=1 row)
+    // but the frontend still holds a live placeholder. The rebuild must drop
+    // the placeholder — its content lives in the finalized DB row.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 'drain-live-A', content: '', blocks: [{ type: 'text', text: 'reply A' }], streaming: true, parentQueueId: '1', seq: 5 },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: '', blocks: [{ type: 'text', text: 'reply A' }], createdAt: '2026-01-01T00:00:01Z' },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    // Exactly one assistant message — the finalized DB row id=2.
+    const assistants = merged.filter((m: any) => m.role === 'assistant')
+    expect(assistants).toHaveLength(1)
+    expect(assistants[0].id).toBe(2)
+    expect((assistants[0] as any).streaming).toBeUndefined()
+  })
+
+  it('live placeholder with an already-assigned DB id is kept and finalized when its row is streaming=0 (done missed while idle)', () => {
+    // ws_stream_start assigned the DB id (2) to the live placeholder. The done
+    // event was lost; a refresh (session idle) makes parseMessages strip the
+    // streaming flag. The exact id match must keep the placeholder object and
+    // finalize it (stable v-for key, identical content) instead of dropping it.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: '', blocks: [{ type: 'text', text: 'reply A' }], streaming: true, parentQueueId: '1', seq: 5 },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: '', blocks: [{ type: 'text', text: 'reply A' }], createdAt: '2026-01-01T00:00:02Z' },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    expect(merged).toHaveLength(2)
+    const reply = merged.find((m: any) => m.role === 'assistant')
+    expect(reply).toBeDefined()
+    expect(reply.id).toBe(2)
+    // Finalized (streaming removed), content preserved.
+    expect(reply.streaming).toBeUndefined()
+    expect((reply.blocks || []).some((b: any) => b.text === 'reply A')).toBe(true)
   })
 })
 

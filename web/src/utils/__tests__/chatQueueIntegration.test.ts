@@ -49,7 +49,7 @@ describe('chat queue full-flow integration', () => {
     //    match), msg2/msg3 matched by queueId → pending stays.
     s = run(s, [{ type: 'stream_finalize' }])
     s = run(s, [{
-      type: 'db_load', sessionRunning: false,
+      type: 'db_load',
       dbMessages: [
         u({ id: 1, content: '1', createdAt: '2026-01-01T00:00:05Z' }),
         a({ id: 2, content: 'reply1', createdAt: '2026-01-01T00:00:01Z' }),
@@ -83,7 +83,7 @@ describe('chat queue full-flow integration', () => {
     //    queueId match (DB reply rows carry queueId = the drained queue).
     s = run(s, [{ type: 'stream_finalize' }])
     s = run(s, [{
-      type: 'db_load', sessionRunning: false,
+      type: 'db_load',
       dbMessages: [
         u({ id: 1, content: '1' }),
         a({ id: 2, content: 'reply1', createdAt: '2026-01-01T00:00:01Z' }),
@@ -107,7 +107,7 @@ describe('chat queue full-flow integration', () => {
     s = run(s, [{ type: 'ws_content', text: 'world' }])
     s = run(s, [{ type: 'stream_finalize' }])
     s = run(s, [{
-      type: 'db_load', sessionRunning: false,
+      type: 'db_load',
       dbMessages: [
         u({ id: 1, content: 'hello' }),
         a({ id: 2, content: 'world', createdAt: '2026-01-01T00:00:01Z' }),
@@ -139,7 +139,7 @@ describe('chat queue full-flow integration', () => {
     // reply1 done, background loadHistory arrives LATE (createdAt 60s later)
     s = run(s, [{ type: 'stream_finalize' }])
     s = run(s, [{
-      type: 'db_load', sessionRunning: false,
+      type: 'db_load',
       dbMessages: [
         u({ id: 1, content: '1', createdAt: tLate }),
         a({ id: 2, content: 'reply1', createdAt: tLate }),
@@ -170,7 +170,7 @@ describe('chat queue full-flow integration', () => {
     // final db_load — reply2/3 adopted via queueId match
     s = run(s, [{ type: 'stream_finalize' }])
     s = run(s, [{
-      type: 'db_load', sessionRunning: false,
+      type: 'db_load',
       dbMessages: [
         u({ id: 1, content: '1' }),
         a({ id: 2, content: 'reply1', createdAt: tLate }),
@@ -210,7 +210,7 @@ describe('chat queue full-flow integration', () => {
     let s: ChatMessage[] = []
     // history from loadHistory (DB ids, no seq, no queueId)
     s = run(s, [{
-      type: 'db_load', sessionRunning: false,
+      type: 'db_load',
       dbMessages: [
         u({ id: 38348, content: 'old' }),
         a({ id: 38349, content: 'old reply' }),
@@ -256,13 +256,13 @@ describe('chat queue full-flow integration', () => {
   it('db_load adopts msg1 first; reply anchor rewritten; late self-echo is no-op', () => {
     let s: ChatMessage[] = []
     // msg1 bubble + reply placeholder
-    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1 }) }])
+    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1, createdAt: '2026-01-01T00:00:01Z' }) }])
     s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 2, parentQueueId: 'pending-1', createdAt: '2026-01-01T00:00:01Z' }) }])
-    // db_load arrives with msg1 row (persist lag: createdAt far apart)
+    // db_load arrives with msg1 row (persist lag: createdAt a few seconds later)
     s = run(s, [{
-      type: 'db_load', sessionRunning: true,
+      type: 'db_load',
       dbMessages: [
-        u({ id: 38350, content: '1', createdAt: '2026-01-01T00:01:00Z' }),
+        u({ id: 38350, content: '1', createdAt: '2026-01-01T00:00:04Z' }),
         a({ id: 38351, content: 'reply1', streaming: true, createdAt: '2026-01-01T00:00:01Z' }),
       ],
     }])
@@ -292,7 +292,7 @@ describe('chat queue full-flow integration', () => {
   it('cross-device remote message and local message sort by DB id, not receive order', () => {
     let s: ChatMessage[] = []
     // history
-    s = run(s, [{ type: 'db_load', sessionRunning: false, dbMessages: [
+    s = run(s, [{ type: 'db_load', dbMessages: [
       u({ id: 1, content: 'q1' }), a({ id: 2, content: 'r1' }),
       u({ id: 3, content: 'q2' }), a({ id: 4, content: 'r2' }),
     ] }])
@@ -315,7 +315,7 @@ describe('chat queue full-flow integration', () => {
   it('db_load clears _remote markers on an adopted remote message', () => {
     let s: ChatMessage[] = []
     s = run(s, [{ type: 'ws_user_message', data: { messageId: 9, content: 'from phone', senderClientId: 'phone', queueId: 'pending-phone', backend: 'codebuddy' } }])
-    s = run(s, [{ type: 'db_load', sessionRunning: false, dbMessages: [
+    s = run(s, [{ type: 'db_load', dbMessages: [
       u({ id: 1, content: 'q1' }), a({ id: 2, content: 'r1' }),
       u({ id: 9, content: 'from phone' }),
     ] }])
@@ -351,7 +351,7 @@ describe('chat queue full-flow integration', () => {
   it('remote queued message survives db_load and still matches the later drain', () => {
     let s: ChatMessage[] = []
     s = run(s, [{ type: 'ws_user_message', data: { messageId: 3, content: 'from phone', senderClientId: 'phone', queueId: 'pending-phone', backend: 'codebuddy' } }])
-    s = run(s, [{ type: 'db_load', sessionRunning: false, dbMessages: [
+    s = run(s, [{ type: 'db_load', dbMessages: [
       u({ id: 3, content: 'from phone', queueId: 'pending-phone', queued: true }),
     ] }])
     const after = s.find((m) => m.content === 'from phone')

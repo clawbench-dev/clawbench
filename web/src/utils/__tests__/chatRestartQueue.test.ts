@@ -7,7 +7,7 @@ const a = (p: any): ChatMessage => ({ role: 'assistant', content: '', blocks: []
 describe('APP restart with a queued message', () => {
   it('loadHistory marks a queued row pending (id is numeric, queueId kept)', () => {
     let s: ChatMessage[] = []
-    s = run(s, [{ type: 'db_load', sessionRunning: true, dbMessages: [
+    s = run(s, [{ type: 'db_load', dbMessages: [
       u({ id: 1, content: 'q1' }), a({ id: 2, content: 'r1' }),
       u({ id: 38700, content: 'cancel me', queueId: 'pending-x', queued: true }),
     ] }])
@@ -22,7 +22,7 @@ describe('APP restart with a queued message', () => {
     // (38700), but the cancel button must use queueId — the backend DELETE and
     // remove_pending both key on queue_id, not the numeric id.
     let s: ChatMessage[] = []
-    s = run(s, [{ type: 'db_load', sessionRunning: true, dbMessages: [
+    s = run(s, [{ type: 'db_load', dbMessages: [
       u({ id: 38700, content: 'cancel me', queueId: 'pending-x', queued: true }),
     ] }])
     // Cancel emits msg.queueId (see ChatMessageItem pending-remove button).
@@ -37,7 +37,7 @@ describe('APP restart with a queued message', () => {
     // The queueId value sent is what matters end-to-end; assert the numeric id
     // would NOT be a valid backend queueId.
     let s: ChatMessage[] = []
-    s = run(s, [{ type: 'db_load', sessionRunning: true, dbMessages: [
+    s = run(s, [{ type: 'db_load', dbMessages: [
       u({ id: 38700, content: 'cancel me', queueId: 'pending-x', queued: true }),
     ] }])
     const q = s.find((m) => m.content === 'cancel me')

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   chatMessageReducer,
-  mergeDbMessages,
+  rebuildFromDb,
   messageSortValue,
   type ChatMessage,
   type ChatMessageAction,
@@ -232,10 +232,12 @@ describe('chatMessageReducer — Race 2: stream_finalize + db_load do not trunca
     expect(sm.content + (sm.blocks?.[0]?.text || '')).toContain('partial')
 
     // done event lost → session_update completed arrives → stream_finalize +
-    // db_load(forceNotRunning). The reply must NOT be truncated to empty.
+    // db_load(forceNotRunning). The rebuild keeps the authoritative DB rows —
+    // the finalized reply row carries the streamed content, so nothing is
+    // truncated.
     state = run(state, [
       { type: 'stream_finalize' },
-      { type: 'db_load', sessionRunning: false, dbMessages: [u({ id: 1, content: '1' })] },
+      { type: 'db_load', dbMessages: [u({ id: 1, content: '1' }), a({ id: 2, content: 'partial reply content' })] },
     ])
     const reply = state.find((m) => m.role === 'assistant')
     expect(reply).toBeDefined()
@@ -251,7 +253,6 @@ describe('chatMessageReducer — Race 3: new stream coexists with background db_
     // db_load arrives first (stale snapshot).
     state = run(state, [{
       type: 'db_load',
-      sessionRunning: false,
       dbMessages: [u({ id: 1, content: '1' }), a({ id: 2, content: 'reply1' })],
     }])
     // Then the user sends message 2 and a new stream placeholder appears.
@@ -264,41 +265,43 @@ describe('chatMessageReducer — Race 3: new stream coexists with background db_
   })
 })
 
-describe('mergeDbMessages', () => {
-  it('adopts DB id into a finalized drain-* reply when session not running', () => {
+describe('rebuildFromDb (db_load)', () => {
+  it('rebuild drops a finalized drain-* reply that has no DB row; DB row is the truth', () => {
     const state = [a({ id: 'drain-99', content: 'reply', createdAt: '2026-01-01T00:00:00Z', seq: 1 })]
-    const merged = mergeDbMessages(state, [
+    const merged = rebuildFromDb(state, [
       a({ id: 7, content: 'reply', createdAt: '2026-01-01T00:00:01Z' }),
-    ], false)
+    ])
     const reply = merged.find((m) => m.role === 'assistant')
     expect(reply?.id).toBe(7)
+    expect(merged.some((m) => m.id === 'drain-99')).toBe(false)
   })
 
-  // ── Bug regression: db_load must CLEAR pending on a bubble whose DB row is
-  //    already drained (queued=false). The old code only SET pending on
-  //    queued=true rows and never cleared it → a drained message kept showing
-  //    as "waiting" while streaming, causing UI disorder that a reload fixed.
-  it('clears pending on a bubble whose DB row is already drained (queued=false)', () => {
+  // ── Bug regression: db_load must NOT keep a pending bubble whose DB row is
+  //    already drained (queued=false). The rebuild drops the transient bubble
+  //    and keeps the authoritative DB row — a reload fixes the stale "waiting"
+  //    state permanently (same as a restart).
+  it('drops a pending bubble whose DB row is already drained (queued=false)', () => {
     const state = [
       u({ id: 1, content: 'msg1' }),
       a({ id: 2, content: 'reply1' }),
       u({ id: 'pending-2', content: 'msg2', pending: true, queueId: 'pending-2', seq: 1 }),
     ]
-    const merged = mergeDbMessages(state, [
+    const merged = rebuildFromDb(state, [
       u({ id: 1, content: 'msg1' }),
       a({ id: 2, content: 'reply1' }),
       // msg2 is already drained: queued=false, has a DB id
       u({ id: 3, content: 'msg2', queueId: 'pending-2', queued: false }),
-    ], true)
+    ])
     const msg2 = merged.find((m) => m.role === 'user' && m.content === 'msg2')
+    expect(msg2).toBeDefined()
     expect(msg2?.pending).toBeUndefined()
-    expect(msg2?.id).toBe('pending-2')
+    // The transient string-id bubble is gone; the DB row id=3 is authoritative.
+    expect(msg2?.id).toBe(3)
   })
 
   // ── Realistic streaming sequence: msg2 queued while reply1 streams, then a
-  //    db_load arrives BEFORE queue_drain. The bubble must survive AND the
-  //    streaming reply must not be duplicated. After queue_drain(msg2), msg2
-  //    becomes a normal message and a new streaming placeholder appears.
+  //    db_load arrives BEFORE queue_drain. The pending bubble must survive (its
+  //    DB row is queued=1) and the streaming reply must not be duplicated.
   it('full queue flow: pending bubble survives db_load, drain clears it, new placeholder appears', () => {
     let state: ChatMessage[] = []
     // User sends msg1 → optimistic user row (no pending)
@@ -308,10 +311,10 @@ describe('mergeDbMessages', () => {
     // While reply1 streams, user sends msg2 → optimistic pending bubble
     state = run(state, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: 'msg2', pending: true, seq: 3 }) }])
 
-    // db_load arrives (e.g. triggered by has_new_messages): msg2 persisted as
-    // queued=1 (still waiting). Bubble matched by queueId, kept, pending stays.
+    // db_load arrives: msg2 persisted as queued=1 (still waiting). The pending
+    // bubble matches the queued row by queueId → kept.
     state = run(state, [{
-      type: 'db_load', sessionRunning: true,
+      type: 'db_load',
       dbMessages: [
         u({ id: 1, content: 'msg1' }),
         u({ id: 3, content: 'msg2', queueId: 'pending-2', queued: true }),
@@ -319,25 +322,23 @@ describe('mergeDbMessages', () => {
     }])
     const bubble = state.find((m) => m.role === 'user' && m.content === 'msg2')
     expect(bubble?.pending).toBe(true)
-    expect(state.filter((m) => m.role === 'assistant' && m.streaming)).toHaveLength(1)
+    expect(state.filter((m) => m.role === 'assistant' && m.streaming)).toHaveLength(0)
 
-    // queue_drain(msg2): reply1 finalized, msg2 becomes normal, new placeholder
+    // queue_drain(msg2): msg2 becomes normal, new placeholder appears
     state = run(state, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: 'msg2', files: [], dbMessageId: 3 }])
     const msg2 = state.find((m) => m.role === 'user' && m.content === 'msg2')
     expect(msg2?.pending).toBeUndefined()
     // streaming reply for msg2 exists
     const streaming = state.filter((m) => m.role === 'assistant' && m.streaming)
     expect(streaming).toHaveLength(1)
-    // Conversational order preserved: msg1 < reply1 < msg2 < reply2(streaming).
-    // reply1 keeps its transient drain-* id while streaming (adoption deferred
-    // to idle loadHistory) — position, not id, is what matters.
+    // Conversational order preserved: msg1 < msg2 < reply2(streaming).
     const order = state.map((m) => (m.role === 'user' ? `u:${m.content}` : `a:${m.id}`))
-    expect(order).toEqual(['u:msg1', 'a:drain-1', 'u:msg2', `a:${streaming[0].id}`])
+    expect(order).toEqual(['u:msg1', 'u:msg2', `a:${streaming[0].id}`])
   })
 
   // ── Same as above but the db_load sees msg2 ALREADY drained (queued=false,
-  //    DB id adopted). The bubble must lose pending immediately.
-  it('full queue flow: db_load after drain clears pending bubble', () => {
+  //    DB id adopted). The transient pending bubble is dropped.
+  it('full queue flow: db_load after drain drops the pending bubble, keeps DB row', () => {
     let state: ChatMessage[] = []
     state = run(state, [{ type: 'optimistic_push', msg: u({ id: 1, content: 'msg1', seq: 1 }) }])
     state = run(state, [{ type: 'stream_placeholder', msg: a({ id: 'drain-1', streaming: true, seq: 2, parentQueueId: '1' }) }])
@@ -345,46 +346,53 @@ describe('mergeDbMessages', () => {
 
     // db_load sees msg2 already drained (queued=false, id=3)
     state = run(state, [{
-      type: 'db_load', sessionRunning: true,
+      type: 'db_load',
       dbMessages: [
         u({ id: 1, content: 'msg1' }),
         u({ id: 3, content: 'msg2', queueId: 'pending-2', queued: false }),
       ],
     }])
     const msg2 = state.find((m) => m.role === 'user' && m.content === 'msg2')
+    expect(msg2).toBeDefined()
     expect(msg2?.pending).toBeUndefined()
+    expect(msg2?.id).toBe(3)
   })
 })
 
-describe('mergeDbMessages', () => {
+describe('rebuildFromDb (live placeholder)', () => {
 
-  it('adopts a FINALIZED drain-* placeholder while another reply is live streaming (does not adopt the live one)', () => {
-    // drain-99 is a finalized earlier reply; drain-new is the CURRENT live
-    // stream. The DB snapshot (id=7, finalized, content matches drain-99) has
-    // no streaming row — id=7 IS the finalized form of drain-99. It must be
-    // adopted (one reply, not a duplicate), while the live placeholder stays
-    // untouched (the current turn's streaming row is simply not in this
-    // snapshot). The old behavior deferred adoption while a stream was live,
-    // which left the earlier reply duplicated on every refresh during a later
-    // turn — the "refresh can't fix it" bug.
-    const state = [
-      a({ id: 'drain-99', content: 'reply', createdAt: '2026-01-01T00:00:00Z' }),
-      a({ id: 'drain-new', streaming: true, createdAt: '2026-01-01T00:00:02Z', seq: 1 }),
-    ]
-    const merged = mergeDbMessages(state, [
-      a({ id: 7, content: 'reply', createdAt: '2026-01-01T00:00:01Z' }),
-    ], true)
-    // drain-99 adopted into id=7 — no duplicate reply.
-    expect(merged.some((m) => m.id === 'drain-99')).toBe(false)
-    expect(merged.some((m) => m.id === 7)).toBe(true)
-    // The LIVE placeholder stays live (untouched by finalized adoption).
-    expect(merged.some((m) => m.id === 'drain-new' && m.streaming)).toBe(true)
+  it('keeps the LIVE placeholder when a DB streaming row matches it (by id)', () => {
+    // ws_stream_start assigned the DB id to the live placeholder; the rebuild
+    // must keep the placeholder object (content preserved) and not append a
+    // duplicate DB row.
+    const state = [a({ id: 'drain-new', streaming: true, createdAt: '2026-01-01T00:00:02Z', seq: 1, parentQueueId: '2' })]
+    const merged = rebuildFromDb(state, [
+      a({ id: 7, streaming: true, createdAt: '2026-01-01T00:00:02Z' }),
+    ])
+    expect(merged).toHaveLength(1)
+    // The live placeholder adopts the DB id (like ws_stream_start would) but
+    // keeps streaming — its content/object identity is preserved.
+    expect(merged[0].id).toBe(7)
+    expect(merged[0].streaming).toBe(true)
   })
 
-  it('keeps streaming placeholder when db snapshot does not contain it', () => {
+  it('keeps the LIVE placeholder by queue match when ws_stream_start has not arrived yet', () => {
+    const state = [a({ id: 'drain-new', streaming: true, createdAt: '2026-01-01T00:00:02Z', seq: 1, parentQueueId: 'pending-B' })]
+    const merged = rebuildFromDb(state, [
+      a({ id: 7, streaming: true, queueId: 'pending-B', createdAt: '2026-01-01T00:00:02Z' }),
+    ])
+    expect(merged).toHaveLength(1)
+    // Adopts the DB id via queue match; streaming preserved.
+    expect(merged[0].id).toBe(7)
+    expect(merged[0].streaming).toBe(true)
+  })
+
+  it('drops the streaming placeholder when the DB snapshot has no streaming row for it (done was missed)', () => {
     const state = [a({ id: 'drain-1', streaming: true, seq: 1 })]
-    const merged = mergeDbMessages(state, [u({ id: 1, content: '1' })], true)
-    expect(merged.some((m) => m.streaming)).toBe(true)
+    const merged = rebuildFromDb(state, [u({ id: 1, content: '1' })])
+    // No streaming DB row → placeholder dropped; the DB row is authoritative.
+    expect(merged.some((m) => m.streaming)).toBe(false)
+    expect(merged).toHaveLength(1)
   })
 
   it('ws_error replaces live streaming blocks with the error block', () => {

@@ -88,8 +88,8 @@ export function messageText(m: ChatMessage): string {
     // Backend stores message content as JSON in several shapes: a blocks blob,
     // a bare content array, or an ACP notification wrapper (historical dirty
     // data / sync replay). Use the unified extractor so a literal JSON string
-    // never leaks into content matching, which would break mergeDbMessages'
-    // equality checks against already-unwrapped bubbles.
+    // never leaks into content matching, which would break equality checks
+    // against already-unwrapped bubbles.
     const text = extractPlainText(c)
     if (text) return text
     // Recognized wrapper with no text → normalize to empty so matches can
@@ -532,11 +532,12 @@ export function drainQueueMessage(
   //
   //    The match deliberately does NOT require (m.pending || m._remote). A
   //    loadHistory snapshot that arrived between the backend persisting the
-  //    drained row (queued=0) and this queue_drain WS event clears the bubble's
-  //    pending flag (mergeDbMessages keeps the string id for pending bubbles),
-  //    so gating on pending would miss it and fall back to pushing a SECOND
-  //    user message — the reported "AAA" duplicate. queueId is the stable
-  //    identity; pending/_remote are UI state, not identity.
+  //    drained row (queued=0) and this queue_drain WS event may have already
+  //    replaced the bubble with its DB row (rebuildFromDb drops the transient
+  //    bubble when queued=0), so gating on pending would miss it and fall back
+  //    to pushing a SECOND user message — the reported "AAA" duplicate.
+  //    queueId is the stable identity; pending/_remote are UI state, not
+  //    identity.
   let pendingIdx = -1
   if (queueId) {
     pendingIdx = messages.findIndex(
@@ -717,8 +718,8 @@ export type ChatMessageAction =
   | { type: 'ws_tool_result'; data: ToolUseEventData }
   | { type: 'ws_metadata'; metadata: Record<string, unknown> }
   | { type: 'ws_warning'; text: string; reason?: string }
-  // ── DB merge (loadHistory) ──
-  | { type: 'db_load'; dbMessages: ChatMessage[]; sessionRunning: boolean }
+  // ── DB rebuild (loadHistory) ──
+  | { type: 'db_load'; dbMessages: ChatMessage[] }
 
 function findBlockByTypeBackward(blocks: ContentBlock[], type: string): ContentBlock | undefined {
   for (let i = blocks.length - 1; i >= 0; i--) {
@@ -729,330 +730,186 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string): ContentB
 }
 
 /**
- * Merge loadHistory DB rows into the existing state WITHOUT wiping transient
- * messages. Rules per DB row (iterated id ASC):
- *  1. Matches an existing message by id        → reuse object, merge fields
- *     (object identity preserved → v-for keys stable).
- *  2. Matches a pending bubble by queueId      → reuse bubble, mark pending per
- *     queued flag; keep its string id (don't prematurely adopt the numeric id —
- *     queue_drain still matches by id).
- *  3. Matches a finalized drain-* reply        → adopt DB numeric id (only when
- *     no assistant message is streaming, to avoid clobbering a live reply).
- *  4. Otherwise                                → append as a new object.
- * Transient messages (pending/streaming/drain-* string ids) not covered by any
- * DB row are KEPT. Non-transient state without a DB row is dropped.
+ * Rebuild the messages array from the authoritative DB snapshot (loadHistory),
+ * preserving ONLY the transient messages that correspond to a real DB row:
+ *
+ *   - live streaming placeholder: matched when the DB snapshot has a
+ *     streaming=1 assistant row whose id (assigned by ws_stream_start) or
+ *     queue_id (the answered queue) matches the placeholder. Its object
+ *     identity is kept (v-for key stable) and the DB id merged in.
+ *   - pending user bubble: matched when a queued=1 DB row carries the same
+ *     queueId.
+ *   - _remote cross-device bubble: matched by DB id.
+ *
+ * EVERYTHING else transient (duplicate leftovers, orphan placeholders,
+ * string-id bubbles with no DB row) is DROPPED — the DB is authoritative, so
+ * any message not present there is garbage. This makes every loadHistory
+ * converge to exactly what an app restart would show, which is what makes the
+ * refresh button behave identically to a restart.
  */
-// sessionRunning 参数因向后兼容保留在签名中（db_load action 类型和调用方
-// useChatSession 都传递它），但 mergeDbMessages 已不再依赖它：adopt 决策由
-// DB 行的 streaming/queued 状态驱动，而非会话整体运行标志。
-export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[], _sessionRunning: boolean): ChatMessage[] {
-  const byId = new Map<string, ChatMessage>()
-  const byQueueId = new Map<string, ChatMessage>()
-  const finalizedDrains: ChatMessage[] = []
-  for (const m of state) {
-    if (m.id != null) byId.set(String(m.id), m)
-    if (m.queueId) byQueueId.set(m.queueId, m)
-    if (m.role === 'assistant' && !m.streaming && typeof m.id === 'string' && m.id.startsWith('drain-')) {
-      finalizedDrains.push(m)
+export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[]): ChatMessage[] {
+  // The live streaming placeholder (at most one) — the object whose identity
+  // must be preserved so the streamed content already rendered keeps its DOM.
+  const live = state.find((m) => m.role === 'assistant' && m.streaming)
+
+  // Index DB rows by id and by queueId (queued rows + streaming rows carrying
+  // the answered queue).
+  const dbById = new Map<string, ChatMessage>()
+  const dbByQueueId = new Map<string, ChatMessage>()
+  for (const db of dbMessages) {
+    if (db.id != null) dbById.set(String(db.id), db)
+    if (db.role === 'user' && db.queueId) dbByQueueId.set(db.queueId, db)
+  }
+
+  // Find the DB streaming row that corresponds to the live placeholder.
+  // Preferred channels: the DB id ws_stream_start already assigned to the
+  // placeholder, or the answered queue (queue_id) matching the placeholder's
+  // anchor. Fallback: any streaming row while the live placeholder is empty.
+  let liveDb: ChatMessage | undefined
+  if (live) {
+    // Channel 1 — exact id match. ws_stream_start assigns the DB row's id to
+    // the placeholder, so an id hit is the strongest identity proof — even
+    // against a finalized row (done missed while the session went idle and
+    // parseMessages stripped the streaming flag): keeping the placeholder
+    // object and finalizing it is smoother than dropping it (no v-for key
+    // churn) and content is identical either way.
+    if (dbById.has(String(live.id))) {
+      const row = dbById.get(String(live.id))!
+      if (row.role === 'assistant') liveDb = row
+    }
+    if (!liveDb) {
+      liveDb = dbMessages.find(
+        (r) =>
+          r.role === 'assistant' &&
+          r.streaming === true &&
+          (r.queueId === live.parentQueueId || r.queueId === String(live.id)),
+      )
+    }
+    if (!liveDb) {
+      liveDb = dbMessages.find(
+        (r) =>
+          r.role === 'assistant' &&
+          r.streaming === true &&
+          messageText(live) === '' &&
+          (live.blocks ?? []).length === 0,
+      )
     }
   }
 
-  const anyStreaming = state.some((m) => m.role === 'assistant' && m.streaming)
   const used = new Set<ChatMessage>()
   const merged: ChatMessage[] = []
-  // When a transient message adopts a DB id, replies anchored to its old id
-  // (parentQueueId) would lose their anchor. Record old→new so we can rewrite
-  // them once all matches are done.
-  const idAdoption = new Map<string, string | number>()
 
   for (const db of dbMessages) {
-    let target = byId.get(String(db.id))
-    if (target) {
-      used.add(target)
-      // The DB row is the authoritative identity for this message. Clear the
-      // transient cross-device markers so the message is treated as a plain
-      // DB-backed row (sorts by id, no drain/_remote matching side effects).
-      // Preserve the queueId from the DB row (if any) — a still-queued remote
-      // message must keep matching the later queue_drain by queueId.
-      if (target.role === 'user') {
-        delete (target as Record<string, unknown>)['_remoteQueueId']
-        delete (target as Record<string, unknown>)['_remote']
-        if (db.queueId && !target.queueId) target.queueId = db.queueId
+    // 1. Live streaming placeholder → keep its object, merge DB identity.
+    if (db === liveDb && live) {
+      used.add(live)
+      if (typeof db.id === 'number' && typeof live.id !== 'number') {
+        live.id = db.id
+        delete live.seq
       }
-    } else if (db.role === 'user' && db.queueId && (byQueueId.has(db.queueId) || byId.has(db.queueId))) {
-      // Match a pending bubble by queueId. The optimistic bubble's id IS the
-      // queueId (no queueId field yet); after a numeric-id adoption the queueId
-      // field survives. Reuse it; keep string id so queue_drain can still find
-      // it by id, but adopt DB queued state.
-      // NOTE: only USER DB rows take this path — an assistant reply row that
-      // carries the same queueId must NOT be matched against the user bubble
-      // (it would clobber the reply into the user message). Assistant rows are
-      // adopted via the drain-* branch below.
-      target = byQueueId.get(db.queueId) || byId.get(db.queueId)!
-      used.add(target)
-      target.queued = db.queued
-      // Capture the ORIGINAL pending state BEFORE clearing it below — the
-      // adopt decision below must distinguish a message that is still waiting
-      // for its queue_drain (pending) from a directly-sent one (never pending).
-      const wasPending = target.pending === true
-      // Sync the pending flag with the DB row: queued=1 → waiting bubble;
-      // queued=false (drained) → clear pending.
-      if (db.queued === true) target.pending = true
-      else if (db.queued === false) delete target.pending
-      // A NON-pending bubble (a directly-sent message that already finished,
-      // or one whose self-echo was lost) must adopt the numeric DB id NOW —
-      // it will never see a queue_drain. Keeping the string id would leave it
-      // sorting in seq space (after every DB row) forever, which is exactly
-      // the "refresh doesn't match app restart" divergence. Pending bubbles
-      // stay string-id until their queue_drain (the drain carries the
-      // authoritative id and clears pending).
-      if (!wasPending && typeof db.id === 'number' && typeof target.id !== 'number') {
-        const oldId = String(target.id)
-        target.id = db.id
-        idAdoption.set(oldId, db.id)
-        delete target.seq
-      }
-    } else if (db.role === 'user') {
-      // Adopt DB identity into an optimistic user bubble that has NO queueId —
-      // e.g. a message sent via sendMessageNow (id = `pending-*`, never queued).
-      // Such a bubble is not matched by id (string vs numeric) nor by queueId.
-      // Match by content. createdAt is NOT a hard gate: the backend can persist
-      // the row seconds after the bubble was created (busy loadHistory), so a
-      // ±5s window would fail and leave the bubble transient → it sorts after
-      // every DB-backed message (misorder). Among multiple same-content
-      // candidates we prefer the one with the closest createdAt.
-      const dt = db.createdAt ? new Date(db.createdAt).getTime() : 0
-      const dbText = messageText(db)
-      const candidates: { m: ChatMessage; dist: number }[] = []
-      for (const m of state) {
-        if (m.role !== 'user') continue
-        if (m.id == null || typeof m.id !== 'string') continue
-        if (messageText(m) !== dbText) continue
-        const pt = m.createdAt ? new Date(m.createdAt).getTime() : 0
-        const dist = dt !== 0 && !Number.isNaN(dt) && pt !== 0 && !Number.isNaN(pt) ? Math.abs(dt - pt) : -1
-        candidates.push({ m, dist })
-      }
-      let matchIdx = -1
-      if (candidates.length === 1) {
-        matchIdx = state.indexOf(candidates[0].m)
-      } else if (candidates.length > 1) {
-        // Prefer the newest-created candidate (dist === -1 sorts last).
-        candidates.sort((a, b) => (a.dist === -1 ? 1 : 0) - (b.dist === -1 ? 1 : 0) || a.dist - b.dist)
-        matchIdx = state.indexOf(candidates[0].m)
-      }
-      if (matchIdx !== -1) {
-        target = state[matchIdx]
-        used.add(target)
-        const oldId = String(target.id)
-        target.id = db.id
-        idAdoption.set(oldId, db.id)
-        delete target.seq
-        // A never-queued message: pending stays off, queued=false.
-        target.queued = false
-        delete target.pending
-      }
-    } else if (db.role === 'assistant' && !db.streaming) {
-      // Adopt DB identity into a drain-* reply placeholder. This branch is NOT
-      // gated on !sessionRunning (unlike the old canAdoptDrains) because a
-      // session stays running while LATER turns stream — earlier replies are
-      // already finalized and their DB rows are streaming=0. Gating on
-      // sessionRunning left every earlier finalized reply duplicated whenever a
-      // loadHistory/refresh landed while a later turn was still streaming (the
-      // live placeholder kept its drain-* id and the DB row was appended
-      // alongside it — the "refresh can't fix it, app restart can" bug).
-      //
-      // Prefer a queueId match — the backend records the replied-to queue on
-      // the DB row, and the drain-* placeholder anchors itself with
-      // parentQueueId = that queueId. This is exact and immune to createdAt
-      // drift (a long AI reply can take minutes, far beyond any ±5s window).
-      // Fall back to content matching (finalized drain placeholders carry the
-      // same content as their DB row); createdAt is NOT a hard gate — the
-      // backend persists the row seconds after the placeholder was created, so
-      // a ±5s window would fail and the DB row would be appended as a duplicate.
-      let matchIdx = -1
-      if (db.queueId) {
-        matchIdx = finalizedDrains.findIndex((d) => d.parentQueueId === db.queueId)
-      }
-      if (matchIdx === -1) {
-        const dt = db.createdAt ? new Date(db.createdAt).getTime() : 0
-        const dbText = messageText(db)
-        const candidates: { d: ChatMessage; dist: number }[] = []
-        for (let i = 0; i < finalizedDrains.length; i++) {
-          const d = finalizedDrains[i]
-          if (messageText(d) !== dbText) continue
-          const pt = d.createdAt ? new Date(d.createdAt).getTime() : 0
-          const dist = dt !== 0 && !Number.isNaN(dt) && pt !== 0 && !Number.isNaN(pt) ? Math.abs(dt - pt) : -1
-          candidates.push({ d, dist })
-        }
-        if (candidates.length === 1) {
-          matchIdx = finalizedDrains.indexOf(candidates[0].d)
-        } else if (candidates.length > 1) {
-          candidates.sort((a, b) => (a.dist === -1 ? 1 : 0) - (b.dist === -1 ? 1 : 0) || a.dist - b.dist)
-          matchIdx = finalizedDrains.indexOf(candidates[0].d)
-        }
-      }
+      // If the matched DB row is already finalized (streaming=0 — the done
+      // event was missed while the session went idle), finalize the placeholder
+      // too so it renders as a normal reply (identical content, stable v-for
+      // key). When the row is still streaming=1, keep streaming.
+      if (db.streaming !== true) delete live.streaming
+      // Merge DB fields (summary, metadata, files) onto the live object.
+      if (db.summary) live.summary = db.summary
+      if (db.summaryCards) live.summaryCards = db.summaryCards
+      if (db.metadata && !live.metadata) live.metadata = db.metadata
+      if (db.files) live.files = db.files
+      merged.push(live)
+      continue
+    }
 
-      // When no finalized drain placeholder matches, the DB row may be the
-      // FINALIZED form of our live streaming placeholder — i.e. the done event
-      // for this reply was lost while the session kept running (a later turn is
-      // streaming, so sessionRunning stays true but THIS reply is already
-      // persisted with streaming=0). Adopt the placeholder as long as the DB
-      // snapshot does NOT contain a streaming=1 row that it could belong to
-      // (that would mean the placeholder is genuinely the live turn and must
-      // stay untouched — handled by the streaming branch below).
-      //
-      // The adopt is gated on IDENTITY, not just "there is a live placeholder":
-      // the placeholder must either be empty (a fresh placeholder with no real
-      // content to lose) or anchored to the same question this DB row answers
-      // (parentQueueId === db.queueId). Without this, a content-full live
-      // placeholder could be collapsed into an unrelated finalized row (e.g.
-      // two replies in flight), silently dropping real AI output.
-      if (matchIdx === -1) {
-        const hasDbStreamingRow = dbMessages.some((r) => r.role === 'assistant' && r.streaming === true)
-        if (!hasDbStreamingRow) {
-          const live = state.find((m) => m.role === 'assistant' && m.streaming)
-          if (live) {
-            const liveHasContent = messageText(live) !== '' || (live.blocks ?? []).length > 0
-            const anchoredSame = !!db.queueId && live.parentQueueId === db.queueId
-            if (!liveHasContent || anchoredSame) {
-              // Finalize the placeholder and adopt the DB id. Never adopt a
-              // placeholder that content-matches a DIFFERENT finalized row (that
-              // row would have consumed it above).
-              delete live.streaming
-              used.add(live)
-              const oldId = String(live.id)
-              live.id = db.id
-              idAdoption.set(oldId, db.id)
-              delete live.seq
-              target = live
-            }
-          }
-        }
-      }
-
-      if (target === undefined && matchIdx !== -1) {
-        const match = finalizedDrains[matchIdx]
-        finalizedDrains.splice(matchIdx, 1) // consume — one drain per DB row
-        target = match
-        used.add(target)
-        const oldId = String(target.id)
-        target.id = db.id
-        idAdoption.set(oldId, db.id)
-        // Keep parentQueueId: the parent may still be transient (its DB id not
-        // yet adopted). sortMessages resolves parentQueueId dynamically, so the
-        // reply follows the parent whether it is transient or DB-backed.
-        delete target.seq
+    // 2. Pending user bubble → keep the bubble object, sync queued state.
+    const queuedRow = db.role === 'user' && db.queued === true && db.queueId
+    if (queuedRow) {
+      const bubble = state.find(
+        (m) =>
+          m.role === 'user' &&
+          m.pending === true &&
+          (m.queueId === db.queueId || String(m.id) === db.queueId),
+      )
+      if (bubble) {
+        used.add(bubble)
+        if (db.summary) bubble.summary = db.summary
+        if (db.files) bubble.files = db.files
+        bubble.pending = true
+        bubble.queued = true
+        merged.push(bubble)
+        continue
       }
     }
 
-    if (target) {
-      // Merge DB fields into the existing object (identity preserved).
-      if (db.summary) target.summary = db.summary
-      if (db.summaryCards) target.summaryCards = db.summaryCards
-      if (db.metadata && !target.metadata) target.metadata = db.metadata
-      if (db.cancelled) target.cancelled = db.cancelled
-      if (db.files) target.files = db.files
-      if (!target.content && db.content) target.content = db.content
-      if (target.blocks == null || target.blocks.length === 0) {
-        if (db.blocks) target.blocks = db.blocks
+    // 3. _remote cross-device bubble adopted by this DB row.
+    if (db.id != null) {
+      const remote = state.find(
+        (m) => m.role === 'user' && m._remote === true && String(m.id) === String(db.id),
+      )
+      if (remote) {
+        used.add(remote)
+        delete (remote as Record<string, unknown>)['_remote']
+        delete (remote as Record<string, unknown>)['_remoteQueueId']
+        if (db.queueId && !remote.queueId) remote.queueId = db.queueId
+        merged.push(remote)
+        continue
       }
-      if (db.queued !== undefined && target.role === 'user') {
-        target.queued = db.queued
-        if (db.queued === true) target.pending = true
-        else if (db.queued === false) delete target.pending
-      }
-      merged.push(target)
-    } else if (db.role === 'assistant' && db.streaming === true && !anyStreaming) {
-      // The DB snapshot contains a streaming=1 row but we have no live
-      // placeholder yet (or the placeholder was replaced) — append it as-is.
-      merged.push({ ...db })
-    } else if (db.role === 'assistant' && db.streaming === true && anyStreaming) {
-      // The DB snapshot's streaming row is the SAME message as our live
-      // placeholder (the stream is reconnecting to a live turn). Merge the DB
-      // identity (id) into the existing placeholder instead of appending a
-      // duplicate or wiping the live object.
-      const live = state.find((m) => m.role === 'assistant' && m.streaming)
-      if (live) {
-        used.add(live)
-        if (typeof db.id === 'number') live.id = db.id
-        merged.push(live)
-      } else {
-        merged.push({ ...db })
-      }
-    } else {
-      // Any other unmatched row (history messages, final replies, queued user
-      // rows) is appended as a new object. A finalized drain-* reply keeps its
-      // transient identity until the next idle loadHistory adopts the DB id —
-      // the DB row appears alongside it in the meantime (transient duplicate,
-      // reconciled by the next idle loadHistory).
-      merged.push({ ...db })
     }
+
+    // 4. Everything else → append the authoritative DB row.
+    const row = { ...db }
+    if (row.role === 'user' && row.queued === true) row.pending = true
+    merged.push(row)
   }
 
-  // Keep transient state not covered by DB rows (pending bubbles, streaming
-  // placeholders, drain-* replies awaiting adoption).
+  // Drop all remaining state not covered by a DB row. This is the crux of the
+  // rebuild: duplicate leftovers, orphaned placeholders and string-id bubbles
+  // without a DB row are NOT in the authoritative DB, so they are dropped —
+  // every loadHistory converges to exactly what an app restart would show.
+  // While dropping, record any dropped user bubble that HAS a DB row so replies
+  // anchored to the bubble's string id can be rewritten to the DB id.
+  const parentAdoption = new Map<string, string>()
   for (const m of state) {
     if (used.has(m)) continue
     const isTransient = m.pending === true || m.streaming === true || typeof m.id === 'string'
     if (!isTransient) continue
-    // Self-heal: drop a transient USER bubble that already has a DB-backed
-    // sibling with the same identity (queueId match, or content match against a
-    // numeric-id row). Such a bubble is a leftover duplicate from a missed
-    // adoption (self-echo lost, queue_drain raced a loadHistory, etc.).
-    // Keeping it would make the duplicate immortal — every later loadHistory
-    // would re-append the DB row alongside it, so only an app restart (which
-    // rebuilds the array from DB) could ever clear it. This is what made the
-    // ActionBar refresh button behave differently from an app restart.
-    //
-    // Non-pending bubbles only: a pending bubble is a message still waiting for
-    // the drain loop, and its DB row (queued=1) is matched + kept in the main
-    // loop above — it must NEVER be dropped here. _remote bubbles are
-    // cross-device messages that arrive WITHOUT a DB id and adopt their DB
-    // identity through a later queue_drain/db_load — they carry no queueId to
-    // match, so content+time heuristics must never collapse them onto a local
-    // row of the same text.
-    if (m.role === 'user' && !m.pending && !m._remote) {
-      const mText = messageText(m)
-      const mTime = m.createdAt ? new Date(m.createdAt).getTime() : 0
-      const drop = dbMessages.some((r) => {
-        if (r.role !== 'user') return false
-        if (r.queueId) {
-          // QueueId identity wins when the DB row carries one.
-          if (r.queueId === m.queueId || r.queueId === String(m.id)) return true
+    // A dropped optimistic/transient user bubble that corresponds to a DB row:
+    // its replies anchor to the string id — rewrite them to the DB id below.
+    if (m.role === 'user' && typeof m.id === 'string') {
+      let row = dbById.get(String(m.id)) || (m.queueId ? dbByQueueId.get(m.queueId) : undefined)
+      if (!row) {
+        // No id/queueId identity on the DB row (a directly-sent message whose
+        // row was persisted without queue_id): match by content, gated by a
+        // createdAt window so two genuinely distinct identical-text messages
+        // (e.g. "build" sent twice minutes apart) never rewrite each other's
+        // reply anchors. This is used ONLY to rewrite reply anchors — the
+        // bubble itself is still dropped, so it cannot resurrect a duplicate.
+        const mText = messageText(m)
+        const mTime = m.createdAt ? new Date(m.createdAt).getTime() : 0
+        if (mText !== '') {
+          row = dbMessages.find((r) => {
+            if (r.role !== 'user' || messageText(r) !== mText) return false
+            const rTime = r.createdAt ? new Date(r.createdAt).getTime() : 0
+            if (rTime === 0 || mTime === 0) return false
+            return Math.abs(rTime - mTime) < 5000
+          })
         }
-        // Content fallback for bubbles that lost their queueId (e.g. a fallback
-        // push from a raced queue_drain). Guard with a createdAt window so two
-        // GENUINELY distinct user messages with identical text are never merged
-        // (a user can send "build" twice minutes apart — content alone must not
-        // collapse them). The leftover duplicate shares the same moment as its
-        // DB row because both were created by the same drain cycle.
-        if (typeof r.id !== 'number' || mText === '') return false
-        if (messageText(r) !== mText) return false
-        const rTime = r.createdAt ? new Date(r.createdAt).getTime() : 0
-        if (rTime === 0 || mTime === 0) return false
-        return Math.abs(rTime - mTime) < 5000
-      })
-      if (drop) continue
+      }
+      if (row && row.id != null && String(row.id) !== String(m.id)) {
+        parentAdoption.set(String(m.id), String(row.id))
+      }
     }
-    merged.push(m)
+    // Deliberately NOT pushed to `merged`.
   }
-
-  // Rewrite parentQueueId anchors whose parent adopted a DB id during this
-  // merge — otherwise a reply anchored to the old string id loses its parent
-  // and falls back to its own sort value (misordering).
-  if (idAdoption.size > 0) {
+  if (parentAdoption.size > 0) {
     for (const m of merged) {
       if (m.parentQueueId) {
-        const newId = idAdoption.get(m.parentQueueId)
-        if (newId !== undefined) m.parentQueueId = String(newId)
+        const newId = parentAdoption.get(m.parentQueueId)
+        if (newId !== undefined) m.parentQueueId = newId
       }
     }
   }
 
-  // queued=1 rows become pending bubbles.
-  for (const m of merged) {
-    if (m.role === 'user' && m.queued === true) m.pending = true
-  }
   anchorRepliesToQuestions(merged)
   sortMessages(merged)
   return merged
@@ -1305,7 +1162,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       return state
     }
     case 'db_load': {
-      return mergeDbMessages(state, action.dbMessages, action.sessionRunning)
+      return rebuildFromDb(state, action.dbMessages)
     }
     default:
       return state

@@ -163,13 +163,11 @@ export function useChatSession(options: UseChatSessionOptions) {
     const parsed = parseMessages(rawMsgs, onParseAssistantContent, messages.value, isRunning)
 
     // Merge DB rows into the current array via the reducer (single write
-    // channel). mergeDbMessages:
-    //   - reuses objects by id (v-for keys stable → no DOM rebuild lag)
-    //   - matches pending bubbles by queueId (they are NEVER wiped)
-    //   - keeps streaming placeholders (NEVER wiped while a stream is live)
-    //   - adopts DB identity into finalized drain-* replies (when idle)
-    //   - marks queued=true rows as pending; anchors + sorts
-    dispatch({ type: 'db_load', dbMessages: parsed as ChatMessage[], sessionRunning: isRunning })
+    // channel). rebuildFromDb rebuilds the array from the authoritative DB
+    // snapshot, preserving only the live streaming placeholder, pending queued
+    // bubbles and adopted _remote rows — so every loadHistory converges to what
+    // an app restart would show (the ActionBar refresh behaves like a restart).
+    dispatch({ type: 'db_load', dbMessages: parsed as ChatMessage[] })
     totalMessages.value = (sessionData.total as number) || messages.value.length
     queuedCount.value = (sessionData.queuedCount as number) || 0
 
