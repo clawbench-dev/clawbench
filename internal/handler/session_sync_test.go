@@ -59,7 +59,15 @@ func TestGroupLoadSessionReplay_UserChunkNestedJSONUnwrapped(t *testing.T) {
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "user", msgs[0].role)
 	assert.NotContains(t, msgs[0].content, "user_message_chunk", "stored content must not contain the raw ACP notification")
-	assert.Contains(t, msgs[0].content, "这是真实的用户消息")
+	// The final stored blocks must be exactly one text block with the unwrapped
+	// text — no empty blocks, no JSON leakage.
+	var parsed struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(msgs[0].content), &parsed))
+	require.Len(t, parsed.Blocks, 1)
+	assert.Equal(t, "text", parsed.Blocks[0].Type)
+	assert.Equal(t, "这是真实的用户消息", parsed.Blocks[0].Text)
 }
 
 func TestGroupLoadSessionReplay_UserChunkContentArrayUnwrapped(t *testing.T) {
@@ -74,10 +82,35 @@ func TestGroupLoadSessionReplay_UserChunkContentArrayUnwrapped(t *testing.T) {
 
 	msgs := groupLoadSessionReplay(client)
 	require.Len(t, msgs, 1)
-	assert.Contains(t, msgs[0].content, "数组里的用户消息")
-	// The stored block must contain the unwrapped user text, not the literal
-	// serialized array as a text block.
-	assert.NotContains(t, msgs[0].content, `"text":"[{\"type\"`)
+	var parsed struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(msgs[0].content), &parsed))
+	require.Len(t, parsed.Blocks, 1)
+	assert.Equal(t, "text", parsed.Blocks[0].Type)
+	assert.Equal(t, "数组里的用户消息", parsed.Blocks[0].Text)
+}
+
+func TestGroupLoadSessionReplay_EmptyUserChunkDoesNotCreateEmptyBlock(t *testing.T) {
+	// A user chunk with empty text (e.g. an image-only message) must not create
+	// an empty text block nor leak JSON; the message may be skipped entirely
+	// rather than produce a junk block.
+	client := ai.NewClawBenchACPClient()
+	client.SetLoadSessionBufForTest([]acp.SessionNotification{
+		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+			MessageId: strPtr("m-empty"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: ""}},
+		}}},
+		{SessionId: "s", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+			MessageId: strPtr("a1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "assistant reply"}},
+		}}},
+	})
+
+	msgs := groupLoadSessionReplay(client)
+	// The empty user chunk produces no block; the assistant reply still lands
+	// as its own message (role grouping not corrupted by the empty chunk).
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "assistant", msgs[0].role)
+	assert.Contains(t, msgs[0].content, "assistant reply")
 }
 
 func TestServeACPSyncSession_NoAcpSession(t *testing.T) {

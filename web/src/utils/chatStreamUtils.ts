@@ -9,6 +9,7 @@
 // ── Core chat types ──
 
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
+import { extractPlainText } from '@/utils/userMsgIndexUtils'
 
 /** A content block within a chat message (text, thinking, tool_use, error, warning). */
 export interface ContentBlock {
@@ -83,21 +84,31 @@ export function messageText(m: ChatMessage): string {
     if (texts.length > 0) return texts.join('')
   }
   const c = typeof m.content === 'string' ? m.content : ''
-  if (c.startsWith('{"blocks":')) {
-    // Backend stores assistant content as a JSON blocks blob; the frontend
-    // parseMessages expands it into blocks, but messages that never passed
-    // through parseMessages (e.g. reducer internals) may keep the raw string.
-    try {
-      const parsed = JSON.parse(c) as { blocks?: Array<{ type: string; text?: string }> }
-      if (Array.isArray(parsed.blocks)) {
-        const texts = parsed.blocks
-          .filter((b) => (b.type === 'text' || b.type === 'warning') && typeof b.text === 'string')
-          .map((b) => b.text as string)
-        if (texts.length > 0) return texts.join('')
-      }
-    } catch { /* fall through to raw content */ }
+  if (c.trim().startsWith('{') || c.trim().startsWith('[')) {
+    // Backend stores message content as JSON in several shapes: a blocks blob,
+    // a bare content array, or an ACP notification wrapper (historical dirty
+    // data / sync replay). Use the unified extractor so a literal JSON string
+    // never leaks into content matching, which would break mergeDbMessages'
+    // equality checks against already-unwrapped bubbles.
+    const text = extractPlainText(c)
+    if (text) return text
+    // Recognized wrapper with no text → normalize to empty so matches can
+    // succeed; unrecognized JSON falls through to raw content.
+    return isJsonContent(c) ? '' : c
   }
   return c
+}
+
+/** Whether the content string is valid JSON (recognized or not). */
+function isJsonContent(c: string): boolean {
+  const trimmed = c.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false
+  try {
+    JSON.parse(trimmed)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** SSE event data for thinking events */
@@ -723,7 +734,7 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string): ContentB
  * Transient messages (pending/streaming/drain-* string ids) not covered by any
  * DB row are KEPT. Non-transient state without a DB row is dropped.
  */
-export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[], sessionRunning: boolean): ChatMessage[] {
+export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[], _sessionRunning: boolean): ChatMessage[] {
   const byId = new Map<string, ChatMessage>()
   const byQueueId = new Map<string, ChatMessage>()
   const finalizedDrains: ChatMessage[] = []
@@ -736,15 +747,6 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
   }
 
   const anyStreaming = state.some((m) => m.role === 'assistant' && m.streaming)
-  // Adopt DB identity into finalized drain-* replies only when the session is
-  // NOT running (stream ended) — the DB snapshot is then authoritative.
-  // NOTE: this deliberately does NOT check anyStreaming. finalizedDrains only
-  // contains NON-streaming placeholders (indexed with `!m.streaming`), so
-  // adopting them can never clobber a live streaming reply. Gating on
-  // anyStreaming caused a real bug: while reply3 was streaming, finalized
-  // reply1/reply2 placeholders were never adopted and their DB rows were
-  // appended as duplicates, disordering the whole queue.
-  const canAdoptDrains = !sessionRunning
   const used = new Set<ChatMessage>()
   const merged: ChatMessage[] = []
   // When a transient message adopts a DB id, replies anchored to its old id
@@ -778,12 +780,29 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
       target = byQueueId.get(db.queueId) || byId.get(db.queueId)!
       used.add(target)
       target.queued = db.queued
+      // Capture the ORIGINAL pending state BEFORE clearing it below — the
+      // adopt decision below must distinguish a message that is still waiting
+      // for its queue_drain (pending) from a directly-sent one (never pending).
+      const wasPending = target.pending === true
       // Sync the pending flag with the DB row: queued=1 → waiting bubble;
       // queued=false (drained) → clear pending. The OLD code only SET pending
       // on queued=true and never cleared it, so a drained message kept showing
       // as "waiting" during streaming until a reload fixed it.
       if (db.queued === true) target.pending = true
       else if (db.queued === false) delete target.pending
+      // A NON-pending bubble (a directly-sent message that already finished,
+      // or one whose self-echo was lost) must adopt the numeric DB id NOW —
+      // it will never see a queue_drain. Keeping the string id would leave it
+      // sorting in seq space (after every DB row) forever, which is exactly
+      // the "refresh doesn't match app restart" divergence. Pending bubbles
+      // stay string-id until their queue_drain (the drain carries the
+      // authoritative id and clears pending).
+      if (!wasPending && typeof db.id === 'number' && typeof target.id !== 'number') {
+        const oldId = String(target.id)
+        target.id = db.id
+        idAdoption.set(oldId, db.id)
+        delete target.seq
+      }
     } else if (db.role === 'user') {
       // Adopt DB identity into an optimistic user bubble that has NO queueId —
       // e.g. a message sent via sendMessageNow (id = `pending-*`, never queued).
@@ -823,16 +842,24 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
         target.queued = false
         delete target.pending
       }
-    } else if (db.role === 'assistant' && canAdoptDrains) {
-      // Adopt DB identity into a finalized drain-* reply. Prefer a queueId
-      // match — the backend records the replied-to queue on the DB row, and the
-      // drain-* placeholder anchors itself with parentQueueId = that queueId.
-      // This is exact and immune to createdAt drift (a long AI reply can take
-      // minutes, far beyond any ±5s window). Fall back to content matching
-      // (finalized drain placeholders carry the same content as their DB row);
-      // createdAt is NOT a hard gate — the backend persists the row seconds
-      // after the placeholder was created, so a ±5s window would fail and the
-      // DB row would be appended as a duplicate.
+    } else if (db.role === 'assistant' && !db.streaming) {
+      // Adopt DB identity into a drain-* reply placeholder. This branch is NOT
+      // gated on !sessionRunning (unlike the old canAdoptDrains) because a
+      // session stays running while LATER turns stream — earlier replies are
+      // already finalized and their DB rows are streaming=0. Gating on
+      // sessionRunning left every earlier finalized reply duplicated whenever a
+      // loadHistory/refresh landed while a later turn was still streaming (the
+      // live placeholder kept its drain-* id and the DB row was appended
+      // alongside it — the "refresh can't fix it, app restart can" bug).
+      //
+      // Prefer a queueId match — the backend records the replied-to queue on
+      // the DB row, and the drain-* placeholder anchors itself with
+      // parentQueueId = that queueId. This is exact and immune to createdAt
+      // drift (a long AI reply can take minutes, far beyond any ±5s window).
+      // Fall back to content matching (finalized drain placeholders carry the
+      // same content as their DB row); createdAt is NOT a hard gate — the
+      // backend persists the row seconds after the placeholder was created, so
+      // a ±5s window would fail and the DB row would be appended as a duplicate.
       let matchIdx = -1
       if (db.queueId) {
         matchIdx = finalizedDrains.findIndex((d) => d.parentQueueId === db.queueId)
@@ -855,7 +882,35 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
           matchIdx = finalizedDrains.indexOf(candidates[0].d)
         }
       }
-      if (matchIdx !== -1) {
+
+      // When no finalized drain placeholder matches, the DB row may be the
+      // FINALIZED form of our live streaming placeholder — i.e. the done event
+      // for this reply was lost while the session kept running (a later turn is
+      // streaming, so sessionRunning stays true but THIS reply is already
+      // persisted with streaming=0). Adopt the placeholder as long as the DB
+      // snapshot does NOT contain a streaming=1 row that it could belong to
+      // (that would mean the placeholder is genuinely the live turn and must
+      // stay untouched — handled by the streaming branch below).
+      if (matchIdx === -1) {
+        const hasDbStreamingRow = dbMessages.some((r) => r.role === 'assistant' && r.streaming === true)
+        if (!hasDbStreamingRow) {
+          const live = state.find((m) => m.role === 'assistant' && m.streaming)
+          if (live) {
+            // Finalize the placeholder and adopt the DB id. Never adopt a
+            // placeholder that content-matches a DIFFERENT finalized row (that
+            // row would have consumed it above).
+            delete live.streaming
+            used.add(live)
+            const oldId = String(live.id)
+            live.id = db.id
+            idAdoption.set(oldId, db.id)
+            delete live.seq
+            target = live
+          }
+        }
+      }
+
+      if (target === undefined && matchIdx !== -1) {
         const match = finalizedDrains[matchIdx]
         finalizedDrains.splice(matchIdx, 1) // consume — one drain per DB row
         target = match
@@ -919,7 +974,47 @@ export function mergeDbMessages(state: ChatMessage[], dbMessages: ChatMessage[],
   for (const m of state) {
     if (used.has(m)) continue
     const isTransient = m.pending === true || m.streaming === true || typeof m.id === 'string'
-    if (isTransient) merged.push(m)
+    if (!isTransient) continue
+    // Self-heal: drop a transient USER bubble that already has a DB-backed
+    // sibling with the same identity (queueId match, or content match against a
+    // numeric-id row). Such a bubble is a leftover duplicate from a missed
+    // adoption (self-echo lost, queue_drain raced a loadHistory, etc.).
+    // Keeping it would make the duplicate immortal — every later loadHistory
+    // would re-append the DB row alongside it, so only an app restart (which
+    // rebuilds the array from DB) could ever clear it. This is what made the
+    // ActionBar refresh button behave differently from an app restart.
+    //
+    // Non-pending bubbles only: a pending bubble is a message still waiting for
+    // the drain loop, and its DB row (queued=1) is matched + kept in the main
+    // loop above — it must NEVER be dropped here. _remote bubbles are
+    // cross-device messages that arrive WITHOUT a DB id and adopt their DB
+    // identity through a later queue_drain/db_load — they carry no queueId to
+    // match, so content+time heuristics must never collapse them onto a local
+    // row of the same text.
+    if (m.role === 'user' && !m.pending && !m._remote) {
+      const mText = messageText(m)
+      const mTime = m.createdAt ? new Date(m.createdAt).getTime() : 0
+      const drop = dbMessages.some((r) => {
+        if (r.role !== 'user') return false
+        if (r.queueId) {
+          // QueueId identity wins when the DB row carries one.
+          if (r.queueId === m.queueId || r.queueId === String(m.id)) return true
+        }
+        // Content fallback for bubbles that lost their queueId (e.g. a fallback
+        // push from a raced queue_drain). Guard with a createdAt window so two
+        // GENUINELY distinct user messages with identical text are never merged
+        // (a user can send "build" twice minutes apart — content alone must not
+        // collapse them). The leftover duplicate shares the same moment as its
+        // DB row because both were created by the same drain cycle.
+        if (typeof r.id !== 'number' || mText === '') return false
+        if (messageText(r) !== mText) return false
+        const rTime = r.createdAt ? new Date(r.createdAt).getTime() : 0
+        if (rTime === 0 || mTime === 0) return false
+        return Math.abs(rTime - mTime) < 5000
+      })
+      if (drop) continue
+    }
+    merged.push(m)
   }
 
   // Rewrite parentQueueId anchors whose parent adopted a DB id during this

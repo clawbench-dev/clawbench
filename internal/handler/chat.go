@@ -943,8 +943,10 @@ func buildForkContext(sessionID string) string {
 			Blocks []model.ContentBlock `json:"blocks"`
 		}
 		if !strings.HasPrefix(m.Content, `{"blocks":`) || json.Unmarshal([]byte(m.Content), &wrapper) != nil {
-			// Non-block content: treat as plain text
-			content := m.Content
+			// Non-block content: treat as plain text. Use the unified extractor
+			// so nested JSON serializations (bare content arrays, ACP notification
+			// wrappers from sync replay) never leak raw JSON into the model.
+			content := service.ExtractPlainText(m.Content)
 			if content == "" {
 				continue
 			}

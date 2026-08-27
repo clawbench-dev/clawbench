@@ -791,13 +791,16 @@ func recentConversation(sessionID string, n int) []string {
 // cards so the recommendation prompt can reference the options.
 func assistantConclusion(content string) string {
 	if !strings.HasPrefix(content, `{"blocks":`) {
-		return content
+		// Assistant content is normally blocks JSON; anything else (bare content
+		// array, ACP notification wrapper, plain text) is unwrapped so raw JSON
+		// never leaks into the recommendation prompt.
+		return ExtractPlainText(content)
 	}
 	var wrapper struct {
 		Blocks []model.ContentBlock `json:"blocks"`
 	}
 	if json.Unmarshal([]byte(content), &wrapper) != nil {
-		return content
+		return ExtractPlainText(content)
 	}
 	conclusion := summarize.ExtractLastAnswerFromBlocks(wrapper.Blocks)
 	if q := askQuestionText(wrapper.Blocks); q != "" {

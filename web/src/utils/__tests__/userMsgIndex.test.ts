@@ -89,6 +89,22 @@ describe('extractPlainText', () => {
     expect(extractPlainText(content)).toBe('hello from array')
   })
 
+  it('skips thinking elements in bare content-array JSON', () => {
+    const content = JSON.stringify([
+      { type: 'thinking', text: 'inner reasoning' },
+      { type: 'text', text: 'final answer' },
+    ])
+    expect(extractPlainText(content)).toBe('final answer')
+  })
+
+  it('degrades gracefully on pathologically deep nesting', () => {
+    let nested = '"leaf"'
+    for (let i = 0; i < 12; i++) {
+      nested = `{"text":${nested}}`
+    }
+    expect(extractPlainText(nested)).toBe('')
+  })
+
   it('extracts text from an ACP notification wrapper directly', () => {
     const content = JSON.stringify({
       content: { text: '直接存的通知', type: 'text' },

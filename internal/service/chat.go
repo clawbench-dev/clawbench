@@ -331,7 +331,8 @@ func unmarshalFilesJSON(raw string) []model.FileEntry {
 // Recognized shapes:
 //   - Plain text (e.g. "hello world") → returned unchanged.
 //   - Block-format JSON ({"blocks":[{"type":"text","text":"..."}]}) → text of
-//     all text blocks joined with "\n\n".
+//     all text blocks joined with "\n\n". The frontend extractPlainText joins
+//     with a space for single-line previews — both valid for their contexts.
 //   - Nested dirty data: a text block whose text field is itself a JSON string
 //     (e.g. an ACP notification JSON or a content array serialized into text).
 //     Recursively unwraps until real text is found.
@@ -360,7 +361,7 @@ func ExtractPlainText(content string) string {
 	if json.Unmarshal([]byte(trimmed), &raw) != nil {
 		return content
 	}
-	text := extractTextFromValue(raw)
+	text := extractTextFromValue(raw, 0)
 	if strings.TrimSpace(text) != "" {
 		return text
 	}
@@ -387,16 +388,10 @@ func isKnownContentWrapper(v any) bool {
 	}
 }
 
-// extractTextFromAny attempts to extract plain text from a JSON-encoded string
-// of any known shape. Returns (text, false) when the input isn't a recognized
-// JSON wrapper or yields no text.
-func extractTextFromAny(encoded string) (string, bool) {
-	var raw any
-	if json.Unmarshal([]byte(encoded), &raw) != nil {
-		return "", false
-	}
-	return extractTextFromValue(raw), true
-}
+// maxUnwrapDepth caps recursive unwrapping of nested JSON serializations.
+// Real dirty data is ≤2–3 levels deep; the cap degrades pathologically nested
+// JSON gracefully instead of recursing unboundedly.
+const maxUnwrapDepth = 8
 
 // extractTextFromValue recursively walks decoded JSON and pulls out the first
 // meaningful text it can find, unwrapping known wrapper shapes:
@@ -411,15 +406,22 @@ func extractTextFromAny(encoded string) (string, bool) {
 // This mirrors the block semantics of the rest of the system: only "text"
 // content is meaningful for user-facing plain text; thinking/tool_use blocks
 // are skipped.
-func extractTextFromValue(v any) string {
+func extractTextFromValue(v any, depth int) string {
+	if depth > maxUnwrapDepth {
+		return ""
+	}
 	switch val := v.(type) {
 	case string:
 		// A string may itself be an embedded JSON serialization (historical
-		// dirty data). Unwrap it; otherwise return as-is.
+		// dirty data). Unwrap it (propagating depth so the cap actually caps);
+		// otherwise return as-is.
 		trimmed := strings.TrimSpace(val)
 		if trimmed != "" && (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) {
-			if inner, ok := extractTextFromAny(trimmed); ok && strings.TrimSpace(inner) != "" {
-				return inner
+			var inner any
+			if json.Unmarshal([]byte(trimmed), &inner) == nil {
+				if nested := extractTextFromValue(inner, depth+1); strings.TrimSpace(nested) != "" {
+					return nested
+				}
 			}
 		}
 		return val
@@ -427,14 +429,14 @@ func extractTextFromValue(v any) string {
 		// 1. {"blocks":[...]} — standard block content.
 		if blocks, ok := val["blocks"]; ok {
 			if arr, isArr := blocks.([]any); isArr {
-				return joinExtractedTexts(extractTextsFromArray(arr))
+				return joinExtractedTexts(extractTextsFromArray(arr, depth))
 			}
 		}
 		// 2. ACP notification wrapper: {"content":{"text":"hi","type":"text"},...}.
 		//    Historical bug stored the whole ACP notification JSON as text.
 		if _, isAcp := val["sessionUpdate"]; isAcp {
 			if contentVal, ok := val["content"]; ok {
-				if s := extractTextFromValue(contentVal); s != "" {
+				if s := extractTextFromValue(contentVal, depth+1); s != "" {
 					return s
 				}
 			}
@@ -442,7 +444,7 @@ func extractTextFromValue(v any) string {
 		// 3. {"text":"..."} — a content block serialized by itself, or a text
 		//    field inside a wrapper that wasn't matched above.
 		if textVal, ok := val["text"]; ok {
-			if s := extractTextFromValue(textVal); s != "" {
+			if s := extractTextFromValue(textVal, depth+1); s != "" {
 				return s
 			}
 		}
@@ -450,7 +452,7 @@ func extractTextFromValue(v any) string {
 		//    object shapes (e.g. metadata) yield nothing.
 		return ""
 	case []any:
-		return joinExtractedTexts(extractTextsFromArray(val))
+		return joinExtractedTexts(extractTextsFromArray(val, depth))
 	default:
 		return ""
 	}
@@ -460,7 +462,7 @@ func extractTextFromValue(v any) string {
 // honoring the same "text only" semantics as block rendering. Each element may
 // be a content block ({"type":"text","text":"..."}), a plain string, or a
 // nested wrapper.
-func extractTextsFromArray(arr []any) []string {
+func extractTextsFromArray(arr []any, depth int) []string {
 	var texts []string
 	for _, el := range arr {
 		switch elem := el.(type) {
@@ -470,15 +472,15 @@ func extractTextsFromArray(arr []any) []string {
 				// thinking/tool_use/warning blocks don't carry user text.
 				continue
 			}
-			if s := extractTextFromValue(elem); s != "" {
+			if s := extractTextFromValue(elem, depth+1); s != "" {
 				texts = append(texts, s)
 			}
 		case string:
-			if s := extractTextFromValue(elem); s != "" {
+			if s := extractTextFromValue(elem, depth+1); s != "" {
 				texts = append(texts, s)
 			}
 		default:
-			if s := extractTextFromValue(el); s != "" {
+			if s := extractTextFromValue(el, depth+1); s != "" {
 				texts = append(texts, s)
 			}
 		}

@@ -358,7 +358,15 @@ describe('mergeDbMessages', () => {
 
 describe('mergeDbMessages', () => {
 
-  it('does NOT adopt drain-* while a stream is live (defers to next idle loadHistory)', () => {
+  it('adopts a FINALIZED drain-* placeholder while another reply is live streaming (does not adopt the live one)', () => {
+    // drain-99 is a finalized earlier reply; drain-new is the CURRENT live
+    // stream. The DB snapshot (id=7, finalized, content matches drain-99) has
+    // no streaming row — id=7 IS the finalized form of drain-99. It must be
+    // adopted (one reply, not a duplicate), while the live placeholder stays
+    // untouched (the current turn's streaming row is simply not in this
+    // snapshot). The old behavior deferred adoption while a stream was live,
+    // which left the earlier reply duplicated on every refresh during a later
+    // turn — the "refresh can't fix it" bug.
     const state = [
       a({ id: 'drain-99', content: 'reply', createdAt: '2026-01-01T00:00:00Z' }),
       a({ id: 'drain-new', streaming: true, createdAt: '2026-01-01T00:00:02Z', seq: 1 }),
@@ -366,11 +374,11 @@ describe('mergeDbMessages', () => {
     const merged = mergeDbMessages(state, [
       a({ id: 7, content: 'reply', createdAt: '2026-01-01T00:00:01Z' }),
     ], true)
-    // Adoption is deferred while streaming: drain-99 keeps its transient id.
-    expect(merged.some((m) => m.id === 'drain-99')).toBe(true)
-    // The DB row appears alongside (transient duplicate, reconciled later) —
-    // it is history, never the live reply, so it is never truncated.
+    // drain-99 adopted into id=7 — no duplicate reply.
+    expect(merged.some((m) => m.id === 'drain-99')).toBe(false)
     expect(merged.some((m) => m.id === 7)).toBe(true)
+    // The LIVE placeholder stays live (untouched by finalized adoption).
+    expect(merged.some((m) => m.id === 'drain-new' && m.streaming)).toBe(true)
   })
 
   it('keeps streaming placeholder when db snapshot does not contain it', () => {

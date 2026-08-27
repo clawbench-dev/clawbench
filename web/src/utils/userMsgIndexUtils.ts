@@ -7,7 +7,9 @@
  *
  *   - Plain text (e.g. "hello world") → returned unchanged.
  *   - Block-format JSON ({"blocks":[{"type":"text","text":"..."}]}) → text of
- *     all text blocks joined with a space.
+ *     all text blocks joined with a space (index/drawer single-line previews).
+ *     Note: the Go-side ExtractPlainText joins with "\n\n" — both are valid
+ *     for their contexts; the frontend single-line previews favor spaces.
  *   - Nested dirty data: a text block whose text field is itself a JSON string
  *     (e.g. an ACP notification JSON or a content array serialized into text).
  *     Recursively unwraps until real text is found.
@@ -16,10 +18,15 @@
  *     "sessionUpdate":"user_message_chunk"}).
  *
  * Returns the original content unchanged when nothing extractable is found.
+ * Recursion is depth-capped so pathologically nested JSON degrades gracefully.
  */
 
+/** Maximum recursive unwrap depth (real dirty data is ≤2–3 levels). */
+const MAX_UNWRAP_DEPTH = 8
+
 /** Extract text from a decoded JSON value, recursively unwrapping known wrappers. */
-function extractTextFromValue(value: unknown): string {
+function extractTextFromValue(value: unknown, depth = 0): string {
+  if (depth > MAX_UNWRAP_DEPTH) return ''
   if (typeof value === 'string') {
     const trimmed = value.trim()
     // A string may itself be an embedded JSON serialization (historical dirty
@@ -27,30 +34,30 @@ function extractTextFromValue(value: unknown): string {
     if (trimmed && (trimmed.startsWith('{') || trimmed.startsWith('['))) {
       try {
         const inner = JSON.parse(trimmed)
-        const nested = extractTextFromValue(inner)
+        const nested = extractTextFromValue(inner, depth + 1)
         if (nested.trim()) return nested
       } catch { /* not JSON, fall through */ }
     }
     return value
   }
   if (Array.isArray(value)) {
-    return joinExtractedTexts(value.map(el => extractTextFromValue(el)).filter(Boolean))
+    return extractTextsFromArray(value, depth)
   }
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>
     // 1. {"blocks":[...]} — standard block content.
     if (Array.isArray(obj.blocks)) {
-      return extractTextsFromArray(obj.blocks)
+      return extractTextsFromArray(obj.blocks, depth)
     }
     // 2. ACP notification wrapper: {"content":{"text":"hi","type":"text"},...}.
     //    Historical bug stored the whole ACP notification JSON as text.
     if ('sessionUpdate' in obj && obj.content !== undefined) {
-      const inner = extractTextFromValue(obj.content)
+      const inner = extractTextFromValue(obj.content, depth + 1)
       if (inner.trim()) return inner
     }
     // 3. {"text":"..."} — a content block serialized by itself.
     if (obj.text !== undefined) {
-      const inner = extractTextFromValue(obj.text)
+      const inner = extractTextFromValue(obj.text, depth + 1)
       if (inner.trim()) return inner
     }
   }
@@ -58,7 +65,7 @@ function extractTextFromValue(value: unknown): string {
 }
 
 /** Extract text from each element of an array, honoring "text only" semantics. */
-function extractTextsFromArray(arr: unknown[]): string {
+function extractTextsFromArray(arr: unknown[], depth: number): string {
   const texts: string[] = []
   for (const el of arr) {
     if (el && typeof el === 'object' && !Array.isArray(el)) {
@@ -68,7 +75,7 @@ function extractTextsFromArray(arr: unknown[]): string {
         continue
       }
     }
-    const s = extractTextFromValue(el)
+    const s = extractTextFromValue(el, depth + 1)
     if (s) texts.push(s)
   }
   return joinExtractedTexts(texts)

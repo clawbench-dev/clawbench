@@ -444,6 +444,23 @@ func TestExtractPlainText_BareContentArray(t *testing.T) {
 	assert.Equal(t, "hello from array", service.ExtractPlainText(content))
 }
 
+func TestExtractPlainText_BareContentArraySkipsThinking(t *testing.T) {
+	// Non-text array elements (thinking etc.) must not leak into the extracted
+	// text — mirrors the frontend behavior.
+	content := `[{"type":"thinking","text":"inner reasoning"},{"type":"text","text":"final answer"}]`
+	assert.Equal(t, "final answer", service.ExtractPlainText(content))
+}
+
+func TestExtractPlainText_DeepNestingCapped(t *testing.T) {
+	// Pathological deep nesting must not hang or panic; it degrades gracefully
+	// to empty (recognized wrapper whose text exceeds the unwrap depth).
+	nested := `"leaf"`
+	for i := 0; i < 12; i++ {
+		nested = `{"text":` + nested + `}`
+	}
+	assert.Equal(t, "", service.ExtractPlainText(nested))
+}
+
 func TestExtractPlainText_BareContentArrayStrings(t *testing.T) {
 	content := `["part one", "part two"]`
 	assert.Equal(t, "part one\n\npart two", service.ExtractPlainText(content))
