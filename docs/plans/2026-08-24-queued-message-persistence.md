@@ -228,10 +228,17 @@ function messageSortValue(m: ChatMessage): number {
 
 ## 竞态与边界
 
-### 1. 取消语义（保留，行为对齐）
+### 1. 取消语义（已修订：真正删除）
 
 现状：取消 = 内存队列移除 + `queue_cancel` 删前端气泡。
-改后：取消 = `UPDATE chat_history SET queued=0 WHERE queue_id=?` + `queue_cancel` 事件（仍保留，前端删 pending 气泡）。已取消消息变成"无回复的用户消息"保留在 DB——与普通已发消息一致，是**行为改进**（现状重启会丢）。
+改后（2026-08-28 修订）：取消 = `DELETE FROM chat_history WHERE session_id=? AND queue_id=? AND queued=1` + `queue_cancel` 事件（单条取消与清空队列均补发，前端删 pending/_remote 气泡）。**已取消消息从 DB 中彻底删除，不再残留为"无回复的用户消息"**。
+
+> **修订原因**：原设计把取消消息保留为 `queued=0` 的普通 user 行，导致当前回合结束后 `loadHistory`（`rebuildFromDb` 以 DB 为权威）把已取消消息当作正式消息重新渲染——用户看到"已取消的排队消息变成正式消息"。这是 Bug，不是行为改进。
+>
+> 配套改动：
+> - `CancelQueuedMessage`/`ClearQueuedMessages` 改为 DELETE（`queued=1` 守卫保证已被 drain 认领的行不会被误删）。
+> - DELETE handler 补发 `queue_cancel` WS 事件（原设计承诺但实现缺失），跨设备 `_remote` 气泡同步移除。**emit 语义**：单条取消与清空队列均**无条件** emit（清空队列即使 queueIDs 为空也发出，`QueueEventData.QueueIDs` 无 `omitempty`），覆盖 archive/destroy 会话路径；`QueueEventData` 复用的会话取消路径（drain/stuck 分支）照常 emit；`ForceCancelSession` 因 WS 客户端已断开不 emit。
+> - 前端 `cancelPendingMessages`/`remove_pending` 同时匹配 `_remoteQueueId`。
 
 ### 2. 排队消息被 loadHistory 提前看到
 
@@ -671,7 +678,7 @@ export interface EnqueueResult {
 | 入队即启动 goroutine 的并发安全 | 中 | 复用 `TrySetSessionRunning` 原子守卫 |
 | **m6：`CancelSession` 三处 `ClearQueue` 都要改 DB + 补发 `queue_cancel`** | 中 | `session_runtime.go:460`（stuck 分支）/`:475`（正常）/`:502`（ForceCancel），每处收集 queueIDs + emit |
 | **m7：`GET /api/ai/chat` 删 `queue` 字段的外部依赖** | 中 | 实施前 grep Android/Electron/其他客户端对 `queue` 字段的引用 |
-| 取消消息残留为无回复 user 消息 | 低 | 设计上接受（行为改进） |
+| ~~取消消息残留为无回复 user 消息~~（已修订 2026-08-28） | 低 | 取消改为真正删除行，不残留 |
 | 测试改写量大（队列相关全删全改） | 中 | 分批：先迁移 → 再 queue/drain → 再 handler → 再前端 |
 
 ---

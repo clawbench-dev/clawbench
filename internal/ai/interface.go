@@ -324,7 +324,7 @@ func truncateToolOutput(output string) string {
 type QueueEventData struct {
 	SessionID string                `json:"sessionId,omitempty"` // Session this event belongs to (for frontend routing)
 	QueueID   string                `json:"queueId,omitempty"`   // Frontend-generated ID for matching pending messages (queue_drain)
-	QueueIDs  []string              `json:"queueIds,omitempty"`  // IDs of cancelled queued messages (queue_cancel)
+	QueueIDs  []string              `json:"queueIds"`            // IDs of cancelled queued messages (queue_cancel) — may be empty
 	Text      string                `json:"text,omitempty"`
 	MessageID int64                 `json:"messageId,omitempty"` // DB ID of the drained user message (queue_drain only)
 	FilePaths []string              `json:"filePaths,omitempty"`

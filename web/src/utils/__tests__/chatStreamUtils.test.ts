@@ -1408,6 +1408,26 @@ describe('cancelPendingMessages', () => {
     expect(removed).toBe(2)
     expect(messages).toHaveLength(0)
   })
+
+  it('removes cross-device _remote bubbles by _remoteQueueId', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'remote-1700000000000-abc', content: 'from phone', _remote: true, _remoteQueueId: 'remote-q-1' },
+      { role: 'user', id: 'pending-1', content: 'A', pending: true },
+      { role: 'user', id: 9, content: 'normal' },
+    ]
+    const removed = cancelPendingMessages(messages, ['remote-q-1'])
+    expect(removed).toBe(1)
+    expect(messages.map((m) => m.id)).toEqual(['pending-1', 9])
+  })
+
+  it('does not remove _remote bubbles whose _remoteQueueId does not match', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'remote-1700000000000-abc', content: 'from phone', _remote: true, _remoteQueueId: 'remote-q-1' },
+    ]
+    const removed = cancelPendingMessages(messages, ['remote-q-999'])
+    expect(removed).toBe(0)
+    expect(messages).toHaveLength(1)
+  })
 })
 
 describe('anchorRepliesToQuestions', () => {

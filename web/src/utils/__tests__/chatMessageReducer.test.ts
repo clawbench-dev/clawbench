@@ -167,6 +167,33 @@ describe('chatMessageReducer — ws_queue_cancel', () => {
     )
     expect(state.map((m) => m.id)).toEqual([9])
   })
+
+  it('removes cross-device _remote bubbles by _remoteQueueId', () => {
+    const state = run(
+      [
+        u({ id: 'p1', pending: true, seq: 1 }),
+        u({ id: 'remote-123', _remote: true, _remoteQueueId: 'p2', content: 'from other device', seq: 2 }),
+        u({ id: 9 }),
+      ],
+      [{ type: 'ws_queue_cancel', queueIds: ['p2'] }],
+    )
+    expect(state.map((m) => m.id)).toEqual(['p1', 9])
+  })
+})
+
+describe('chatMessageReducer — remove_pending', () => {
+  it('removes pending bubbles and cross-device _remote bubbles by queueId', () => {
+    const state = run(
+      [
+        u({ id: 'p1', pending: true, queueId: 'p1', seq: 1 }),
+        u({ id: 'remote-abc', _remote: true, _remoteQueueId: 'p2', content: 'other', seq: 2 }),
+        u({ id: 9 }),
+      ],
+      [{ type: 'remove_pending', queueId: 'p2' }],
+    )
+    // Only the _remote bubble for p2 is removed; p1 (a different queueId) stays.
+    expect(state.map((m) => m.id)).toEqual(['p1', 9])
+  })
 })
 
 // ── Race 1: optimistic_push → db_load → ws_queue_drain ──

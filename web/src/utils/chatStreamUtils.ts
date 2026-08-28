@@ -622,9 +622,10 @@ export function drainQueueMessage(
 /**
  * Remove pending messages from the messages array whose IDs match
  * the given queueIds. Used by the queue_cancel event handler.
- * Matches by id (optimistic pending bubble, string id = queueId) OR by the
+ * Matches by id (optimistic pending bubble, string id = queueId), by the
  * queueId field (a queued message already adopted a numeric DB id via
- * drainQueueMessage or loadHistory). Returns the number of removed messages.
+ * drainQueueMessage or loadHistory), or by _remoteQueueId (a cross-device
+ * _remote bubble). Returns the number of removed messages.
  */
 export function cancelPendingMessages(
   messages: ChatMessage[],
@@ -632,7 +633,14 @@ export function cancelPendingMessages(
 ): number {
   let removed = 0
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].pending && (queueIds.includes(String(messages[i].id)) || queueIds.includes(messages[i].queueId || ''))) {
+    const m = messages[i]
+    if (m.pending && (queueIds.includes(String(m.id)) || queueIds.includes(m.queueId || ''))) {
+      messages.splice(i, 1)
+      removed++
+    } else if (m._remote && queueIds.includes((m as Record<string, unknown>)['_remoteQueueId'] as string)) {
+      // Cross-device bubble: cancel removes it too — the backend row is gone,
+      // so any later loadHistory would drop it anyway; remove it now so the
+      // current UI doesn't show a stale pending message.
       messages.splice(i, 1)
       removed++
     }
@@ -978,6 +986,9 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       for (let i = state.length - 1; i >= 0; i--) {
         const m = state[i]
         if (m.pending && (String(m.id) === action.queueId || m.queueId === action.queueId)) {
+          state.splice(i, 1)
+        } else if (m._remote && (m as Record<string, unknown>)['_remoteQueueId'] === action.queueId) {
+          // Cross-device bubble: cancel removes it too (backend row deleted).
           state.splice(i, 1)
         }
       }

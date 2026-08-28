@@ -378,3 +378,70 @@ func TestWaitForEnqueue_Timeout(t *testing.T) {
 	assert.False(t, WaitForEnqueue(sessionID, 50*time.Millisecond))
 	assert.GreaterOrEqual(t, time.Since(start), 40*time.Millisecond)
 }
+
+// TestCancelQueuedMessage_DeletesRow verifies that canceling a queued message
+// truly deletes its chat_history row — the canceled message must never resurface
+// as a formal message after the current turn completes (regression: previously
+// it only flipped queued=0, leaving an indistinguishable "no-reply user
+// message" that loadHistory resurrected).
+func TestCancelQueuedMessage_DeletesRow(t *testing.T) {
+	setupDrainTest()
+	sessionID := "drain-cancel-delete"
+	setupDrainSession(t, sessionID)
+
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "will cancel", nil, "q-cancel", "")
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "stays", nil, "q-keep", "")
+	assert.Equal(t, 2, GetQueuedCount(sessionID))
+
+	err := CancelQueuedMessage(sessionID, "q-cancel")
+	assert.NoError(t, err)
+
+	assert.Equal(t, 1, GetQueuedCount(sessionID))
+
+	// The canceled row is gone from chat_history entirely.
+	var remaining int
+	err = UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id = ?",
+		sessionID, "q-cancel",
+	).Scan(&remaining)
+	assert.NoError(t, err)
+	assert.Zero(t, remaining, "canceled queued message must be deleted, not kept as queued=0")
+}
+
+// TestCancelQueuedMessage_Idempotent verifies canceling a queueId that is no
+// longer queued (already drained or already canceled) is a no-op and harmless.
+func TestCancelQueuedMessage_Idempotent(t *testing.T) {
+	setupDrainTest()
+	sessionID := "drain-cancel-idempotent"
+	setupDrainSession(t, sessionID)
+
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "already gone", nil, "q-gone", "")
+	assert.NoError(t, CancelQueuedMessage(sessionID, "q-gone"))
+	// Second cancel — row already deleted, must not error.
+	assert.NoError(t, CancelQueuedMessage(sessionID, "q-gone"))
+	assert.Equal(t, 0, GetQueuedCount(sessionID))
+}
+
+// TestClearQueuedMessages_DeletesRows verifies clearing the queue (session
+// cancel / force-cancel) deletes the queued rows outright.
+func TestClearQueuedMessages_DeletesRows(t *testing.T) {
+	setupDrainTest()
+	sessionID := "drain-clear-delete"
+	setupDrainSession(t, sessionID)
+
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "a", nil, "q-a", "")
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "b", nil, "q-b", "")
+	assert.Equal(t, 2, GetQueuedCount(sessionID))
+
+	assert.NoError(t, ClearQueuedMessages(sessionID))
+
+	assert.Equal(t, 0, GetQueuedCount(sessionID))
+	var remaining int
+	err := UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id != ''",
+		sessionID,
+	).Scan(&remaining)
+	assert.NoError(t, err)
+	assert.Zero(t, remaining, "cleared queued messages must be deleted, not kept as queued=0")
+}
+

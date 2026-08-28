@@ -712,11 +712,19 @@ func DequeueQueuedMessageByID(sessionID string, msgID int64) (model.ChatMessage,
 	return msg, true, nil
 }
 
-// ClearQueuedMessages marks every queued message of a session as consumed
-// (queued=0). Used by session cancel/force-cancel — the rows stay in
-// chat_history as normal conversation records.
+// ClearQueuedMessages deletes every queued message of a session. Used by
+// session cancel/force-cancel — cancel semantics are "drop the queued
+// messages", so the rows are truly removed and never resurface as normal
+// conversation records after the current turn completes (they would otherwise
+// be indistinguishable from sent messages and reappear as "formal" messages on
+// the next loadHistory).
+//
+// NOTE: this function only deletes rows — it does NOT emit queue_cancel.
+// Callers are responsible for emitting the WS event so other devices remove
+// their pending/_remote bubbles (the session-cancel path emits it, while
+// ForceCancelSession does not because the WS client has already disconnected).
 func ClearQueuedMessages(sessionID string) error {
-	_, err := WriteExec("UPDATE chat_history SET queued = 0 WHERE session_id = ? AND queued = 1", sessionID)
+	_, err := WriteExec("DELETE FROM chat_history WHERE session_id = ? AND queued = 1", sessionID)
 	return err
 }
 
@@ -762,9 +770,14 @@ func GetQueuedMessages(sessionID string) ([]model.ChatMessage, error) {
 	return scanMessages(rows, sessionID)
 }
 
-// CancelQueuedMessage marks a single queued message as consumed by queue_id.
+// CancelQueuedMessage deletes a single queued message by queue_id. The row is
+// truly removed so the canceled message can never resurface as a normal
+// conversation record (e.g. after the current turn completes and the frontend
+// reloads history from the authoritative DB). The queued=1 guard means a row
+// already claimed by the drain loop (queued=0) is left untouched — the
+// execution in flight must not be deleted.
 func CancelQueuedMessage(sessionID, queueID string) error {
-	_, err := WriteExec("UPDATE chat_history SET queued = 0 WHERE session_id = ? AND queue_id = ? AND queued = 1", sessionID, queueID)
+	_, err := WriteExec("DELETE FROM chat_history WHERE session_id = ? AND queue_id = ? AND queued = 1", sessionID, queueID)
 	return err
 }
 

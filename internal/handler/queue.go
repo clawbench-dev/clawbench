@@ -222,6 +222,17 @@ func handleQueueDelete(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueDeleteFailed")
 			return
 		}
+		// Emit queue_cancel so other subscribed devices remove their pending
+		// /_remote bubble for this message immediately (the row is deleted —
+		// without the event they would keep a stale bubble until the next
+		// loadHistory).
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "queue_cancel",
+			QueueEvent: &ai.QueueEventData{
+				SessionID: sessionID,
+				QueueIDs:  []string{queueID},
+			},
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -235,9 +246,24 @@ func handleQueueDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear all queued messages for the session.
+	// Collect queue IDs before clearing so other devices can remove their
+	// pending/_remote bubbles.
+	queueIDs, _ := service.GetQueuedQueueIDs(sessionID)
 	if err := service.ClearQueuedMessages(sessionID); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueClearFailed")
 		return
 	}
+	// Emit queue_cancel unconditionally (even with empty queueIDs) so every
+	// clear path — including archive/destroy of a session with no queued
+	// messages — reaches other devices; a cross-device _remote bubble must not
+	// linger until the next loadHistory. The frontend treats an empty queueIds
+	// array as a no-op.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "queue_cancel",
+		QueueEvent: &ai.QueueEventData{
+			SessionID: sessionID,
+			QueueIDs:  queueIDs,
+		},
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

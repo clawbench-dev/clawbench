@@ -255,8 +255,16 @@ func TestQueueHandler_Delete_ByQueueID(t *testing.T) {
 
 	assertOK(t, w)
 
-	// q-1 cancelled (queued=0), q-2 still queued.
+	// q-1 cancelled — its row is truly deleted (not merely un-queued), so it
+	// can never resurface as a formal message. q-2 still queued.
 	assert.Equal(t, 1, service.GetQueuedCount(sessionID))
+	var q1Rows int
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id = ?",
+		sessionID, "q-1",
+	).Scan(&q1Rows)
+	require.NoError(t, err)
+	assert.Zero(t, q1Rows, "canceled queued message must not remain in chat_history")
 }
 
 func TestQueueHandler_Delete_ClearAll(t *testing.T) {
@@ -275,6 +283,15 @@ func TestQueueHandler_Delete_ClearAll(t *testing.T) {
 
 	assertOK(t, w)
 	assert.Equal(t, 0, service.GetQueuedCount(sessionID))
+	// Clear-all deletes the queued rows outright — they must not remain as
+	// formal messages in the session history.
+	var remaining int
+	err := service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id IN ('q-1', 'q-2')",
+		sessionID,
+	).Scan(&remaining)
+	require.NoError(t, err)
+	assert.Zero(t, remaining, "cleared queued messages must not remain in chat_history")
 }
 
 func TestQueueHandler_Delete_InvalidIndex(t *testing.T) {
