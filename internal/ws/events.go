@@ -79,7 +79,11 @@ func EventsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		mgr.DisconnectClient(clientID)
-		mgr.StreamHub().UnsubscribeAll(clientID)
+		// Guard: StreamHub may be nil if a test swapped the global manager
+		// (or the manager was reset) while this handler was connected.
+		if hub := mgr.StreamHub(); hub != nil {
+			hub.UnsubscribeAll(clientID)
+		}
 		// Stop the async writer goroutine for this connection before returning.
 		// Events arriving after this point are buffered for reconnect replay.
 		// Pass conn so StopWriter only stops this connection's writer (an old

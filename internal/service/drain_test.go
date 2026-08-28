@@ -3,8 +3,8 @@ package service
 import (
 	"database/sql"
 	"sync/atomic"
-	"time"
 	"testing"
+	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -444,4 +444,3 @@ func TestClearQueuedMessages_DeletesRows(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Zero(t, remaining, "cleared queued messages must be deleted, not kept as queued=0")
 }
-

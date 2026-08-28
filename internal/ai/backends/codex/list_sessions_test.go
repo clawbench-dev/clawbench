@@ -1,9 +1,11 @@
 package codex
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -231,4 +233,93 @@ func TestParseAndFormatCodexSessionTime(t *testing.T) {
 	formatted := formatCodexSessionTime(parsed)
 	require.NotNil(t, formatted)
 	assert.Equal(t, "2026-08-27T10:00:00Z", *formatted)
+}
+
+func TestResolveCodexHomeDefaultsToUserHome(t *testing.T) {
+	home := t.TempDir()
+	// os.UserHomeDir reads $HOME on POSIX and $USERPROFILE on Windows.
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	} else {
+		t.Setenv("HOME", home)
+	}
+	t.Setenv("CODEX_HOME", "")
+
+	actual, err := resolveCodexHome()
+
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".codex"), actual)
+}
+
+func TestNormalizeCodexProjectPathEdgeCases(t *testing.T) {
+	// Empty / whitespace-only → empty string.
+	assert.Equal(t, "", normalizeCodexProjectPath(""))
+	assert.Equal(t, "", normalizeCodexProjectPath("   "))
+
+	// Windows drive path → normalized + lowercased.
+	assert.Equal(t, "c:/users/test", normalizeCodexProjectPath(`C:\Users\Test`))
+
+	// UNC path → double-slash preserved, no trailing slash.
+	assert.Equal(t, "//server/share", normalizeCodexProjectPath(`\\server\share\`))
+
+	// POSIX path unchanged (case-sensitive).
+	assert.Equal(t, "/home/User/Project", normalizeCodexProjectPath("/home/User/Project"))
+
+	// "." cleans to empty.
+	assert.Equal(t, "", normalizeCodexProjectPath("."))
+}
+
+func TestScanCodexSessionsSortsEqualUpdatedAtByCreatedAt(t *testing.T) {
+	codexHome := t.TempDir()
+	project := t.TempDir()
+	same := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+	// Same UpdatedAt, different CreatedAt (determined by file content timestamp).
+	dir := filepath.Join(codexHome, "sessions", "2026", "08", "27")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	// Marshal cwd so Windows backslashes are escaped inside the JSON payload.
+	projectJSON, err := json.Marshal(project)
+	require.NoError(t, err)
+	earlier := filepath.Join(dir, "rollout-2026-08-27T09-00-00-earlier.jsonl")
+	require.NoError(t, os.WriteFile(earlier, []byte(
+		`{"timestamp":"2026-08-27T09:00:00.000Z","type":"session_meta","payload":{"id":"sess-earlier","timestamp":"2026-08-27T09:00:00.000Z","cwd":`+string(projectJSON)+`,"originator":"codex_cli_rs","cli_version":"1.0.0"}}`+"\n",
+	), 0o644))
+	require.NoError(t, os.Chtimes(earlier, same, same))
+	later := filepath.Join(dir, "rollout-2026-08-27T11-00-00-later.jsonl")
+	require.NoError(t, os.WriteFile(later, []byte(
+		`{"timestamp":"2026-08-27T11:00:00.000Z","type":"session_meta","payload":{"id":"sess-later","timestamp":"2026-08-27T11:00:00.000Z","cwd":`+string(projectJSON)+`,"originator":"codex_cli_rs","cli_version":"1.0.0"}}`+"\n",
+	), 0o644))
+	require.NoError(t, os.Chtimes(later, same, same))
+
+	sessions, stats := scanCodexSessions(filepath.Join(codexHome, "sessions"), project, 100, 100)
+
+	require.Len(t, sessions, 2)
+	assert.Equal(t, "sess-later", sessions[0].SessionID, "later CreatedAt wins when UpdatedAt ties")
+	assert.Equal(t, "sess-earlier", sessions[1].SessionID)
+	assert.Equal(t, 2, stats.scanned)
+}
+
+func TestScanCodexSessionsSkipsEntryInfoErrors(t *testing.T) {
+	codexHome := t.TempDir()
+	project := t.TempDir()
+
+	// A rollout file that disappears between ReadDir and entry.Info() is hard
+	// to fabricate portably; instead verify the scan still tolerates a broken
+	// rollout symlink that points nowhere (Info() on a dangling symlink fails).
+	dir := filepath.Join(codexHome, "sessions", "2026", "08", "27")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	broken := filepath.Join(dir, "rollout-2026-08-27T10-00-00-broken.jsonl")
+	require.NoError(t, os.Symlink(filepath.Join(dir, "does-not-exist"), broken))
+
+	sessions, stats := scanCodexSessions(filepath.Join(codexHome, "sessions"), project, 100, 100)
+
+	assert.Empty(t, sessions)
+	assert.Equal(t, 1, stats.skipped, "dangling symlink should be counted as skipped")
+}
+
+func TestParseCodexSessionHeaderOpenError(t *testing.T) {
+	info, err := os.Stat(t.TempDir())
+	require.NoError(t, err)
+	_, err = parseCodexSessionHeader(filepath.Join(t.TempDir(), "missing.jsonl"), info)
+	assert.Error(t, err)
 }

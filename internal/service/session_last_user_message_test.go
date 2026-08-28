@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ func TestGetLastUserMessagePlain_ReturnsLatestUserMessage(t *testing.T) {
 	insertMsg("user", "第二个问题")
 	insertMsg("assistant", `{"blocks":[{"type":"text","text":"回答二"}]}`)
 
-	got := GetLastUserMessagePlain(sessionID)
+	got := GetLastUserMessagePlain(context.Background(), sessionID)
 	require.Equal(t, "第二个问题", got)
 }
 
@@ -39,7 +40,7 @@ func TestGetLastUserMessagePlain_ExtractsPlainTextFromBlocks(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	got := GetLastUserMessagePlain(sessionID)
+	got := GetLastUserMessagePlain(context.Background(), sessionID)
 	require.Equal(t, "带格式的用户消息", got)
 }
 
@@ -65,7 +66,7 @@ func TestGetLastUserMessagePlain_SkipsStreamingAndQueued(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	got := GetLastUserMessagePlain(sessionID)
+	got := GetLastUserMessagePlain(context.Background(), sessionID)
 	require.Equal(t, "最终消息", got)
 }
 
@@ -80,6 +81,6 @@ func TestGetLastUserMessagePlain_EmptyWhenNoUserMessage(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	got := GetLastUserMessagePlain(sessionID)
+	got := GetLastUserMessagePlain(context.Background(), sessionID)
 	require.Equal(t, "", got)
 }

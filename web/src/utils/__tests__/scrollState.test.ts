@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isUserScrolling, shouldFollowStream, SCROLL_STOP_MS, NEAR_BOTTOM_PX, STREAM_FOLLOW_GRACE_PX, STREAM_FOLLOW_LATENCY_MS, type ScrollStateInput } from '../scrollState'
+import { isUserScrolling, shouldFollowStream, SCROLL_STOP_MS, NEAR_BOTTOM_PX, STREAM_FOLLOW_GRACE_PX, type ScrollStateInput } from '../scrollState'
 
 function baseInput(overrides: Partial<ScrollStateInput> = {}): ScrollStateInput {
   return {
@@ -118,58 +118,42 @@ describe('shouldFollowStream — streaming grace band', () => {
   })
 })
 
-describe('shouldFollowStream — time-windowed follow (burst growth)', () => {
+describe('shouldFollowStream — user left the bottom (must never be yanked back)', () => {
   const now = 100000
 
-  it('follows a stationary user far above the bottom within a fresh follow window', () => {
-    // A throttled render flush can grow scrollHeight far beyond the grace band
-    // in one frame. As long as the window is fresh, follow regardless of gap.
-    expect(shouldFollowStream(baseInput({ streaming: true, streamStartAt: now, now, nearBottomDist: 5000 }), false)).toBe(true)
+  it('suppresses follow entirely once the user scrolled away, regardless of distance', () => {
+    // Far away
+    expect(shouldFollowStream(baseInput({ streaming: true, userLeftBottom: true, nearBottomDist: 5000 }), false)).toBe(false)
+    // Small gap inside the grace band — leaving is still respected
+    expect(shouldFollowStream(baseInput({ streaming: true, userLeftBottom: true, nearBottomDist: 200 }), false)).toBe(false)
   })
 
-  it('stops following once the follow window expires', () => {
-    expect(shouldFollowStream(baseInput({
-      streaming: true,
-      streamStartAt: now - STREAM_FOLLOW_LATENCY_MS - 1,
-      now,
-      nearBottomDist: 5000,
-    }), false)).toBe(false)
+  it('suppresses follow inside the grace band once the user left', () => {
+    expect(shouldFollowStream(baseInput({ streaming: true, userLeftBottom: true, nearBottomDist: STREAM_FOLLOW_GRACE_PX }), false)).toBe(false)
   })
 
-  it('grace band still applies after the window expires (slow gradual drift)', () => {
-    expect(shouldFollowStream(baseInput({
-      streaming: true,
-      streamStartAt: now - STREAM_FOLLOW_LATENCY_MS - 1,
-      now,
-      nearBottomDist: STREAM_FOLLOW_GRACE_PX,
-    }), false)).toBe(true)
-    expect(shouldFollowStream(baseInput({
-      streaming: true,
-      streamStartAt: now - STREAM_FOLLOW_LATENCY_MS - 1,
-      now,
-      nearBottomDist: STREAM_FOLLOW_GRACE_PX + 1,
-    }), false)).toBe(false)
+  it('force pins still apply when the user left the bottom (send message / session switch)', () => {
+    expect(shouldFollowStream(baseInput({ streaming: true, userLeftBottom: true, nearBottomDist: 5000 }), true)).toBe(true)
   })
 
-  it('boundary: just inside the window follows, exactly at the expiry does not (strict <)', () => {
-    expect(shouldFollowStream(baseInput({ streaming: true, streamStartAt: now - STREAM_FOLLOW_LATENCY_MS + 1, now, nearBottomDist: 5000 }), false)).toBe(true)
-    expect(shouldFollowStream(baseInput({ streaming: true, streamStartAt: now - STREAM_FOLLOW_LATENCY_MS, now, nearBottomDist: 5000 }), false)).toBe(false)
+  it('follow resumes once the user scrolls back to the bottom', () => {
+    expect(shouldFollowStream(baseInput({ streaming: true, userLeftBottom: false, nearBottomDist: 0 }), false)).toBe(true)
   })
 
-  it('window does not apply when not streaming', () => {
-    expect(shouldFollowStream(baseInput({ streamStartAt: now, now, nearBottomDist: 5000 }), false)).toBe(false)
+  it('near-bottom check wins even if a stale userLeftBottom flag is set (user returned)', () => {
+    expect(shouldFollowStream(baseInput({ userLeftBottom: true, nearBottomDist: 50 }), false)).toBe(true)
+    expect(shouldFollowStream(baseInput({ streaming: true, userLeftBottom: true, nearBottomDist: NEAR_BOTTOM_PX }), false)).toBe(true)
   })
 
-  it('an active user scroll is never overridden, even inside the window', () => {
+  it('an active user scroll while leaving is never overridden (userLeftBottom + scrolling)', () => {
     const input = baseInput({
       streaming: true,
-      streamStartAt: now,
-      now,
+      userLeftBottom: true,
       owner: 'user',
       lastScrollAt: now - 50,
-      nearBottomDist: 5000,
+      now,
+      nearBottomDist: 3000,
     })
     expect(shouldFollowStream(input, true)).toBe(false)
-    expect(shouldFollowStream(baseInput({ streaming: true, streamStartAt: now, now, userTouching: true, nearBottomDist: 5000 }), true)).toBe(false)
   })
 })

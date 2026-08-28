@@ -17,8 +17,9 @@ import (
 
 // helper: creates a session with a streaming placeholder and an executor that
 // has already accumulated a text + thinking block in memory.
-func newFlushableExecutor(t *testing.T, agentID string) (*SessionExecutor, string, int64) {
+func newFlushableExecutor(t *testing.T) (*SessionExecutor, int64) {
 	t.Helper()
+	agentID := "test-agent"
 	sid := setupExecutorSession(t, agentID)
 	ctx := context.Background()
 	cfg := RunConfig{
@@ -36,7 +37,7 @@ func newFlushableExecutor(t *testing.T, agentID string) (*SessionExecutor, strin
 		{Type: "text", Text: "partial answer"},
 		{Type: "thinking", Text: "secret reasoning"},
 	}
-	return executor, sid, cfg.StreamingMessageID
+	return executor, cfg.StreamingMessageID
 }
 
 func getStreamingMsgIDForTest(t *testing.T, sessionID string) int64 {
@@ -67,7 +68,7 @@ func TestFlushStreamingNow_PersistsBlocksAndThinking(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	executor, _, msgID := newFlushableExecutor(t, "test-agent")
+	executor, msgID := newFlushableExecutor(t)
 
 	// Graceful shutdown fires: force-flush every active stream.
 	FlushStreamingNow()
@@ -120,8 +121,8 @@ func TestFlushStreamingNow_MultipleStreams(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	e1, _, msgID1 := newFlushableExecutor(t, "test-agent")
-	e2, _, msgID2 := newFlushableExecutor(t, "test-agent")
+	e1, msgID1 := newFlushableExecutor(t)
+	e2, msgID2 := newFlushableExecutor(t)
 	// Keep the registry clean across tests.
 	defer e1.unregisterActiveStream()
 	defer e2.unregisterActiveStream()
@@ -155,7 +156,7 @@ func TestFlushStreamingNow_ConcurrentWithEventLoop(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	executor, _, _ := newFlushableExecutor(t, "test-agent")
+	executor, _ := newFlushableExecutor(t)
 	defer executor.unregisterActiveStream()
 
 	stop := make(chan struct{})

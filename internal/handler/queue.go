@@ -115,6 +115,7 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 			Files:          validatedFiles,
 			SenderClientID: req.ClientID,
 			QueueID:        req.QueueID,
+			Queued:         true, // enqueued: waiting for the drain loop, not yet started
 		},
 	})
 

@@ -263,7 +263,6 @@ func (m *mockSessionMessengerWithErr) SendMessageToSession(sessionID, message st
 	return nil
 }
 
-
 // mockSessionMessenger implements SessionMessenger for testing.
 type mockSessionMessenger struct {
 	runningSessions []common.SessionInfo

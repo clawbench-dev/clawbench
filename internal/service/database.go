@@ -147,6 +147,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 
 	dbPath := filepath.Join(dbDir, "ClawBench.db")
+	// Close any previously opened handles before re-opening. InitDB may be
+	// called more than once (migration rerun tests, restart flows); leaking the
+	// old pool keeps the old SQLite file handle open, which blocks file removal
+	// on Windows and wastes descriptors.
+	CloseDB()
 	var err error
 	db, err = sql.Open("sqlite", dbPath)
 	if err != nil {

@@ -394,6 +394,85 @@ public class FloatingStatusPanelViewTest {
         panel.stopBreathing();
     }
 
+    // =====================================================
+    // Skeleton loading placeholder
+    // =====================================================
+
+    @Test
+    public void showSkeleton_fillsListUntilRender() throws Exception {
+        FloatingStatusPanelView panel = newPanel();
+
+        panel.showSkeleton();
+
+        ViewGroup list = (ViewGroup) getField(panel, "listContainer");
+        assertTrue("skeleton must populate the list area, got " + list.getChildCount(),
+                list.getChildCount() > 0);
+        assertTrue("skeleton must be reported as showing", panel.isSkeletonShowing());
+
+        // Real data replaces the skeleton rows.
+        panel.render(new JSONObject(overviewWith(2)), null);
+        assertFalse("render must clear the skeleton", panel.isSkeletonShowing());
+        assertTrue("real session rows must be present",
+                list.getChildCount() >= 2);
+        panel.stopBreathing();
+    }
+
+    @Test
+    public void showSkeleton_emptyOverview_stillClears() throws Exception {
+        // A no-session overview is still real content: the placeholder must
+        // not linger after a load that returned zero sessions.
+        FloatingStatusPanelView panel = newPanel();
+        panel.showSkeleton();
+
+        panel.render(new JSONObject("{\"projects\":[],\"total\":0}"), null);
+
+        assertFalse("empty overview must clear the skeleton", panel.isSkeletonShowing());
+        assertEquals("empty overview renders an empty list", 0,
+                ((ViewGroup) getField(panel, "listContainer")).getChildCount());
+        panel.stopBreathing();
+    }
+
+    @Test
+    public void showSkeleton_hideSkeleton_clearsImmediately() throws Exception {
+        FloatingStatusPanelView panel = newPanel();
+        panel.showSkeleton();
+        assertTrue(panel.isSkeletonShowing());
+
+        panel.hideSkeleton();
+
+        assertFalse("hideSkeleton must clear the placeholder", panel.isSkeletonShowing());
+        assertEquals("list must be empty after hideSkeleton", 0,
+                ((ViewGroup) getField(panel, "listContainer")).getChildCount());
+    }
+
+    @Test
+    public void showSkeleton_stopBreathing_restoresFullOpacity() throws Exception {
+        FloatingStatusPanelView panel = newPanel();
+        panel.showSkeleton();
+
+        ViewGroup list = (ViewGroup) getField(panel, "listContainer");
+        panel.stopBreathing();
+
+        assertEquals("skeleton container must return to full opacity",
+                1.0f, list.getAlpha(), 0.001f);
+    }
+
+    @Test
+    public void mixArgb_blendsTowardBackground() {
+        // textSecondary (#8B949E) mixed 50% toward the dark bg (#161B22) must
+        // land between the two (a faint gray placeholder).
+        int mixed = FloatingStatusPanelView.mixArgb(0xFF8B949E, 0xFF161B22, 0.5f);
+        int r = (mixed >> 16) & 0xFF;
+        int g = (mixed >> 8) & 0xFF;
+        int b = mixed & 0xFF;
+        assertTrue("red must blend between inputs", r >= 0x16 && r <= 0x8B);
+        assertTrue("green must blend between inputs", g >= 0x1B && g <= 0x94);
+        assertTrue("blue must blend between inputs", b >= 0x22 && b <= 0x9E);
+        // The placeholder must be visibly fainter than real text color.
+        assertTrue("skeleton gray must be dimmer than the text color",
+                (r + g + b) < (0x8B + 0x94 + 0x9E));
+    }
+
     // --- helpers ---
 
     private static Object getField(Object target, String name) throws Exception {

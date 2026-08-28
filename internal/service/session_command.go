@@ -287,10 +287,16 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 	// Persist model/transport selection so the drain loop uses the user's
 	// choices (parity with the POST /api/ai/chat handler).
 	if cfg.ModelID != "" {
-		UpdateSessionModel(cfg.SessionID, cfg.ModelID)
+		if updateErr := UpdateSessionModel(cfg.SessionID, cfg.ModelID); updateErr != nil {
+			slog.Warn("enqueue: failed to persist session model",
+				slog.String("session", cfg.SessionID), slog.String("error", updateErr.Error()))
+		}
 	}
 	if cfg.Transport != "" {
-		UpdateSessionTransport(cfg.SessionID, cfg.Transport)
+		if updateErr := UpdateSessionTransport(cfg.SessionID, cfg.Transport); updateErr != nil {
+			slog.Warn("enqueue: failed to persist session transport",
+				slog.String("session", cfg.SessionID), slog.String("error", updateErr.Error()))
+		}
 	}
 
 	msgID, err = AddQueuedMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, cfg.Message, cfg.Files, cfg.QueueID, "")

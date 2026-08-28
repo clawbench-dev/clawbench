@@ -12,6 +12,8 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -84,6 +86,19 @@ public class FloatingStatusPanelView extends FrameLayout {
     private static final float BREATH_ALPHA_MAX = 1.0f;
     private static final long BREATH_MS = 800;
 
+    // Skeleton loading row layout.
+    private static final int SKELETON_ROWS = 4;
+    private static final int SKELETON_DOT_SIZE_DP = 8;
+    private static final int SKELETON_BAR_HEIGHT_DP = 10;
+    private static final int SKELETON_BAR_MARGIN_END_DP = 26;
+    private static final int SKELETON_ROW_PADDING_TOP_DP = 10;
+    private static final float SKELETON_BAR_ALPHA = 0.35f;
+
+    /** Per-instance animation counter so overlapping skeleton breaths serialize. */
+    private final AtomicLong skeletonBreatheSeq = new AtomicLong();
+    /** True while the list shows skeleton placeholder rows. UI thread only. */
+    private boolean skeletonShowing;
+
     /**
      * Status-dot kind for a session row. Pure: no framework deps.
      *
@@ -108,6 +123,8 @@ public class FloatingStatusPanelView extends FrameLayout {
     private final ScrollView scrollView;
     private final int colorTextPrimary;
     private final int colorTextSecondary;
+    /** Theme-derived gray used for skeleton placeholder rows (mix of textSecondary with the panel bg). */
+    private final int skeletonGray;
     private Runnable onCollapseClick;
     /** Views currently breathing; stopped when rows are rebuilt. */
     private final List<View> breathingDots = new ArrayList<>();
@@ -221,6 +238,10 @@ public class FloatingStatusPanelView extends FrameLayout {
         int borderColor = FloatingThemeColors.borderColorFromBackground(palette[0]);
         colorTextPrimary = palette[1];
         colorTextSecondary = palette[2];
+        // Skeleton gray: the text-secondary hue mixed toward the panel
+        // background, so the placeholder is visible on both dark and light
+        // themes while staying clearly fainter than real content.
+        skeletonGray = mixArgb(colorTextSecondary, bgColor, 0.5f);
 
         // Background: rounded translucent theme panel with a thin border.
         GradientDrawable bg = new GradientDrawable();
@@ -338,6 +359,121 @@ public class FloatingStatusPanelView extends FrameLayout {
             }
         }
         startBreathing();
+    }
+
+    /**
+     * Show a skeleton (placeholder) list while the first overview is loading.
+     * Builds {@value #SKELETON_ROWS} pseudo session rows — a small dot plus a
+     * rounded title bar in a theme-derived gray — that breathe between 35%
+     * and full opacity, then removes them when the real overview renders.
+     * This replaces the previous blank gap between the panel opening and the
+     * first /api/ai/sessions/overview round trip. Safe to call repeatedly;
+     * each call rebuilds the rows. UI thread only.
+     */
+    public void showSkeleton() {
+        stopBreathing();
+        listContainer.removeAllViews();
+        breathingDots.clear();
+
+        for (int i = 0; i < SKELETON_ROWS; i++) {
+            listContainer.addView(buildSkeletonRow());
+        }
+        skeletonShowing = true;
+        skeletonBreatheSeq.incrementAndGet();
+        breatheSkeleton(listContainer, skeletonBreatheSeq.get());
+    }
+
+    /**
+     * Remove the skeleton rows. No-op when the list already holds real
+     * content (or is empty from a no-session overview). UI thread only.
+     */
+    public void hideSkeleton() {
+        if (!skeletonShowing) {
+            return;
+        }
+        cancelSkeletonBreath();
+        listContainer.removeAllViews();
+        skeletonShowing = false;
+    }
+
+    /** True when the list currently shows skeleton placeholder rows. UI thread only. */
+    public boolean isSkeletonShowing() {
+        return skeletonShowing;
+    }
+
+    private View buildSkeletonRow() {
+        LinearLayout row = new LinearLayout(getContext());
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+
+        View dot = new View(getContext());
+        GradientDrawable dotDrawable = new GradientDrawable();
+        dotDrawable.setShape(GradientDrawable.OVAL);
+        dotDrawable.setColor(skeletonGray);
+        dot.setBackground(dotDrawable);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(
+                dp(SKELETON_DOT_SIZE_DP), dp(SKELETON_DOT_SIZE_DP));
+        dotLp.setMargins(0, 0, dp(DOT_MARGIN_END_DP), 0);
+        row.addView(dot, dotLp);
+
+        View bar = new View(getContext());
+        GradientDrawable barDrawable = new GradientDrawable();
+        barDrawable.setColor(skeletonGray);
+        barDrawable.setCornerRadius(dp(SKELETON_BAR_HEIGHT_DP) / 2f);
+        bar.setBackground(barDrawable);
+        bar.setAlpha(SKELETON_BAR_ALPHA);
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
+                0, dp(SKELETON_BAR_HEIGHT_DP), 1f);
+        barLp.setMargins(0, 0, dp(SKELETON_BAR_MARGIN_END_DP), 0);
+        row.addView(bar, barLp);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(SKELETON_ROW_PADDING_TOP_DP);
+        row.setLayoutParams(lp);
+        return row;
+    }
+
+    /**
+     * Breathe the whole skeleton between 35% and full opacity. The rows pulse
+     * as one unit so the placeholder reads as "content is coming" rather than
+     * as moving list items. The animator re-checks the calling sequence on
+     * every frame, so a newer showSkeleton()/hideSkeleton() call cancels it.
+     * UI thread only.
+     */
+    private void breatheSkeleton(ViewGroup container, long seq) {
+        ObjectAnimator anim = ObjectAnimator.ofFloat(container, "alpha",
+                SKELETON_BAR_ALPHA, BREATH_ALPHA_MAX);
+        anim.setDuration(BREATH_MS * 2);
+        anim.setRepeatCount(ObjectAnimator.INFINITE);
+        anim.setRepeatMode(ObjectAnimator.REVERSE);
+        anim.addUpdateListener(a -> {
+            if (skeletonBreatheSeq.get() != seq) {
+                a.removeAllUpdateListeners();
+                a.cancel();
+            }
+        });
+        anim.start();
+        container.setTag(anim);
+    }
+
+    /**
+     * Cancel an in-flight skeleton breath animation and restore the list to
+     * full opacity, so the pulsing does not leak onto real content. Called by
+     * stopBreathing() (every render and teardown) and hideSkeleton(). UI
+     * thread only.
+     */
+    private void cancelSkeletonBreath() {
+        skeletonBreatheSeq.incrementAndGet();
+        Object tag = listContainer.getTag();
+        if (tag instanceof ObjectAnimator) {
+            ((ObjectAnimator) tag).cancel();
+            listContainer.setTag(null);
+        }
+        listContainer.setAlpha(1f);
+        // Any render/teardown path cancels the placeholder state too, so the
+        // flag cannot stick after real content (or an empty overview) lands.
+        skeletonShowing = false;
     }
 
     /**
@@ -498,6 +634,7 @@ public class FloatingStatusPanelView extends FrameLayout {
      * is removed. UI thread only.
      */
     public void stopBreathing() {
+        cancelSkeletonBreath();
         headerContentView.stopBreathing();
         for (View dot : breathingDots) {
             Object tag = dot.getTag();
@@ -507,6 +644,19 @@ public class FloatingStatusPanelView extends FrameLayout {
             dot.setAlpha(BREATH_ALPHA_MAX);
         }
         breathingDots.clear();
+    }
+
+    /**
+     * Linear RGB mix of two opaque colors at the given fraction of {@code b}.
+     * Alpha is taken from {@code a}. Pure: no framework deps.
+     */
+    static int mixArgb(int a, int b, float frac) {
+        int r = (a >> 16) & 0xFF, g = (a >> 8) & 0xFF, bl = a & 0xFF;
+        int r2 = (b >> 16) & 0xFF, g2 = (b >> 8) & 0xFF, bl2 = b & 0xFF;
+        int nr = Math.round(r + (r2 - r) * frac);
+        int ng = Math.round(g + (g2 - g) * frac);
+        int nb = Math.round(bl + (bl2 - bl) * frac);
+        return (a & 0xFF000000) | ((nr & 0xFF) << 16) | ((ng & 0xFF) << 8) | (nb & 0xFF);
     }
 
     private int dp(int value) {

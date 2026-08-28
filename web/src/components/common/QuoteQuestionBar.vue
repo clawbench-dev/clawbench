@@ -245,6 +245,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   background: transparent;
   color: var(--accent-color);
   border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
+  border-radius: 8px;
 }
 
 @media (hover: hover) {
@@ -268,7 +269,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   height: 24px;
   padding: 0 4px;
   border: none;
-  background: color-mix(in srgb, var(--bg-tertiary) 80%, transparent);
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
@@ -277,14 +278,14 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 @media (hover: hover) {
   .qq-copy-btn:hover {
     color: var(--text-primary);
-    background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
+    background: transparent;
   }
 }
 
 /* Copied feedback state — shows "已复制" text (same pattern as ChatMessageItem) */
 .qq-copy-btn.is-copied {
   color: var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  background: transparent;
 }
 
 .qq-copied-text {
@@ -308,7 +309,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   align-items: flex-start;
   gap: 5px;
   padding: 6px 8px;
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
   border-left: 2px solid var(--accent-color);
   border-radius: 0;
   margin: 0 2px;
@@ -322,6 +323,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   padding: 5px 8px;
   margin: 0;
   border-radius: 0;
+  background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
 }
 
 /* Quote text: single line by default; expand on click to show full content.
@@ -350,7 +352,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   flex-direction: column;
   background: var(--bg-tertiary);
   border: none;
-  border-radius: 0;
+  border-radius: 999px;
   overflow: hidden;
   transition: background 0.2s, box-shadow 0.2s;
 }
@@ -396,7 +398,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 0;
+  border-radius: 50%;
   transition: color 0.15s, background 0.15s;
   flex-shrink: 0;
   align-self: flex-end;
@@ -420,7 +422,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   background: var(--accent-color);
   color: #fff;
   border: none;
-  border-radius: 0;
+  border-radius: 50%;
   cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
   flex-shrink: 0;

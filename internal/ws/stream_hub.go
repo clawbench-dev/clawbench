@@ -321,6 +321,9 @@ func userMessagePayload(event ai.StreamEvent) any {
 	if event.UserMessage.QueueID != "" {
 		payload["queueId"] = event.UserMessage.QueueID
 	}
+	if event.UserMessage.Queued {
+		payload["queued"] = true
+	}
 	return payload
 }
 

@@ -258,6 +258,13 @@ public class FloatingStatusController {
                     // Fit the (initially empty) panel before the first overview
                     // arrives so the header-only window is compact.
                     resizePanelIfNeeded();
+                    // Show skeleton rows immediately so the panel never sits
+                    // blank while the overview round trip is in flight; the
+                    // first onOverviewLoaded() render replaces them.
+                    if (panelView != null) {
+                        panelView.showSkeleton();
+                        resizePanelIfNeeded();
+                    }
                 }
                 // Force the overview fetch: the panel's session list depends on
                 // it, and the throttled path could swallow the request if a
@@ -306,6 +313,10 @@ public class FloatingStatusController {
                         setExpanded(false);
                     }
                 });
+                // Real data (or an empty no-session overview) replaces the
+                // skeleton, so the placeholder never lingers after a load —
+                // even when the overview carried zero sessions.
+                panelView.hideSkeleton();
                 // The overview changed the panel's content (group/session
                 // count), so re-fit the window height to the new content.
                 resizePanelIfNeeded();

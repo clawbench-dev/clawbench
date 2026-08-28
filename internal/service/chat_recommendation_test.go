@@ -100,7 +100,7 @@ func TestRecentConversation_LoadError(t *testing.T) {
 
 	_, _ = db.Exec("DROP TABLE chat_history")
 
-	assert.Nil(t, recentConversation("sess-rc-load-err", 5))
+	assert.Nil(t, recentConversation(context.Background(), "sess-rc-load-err", 5))
 }
 
 func TestRecentConversation_SkipsOtherRolesAndEmptyText(t *testing.T) {
@@ -117,7 +117,7 @@ func TestRecentConversation_SkipsOtherRolesAndEmptyText(t *testing.T) {
 
 	// system role (902) and empty-text user (903) are skipped; remaining
 	// messages returned in chronological order.
-	got := recentConversation(sessionID, 10)
+	got := recentConversation(context.Background(), sessionID, 10)
 	assert.Equal(t, []string{"hello", "reply", "world"}, got)
 }
 
@@ -138,7 +138,7 @@ func TestRecentConversation_PlainTextAssistantFallback(t *testing.T) {
 	// Plain-text assistant content (no blocks JSON) → ExtractPlainText fallback.
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (911, '/test', 'assistant', 'plain reply', ?, 0)", sessionID)
 
-	got := recentConversation(sessionID, 5)
+	got := recentConversation(context.Background(), sessionID, 5)
 	assert.Equal(t, []string{"hi", "plain reply"}, got)
 }
 
@@ -153,7 +153,7 @@ func TestRecentConversation_BrokenJSONAssistantFallback(t *testing.T) {
 	// the DB content and the fallback ExtractPlainText keeps the original text.
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (921, '/test', 'assistant', '{\"blocks\": broken', ?, 0)", sessionID)
 
-	got := recentConversation(sessionID, 5)
+	got := recentConversation(context.Background(), sessionID, 5)
 	assert.Equal(t, []string{"hi", "{\"blocks\": broken"}, got)
 }
 

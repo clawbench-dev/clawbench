@@ -159,6 +159,26 @@ async function fetchPendingEvents() {
         const events: Array<{ event_id: string; event_type: string; payload: string }> = data.events || []
         if (events.length === 0) return
 
+        // No cursor (fresh install — localStorage was cleared, e.g. by
+        // uninstall/reinstall): the client has never seen any event, so there
+        // is nothing to replay. The server's pending_events table keeps up to
+        // 24h of terminal events (completed/cancelled/failed); replaying them
+        // all would flood a fresh client with dozens of stale completion
+        // popups/notifications. Instead, advance the cursor to the newest
+        // event so future reconnects start from here.
+        if (!lastSeenId) {
+            const latest = events[events.length - 1]
+            if (latest.event_id) {
+                localStorage.setItem(LAST_SEEN_KEY, latest.event_id)
+                // Sync cursor to Android SharedPreferences so native
+                // fetchPendingEvents() won't re-deliver these events either.
+                try {
+                    getNative()?.updateLastSeenEventId(latest.event_id)
+                } catch {}
+            }
+            return
+        }
+
         let latestId = lastSeenId
         for (const event of events) {
             const msg: ServerEvent = JSON.parse(event.payload)

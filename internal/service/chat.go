@@ -406,6 +406,8 @@ const maxUnwrapDepth = 8
 // This mirrors the block semantics of the rest of the system: only "text"
 // content is meaningful for user-facing plain text; thinking/tool_use blocks
 // are skipped.
+//
+//nolint:gocognit // recursive JSON unwrap enumerates wrapper shapes by design
 func extractTextFromValue(v any, depth int) string {
 	if depth > maxUnwrapDepth {
 		return ""
@@ -630,7 +632,7 @@ func DequeueQueuedMessage(sessionID string) (model.ChatMessage, bool, error) {
 		FROM chat_history WHERE session_id = ? AND queued = 1
 		ORDER BY id ASC LIMIT 1
 	`, sessionID).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &msg.CreatedAt, &queueID, &queued)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return model.ChatMessage{}, false, nil // genuinely empty
 	}
 	if err != nil {
@@ -684,7 +686,7 @@ func DequeueQueuedMessageByID(sessionID string, msgID int64) (model.ChatMessage,
 		SELECT id, role, content, files, backend, created_at, queue_id, queued
 		FROM chat_history WHERE session_id = ? AND id = ? AND queued = 1
 	`, sessionID, msgID).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &msg.CreatedAt, &queueID, &queued)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return model.ChatMessage{}, false, nil // row not queued (already claimed/cleared)
 	}
 	if err != nil {

@@ -1876,6 +1876,62 @@ describe('duplicate message root causes (regression)', () => {
     expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use')).toHaveLength(1)
   })
 
+  it('ws_user_message with queued flag creates pending remote bubble', () => {
+    // Client A enqueues a message while its session is running; the broadcast
+    // user_message carries queued:true. Client B must render the _remote bubble
+    // as a pending (排队中) message, not a normal committed one.
+    let s: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
+    ]
+
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: {
+        messageId: 200,
+        content: 'enqueued from phone',
+        senderClientId: 'device-a',
+        queueId: 'remote-q-queued',
+        queued: true,
+        backend: 'claude',
+      },
+    } as any)
+
+    const userBubbles = s.filter((m: any) => m.role === 'user' && m.content === 'enqueued from phone')
+    expect(userBubbles).toHaveLength(1, 'B must render one remote bubble for the queued message')
+    const bubble = userBubbles[0]
+    expect(bubble._remote).toBe(true)
+    expect(bubble.pending).toBe(true, 'queued broadcast must render as a pending bubble on B')
+    expect(bubble.queued).toBe(true, 'queued broadcast must carry the queued marker on B')
+    expect(bubble._remoteQueueId).toBe('remote-q-queued')
+  })
+
+  it('ws_user_message without queued flag creates normal remote bubble', () => {
+    // A non-queued (immediately started) message must keep the existing
+    // behavior: a normal _remote bubble with no pending marker.
+    let s: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
+    ]
+
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: {
+        messageId: 300,
+        content: 'direct from phone',
+        senderClientId: 'device-a',
+        queueId: 'remote-q-direct',
+      },
+    } as any)
+
+    const userBubbles = s.filter((m: any) => m.role === 'user' && m.content === 'direct from phone')
+    expect(userBubbles).toHaveLength(1, 'B must render one remote bubble for the direct message')
+    const bubble = userBubbles[0]
+    expect(bubble._remote).toBe(true)
+    expect(bubble.pending).toBeUndefined('a non-queued message must NOT render as pending')
+    expect(bubble.queued).toBeUndefined()
+  })
+
   it('A/B dual client: A sends → B gets _remote bubble → queue_drain upgrades it to the DB row', () => {
     // Client B's reducer receives the authoritative push event from client A's
     // send. The full sequence:

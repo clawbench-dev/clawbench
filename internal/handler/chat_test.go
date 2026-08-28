@@ -3347,7 +3347,7 @@ func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	payload, ok := data.Payload.(map[string]any)
 	require.True(t, ok)
 	// messageId is stored as the original int64 (the buffer holds the Go value,
-	// not JSON), so it may appear as int64 or float64 depending on marshalling.
+	// not JSON), so it may appear as int64 or float64 depending on marshaling.
 	msgID, _ := payload["messageId"].(int64)
 	if msgID == 0 {
 		if f, ok := payload["messageId"].(float64); ok {
@@ -3357,6 +3357,9 @@ func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	assert.Greater(t, msgID, int64(0), "enqueue-path user_message must carry the real persisted DB id (msgID > 0)")
 	assert.Equal(t, "sender-1", payload["senderClientId"])
 	assert.Equal(t, "queued message", payload["content"])
+	queued, ok := payload["queued"].(bool)
+	assert.True(t, ok, "queued must be present as a boolean in the enqueue-path payload")
+	assert.True(t, queued, "enqueue-path user_message must mark the message as queued=true")
 
 	// The broadcast id must match the DB row id (queued=1) for this session.
 	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
@@ -3542,11 +3545,17 @@ func TestDrainReplyQueueID_HTTPPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w2.Code)
 	assert.Eventually(t, func() bool { return !service.IsSessionRunning(sessionID) }, 10*time.Second, 50*time.Millisecond)
 
-	// The LATEST assistant row (the reply to message 2) must carry queue_id pending-q2.
+	// The reply to message 2 must carry queue_id pending-q2. Poll instead of a
+	// single read: a prior run's deferred finalization may briefly race the new
+	// run's reply row, and the DB write that anchors the reply to its question
+	// can land a moment after the session-running flag clears.
 	var qid string
-	err = service.ReadDB().QueryRow(
-		"SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sessionID,
-	).Scan(&qid)
-	assert.NoError(t, err, "assistant reply row should exist")
+	assert.Eventually(t, func() bool {
+		err = service.ReadDB().QueryRow(
+			"SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? AND queue_id=? ORDER BY id DESC LIMIT 1",
+			sessionID, "pending-q2",
+		).Scan(&qid)
+		return err == nil
+	}, 10*time.Second, 20*time.Millisecond, "assistant reply anchored to pending-q2 should exist")
 	assert.Equal(t, "pending-q2", qid, "drain reply must record the consumed message's queue_id so the frontend can anchor it")
 }

@@ -534,7 +534,7 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 			if responsePreviewRaw != "" {
 				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 			}
-			data.LastUserMessage = GetLastUserMessagePlain(sessionID)
+			data.LastUserMessage = GetLastUserMessagePlain(context.Background(), sessionID)
 			data.AgentID = GetSessionAgentID(sessionID)
 		}
 	}
