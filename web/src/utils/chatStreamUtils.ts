@@ -738,6 +738,88 @@ function findBlockByTypeBackward(blocks: ContentBlock[], type: string): ContentB
 }
 
 /**
+ * Merge the DB streaming row's flushed blocks into a live placeholder that
+ * already holds content. Called when the placeholder was (re)created by a
+ * stream_start event and WS increment events appended content BEFORE the
+ * loadHistory DB snapshot arrived — so the DB row's rate-limited flushed
+ * history (tool_use + earlier text) may be a prefix the placeholder lacks.
+ *
+ * Three cases:
+ *   1. Continuous streaming (liveText starts with dbText): the live text
+ *      already covers the DB flush (a stale subset). Only DB non-text blocks
+ *      (tool_use) that live is missing are adopted.
+ *   2. Re-subscribed mid-stream (switch-back): the DB text is a true prefix
+ *      the live increment does not cover. Evidence: the DB text/live text
+ *      overlap at a seam, OR the DB carries a tool_use block live lacks
+ *      (tools finished before the switch). The DB blocks are prepended, with
+ *      the text seam deduped so a boundary re-emitted by both paths never
+ *      repeats.
+ *   3. No evidence (unrelated text, no tool_use anchor): leave live alone —
+ *      the DB flush is stale (e.g. a content_reset boundary), and merging
+ *      would duplicate unrelated content.
+ */
+function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): ContentBlock[] {
+  const dbText = dbBlocks
+    .filter((b) => b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+    .join('')
+  const liveText = liveBlocks
+    .filter((b) => b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+    .join('')
+
+  // Case 1 — live already covers the DB text. Adopt only the DB non-text
+  // blocks (tool_use finished before the placeholder was recreated) that live
+  // is missing.
+  if (dbText && liveText.startsWith(dbText)) {
+    const liveToolIds = new Set(liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id))
+    const extra = dbBlocks.filter(
+      (b) => b.type !== 'text' && !(b.type === 'tool_use' && b.id && liveToolIds.has(b.id)),
+    )
+    return extra.length > 0 ? [...extra, ...liveBlocks] : liveBlocks
+  }
+
+  // Case 3 — no overlap and the DB has no non-text history live lacks: the DB
+  // flush is stale/unrelated. Do not merge.
+  const dbLiveMissingTool = dbBlocks.some(
+    (b) => b.type === 'tool_use' && b.id && !liveBlocks.some((l) => l.type === 'tool_use' && l.id === b.id),
+  )
+  let overlap = 0
+  if (dbText && liveText) {
+    const maxO = Math.min(dbText.length, liveText.length)
+    for (let k = maxO; k > 0; k--) {
+      if (dbText.slice(dbText.length - k) === liveText.slice(0, k)) {
+        overlap = k
+        break
+      }
+    }
+  }
+  if (!dbLiveMissingTool && overlap === 0) return liveBlocks
+
+  // Case 2 — the DB text is a genuine prefix the live increment does not
+  // cover. Prepend the DB blocks, trimming the text seam: if the DB text tail
+  // repeats the live text head (a boundary re-emitted by both paths), cut it
+  // from the DB tail.
+  const copy = dbBlocks.map((b) => ({ ...b }))
+  if (overlap > 0) {
+    let remaining = overlap
+    for (let i = copy.length - 1; i >= 0 && remaining > 0; i--) {
+      const b = copy[i]
+      if (b.type === 'text' && typeof b.text === 'string') {
+        if (b.text.length <= remaining) {
+          remaining -= b.text.length
+          copy.splice(i, 1)
+        } else {
+          b.text = b.text.slice(0, b.text.length - remaining)
+          remaining = 0
+        }
+      }
+    }
+  }
+  return [...copy, ...liveBlocks]
+}
+
+/**
  * Rebuild the messages array from the authoritative DB snapshot (loadHistory),
  * preserving ONLY the transient messages that correspond to a real DB row:
  *
@@ -837,6 +919,14 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[]): 
         } else if (db.content) {
           live.content = db.content
         }
+      } else if (Array.isArray(db.blocks) && db.blocks.length > 0 && Array.isArray(live.blocks)) {
+        // Live placeholder already holds streamed content, but the DB row may
+        // still carry earlier flushed history the live stream lacks — e.g. the
+        // placeholder was recreated by a stream_start after a session switch
+        // while the REST loadHistory was in flight, so the first WS increments
+        // appended onto an EMPTY base before db_load arrived. Merge the DB
+        // blocks as a prefix (see mergeStreamBlocks for the seam handling).
+        live.blocks = mergeStreamBlocks(db.blocks, live.blocks)
       }
       merged.push(live)
       continue
