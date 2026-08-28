@@ -42,13 +42,16 @@ public class FloatingStatusView extends FrameLayout {
     private static final int COLOR_UNREAD = 0xFF3B82F6; // blue
 
     // Layout / animation constants.
-    private static final int CORNER_RADIUS_DP = 18;
+    // CORNER_RADIUS = half the 48dp capsule height (20dp vertical padding +
+    // 28dp logo) so both ends render as full semicircles.
+    private static final int CORNER_RADIUS_DP = 24;
     private static final int PADDING_H_DP = 14;
+    private static final int PADDING_H_START_DP = 8;
     private static final int PADDING_V_DP = 10;
     private static final int DOT_SIZE_DP = 12;
     private static final int DOT_MARGIN_END_DP = 6;
     private static final int TEXT_SIZE_SP = 14;
-    private static final int LOGO_SIZE_DP = 24;
+    private static final int LOGO_SIZE_DP = 28;
     private static final int LOGO_MARGIN_END_DP = 10;
     // Breathing animation: the running dot pulses between 30% and full opacity.
     private static final float BREATH_ALPHA_MIN = 0.3f;
@@ -72,12 +75,18 @@ public class FloatingStatusView extends FrameLayout {
         int bgColor = (palette[0] & 0x00FFFFFF) | 0xEE000000; // keep ~93% opacity
         int textColor = palette[1];
 
-        // Background: rounded capsule, translucent theme background.
+        // Background: capsule with full-semicircle ends, translucent theme
+        // background, and a thin border in the same color made opaque (matches
+        // FloatingStatusPanelView's border so the collapsed capsule reads as
+        // the panel's companion).
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(bgColor);
         bg.setCornerRadius(dp(CORNER_RADIUS_DP));
+        bg.setStroke(dp(1), (palette[0] & 0x00FFFFFF) | 0xFF000000);
         setBackground(bg);
-        setPadding(dp(PADDING_H_DP), dp(PADDING_V_DP), dp(PADDING_H_DP), dp(PADDING_V_DP));
+        // Asymmetric padding: tighter leading edge so the logo sits embedded
+        // near the capsule's left end; trailing edge keeps the wider 14dp.
+        setPadding(dp(PADDING_H_START_DP), dp(PADDING_V_DP), dp(PADDING_H_DP), dp(PADDING_V_DP));
 
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);

@@ -1,6 +1,7 @@
 package com.clawbench.app;
 
 import android.animation.ObjectAnimator;
+import android.graphics.drawable.GradientDrawable;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
@@ -288,19 +289,51 @@ public class FloatingStatusViewTest {
         // title text 14sp) so the capsule is at least as tall as the header.
         assertEquals(10, constantInt("PADDING_V_DP"));
         assertEquals(14, constantInt("PADDING_H_DP"));
+        assertEquals(8, constantInt("PADDING_H_START_DP"));
         assertEquals(12, constantInt("DOT_SIZE_DP"));
         assertEquals(6, constantInt("DOT_MARGIN_END_DP"));
         assertEquals(14, constantInt("TEXT_SIZE_SP"));
-        assertEquals(24, constantInt("LOGO_SIZE_DP"));
+        assertEquals(28, constantInt("LOGO_SIZE_DP"));
         assertEquals(10, constantInt("LOGO_MARGIN_END_DP"));
     }
 
     @Test
+    public void cornerRadius_isHalfTheCapsuleHeight() throws Exception {
+        // The capsule renders as a pill: CORNER_RADIUS 24dp equals half the
+        // 48dp target height (20dp vertical padding + 28dp logo), so both
+        // ends are full semicircles rather than rounded-rectangle corners.
+        assertEquals(24, constantInt("CORNER_RADIUS_DP"));
+        assertEquals("logo height + 2 * vertical padding",
+                48, 2 * constantInt("PADDING_V_DP") + constantInt("LOGO_SIZE_DP"));
+        assertEquals("corner radius must be half the 48dp height",
+                48 / 2, constantInt("CORNER_RADIUS_DP"));
+    }
+
+    @Test
+    public void background_isOpaqueTintedBorderStroke() throws Exception {
+        // The capsule gets a 1dp border in the theme background color made
+        // opaque, matching FloatingStatusPanelView's border treatment. The
+        // stroke getters are API 29+ on the real class, so read them through
+        // Robolectric's shadow.
+        FloatingStatusView capsule = newCapsule();
+        GradientDrawable bg = (GradientDrawable) capsule.getBackground();
+        org.robolectric.shadows.ShadowGradientDrawable shadow =
+                Shadows.shadowOf(bg);
+        assertEquals("border must be 1dp at density 1.0", 1,
+                shadow.getStrokeWidth());
+        assertEquals("border must be the opaque theme background color",
+                (FloatingThemeColors.get(RuntimeEnvironment.getApplication())[0] & 0x00FFFFFF) | 0xFF000000,
+                shadow.getStrokeColor());
+        capsule.stopBreathing();
+    }
+
+    @Test
     public void capsuleMeasuredHeight_meetsTarget() throws Exception {
-        // Target ≈ 40dp (same as the panel header). Robolectric's default font
-        // metrics inflate the 14sp text line height well above on-device values
-        // (~19dp), so it measures ~55px here while a real device renders ~44dp
-        // (20dp vertical padding + 24dp logo). The lower bound is the real
+        // Target ≈ 48dp (20dp vertical padding + 28dp logo, i.e. the pill
+        // height whose half drives the full-semicircle corner radius).
+        // Robolectric's default font metrics inflate the 14sp text line
+        // height well above on-device values (~19dp), so it measures ~55px
+        // here while a real device renders ~48dp. The lower bound is the real
         // guard against a "stingy" capsule; the upper bound catches gross
         // regressions. Robolectric runs at density=1, so dp == px here.
         FloatingStatusView capsule = newCapsule();
@@ -311,8 +344,8 @@ public class FloatingStatusViewTest {
         capsule.measure(widthSpec, heightSpec);
 
         int height = capsule.getMeasuredHeight();
-        assertTrue("capsule height " + height + "px must be >= 36dp (target ~40dp)",
-                height >= 36);
+        assertTrue("capsule height " + height + "px must be >= 44dp (target ~48dp)",
+                height >= 44);
         assertTrue("capsule height " + height + "px must be <= 64dp (Robolectric inflates text)",
                 height <= 64);
         capsule.stopBreathing();

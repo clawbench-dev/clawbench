@@ -67,7 +67,7 @@ public class FloatingStatusPanelView extends FrameLayout {
 
     // Layout constants.
     private static final int PANEL_WIDTH_DP = 280;
-    private static final int CORNER_RADIUS_DP = 18;
+    private static final int CORNER_RADIUS_DP = 20;
     private static final int PADDING_H_DP = 14;
     private static final int PADDING_V_DP = 10;
     private static final int HEADER_TITLE_SIZE_SP = 14;
