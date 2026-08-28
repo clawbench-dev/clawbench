@@ -2753,25 +2753,12 @@ public class BackgroundService extends Service {
             return;
         }
         try {
-            // Read session cookie (same pattern as connectNativeWs)
+            // Send ALL cookies for this host (session + project). The /api/ai/sessions
+            // endpoint requires the project cookie (clawbench_project) via requireProject;
+            // sending only the session cookie yields HTTP 403.
             String cookies = android.webkit.CookieManager.getInstance().getCookie(serverUrl);
-            String sessionCookie = null;
-            if (cookies != null) {
-                for (String cookie : cookies.split(";")) {
-                    String trimmed = cookie.trim();
-                    int eqIdx = trimmed.indexOf('=');
-                    if (eqIdx > 0) {
-                        String name = trimmed.substring(0, eqIdx);
-                        if (name.equals("clawbench_session") ||
-                                (name.startsWith("cb") && name.endsWith("_clawbench_session"))) {
-                            sessionCookie = trimmed;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (sessionCookie == null) {
-                AppLog.d(TAG, "FloatingWindow: no session cookie, skipping sessions poll");
+            if (cookies == null || cookies.trim().isEmpty()) {
+                AppLog.d(TAG, "FloatingWindow: no cookies, skipping sessions poll");
                 return;
             }
 
@@ -2789,7 +2776,7 @@ public class BackgroundService extends Service {
 
             Request request = new Request.Builder()
                     .url(serverUrl + "/api/ai/sessions")
-                    .header("Cookie", sessionCookie)
+                    .header("Cookie", cookies)
                     .get()
                     .build();
 
