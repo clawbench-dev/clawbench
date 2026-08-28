@@ -1755,6 +1755,50 @@ describe('duplicate message root causes (regression)', () => {
     expect((merged[0] as any)._remote).toBeUndefined()
   })
 
+  it('rebuildFromDb backfills empty live placeholder from DB streaming row', () => {
+    // Reported: session streams → user switches away (subscription torn down,
+    // array cleared) → switches back → ws_stream_start recreates an EMPTY
+    // placeholder → loadHistory rebuild runs → the DB streaming row already
+    // holds flushed partial content that the placeholder must inherit, or the
+    // incremental content events accumulate onto an empty base and the earlier
+    // output is lost forever.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      // Freshly re-created placeholder: empty content, no blocks, streaming.
+      { role: 'assistant', id: 42, content: '', blocks: [], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      // DB streaming row with already-flushed content, blocks already parsed.
+      { role: 'assistant', id: 42, content: '[{"type":"text","text":"partial content"}]', blocks: [{ type: 'text', text: 'partial content' }], streaming: true },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    expect(reply).toBeDefined()
+    expect(reply.streaming).toBe(true)
+    expect((reply.blocks || []).some((b: any) => b.type === 'text' && b.text === 'partial content')).toBe(true)
+  })
+
+  it('rebuildFromDb does NOT overwrite live placeholder that already has content', () => {
+    // The live placeholder is mid-stream with real content — the DB snapshot's
+    // 500ms rate-limited flush is strictly older. Never clobber the fresher
+    // live stream with the DB's stale content.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'live streamed' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'older db content' }], streaming: true },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    expect(reply).toBeDefined()
+    expect(reply.streaming).toBe(true)
+    expect((reply.blocks || []).some((b: any) => b.text === 'live streamed')).toBe(true)
+    expect((reply.blocks || []).some((b: any) => b.text === 'older db content')).toBe(false)
+  })
+
   it('A/B dual client: A sends → B gets _remote bubble → queue_drain upgrades it to the DB row', () => {
     // Client B's reducer receives the authoritative push event from client A's
     // send. The full sequence:

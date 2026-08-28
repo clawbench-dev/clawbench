@@ -825,6 +825,19 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[]): 
       if (db.summaryCards) live.summaryCards = db.summaryCards
       if (db.metadata && !live.metadata) live.metadata = db.metadata
       if (db.files) live.files = db.files
+      // Backfill partial content: if the live placeholder is empty (e.g. freshly
+      // created by a stream_start event after a re-subscribe) but the DB row has
+      // already-flushed content, copy it in so previously-streamed text isn't lost.
+      // Never overwrite a live placeholder that already has content — its live
+      // stream is fresher than the DB's 500ms rate-limited flush.
+      const liveIsEmpty = (live.blocks ?? []).length === 0 && messageText(live) === ''
+      if (liveIsEmpty) {
+        if (Array.isArray(db.blocks) && db.blocks.length > 0) {
+          live.blocks = db.blocks
+        } else if (db.content) {
+          live.content = db.content
+        }
+      }
       merged.push(live)
       continue
     }
