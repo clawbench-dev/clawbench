@@ -4630,7 +4630,16 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 	// in-memory database, hiding rows written by other connections).
 	db.SetMaxOpenConns(1)
 	_ = db
-	sid := helperCreateSession(t, "/project", "claude", "Enqueue Concurrent")
+	// Register a blocking mock backend so the winner's goroutine stays alive
+	// while the loser enqueues. With an unknown backend the winner would fail
+	// immediately (unsupported backend), clearing the running flag before the
+	// loser's TrySetSessionRunning — letting both enqueues "start" and making
+	// the exactly-one assertion flaky.
+	const backendID = "test-enqueue-concurrent"
+	gate := make(chan struct{})
+	ai.RegisterBackend(backendID, func() ai.AIBackend { return &enqueueBlockingBackend{gate: gate} })
+	t.Cleanup(func() { close(gate) })
+	sid := helperCreateSession(t, "/project", backendID, "Enqueue Concurrent")
 
 	var wg sync.WaitGroup
 	startedFlags := make([]bool, 2)
@@ -4641,7 +4650,7 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 			started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 				SessionID:   sid,
 				ProjectPath: "/project",
-				BackendName: "claude",
+				BackendName: backendID,
 				Message:     fmt.Sprintf("msg-%d", i),
 				QueueID:     fmt.Sprintf("pending-%d", i),
 			})
@@ -4660,17 +4669,44 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 	}
 	assert.Equal(t, 1, startedCount, "exactly one enqueue should win the idle claim")
 
-	// Both messages must exist in the DB — no message may be lost. queuedCount
-	// may be 0 or 1 depending on whether the B2 self-heal goroutine (scheduled
-	// 100ms later) already claimed the loser after the winner's goroutine
-	// failed to start (unsupported backend in tests).
-	msgs, err := service.GetChatHistory("/project", "claude", sid)
+	// Both messages must exist in the DB — no message may be lost. The loser
+	// stays queued for the drain loop (the winner's goroutine is blocked on the
+	// gate, so the B2 self-heal has not claimed it yet).
+	msgs, err := service.GetChatHistory("/project", backendID, sid)
 	assert.NoError(t, err)
-	assert.Len(t, msgs, 2, "both enqueued messages must be present in DB")
+	userCount := 0
+	for _, m := range msgs {
+		if m.Role == "user" {
+			userCount++
+		}
+	}
+	assert.Equal(t, 2, userCount, "both enqueued user messages must be present in DB")
 
-	// Clean up: cancel kills the running session and the B2 self-heal window.
+	// Clean up: cancel kills the running session and releases the gate.
 	service.CancelSession(sid)
 	time.Sleep(300 * time.Millisecond)
+}
+
+// enqueueBlockingBackend blocks until the session is cancelled so an execution
+// goroutine stays alive while a concurrent enqueue runs — otherwise the winner
+// would finish immediately and clear the running flag before the loser's
+// TrySetSessionRunning, making the exactly-one assertion flaky.
+type enqueueBlockingBackend struct {
+	gate chan struct{}
+}
+
+func (m *enqueueBlockingBackend) Name() string { return "test-enqueue-concurrent" }
+func (m *enqueueBlockingBackend) ExecuteStream(ctx context.Context, _ ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	ch := make(chan ai.StreamEvent, 4)
+	go func() {
+		defer close(ch)
+		select {
+		case <-m.gate:
+		case <-ctx.Done():
+		}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+	return ch, nil
 }
 
 // TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine verifies that when the
