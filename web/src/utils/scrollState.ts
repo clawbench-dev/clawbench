@@ -34,6 +34,20 @@ export interface ScrollStateInput {
    * viewport to already sit at the bottom.
    */
   streaming?: boolean
+  /**
+   * Timestamp (Date.now()) when the current stream-follow window began. A
+   * stream-follow window opens when a streaming context starts (assistant
+   * placeholder created, stream connected) and re-opens when the user scrolls
+   * back to the bottom during streaming.
+   *
+   * Rationale: a single throttled render flush can grow scrollHeight far beyond
+   * STREAM_FOLLOW_GRACE_PX in one frame (e.g. a burst of tokens arriving at
+   * once). Judging follow by a static distance alone would then permanently
+   * lose the bottom (scrollTop lags further with every subsequent flush).
+   * Within this window, a stationary user is assumed to be following the stream,
+   * so follow regardless of the gap — until they actively scroll away.
+   */
+  streamStartAt?: number
 }
 
 /** Silent window after the last scroll event before we consider scrolling "stopped". */
@@ -49,7 +63,17 @@ export const NEAR_BOTTOM_PX = 100
  * mid-stream, while a genuinely scrolled-away user (gap far beyond the band)
  * is still left alone.
  */
-export const STREAM_FOLLOW_GRACE_PX = 400
+export const STREAM_FOLLOW_GRACE_PX = 1000
+
+/**
+ * How long after a stream-follow window opens (or re-opens via a scroll-back
+ * to the bottom) we follow without a distance limit. A throttled render flush
+ * (ContentBlocks.vue) can grow scrollHeight by far more than the grace band in
+ * a single frame — long bursts, code blocks, slow markdown. The window must
+ * outlive the longest plausible flush pause. 2s covers a slow network / heavy
+ * render while still abandoning follow shortly after the user stops scrolling.
+ */
+export const STREAM_FOLLOW_LATENCY_MS = 2000
 
 /**
  * Whether the user is currently scrolling or in a fling. True while the touch
@@ -88,6 +112,17 @@ export function shouldFollowStream(s: ScrollStateInput, force: boolean): boolean
   // moment the placeholder/block is created. A user who scrolled far away
   // (gap beyond the band) is still left alone.
   if (s.streaming && s.nearBottomDist <= STREAM_FOLLOW_GRACE_PX) {
+    return true
+  }
+  // Time-windowed follow: within a fresh stream-follow window a stationary
+  // user is assumed to be following — a single throttled render flush can grow
+  // scrollHeight beyond STREAM_FOLLOW_GRACE_PX in one frame, and the static
+  // distance check above would then permanently lose the bottom (every later
+  // flush re-reads a gap that never shrinks back below the band). The window
+  // is re-opened whenever the user scrolls back to the bottom during streaming,
+  // so follow resumes the moment they return. This ONLY applies to a stationary
+  // user — isUserScrolling() already rejected active scrolls above.
+  if (s.streaming && s.streamStartAt !== undefined && s.now - s.streamStartAt < STREAM_FOLLOW_LATENCY_MS) {
     return true
   }
   if (force) return true

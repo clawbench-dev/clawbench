@@ -344,6 +344,25 @@ let lastScrollAt = 0
 let scrollStopTimer = null
 let pendingFollow = false
 
+// Whether the current context is streaming (assistant content still arriving).
+// Mirrors the `streaming` argument callers passed to scrollToBottom — a single
+// call with streaming=true opens a follow window for the whole stream.
+const streamingFollowRef = ref(false)
+// Timestamp of the most recent stream-follow window open. Re-opened when the
+// user scrolls back to the bottom during streaming (see handleScroll) so follow
+// resumes the moment they return, and when a new stream starts.
+let streamStartAt = 0
+
+function openStreamFollowWindow() {
+  streamingFollowRef.value = true
+  streamStartAt = Date.now()
+}
+
+function endStreamFollowWindow() {
+  streamingFollowRef.value = false
+  streamStartAt = 0
+}
+
 // Hide the floating scroll buttons while the user is selecting text.
 const { active: textSelecting } = useTextSelectionActive()
 
@@ -400,6 +419,12 @@ function handleScroll() {
   if (!programmaticScrolling) {
     scrollOwner.value = 'user'
     lastScrollAt = Date.now()
+    // The user scrolled back to the bottom during streaming: re-open the
+    // stream-follow window so a static-distance gate (grace band) can never
+    // permanently strand follow — the moment they return, follow resumes.
+    if (streamingFollowRef.value && nearBottom) {
+      streamStartAt = Date.now()
+    }
   }
 
   // When near edges during programmatic scroll, hide buttons immediately
@@ -503,6 +528,13 @@ function onScrollStopped() {
       scrollToBottom(true)
     }
   }
+  // Streaming: the user stopped scrolling (250ms of silence) — restore follow
+  // by pinning to the bottom now that the scroll gesture is over. Without this,
+  // a user who briefly scrolls during a burst (or whose fling takes them a
+  // little way up) is never pulled back once the stream resumes.
+  if (streamingFollowRef.value && dist > NEAR_EDGE_THRESHOLD) {
+    scrollToBottom(false, true)
+  }
 }
 
 // Hide scroll FAB on outside click
@@ -550,6 +582,7 @@ onBeforeUnmount(() => {
 })
 
 function scrollToBottom(force = false, streaming = false) {
+  if (streaming) openStreamFollowWindow()
   nextTick(() => {
     if (!messagesRef.value) return
     const el = messagesRef.value
@@ -563,6 +596,7 @@ function scrollToBottom(force = false, streaming = false) {
       now: Date.now(),
       nearBottomDist: dist,
       streaming,
+      streamStartAt,
     })
 
     // User is actively scrolling/flinging → never yank the view. A force pin
@@ -571,50 +605,57 @@ function scrollToBottom(force = false, streaming = false) {
       if (force) pendingFollow = true
       return
     }
-    if (!shouldFollowStream(state(), force)) return
-
     // Mark the write as programmatic so the scroll event it emits is not
     // misread as a user scroll (which would make the rAF correction below
     // suppress itself via isUserScrolling). Ownership is released by
     // onScrollStopped ~SCROLL_STOP_MS after the emitted scroll event.
-    setProgrammatic(true)
-    el.scrollTop = el.scrollHeight
-    // Verify the scroll actually reached the bottom — content may have grown
-    // between the scrollToBottom call and this nextTick callback, or may grow
-    // after this callback completes (streaming text, throttled render flush).
-    // Re-check after the browser has laid out the DOM changes, and re-scroll if
-    // still not at the bottom. Same guards as the initial scroll: never override
-    // an active user scroll, never follow once the user has scrolled away
-    // (unless force — async lazy content must still be corrected even if the
-    // user is stationary but not at the bottom).
-    requestAnimationFrame(() => {
-      if (!messagesRef.value) return
-      const el2 = messagesRef.value
-      const gap = el2.scrollHeight - el2.scrollTop - el2.clientHeight
-      // Sync the externally-consumed isAtBottom flag: a pin with zero gap
-      // emits no scroll event, so handleScroll never runs.
-      isAtBottom.value = gap <= NEAR_EDGE_THRESHOLD
-      if (gap <= 0) return
-      const state2 = {
-        owner: scrollOwner.value,
-        userTouching,
-        lastScrollAt,
-        now: Date.now(),
-        nearBottomDist: gap,
-        streaming,
-      }
-      if (isUserScrolling(state2)) return
-      if (shouldFollowStream(state2, force)) {
-        el2.scrollTop = el2.scrollHeight
-        isAtBottom.value = true
-      }
-    })
-    // NOTE: the old unconditional force pin timer (300ms) is gone. Async
-    // content growth (Mermaid, KaTeX, lazy original fetch, thinking collapse)
-    // is handled by the rAF correction above; if the user started scrolling in
-    // between, pendingFollow + onScrollStopped take over instead of fighting.
+    if (shouldFollowStream(state(), force)) {
+      followToBottom(streaming, force)
+    }
   })
 }
+
+function followToBottom(streaming, force) {
+  setProgrammatic(true)
+  const el = messagesRef.value
+  el.scrollTop = el.scrollHeight
+  // Verify the scroll actually reached the bottom — content may have grown
+  // between the scrollToBottom call and this nextTick callback, or may grow
+  // after this callback completes (streaming text, throttled render flush).
+  // Re-check after the browser has laid out the DOM changes, and re-scroll if
+  // still not at the bottom. Same guards as the initial scroll: never override
+  // an active user scroll, never follow once the user has scrolled away
+  // (unless force — async lazy content must still be corrected even if the
+  // user is stationary but not at the bottom).
+  requestAnimationFrame(() => {
+    if (!messagesRef.value) return
+    const el2 = messagesRef.value
+    const gap = el2.scrollHeight - el2.scrollTop - el2.clientHeight
+    // Sync the externally-consumed isAtBottom flag: a pin with zero gap
+    // emits no scroll event, so handleScroll never runs.
+    isAtBottom.value = gap <= NEAR_EDGE_THRESHOLD
+    if (gap <= 0) return
+    const state2 = {
+      owner: scrollOwner.value,
+      userTouching,
+      lastScrollAt,
+      now: Date.now(),
+      nearBottomDist: gap,
+      streaming,
+      streamStartAt,
+    }
+    if (isUserScrolling(state2)) return
+    if (shouldFollowStream(state2, force)) {
+      el2.scrollTop = el2.scrollHeight
+      isAtBottom.value = true
+    }
+  })
+  // NOTE: the old unconditional force pin timer (300ms) is gone. Async
+  // content growth (Mermaid, KaTeX, lazy original fetch, thinking collapse)
+  // is handled by the rAF correction above; if the user started scrolling in
+  // between, pendingFollow + onScrollStopped take over instead of fighting.
+}
+// [deleted dangling brace]
 
 function scrollToTop() {
   if (!messagesRef.value) return
@@ -801,6 +842,7 @@ watch(() => props.currentSessionId, () => {
   setProgrammatic(false)
   lastScrollAt = 0
   pendingFollow = false
+  endStreamFollowWindow()
   clearTimeout(scrollStopTimer)
   scrollStopTimer = null
   userTouching = false

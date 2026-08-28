@@ -97,7 +97,6 @@ describe('ChatMessageList — force pin is guarded by user scrolling', () => {
     expect(source).toContain('isUserScrolling(state())')
     expect(source).toContain('shouldFollowStream(state(), force)')
   })
-
   it('force pin is deferred (pendingFollow) while the user is scrolling, not applied', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
@@ -174,5 +173,55 @@ describe('ChatMessageList — DOM reconciliation key (listKey)', () => {
     expect(source).toContain('msgs.length')
     expect(source).toContain('msgs[0]?.id')
     expect(source).toContain('msgs[msgs.length - 1]?.id')
+  })
+})
+
+/**
+ * Tests for the stream-follow persistence fix.
+ *
+ * Root cause: a single throttled render flush (ContentBlocks.vue, 300ms) can
+ * grow scrollHeight far beyond STREAM_FOLLOW_GRACE_PX in one frame when a burst
+ * of tokens arrives at once. scrollToBottom's static distance check then rejects
+ * the follow (gap > grace band) and the viewport is never pulled down again —
+ * every later flush re-reads an even larger gap, so follow is lost permanently.
+ *
+ * Fix:
+ * - A stream-follow window (streamingFollowRef + streamStartAt) opens when a
+ *   streaming scroll request arrives and stays open until the stream ends or
+ *   the session switches. Within the window, a STATIONARY user follows
+ *   regardless of the gap (the time-window branch in shouldFollowStream).
+ * - Scrolling back to the bottom during streaming re-opens the window.
+ * - When the user's scroll stops (onScrollStopped) mid-stream, follow is
+ *   restored by pinning to the bottom once the gesture is over.
+ */
+describe('ChatMessageList — stream-follow persistence', () => {
+  it('streaming scroll requests open a follow window that persists across calls', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // A streaming scroll request opens the follow window
+    expect(source).toContain('if (streaming) openStreamFollowWindow()')
+    // The window state is tracked component-locally, not passed per-call
+    expect(source).toContain('const streamingFollowRef = ref(false)')
+    expect(source).toContain('let streamStartAt = 0')
+  })
+
+  it('scrolling back to the bottom during streaming re-opens the follow window', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain('if (streamingFollowRef.value && nearBottom)')
+    expect(source).toContain('streamStartAt = Date.now()')
+  })
+
+  it('onScrollStopped restores follow when the user stops scrolling mid-stream', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain("if (streamingFollowRef.value && dist > NEAR_EDGE_THRESHOLD) {")
+    expect(source).toContain('scrollToBottom(false, true)')
+  })
+
+  it('session switch closes the follow window', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain('endStreamFollowWindow()')
   })
 })
