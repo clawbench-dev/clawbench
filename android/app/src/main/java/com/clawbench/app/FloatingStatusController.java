@@ -132,6 +132,18 @@ public class FloatingStatusController {
      * cancelled / failed). Any thread.
      */
     public void trackSessionState(String eventType, String status, String sessionId) {
+        // Late events arriving after destroy() must not resurrect the cleared
+        // running set. This guard runs before any mutation; the postToUi
+        // dropped-runnable guard only protects the window, not this set.
+        if (destroyed) {
+            return;
+        }
+        // Only session_update events feed the running set. task_update is a
+        // scheduled-task status, not a session status: its session_id is
+        // omitempty (often empty) and would desync the count from hasActive.
+        if (!"session_update".equals(eventType)) {
+            return;
+        }
         if (sessionId == null || sessionId.isEmpty()) {
             return;
         }
@@ -140,6 +152,9 @@ public class FloatingStatusController {
         } else if ("completed".equals(status) || "cancelled".equals(status)
                 || "failed".equals(status)) {
             runningSessions.remove(sessionId);
+        } else {
+            // permission_resolved leaves the session still running, so it must
+            // NOT be removed from the set here.
         }
     }
 

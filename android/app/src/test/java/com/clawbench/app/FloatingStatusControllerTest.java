@@ -349,6 +349,33 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
+    public void trackSessionState_afterDestroy_doesNotReviveSet() throws Exception {
+        // Regression: trackSessionState runs synchronously outside postToUi, so
+        // a late event (e.g. a WS event arriving after destroy) would re-add to
+        // the cleared running set. The destroyed guard must drop it.
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        assertEquals(1, controller.getRunningSessionCount());
+        controller.destroy();
+        assertEquals(0, controller.getRunningSessionCount());
+
+        controller.trackSessionState("session_update", "running", "s1");
+        assertEquals("trackSessionState after destroy must not revive the set", 0,
+                controller.getRunningSessionCount());
+    }
+
+    @Test
+    public void trackSessionState_taskUpdate_isIgnored() throws Exception {
+        // task_update is a scheduled-task status (session_id omitempty, often
+        // empty); it must not feed the running session set.
+        FloatingStatusController controller = newController();
+        controller.trackSessionState("task_update", "running", "t1");
+        assertEquals("task_update must not be tracked as a running session", 0,
+                controller.getRunningSessionCount());
+        controller.destroy();
+    }
+
+    @Test
     public void shouldOpenSessionOnCapsuleTap_singleRunning_true() throws Exception {
         FloatingStatusController controller = newController();
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
