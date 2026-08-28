@@ -294,7 +294,7 @@ function handleSummaryClick(event: MouseEvent): void {
     margin-bottom: 0;
 }
 
-/* 快捷输入框 */
+/* 快捷输入框 — 左右半圆胶囊 */
 .completion-popover-input {
     display: flex;
     align-items: flex-end;
@@ -303,7 +303,7 @@ function handleSummaryClick(event: MouseEvent): void {
     padding: 4px 6px 4px 8px;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 0;
+    border-radius: 999px;
 }
 
 .completion-popover-input:focus-within {
@@ -341,7 +341,7 @@ function handleSummaryClick(event: MouseEvent): void {
     background: var(--accent-color);
     color: #fff;
     border: none;
-    border-radius: 0;
+    border-radius: 50%;
     cursor: pointer;
     transition: opacity 0.15s;
 }
