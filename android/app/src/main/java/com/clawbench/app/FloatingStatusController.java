@@ -91,6 +91,21 @@ public class FloatingStatusController {
     private final java.util.Set<String> runningSessions =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    /**
+     * Session ids currently awaiting approval, tracked from events. Thread-safe
+     * set. Kept in parallel with runningSessions so the capsule can show a
+     * live pending count without waiting for an overview round trip.
+     */
+    private final java.util.Set<String> pendingSessions =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Number of sessions with unread messages, as of the last overview. Events
+     * carry no unread data, so this is the best the capsule can show between
+     * overview refreshes; onOverviewLoaded corrects it.
+     */
+    private volatile int lastUnreadCount;
+
     // Drag bookkeeping.
     private float downX;
     private float downY;
@@ -166,12 +181,19 @@ public class FloatingStatusController {
         }
         if (isActiveStatus(eventType, status)) {
             runningSessions.add(sessionId);
+            if ("permission_pending".equals(status)) {
+                pendingSessions.add(sessionId);
+            }
         } else if ("completed".equals(status) || "cancelled".equals(status)
                 || "failed".equals(status)) {
             runningSessions.remove(sessionId);
+            pendingSessions.remove(sessionId);
         } else {
             // permission_resolved leaves the session still running, so it must
             // NOT be removed from the set here.
+            if ("permission_resolved".equals(status)) {
+                pendingSessions.remove(sessionId);
+            }
         }
     }
 
@@ -266,6 +288,7 @@ public class FloatingStatusController {
             return;
         }
         seedRunningFromOverview(overview);
+        lastUnreadCount = FloatingStatusView.countUnread(overview);
         postToUi(() -> {
             if (panelView != null && expanded) {
                 panelView.render(overview, (sid, projectPath) -> {
@@ -295,8 +318,8 @@ public class FloatingStatusController {
     }
 
     /**
-     * Add sessions flagged running by the overview into the running set. Any
-     * thread. No-op when the overview is malformed.
+     * Add sessions flagged running or pending-approval by the overview into
+     * their tracked sets. Any thread. No-op when the overview is malformed.
      */
     private void seedRunningFromOverview(JSONObject overview) {
         JSONArray projects = overview.optJSONArray("projects");
@@ -315,11 +338,24 @@ public class FloatingStatusController {
             }
             for (int j = 0; j < sessions.length(); j++) {
                 JSONObject s = sessions.optJSONObject(j);
-                if (s != null && s.optBoolean("running", false)) {
-                    String id = s.optString("id", "");
-                    if (!id.isEmpty()) {
-                        runningSessions.add(id);
-                    }
+                if (s == null) {
+                    continue;
+                }
+                String id = s.optString("id", "");
+                if (id.isEmpty()) {
+                    continue;
+                }
+                boolean pending = s.optBoolean("pendingApproval", false);
+                boolean running = s.optBoolean("running", false);
+                if (pending) {
+                    // Pending wins over running (yellow > green), matching the
+                    // panel's status-dot priority and the capsule's mutual
+                    // exclusion between the running and pending groups.
+                    runningSessions.add(id);
+                    pendingSessions.add(id);
+                    anyRunning = true;
+                } else if (running) {
+                    runningSessions.add(id);
                     anyRunning = true;
                 }
             }
@@ -425,8 +461,11 @@ public class FloatingStatusController {
             if (active) {
                 if (shouldShow(appForeground, true, userDismissed)) {
                     ensureWindow();
-                    // The stats capsule is overview-driven: pull a fresh
-                    // overview so the counts stay in sync with the event.
+                    // Render the capsule instantly from locally tracked state
+                    // (running/pending sets, last overview's unread count) so a
+                    // session start is visible without waiting for the overview
+                    // network round trip; the refresh then corrects all counts.
+                    renderCapsuleStats();
                     requestOverviewRefresh();
                 }
             } else {
@@ -435,15 +474,38 @@ public class FloatingStatusController {
                 // so never auto-hide it; the overview refresh keeps it current.
                 if (windowShowing && !expanded) {
                     if (!runningSessions.isEmpty()) {
-                        // Other sessions are still running: keep the capsule up.
+                        // Other sessions are still running: keep the capsule up
+                        // with the updated counts (terminal event may have
+                        // dropped this session's running/pending state).
+                        renderCapsuleStats();
                         // The overview refresh re-seeds the running set and the
                         // fresh overview drives the capsule's stats.
                         requestOverviewRefresh();
                     } else {
+                        // Last session ended: reflect the empty counts instantly
+                        // (breathing stops, groups hide) before the fade-out.
+                        renderCapsuleStats();
                         requestOverviewRefresh();
                         scheduleTerminalHide();
                     }
                 }
+            }
+        });
+    }
+
+    /**
+     * Render the capsule stats from locally tracked state, without waiting for
+     * an overview round trip. The running count is the tracked running set
+     * minus the pending set (pending wins over running, matching the overview
+     * grouping); the unread count is whatever the last overview reported, since
+     * events carry no unread data. onOverviewLoaded corrects all three. Any
+     * thread; marshalled to the UI thread.
+     */
+    private void renderCapsuleStats() {
+        postToUi(() -> {
+            if (view != null) {
+                int running = Math.max(0, runningSessions.size() - pendingSessions.size());
+                view.renderStats(running, pendingSessions.size(), lastUnreadCount);
             }
         });
     }
@@ -465,9 +527,7 @@ public class FloatingStatusController {
             } else if (shouldShow(false, hasActive, userDismissed)) {
                 cancelPendingHide();
                 ensureWindow();
-                if (view != null) {
-                    view.pulse();
-                }
+                renderCapsuleStats();
             }
         });
     }
@@ -483,9 +543,7 @@ public class FloatingStatusController {
                 // Re-evaluate: un-dismissing should restore the window if conditions hold.
                 cancelPendingHide();
                 ensureWindow();
-                if (view != null) {
-                    view.pulse();
-                }
+                renderCapsuleStats();
             }
         });
     }
@@ -498,6 +556,7 @@ public class FloatingStatusController {
     public void destroy() {
         destroyed = true;
         runningSessions.clear();
+        pendingSessions.clear();
         // Bypass postToUi's destroyed guard here: the guard must drop event
         // runnables, but it must NOT drop our own teardown, otherwise the
         // window is never removed from the WindowManager.
@@ -505,6 +564,7 @@ public class FloatingStatusController {
             cancelPendingHide();
             if (view != null) {
                 view.animate().cancel();
+                view.stopBreathing();
             }
             if (panelView != null) {
                 panelView.setOnCollapseClickListener(null);
@@ -595,7 +655,10 @@ public class FloatingStatusController {
             snapRightEdgeIfNeeded();
             attachedView.setAlpha(1f);
             if (attachedView instanceof FloatingStatusView) {
-                ((FloatingStatusView) attachedView).pulse();
+                // The capsule's stats render on the next event / overview; the
+                // breathing animation is driven by renderStats, so nothing to
+                // start here.
+                renderCapsuleStats();
             }
             AppLog.i(TAG, "floating window shown at x=" + params.x + " y=" + params.y
                     + (expanded ? " (panel)" : " (capsule)"));
@@ -644,7 +707,7 @@ public class FloatingStatusController {
             try {
                 windowManager.addView(attachedView, params);
                 if (attachedView instanceof FloatingStatusView) {
-                    ((FloatingStatusView) attachedView).pulse();
+                    renderCapsuleStats();
                 }
             } catch (Exception e) {
                 AppLog.w(TAG, "failed to add swapped floating view", e);

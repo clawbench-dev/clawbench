@@ -48,16 +48,18 @@ public class FloatingStatusView extends FrameLayout {
     private static final int DOT_SIZE_DP = 8;
     private static final int DOT_MARGIN_END_DP = 5;
     private static final int TEXT_SIZE_SP = 12;
-    private static final int PULSE_MS = 200;
     private static final int LOGO_SIZE_DP = 16;
     private static final int LOGO_MARGIN_END_DP = 8;
+    // Breathing animation: the running dot pulses between 30% and full opacity.
+    private static final float BREATH_ALPHA_MIN = 0.3f;
+    private static final float BREATH_ALPHA_MAX = 1.0f;
+    private static final long BREATH_MS = 800;
 
     private final View runningDot;
     private final LinearLayout runningItem;
     private final LinearLayout pendingItem;
     private final LinearLayout unreadItem;
-    private final ObjectAnimator pulseAnimX;
-    private final ObjectAnimator pulseAnimY;
+    private final ObjectAnimator breathAnim;
     private float density = 1f;
 
     public FloatingStatusView(Context context) {
@@ -101,12 +103,13 @@ public class FloatingStatusView extends FrameLayout {
 
         addView(row, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
 
-        // Single pair of animators reused on every pulse; cancel-then-start avoids
-        // stacking concurrent animations (visual jitter + object leaks).
-        pulseAnimX = ObjectAnimator.ofFloat(runningDot, "scaleX", 1f, 1.25f, 1f);
-        pulseAnimX.setDuration(PULSE_MS);
-        pulseAnimY = ObjectAnimator.ofFloat(runningDot, "scaleY", 1f, 1.25f, 1f);
-        pulseAnimY.setDuration(PULSE_MS);
+        // Breathing alpha animation on the running dot. Loops forever while any
+        // session is running; renderStats starts/stops it with the running count.
+        breathAnim = ObjectAnimator.ofFloat(runningDot, "alpha",
+                BREATH_ALPHA_MIN, BREATH_ALPHA_MAX);
+        breathAnim.setDuration(BREATH_MS);
+        breathAnim.setRepeatCount(ObjectAnimator.INFINITE);
+        breathAnim.setRepeatMode(ObjectAnimator.REVERSE);
 
         // Initial state: all groups hidden until the first renderStats.
         renderStats(0, 0, 0);
@@ -188,6 +191,10 @@ public class FloatingStatusView extends FrameLayout {
     /**
      * Render the three stats into the capsule. Groups with a count of 0 are
      * hidden entirely (dot + label). UI thread only.
+     *
+     * The running dot breathes (alpha 0.3 ↔ 1.0 loop) while the running count
+     * is above 0; on zero it stops and the dot returns to full opacity. The
+     * pending and unread dots never breathe.
      */
     public void renderStats(int running, int pending, int unread) {
         AppLog.d("FloatingStatusView", "renderStats running=" + running
@@ -195,6 +202,26 @@ public class FloatingStatusView extends FrameLayout {
         setStat(runningItem, running, "执行中");
         setStat(pendingItem, pending, "待审批");
         setStat(unreadItem, unread, "未读");
+        if (running > 0) {
+            if (!breathAnim.isRunning()) {
+                breathAnim.start();
+            }
+        } else if (breathAnim.isRunning()) {
+            breathAnim.cancel();
+            runningDot.setAlpha(BREATH_ALPHA_MAX);
+        }
+    }
+
+    /**
+     * Stop the breathing animation and restore the running dot to full opacity.
+     * Called on controller teardown so an infinite animator cannot keep posting
+     * frame callbacks after the window is removed. UI thread only.
+     */
+    public void stopBreathing() {
+        if (breathAnim.isRunning()) {
+            breathAnim.cancel();
+        }
+        runningDot.setAlpha(BREATH_ALPHA_MAX);
     }
 
     /** Build one dot+label item, added to the row with dot leading the label. */
@@ -242,20 +269,6 @@ public class FloatingStatusView extends FrameLayout {
         } else {
             item.setVisibility(GONE);
         }
-    }
-
-    /**
-     * Pulse the running dot (scale 1 → 1.25 → 1, 200ms each way) to signal an
-     * active session. No-op while no running item is visible.
-     */
-    public void pulse() {
-        if (runningItem.getVisibility() != VISIBLE) {
-            return;
-        }
-        pulseAnimX.cancel();
-        pulseAnimY.cancel();
-        pulseAnimX.start();
-        pulseAnimY.start();
     }
 
     /**

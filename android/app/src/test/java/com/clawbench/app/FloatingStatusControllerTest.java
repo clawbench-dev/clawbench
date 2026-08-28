@@ -1015,6 +1015,133 @@ public class FloatingStatusControllerTest {
     }
 
     // =====================================================
+    // Instant capsule counts: handleEvent renders from local
+    // state without waiting for the overview round trip
+    // =====================================================
+
+    /** The FloatingStatusView built by the controller (capsule). */
+    private FloatingStatusView capsuleOf(FloatingStatusController controller) throws Exception {
+        return (FloatingStatusView) getPrivateField(controller, "view");
+    }
+
+    @Test
+    public void handleEvent_running_rendersCapsuleCountsImmediately() throws Exception {
+        // Regression: after commit 572a5754 the capsule waited for an overview
+        // round trip (5s/10s timeouts), so a session start left the capsule
+        // showing only the logo until the network returned.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        FloatingStatusView capsule = capsuleOf(controller);
+        assertNotNull("active event must build the capsule", capsule);
+        List<String> texts = collectAllTexts(capsule);
+        assertTrue("capsule must show the running count instantly, got: " + texts,
+                texts.contains("执行中 1"));
+        assertTrue("capsule must not show the session title, got: " + texts,
+                !texts.contains("s1"));
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_permissionPending_rendersPendingCountInstantly() throws Exception {
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+
+        controller.handleEvent("session_update", sessionEvent("permission_pending", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        FloatingStatusView capsule = capsuleOf(controller);
+        assertNotNull("permission_pending event must build the capsule", capsule);
+        List<String> texts = collectAllTexts(capsule);
+        assertTrue("capsule must show the pending count instantly, got: " + texts,
+                texts.contains("待审批 1"));
+        assertTrue("a pending session must not count as running, got: " + texts,
+                !texts.contains("执行中"));
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_completed_rendersUpdatedCountsInstantly() throws Exception {
+        // A terminal event must drop the finished session from the capsule's
+        // running/pending counts immediately (before any overview returns).
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.handleEvent("session_update", sessionEvent("running", "s2"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue("capsule must be showing two running sessions",
+                collectAllTexts(capsuleOf(controller)).contains("执行中 2"));
+
+        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        List<String> texts = collectAllTexts(capsuleOf(controller));
+        assertTrue("capsule must drop the finished session instantly, got: " + texts,
+                texts.contains("执行中 1"));
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_keepsUnreadCountFromLastOverview() throws Exception {
+        // Events carry no unread data, so the capsule must keep the unread
+        // count from the last overview until a fresh one corrects it.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"s1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0},"
+                        + "{\"id\":\"u\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":3}"
+                        + "]}]}");
+        controller.onOverviewLoaded(overview);
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(collectAllTexts(capsuleOf(controller)).contains("未读 1"));
+
+        // A new running event must not zero out the unread count.
+        controller.handleEvent("session_update", sessionEvent("running", "s2"));
+        ShadowLooper.runUiThreadTasks();
+
+        List<String> texts = collectAllTexts(capsuleOf(controller));
+        assertTrue("unread count from the last overview must persist, got: " + texts,
+                texts.contains("未读 1"));
+        assertTrue(texts.contains("执行中 2"));
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_runningPendingMix_pendingExcludedFromRunning() throws Exception {
+        // Pending wins over running (yellow > green): a session that is both
+        // running and pending-approval counts as pending, not running.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s-running"));
+        controller.handleEvent("session_update", sessionEvent("permission_pending", "s-pending"));
+        ShadowLooper.runUiThreadTasks();
+
+        List<String> texts = collectAllTexts(capsuleOf(controller));
+        assertTrue("capsule must show one running, got: " + texts, texts.contains("执行中 1"));
+        assertTrue("capsule must show one pending, got: " + texts, texts.contains("待审批 1"));
+        assertTrue("capsule must not double-count the pending session, got: " + texts,
+                !texts.contains("执行中 2"));
+        controller.destroy();
+    }
+
+    // =====================================================
     // Session click: panel row -> onSessionClick callback
     // =====================================================
 
