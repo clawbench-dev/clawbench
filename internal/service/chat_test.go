@@ -15,6 +15,7 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/ws"
 
 	_ "modernc.org/sqlite"
 
@@ -1350,6 +1351,31 @@ func TestUpdateLastRead(t *testing.T) {
 	err = service.UnsafeDBForTest().QueryRow("SELECT last_read_at FROM chat_sessions WHERE id = ?", sid).Scan(&lastRead)
 	assert.NoError(t, err)
 	assert.True(t, lastRead.Valid)
+}
+
+func TestUpdateLastRead_BroadcastsReadEvent(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-read", "")
+
+	service.UpdateLastRead(sid)
+
+	buffered := sub.GetBufferedEvents()
+	if len(buffered) == 0 {
+		t.Fatal("expected a session_update broadcast after UpdateLastRead")
+	}
+	assert.Equal(t, "session_update", buffered[0].Event)
+	data, ok := buffered[0].Data.(*ws.SessionUpdateData)
+	require.True(t, ok, "expected SessionUpdateData")
+	assert.Equal(t, "read", data.Status)
+	assert.Equal(t, sid, data.SessionID)
+	assert.False(t, data.HasNewMessages)
 }
 
 // ---------- GetSessionAgentID ----------

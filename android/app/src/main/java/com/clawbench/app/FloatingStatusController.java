@@ -448,7 +448,10 @@ public class FloatingStatusController {
         // so the session list stays current without waiting for the next tap.
         // High-frequency streaming events would otherwise pile up requests, so
         // the refresh is throttled to OVERVIEW_REFRESH_MIN_INTERVAL_MS.
-        if (expanded) {
+        // A "read" event (session marked read from another client) carries no
+        // running/pending change, but must also refresh the overview so the
+        // capsule's unread count updates even while collapsed.
+        if (expanded || "read".equals(status)) {
             requestOverviewRefresh();
         }
 

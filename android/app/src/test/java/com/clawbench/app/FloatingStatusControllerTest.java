@@ -346,6 +346,67 @@ public class FloatingStatusControllerTest {
     }
 
     // =====================================================
+    // handleEvent status="read": unread-only refresh
+    // =====================================================
+
+    @Test
+    public void handleEvent_readStatus_triggersOverviewRefresh() throws Exception {
+        // A "read" event (session marked read from another client) must refresh
+        // the overview even while collapsed, so the capsule's unread count
+        // updates without waiting for the next panel expand.
+        final int[] requests = {0};
+        FloatingStatusController controller = newController();
+        controller.setOverviewRequestListener(() -> requests[0]++);
+
+        // Not expanded: previously only expanded events triggered a refresh.
+        controller.handleEvent("session_update", sessionEvent("read", "s1"));
+
+        assertEquals("read events must trigger an overview refresh even while collapsed",
+                1, requests[0]);
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_readStatus_doesNotChangeRunningSet() throws Exception {
+        // "read" is a unread-only refresh: it must not add, remove, or otherwise
+        // disturb the tracked running/pending session sets.
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        assertEquals(1, controller.getRunningSessionCount());
+
+        controller.handleEvent("session_update", sessionEvent("read", "s1"));
+
+        assertEquals("read must not remove a running session", 1,
+                controller.getRunningSessionCount());
+
+        // And it must not add a session that was never running.
+        controller.handleEvent("session_update", sessionEvent("read", "s2"));
+        assertEquals("read must not add sessions to the running set", 1,
+                controller.getRunningSessionCount());
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_readStatus_doesNotHideWindow() throws Exception {
+        // "read" is not an active status, but it must not trigger the terminal
+        // hide path either (it is not completed/cancelled/failed).
+        FloatingStatusController controller = newController();
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        controller.handleEvent("session_update", sessionEvent("read", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("read must not hide the window", controller.isWindowShowing());
+        assertNull("read must not schedule a terminal hide",
+                getPrivateField(controller, "fadeHideRunnable"));
+        controller.destroy();
+    }
+
+    // =====================================================
     // onCapsuleTap: unified expand-panel tap (Task 3)
     // =====================================================
 

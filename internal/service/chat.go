@@ -1098,6 +1098,10 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 // list still showed unread messages after the user opened the session.
 func UpdateLastRead(sessionID string) {
 	WriteExec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
+	// Broadcast a status change so connected clients (e.g. the Android floating
+	// window) can refresh their unread counts. WS-only: no push notification and
+	// no pending event — reading a session must not create a notification.
+	EmitSessionEventWSOnly(sessionID, "read", false)
 }
 
 // GetSessionBackend returns the backend of a session, or empty string if not found or archived.
