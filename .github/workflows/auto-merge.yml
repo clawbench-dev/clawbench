@@ -127,7 +127,7 @@ jobs:
             echo "✅ All checks passed, merging PR #$PR_NUMBER"
             gh pr merge "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
-              --squash \
+              --merge \
               --admin \
               --subject "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title --jq '.title')" \
               --body "Auto-merged after CI passed"
