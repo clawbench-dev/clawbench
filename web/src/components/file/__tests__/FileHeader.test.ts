@@ -185,6 +185,38 @@ describe('FileHeader', () => {
     expect(getMenuOpen(wrapper)).toBe(false)
   })
 
+  describe('toggleView button', () => {
+    it('renders an eye icon with the active class when the rendered preview is shown', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
+      const btn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Source')
+      expect(btn).toBeTruthy()
+      expect(btn!.classes()).toContain('active')
+    })
+
+    it('renders an eye icon without the active class when the source view is shown', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'source', editing: false })
+      const btn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Rendered')
+      expect(btn).toBeTruthy()
+      expect(btn!.classes()).not.toContain('active')
+    })
+
+    it('is disabled while editing', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'source', editing: true })
+      const btn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Rendered')
+      expect(btn).toBeTruthy()
+      expect((btn!.element as HTMLButtonElement).disabled).toBe(true)
+    })
+
+    it('sits directly beside the edit button with no other buttons in between', () => {
+      const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'source', editing: false })
+      const btns = wrapper.findAll('.header-actions .file-header-btn')
+      const toggleIndex = btns.findIndex(b => b.attributes('title') === 'Rendered')
+      const editIndex = btns.findIndex(b => b.attributes('title') === 'Edit')
+      expect(toggleIndex).toBeGreaterThanOrEqual(0)
+      expect(editIndex).toBe(toggleIndex + 1)
+    })
+  })
+
   it('emits openAsText when handleOpenAsText is called', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
     const vm = wrapper.vm as any

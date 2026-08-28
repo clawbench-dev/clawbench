@@ -30,10 +30,16 @@
       <!-- Refresh button -->
       <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
 
-      <!-- Toggle view button (source/rendered) -->
-      <button v-if="toolbarInlineIds.includes('toggleView')" class="file-header-btn" @click.stop="handleToggleView" :title="effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
-        <Code2 v-if="effectiveViewMode === 'rendered'" :size="14" />
-        <Eye v-else :size="14" />
+      <!-- Toggle view button (source/rendered). Always an eye icon: highlighted
+           when the rendered preview is shown, dimmed for the source view. It is
+           disabled while editing so the edit button stays the sole relevant control. -->
+      <button v-if="toolbarInlineIds.includes('toggleView')" class="file-header-btn" :class="{ active: effectiveViewMode === 'rendered' }" :disabled="editing" @click.stop="handleToggleView" :title="effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
+        <Eye :size="14" />
+      </button>
+
+      <!-- Edit toggle button — always directly beside the preview toggle -->
+      <button v-if="toolbarInlineIds.includes('edit')" class="file-header-btn" :class="{ active: editing }" @click.stop="handleToggleEdit" :title="editing ? t('file.header.finishEditing') : t('file.header.edit')">
+        <Pencil :size="14" />
       </button>
 
       <!-- Word wrap toggle button -->
@@ -49,11 +55,6 @@
       <!-- Sticky scroll toggle button -->
       <button v-if="toolbarInlineIds.includes('stickyScroll')" class="file-header-btn" :class="{ active: stickyScroll }" @click.stop="handleToggleStickyScroll" :title="t('file.header.stickyScroll')">
         <Pin :size="14" />
-      </button>
-
-      <!-- Edit toggle button -->
-      <button v-if="toolbarInlineIds.includes('edit')" class="file-header-btn" :class="{ active: editing }" @click.stop="handleToggleEdit" :title="editing ? t('file.header.finishEditing') : t('file.header.edit')">
-        <Pencil :size="14" />
       </button>
 
       <!-- Open as text button (binary files only) -->
@@ -119,10 +120,13 @@
               <RotateCw :size="14" />
               {{ t('nav.refresh') }}
             </button>
-            <button v-if="toolbarCollapsedIds.includes('toggleView')" class="dropdown-item" @click="handleToggleView">
-              <Code2 v-if="effectiveViewMode === 'rendered'" :size="14" />
-              <Eye v-else :size="14" />
+            <button v-if="toolbarCollapsedIds.includes('toggleView')" class="dropdown-item" :class="{ active: effectiveViewMode === 'rendered' }" :disabled="editing" @click="handleToggleView">
+              <Eye :size="14" />
               {{ effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}
+            </button>
+            <button v-if="toolbarCollapsedIds.includes('edit')" class="dropdown-item" :class="{ active: editing }" @click="handleToggleEdit">
+              <Pencil :size="14" />
+              {{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}
             </button>
             <button v-if="toolbarCollapsedIds.includes('wordWrap')" class="dropdown-item" @click="handleToggleWordWrap">
               <TextWrap :size="14" />
@@ -138,10 +142,6 @@
               <Pin :size="14" />
               {{ t('file.header.stickyScroll') }}
               <span v-if="stickyScroll" class="wrap-check">✓</span>
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('edit')" class="dropdown-item" :class="{ active: editing }" @click="handleToggleEdit">
-              <Pencil :size="14" />
-              {{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}
             </button>
             <!-- Collapsible extra items (shown inline when space allows) -->
             <button v-if="file.isBinary && toolbarCollapsedIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText(); menuOpen = false">
@@ -195,7 +195,7 @@ import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -253,10 +253,12 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     ids.push('attach')
     if (hasTextContent.value) ids.push('refresh')
     if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value)) ids.push('toggleView')
+    // Edit always sits right next to the preview toggle: the two form a single
+    // view-mode control pair with no other buttons in between.
+    if (isEditable.value) ids.push('edit')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('wordWrap')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('lineNumbers')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('stickyScroll')
-    if (isEditable.value) ids.push('edit')
     // Extra actions demote to the More dropdown when space runs out.
     // Order = left-to-right display priority; delete is kept last.
     if (props.file?.isBinary) ids.push('openAsText')
@@ -661,6 +663,11 @@ onBeforeUnmount(() => {
 }
 .file-header-dropdown-menu .dropdown-item svg {
     flex-shrink: 0;
+}
+.file-header-dropdown-menu .dropdown-item:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 .file-header-dropdown-menu .dropdown-divider {
     height: 1px; background: var(--border-color); margin: 4px 0;
