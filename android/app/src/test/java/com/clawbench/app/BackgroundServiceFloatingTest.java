@@ -15,6 +15,10 @@ import org.robolectric.annotation.Config;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
+
 import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -352,6 +356,146 @@ public class BackgroundServiceFloatingTest {
     }
 
     // =====================================================
+    // Overview fetch: fetchOverviewSessions pulls /api/ai/sessions/overview
+    // and hands the parsed JSON to the controller
+    // =====================================================
+
+    /** Seed the CookieManager so fetchOverviewSessions has auth cookies. */
+    private void seedCookies(String url) {
+        android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance();
+        cm.setCookie(url, "clawbench_session=abc; clawbench_project=/proj");
+        cm.flush();
+    }
+
+    private static final String OVERVIEW_BODY =
+            "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"t1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}";
+
+    @Test
+    public void fetchOverviewSessions_hitsOverviewEndpoint_andPassesJsonToController() throws Exception {
+        MockWebServer server = new MockWebServer();
+        server.enqueue(new MockResponse().setResponseCode(200).setBody(OVERVIEW_BODY));
+        server.start();
+
+        try {
+            String url = "http://" + server.getHostName() + ":" + server.getPort();
+            seedCookies(url);
+
+            FloatingStatusController controller = mock(FloatingStatusController.class);
+            setField(service, "floatingController", controller);
+
+            invokeMethod(service, "fetchOverviewSessions", url);
+
+            RecordedRequest request = server.takeRequest();
+            assertEquals("fetch must hit /api/ai/sessions/overview",
+                    "/api/ai/sessions/overview", request.getPath());
+
+            org.mockito.ArgumentCaptor<org.json.JSONObject> captor =
+                    org.mockito.ArgumentCaptor.forClass(org.json.JSONObject.class);
+            verify(controller).onOverviewLoaded(captor.capture());
+            assertEquals("s1", captor.getValue().optJSONArray("projects")
+                    .optJSONObject(0).optJSONArray("sessions").optJSONObject(0).optString("id"));
+        } finally {
+            server.shutdown();
+        }
+    }
+
+    @Test
+    public void fetchOverviewSessions_httpError_doesNotCallOnOverviewLoaded() throws Exception {
+        MockWebServer server = new MockWebServer();
+        server.enqueue(new MockResponse().setResponseCode(500));
+        server.start();
+
+        try {
+            String url = "http://" + server.getHostName() + ":" + server.getPort();
+            seedCookies(url);
+
+            FloatingStatusController controller = mock(FloatingStatusController.class);
+            setField(service, "floatingController", controller);
+
+            invokeMethod(service, "fetchOverviewSessions", url);
+
+            verify(controller, never()).onOverviewLoaded(any(org.json.JSONObject.class));
+        } finally {
+            server.shutdown();
+        }
+    }
+
+    @Test
+    public void fetchOverviewSessions_nullController_noThrow() throws Exception {
+        MockWebServer server = new MockWebServer();
+        server.enqueue(new MockResponse().setResponseCode(200).setBody(OVERVIEW_BODY));
+        server.start();
+
+        try {
+            String url = "http://" + server.getHostName() + ":" + server.getPort();
+            seedCookies(url);
+            setField(service, "floatingController", null);
+
+            invokeMethod(service, "fetchOverviewSessions", url);
+            // No exception thrown; no controller to notify.
+        } finally {
+            server.shutdown();
+        }
+    }
+
+    // =====================================================
+    // onCreate wiring: controller callbacks + overview request listener
+    // =====================================================
+
+    @Test
+    public void onCreate_wiresSessionClickAndOverviewRequestListener() throws Exception {
+        BackgroundService.setFloatingWindowEnabled(appContext, true);
+        setStaticField("instance", null);
+
+        invokeMethod(service, "onCreate");
+
+        Object controller = getField(service, "floatingController");
+        assertNotNull(controller);
+
+        Field sessionClick = FloatingStatusController.class.getDeclaredField("onSessionClick");
+        sessionClick.setAccessible(true);
+        assertNotNull("onCreate must wire the panel session-click callback",
+                sessionClick.get(controller));
+
+        Field overviewListener = FloatingStatusController.class.getDeclaredField("overviewRequestListener");
+        overviewListener.setAccessible(true);
+        assertNotNull("onCreate must wire the overview request listener",
+                overviewListener.get(controller));
+    }
+
+    @Test
+    public void overviewRequestListener_fetchesOverviewFromServer() throws Exception {
+        BackgroundService.setFloatingWindowEnabled(appContext, true);
+        setStaticField("instance", null);
+        invokeMethod(service, "onCreate");
+
+        Object controller = getField(service, "floatingController");
+        assertNotNull(controller);
+
+        MockWebServer server = new MockWebServer();
+        server.enqueue(new MockResponse().setResponseCode(200).setBody(OVERVIEW_BODY));
+        server.start();
+
+        try {
+            String url = "http://" + server.getHostName() + ":" + server.getPort();
+            seedCookies(url);
+            service.getSharedPreferences("clawbench_prefs", Context.MODE_PRIVATE)
+                    .edit().putString("server_url", url).commit();
+
+            FloatingStatusController.OverviewRequestListener listener =
+                    (FloatingStatusController.OverviewRequestListener) getField(controller, "overviewRequestListener");
+            assertNotNull(listener);
+            listener.onRequestOverview();
+
+            RecordedRequest request = server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertNotNull("listener must trigger an overview fetch", request);
+            assertEquals("/api/ai/sessions/overview", request.getPath());
+        } finally {
+            server.shutdown();
+        }
+    }
+
+    // =====================================================
     // Internal listener invocation + helpers
     // =====================================================
 
@@ -388,9 +532,20 @@ public class BackgroundServiceFloatingTest {
     }
 
     private Object getField(Object target, String name) throws Exception {
-        Field f = BackgroundService.class.getDeclaredField(name);
-        f.setAccessible(true);
-        return f.get(target);
+        return getFieldIn(target, name, target.getClass());
+    }
+
+    private Object getFieldIn(Object target, String name, Class<?> clazz) throws Exception {
+        try {
+            Field f = clazz.getDeclaredField(name);
+            f.setAccessible(true);
+            return f.get(target);
+        } catch (NoSuchFieldException e) {
+            if (clazz.getSuperclass() != null) {
+                return getFieldIn(target, name, clazz.getSuperclass());
+            }
+            throw e;
+        }
     }
 
     private void setField(Object target, String name, Object value) throws Exception {

@@ -357,6 +357,17 @@ public class BackgroundService extends Service {
         boolean enabled = isFloatingWindowEnabled(this);
         if (enabled && floatingController == null) {
             floatingController = new FloatingStatusController(this, floatingOnTap);
+            // Panel session-row taps deep-link into the tapped session
+            // (capsule taps keep using floatingSessionId via floatingOnTap).
+            floatingController.setOnSessionClick(sid -> MainActivity.launchFromFloatingWindow(sid));
+            // Every panel expand / event-while-expanded pulls a fresh overview.
+            floatingController.setOverviewRequestListener(() -> {
+                String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .getString(KEY_SERVER_URL, "");
+                if (!serverUrl.isEmpty()) {
+                    networkExecutor.execute(() -> fetchOverviewSessions(serverUrl));
+                }
+            });
             // Only show the capsule while the app is in the background.
             if (MainActivity.isForeground) {
                 floatingController.setAppForeground(true);
@@ -2351,9 +2362,9 @@ public class BackgroundService extends Service {
                 // The floating window's "hasActive" state is event-driven, but the
                 // "running" session_update is broadcast once at session start — which
                 // may have happened while the native WS was down (app foreground).
-                // Poll /api/sessions on connect so a running session shows the
-                // capsule even though the start event was missed.
-                networkExecutor.execute(() -> fetchRunningSessions(serverUrl));
+                // Poll /api/ai/sessions/overview on connect so the running session
+                // shows the capsule even though the start event was missed.
+                networkExecutor.execute(() -> fetchOverviewSessions(serverUrl));
             }
         }
 
@@ -2742,23 +2753,32 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * Poll /api/ai/sessions for a currently-running session and notify the
-     * floating window controller so the capsule appears even when the
-     * "running" session_update event was broadcast while the native WS was
-     * down (e.g. session started while the app was in the foreground).
-     * MUST be called from a background thread (network I/O).
+     * Poll /api/ai/sessions/overview and hand the raw JSON to the floating
+     * window controller. Two purposes:
+     *
+     * 1. On WS connect: a running session is reported via the "running"
+     *    session_update event, which may have been broadcast while the native
+     *    WS was down (e.g. session started while the app was in the
+     *    foreground). The overview re-seeds the capsule so it appears anyway.
+     * 2. On panel expand (and every event while expanded): refreshes the
+     *    grouped session list rendered in the panel.
+     *
+     * Parsing is left to the controller/panel (buildGroups); this method only
+     * forwards the JSONObject. MUST be called from a background thread
+     * (network I/O).
      */
-    private void fetchRunningSessions(String serverUrl) {
+    private void fetchOverviewSessions(String serverUrl) {
         if (floatingController == null) {
             return;
         }
         try {
-            // Send ALL cookies for this host (session + project). The /api/ai/sessions
-            // endpoint requires the project cookie (clawbench_project) via requireProject;
-            // sending only the session cookie yields HTTP 403.
+            // Send ALL cookies for this host (session + project). The
+            // /api/ai/sessions/overview endpoint requires the project cookie
+            // (clawbench_project) via requireProject; sending only the session
+            // cookie yields HTTP 403.
             String cookies = android.webkit.CookieManager.getInstance().getCookie(serverUrl);
             if (cookies == null || cookies.trim().isEmpty()) {
-                AppLog.d(TAG, "FloatingWindow: no cookies, skipping sessions poll");
+                AppLog.d(TAG, "FloatingWindow: no cookies, skipping overview poll");
                 return;
             }
 
@@ -2775,14 +2795,14 @@ public class BackgroundService extends Service {
             }
 
             Request request = new Request.Builder()
-                    .url(serverUrl + "/api/ai/sessions")
+                    .url(serverUrl + "/api/ai/sessions/overview")
                     .header("Cookie", cookies)
                     .get()
                     .build();
 
             try (Response response = clientBuilder.build().newCall(request).execute()) {
                 if (!response.isSuccessful()) {
-                    AppLog.d(TAG, "FloatingWindow: /api/ai/sessions returned HTTP " + response.code());
+                    AppLog.d(TAG, "FloatingWindow: /api/ai/sessions/overview returned HTTP " + response.code());
                     return;
                 }
                 String body = response.body() != null ? response.body().string() : "";
@@ -2790,35 +2810,10 @@ public class BackgroundService extends Service {
                     return;
                 }
                 JSONObject data = new JSONObject(body);
-                if (FloatingStatusController.hasRunningSession(data)) {
-                    // Pick the first running session for the capsule title.
-                    String sessionId = "";
-                    String sessionTitle = "";
-                    JSONArray sessions = data.optJSONArray("sessions");
-                    if (sessions != null) {
-                        for (int i = 0; i < sessions.length(); i++) {
-                            JSONObject s = sessions.optJSONObject(i);
-                            if (s != null && s.optBoolean("running", false)) {
-                                sessionId = s.optString("id", "");
-                                sessionTitle = s.optString("title", "");
-                                break;
-                            }
-                        }
-                    }
-                    final String fId = sessionId;
-                    final String fTitle = sessionTitle;
-                    if (fId.isEmpty()) {
-                        AppLog.i(TAG, "FloatingWindow: running session found but missing id");
-                        return;
-                    }
-                    AppLog.i(TAG, "FloatingWindow: running session detected via poll: " + fId);
-                    floatingController.notifyRunningSession(fId, fTitle);
-                } else {
-                    AppLog.d(TAG, "FloatingWindow: no running session in poll");
-                }
+                floatingController.onOverviewLoaded(data);
             }
         } catch (Exception e) {
-            AppLog.w(TAG, "FloatingWindow: sessions poll failed", e);
+            AppLog.w(TAG, "FloatingWindow: overview poll failed", e);
         }
     }
 
