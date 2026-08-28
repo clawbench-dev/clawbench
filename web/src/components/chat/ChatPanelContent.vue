@@ -1069,7 +1069,7 @@ async function ensureMessageContent(msg) {
         // back into this chat) ends up visually stuck mid-list. Re-sync once:
         // - at bottom (session switch): isAtBottom=true → pinned back to bottom
         // - user manually toggled original while reading: isAtBottom=false → keep position
-        scrollBottom()
+        if (messageListRef.value?.isAtBottom?.()) scrollBottom()
     } catch (err) {
         appLog.w(TAG, 'failed to load original content', err)
     } finally {
