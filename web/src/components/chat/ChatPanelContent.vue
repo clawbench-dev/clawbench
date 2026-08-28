@@ -362,7 +362,7 @@ const session = useChatSession({
   onParseAssistantContent: (content) => render.parseAssistantContent(content),
   onExtractScheduledTasks: (msgs) => render.extractScheduledTasks(msgs),
   onRenderUpdate: (forceFull) => render.updateRenderedContents(forceFull),
-  onScrollBottom: (force) => scrollBottom(force),
+  onScrollBottom: (force, streaming) => scrollBottom(force, streaming),
   onDisconnectStream: () => stream.disconnectStream(),
   onOpen: () => emit('open'),
   onStreamDone: playNotificationSound,
@@ -434,7 +434,7 @@ const stream = useChatStream({
   currentBackend: identity.currentBackend,
   loading,
   onRenderNeeded: (forceFull) => render.updateRenderedContents(forceFull),
-  onScrollBottom: (force) => scrollBottom(force),
+  onScrollBottom: (force, streaming) => scrollBottom(force, streaming),
   onLoadHistory: () => session.loadHistory(false),
   onMessage: () => emit('message'),
   onOpen: () => emit('open'),
@@ -909,8 +909,8 @@ async function handleToolSendMessage(text) {
     }
 }
 
-function scrollBottom(force = false) {
-    messageListRef.value?.scrollToBottom(force)
+function scrollBottom(force = false, streaming = false) {
+    messageListRef.value?.scrollToBottom(force, streaming)
 }
 
 async function handleLoadMore() {
