@@ -85,12 +85,21 @@ describe('CompletionPopover', () => {
     })
 
     it('renders the project name and path when provided', () => {
-        mockState.active = ref(makeItem({ projectName: 'my-app', projectPath: '/home/user/my-app' }))
+        mockState.active = ref(makeItem({ projectName: 'my-app', projectPath: '/home/user' }))
         mountPopover()
 
-        const el = document.querySelector('.completion-popover-project')!
-        expect(el.textContent).toContain('my-app')
-        expect(el.textContent).toContain('/home/user/my-app')
+        const nameEl = document.querySelector('.completion-popover-project-name')!
+        expect(nameEl.textContent).toBe('my-app')
+        const pathEl = document.querySelector('.completion-popover-project-path')!
+        expect(pathEl.textContent).toBe('/home/user')
+    })
+
+    it('hides the project path span when projectPath is empty', () => {
+        mockState.active = ref(makeItem({ projectName: 'my-app', projectPath: '' }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-popover-project-name')).toBeTruthy()
+        expect(document.querySelector('.completion-popover-project-path')).toBeFalsy()
     })
 
     it('hides the project row when projectName is empty (same project)', () => {

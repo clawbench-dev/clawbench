@@ -16,7 +16,9 @@
           </div>
           <div v-if="active.projectName" class="completion-popover-meta">
             <span class="completion-popover-project" :title="active.projectPath || active.projectName">
-              <Folder :size="11" /> {{ active.projectName }}{{ active.projectPath ? ' · ' + active.projectPath : '' }}
+              <Folder :size="11" />
+              <span class="completion-popover-project-name">{{ active.projectName }}</span>
+              <span v-if="active.projectPath" class="completion-popover-project-path">{{ active.projectPath }}</span>
             </span>
           </div>
           <div v-if="active.userMessage" class="completion-popover-meta">
@@ -246,7 +248,19 @@ function handleSummaryClick(event: MouseEvent): void {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    opacity: 0.85;
+}
+
+.completion-popover-project {
+    gap: 5px;
+}
+
+.completion-popover-project-name {
+    font-weight: 600;
+    color: var(--text-secondary, var(--text-primary));
+}
+
+.completion-popover-project-path {
+    opacity: 0.7;
 }
 
 .completion-popover-summary {
