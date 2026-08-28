@@ -74,10 +74,20 @@
 - `handleEvent` 更新本地会话状态集合（running 加入、completed/cancelled 移出）
 - 收到事件后若面板展开 → 重新拉取 overview 刷新列表
 
+## 主题配色
+
+悬浮窗必须匹配 app 当前主题（20+ 种主题）。方案：**前端把颜色传给原生**。
+
+- 前端 `setTheme(themeId)` 桥扩展为附带颜色：`setTheme(themeId, bg, text, textSecondary, accent)`
+- 来源：`themeMeta.ts` 的 `preview`（bg/text/accent）+ `getComputedStyle` 读 `--text-secondary`
+- 原生持久化到 SharedPreferences，悬浮窗读取；主题切换即时生效，重启保留
+- 状态色（绿/黄/红）保持固定语义色，不随主题
+
 ## 测试
 
 - 后端：overview handler 单测（分组、过滤、running/pending/unread 标注、跨 project unread）
 - Android：状态机（单/多会话点击决策）、overview JSON 解析、列表渲染数据映射
+- 前端：setTheme 传色桥单测
 
 ## 文件变更
 
