@@ -209,26 +209,29 @@ public class FloatingStatusControllerTest {
     }
 
     // =====================================================
-    // decideCapsuleClick: pure tap-decision function
+    // Panel height sizing: height-follows-content (Task 3)
     // =====================================================
 
     @Test
-    public void decideCapsuleClick_singleRunning_opensSession() {
-        assertEquals(FloatingStatusController.CLICK_OPEN_SESSION,
-                FloatingStatusController.decideCapsuleClick(1));
+    public void panelHeightForContent_clampsToScreen() {
+        // Content taller than the screen must be capped at the screen height.
+        assertEquals(600, FloatingStatusController.panelHeightForContent(800, 600));
     }
 
     @Test
-    public void decideCapsuleClick_multipleRunning_expandsPanel() {
-        assertEquals(FloatingStatusController.CLICK_EXPAND_PANEL,
-                FloatingStatusController.decideCapsuleClick(2));
+    public void panelHeightForContent_smallContent_notClamped() {
+        assertEquals(200, FloatingStatusController.panelHeightForContent(200, 600));
     }
 
     @Test
-    public void decideCapsuleClick_zeroRunning_expandsPanel() {
-        // No running sessions (e.g. only unread) -> expand panel to view the list.
-        assertEquals(FloatingStatusController.CLICK_EXPAND_PANEL,
-                FloatingStatusController.decideCapsuleClick(0));
+    public void panelHeightForContent_zeroScreen_clamps() {
+        // A zero screen height (unlikely) must still yield a finite height.
+        assertEquals(0, FloatingStatusController.panelHeightForContent(200, 0));
+    }
+
+    @Test
+    public void panelHeightForContent_zeroContent_returnsZero() {
+        assertEquals(0, FloatingStatusController.panelHeightForContent(0, 600));
     }
 
     // =====================================================
@@ -342,25 +345,8 @@ public class FloatingStatusControllerTest {
         controller.destroy();
     }
 
-    @Test
-    public void shouldOpenSessionOnCapsuleTap_singleRunning_true() throws Exception {
-        FloatingStatusController controller = newController();
-        controller.handleEvent("session_update", sessionEvent("running", "s1"));
-        assertTrue(controller.shouldOpenSessionOnCapsuleTap());
-        controller.destroy();
-    }
-
-    @Test
-    public void shouldOpenSessionOnCapsuleTap_multipleRunning_false() throws Exception {
-        FloatingStatusController controller = newController();
-        controller.handleEvent("session_update", sessionEvent("running", "s1"));
-        controller.handleEvent("session_update", sessionEvent("running", "s2"));
-        assertFalse(controller.shouldOpenSessionOnCapsuleTap());
-        controller.destroy();
-    }
-
     // =====================================================
-    // onCapsuleTap: capsule tap decision wiring
+    // onCapsuleTap: unified expand-panel tap (Task 3)
     // =====================================================
 
     /** Track whether the onTap Runnable was invoked. */
@@ -369,7 +355,9 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void capsuleTap_singleRunning_invokesOnTap() throws Exception {
+    public void onCapsuleTap_singleRunning_expandsPanelNotSession() throws Exception {
+        // Capsule tap is now a unified "expand the panel" gesture: even with a
+        // single running session it must NOT open the session directly.
         TapRecorder recorder = new TapRecorder();
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
@@ -377,13 +365,15 @@ public class FloatingStatusControllerTest {
 
         controller.onCapsuleTap();
 
-        assertTrue("single running session tap must open the session (invoke onTap)",
+        assertFalse("single running session tap must not open the session",
                 recorder.tapped);
+        assertTrue("single running session tap must expand the panel",
+                controller.isExpanded());
         controller.destroy();
     }
 
     @Test
-    public void capsuleTap_multipleRunning_doesNotInvokeOnTap() throws Exception {
+    public void onCapsuleTap_multipleRunning_expandsPanel() throws Exception {
         TapRecorder recorder = new TapRecorder();
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
@@ -392,8 +382,9 @@ public class FloatingStatusControllerTest {
 
         controller.onCapsuleTap();
 
-        assertFalse("multiple running sessions tap must expand the panel, not open a session",
+        assertFalse("multiple running sessions tap must not open a session",
                 recorder.tapped);
+        assertTrue(controller.isExpanded());
         controller.destroy();
     }
 
@@ -405,16 +396,16 @@ public class FloatingStatusControllerTest {
 
         controller.onCapsuleTap();
 
-        assertFalse("no running sessions tap must expand the panel, not open a session",
+        assertFalse("no running sessions tap must not open a session",
                 recorder.tapped);
         assertTrue(controller.isExpanded());
         controller.destroy();
     }
 
     @Test
-    public void onCapsuleTap_singleRunning_whenExpanded_stillOpensSession() throws Exception {
-        // A tap while the panel is already expanded should still respect the
-        // single-session decision (open the session) rather than collapsing.
+    public void onCapsuleTap_whenAlreadyExpanded_staysExpanded() throws Exception {
+        // A tap while the panel is already expanded keeps it expanded rather
+        // than collapsing (the capsule is not attached in that state anyway).
         TapRecorder recorder = new TapRecorder();
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
@@ -424,15 +415,15 @@ public class FloatingStatusControllerTest {
 
         controller.onCapsuleTap();
 
-        assertTrue(recorder.tapped);
+        assertFalse(recorder.tapped);
+        assertTrue(controller.isExpanded());
         controller.destroy();
     }
 
     @Test
-    public void capsuleTapTouchEvent_multipleRunning_expandsPanel() throws Exception {
+    public void capsuleTapTouchEvent_expandsPanel() throws Exception {
         // Real touch path: ACTION_UP on the capsule view must route through
-        // onCapsuleTap (decideCapsuleClick), so multiple running sessions
-        // expand the panel instead of opening a session.
+        // onCapsuleTap and always expand the panel, never open a session.
         TapRecorder recorder = new TapRecorder();
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
@@ -455,8 +446,23 @@ public class FloatingStatusControllerTest {
         capsule.dispatchTouchEvent(up);
         ShadowLooper.runUiThreadTasks();
 
-        assertFalse("multi-session capsule tap must not open a session", recorder.tapped);
-        assertTrue("multi-session capsule tap must expand the panel", controller.isExpanded());
+        assertFalse("capsule tap must not open a session", recorder.tapped);
+        assertTrue("capsule tap must expand the panel", controller.isExpanded());
+        controller.destroy();
+    }
+
+    @Test
+    public void onCapsuleTap_ignoresOnTapRunnable() throws Exception {
+        // The onTap runnable (legacy "open most recent session") must never fire
+        // from a capsule tap now that taps always expand the panel.
+        TapRecorder recorder = new TapRecorder();
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+
+        controller.onCapsuleTap();
+
+        assertFalse("onTap must not be invoked by a capsule tap", recorder.tapped);
         controller.destroy();
     }
 

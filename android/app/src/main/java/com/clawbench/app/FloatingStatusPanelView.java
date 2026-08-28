@@ -1,10 +1,12 @@
 package com.clawbench.app;
 
+import android.animation.ObjectAnimator;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -14,7 +16,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiConsumer;
 
 /**
@@ -23,10 +27,22 @@ import java.util.function.BiConsumer;
  * Renders the /api/ai/sessions/overview response as a scrollable list grouped
  * by project. UI is built in code (no XML): a header row with a live-session
  * count and a collapse ("×") button, followed by per-project group headers and
- * session rows. Each session row shows a status indicator (green running dot,
- * yellow pending-approval dot, or nothing), a single-line ellipsized title,
- * and a red circular unread badge when unreadCount > 0. Tapping a row invokes
- * the onSessionClick callback.
+ * session rows. Each session row shows a tri-color status indicator, a
+ * single-line ellipsized title, and a red circular unread badge when
+ * unreadCount > 0. Tapping a row invokes the onSessionClick callback.
+ *
+ * Status dots follow a fixed priority (yellow > green > blue):
+ *   - PENDING  (yellow): pendingApproval, regardless of running/unread
+ *   - RUNNING  (green):  running && !pendingApproval — the dot breathes
+ *   - UNREAD   (blue):   !running && !pendingApproval && unreadCount > 0
+ *   - NONE:     no dot
+ * The decision is the static pure function statusDotKind(SessionItem) so it
+ * is unit-testable without an Android framework.
+ *
+ * The panel's height is content-driven: the controller measures
+ * measureContentHeight(widthPx) after rendering and clamps it to the screen.
+ * constrainListHeight caps the inner ScrollView at (panel - header) so the
+ * list scrolls instead of stretching the window.
  *
  * The static buildGroups pure function parses overview JSON into model lists
  * with no Android framework dependency (org.json + plain lists), so it is
@@ -41,6 +57,7 @@ public class FloatingStatusPanelView extends FrameLayout {
     // Colors as inline ARGB literals to keep pure functions framework-free.
     private static final int COLOR_RUNNING = 0xFF00CC00; // green
     private static final int COLOR_PERMISSION_PENDING = 0xFFE6A23C; // yellow
+    private static final int COLOR_UNREAD = 0xFF3B82F6; // blue
 
     // github-dark fallback palette (overridden at construction by the
     // persisted theme palette via FloatingThemeColors).
@@ -50,7 +67,6 @@ public class FloatingStatusPanelView extends FrameLayout {
 
     // Layout constants.
     private static final int PANEL_WIDTH_DP = 280;
-    private static final int MAX_HEIGHT_DP = 400;
     private static final int CORNER_RADIUS_DP = 18;
     private static final int PADDING_H_DP = 14;
     private static final int PADDING_V_DP = 10;
@@ -67,12 +83,39 @@ public class FloatingStatusPanelView extends FrameLayout {
     private static final int BADGE_TEXT_SIZE_SP = 10;
     private static final int BADGE_MARGIN_START_DP = 6;
 
+    // Breathing animation for a running session's green dot (same rhythm as
+    // the capsule's running dot in FloatingStatusView).
+    private static final float BREATH_ALPHA_MIN = 0.3f;
+    private static final float BREATH_ALPHA_MAX = 1.0f;
+    private static final long BREATH_MS = 800;
+
+    /**
+     * Status-dot kind for a session row. Pure: no framework deps.
+     *
+     * Priority is yellow > green > blue (pending approval needs user action,
+     * then running activity, then unread content).
+     */
+    public enum StatusDotKind {
+        /** Pending approval (yellow) — wins over running and unread. */
+        PENDING,
+        /** Running without pending approval (green, breathing). */
+        RUNNING,
+        /** Idle with unread messages (blue). */
+        UNREAD,
+        /** No dot. */
+        NONE
+    }
+
     private final float density;
     private final TextView headerTitleView;
+    private final LinearLayout headerLayout;
     private final LinearLayout listContainer;
+    private final ScrollView scrollView;
     private final int colorTextPrimary;
     private final int colorTextSecondary;
     private Runnable onCollapseClick;
+    /** Views currently breathing; stopped when rows are rebuilt. */
+    private final List<View> breathingDots = new ArrayList<>();
 
     /**
      * A single session as it appears in the overview list.
@@ -150,6 +193,25 @@ public class FloatingStatusPanelView extends FrameLayout {
         return groups;
     }
 
+    /**
+     * Decide the status-dot kind for a session. Pure: no framework deps.
+     * Pending (yellow) wins over running (green); either wins over unread
+     * (blue). Sessions that are neither running nor pending with no unread get
+     * no dot.
+     */
+    public static StatusDotKind statusDotKind(SessionItem s) {
+        if (s.pendingApproval) {
+            return StatusDotKind.PENDING;
+        }
+        if (s.running) {
+            return StatusDotKind.RUNNING;
+        }
+        if (s.unreadCount > 0) {
+            return StatusDotKind.UNREAD;
+        }
+        return StatusDotKind.NONE;
+    }
+
     public FloatingStatusPanelView(Context context, BiConsumer<String, String> onSessionClick) {
         super(context);
         density = getResources().getDisplayMetrics().density;
@@ -177,6 +239,7 @@ public class FloatingStatusPanelView extends FrameLayout {
         LinearLayout header = new LinearLayout(context);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
+        headerLayout = header;
         headerTitleView = new TextView(context);
         headerTitleView.setTextSize(HEADER_TITLE_SIZE_SP);
         headerTitleView.setTextColor(colorTextPrimary);
@@ -201,25 +264,28 @@ public class FloatingStatusPanelView extends FrameLayout {
         root.addView(header, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        // Scrollable session list.
-        ScrollView scrollView = new ScrollView(context);
+        // Scrollable session list. The scroll area's height is capped by
+        // constrainListHeight so the whole panel stays at the content height
+        // (and scrolls once content exceeds the window).
+        scrollView = new ScrollView(context);
         scrollView.setVerticalScrollBarEnabled(false);
         listContainer = new LinearLayout(context);
         listContainer.setOrientation(LinearLayout.VERTICAL);
         scrollView.addView(listContainer, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
         root.addView(scrollView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        addView(root, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+        addView(root, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
-        // Panel size: ~280dp wide, max ~400dp tall (scrolls beyond that).
+        // Panel width: fixed ~280dp. Height is content-driven and set by the
+        // controller after render (measureContentHeight + clamp to screen).
         LayoutParams selfLp = (LayoutParams) getLayoutParams();
         if (selfLp == null) {
             selfLp = new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
         }
         selfLp.width = dp(PANEL_WIDTH_DP);
-        selfLp.height = dp(MAX_HEIGHT_DP);
+        selfLp.height = LayoutParams.WRAP_CONTENT;
         setLayoutParams(selfLp);
     }
 
@@ -230,7 +296,8 @@ public class FloatingStatusPanelView extends FrameLayout {
     /**
      * Rebuild the panel content from an overview JSON object. Safe to call on
      * the UI thread; replaces the entire list so refreshes never accumulate
-     * stale rows.
+     * stale rows. Running-dot breathing is restarted for the new rows (and
+     * stopped for any rows discarded by this rebuild).
      *
      * @param onSessionClick receives (sessionId, projectPath) for the tapped
      *                       session; projectPath is the owning ProjectGroup.name
@@ -252,13 +319,43 @@ public class FloatingStatusPanelView extends FrameLayout {
         headerTitleView.setText(runningCount > 0
                 ? runningCount + " 个会话运行中" : "会话列表");
 
+        stopBreathing();
         listContainer.removeAllViews();
+        breathingDots.clear();
         for (ProjectGroup group : groups) {
             listContainer.addView(buildProjectHeader(group.name));
             for (SessionItem session : group.sessions) {
                 listContainer.addView(buildSessionRow(session, group.name, onSessionClick));
             }
         }
+        startBreathing();
+    }
+
+    /**
+     * Measure the panel's desired height for its current content at the given
+     * width. The panel is laid out at width x 0 so the header and list compute
+     * their intrinsic heights; the result is the content height including
+     * padding. UI thread only.
+     */
+    public int measureContentHeight(int widthPx) {
+        measure(
+                View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        return getMeasuredHeight();
+    }
+
+    /**
+     * Cap the inner scroll area so the whole panel's height stays at targetPx:
+     * the scroll area gets exactly (targetPx - fixed header height - padding),
+     * and the list scrolls once content exceeds that. UI thread only.
+     */
+    public void constrainListHeight(int targetPx) {
+        int fixedPx = headerLayout.getMeasuredHeight()
+                + getPaddingTop() + getPaddingBottom();
+        int maxScrollPx = Math.max(0, targetPx - fixedPx);
+        ViewGroup.LayoutParams lp = scrollView.getLayoutParams();
+        lp.height = maxScrollPx;
+        scrollView.setLayoutParams(lp);
     }
 
     private View buildProjectHeader(String name) {
@@ -281,15 +378,18 @@ public class FloatingStatusPanelView extends FrameLayout {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
 
-        // Status indicator: yellow dot (pending approval) wins over green dot
-        // (running) since pending approval needs user action, none otherwise.
-        if (session.pendingApproval || session.running) {
+        // Tri-color status dot: yellow (pending) > green (running, breathing)
+        // > blue (unread), else none.
+        StatusDotKind kind = statusDotKind(session);
+        if (kind != StatusDotKind.NONE) {
             View dot = new View(getContext());
             GradientDrawable dotDrawable = new GradientDrawable();
             dotDrawable.setShape(GradientDrawable.OVAL);
-            dotDrawable.setColor(session.pendingApproval
-                    ? COLOR_PERMISSION_PENDING : COLOR_RUNNING);
+            dotDrawable.setColor(colorFor(kind));
             dot.setBackground(dotDrawable);
+            if (kind == StatusDotKind.RUNNING) {
+                breathingDots.add(dot);
+            }
             LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(
                     dp(DOT_SIZE_DP), dp(DOT_SIZE_DP));
             dotLp.setMargins(0, 0, dp(DOT_MARGIN_END_DP), 0);
@@ -307,7 +407,8 @@ public class FloatingStatusPanelView extends FrameLayout {
         row.addView(title, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        // Unread badge: red circle with the unread count when > 0.
+        // Unread badge: red circle with the unread count when > 0. Kept even
+        // when a blue dot already signals unread — the badge shows the count.
         if (session.unreadCount > 0) {
             TextView badge = new TextView(getContext());
             badge.setText(String.valueOf(session.unreadCount));
@@ -336,6 +437,53 @@ public class FloatingStatusPanelView extends FrameLayout {
         lp.topMargin = dp(SESSION_ROW_PADDING_TOP_DP);
         row.setLayoutParams(lp);
         return row;
+    }
+
+    private int colorFor(StatusDotKind kind) {
+        switch (kind) {
+            case PENDING:
+                return COLOR_PERMISSION_PENDING;
+            case UNREAD:
+                return COLOR_UNREAD;
+            case RUNNING:
+            default:
+                return COLOR_RUNNING;
+        }
+    }
+
+    /**
+     * Start the breathing alpha loop on every running session's dot. Each dot
+     * animates independently so one session finishing does not stall the others;
+     * the animators are cancelled in stopBreathing() (called at the top of the
+     * next render and on teardown).
+     */
+    private void startBreathing() {
+        for (View dot : breathingDots) {
+            ObjectAnimator anim = ObjectAnimator.ofFloat(dot, "alpha",
+                    BREATH_ALPHA_MIN, BREATH_ALPHA_MAX);
+            anim.setDuration(BREATH_MS);
+            anim.setRepeatCount(ObjectAnimator.INFINITE);
+            anim.setRepeatMode(ObjectAnimator.REVERSE);
+            anim.start();
+            dot.setTag(anim);
+        }
+    }
+
+    /**
+     * Stop all running-dot breathing animations and restore full opacity.
+     * Called before every list rebuild so stale rows never keep animating, and
+     * by the controller on teardown so infinite animators cannot keep posting
+     * frame callbacks after the window is removed. UI thread only.
+     */
+    public void stopBreathing() {
+        for (View dot : breathingDots) {
+            Object tag = dot.getTag();
+            if (tag instanceof ObjectAnimator) {
+                ((ObjectAnimator) tag).cancel();
+            }
+            dot.setAlpha(BREATH_ALPHA_MAX);
+        }
+        breathingDots.clear();
     }
 
     private int dp(int value) {

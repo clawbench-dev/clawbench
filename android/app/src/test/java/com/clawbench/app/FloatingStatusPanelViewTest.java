@@ -1,20 +1,37 @@
 package com.clawbench.app;
 
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+
 import org.json.JSONObject;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.RuntimeEnvironment;
+import org.robolectric.annotation.Config;
 
 import java.util.List;
 
 import static org.junit.Assert.*;
 
 /**
- * Unit tests for FloatingStatusPanelView's pure buildGroups model builder.
+ * Unit tests for FloatingStatusPanelView.
  *
- * buildGroups parses the /api/ai/sessions/overview JSON response into grouped
- * project/session models. It has no Android framework dependency (uses
- * org.json + plain lists), so it is unit-testable with plain JUnit.
+ * buildGroups / statusDotKind are pure functions (org.json + plain model
+ * fields, no Android framework dependency) so they are unit-testable with
+ * plain JUnit. The content-height measurement (measureContentHeight /
+ * constrainListHeight) drives the panel's height-follows-content sizing, so
+ * those run under Robolectric against the real View measure machinery.
  */
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 28)
 public class FloatingStatusPanelViewTest {
+
+    private static final int WIDTH_PX = 280; // density 1.0 under Robolectric
+
+    // =====================================================
+    // buildGroups: pure overview -> model builder
+    // =====================================================
 
     @Test
     public void buildGroups_groupsByProject() throws Exception {
@@ -110,5 +127,118 @@ public class FloatingStatusPanelViewTest {
         assertFalse(item.running);
         assertFalse(item.pendingApproval);
         assertEquals(0, item.unreadCount);
+    }
+
+    // =====================================================
+    // statusDotKind: pure status-dot decision (Task 3)
+    // =====================================================
+
+    private FloatingStatusPanelView.SessionItem item(boolean running,
+                                                     boolean pendingApproval,
+                                                     int unreadCount) {
+        return new FloatingStatusPanelView.SessionItem(
+                "s", "t", running, pendingApproval, unreadCount);
+    }
+
+    @Test
+    public void statusDotKind_pendingWinsOverRunning() {
+        assertEquals(FloatingStatusPanelView.StatusDotKind.PENDING,
+                FloatingStatusPanelView.statusDotKind(item(true, true, 0)));
+    }
+
+    @Test
+    public void statusDotKind_pendingWithUnread_isPending() {
+        // Pending (yellow) wins over unread (blue).
+        assertEquals(FloatingStatusPanelView.StatusDotKind.PENDING,
+                FloatingStatusPanelView.statusDotKind(item(false, true, 5)));
+    }
+
+    @Test
+    public void statusDotKind_runningWinsOverUnread() {
+        // Running (green) wins over unread (blue).
+        assertEquals(FloatingStatusPanelView.StatusDotKind.RUNNING,
+                FloatingStatusPanelView.statusDotKind(item(true, false, 2)));
+    }
+
+    @Test
+    public void statusDotKind_runningOnly_isRunning() {
+        assertEquals(FloatingStatusPanelView.StatusDotKind.RUNNING,
+                FloatingStatusPanelView.statusDotKind(item(true, false, 0)));
+    }
+
+    @Test
+    public void statusDotKind_idleWithUnread_isUnread() {
+        assertEquals(FloatingStatusPanelView.StatusDotKind.UNREAD,
+                FloatingStatusPanelView.statusDotKind(item(false, false, 3)));
+    }
+
+    @Test
+    public void statusDotKind_idleNoUnread_isNone() {
+        assertEquals(FloatingStatusPanelView.StatusDotKind.NONE,
+                FloatingStatusPanelView.statusDotKind(item(false, false, 0)));
+    }
+
+    // =====================================================
+    // Content-height measurement (Robolectric)
+    // =====================================================
+
+    private static String overviewWith(int sessionCount) {
+        StringBuilder sb = new StringBuilder("{\"projects\":[{\"name\":\"/projA\",\"sessions\":[");
+        for (int i = 0; i < sessionCount; i++) {
+            if (i > 0) {
+                sb.append(",");
+            }
+            sb.append("{\"id\":\"s").append(i).append("\",\"title\":\"t").append(i)
+                    .append("\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}");
+        }
+        sb.append("]}]}");
+        return sb.toString();
+    }
+
+    private static FloatingStatusPanelView newPanel() throws Exception {
+        return new FloatingStatusPanelView(RuntimeEnvironment.getApplication(), null);
+    }
+
+    @Test
+    public void measureContentHeight_growsWithSessionCount() throws Exception {
+        FloatingStatusPanelView panel = newPanel();
+        panel.render(new JSONObject(overviewWith(1)), null);
+        int one = panel.measureContentHeight(WIDTH_PX);
+        panel.render(new JSONObject(overviewWith(20)), null);
+        int many = panel.measureContentHeight(WIDTH_PX);
+        assertTrue("more sessions must measure taller, one=" + one + " many=" + many,
+                many > one);
+    }
+
+    @Test
+    public void constrainListHeight_shrinksPanelToTarget() throws Exception {
+        FloatingStatusPanelView panel = newPanel();
+        panel.render(new JSONObject(overviewWith(20)), null);
+        panel.measureContentHeight(WIDTH_PX); // lay out so the header height is known
+
+        panel.constrainListHeight(100);
+        int measured = panel.measureContentHeight(WIDTH_PX);
+        assertEquals("a constrained panel must measure to the target height", 100, measured);
+    }
+
+    @Test
+    public void constrainListHeight_capsScrollViewHeight() throws Exception {
+        FloatingStatusPanelView panel = newPanel();
+        panel.render(new JSONObject(overviewWith(20)), null);
+        panel.measureContentHeight(WIDTH_PX);
+
+        panel.constrainListHeight(100);
+        ScrollView sv = (ScrollView) getField(panel, "scrollView");
+        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) sv.getLayoutParams();
+        assertTrue("scroll area must fit within the constrained panel, got " + lp.height,
+                lp.height > 0 && lp.height <= 100);
+    }
+
+    // --- helpers ---
+
+    private static Object getField(Object target, String name) throws Exception {
+        java.lang.reflect.Field f = target.getClass().getDeclaredField(name);
+        f.setAccessible(true);
+        return f.get(target);
     }
 }

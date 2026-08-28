@@ -26,10 +26,19 @@ import java.util.function.BiConsumer;
  * task_update events, app foreground state, and user dismissal. Handles
  * drag-to-snap positioning (persisted to SharedPreferences) and tap-to-open.
  *
+ * Capsule taps always expand the grouped panel (the panel's session rows are
+ * the single tap-to-open entry point, carrying session id + project path).
+ *
+ * The panel's height follows its content: after each render the panel is
+ * measured and the window height is updated to min(content, screen), so a few
+ * sessions show a compact panel and a long list scrolls inside a full-height
+ * window.
+ *
  * handleEvent / setAppForeground / setUserDismissed are safe to call from any
  * thread; all WindowManager and View mutations are marshalled to the UI
  * thread via view.post(Runnable). The static pure functions isActiveStatus /
- * shouldShow have no framework dependency and are unit-tested with plain JUnit.
+ * shouldShow / panelHeightForContent have no framework dependency and are
+ * unit-tested with plain JUnit.
  */
 public class FloatingStatusController {
 
@@ -50,20 +59,12 @@ public class FloatingStatusController {
     /** Drag opacity while moving. */
     private static final float DRAG_ALPHA = 0.85f;
 
-    /** Capsule tap opens the single running session directly. */
-    public static final int CLICK_OPEN_SESSION = 0;
-    /** Capsule tap expands the panel to show the session list. */
-    public static final int CLICK_EXPAND_PANEL = 1;
-
     /** Panel width in dp (matches FloatingStatusPanelView). */
     private static final int PANEL_WIDTH_DP = 280;
-    /** Panel max height in dp (matches FloatingStatusPanelView). */
-    private static final int PANEL_MAX_HEIGHT_DP = 400;
     /** Minimum interval between overview refreshes triggered by events while expanded. */
     private static final long OVERVIEW_REFRESH_MIN_INTERVAL_MS = 2000;
 
     private final Context context;
-    private final Runnable onTap;
     private final WindowManager windowManager;
     private final Handler handler;
     private final SharedPreferences prefs;
@@ -138,6 +139,18 @@ public class FloatingStatusController {
     }
 
     /**
+     * Clamp a panel content height to the screen. Pure: no framework deps.
+     * Returns 0 when either input is non-positive so a malformed measure can
+     * never drive the window to a negative size.
+     */
+    public static int panelHeightForContent(int contentHeight, int screenHeight) {
+        if (contentHeight <= 0 || screenHeight <= 0) {
+            return 0;
+        }
+        return Math.min(contentHeight, screenHeight);
+    }
+
+    /**
      * Compute the window x coordinate (left edge, gravity TOP|START) snapped to
      * the left or right edge of the screen with the given margin. Clamps so the
      * capsule right edge never exceeds the screen. Pure: no framework deps.
@@ -148,14 +161,6 @@ public class FloatingStatusController {
             return x < margin ? margin : x;
         }
         return margin;
-    }
-
-    /**
-     * Decide what a capsule tap does: open the single running session, or
-     * expand the panel. Pure: no framework deps.
-     */
-    public static int decideCapsuleClick(int runningSessionCount) {
-        return runningSessionCount == 1 ? CLICK_OPEN_SESSION : CLICK_EXPAND_PANEL;
     }
 
     /**
@@ -202,14 +207,6 @@ public class FloatingStatusController {
         return runningSessions.size();
     }
 
-    /**
-     * True when a capsule tap should open the running session directly rather
-     * than expand the panel. Backs the Task 5 onTap wiring.
-     */
-    public boolean shouldOpenSessionOnCapsuleTap() {
-        return decideCapsuleClick(getRunningSessionCount()) == CLICK_OPEN_SESSION;
-    }
-
     /** Whether the grouped session panel is currently expanded. Any thread. */
     public boolean isExpanded() {
         return expanded;
@@ -225,17 +222,12 @@ public class FloatingStatusController {
     }
 
     /**
-     * Public entry point for a capsule tap: open the single running session or
-     * expand the grouped panel. Any thread.
+     * Public entry point for a capsule tap: always expand the grouped panel.
+     * Session-specific open actions happen through the panel's session rows
+     * (which carry the tapped session id + project path). Any thread.
      */
     public void onCapsuleTap() {
-        if (decideCapsuleClick(getRunningSessionCount()) == CLICK_OPEN_SESSION) {
-            if (onTap != null) {
-                onTap.run();
-            }
-        } else {
-            setExpanded(true);
-        }
+        setExpanded(true);
     }
 
     /**
@@ -256,6 +248,9 @@ public class FloatingStatusController {
                     // right-edge placement would push the panel off-screen, so
                     // re-clamp x against the real panel width.
                     clampPanelX();
+                    // Fit the (initially empty) panel before the first overview
+                    // arrives so the header-only window is compact.
+                    resizePanelIfNeeded();
                 }
                 requestOverviewRefresh();
             } else {
@@ -301,6 +296,9 @@ public class FloatingStatusController {
                         setExpanded(false);
                     }
                 });
+                // The overview changed the panel's content (group/session
+                // count), so re-fit the window height to the new content.
+                resizePanelIfNeeded();
             } else if (shouldShow(appForeground, hasActive, userDismissed) && !windowShowing) {
                 // WS-connect fallback: a running session discovered via the
                 // overview (whose start event was missed while the WS was down)
@@ -397,8 +395,7 @@ public class FloatingStatusController {
     /**
      * Callback invoked when a session row is tapped in the expanded panel.
      * Carries the session id and its owning project path so the service can
-     * deep-link into it (unlike the no-arg onTap which opens the most recently
-     * seen session). projectPath may be null/empty for rows without a group.
+     * deep-link into it. projectPath may be null/empty for rows without a group.
      */
     public void setOnSessionClick(BiConsumer<String, String> listener) {
         this.onSessionClick = listener;
@@ -415,7 +412,6 @@ public class FloatingStatusController {
 
     public FloatingStatusController(Context context, Runnable onTap) {
         this.context = context.getApplicationContext();
-        this.onTap = onTap;
         this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
         this.handler = new Handler(Looper.getMainLooper());
         this.prefs = this.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -568,6 +564,7 @@ public class FloatingStatusController {
             }
             if (panelView != null) {
                 panelView.setOnCollapseClickListener(null);
+                panelView.stopBreathing();
             }
             hideWindow();
             view = null;
@@ -716,8 +713,9 @@ public class FloatingStatusController {
     }
 
     /**
-     * Size the attached view for its role: the panel gets a fixed 280x400dp
-     * window, the capsule stays wrap-content. UI thread only.
+     * Size the attached view for its role: the panel gets a fixed 280dp-wide
+     * window (height is content-driven, see resizePanelIfNeeded), the capsule
+     * stays wrap-content. UI thread only.
      */
     private void applyViewSizing() {
         if (params == null || attachedView == null) {
@@ -726,11 +724,43 @@ public class FloatingStatusController {
         float density = context.getResources().getDisplayMetrics().density;
         if (expanded && attachedView == panelView) {
             params.width = Math.round(PANEL_WIDTH_DP * density);
-            params.height = Math.min(
-                    Math.round(PANEL_MAX_HEIGHT_DP * density), screenHeight());
+            params.height = WindowManager.LayoutParams.WRAP_CONTENT;
         } else {
             params.width = WindowManager.LayoutParams.WRAP_CONTENT;
             params.height = WindowManager.LayoutParams.WRAP_CONTENT;
+        }
+    }
+
+    /**
+     * Fit the expanded panel's window height to its content: measure the
+     * rendered content, clamp it to the screen, cap the inner scroll area, and
+     * push the new height to the WindowManager. Called after every panel render
+     * so a few sessions show a compact panel and a long list scrolls inside a
+     * full-height window. UI thread only.
+     */
+    private void resizePanelIfNeeded() {
+        if (panelView == null || params == null || attachedView != panelView) {
+            return;
+        }
+        try {
+            int contentHeight = panelView.measureContentHeight(params.width);
+            int panelHeight = panelHeightForContent(contentHeight, screenHeight());
+            if (panelHeight <= 0) {
+                return;
+            }
+            panelView.constrainListHeight(panelHeight);
+            params.height = panelHeight;
+            if (windowShowing) {
+                try {
+                    windowManager.updateViewLayout(panelView, params);
+                } catch (IllegalArgumentException e) {
+                    AppLog.w(TAG, "resizePanelIfNeeded updateViewLayout failed", e);
+                }
+            }
+            AppLog.d(TAG, "panel resized to height=" + panelHeight
+                    + " (content=" + contentHeight + " screen=" + screenHeight() + ")");
+        } catch (Exception e) {
+            AppLog.w(TAG, "resizePanelIfNeeded failed", e);
         }
     }
 
@@ -871,7 +901,7 @@ public class FloatingStatusController {
                         // Tap on empty panel space collapses it back to the capsule.
                         setExpanded(false);
                     } else {
-                        // Capsule tap: decide open-session vs expand-panel.
+                        // Capsule tap: always expand the panel.
                         onCapsuleTap();
                     }
                     return true;
