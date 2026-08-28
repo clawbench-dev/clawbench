@@ -368,12 +368,24 @@ ws.GetManager().BroadcastEvent(msg)  // 或 EmitToSession
 |---|---|---|
 | 0 | **前置条件**：修复 `chat.go:475-484` 入队分支 `MessageID: 0` → 改为 `MessageID: msgID`（`AddQueuedMessage` 返回值） | B 端 `_remote` 气泡能带数字 id |
 | 1 | **订阅解耦 + 删 streamTimeout**（原子操作）：`useChatStream` 拆 `subscribe`/`unsubscribe`/`ensureStreamingPlaceholder`/`stopStreaming`；`switchSession`/`createSession` 挂订阅；`watch(connected)` 改语义；删 `streamTimeout` 机制 | 无重复 subscribe；切会话不泄漏订阅；idle 不误 reload |
-| 2 | 删 `loadHistory` 的 connectStream 分支 + `reuseExistingStreaming`/`subscribeOnly`/`forceNotRunning` 选项；删 `sendMessageNow` 的 `connectStream`；删 done/error/replay_done 的 `disconnectStream`（订阅常驻）；简化 `syncSessionOnReconnect` | 单条发送、队列、运行中刷新、连续多轮对话全部正常 |
+| 2 | **占位符事件驱动（根本性解决）**：后端每次 prompt 广播 `stream_start`（含真实 streaming 行 id）；前端 `ws_stream_start` 处理改为「无占位符则创建」；删 `loadHistory` 的 isRunning/isReplayPending 分支 `onConnectStream` 调用（占位符由 DB streaming=1 行或 stream_start 事件驱动）；删 `subscribeOnly`/`forceNotRunning` 选项（`reuseExistingStreaming` 保留——`sendMessageNow` 运行中分支仍用）；`sendMessageNow` 保留 `ensureStreamingPlaceholder`（发送后立即响应） | 打开 running 会话有占位符；流式 content 事件不丢；单条发送/队列/运行中刷新/多轮对话正常。**已完成（2026-08-28）**：`stream_start` 广播覆盖 service（`executeStreamRunShared`）与 handler（`executeStreamRun`）双路径；`useChatStream` 增加 `watch(currentSessionId)` 订阅随会话切换（打开即订阅，替代原 connectStream 的订阅职责） |
 | 3 | **后端**：`pending_events` 扩展存 `user_message` + 广播点 write-ahead | 断线窗口 user_message 可补偿 |
 | 4 | **前端**：`fetchPendingEvents` 扩展处理 `user_message`；`LAST_SEEN_KEY` 游标对 `user_message` 也更新 | 断线重连后补回漏掉的消息 |
 | 5 | 全量回归：`go test ./...` + `npm test` + `vue-tsc` + 手动多端验证 | 全部通过 |
 
-每个阶段有独立验证点，风险从低到高。阶段 1 与阶段 3/4 相互独立，可并行。
+每个阶段有独立验证点，风险从低到高。阶段 1/2 与阶段 3/4 相互独立，可并行。
+
+### 阶段 2 根本性解决的原理
+
+**问题**：占位符（assistant streaming bubble）有两个来源——`connectStream` 的 `ensureStreamingPlaceholder`（调用点驱动）和 `rebuildFromDb` 的 streaming=1 行（数据驱动）。方案原计划删 `loadHistory` 的 connectStream，但会导致「打开正在流式的会话时，stream_start/content 事件先于占位符到达」的丢失窗口（`stream_start` 只在订阅时发一次，无法替代占位符创建）。
+
+**解决**：让占位符完全由**数据事实**驱动，消除调用点依赖：
+1. 后端 `executeStreamRunShared` 在创建 streaming=1 行后（`session_command.go:725`）广播 `stream_start`（含真实 `StreamingMessageID`）
+2. 前端 `ws_stream_start` 处理改为：无 streaming 占位符则先创建（用 `message_id` 做 id）
+3. `loadHistory` 的 isRunning 分支删 `connectStream`——占位符由 `rebuildFromDb`（DB streaming=1 行，打开会话时）或 `stream_start` 事件（实时流时）驱动
+4. `sendMessageNow` 保留 `ensureStreamingPlaceholder`——发送后立即显示气泡，不等事件 RTT（乐观气泡的即时响应体验）
+
+**为什么根本**：占位符不再依赖「谁在什么时候调了 connectStream」，而是「DB 有 streaming=1 行」或「收到 stream_start 事件」——两者都是数据事实，与客户端打开/发送时机无关。任何客户端、任何时机，占位符都会出现。
 
 ---
 
@@ -398,3 +410,4 @@ ws.GetManager().BroadcastEvent(msg)  // 或 EmitToSession
 - **不做** `hasNewMessages=true` 后端增强（`TrySetSessionRunning` 带标记）——订阅常驻后 idle 客户端也能收到实时事件，此增强成为纯兜底，收益低，暂缓
 - **不做** `queuedCount` 实时计数改造——现有 `!m.queueId` 过滤已免疫快照漂移，收益小
 - **不做** 纯推送（无乐观气泡）——用户点发送的即时响应是移动端核心体验，乐观气泡保留
+- **做了（原 YAGNI 列表移除）**：每次 prompt 广播 `stream_start`（§4.4 增强）——这是阶段 2 根本性解决的前提，让占位符由事件驱动，消除对 `connectStream` 调用点的依赖。改动集中在 `executeStreamRunShared` 一处，成本低收益大

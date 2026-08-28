@@ -754,6 +754,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
 	streamingMsgID, _ := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
 
+	// Broadcast stream_start (same as interactive paths) so clients that open the
+	// task's session mid-stream can create the streaming placeholder from the
+	// event, not just from the DB streaming row.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type:        "stream_start",
+		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
+	})
+
 	// Delegate event loop to SessionExecutor (scheduled mode — no ask-question
 	// conversion, no cancel-reason tracking)
 	executor := NewSessionExecutor(ctx, RunConfig{

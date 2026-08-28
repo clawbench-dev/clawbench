@@ -463,7 +463,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	if !service.TrySetSessionRunning(sessionID) {
 		// Session already running — enqueue the message to DB (queued=1).
 		// The running drain loop picks it up via DequeueQueuedMessage.
-		_, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))
+		msgID, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
 			return
@@ -471,11 +471,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		service.SignalDrain(sessionID)
 
 		// Emit user_message to other session subscribers for cross-device sync.
-		// SenderClientID allows the sending device to skip its own echo.
+		// SenderClientID allows the sending device to skip its own echo. MessageID
+		// carries the persisted DB id so the receiving device can anchor its bubble
+		// to the authoritative backend id (same as the non-queue path).
 		ws.EmitToSession(sessionID, ai.StreamEvent{
 			Type: "user_message",
 			UserMessage: &ai.UserMessageData{
-				MessageID:      0,
+				MessageID:      msgID,
 				Content:        req.Message,
 				Files:          allFiles,
 				SenderClientID: req.ClientID,
@@ -688,6 +690,15 @@ func executeStreamRun(
 		slog.String("session", sessionID),
 		slog.Int64("streamingMsgID", streamingMsgID),
 		slog.String("queueID", queueID))
+
+	// Broadcast stream_start so subscribed clients (including ones that opened
+	// the session mid-stream) know the streaming message id and can create a
+	// placeholder if none exists yet. Mirrors executeStreamRunShared in the
+	// service layer — this is the web POST path's per-prompt insertion point.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type:        "stream_start",
+		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
+	})
 
 	// Delegate event loop to SessionExecutor
 	cfg := service.RunConfig{

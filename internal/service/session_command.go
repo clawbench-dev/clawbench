@@ -726,6 +726,15 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	if err != nil {
 		slog.Error("failed to create streaming message", slog.String("session", cfg.SessionID), slog.String("err", err.Error()))
 	}
+	// Broadcast stream_start so subscribed clients (including ones that opened
+	// the session mid-stream) know the streaming message id and can create a
+	// placeholder if none exists yet. This makes the assistant bubble purely
+	// data-driven: any client, at any time, sees a placeholder whenever the DB
+	// has a streaming=1 row or a stream_start event arrives.
+	ws.EmitToSession(cfg.SessionID, ai.StreamEvent{
+		Type:        "stream_start",
+		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
+	})
 
 	execCfg := RunConfig{
 		Mode:               ModeInteractive,

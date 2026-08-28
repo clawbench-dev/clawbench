@@ -363,10 +363,10 @@ const session = useChatSession({
   onExtractScheduledTasks: (msgs) => render.extractScheduledTasks(msgs),
   onRenderUpdate: (forceFull) => render.updateRenderedContents(forceFull),
   onScrollBottom: (force) => scrollBottom(force),
-  onConnectStream: (sessionId, options) => stream.connectStream(sessionId, options),
   onDisconnectStream: () => stream.disconnectStream(),
   onOpen: () => emit('open'),
   onStreamDone: playNotificationSound,
+  onEnsureStreamingPlaceholder: () => stream.ensureStreamingPlaceholder({ reuseExistingStreaming: true }),
 })
 
 // onStreamEnd: fires when current session stream completes with a reason

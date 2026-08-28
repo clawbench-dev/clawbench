@@ -73,10 +73,13 @@ export interface UseChatSessionOptions {
   onExtractScheduledTasks: (msgs: Array<Record<string, unknown>>) => void
   onRenderUpdate: (forceFull: boolean) => void
   onScrollBottom: (force?: boolean, streaming?: boolean) => void
-  onConnectStream: (sessionId: string, options?: { subscribeOnly?: boolean; reuseExistingStreaming?: boolean }) => void
   onDisconnectStream: () => void
   onOpen: () => void
   onStreamDone?: () => void
+  /** Defensive fallback: create the streaming placeholder when a running event
+   *  arrives while loading is false but the stream_start event hasn't created
+   *  one yet (delayed/lost). The placeholder is normally event-driven. */
+  onEnsureStreamingPlaceholder?: () => void
 }
 
 export function useChatSession(options: UseChatSessionOptions) {
@@ -93,8 +96,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     onExtractScheduledTasks,
     onRenderUpdate,
     onScrollBottom,
-    onConnectStream,
     onDisconnectStream,
+    onEnsureStreamingPlaceholder,
   } = options
 
   const toast = useToast()
@@ -110,12 +113,11 @@ export function useChatSession(options: UseChatSessionOptions) {
     sessionData: Record<string, unknown>,
     forceScrollBottom: boolean,
     skipIfUnchanged: boolean,
-    forceNotRunning: boolean,
     immediate: boolean,
   ): { synced: boolean; keepInputDisabled: boolean } {
     const rawMsgs = (sessionData.messages as Array<Record<string, unknown>> | undefined) || []
-    const isRunning = forceNotRunning ? false : !!sessionData.running
-    const isReplayPending = !!sessionData.replayPending && !forceNotRunning
+    const isRunning = !!sessionData.running
+    const isReplayPending = !!sessionData.replayPending
 
     // ── Session identity guard ──
     // A stale loadHistory response (e.g. for a session the user just switched
@@ -216,21 +218,19 @@ export function useChatSession(options: UseChatSessionOptions) {
     onRenderUpdate(forceScrollBottom)
 
     // ── Running / replay / idle ──
+    // The streaming placeholder is data-driven now: rebuildFromDb restores it
+    // from the DB streaming=1 row (opening a mid-stream session) and the
+    // backend's per-prompt stream_start event creates it for live streams —
+    // so no onConnectStream call is needed here.
     let keepInputDisabled = false
     if (isRunning) {
       loading.value = true
       onScrollBottom(forceScrollBottom, true)
-      // This loadHistory is reconnecting to the SAME live stream (e.g. after a
-      // WS reconnect, tab-visibility change, or stream timeout) — NOT starting a
-      // new turn. Reuse the existing streaming message so connectStream doesn't
-      // finalize it and open a duplicate empty "outputting" segment.
-      onConnectStream(currentSessionId.value, { reuseExistingStreaming: true })
     } else if (isReplayPending) {
       loading.value = true
       if (immediate) keepInputDisabled = true
       else inputDisabled.value = true
       onScrollBottom(forceScrollBottom, true)
-      onConnectStream(currentSessionId.value, immediate ? { subscribeOnly: true } : undefined)
     } else {
       loading.value = false
       onScrollBottom(forceScrollBottom)
@@ -358,7 +358,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   // one completes. This prevents redundant concurrent fetches while ensuring the
   // final state is always fresh.
   let loadHistoryInProgress = false
-  let pendingReload: { forceScrollBottom: boolean; showOverlay: boolean; skipIfUnchanged: boolean; forceNotRunning: boolean; immediate?: boolean } | null = null
+  let pendingReload: { forceScrollBottom: boolean; showOverlay: boolean; skipIfUnchanged: boolean; immediate?: boolean } | null = null
   let loadHistoryDeferred: { promise: Promise<void> } | null = null
 
   // forceScrollBottom: true = always scroll to bottom (switch session, first load)
@@ -367,16 +367,11 @@ export function useChatSession(options: UseChatSessionOptions) {
   //            false = silent reload (stream done, polling)
   // skipIfUnchanged: true = when data matches last snapshot, skip UI refresh entirely
   //                (used by polling to avoid collapsing expandedTools / resetting scroll)
-  // forceNotRunning: true = treat the session as not running even if the server
-  //                  says it is (used after session_update completed/cancelled to
-  //                  prevent a race where the server's in-memory running state
-  //                  hasn't been updated yet, causing loadHistory to re-connect
-  //                  the stream and set loading=true again)
   // immediate: true = skip the loadHistoryInProgress queue and execute immediately.
   //             Used by switchSession which must not wait for a stale polling request
   //             to finish. When immediate=true, switching/inputDisabled are set and
   //             restored in loadHistory's finally block (same as switchSession did).
-  async function loadHistory(forceScrollBottom = true, showOverlay = false, skipIfUnchanged = false, forceNotRunning = false, immediate = false) {
+  async function loadHistory(forceScrollBottom = true, showOverlay = false, skipIfUnchanged = false, immediate = false) {
     // Track whether input should remain disabled after load (replayPending case).
     // Only relevant when immediate=true (switchSession path).
     let keepInputDisabled = false
@@ -389,7 +384,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // rapid calls while ensuring callers can await + .finally() and that the
       // final state is always fresh.
       if (loadHistoryInProgress) {
-        pendingReload = { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning, immediate }
+        pendingReload = { forceScrollBottom, showOverlay, skipIfUnchanged, immediate }
         // Return the in-flight load's promise so callers can await/finally it.
         // The pendingReload will be executed after the in-flight load completes.
         return loadHistoryDeferred!.promise
@@ -446,7 +441,7 @@ export function useChatSession(options: UseChatSessionOptions) {
             currentSessionId.value = recoverData.sessionId
             const rawMsgs = (recoverData.messages || []) as Array<Record<string, unknown>>
             if (rawMsgs.length > 0) {
-              const result = syncSessionState(recoverData, forceScrollBottom, skipIfUnchanged, forceNotRunning, immediate)
+              const result = syncSessionState(recoverData, forceScrollBottom, skipIfUnchanged, immediate)
               keepInputDisabled = result.keepInputDisabled
               if (result.synced) {
                 // Skip the second fetch — we already have the data
@@ -505,9 +500,9 @@ export function useChatSession(options: UseChatSessionOptions) {
           loadHistoryInProgress = false
           resolveDeferred!()
           loadHistoryDeferred = null
-          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning, immediate }
+          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged, immediate }
           pendingReload = null
-          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning, next.immediate), 0)
+          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.immediate), 0)
           return
         }
         // If the session was deleted (404 + SessionNotFound), clear stale
@@ -522,9 +517,9 @@ export function useChatSession(options: UseChatSessionOptions) {
           loadHistoryInProgress = false
           resolveDeferred!()
           loadHistoryDeferred = null
-          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning, immediate }
+          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged, immediate }
           pendingReload = null
-          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning, next.immediate), 0)
+          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.immediate), 0)
           return
         }
         throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
@@ -536,7 +531,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Delegate all state sync to the shared helper.
       // Main path does NOT set currentSessionId before calling — the helper
       // sets it from the response data (returnedId).
-      const result = syncSessionState(data, forceScrollBottom, skipIfUnchanged, forceNotRunning, immediate)
+      const result = syncSessionState(data, forceScrollBottom, skipIfUnchanged, immediate)
       keepInputDisabled = result.keepInputDisabled
       if (!result.synced) return // skipIfUnchanged detected no change
 
@@ -547,7 +542,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         const next = pendingReload
         pendingReload = null
         // Execute pending load — its completion will resolve the deferred
-        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning, next.immediate || false), 0)
+        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.immediate || false), 0)
       } else {
         // No pending load — resolve the deferred so all awaiting callers proceed
         resolveDeferred!()
@@ -561,7 +556,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (pendingReload) {
         const next = pendingReload
         pendingReload = null
-        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning, next.immediate || false), 0)
+        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.immediate || false), 0)
       } else {
         resolveDeferred!()
         loadHistoryDeferred = null
@@ -650,10 +645,10 @@ export function useChatSession(options: UseChatSessionOptions) {
     // Delegate to loadHistory which handles:
     // - Fetch + parseMessages + queue restore (single path, no duplication)
     // - Switching overlay / inputDisabled control
-    // - Stream connection for running sessions
+    // - Placeholder restoration for running sessions (rebuildFromDb)
     // immediate=true skips the loadHistoryInProgress queue and
     // handles switching/inputDisabled in its finally block.
-    await loadHistory(true, true, false, false, true)
+    await loadHistory(true, true, false, true)
 
     // Recalculate global chatUnread after switching — the backend has already
     // marked this session as read (UpdateLastRead), so the session list will
@@ -863,7 +858,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (sid === currentSessionId.value && !loading.value) {
         appLog.w(TAG, `session_update running received but loading is false — recovering streaming state`)
         loading.value = true
-        onConnectStream(currentSessionId.value, { reuseExistingStreaming: true })
+        // Defensive: create the streaming placeholder now in case the backend's
+        // stream_start event is delayed/lost. Normally stream_start follows the
+        // running event and would create it; this covers the gap.
+        onEnsureStreamingPlaceholder?.()
       }
     } else if (data.status === 'permission_pending' || data.status === 'permission_resolved') {
       // Permission approval state changed — reload sessions to update dot indicators
@@ -891,11 +889,10 @@ export function useChatSession(options: UseChatSessionOptions) {
         onDisconnectStream()
         forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
         loading.value = false
-        // Reload from DB to get the final message state.
-        // forceNotRunning=true prevents a race where the server's in-memory
-        // running state hasn't been updated yet, which would cause loadHistory
-        // to re-connect the stream and set loading=true again.
-        loadHistory(false, false, true, true).then(() => {
+        // Reload from DB to get the final message state. The backend clears
+        // in-memory running state before emitting terminal WS events, so a
+        // plain reload sees the final state.
+        loadHistory(false, false, true).then(() => {
           // Re-render Mermaid on the final DOM — loadHistory replaced messages
           // and Vue rebuilt the DOM, destroying any Mermaid SVGs rendered by the
           // earlier forceCleanupStreamingState onRenderUpdate(true) call.
@@ -942,16 +939,17 @@ export function useChatSession(options: UseChatSessionOptions) {
    * Refreshes runningSessions from the backend, then branches on session state.
    *
    * forceReload:false (WS reconnect) — lightweight, silent:
-   * - still running: re-subscribe the stream in place (subscribeOnly), preserving
-   *   the existing streaming message; no history fetch.
+   * - still running: reload history (the placeholder is restored from the DB
+   *   streaming=1 row via rebuildFromDb, or created by the live stream_start
+   *   event); no explicit stream connect needed.
    * - finished while disconnected: clean up the stuck loading state, then reload
-   *   history with skipIfUnchanged=true + forceNotRunning=true.
+   *   history with skipIfUnchanged=true.
    * - idle: reload history with skipIfUnchanged=true (no UI churn if unchanged).
    * No switching overlay, no input lock, queued behind any in-flight loadHistory.
    *
    * forceReload:true (manual refresh) — always authoritative:
-   * - still running: force a history reload whose syncSessionState isRunning
-   *   branch re-subscribes the stream (reuseExistingStreaming).
+   * - still running: force a history reload (isRunning keeps loading=true, the
+   *   placeholder is restored from the DB streaming=1 row).
    * - finished while disconnected: same cleanup, then force reload history.
    * - idle: force reload history with skipIfUnchanged=false so the UI always
    *   re-renders against the latest server state.
@@ -975,13 +973,13 @@ export function useChatSession(options: UseChatSessionOptions) {
     if (loading.value) {
       if (runningSessions.value.has(currentSessionId.value)) {
         if (forceReload) {
-          // Still running — force a history reload. loadHistory's isRunning
-          // branch re-subscribes the stream (reuseExistingStreaming) and keeps
-          // loading=true, so the live stream is resumed from the authoritative
-          // DB state rather than merely re-subscribed in place.
-          appLog.i(TAG, `${source}: session ${currentSessionId.value} still running — force reload history + resubscribe stream`)
+          // Still running — force a history reload. The isRunning branch keeps
+          // loading=true, and the streaming placeholder is restored from the
+          // authoritative DB streaming=1 row (rebuildFromDb), so the live
+          // stream resumes from the full message list.
+          appLog.i(TAG, `${source}: session ${currentSessionId.value} still running — force reload history`)
           try {
-            await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, false, immediate)
+            await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
             onRenderUpdate(true)
           } catch {
             loading.value = false
@@ -989,20 +987,13 @@ export function useChatSession(options: UseChatSessionOptions) {
           return
         }
         // WS reconnect (e.g. app resumed from background): the live stream
-        // re-subscribes on reconnect. The useChatStream watch on `connected`
-        // only re-subscribes when its internal isStreaming is still true. If a
-        // stream watchdog timeout (or an explicit disconnectStream()) already
-        // set isStreaming=false while loading stayed true, that watch never
-        // fires and the session is left stuck on the loading spinner with no
-        // live stream and no history reload. Explicitly reload history AND
-        // re-subscribe (loadHistory's isRunning branch uses reuseExistingStreaming
-        // to preserve the live placeholder) so the UI gets the authoritative
-        // full message list — while the app was away, other devices/sessions
-        // may have added messages the local array never received. skipIfUnchanged
-        // keeps this silent (no UI churn when nothing changed).
-        appLog.i(TAG, `${source}: session ${currentSessionId.value} still running — reload history + resubscribe stream`)
+        // re-subscribes on reconnect (watch(connected) in useChatStream).
+        // Reload the FULL history so messages produced while the app was away
+        // appear, and the streaming placeholder is restored from the DB row.
+        // skipIfUnchanged keeps this silent (no UI churn when nothing changed).
+        appLog.i(TAG, `${source}: session ${currentSessionId.value} still running — reload history`)
         try {
-          await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, false, immediate)
+          await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
           onRenderUpdate(true)
         } catch {
           loading.value = false
@@ -1010,15 +1001,14 @@ export function useChatSession(options: UseChatSessionOptions) {
         return
       }
       // AI finished while the user was away — clean up the stuck loading state
-      // and reload history. forceNotRunning=true prevents loadHistory from
-      // re-connecting the stream if the server's in-memory running state
-      // hasn't been updated yet.
+      // and reload history. The backend clears in-memory running state before
+      // emitting terminal events, so the plain reload sees the final state.
       appLog.w(TAG, `${source}: session ${currentSessionId.value} no longer running — cleaning up stuck loading state`)
       onDisconnectStream()
       forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
       loading.value = false
       try {
-        await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, true, immediate)
+        await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
         onRenderUpdate(true)
       } catch {
         loading.value = false
@@ -1029,7 +1019,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // a manual refresh forces the reload (skipIfUnchanged=false) so the UI
       // always re-renders against the latest server state.
       try {
-        await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, false, immediate)
+        await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
         onRenderUpdate(true)
       } catch {
         // Non-critical — keep current view on failure.

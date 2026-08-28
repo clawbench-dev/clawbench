@@ -385,6 +385,7 @@ function createSessionInternal() {
     onConnectStream: vi.fn(),
     onDisconnectStream: vi.fn(),
     onOpen: vi.fn(),
+    onEnsureStreamingPlaceholder: vi.fn(),
   }
   const session = useChatSession(options)
   lastSessionOptions = options
@@ -643,9 +644,12 @@ describe('onSessionEvent', () => {
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'running' })
 
-    // Should recover: loading=true, connectStream called
+    // Should recover: loading=true, and the defensive placeholder fallback is
+    // invoked (normally the backend's stream_start event creates the placeholder;
+    // this covers the gap when that event is delayed/lost).
     expect(options.loading.value).toBe(true)
-    expect(options.onConnectStream).toHaveBeenCalledWith('current-s1', { reuseExistingStreaming: true })
+    expect(options.onEnsureStreamingPlaceholder).toHaveBeenCalledTimes(1)
+    expect(options.onConnectStream).not.toHaveBeenCalled()
   })
 
   it('does not recover loading for a different session', () => {
@@ -658,6 +662,7 @@ describe('onSessionEvent', () => {
 
     // Should NOT recover — it's a different session
     expect(options.loading.value).toBe(false)
+    expect(options.onEnsureStreamingPlaceholder).not.toHaveBeenCalled()
     expect(options.onConnectStream).not.toHaveBeenCalled()
   })
 
@@ -819,7 +824,7 @@ describe('onSessionEvent', () => {
     mockState.currentSessionId = 'stale-sB'
     session.currentSessionId.value = 'stale-sB'
 
-    await session.loadHistory(false, false, true, true, true)
+    await session.loadHistory(false, false, true, true)
 
     // Recovery fetch fired (no session_id) and identity was recovered
     await vi.waitFor(() => {
@@ -1101,11 +1106,11 @@ describe('onSessionEvent', () => {
     expect(chatCalls.length).toBe(0)
   })
 
-  it('safety net uses forceNotRunning to prevent race where server still says running', async () => {
-    // Scenario: session completed, session_update arrives, but loadHistory
-    // hits the server before its in-memory running state is updated.
-    // Without forceNotRunning, loadHistory would see running=true, set
-    // loading=true, and reconnect the stream — putting us back in stuck state.
+  it('safety net cleans up a completed session without re-entering loading', async () => {
+    // Scenario: session completed, session_update arrives. The backend clears
+    // its in-memory running state BEFORE emitting terminal WS events, so the
+    // reload always sees running=false and loading stays false — no stream
+    // re-connect, no stuck loading state.
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onConnectStream = vi.fn()
@@ -1129,14 +1134,14 @@ describe('onSessionEvent', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    // Mock fetch to return running=true (simulating race condition where
-    // server hasn't updated its in-memory state yet)
+    // Mock fetch to return running=false (the backend clears running state
+    // before emitting the terminal event).
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
         messages: [],
         sessionId: 'current-s1',
-        running: true,  // Server still says running!
+        running: false,
         total: 0,
       }),
     })
@@ -1148,73 +1153,11 @@ describe('onSessionEvent', () => {
     // Wait for async loadHistory to complete
     await vi.waitFor(() => fetchSpy.mock.calls.length > 0)
 
-    // Despite server returning running=true, loading should stay false
-    // because forceNotRunning=true prevents reconnecting the stream
+    // loading should stay false — the reload sees running=false and the
+    // placeholder is finalized by forceCleanupStreamingState.
     expect(loading.value).toBe(false)
     expect(onDisconnectStream).toHaveBeenCalled()
-    // onConnectStream should NOT be called (forceNotRunning prevents it)
-    expect(onConnectStream).not.toHaveBeenCalled()
-  })
-
-  it('safety net strips streaming flags when server race returns running=true', async () => {
-    // Verify that forceNotRunning causes parseMessages to receive sessionRunning=false,
-    // which strips the streaming flag from assistant messages — preventing the
-    // three-dot loading indicator from appearing on a completed session.
-    const loading = ref(true)
-    const onDisconnectStream = vi.fn()
-    const onConnectStream = vi.fn()
-    // Return an assistant message with streaming flag
-    const onParseAssistantContent = vi.fn((content: string) => ({
-      blocks: content ? [{ type: 'text', text: content }] : [],
-      metadata: {},
-    }))
-    const messages = ref([] as any[])
-    const options = {
-      currentSessionId: ref('current-s1'),
-      messages,
-      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
-      loading,
-      inputDisabled: ref(false),
-      blockTasks: {},
-      blockAskQuestions: {},
-      expandedTools: ref({}),
-      onParseAssistantContent,
-      onExtractScheduledTasks: vi.fn(),
-      onRenderUpdate: vi.fn(),
-      onScrollBottom: vi.fn(),
-      onConnectStream,
-      onDisconnectStream,
-      onOpen: vi.fn(),
-    }
-    lastSessionOptions = options
-    const session = useChatSession(options)
-
-    // Mock fetch to return an assistant message with streaming=1 AND running=true
-    const fetchSpy = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        messages: [{ id: 1, role: 'assistant', content: 'Hello', streaming: 1, created_at: '2025-01-01' }],
-        sessionId: 'current-s1',
-        running: true,  // Server still says running (race condition)
-        total: 1,
-      }),
-    })
-    globalThis.fetch = fetchSpy as any
-
-    // Trigger safety net
-    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
-
-    // Wait for async loadHistory to complete
-    await vi.waitFor(() => fetchSpy.mock.calls.length > 0)
-
-    // Despite server returning running=true, the streaming flag should be stripped
-    // because forceNotRunning=true causes parseMessages to receive sessionRunning=false
-    expect(loading.value).toBe(false)
-    // The assistant message should NOT have streaming flag
-    const assistantMsg = messages.value.find((m: any) => m.role === 'assistant')
-    if (assistantMsg) {
-      expect(assistantMsg.streaming).toBeUndefined()
-    }
+    // onConnectStream should NOT be called (placeholder is data-driven).
     expect(onConnectStream).not.toHaveBeenCalled()
   })
 })
@@ -2725,7 +2668,7 @@ describe('loadHistory', () => {
     expect(expandedTools.value).toEqual({})
   })
 
-  it('when data.running=true: sets loading=true, calls onConnectStream', async () => {
+  it('when data.running=true: sets loading=true, does not call onConnectStream', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
@@ -2763,11 +2706,10 @@ describe('loadHistory', () => {
     await session.loadHistory(true, false, false)
 
     expect(loading.value).toBe(true)
-    // onConnectStream is called with currentSessionId.value (set to data.sessionId),
-    // reconnecting to the SAME live stream — must reuse the existing streaming
-    // message so connectStream doesn't finalize it and open a duplicate empty
-    // "outputting" segment (regression for the split-reply bug).
-    expect(onConnectStream).toHaveBeenCalledWith('current-s1', { reuseExistingStreaming: true })
+    // The streaming placeholder is data-driven now: rebuildFromDb restores it
+    // from the DB streaming=1 row (when the snapshot has one) and the backend's
+    // stream_start event creates it for live streams. No connectStream call.
+    expect(onConnectStream).not.toHaveBeenCalled()
   })
 
   it('when data.running=false: sets loading=false', async () => {
@@ -3832,13 +3774,12 @@ describe('handleWsReconnect', () => {
 
     await session.handleWsReconnect()
 
-    // The still-running branch must NOT rely solely on the useChatStream
-    // connected-watch (which requires isStreaming === true). It must reload
-    // the FULL history (so messages produced while the app was in background /
-    // on other devices appear) and re-subscribe the stream — preserving the
-    // existing streaming placeholder (reuseExistingStreaming) so no duplicate
-    // empty segment is opened and the loading spinner can never stay stuck.
-    expect(onConnectStream).toHaveBeenCalledWith('s1', { reuseExistingStreaming: true })
+    // The still-running branch must reload the FULL history (so messages
+    // produced while the app was in background / on other devices appear) and
+    // keep loading=true. The streaming placeholder is restored from the DB
+    // streaming=1 row via rebuildFromDb, and the live stream re-subscribes via
+    // useChatStream's watch(connected) — no explicit connectStream needed.
+    expect(onConnectStream).not.toHaveBeenCalled()
     expect(onDisconnectStream).not.toHaveBeenCalled()
     expect(loading.value).toBe(true)
     // A full history fetch must have been issued (not just a stream resume).
@@ -4038,17 +3979,16 @@ describe('handleManualRefresh', () => {
     await session.handleManualRefresh()
 
     // loadHistory was executed (the fetch mock above also serves the chat fetch;
-    // assert a session-scoped fetch happened) — running branch must NOT just
-    // subscribeOnly; it forces the history reload whose syncSessionState
-    // isRunning path re-subscribes the stream.
-    expect(onConnectStream).toHaveBeenCalledWith('s1', { reuseExistingStreaming: true })
+    // assert a session-scoped fetch happened) — the running branch forces the
+    // history reload; the placeholder is restored from the DB streaming=1 row.
+    expect(onConnectStream).not.toHaveBeenCalled()
     expect(onDisconnectStream).not.toHaveBeenCalled()
     expect(loading.value).toBe(true)
 
     vi.restoreAllMocks()
   })
 
-  it('when loading=true and session no longer running: cleans up stuck loading, then forces history reload with forceNotRunning', async () => {
+  it('when loading=true and session no longer running: cleans up stuck loading, then reloads history', async () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onRenderUpdate = vi.fn()

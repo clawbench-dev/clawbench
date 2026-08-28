@@ -1053,6 +1053,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		return ctxState.Usage
 	})
 
+	// Inject pending_events write-ahead for user_message events (breaks import
+	// cycle between ws and service). StreamHub.Emit stores user_message before
+	// broadcast so offline clients can recover them after reconnect.
+	ws.GetManager().StreamHub().SetEventStoreFunc(service.StoreNotifiableEvent)
+
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 

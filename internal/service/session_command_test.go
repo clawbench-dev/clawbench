@@ -2348,6 +2348,89 @@ func (m *mockStreamErrBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest
 	return nil, fmt.Errorf("stream start failed")
 }
 
+// mockStreamStartBackend returns a successful short stream (content + done) so
+// executeStreamRunShared reaches the stream_start broadcast point.
+type mockStreamStartBackend struct{}
+
+func (m *mockStreamStartBackend) Name() string { return "test-stream-start" }
+func (m *mockStreamStartBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	ch := make(chan ai.StreamEvent, 4)
+	ch <- ai.StreamEvent{Type: "content", Content: "ok"}
+	ch <- ai.StreamEvent{Type: "done"}
+	close(ch)
+	return ch, nil
+}
+
+// TestExecuteStreamRunShared_BroadcastsStreamStart verifies that every prompt
+// run broadcasts a stream_start event carrying the streaming message's real
+// DB id, so any subscribed client can create a data-driven placeholder.
+func TestExecuteStreamRunShared_BroadcastsStreamStart(t *testing.T) {
+	ai.RegisterBackend("test-stream-start", func() ai.AIBackend { return &mockStreamStartBackend{} })
+
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Transport: ""},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	sessionID := "stream-start-sess"
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/tmp', 'test-stream-start', 'Test', 'test-agent', 'default', '', 'chat', 0)", sessionID)
+	require.NoError(t, err)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "stream-start-client", "")
+	mgr.StreamHub().Subscribe("stream-start-client", sessionID)
+
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/tmp",
+		BackendName: "test-stream-start",
+		AgentID:     "test-agent",
+		Message:     "test",
+	}
+	result := executeStreamRunShared(context.Background(), cfg)
+	assert.Empty(t, result.err, "mock backend should succeed")
+
+	// The stream_start event must be broadcast with the real DB streaming row id.
+	var found *ws.ServerMessage
+	assert.Eventually(t, func() bool {
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			data, ok := ev.Data.(ws.ChatStreamData)
+			if !ok || data.EventType != "stream_start" {
+				continue
+			}
+			found = &ev
+			return true
+		}
+		return false
+	}, 2*time.Second, 20*time.Millisecond)
+	require.NotNil(t, found, "expected a stream_start chat_stream event in the subscriber buffer")
+
+	data := found.Data.(ws.ChatStreamData)
+	payload, ok := data.Payload.(map[string]int64)
+	require.True(t, ok, "stream_start payload must be map[string]int64")
+	assert.Greater(t, payload["message_id"], int64(0), "stream_start must carry the streaming message DB id")
+
+	// The broadcast id must match the persisted assistant row created by this run.
+	// Note: the streaming row is finalized (streaming=0) once the done event
+	// processes, so match by the latest assistant row for the session.
+	var dbMsgID int64
+	err = db.QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", sessionID).Scan(&dbMsgID)
+	require.NoError(t, err)
+	assert.Equal(t, dbMsgID, payload["message_id"], "stream_start message_id must equal the streaming row id")
+}
+
 func TestExecuteStreamRunShared_StreamStartFails_CoversAbsErrAndReasonKeys(t *testing.T) {
 	// Register a mock backend that succeeds creation but fails ExecuteStream.
 	// This covers lines 460-463 (absErr rename) and 472 (contentKeyReason in stream error path).

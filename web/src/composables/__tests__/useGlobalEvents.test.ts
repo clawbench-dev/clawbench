@@ -959,4 +959,187 @@ describe('useGlobalEvents', () => {
             dispatchSpy.mockRestore()
         })
     })
+
+    // ── fetchPendingEvents (断线补偿：pending 拉取的 user_message) ──
+    // Phase 4: fetchPendingEvents must dispatch chat_stream user_message events
+    // through the shared handlers (so useChatStream inserts the _remote bubble),
+    // update the LAST_SEEN_KEY cursor, dedup by event id across the WS + pending
+    // dual channels, and never trigger browser notifications for chat_stream.
+    describe('fetchPendingEvents', () => {
+        const LAST_SEEN_KEY = 'clawbench_last_seen_event_id'
+
+        let originalFetch: typeof globalThis.fetch
+
+        beforeEach(() => {
+            originalFetch = globalThis.fetch
+            localStorage.removeItem(LAST_SEEN_KEY)
+        })
+
+        afterEach(() => {
+            globalThis.fetch = originalFetch
+            localStorage.removeItem(LAST_SEEN_KEY)
+        })
+
+        /**
+         * Mock fetch() for GET /api/ai/events/pending.
+         * pending_events rows carry `event_type: 'chat_stream'` + a serialized
+         * ServerMessage payload: `{type, id, event: 'chat_stream', data: ChatStreamData}`.
+         */
+        function mockPendingFetch(rows: Array<{ event_id: string; event_type?: string; payload?: unknown }>) {
+            globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+                expect(String(input)).toContain('/api/ai/events/pending')
+                return {
+                    ok: true,
+                    json: async () => ({ events: rows }),
+                } as Response
+            }) as typeof fetch
+        }
+
+        /** Build a pending_events row for a chat_stream user_message. */
+        function userMessageRow(eventId: string, msgId: number, opts: { content?: string; senderClientId?: string; queueId?: string } = {}) {
+            return {
+                event_id: eventId,
+                event_type: 'chat_stream',
+                payload: JSON.stringify({
+                    type: 'event',
+                    id: eventId,
+                    event: 'chat_stream',
+                    data: {
+                        session_id: 's1',
+                        event_type: 'user_message',
+                        payload: {
+                            messageId: msgId,
+                            content: opts.content ?? 'hi',
+                            ...(opts.senderClientId ? { senderClientId: opts.senderClientId } : {}),
+                            ...(opts.queueId ? { queueId: opts.queueId } : {}),
+                        },
+                    },
+                }),
+            }
+        }
+
+        it('dispatches chat_stream user_message to registered handlers', async () => {
+            const handler = vi.fn()
+            events.onEvent(handler)
+            // Install the pending-events mock BEFORE opening the WS — onopen
+            // fires fetchPendingEvents() (fire-and-forget), which must see the mock.
+            mockPendingFetch([userMessageRow('evt_user_1', 42, { content: 'hi', senderClientId: 'other-device' })])
+            connectAndGetWs()
+
+            await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1))
+            expect(handler).toHaveBeenCalledWith('chat_stream', {
+                session_id: 's1',
+                event_type: 'user_message',
+                payload: { messageId: 42, content: 'hi', senderClientId: 'other-device' },
+            })
+        })
+
+        it('updates LAST_SEEN_KEY cursor after dispatching user_message', async () => {
+            const handler = vi.fn()
+            events.onEvent(handler)
+            mockPendingFetch([userMessageRow('evt_user_2', 43)])
+            connectAndGetWs()
+
+            await vi.waitFor(() => expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('evt_user_2'))
+        })
+
+        it('dedups pending events by event id (already processed via WS)', async () => {
+            const handler = vi.fn()
+            events.onEvent(handler)
+            const id = nextId()
+            // Pull contains the already-seen event PLUS a fresh one — the fresh
+            // event proves fetchPendingEvents actually ran (dispatched + cursor
+            // advanced), while the seen event must be skipped (no re-dispatch).
+            mockPendingFetch([userMessageRow(id, 44), userMessageRow('evt_user_new', 45, { content: 'fresh' })])
+            const ws = connectAndGetWs()
+
+            // The same user_message event arrives over WS first (dedup mark added)
+            ws.receive({
+                type: 'event',
+                id,
+                event: 'chat_stream',
+                data: { session_id: 's1', event_type: 'user_message', payload: { messageId: 44, content: 'hi' } },
+            })
+            expect(handler).toHaveBeenCalledTimes(1)
+
+            // fetchPendingEvents (fired on WS open) returns the same event — must
+            // be skipped — plus a fresh one that IS dispatched.
+            await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2))
+            expect(handler).toHaveBeenLastCalledWith('chat_stream', {
+                session_id: 's1',
+                event_type: 'user_message',
+                payload: { messageId: 45, content: 'fresh' },
+            })
+            await vi.waitFor(() => expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('evt_user_new'))
+        })
+
+        it('does not show browser notification for chat_stream events', async () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            mockPendingFetch([userMessageRow('evt_user_3', 45)])
+            connectAndGetWs()
+
+            // The event is processed (cursor advances), but chat_stream never
+            // triggers a browser notification.
+            await vi.waitFor(() => expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('evt_user_3'))
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('断线期间 pending user_message 与流式 content 事件按到达顺序交错分发', async () => {
+            // Scenario: device B was offline while device A sent a message. On
+            // reconnect, fetchPendingEvents returns the missed user_message
+            // (write-ahead stored while disconnected), while the live WS stream
+            // for that same turn delivers stream_start/content events. Both
+            // channels flow through the same shared handlers, so the reducer
+            // (in useChatStream) sees them in arrival order and can build the
+            // _remote bubble BEFORE the streaming content lands.
+            const received: Array<{ event: string; data: any }> = []
+            events.onEvent((event, data) => received.push({ event, data }))
+
+            // The pending pull carries the user_message for the turn that
+            // happened while offline.
+            mockPendingFetch([userMessageRow('evt_pending_user', 200, { content: 'hi while offline', senderClientId: 'device-a', queueId: 'remote-q-1' })])
+            const ws = connectAndGetWs()
+
+            // Wait until the pending user_message was dispatched through the
+            // handler (fetchPendingEvents is async, fired on WS open).
+            await vi.waitFor(() => {
+                expect(received.some((r) => r.event === 'chat_stream' &&
+                    r.data?.event_type === 'user_message' &&
+                    r.data?.payload?.messageId === 200)).toBe(true)
+            })
+
+            // Now the live streaming events for the same turn arrive over WS.
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'chat_stream',
+                data: { session_id: 's1', event_type: 'stream_start', payload: { message_id: 201 } },
+            })
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'chat_stream',
+                data: { session_id: 's1', event_type: 'content', payload: { content: 'reply to your message' } },
+            })
+
+            await vi.waitFor(() => {
+                expect(received.some((r) => r.event === 'chat_stream' && r.data?.event_type === 'content')).toBe(true)
+            })
+
+            // Ordering: the offline-compensated user_message arrives BEFORE the
+            // live stream events — so a reducer that inserts the _remote bubble
+            // first and then finds the streaming placeholder is never starved.
+            const types = received.map((r) => `${r.event}:${r.data?.event_type}`)
+            const umIdx = types.indexOf('chat_stream:user_message')
+            const ssIdx = types.indexOf('chat_stream:stream_start')
+            expect(umIdx).toBeGreaterThanOrEqual(0)
+            expect(ssIdx).toBeGreaterThan(umIdx)
+
+            // Cursor advanced past the pending user_message so it won't be
+            // re-delivered on the next reconnect.
+            expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('evt_pending_user')
+        })
+    })
 })

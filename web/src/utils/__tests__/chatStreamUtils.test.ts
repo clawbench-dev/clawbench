@@ -1755,6 +1755,85 @@ describe('duplicate message root causes (regression)', () => {
     expect((merged[0] as any)._remote).toBeUndefined()
   })
 
+  it('A/B dual client: A sends → B gets _remote bubble → queue_drain upgrades it to the DB row', () => {
+    // Client B's reducer receives the authoritative push event from client A's
+    // send. The full sequence:
+    //   1. ws_user_message (senderClientId=A, messageId=100, queueId='remote-q-1')
+    //      → B inserts a _remote bubble with the real numeric id + _remoteQueueId.
+    //   2. ws_queue_drain (queueId='remote-q-1', dbMessageId=100)
+    //      → the _remote bubble is upgraded: flags cleared, no duplicate pushed.
+    let s: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
+    ]
+
+    // Step 1 — the user_message event from device A arrives on device B.
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: {
+        messageId: 100,
+        content: 'hi from phone',
+        senderClientId: 'device-a',
+        queueId: 'remote-q-1',
+        backend: 'claude',
+      },
+    } as any)
+
+    const userBubbles = s.filter((m: any) => m.role === 'user' && m.content === 'hi from phone')
+    expect(userBubbles).toHaveLength(1, 'B must render one user bubble from the push event')
+    const bubble = userBubbles[0]
+    expect(bubble.id).toBe(100, '_remote bubble carries the authoritative DB id from the event')
+    expect(bubble._remote).toBe(true)
+    expect(bubble._remoteQueueId).toBe('remote-q-1')
+    expect(bubble.pending).toBeUndefined()
+
+    // Step 2 — the drain confirms the same row; the bubble is upgraded in place.
+    s = chatMessageReducer(s, {
+      type: 'ws_queue_drain',
+      queueId: 'remote-q-1',
+      text: 'hi from phone',
+      files: [],
+      dbMessageId: 100,
+      backend: 'claude',
+    } as any)
+
+    const afterDrain = s.filter((m: any) => m.role === 'user' && m.content === 'hi from phone')
+    expect(afterDrain).toHaveLength(1, 'queue_drain must not duplicate the _remote bubble')
+    expect(afterDrain[0]._remote).toBeUndefined('flags cleared after upgrade')
+    expect(afterDrain[0]._remoteQueueId).toBeUndefined()
+    expect(afterDrain[0].id).toBe(100, 'numeric id preserved through the upgrade')
+    // A streaming assistant placeholder is anchored after the drained message.
+    const streaming = s.find((m: any) => m.role === 'assistant' && m.streaming)
+    expect(streaming).toBeDefined('drain pushes a streaming placeholder for B')
+    // Anchored via the stable queue id (dynamic resolution in sortMessages
+    // follows the parent even as it adopts DB ids).
+    expect(streaming.parentQueueId).toBe('remote-q-1')
+  })
+
+  it('A/B dual client: rebuildFromDb adopts the _remote bubble without duplication after a refresh', () => {
+    // After the full WS sequence (user_message + queue_drain), a loadHistory
+    // refresh must converge to exactly one bubble for the remote message — the
+    // DB row. The _remote bubble is adopted, not duplicated.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
+      { role: 'user', id: 100, content: 'hi from phone', blocks: [{ type: 'text', text: 'hi from phone' }], queueId: 'remote-q-1', _remote: true, _remoteQueueId: 'remote-q-1' },
+      { role: 'assistant', id: 3, content: '', blocks: [{ type: 'text', text: 'hi reply' }], parentQueueId: '100' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
+      { role: 'user', id: 100, content: 'hi from phone', blocks: [{ type: 'text', text: 'hi from phone' }], queueId: 'remote-q-1' },
+      { role: 'assistant', id: 3, content: 'hi reply', blocks: [{ type: 'text', text: 'hi reply' }] },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const users = merged.filter((m: any) => m.role === 'user' && m.content === 'hi from phone')
+    expect(users).toHaveLength(1)
+    expect(users[0].id).toBe(100)
+    expect(users[0]._remote).toBeUndefined()
+    expect(users[0]._remoteQueueId).toBeUndefined()
+  })
+
   it('RC4: queue_drain double-delivery with an in-between DB snapshot must not duplicate the user message', () => {
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
