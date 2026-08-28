@@ -59,6 +59,8 @@ public class FloatingStatusController {
     private static final int PANEL_WIDTH_DP = 280;
     /** Panel max height in dp (matches FloatingStatusPanelView). */
     private static final int PANEL_MAX_HEIGHT_DP = 400;
+    /** Minimum interval between overview refreshes triggered by events while expanded. */
+    private static final long OVERVIEW_REFRESH_MIN_INTERVAL_MS = 2000;
 
     private final Context context;
     private final Runnable onTap;
@@ -82,6 +84,8 @@ public class FloatingStatusController {
     private Runnable fadeHideRunnable;
     private Consumer<String> onSessionClick;
     private OverviewRequestListener overviewRequestListener;
+    /** Last time an event-triggered overview refresh was requested (throttle). */
+    private volatile long lastOverviewRequestMs;
 
     /** Session ids currently running, tracked from events. Thread-safe set. */
     private final java.util.Set<String> runningSessions =
@@ -226,10 +230,12 @@ public class FloatingStatusController {
                 ensureWindow();
                 if (windowShowing) {
                     attachView(panelView != null ? panelView : buildPanelView());
+                    // A panel is much wider than the capsule: the capsule's
+                    // right-edge placement would push the panel off-screen, so
+                    // re-clamp x against the real panel width.
+                    clampPanelX();
                 }
-                if (overviewRequestListener != null) {
-                    overviewRequestListener.onRequestOverview();
-                }
+                requestOverviewRefresh();
             } else {
                 // Collapse: back to the capsule if a session is still active,
                 // otherwise hide the window entirely.
@@ -311,6 +317,19 @@ public class FloatingStatusController {
         }
         if (anyRunning) {
             hasActive = true;
+        } else if (hasActive && overview.optInt("total", 0) == 0) {
+            // No running session anywhere in the overview and nothing left
+            // worth showing (total counts unread / pending-approval items too):
+            // every session ended while the WS was down, so reset hasActive and
+            // hide the lingering window. total > 0 means unread or pending
+            // items remain — keep the window.
+            hasActive = false;
+            postToUi(() -> {
+                if (!expanded) {
+                    cancelPendingHide();
+                    hideWindow();
+                }
+            });
         }
     }
 
@@ -366,8 +385,10 @@ public class FloatingStatusController {
 
         // While the panel is expanded, every event should refresh the overview
         // so the session list stays current without waiting for the next tap.
-        if (expanded && overviewRequestListener != null) {
-            overviewRequestListener.onRequestOverview();
+        // High-frequency streaming events would otherwise pile up requests, so
+        // the refresh is throttled to OVERVIEW_REFRESH_MIN_INTERVAL_MS.
+        if (expanded) {
+            requestOverviewRefresh();
         }
 
         AppLog.d(TAG, "handleEvent event=" + eventType + " status=" + status
@@ -400,6 +421,14 @@ public class FloatingStatusController {
     /** App foreground state changes drive visibility directly. Any thread. */
     public void setAppForeground(boolean foreground) {
         appForeground = foreground;
+        if (foreground) {
+            // Returning to the foreground hides the window but must also reset
+            // the expanded state: otherwise a later background would rebuild the
+            // stale panel (with old content) instead of the capsule. The panel
+            // view is dropped too so the next expand rebuilds it fresh.
+            expanded = false;
+            panelView = null;
+        }
         postToUi(() -> {
             if (foreground) {
                 hideWindow();
@@ -435,50 +464,6 @@ public class FloatingStatusController {
         return windowShowing;
     }
 
-    /**
-     * True when a /api/sessions response contains at least one running session.
-     * Pure function (no Android framework deps) so it is unit-testable.
-     */
-    public static boolean hasRunningSession(JSONObject sessionsResponse) {
-        if (sessionsResponse == null) {
-            return false;
-        }
-        JSONArray sessions = sessionsResponse.optJSONArray("sessions");
-        if (sessions == null) {
-            return false;
-        }
-        for (int i = 0; i < sessions.length(); i++) {
-            JSONObject s = sessions.optJSONObject(i);
-            if (s != null && s.optBoolean("running", false)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Notify the controller that a session is running (discovered via the
-     * /api/sessions poll on native WS connect). Marks the session active so the
-     * capsule appears when the app is backgrounded. Any thread.
-     */
-    public void notifyRunningSession(String sessionId, String sessionTitle) {
-        hasActive = true;
-        if (sessionId != null && !sessionId.isEmpty()) {
-            runningSessions.add(sessionId);
-        }
-        final String fSessionId = sessionId;
-        final String fSessionTitle = sessionTitle;
-        postToUi(() -> {
-            cancelPendingHide();
-            if (shouldShow(appForeground, true, userDismissed)) {
-                ensureWindow();
-                render("session_update", "running", fSessionTitle, "", "");
-            } else if (appForeground) {
-                // Backgrounded later; setAppForeground(false) will re-evaluate.
-            }
-        });
-    }
-
     /** Remove the window and cancel all pending callbacks. Any thread. */
     public void destroy() {
         destroyed = true;
@@ -508,6 +493,26 @@ public class FloatingStatusController {
     }
 
     // --- UI-thread window management ---
+
+    /**
+     * Request a fresh overview. Expand requests always fire; event-triggered
+     * requests are throttled so high-frequency streaming events cannot pile up
+     * network pulls. Any thread.
+     */
+    private void requestOverviewRefresh() {
+        if (overviewRequestListener == null) {
+            return;
+        }
+        long now = android.os.SystemClock.elapsedRealtime();
+        // lastOverviewRequestMs == 0 means "never requested" — always fire so
+        // the expand request is never swallowed by the throttle.
+        if (lastOverviewRequestMs != 0
+                && now - lastOverviewRequestMs < OVERVIEW_REFRESH_MIN_INTERVAL_MS) {
+            return;
+        }
+        lastOverviewRequestMs = now;
+        overviewRequestListener.onRequestOverview();
+    }
 
     private void postToUi(Runnable r) {
         if (destroyed) {
@@ -643,14 +648,9 @@ public class FloatingStatusController {
     }
 
     private FloatingStatusPanelView buildPanelView() {
-        panelView = new FloatingStatusPanelView(context, sid -> {
-            if (sid != null && !sid.isEmpty()) {
-                if (onSessionClick != null) {
-                    onSessionClick.accept(sid);
-                }
-                setExpanded(false);
-            }
-        });
+        // Session-row taps are delivered through the render() callback
+        // (setOnSessionClick), so construction only wires the collapse button.
+        panelView = new FloatingStatusPanelView(context, null);
         panelView.setOnCollapseClickListener(() -> setExpanded(false));
         // Panel content is dark/translucent; keep the drag alpha subtle.
         attachTouchListener(panelView);
@@ -838,6 +838,29 @@ public class FloatingStatusController {
             return Math.round(PANEL_WIDTH_DP * context.getResources().getDisplayMetrics().density);
         }
         return capsuleWidthPx;
+    }
+
+    /**
+     * Clamp the panel's left edge so the whole panel stays on-screen. The
+     * capsule default sits at the right edge (x = width - capsuleWidth -
+     * margin), which would push the wider panel off-screen; re-clamping with
+     * the real panel width keeps it fully visible. UI thread only.
+     */
+    private void clampPanelX() {
+        if (attachedView == null || params == null || !windowShowing) {
+            return;
+        }
+        int panelWidthPx = Math.round(PANEL_WIDTH_DP * context.getResources().getDisplayMetrics().density);
+        int clamped = clamp(snapX(screenWidth(), panelWidthPx, edgeMarginPx, true),
+                edgeMarginPx, screenWidth());
+        if (clamped != params.x) {
+            params.x = clamped;
+            try {
+                windowManager.updateViewLayout(attachedView, params);
+            } catch (IllegalArgumentException e) {
+                AppLog.w(TAG, "clampPanelX updateViewLayout failed", e);
+            }
+        }
     }
 
     /** Largest left-edge x that keeps the attached view fully on-screen. */

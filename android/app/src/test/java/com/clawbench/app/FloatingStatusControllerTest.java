@@ -4,6 +4,7 @@ import android.content.Context;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -208,39 +209,6 @@ public class FloatingStatusControllerTest {
     }
 
     // =====================================================
-    // hasRunningSession: parse /api/sessions response for running sessions
-    // =====================================================
-
-    @Test
-    public void hasRunningSession_withRunningSession_true() throws Exception {
-        String json = "{\"sessions\":[{\"id\":\"s1\",\"running\":true},{\"id\":\"s2\",\"running\":false}]}";
-        assertTrue(FloatingStatusController.hasRunningSession(new org.json.JSONObject(json)));
-    }
-
-    @Test
-    public void hasRunningSession_noRunning_false() throws Exception {
-        String json = "{\"sessions\":[{\"id\":\"s1\",\"running\":false},{\"id\":\"s2\",\"running\":false}]}";
-        assertFalse(FloatingStatusController.hasRunningSession(new org.json.JSONObject(json)));
-    }
-
-    @Test
-    public void hasRunningSession_emptySessions_false() throws Exception {
-        assertFalse(FloatingStatusController.hasRunningSession(new org.json.JSONObject("{\"sessions\":[]}")));
-    }
-
-    @Test
-    public void hasRunningSession_missingSessionsKey_false() throws Exception {
-        assertFalse(FloatingStatusController.hasRunningSession(new org.json.JSONObject("{}")));
-    }
-
-    @Test
-    public void hasRunningSession_runningOmitted_false() throws Exception {
-        // "running" is omitempty server-side; an entry without the field is not running
-        String json = "{\"sessions\":[{\"id\":\"s1\"}]}";
-        assertFalse(FloatingStatusController.hasRunningSession(new org.json.JSONObject(json)));
-    }
-
-    // =====================================================
     // decideCapsuleClick: pure tap-decision function
     // =====================================================
 
@@ -338,15 +306,6 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void notifyRunningSession_addsToRunningCount() {
-        FloatingStatusController controller = newController();
-        controller.notifyRunningSession("s1", "会话标题");
-        assertEquals("WS poll-discovered session must be tracked", 1,
-                controller.getRunningSessionCount());
-        controller.destroy();
-    }
-
-    @Test
     public void destroy_clearsRunningSessions() throws Exception {
         FloatingStatusController controller = newController();
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -398,52 +357,6 @@ public class FloatingStatusControllerTest {
         controller.handleEvent("session_update", sessionEvent("running", "s2"));
         assertFalse(controller.shouldOpenSessionOnCapsuleTap());
         controller.destroy();
-    }
-
-    // =====================================================
-    // notifyRunningSession: sets hasActive and shows the window when backgrounded
-    // =====================================================
-
-    @Test
-    public void notifyRunningSession_background_showsWindow() {
-        FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
-        ShadowSettings.setCanDrawOverlays(true);
-        controller.setAppForeground(false); // backgrounded
-        controller.notifyRunningSession("s1", "会话标题");
-
-        ShadowLooper.runUiThreadTasks();
-        assertTrue("window should show for a running session while backgrounded",
-                controller.isWindowShowing());
-        controller.destroy();
-    }
-
-    @Test
-    public void notifyRunningSession_foreground_doesNotShow() {
-        FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
-        ShadowSettings.setCanDrawOverlays(true);
-        controller.setAppForeground(true); // foreground
-        controller.notifyRunningSession("s1", "会话标题");
-
-        ShadowLooper.runUiThreadTasks();
-        assertFalse("window must not show while app is foreground",
-                controller.isWindowShowing());
-        controller.destroy();
-    }
-
-    /** Robolectric helper to set Settings.canDrawOverlays(true) for SDK 28. */
-    private static final class ShadowSettings {
-        static void setCanDrawOverlays(boolean value) {
-            try {
-                Class<?> cls = Class.forName("org.robolectric.shadows.ShadowSettings");
-                java.lang.reflect.Method m = cls.getDeclaredMethod("setCanDrawOverlays", boolean.class);
-                m.setAccessible(true);
-                m.invoke(null, value);
-            } catch (Exception e) {
-                throw new RuntimeException("failed to set canDrawOverlays", e);
-            }
-        }
     }
 
     // =====================================================
@@ -622,6 +535,96 @@ public class FloatingStatusControllerTest {
         controller.destroy();
     }
 
+    @Test
+    public void setAppForeground_true_resetsExpanded() throws Exception {
+        // Regression: returning to the foreground hid the window but kept the
+        // expanded flag, so a later background rebuilt the stale panel instead
+        // of the capsule.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.setExpanded(true);
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isExpanded());
+
+        controller.setAppForeground(true);
+        ShadowLooper.runUiThreadTasks();
+
+        assertFalse("foreground must reset the expanded state",
+                controller.isExpanded());
+        assertFalse("foreground must hide the window", controller.isWindowShowing());
+        assertNull("foreground must drop the stale panel view",
+                getPrivateField(controller, "panelView"));
+        controller.destroy();
+    }
+
+    @Test
+    public void setAppForeground_false_afterForegroundReset_showsCapsule() throws Exception {
+        // After the foreground reset, backgrounding with an active session must
+        // bring back the capsule (not a stale panel).
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.setExpanded(true);
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isExpanded());
+
+        controller.setAppForeground(true);
+        ShadowLooper.runUiThreadTasks();
+        assertFalse(controller.isExpanded());
+
+        controller.setAppForeground(false);
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("background with an active session must show the window again",
+                controller.isWindowShowing());
+        Object capsuleView = getPrivateField(controller, "view");
+        assertNotNull(capsuleView);
+        assertEquals("the re-shown window must be the capsule, not a stale panel",
+                capsuleView, getPrivateField(controller, "attachedView"));
+        controller.destroy();
+    }
+
+    // =====================================================
+    // setExpanded panel positioning: the panel must stay on-screen
+    // =====================================================
+
+    @Test
+    public void setExpanded_true_clampsPanelXWithinScreen() throws Exception {
+        // Regression: the capsule default sits at the right edge (x = width -
+        // capsuleWidth - margin); attaching the wider 280dp panel there pushed
+        // it off-screen. After expand, x must be re-clamped to the panel width.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.setExpanded(true);
+        ShadowLooper.runUiThreadTasks();
+
+        WindowManager.LayoutParams lp = (WindowManager.LayoutParams)
+                getPrivateField(controller, "params");
+        assertNotNull(lp);
+        int screenWidth = contextWidthPx();
+        int panelWidthPx = Math.round(280 * density());
+        int marginPx = Math.round(8 * density());
+        assertTrue("panel left edge must be >= margin", lp.x >= marginPx);
+        assertTrue("panel right edge must be within the screen",
+                lp.x + panelWidthPx <= screenWidth);
+        controller.destroy();
+    }
+
+    private int contextWidthPx() {
+        return RuntimeEnvironment.getApplication().getResources().getDisplayMetrics().widthPixels;
+    }
+
+    private float density() {
+        return RuntimeEnvironment.getApplication().getResources().getDisplayMetrics().density;
+    }
+
     // =====================================================
     // onOverviewLoaded: overview rendering into the panel
     // =====================================================
@@ -702,6 +705,54 @@ public class FloatingStatusControllerTest {
         controller.destroy();
     }
 
+    @Test
+    public void onOverviewLoaded_noRunningAndTotalZero_hidesLingeringWindow() throws Exception {
+        // Regression: the overview had no running sessions but did not reset
+        // hasActive, so a session that ended while the WS was down left the
+        // capsule stuck on screen. With total == 0 nothing is worth showing.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue("window must be visible while the session is running",
+                controller.isWindowShowing());
+
+        // Session ended while the WS was down; the overview confirms nothing
+        // is running and there are no unread/pending sessions left.
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[],\"total\":0}");
+        controller.onOverviewLoaded(overview);
+        ShadowLooper.runUiThreadTasks();
+
+        assertFalse("empty overview must reset hasActive and hide the window",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void onOverviewLoaded_noRunningButTotalPositive_keepsWindow() throws Exception {
+        // total > 0 means unread / pending-approval sessions remain, which are
+        // still "worth showing" — the window must not be hidden.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"t1\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}]}],\"total\":1}");
+        controller.onOverviewLoaded(overview);
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("unread sessions must keep the window visible",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
     // =====================================================
     // setExpanded + overview request callback
     // =====================================================
@@ -731,11 +782,43 @@ public class FloatingStatusControllerTest {
         controller.setOverviewRequestListener(() -> requests[0]++);
         controller.setExpanded(true);
         ShadowLooper.runUiThreadTasks();
+        // Fast-forward past the refresh throttle so the expand request does not
+        // suppress the event-triggered one.
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(3000,
+                java.util.concurrent.TimeUnit.MILLISECONDS);
         requests[0] = 0; // reset the initial expand request
 
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
 
         assertEquals("events while expanded must trigger an overview refresh", 1, requests[0]);
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_whenExpanded_throttlesRapidRefreshRequests() throws Exception {
+        final int[] requests = {0};
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        controller.setOverviewRequestListener(() -> requests[0]++);
+        controller.setExpanded(true);
+        ShadowLooper.runUiThreadTasks();
+        // Fast-forward past the throttle window so the expand request does not
+        // suppress the first event-triggered one.
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(3000,
+                java.util.concurrent.TimeUnit.MILLISECONDS);
+        requests[0] = 0;
+
+        // Burst of streaming events inside the throttle window: only the first
+        // may fire the listener; the rest must be skipped.
+        for (int i = 0; i < 5; i++) {
+            controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        }
+        assertEquals("events inside the throttle window must be coalesced", 1, requests[0]);
+
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(3000,
+                java.util.concurrent.TimeUnit.MILLISECONDS);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        assertEquals("a refresh after the throttle window must fire", 2, requests[0]);
         controller.destroy();
     }
 
@@ -850,6 +933,20 @@ public class FloatingStatusControllerTest {
             }
             if (child instanceof ViewGroup) {
                 collectTextViews((ViewGroup) child, out, depth + 1);
+            }
+        }
+    }
+
+    /** Robolectric helper to set Settings.canDrawOverlays(true) for SDK 28. */
+    private static final class ShadowSettings {
+        static void setCanDrawOverlays(boolean value) {
+            try {
+                Class<?> cls = Class.forName("org.robolectric.shadows.ShadowSettings");
+                java.lang.reflect.Method m = cls.getDeclaredMethod("setCanDrawOverlays", boolean.class);
+                m.setAccessible(true);
+                m.invoke(null, value);
+            } catch (Exception e) {
+                throw new RuntimeException("failed to set canDrawOverlays", e);
             }
         }
     }
