@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/ws"
 
@@ -79,7 +78,7 @@ func TestQueueHandler_Enqueue_FilePathsMissing(t *testing.T) {
 
 	body := map[string]any{
 		"message":   "with file",
-		"filePaths": []string{filepath.Join(env.ProjectDir, "does-not-exist.txt")},
+		"filePaths": []string{"does-not-exist.txt"},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -99,7 +98,7 @@ func TestQueueHandler_Enqueue_FilesEntryMissing(t *testing.T) {
 	body := map[string]any{
 		"message": "with structured file",
 		"files": []map[string]any{
-			{"path": filepath.Join(env.ProjectDir, "no-such-file.txt")},
+			{"path": "no-such-file.txt"},
 		},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
@@ -252,7 +251,7 @@ func TestQueueHandler_Enqueue_InvalidJSON(t *testing.T) {
 	createQueueSession(t, env, sessionID)
 	req := httptest.NewRequest(http.MethodPost, "/api/ai/queue?session_id="+sessionID, http.NoBody)
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: env.ProjectDir})
+	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(QueueHandler, req)
 
 	assertStatus(t, w, http.StatusBadRequest)

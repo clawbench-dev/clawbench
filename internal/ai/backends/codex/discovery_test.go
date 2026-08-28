@@ -128,12 +128,19 @@ func mockCodexInstall(t *testing.T, binaryStrings []string) {
 	root := t.TempDir()
 	binDir := filepath.Join(root, "bin")
 	require.NoError(t, os.MkdirAll(binDir, 0o755))
-	codexBin := filepath.Join(binDir, "codex")
+	// Windows resolves commands by .exe/.cmd suffix; the shebang line is
+	// meaningless there but harmless on POSIX (it is just a non-ASCII-printable
+	// byte, so it never shows up in ExtractStrings output).
+	codexName := "codex"
+	if runtime.GOOS == "windows" {
+		codexName = "codex.exe"
+	}
+	codexBin := filepath.Join(binDir, codexName)
 	require.NoError(t, os.WriteFile(codexBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	triple := codexTargetTriple()
 	require.NotEmpty(t, triple, "test platform must map to a known target triple")
-	binaryPath := filepath.Join(root, "vendor", triple, "codex", "codex")
+	binaryPath := filepath.Join(root, "vendor", triple, "codex", codexName)
 	require.NoError(t, os.MkdirAll(filepath.Dir(binaryPath), 0o755))
 	var buf bytes.Buffer
 	for _, s := range binaryStrings {

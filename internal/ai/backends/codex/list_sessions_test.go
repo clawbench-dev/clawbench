@@ -1,9 +1,11 @@
 package codex
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -235,7 +237,12 @@ func TestParseAndFormatCodexSessionTime(t *testing.T) {
 
 func TestResolveCodexHomeDefaultsToUserHome(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	// os.UserHomeDir reads $HOME on POSIX and $USERPROFILE on Windows.
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	} else {
+		t.Setenv("HOME", home)
+	}
 	t.Setenv("CODEX_HOME", "")
 
 	actual, err := resolveCodexHome()
@@ -270,14 +277,17 @@ func TestScanCodexSessionsSortsEqualUpdatedAtByCreatedAt(t *testing.T) {
 	// Same UpdatedAt, different CreatedAt (determined by file content timestamp).
 	dir := filepath.Join(codexHome, "sessions", "2026", "08", "27")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
+	// Marshal cwd so Windows backslashes are escaped inside the JSON payload.
+	projectJSON, err := json.Marshal(project)
+	require.NoError(t, err)
 	earlier := filepath.Join(dir, "rollout-2026-08-27T09-00-00-earlier.jsonl")
 	require.NoError(t, os.WriteFile(earlier, []byte(
-		`{"timestamp":"2026-08-27T09:00:00.000Z","type":"session_meta","payload":{"id":"sess-earlier","timestamp":"2026-08-27T09:00:00.000Z","cwd":"`+project+`","originator":"codex_cli_rs","cli_version":"1.0.0"}}`+"\n",
+		`{"timestamp":"2026-08-27T09:00:00.000Z","type":"session_meta","payload":{"id":"sess-earlier","timestamp":"2026-08-27T09:00:00.000Z","cwd":`+string(projectJSON)+`,"originator":"codex_cli_rs","cli_version":"1.0.0"}}`+"\n",
 	), 0o644))
 	require.NoError(t, os.Chtimes(earlier, same, same))
 	later := filepath.Join(dir, "rollout-2026-08-27T11-00-00-later.jsonl")
 	require.NoError(t, os.WriteFile(later, []byte(
-		`{"timestamp":"2026-08-27T11:00:00.000Z","type":"session_meta","payload":{"id":"sess-later","timestamp":"2026-08-27T11:00:00.000Z","cwd":"`+project+`","originator":"codex_cli_rs","cli_version":"1.0.0"}}`+"\n",
+		`{"timestamp":"2026-08-27T11:00:00.000Z","type":"session_meta","payload":{"id":"sess-later","timestamp":"2026-08-27T11:00:00.000Z","cwd":`+string(projectJSON)+`,"originator":"codex_cli_rs","cli_version":"1.0.0"}}`+"\n",
 	), 0o644))
 	require.NoError(t, os.Chtimes(later, same, same))
 
