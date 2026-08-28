@@ -829,9 +829,13 @@ public class FloatingStatusControllerTest {
     @Test
     public void setOnSessionClick_rowClickInvokesCallbackWithSessionId() throws Exception {
         final String[] clicked = {null};
+        final String[] clickedProjectPath = {null};
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication(), () -> {});
-        controller.setOnSessionClick(sid -> clicked[0] = sid);
+        controller.setOnSessionClick((sid, projectPath) -> {
+            clicked[0] = sid;
+            clickedProjectPath[0] = projectPath;
+        });
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.setExpanded(true);
@@ -850,6 +854,8 @@ public class FloatingStatusControllerTest {
         ((View) title.getParent()).performClick();
 
         assertEquals("clicking a session row must deliver its session id", "s-click", clicked[0]);
+        assertEquals("clicking a session row must deliver its owning project path",
+                "/projA", clickedProjectPath[0]);
         controller.destroy();
     }
 
@@ -857,7 +863,7 @@ public class FloatingStatusControllerTest {
     public void setOnSessionClick_rowClick_collapsesPanel() throws Exception {
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication(), () -> {});
-        controller.setOnSessionClick(sid -> {});
+        controller.setOnSessionClick((sid, projectPath) -> {});
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.setExpanded(true);

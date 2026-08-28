@@ -1544,8 +1544,22 @@ public class MainActivity extends AppCompatActivity {
      * Bring the main activity to the front from the desktop floating status window
      * (capsule tap). Static so BackgroundService can invoke it without an activity
      * reference. Carries the tapped session id as a deep link for the frontend.
+     * No project path is available for capsule taps (it opens the most recently
+     * seen session), so this delegates to the two-arg variant with a null path.
      */
     public static void launchFromFloatingWindow(String sessionId) {
+        launchFromFloatingWindow(sessionId, null);
+    }
+
+    /**
+     * Bring the main activity to the front from the desktop floating status window
+     * panel. Static so BackgroundService can invoke it without an activity
+     * reference. Carries the tapped session id and its project path as a deep link
+     * for the frontend: the frontend uses projectPath to switch the project cookie
+     * before opening cross-project sessions (a bare session id would be rejected
+     * with 403 when the session belongs to a different project).
+     */
+    public static void launchFromFloatingWindow(String sessionId, String projectPath) {
         Context ctx = null;
         if (instance != null) {
             ctx = instance.getApplicationContext();
@@ -1565,6 +1579,9 @@ public class MainActivity extends AppCompatActivity {
                 | Intent.FLAG_ACTIVITY_NEW_TASK);
         if (sessionId != null && !sessionId.isEmpty()) {
             launchIntent.putExtra("session_id", sessionId);
+        }
+        if (projectPath != null && !projectPath.isEmpty()) {
+            launchIntent.putExtra("project_path", projectPath);
         }
         try {
             ctx.startActivity(launchIntent);

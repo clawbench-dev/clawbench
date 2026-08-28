@@ -15,7 +15,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 /**
  * Grouped session-list panel for the desktop floating status window.
@@ -150,7 +150,7 @@ public class FloatingStatusPanelView extends FrameLayout {
         return groups;
     }
 
-    public FloatingStatusPanelView(Context context, Consumer<String> onSessionClick) {
+    public FloatingStatusPanelView(Context context, BiConsumer<String, String> onSessionClick) {
         super(context);
         density = getResources().getDisplayMetrics().density;
 
@@ -231,8 +231,12 @@ public class FloatingStatusPanelView extends FrameLayout {
      * Rebuild the panel content from an overview JSON object. Safe to call on
      * the UI thread; replaces the entire list so refreshes never accumulate
      * stale rows.
+     *
+     * @param onSessionClick receives (sessionId, projectPath) for the tapped
+     *                       session; projectPath is the owning ProjectGroup.name
+     *                       so cross-project deep links can pass it through.
      */
-    public void render(JSONObject overview, Consumer<String> onSessionClick) {
+    public void render(JSONObject overview, BiConsumer<String, String> onSessionClick) {
         List<ProjectGroup> groups = buildGroups(overview);
         int runningCount = 0;
         for (ProjectGroup g : groups) {
@@ -252,7 +256,7 @@ public class FloatingStatusPanelView extends FrameLayout {
         for (ProjectGroup group : groups) {
             listContainer.addView(buildProjectHeader(group.name));
             for (SessionItem session : group.sessions) {
-                listContainer.addView(buildSessionRow(session, onSessionClick));
+                listContainer.addView(buildSessionRow(session, group.name, onSessionClick));
             }
         }
     }
@@ -271,7 +275,8 @@ public class FloatingStatusPanelView extends FrameLayout {
         return header;
     }
 
-    private View buildSessionRow(SessionItem session, Consumer<String> onSessionClick) {
+    private View buildSessionRow(SessionItem session, String projectPath,
+                                 BiConsumer<String, String> onSessionClick) {
         LinearLayout row = new LinearLayout(getContext());
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -322,7 +327,7 @@ public class FloatingStatusPanelView extends FrameLayout {
         row.setClickable(true);
         row.setOnClickListener(v -> {
             if (onSessionClick != null) {
-                onSessionClick.accept(session.id);
+                onSessionClick.accept(session.id, projectPath);
             }
         });
 

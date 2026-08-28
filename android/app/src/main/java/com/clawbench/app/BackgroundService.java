@@ -357,9 +357,11 @@ public class BackgroundService extends Service {
         boolean enabled = isFloatingWindowEnabled(this);
         if (enabled && floatingController == null) {
             floatingController = new FloatingStatusController(this, floatingOnTap);
-            // Panel session-row taps deep-link into the tapped session
-            // (capsule taps keep using floatingSessionId via floatingOnTap).
-            floatingController.setOnSessionClick(sid -> MainActivity.launchFromFloatingWindow(sid));
+            // Panel session-row taps deep-link into the tapped session carrying
+            // its project path (capsule taps keep using floatingSessionId via
+            // floatingOnTap, with no project path).
+            floatingController.setOnSessionClick((sid, projectPath) ->
+                    MainActivity.launchFromFloatingWindow(sid, projectPath));
             // Every panel expand / event-while-expanded pulls a fresh overview.
             floatingController.setOverviewRequestListener(() -> {
                 String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)

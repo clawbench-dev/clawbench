@@ -464,6 +464,36 @@ public class BackgroundServiceFloatingTest {
     }
 
     @Test
+    public void onSessionClick_callback_forwardsSessionIdAndProjectPathToLaunch() throws Exception {
+        // The panel session-click callback must reach MainActivity's two-arg
+        // launch entry point with both the session id and its project path, so
+        // cross-project sessions can be opened (bare session id would 403).
+        BackgroundService.setFloatingWindowEnabled(appContext, true);
+        setStaticField("instance", null);
+
+        invokeMethod(service, "onCreate");
+
+        Object controller = getField(service, "floatingController");
+        assertNotNull(controller);
+
+        java.lang.reflect.Field sessionClickField =
+                FloatingStatusController.class.getDeclaredField("onSessionClick");
+        sessionClickField.setAccessible(true);
+        java.util.function.BiConsumer<String, String> callback =
+                (java.util.function.BiConsumer<String, String>) sessionClickField.get(controller);
+        assertNotNull("onCreate must wire the panel session-click callback", callback);
+
+        callback.accept("s-cross", "/projB");
+
+        android.content.Intent next = org.robolectric.Shadows.shadowOf(
+                (android.app.Application) appContext).getNextStartedActivity();
+        assertNotNull("session click must start the activity", next);
+        assertEquals("s-cross", next.getStringExtra("session_id"));
+        assertEquals("project_path extra must carry the tapped session's project",
+                "/projB", next.getStringExtra("project_path"));
+    }
+
+    @Test
     public void overviewRequestListener_fetchesOverviewFromServer() throws Exception {
         BackgroundService.setFloatingWindowEnabled(appContext, true);
         setStaticField("instance", null);

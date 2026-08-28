@@ -16,7 +16,7 @@ import android.view.WindowManager;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 /**
  * Controller for the desktop floating status window.
@@ -82,7 +82,7 @@ public class FloatingStatusController {
     private volatile boolean userDismissed;
     private volatile boolean expanded;
     private Runnable fadeHideRunnable;
-    private Consumer<String> onSessionClick;
+    private BiConsumer<String, String> onSessionClick;
     private OverviewRequestListener overviewRequestListener;
     /** Last time an event-triggered overview refresh was requested (throttle). */
     private volatile long lastOverviewRequestMs;
@@ -268,12 +268,12 @@ public class FloatingStatusController {
         seedRunningFromOverview(overview);
         postToUi(() -> {
             if (panelView != null && expanded) {
-                panelView.render(overview, sid -> {
+                panelView.render(overview, (sid, projectPath) -> {
                     if (sid != null && !sid.isEmpty()) {
                         // Opening a specific session: deliver it to the service
                         // deep-link and collapse the panel.
                         if (onSessionClick != null) {
-                            onSessionClick.accept(sid);
+                            onSessionClick.accept(sid, projectPath);
                         }
                         setExpanded(false);
                     }
@@ -335,10 +335,11 @@ public class FloatingStatusController {
 
     /**
      * Callback invoked when a session row is tapped in the expanded panel.
-     * Carries the session id so the service can deep-link into it (unlike the
-     * no-arg onTap which opens the most recently seen session).
+     * Carries the session id and its owning project path so the service can
+     * deep-link into it (unlike the no-arg onTap which opens the most recently
+     * seen session). projectPath may be null/empty for rows without a group.
      */
-    public void setOnSessionClick(Consumer<String> listener) {
+    public void setOnSessionClick(BiConsumer<String, String> listener) {
         this.onSessionClick = listener;
     }
 
