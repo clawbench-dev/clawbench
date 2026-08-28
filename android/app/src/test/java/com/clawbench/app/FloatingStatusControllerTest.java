@@ -142,7 +142,7 @@ public class FloatingStatusControllerTest {
 
     private FloatingStatusController newController() {
         Context ctx = RuntimeEnvironment.getApplication();
-        return new FloatingStatusController(ctx, null);
+        return new FloatingStatusController(ctx);
     }
 
     @Test
@@ -349,24 +349,16 @@ public class FloatingStatusControllerTest {
     // onCapsuleTap: unified expand-panel tap (Task 3)
     // =====================================================
 
-    /** Track whether the onTap Runnable was invoked. */
-    private static final class TapRecorder {
-        boolean tapped;
-    }
-
     @Test
     public void onCapsuleTap_singleRunning_expandsPanelNotSession() throws Exception {
         // Capsule tap is now a unified "expand the panel" gesture: even with a
         // single running session it must NOT open the session directly.
-        TapRecorder recorder = new TapRecorder();
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
+                RuntimeEnvironment.getApplication());
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
 
         controller.onCapsuleTap();
 
-        assertFalse("single running session tap must not open the session",
-                recorder.tapped);
         assertTrue("single running session tap must expand the panel",
                 controller.isExpanded());
         controller.destroy();
@@ -374,30 +366,24 @@ public class FloatingStatusControllerTest {
 
     @Test
     public void onCapsuleTap_multipleRunning_expandsPanel() throws Exception {
-        TapRecorder recorder = new TapRecorder();
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
+                RuntimeEnvironment.getApplication());
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
         controller.handleEvent("session_update", sessionEvent("running", "s2"));
 
         controller.onCapsuleTap();
 
-        assertFalse("multiple running sessions tap must not open a session",
-                recorder.tapped);
         assertTrue(controller.isExpanded());
         controller.destroy();
     }
 
     @Test
     public void onCapsuleTap_zeroRunning_expandsPanel() throws Exception {
-        TapRecorder recorder = new TapRecorder();
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
+                RuntimeEnvironment.getApplication());
 
         controller.onCapsuleTap();
 
-        assertFalse("no running sessions tap must not open a session",
-                recorder.tapped);
         assertTrue(controller.isExpanded());
         controller.destroy();
     }
@@ -406,16 +392,14 @@ public class FloatingStatusControllerTest {
     public void onCapsuleTap_whenAlreadyExpanded_staysExpanded() throws Exception {
         // A tap while the panel is already expanded keeps it expanded rather
         // than collapsing (the capsule is not attached in that state anyway).
-        TapRecorder recorder = new TapRecorder();
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
+                RuntimeEnvironment.getApplication());
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
         controller.setExpanded(true);
         assertTrue(controller.isExpanded());
 
         controller.onCapsuleTap();
 
-        assertFalse(recorder.tapped);
         assertTrue(controller.isExpanded());
         controller.destroy();
     }
@@ -424,9 +408,8 @@ public class FloatingStatusControllerTest {
     public void capsuleTapTouchEvent_expandsPanel() throws Exception {
         // Real touch path: ACTION_UP on the capsule view must route through
         // onCapsuleTap and always expand the panel, never open a session.
-        TapRecorder recorder = new TapRecorder();
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -446,23 +429,7 @@ public class FloatingStatusControllerTest {
         capsule.dispatchTouchEvent(up);
         ShadowLooper.runUiThreadTasks();
 
-        assertFalse("capsule tap must not open a session", recorder.tapped);
         assertTrue("capsule tap must expand the panel", controller.isExpanded());
-        controller.destroy();
-    }
-
-    @Test
-    public void onCapsuleTap_ignoresOnTapRunnable() throws Exception {
-        // The onTap runnable (legacy "open most recent session") must never fire
-        // from a capsule tap now that taps always expand the panel.
-        TapRecorder recorder = new TapRecorder();
-        FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> recorder.tapped = true);
-        controller.handleEvent("session_update", sessionEvent("running", "s1"));
-
-        controller.onCapsuleTap();
-
-        assertFalse("onTap must not be invoked by a capsule tap", recorder.tapped);
         controller.destroy();
     }
 
@@ -473,7 +440,7 @@ public class FloatingStatusControllerTest {
     @Test
     public void setExpanded_true_showsPanelWindow() throws Exception {
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -494,7 +461,7 @@ public class FloatingStatusControllerTest {
     @Test
     public void collapse_restoresCapsuleView() throws Exception {
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -524,7 +491,7 @@ public class FloatingStatusControllerTest {
         // No active session (e.g. panel showed only unread sessions): collapsing
         // must hide the floating window entirely rather than restore the capsule.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
 
@@ -547,7 +514,7 @@ public class FloatingStatusControllerTest {
         // expanded flag, so a later background rebuilt the stale panel instead
         // of the capsule.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.setExpanded(true);
@@ -570,7 +537,7 @@ public class FloatingStatusControllerTest {
         // After the foreground reset, backgrounding with an active session must
         // bring back the capsule (not a stale panel).
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -604,7 +571,7 @@ public class FloatingStatusControllerTest {
         // capsuleWidth - margin); attaching the wider 280dp panel there pushed
         // it off-screen. After expand, x must be re-clamped to the panel width.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -638,7 +605,7 @@ public class FloatingStatusControllerTest {
     @Test
     public void onOverviewLoaded_rendersSessionsIntoPanel() throws Exception {
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -661,7 +628,7 @@ public class FloatingStatusControllerTest {
     @Test
     public void onOverviewLoaded_whenNotExpanded_isNoOp() throws Exception {
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"t1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}");
 
@@ -678,7 +645,7 @@ public class FloatingStatusControllerTest {
         // WS-connect fallback: a running session discovered via the overview
         // (start event missed while the WS was down) must bring up the capsule.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false); // backgrounded
 
@@ -697,7 +664,7 @@ public class FloatingStatusControllerTest {
     @Test
     public void onOverviewLoaded_noRunning_doesNotShowWindow() throws Exception {
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
 
@@ -717,7 +684,7 @@ public class FloatingStatusControllerTest {
         // hasActive, so a session that ended while the WS was down left the
         // capsule stuck on screen. With total == 0 nothing is worth showing.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -742,7 +709,7 @@ public class FloatingStatusControllerTest {
         // total > 0 means unread / pending-approval sessions remain, which are
         // still "worth showing" — the window must not be hidden.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -797,7 +764,7 @@ public class FloatingStatusControllerTest {
     @Test
     public void onOverviewLoaded_updatesCapsuleStats() throws Exception {
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -829,7 +796,7 @@ public class FloatingStatusControllerTest {
     public void onOverviewLoaded_zeroCounts_hideStatItems() throws Exception {
         // Zero-count groups (dot + label) must be hidden: only the logo shows.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -854,7 +821,7 @@ public class FloatingStatusControllerTest {
         // onOverviewLoaded must still keep the (unattached) capsule stats fresh
         // so collapsing back shows correct counts immediately.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -884,7 +851,7 @@ public class FloatingStatusControllerTest {
         // capsule displayed the initial empty state ("—" label, transparent dot).
         // The stats capsule must render the running count from the overview.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false); // backgrounded, no prior events
 
@@ -910,7 +877,7 @@ public class FloatingStatusControllerTest {
         // Bug 2: a terminal event for one session set hasActive=false, so the
         // 3s hide fired even though another session was still running.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -933,7 +900,7 @@ public class FloatingStatusControllerTest {
         // Regression guard: when the last running session ends, the "done"
         // capsule must still be shown briefly and then hidden.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -959,7 +926,7 @@ public class FloatingStatusControllerTest {
     public void setExpanded_true_invokesOverviewRequestListener() {
         final int[] requests = {0};
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         controller.setOverviewRequestListener(() -> requests[0]++);
 
         controller.setExpanded(true);
@@ -976,7 +943,7 @@ public class FloatingStatusControllerTest {
     public void handleEvent_whenExpanded_requestsOverviewRefresh() throws Exception {
         final int[] requests = {0};
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         controller.setOverviewRequestListener(() -> requests[0]++);
         controller.setExpanded(true);
         ShadowLooper.runUiThreadTasks();
@@ -996,7 +963,7 @@ public class FloatingStatusControllerTest {
     public void handleEvent_whenExpanded_throttlesRapidRefreshRequests() throws Exception {
         final int[] requests = {0};
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         controller.setOverviewRequestListener(() -> requests[0]++);
         controller.setExpanded(true);
         ShadowLooper.runUiThreadTasks();
@@ -1036,7 +1003,7 @@ public class FloatingStatusControllerTest {
         // round trip (5s/10s timeouts), so a session start left the capsule
         // showing only the logo until the network returned.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
 
@@ -1056,7 +1023,7 @@ public class FloatingStatusControllerTest {
     @Test
     public void handleEvent_permissionPending_rendersPendingCountInstantly() throws Exception {
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
 
@@ -1078,7 +1045,7 @@ public class FloatingStatusControllerTest {
         // A terminal event must drop the finished session from the capsule's
         // running/pending counts immediately (before any overview returns).
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -1101,7 +1068,7 @@ public class FloatingStatusControllerTest {
         // Events carry no unread data, so the capsule must keep the unread
         // count from the last overview until a fresh one corrects it.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
@@ -1132,7 +1099,7 @@ public class FloatingStatusControllerTest {
         // Pending wins over running (yellow > green): a session that is both
         // running and pending-approval counts as pending, not running.
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);
         controller.handleEvent("session_update", sessionEvent("running", "s-running"));
@@ -1156,7 +1123,7 @@ public class FloatingStatusControllerTest {
         final String[] clicked = {null};
         final String[] clickedProjectPath = {null};
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         controller.setOnSessionClick((sid, projectPath) -> {
             clicked[0] = sid;
             clickedProjectPath[0] = projectPath;
@@ -1187,7 +1154,7 @@ public class FloatingStatusControllerTest {
     @Test
     public void setOnSessionClick_rowClick_collapsesPanel() throws Exception {
         FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication(), () -> {});
+                RuntimeEnvironment.getApplication());
         controller.setOnSessionClick((sid, projectPath) -> {});
         ShadowSettings.setCanDrawOverlays(true);
         controller.setAppForeground(false);

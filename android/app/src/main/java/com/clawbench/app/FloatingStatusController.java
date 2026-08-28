@@ -410,7 +410,7 @@ public class FloatingStatusController {
         this.overviewRequestListener = listener;
     }
 
-    public FloatingStatusController(Context context, Runnable onTap) {
+    public FloatingStatusController(Context context) {
         this.context = context.getApplicationContext();
         this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
         this.handler = new Handler(Looper.getMainLooper());

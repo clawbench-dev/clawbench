@@ -218,11 +218,8 @@ public class BackgroundService extends Service {
     // window feature is enabled, destroyed in onDestroy(). Null otherwise.
     private FloatingStatusController floatingController;
     // Most recently seen session_id from session_update/task_update events,
-    // passed to MainActivity when the floating capsule is tapped.
+    // tracked so the panel's session rows can deep-link into the right session.
     private volatile String floatingSessionId = "";
-    // Shared tap-to-open callback reused by every controller instance
-    // (onCreate and syncFloatingController both create controllers).
-    private Runnable floatingOnTap;
 
     // Event ID dedup (mirrors frontend processedEventIds pattern)
     // Uses Collections.synchronizedSet with LinkedHashSet for atomic eviction:
@@ -356,10 +353,9 @@ public class BackgroundService extends Service {
     private void syncFloatingController() {
         boolean enabled = isFloatingWindowEnabled(this);
         if (enabled && floatingController == null) {
-            floatingController = new FloatingStatusController(this, floatingOnTap);
+            floatingController = new FloatingStatusController(this);
             // Panel session-row taps deep-link into the tapped session carrying
-            // its project path (capsule taps keep using floatingSessionId via
-            // floatingOnTap, with no project path).
+            // its project path (capsule taps always expand the panel).
             floatingController.setOnSessionClick((sid, projectPath) ->
                     MainActivity.launchFromFloatingWindow(sid, projectPath));
             // Every panel expand / event-while-expanded pulls a fresh overview.
@@ -708,12 +704,6 @@ public class BackgroundService extends Service {
 
         // Initialize the desktop floating status window controller (opt-in feature).
         // Created here so it lives exactly as long as this Service instance.
-        floatingOnTap = () -> {
-            // Tap-to-open: bring the main activity to the front (deep-linked to the
-            // most recently seen session). Delegated to MainActivity so the launch
-            // intent construction stays in one place.
-            MainActivity.launchFromFloatingWindow(floatingSessionId);
-        };
         syncFloatingController();
 
         // NOTE: Do NOT call stopSelf() here even if forwardedPorts is empty!
@@ -841,7 +831,6 @@ public class BackgroundService extends Service {
             floatingController.destroy();
             floatingController = null;
         }
-        floatingOnTap = null;
         stopConnectionMonitor();
         releaseWifiLock();
         releaseWakeLock();
