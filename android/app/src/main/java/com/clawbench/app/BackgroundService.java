@@ -2763,10 +2763,9 @@ public class BackgroundService extends Service {
             return;
         }
         try {
-            // Send ALL cookies for this host (session + project). The
-            // /api/ai/sessions/overview endpoint requires the project cookie
-            // (clawbench_project) via requireProject; sending only the session
-            // cookie yields HTTP 403.
+            // Send the full cookie set for this host. /api/ai/sessions/overview
+            // requires only Auth (session cookie); the project cookie is sent
+            // along harmlessly for consistency with other /api/ai/sessions calls.
             String cookies = android.webkit.CookieManager.getInstance().getCookie(serverUrl);
             if (cookies == null || cookies.trim().isEmpty()) {
                 AppLog.d(TAG, "FloatingWindow: no cookies, skipping overview poll");

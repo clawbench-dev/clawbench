@@ -252,7 +252,10 @@ public class FloatingStatusController {
                     // arrives so the header-only window is compact.
                     resizePanelIfNeeded();
                 }
-                requestOverviewRefresh();
+                // Force the overview fetch: the panel's session list depends on
+                // it, and the throttled path could swallow the request if a
+                // streaming event fired moments before the expand.
+                requestOverviewRefresh(true);
             } else {
                 // Collapse: back to the capsule if a session is still active,
                 // otherwise hide the window entirely.
@@ -587,13 +590,22 @@ public class FloatingStatusController {
      * network pulls. Any thread.
      */
     private void requestOverviewRefresh() {
+        requestOverviewRefresh(false);
+    }
+
+    /**
+     * Request a fresh overview. When {@code force} is true the throttle is
+     * bypassed entirely (used for panel expand, where the overview is required
+     * to populate the list). Any thread.
+     */
+    private void requestOverviewRefresh(boolean force) {
         if (overviewRequestListener == null) {
             return;
         }
         long now = android.os.SystemClock.elapsedRealtime();
         // lastOverviewRequestMs == 0 means "never requested" — always fire so
         // the expand request is never swallowed by the throttle.
-        if (lastOverviewRequestMs != 0
+        if (!force && lastOverviewRequestMs != 0
                 && now - lastOverviewRequestMs < OVERVIEW_REFRESH_MIN_INTERVAL_MS) {
             return;
         }

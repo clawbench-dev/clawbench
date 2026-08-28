@@ -960,8 +960,7 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void handleEvent_whenExpanded_throttlesRapidRefreshRequests() throws Exception {
-        final int[] requests = {0};
+    public void handleEvent_whenExpanded_throttlesRapidRefreshRequests() throws Exception {        final int[] requests = {0};
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication());
         controller.setOverviewRequestListener(() -> requests[0]++);
@@ -984,6 +983,26 @@ public class FloatingStatusControllerTest {
                 java.util.concurrent.TimeUnit.MILLISECONDS);
         controller.handleEvent("session_update", sessionEvent("running", "s1"));
         assertEquals("a refresh after the throttle window must fire", 2, requests[0]);
+        controller.destroy();
+    }
+
+    @Test
+    public void setExpanded_true_bypassesThrottle_fetchesOverview() throws Exception {
+        final int[] requests = {0};
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        controller.setOverviewRequestListener(() -> requests[0]++);
+        // Fire one request first to arm the throttle window.
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertEquals("the initial event must fire the listener", 1, requests[0]);
+
+        // Expanding while still inside the throttle window must STILL fetch:
+        // the panel's session list depends on the overview.
+        controller.setExpanded(true);
+        ShadowLooper.runUiThreadTasks();
+        assertEquals("expand must bypass the throttle and fetch the overview",
+                2, requests[0]);
         controller.destroy();
     }
 
