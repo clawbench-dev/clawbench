@@ -1,7 +1,11 @@
 package com.clawbench.app;
 
+import android.animation.ObjectAnimator;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.TextView;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -10,6 +14,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.*;
@@ -258,11 +263,145 @@ public class FloatingStatusPanelViewTest {
                 afterConstrain == unconstrained);
     }
 
+    // =====================================================
+    // Title bar: shared capsule content row + stats
+    // =====================================================
+
+    private FloatingStatusContentView headerContent(FloatingStatusPanelView panel) throws Exception {
+        LinearLayout header = (LinearLayout) getField(panel, "headerLayout");
+        return (FloatingStatusContentView) header.getChildAt(0);
+    }
+
+    /** The running dot inside the header's shared content row. */
+    private View headerRunningDot(FloatingStatusPanelView panel) throws Exception {
+        FloatingStatusContentView content = headerContent(panel);
+        LinearLayout runningItem = (LinearLayout) content.getChildAt(1);
+        return runningItem.getChildAt(0);
+    }
+
+    private ObjectAnimator headerBreathAnimator(FloatingStatusPanelView panel) throws Exception {
+        return (ObjectAnimator) getField(headerContent(panel), "breathAnim");
+    }
+
+    @Test
+    public void renderHeaderStats_withRunning_startsBreathing() throws Exception {
+        FloatingStatusPanelView panel = newPanel();
+        panel.renderHeaderStats(2, 0, 0);
+
+        ObjectAnimator anim = headerBreathAnimator(panel);
+        assertTrue("header running dot must breathe while sessions run", anim.isRunning());
+        assertEquals("header breathing must loop forever", ObjectAnimator.INFINITE,
+                org.robolectric.Shadows.shadowOf(anim).getActualRepeatCount());
+        panel.stopBreathing();
+    }
+
+    @Test
+    public void renderHeaderStats_zeroRunning_stopsBreathingAndRestoresAlpha() throws Exception {
+        FloatingStatusPanelView panel = newPanel();
+        panel.renderHeaderStats(1, 0, 0);
+        assertTrue(headerBreathAnimator(panel).isRunning());
+
+        panel.renderHeaderStats(0, 0, 0);
+
+        assertFalse("header breathing must stop when the running count drops to 0",
+                headerBreathAnimator(panel).isRunning());
+        assertEquals("the header running dot must return to full opacity", 1.0f,
+                headerRunningDot(panel).getAlpha(), 0.001f);
+        panel.stopBreathing();
+    }
+
+    @Test
+    public void render_paintsTitleBarStatsFromOverview() throws Exception {
+        // The title bar reuses the capsule content row: render() must feed it
+        // the same mutually-exclusive stats as the capsule (pending wins over
+        // running; unread only counts idle sessions). No separate
+        // "N 个会话运行中" header text remains.
+        FloatingStatusPanelView panel = newPanel();
+        String json = "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                + "{\"id\":\"r\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0},"
+                + "{\"id\":\"p\",\"running\":false,\"pendingApproval\":true,\"unreadCount\":0},"
+                + "{\"id\":\"b\",\"running\":true,\"pendingApproval\":true,\"unreadCount\":0},"
+                + "{\"id\":\"u\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":3}"
+                + "]}]}";
+        panel.render(new JSONObject(json), null);
+
+        List<String> texts = collectAllTexts(panel);
+        assertTrue("title bar must show the running count, got: " + texts,
+                texts.contains("执行中 1"));
+        assertTrue("title bar must show the pending count, got: " + texts,
+                texts.contains("待审批 2"));
+        assertTrue("title bar must show the unread count, got: " + texts,
+                texts.contains("未读 1"));
+        panel.stopBreathing();
+    }
+
+    @Test
+    public void headerContent_staysStableAcrossRenders() throws Exception {
+        // The title bar's content row is built once at construction; render()
+        // only rebuilds the session list, so the header keeps its own state
+        // (and breathing animation) across refreshes.
+        FloatingStatusPanelView panel = newPanel();
+        FloatingStatusContentView first = headerContent(panel);
+
+        panel.render(new JSONObject(overviewWith(1)), null);
+        panel.render(new JSONObject(overviewWith(3)), null);
+
+        assertEquals("header content row must not be rebuilt on render",
+                first, headerContent(panel));
+        panel.stopBreathing();
+    }
+
     // --- helpers ---
 
     private static Object getField(Object target, String name) throws Exception {
         java.lang.reflect.Field f = target.getClass().getDeclaredField(name);
         f.setAccessible(true);
         return f.get(target);
+    }
+
+    /** All visible TextView texts in the hierarchy, in order. */
+    private List<String> collectAllTexts(ViewGroup root) {
+        List<String> out = new ArrayList<>();
+        for (TextView tv : collectVisibleTextViews(root, 0)) {
+            String text = tv.getText().toString();
+            if (!text.isEmpty()) {
+                out.add(text);
+            }
+        }
+        return out;
+    }
+
+    private List<TextView> collectVisibleTextViews(ViewGroup root, int depth) {
+        List<TextView> out = new ArrayList<>();
+        if (depth > 6) {
+            return out;
+        }
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View child = root.getChildAt(i);
+            if (child instanceof TextView
+                    && child.getVisibility() == View.VISIBLE
+                    && isVisibleInHierarchy(child)) {
+                out.add((TextView) child);
+            }
+            if (child instanceof ViewGroup) {
+                out.addAll(collectVisibleTextViews((ViewGroup) child, depth + 1));
+            }
+        }
+        return out;
+    }
+
+    /** A GONE parent hides its children even when their own flag is VISIBLE. */
+    private static boolean isVisibleInHierarchy(View v) {
+        View current = v;
+        while (current != null) {
+            if (current.getVisibility() != View.VISIBLE) {
+                return false;
+            }
+            if (!(current.getParent() instanceof View)) {
+                break;
+            }
+            current = (View) current.getParent();
+        }
+        return true;
     }
 }

@@ -3,7 +3,6 @@ package com.clawbench.app;
 import android.animation.ObjectAnimator;
 import android.graphics.drawable.GradientDrawable;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.LinearLayout;
 
 import org.json.JSONObject;
@@ -171,15 +170,20 @@ public class FloatingStatusViewTest {
         return new FloatingStatusView(RuntimeEnvironment.getApplication());
     }
 
+    /** The shared content row embedded in the capsule. */
+    private FloatingStatusContentView content(FloatingStatusView capsule) {
+        return (FloatingStatusContentView) capsule.getChildAt(0);
+    }
+
     /** The running dot: first child of the running item (dot, then label). */
     private View runningDot(FloatingStatusView capsule) {
-        ViewGroup row = (ViewGroup) capsule.getChildAt(0);
+        FloatingStatusContentView row = content(capsule);
         LinearLayout runningItem = (LinearLayout) row.getChildAt(1);
         return runningItem.getChildAt(0);
     }
 
     private ObjectAnimator breathAnimator(FloatingStatusView capsule) throws Exception {
-        return (ObjectAnimator) getField(capsule, "breathAnim");
+        return (ObjectAnimator) getField(content(capsule), "breathAnim");
     }
 
     private Object getField(Object target, String name) throws Exception {
@@ -273,7 +277,7 @@ public class FloatingStatusViewTest {
     }
 
     // =====================================================
-    // Capsule sizing: enlarged to match the panel header height
+    // Capsule sizing: compact 38dp pill (7dp padding + 24dp logo)
     // =====================================================
 
     private static int constantInt(String name) throws Exception {
@@ -282,31 +286,37 @@ public class FloatingStatusViewTest {
         return f.getInt(null);
     }
 
+    private static int contentConstantInt(String name) throws Exception {
+        java.lang.reflect.Field f = FloatingStatusContentView.class.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.getInt(null);
+    }
+
     @Test
-    public void sizeConstants_areEnlargedToMatchPanelHeader() throws Exception {
-        // The user complained the collapsed capsule was "too stingy". These
-        // values mirror the expanded panel's title bar (PADDING_V 10dp,
-        // title text 14sp) so the capsule is at least as tall as the header.
-        assertEquals(10, constantInt("PADDING_V_DP"));
+    public void sizeConstants_areCompact() throws Exception {
+        // The capsule is a compact 38dp pill: 7dp vertical padding around a
+        // 24dp logo. Constants specific to the content row (logo, dots, text)
+        // live in FloatingStatusContentView, shared with the panel title bar.
+        assertEquals(7, constantInt("PADDING_V_DP"));
         assertEquals(14, constantInt("PADDING_H_DP"));
         assertEquals(8, constantInt("PADDING_H_START_DP"));
-        assertEquals(12, constantInt("DOT_SIZE_DP"));
-        assertEquals(6, constantInt("DOT_MARGIN_END_DP"));
-        assertEquals(14, constantInt("TEXT_SIZE_SP"));
-        assertEquals(28, constantInt("LOGO_SIZE_DP"));
-        assertEquals(10, constantInt("LOGO_MARGIN_END_DP"));
+        assertEquals(24, contentConstantInt("LOGO_SIZE_DP"));
+        assertEquals(12, contentConstantInt("DOT_SIZE_DP"));
+        assertEquals(6, contentConstantInt("DOT_MARGIN_END_DP"));
+        assertEquals(14, contentConstantInt("TEXT_SIZE_SP"));
+        assertEquals(10, contentConstantInt("LOGO_MARGIN_END_DP"));
     }
 
     @Test
     public void cornerRadius_isHalfTheCapsuleHeight() throws Exception {
-        // The capsule renders as a pill: CORNER_RADIUS 24dp equals half the
-        // 48dp target height (20dp vertical padding + 28dp logo), so both
+        // The capsule renders as a pill: CORNER_RADIUS 19dp equals half the
+        // 38dp target height (7dp vertical padding + 24dp logo), so both
         // ends are full semicircles rather than rounded-rectangle corners.
-        assertEquals(24, constantInt("CORNER_RADIUS_DP"));
+        assertEquals(19, constantInt("CORNER_RADIUS_DP"));
         assertEquals("logo height + 2 * vertical padding",
-                48, 2 * constantInt("PADDING_V_DP") + constantInt("LOGO_SIZE_DP"));
-        assertEquals("corner radius must be half the 48dp height",
-                48 / 2, constantInt("CORNER_RADIUS_DP"));
+                38, 2 * constantInt("PADDING_V_DP") + contentConstantInt("LOGO_SIZE_DP"));
+        assertEquals("corner radius must be half the 38dp height",
+                38 / 2, constantInt("CORNER_RADIUS_DP"));
     }
 
     @Test
@@ -329,11 +339,11 @@ public class FloatingStatusViewTest {
 
     @Test
     public void capsuleMeasuredHeight_meetsTarget() throws Exception {
-        // Target ≈ 48dp (20dp vertical padding + 28dp logo, i.e. the pill
+        // Target ≈ 38dp (7dp vertical padding + 24dp logo, i.e. the pill
         // height whose half drives the full-semicircle corner radius).
         // Robolectric's default font metrics inflate the 14sp text line
-        // height well above on-device values (~19dp), so it measures ~55px
-        // here while a real device renders ~48dp. The lower bound is the real
+        // height well above on-device values (~19dp), so it measures ~45px
+        // here while a real device renders ~38dp. The lower bound is the real
         // guard against a "stingy" capsule; the upper bound catches gross
         // regressions. Robolectric runs at density=1, so dp == px here.
         FloatingStatusView capsule = newCapsule();
@@ -344,10 +354,10 @@ public class FloatingStatusViewTest {
         capsule.measure(widthSpec, heightSpec);
 
         int height = capsule.getMeasuredHeight();
-        assertTrue("capsule height " + height + "px must be >= 44dp (target ~48dp)",
-                height >= 44);
-        assertTrue("capsule height " + height + "px must be <= 64dp (Robolectric inflates text)",
-                height <= 64);
+        assertTrue("capsule height " + height + "px must be >= 38dp (target)",
+                height >= 38);
+        assertTrue("capsule height " + height + "px must be <= 60dp (Robolectric inflates text)",
+                height <= 60);
         capsule.stopBreathing();
     }
 }

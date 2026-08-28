@@ -25,8 +25,9 @@ import java.util.function.BiConsumer;
  * Grouped session-list panel for the desktop floating status window.
  *
  * Renders the /api/ai/sessions/overview response as a scrollable list grouped
- * by project. UI is built in code (no XML): a header row with a live-session
- * count and a collapse ("×") button, followed by per-project group headers and
+ * by project. UI is built in code (no XML): a header row with the shared
+ * capsule content (logo + live stat counts, see FloatingStatusContentView)
+ * and a collapse ("×") button, followed by per-project group headers and
  * session rows. Each session row shows a tri-color status indicator, a
  * single-line ellipsized title, and a red circular unread badge when
  * unreadCount > 0. Tapping a row invokes the onSessionClick callback.
@@ -70,7 +71,6 @@ public class FloatingStatusPanelView extends FrameLayout {
     private static final int CORNER_RADIUS_DP = 20;
     private static final int PADDING_H_DP = 14;
     private static final int PADDING_V_DP = 10;
-    private static final int HEADER_TITLE_SIZE_SP = 14;
     private static final int COLLAPSE_BTN_SIZE_DP = 22;
     private static final int COLLAPSE_BTN_TEXT_SIZE_SP = 16;
     private static final int PROJECT_HEADER_SIZE_SP = 11;
@@ -107,7 +107,7 @@ public class FloatingStatusPanelView extends FrameLayout {
     }
 
     private final float density;
-    private final TextView headerTitleView;
+    private final FloatingStatusContentView headerContentView;
     private final LinearLayout headerLayout;
     private final LinearLayout listContainer;
     private final ScrollView scrollView;
@@ -237,17 +237,19 @@ public class FloatingStatusPanelView extends FrameLayout {
         LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.VERTICAL);
 
-        // Header: live-session count + collapse button.
+        // Header: shared stats content row (same logo + count items as the
+        // collapsed capsule, left-aligned) + collapse button. The content row
+        // is built once here and kept across renders, so the capsule visuals
+        // and their breathing animation are stable while the session list
+        // below is rebuilt. Its intrinsic height (24dp logo) plus the panel's
+        // 10dp vertical padding yields a ~44dp header bar; constrainListHeight
+        // accounts for the measured header height.
         LinearLayout header = new LinearLayout(context);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
         headerLayout = header;
-        headerTitleView = new TextView(context);
-        headerTitleView.setTextSize(HEADER_TITLE_SIZE_SP);
-        headerTitleView.setTextColor(colorTextPrimary);
-        headerTitleView.setTypeface(Typeface.DEFAULT_BOLD);
-        headerTitleView.setIncludeFontPadding(false);
-        header.addView(headerTitleView, new LinearLayout.LayoutParams(
+        headerContentView = new FloatingStatusContentView(context);
+        header.addView(headerContentView, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         TextView collapseBtn = new TextView(context);
@@ -307,19 +309,28 @@ public class FloatingStatusPanelView extends FrameLayout {
      */
     public void render(JSONObject overview, BiConsumer<String, String> onSessionClick) {
         List<ProjectGroup> groups = buildGroups(overview);
+        AppLog.d("FloatingPanelView", "render groups=" + groups.size());
+
+        // The title bar shows the shared content row (logo + stats). Compute
+        // the stats from the overview the same way the capsule does, so the
+        // panel header and the collapsed capsule always agree. The three
+        // groups are mutually exclusive: pending wins over running for
+        // both-flag sessions; unread only counts idle sessions with unread.
         int runningCount = 0;
+        int pendingCount = 0;
+        int unreadCount = 0;
         for (ProjectGroup g : groups) {
             for (SessionItem s : g.sessions) {
-                if (s.running) {
+                if (s.pendingApproval) {
+                    pendingCount++;
+                } else if (s.running) {
                     runningCount++;
+                } else if (s.unreadCount > 0) {
+                    unreadCount++;
                 }
             }
         }
-        AppLog.d("FloatingPanelView", "render groups=" + groups.size()
-                + " running=" + runningCount);
-
-        headerTitleView.setText(runningCount > 0
-                ? runningCount + " 个会话运行中" : "会话列表");
+        renderHeaderStats(runningCount, pendingCount, unreadCount);
 
         stopBreathing();
         listContainer.removeAllViews();
@@ -331,6 +342,15 @@ public class FloatingStatusPanelView extends FrameLayout {
             }
         }
         startBreathing();
+    }
+
+    /**
+     * Render the stats into the title bar's shared content row (logo + three
+     * count groups), mirroring the collapsed capsule. The content row is
+     * stable across renders — only the session list below is rebuilt.
+     */
+    public void renderHeaderStats(int running, int pending, int unread) {
+        headerContentView.renderStats(running, pending, unread);
     }
 
     /**
@@ -493,11 +513,14 @@ public class FloatingStatusPanelView extends FrameLayout {
 
     /**
      * Stop all running-dot breathing animations and restore full opacity.
-     * Called before every list rebuild so stale rows never keep animating, and
-     * by the controller on teardown so infinite animators cannot keep posting
-     * frame callbacks after the window is removed. UI thread only.
+     * Covers the title bar's shared content row (which owns its own breathing
+     * animation) and the session rows. Called before every list rebuild so
+     * stale rows never keep animating, and by the controller on teardown so
+     * infinite animators cannot keep posting frame callbacks after the window
+     * is removed. UI thread only.
      */
     public void stopBreathing() {
+        headerContentView.stopBreathing();
         for (View dot : breathingDots) {
             Object tag = dot.getTag();
             if (tag instanceof ObjectAnimator) {
