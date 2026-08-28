@@ -872,6 +872,11 @@ export function useChatSession(options: UseChatSessionOptions) {
         permissionDebounce = null
         loadSessionsOnce()
       }, 300)
+    } else if (data.status === 'read') {
+      // The session was marked read from another client. This is a pure unread
+      // count refresh — it must NOT remove the session from runningSessions
+      // (a running session can be read from elsewhere while still streaming).
+      loadSessionsOnce()
     } else {
       if (sid) { runningSessions.value.delete(sid); runningSessionsVersion.value++ }
       // Safety net: if the session completed/cancelled but loading is still true,

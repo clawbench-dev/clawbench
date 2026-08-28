@@ -994,6 +994,51 @@ describe('onSessionEvent', () => {
     expect(onDisconnectStream).not.toHaveBeenCalled()
   })
 
+  it('read status keeps session in runningSessions (unread-only refresh)', () => {
+    // Regression: a "read" event (session marked read from another client)
+    // must not drop the session from runningSessions — a session can be read
+    // from elsewhere while still streaming.
+    const session = createSession()
+    session.onSessionEvent({ session_id: 's1', status: 'running' })
+    expect(mockState.runningSessions.has('s1')).toBe(true)
+
+    session.onSessionEvent({ session_id: 's1', status: 'read' })
+
+    expect(mockState.runningSessions.has('s1'),
+        "read must not remove the session from runningSessions").toBe(true)
+    expect(mockState.runningSessionsVersion).toBe(1)
+  })
+
+  it('read status does NOT trigger the stuck-loading safety net', () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'read' })
+
+    // read is not a terminal status: the safety net must not fire
+    expect(loading.value).toBe(true)
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+  })
+
   it('normal path: still calls loadHistory when loading=false and session completes', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
