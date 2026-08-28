@@ -971,6 +971,48 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 	return sessions, rows.Err()
 }
 
+// GetOverviewSessions returns all non-archived chat sessions across every
+// project (for the floating window overview panel), including per-session
+// unread counts. Unread is computed per-project (joined by project_path) so
+// sessions in different projects don't interfere.
+func GetOverviewSessions() ([]model.ChatSession, error) {
+	sessions := []model.ChatSession{}
+	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, s.project_path,
+		COALESCE(unread.cnt, 0) AS unread_count
+		FROM chat_sessions s
+		LEFT JOIN (
+			SELECT h.session_id, h.project_path, COUNT(*) AS cnt
+			FROM chat_history h
+			JOIN chat_sessions s2 ON s2.id = h.session_id AND s2.project_path = h.project_path
+			WHERE h.role = 'assistant' AND h.streaming = 0
+			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
+			GROUP BY h.session_id, h.project_path
+		) unread ON unread.session_id = s.id AND unread.project_path = s.project_path
+		WHERE s.archived = 0 AND s.session_type = 'chat'
+		ORDER BY s.updated_at DESC, s.id DESC`
+	rows, err := dbRead.Query(query)
+	if err != nil {
+		return sessions, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s model.ChatSession
+		var lastRead sql.NullTime
+		var sourceSessionID sql.NullString
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.ProjectPath, &s.UnreadCount); err != nil {
+			return nil, err
+		}
+		if lastRead.Valid {
+			s.LastReadAt = &lastRead.Time
+		}
+		if sourceSessionID.Valid {
+			s.SourceSessionID = sourceSessionID.String
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
 // GetSessionsPaged retrieves chat sessions with cursor-based pagination,
 // ordered by created_at DESC (newest first; fixed order, unaffected by interaction).
 // limit=0 means no limit (returns all sessions).

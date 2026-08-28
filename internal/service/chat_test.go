@@ -2516,6 +2516,62 @@ func TestGetSessions_UnreadCountScopedToProject(t *testing.T) {
 	assert.Equal(t, 1, sessionsB[0].UnreadCount, "unread count should only count messages in project-b")
 }
 
+// ---------- GetOverviewSessions ----------
+
+func TestGetOverviewSessions_crossProjectUnread(t *testing.T) {
+	db := setupDB(t)
+
+	// projectA: A1 has unread assistant message; A2 is read
+	// projectB: B1 has no messages
+	// archived: archived session in projectA must be excluded
+	insertSessionWithTime(t, "/projectA", "session-A1", "A1 unread", "2025-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/projectA", "session-A2", "A2 read", "2025-01-01 10:00:01", false)
+	insertSessionWithTime(t, "/projectB", "session-B1", "B1 empty", "2025-01-01 10:00:02", false)
+	insertSessionWithTime(t, "/projectA", "session-archived", "Archived", "2025-01-01 10:00:03", true)
+
+	_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'user', 'hello', '2025-01-01 10:00:00')", "/projectA", "session-A1")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'unread reply', '2025-01-01 10:00:05')", "/projectA", "session-A1")
+	require.NoError(t, err)
+
+	// A2 is read: assistant message created before last_read_at
+	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', '2025-01-01 10:00:02')", "/projectA", "session-A2")
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE chat_sessions SET last_read_at = '2025-01-01 10:00:10' WHERE id = 'session-A2'")
+	require.NoError(t, err)
+
+	sessions, err := service.GetOverviewSessions()
+	require.NoError(t, err)
+	require.Len(t, sessions, 3, "should return A1, A2, B1 (archived excluded)")
+
+	byID := make(map[string]model.ChatSession, len(sessions))
+	for _, s := range sessions {
+		byID[s.ID] = s
+	}
+
+	// A1: unread assistant message → unread > 0
+	a1, ok := byID["session-A1"]
+	require.True(t, ok, "session-A1 should be present")
+	assert.Equal(t, "/projectA", a1.ProjectPath)
+	assert.Equal(t, 1, a1.UnreadCount, "A1 has one unread assistant message")
+
+	// A2: read → unread == 0
+	a2, ok := byID["session-A2"]
+	require.True(t, ok, "session-A2 should be present")
+	assert.Equal(t, "/projectA", a2.ProjectPath)
+	assert.Equal(t, 0, a2.UnreadCount, "A2 was read, no unread messages")
+
+	// B1: no messages → unread == 0
+	b1, ok := byID["session-B1"]
+	require.True(t, ok, "session-B1 should be present")
+	assert.Equal(t, "/projectB", b1.ProjectPath)
+	assert.Equal(t, 0, b1.UnreadCount, "B1 has no messages")
+
+	// Archived session must not be returned
+	_, ok = byID["session-archived"]
+	assert.False(t, ok, "archived session must not be returned")
+}
+
 // ---------- GetSessionsPaged UnreadCount ----------
 
 func TestGetSessionsPaged_UnreadCount(t *testing.T) {
