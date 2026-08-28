@@ -350,6 +350,7 @@ type UserMessageData struct {
 	Files          []model.FileEntry `json:"files,omitempty"`          // File attachments
 	SenderClientID string            `json:"senderClientId,omitempty"` // WS client ID of the sender (to skip self-echo)
 	QueueID        string            `json:"queueId,omitempty"`        // Frontend queue ID (for enqueued messages, enables precise drain matching)
+	Queued         bool              `json:"queued,omitempty"`         // true = message is enqueued (waiting for drain), not yet started
 }
 
 // AIBackend defines the interface for AI backend implementations

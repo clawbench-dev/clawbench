@@ -3357,6 +3357,9 @@ func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	assert.Greater(t, msgID, int64(0), "enqueue-path user_message must carry the real persisted DB id (msgID > 0)")
 	assert.Equal(t, "sender-1", payload["senderClientId"])
 	assert.Equal(t, "queued message", payload["content"])
+	queued, ok := payload["queued"].(bool)
+	assert.True(t, ok, "queued must be present as a boolean in the enqueue-path payload")
+	assert.True(t, queued, "enqueue-path user_message must mark the message as queued=true")
 
 	// The broadcast id must match the DB row id (queued=1) for this session.
 	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)

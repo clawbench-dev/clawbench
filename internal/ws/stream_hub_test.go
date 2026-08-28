@@ -671,6 +671,28 @@ func TestStreamEventToPayload_UserMessage_NoFiles(t *testing.T) {
 	assert.Equal(t, "pending-123", m["queueId"])
 	_, hasFiles := m["files"]
 	assert.False(t, hasFiles, "files should be omitted when empty")
+	_, hasQueued := m["queued"]
+	assert.False(t, hasQueued, "queued should be omitted when false")
+}
+
+func TestStreamEventToPayload_UserMessage_Queued(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID: 11,
+			Content:   "enqueued message",
+			QueueID:   "pending-456",
+			Queued:    true,
+		},
+	})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, int64(11), m["messageId"])
+	assert.Equal(t, "enqueued message", m["content"])
+	assert.Equal(t, "pending-456", m["queueId"])
+	queued, ok := m["queued"].(bool)
+	assert.True(t, ok, "queued must be a boolean")
+	assert.True(t, queued, "queued should be true when the message is enqueued")
 }
 
 func TestStreamEventToPayload_UserMessage_Nil(t *testing.T) {

@@ -1045,6 +1045,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         _remote: true,
         ...(data.backend ? { backend: data.backend } : {}),
         ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
+        ...((data as { queued?: boolean }).queued ? { pending: true, queued: true } : {}),
         seq: nextClientSeq(),
       } as ChatMessage)
       sortMessages(state)
