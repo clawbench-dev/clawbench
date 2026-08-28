@@ -29,6 +29,13 @@ interface ServerEvent {
         agent_id?: string // agent that ran the session/execution (completed only)
         tool_name?: string
         project_path?: string
+        // chat_stream events (e.g. user_message) carry a ChatStreamData body:
+        // { session_id, event_type, payload }. These are optional and loose —
+        // existing notification/status fields above remain untouched. The
+        // actual shape is validated downstream in useChatStream's onEvent
+        // handler (it casts to ChatStreamEventData and guards session_id).
+        event_type?: string
+        payload?: unknown
     }
 }
 
