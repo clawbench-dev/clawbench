@@ -436,9 +436,7 @@ export default {
       copied: '已复制',
       summaryViewOriginal: '原文',
       summaryViewSummary: '摘要',
-      summarizing: '摘要生成中...',
       deepThinking: '深度思考',
-      loadingOriginal: '加载原文中...',
     },
     fileChanges: {
       title: '查看变更文件',

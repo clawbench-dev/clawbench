@@ -67,12 +67,11 @@
       <div class="chat-meta-actions">
         <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
           <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
-          <button v-else class="chat-action-btn chat-action-btn--wide" disabled>
-            <Clock :size="14" class="speak-spinner" />
-            <span>{{ t('chat.message.summarizing') }}</span>
-          </button>
+          <LoadingIndicator v-else size="sm" inline />
         </span>
-        <span v-if="msg._loadingOriginal" class="chat-loading-original">{{ t('chat.message.loadingOriginal') }}</span>
+        <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
+          <LoadingIndicator size="sm" inline />
+        </span>
         <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
           <template v-if="autoSpeech.isGeneratingText(msg.id)">
@@ -148,7 +147,7 @@ import FileChangesDrawer from './FileChangesDrawer.vue'
 import FileDiffsDrawer from './FileDiffsDrawer.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
-
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const { t } = useI18n()
 
@@ -472,13 +471,6 @@ function handleCopyMessage() {
 .chat-summary-anchor {
     display: inline-flex;
     align-items: center;
-}
-
-/* Loading hint shown while lazily fetching the original message content */
-.chat-loading-original {
-    font-size: 12px;
-    color: var(--text-secondary, #888);
-    padding: 0 6px;
 }
 
 /* Speak button loading spinner animation */

@@ -91,6 +91,9 @@ vi.mock('@/components/chat/FileAttachmentList.vue', () => ({
 vi.mock('@/components/common/SummaryToggle.vue', () => ({
   default: { name: 'SummaryToggle', props: ['showingSummary'], template: '<span class="summary-toggle-stub" />' },
 }))
+vi.mock('@/components/common/LoadingIndicator.vue', () => ({
+  default: { name: 'LoadingIndicator', props: ['size', 'inline'], template: '<span class="loading-indicator-stub" />' },
+}))
 vi.mock('@/components/chat/FileChangesDrawer.vue', () => ({
   default: { name: 'FileChangesDrawer', template: '<div class="file-changes-drawer-stub" />' },
 }))
@@ -111,7 +114,6 @@ const i18n = createI18n({
           readAloud: '朗读',
           speaking: '正在朗读',
           viewDetails: '详情',
-          summarizing: '摘要生成中',
         },
         contentBlocks: { cancelled: '已中断' },
         pending: { queuing: '排队中' },
@@ -232,8 +234,14 @@ describe('ChatMessageItem', () => {
       msg: { id: 'sum1', role: 'assistant', content: 'full text', blocks: [{ type: 'text', text: 'full text' }], _summarizing: true, streaming: false },
     })
     expect(wrapper.find('.summary-toggle-stub').exists()).toBe(false)
-    expect(wrapper.find('.chat-summary-anchor button').exists()).toBe(true)
-    expect(wrapper.text()).toContain('摘要生成中')
+    expect(wrapper.find('.chat-summary-anchor .loading-indicator-stub').exists()).toBe(true)
+  })
+
+  it('shows a loading indicator while lazily loading the original content', () => {
+    const wrapper = createWrapper({
+      msg: { id: 'load1', role: 'assistant', content: 'full text', blocks: [{ type: 'text', text: 'full text' }], _loadingOriginal: true, streaming: false },
+    })
+    expect(wrapper.find('.chat-summary-anchor .loading-indicator-stub').exists()).toBe(true)
   })
 
   it('shows read-aloud button for summary view with empty blocks (summary fallback)', () => {
