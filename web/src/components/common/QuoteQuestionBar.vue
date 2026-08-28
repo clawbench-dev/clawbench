@@ -206,10 +206,10 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   top: calc(var(--header-height, 40px) + 8px + var(--header-safe-area-top, 0px));
   left: 8px;
   right: 8px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 0;
-  box-shadow: var(--shadow-md);
+  background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
+  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
   z-index: 2400;
   max-width: 600px;
   margin: 0 auto;
@@ -310,7 +310,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   padding: 6px 8px;
   background: var(--bg-tertiary);
   border-left: 2px solid var(--accent-color);
-  border-radius: 0;
+  border-radius: 6px;
   margin: 0 2px;
   flex: 1;
   min-width: 0;
@@ -321,7 +321,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   align-items: center;
   padding: 5px 8px;
   margin: 0;
-  border-radius: 0;
+  border-radius: 6px;
 }
 
 /* Quote text: single line by default; expand on click to show full content.
@@ -350,7 +350,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   flex-direction: column;
   background: var(--bg-tertiary);
   border: none;
-  border-radius: 0;
+  border-radius: 6px;
   overflow: hidden;
   transition: background 0.2s, box-shadow 0.2s;
 }
@@ -396,7 +396,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 0;
+  border-radius: 6px;
   transition: color 0.15s, background 0.15s;
   flex-shrink: 0;
   align-self: flex-end;
@@ -420,7 +420,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   background: var(--accent-color);
   color: #fff;
   border: none;
-  border-radius: 0;
+  border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
   flex-shrink: 0;
@@ -451,18 +451,18 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   cursor: not-allowed;
 }
 
-/* ===== Transitions ===== */
+/* ===== Transitions (对齐 CompletionPopover 滑下+淡入动效) ===== */
 .quote-bar-enter-active {
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .quote-bar-leave-active {
-  transition: all 0.15s ease-in;
+  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
 }
 
 .quote-bar-enter-from,
 .quote-bar-leave-to {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateY(-100%);
 }
 </style>
