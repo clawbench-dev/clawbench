@@ -622,7 +622,14 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 	if lastAssistant == nil {
 		return
 	}
-	if blocks, err := parseMessageBlocks(lastAssistant.Content); err == nil && len(blocks) > 0 {
+	// Re-read the last assistant message's raw content from DB. GetMessagesBySessionID
+	// goes through enrichMessagesWithSummaries, which strips the blocks of any
+	// assistant message that already has a reading summary (summarizeContentForView
+	// replaces them with an empty {"blocks":[]}). Without this, the recommendation
+	// silently stops firing once a reply's summary exists — every subsequent
+	// lastAssistant.Content would parse to zero blocks and the len(blocks) > 0
+	// guard below would skip the recommendation every time.
+	if blocks, err := rawAssistantBlocks(lastAssistant.ID, lastAssistant.Content); err == nil && len(blocks) > 0 {
 		// Run the recommendation in a background goroutine: RecommendNextStep makes
 		// a blocking LLM call (up to the 60s internal timeout) that would otherwise
 		// stall Finalize() and delay the terminal 'done' WS event by seconds. The
@@ -633,8 +640,45 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 		// "loading" placeholder when the user switches to the session meanwhile. The
 		// recommendation chip is a nice-to-have and can arrive whenever the LLM
 		// responds. blocks is a fresh slice parsed above — safe to hand to the goroutine.
-		go triggerChatRecommendation(ctx, sessionID, projectPath, lastAssistant.ID, blocks)
+		//
+		// The session's ctx is cancelled as soon as the handler goroutine returns
+		// (defer cancel() in the AI goroutine). Without stripping the cancellation
+		// signal, the recommendation's LLM call — which legitimately outlives the
+		// reply stream — would be aborted almost immediately, so recommendations
+		// would silently never appear. The detached ctx still carries no deadline
+		// of its own; triggerChatRecommendation applies its own 60s timeout.
+		go triggerChatRecommendation(context.WithoutCancel(ctx), sessionID, projectPath, lastAssistant.ID, blocks)
 	}
+}
+
+// rawAssistantBlocks returns the parsed ContentBlock array of an assistant
+// message, preferring the raw (unmodified) content from DB over the possibly
+// summary-stripped view. GetMessagesBySessionID goes through
+// enrichMessagesWithSummaries, which strips the blocks of any assistant message
+// that already has a reading summary (summarizeContentForView replaces them
+// with an empty {"blocks":[]}). The recommendation feature needs the real
+// blocks to extract the assistant's latest conclusion, so when the provided
+// view content parses to zero blocks it falls back to the DB content. Returns
+// an empty slice when the message is missing, still streaming, or unparsable.
+func rawAssistantBlocks(messageID int64, viewContent string) ([]model.ContentBlock, error) {
+	if blocks, err := parseMessageBlocks(viewContent); err == nil && len(blocks) > 0 {
+		return blocks, nil
+	}
+	if dbRead == nil {
+		return nil, nil
+	}
+	var content string
+	var streaming int
+	if err := dbRead.QueryRow(
+		"SELECT content, streaming FROM chat_history WHERE id = ?",
+		messageID,
+	).Scan(&content, &streaming); err != nil {
+		return nil, err
+	}
+	if streaming != 0 {
+		return nil, nil
+	}
+	return parseMessageBlocks(content)
 }
 
 // parseMessageBlocks unmarshals message content into its ContentBlock array.
@@ -776,7 +820,12 @@ func recentConversation(sessionID string, n int) []string {
 		case "user":
 			text = ExtractPlainText(messages[i].Content)
 		case "assistant":
-			text = assistantConclusion(messages[i].Content)
+			// GetMessagesBySessionID strips the blocks of any assistant message
+			// that already has a reading summary (summarizeContentForView yields
+			// an empty {"blocks":[]}). Re-read the raw content so the conclusion
+			// the recommendation LLM sees is the real answer, not nothing.
+			blocks, _ := rawAssistantBlocks(messages[i].ID, messages[i].Content)
+			text = assistantConclusionFromBlocks(blocks)
 		default:
 			continue
 		}
@@ -804,8 +853,19 @@ func assistantConclusion(content string) string {
 	if json.Unmarshal([]byte(content), &wrapper) != nil {
 		return ExtractPlainText(content)
 	}
-	conclusion := summarize.ExtractLastAnswerFromBlocks(wrapper.Blocks)
-	if q := askQuestionText(wrapper.Blocks); q != "" {
+	return assistantConclusionFromBlocks(wrapper.Blocks)
+}
+
+// assistantConclusionFromBlocks extracts the conclusion text from an already
+// parsed ContentBlock array: the last answer (text after the last tool_use),
+// plus any AskUserQuestion cards so the recommendation prompt can reference
+// the options. Returns an empty string when there are no blocks.
+func assistantConclusionFromBlocks(blocks []model.ContentBlock) string {
+	if len(blocks) == 0 {
+		return ""
+	}
+	conclusion := summarize.ExtractLastAnswerFromBlocks(blocks)
+	if q := askQuestionText(blocks); q != "" {
 		conclusion += q
 	}
 	return conclusion
