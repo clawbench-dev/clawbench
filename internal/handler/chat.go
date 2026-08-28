@@ -463,7 +463,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	if !service.TrySetSessionRunning(sessionID) {
 		// Session already running — enqueue the message to DB (queued=1).
 		// The running drain loop picks it up via DequeueQueuedMessage.
-		_, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))
+		msgID, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
 			return
@@ -471,11 +471,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		service.SignalDrain(sessionID)
 
 		// Emit user_message to other session subscribers for cross-device sync.
-		// SenderClientID allows the sending device to skip its own echo.
+		// SenderClientID allows the sending device to skip its own echo. MessageID
+		// carries the persisted DB id so the receiving device can anchor its bubble
+		// to the authoritative backend id (same as the non-queue path).
 		ws.EmitToSession(sessionID, ai.StreamEvent{
 			Type: "user_message",
 			UserMessage: &ai.UserMessageData{
-				MessageID:      0,
+				MessageID:      msgID,
 				Content:        req.Message,
 				Files:          allFiles,
 				SenderClientID: req.ClientID,
