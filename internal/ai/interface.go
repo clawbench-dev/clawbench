@@ -267,7 +267,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "queue_drain", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "replay_done", "content_reset"
+	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "queue_drain", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
 	Content        string                 // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	Meta           *Metadata              // Metadata (Type=metadata)
@@ -284,6 +284,15 @@ type StreamEvent struct {
 	Usage          *UsageState            // Usage state (Type=usage_update)
 	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
 	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
+	StreamStart    *StreamStartData       // Stream start (Type=stream_start) — carries streaming message DB id
+}
+
+// StreamStartData carries the streaming message DB id for the stream_start event.
+// Emitted by the service layer once per prompt so any client (including ones
+// that opened the session mid-stream) can create a streaming placeholder
+// anchored to the authoritative DB row id.
+type StreamStartData struct {
+	MessageID int64 `json:"message_id"`
 }
 
 // ToolCall represents a tool invocation by the AI.

@@ -565,6 +565,23 @@ func TestStreamEventToPayload_UserMessage_Nil(t *testing.T) {
 	assert.Nil(t, payload)
 }
 
+// --- stream_start payload ---
+
+func TestStreamEventToPayload_StreamStart(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type:        "stream_start",
+		StreamStart: &ai.StreamStartData{MessageID: 12345},
+	})
+	m, ok := payload.(map[string]int64)
+	require.True(t, ok, "expected map[string]int64 payload")
+	assert.Equal(t, int64(12345), m["message_id"])
+}
+
+func TestStreamEventToPayload_StreamStartNilData(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "stream_start", StreamStart: nil})
+	assert.Nil(t, payload)
+}
+
 // --- queueDrainPayload ---
 
 func TestStreamEventToPayload_QueueDrain(t *testing.T) {

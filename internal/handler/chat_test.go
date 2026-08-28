@@ -3366,6 +3366,75 @@ func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	assert.True(t, messages[0].Queued)
 }
 
+// TestAIChat_StreamStartEvent verifies the web POST path broadcasts a
+// stream_start event (carrying the streaming message DB id) for every prompt,
+// so clients can create a data-driven streaming placeholder.
+func TestAIChat_StreamStartEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test-stream-start-emit", "codebuddy", "", "default", "chat")
+	assert.NoError(t, err)
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-stream-start-client", "")
+	mgr.StreamHub().Subscribe("test-stream-start-client", sessionID)
+
+	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "cli", Command: "echo"}
+
+	body := map[string]string{"message": "hello from test", "agentId": "codebuddy"}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+
+	var found *ws.ServerMessage
+	assert.Eventually(t, func() bool {
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			data, ok := ev.Data.(ws.ChatStreamData)
+			if !ok || data.EventType != "stream_start" {
+				continue
+			}
+			found = &ev
+			return true
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond)
+	require.NotNil(t, found, "expected a stream_start chat_stream event in the subscriber buffer")
+
+	data := found.Data.(ws.ChatStreamData)
+	payload, ok := data.Payload.(map[string]int64)
+	require.True(t, ok, "stream_start payload must be map[string]int64")
+	assert.Greater(t, payload["message_id"], int64(0), "stream_start must carry the streaming message DB id")
+
+	// The broadcast id must match the persisted assistant streaming row.
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	require.NotEmpty(t, messages)
+	var streamingRowID int64
+	for _, m := range messages {
+		if m.Role == "assistant" {
+			streamingRowID = m.ID
+		}
+	}
+	assert.Greater(t, streamingRowID, int64(0))
+	assert.Equal(t, streamingRowID, payload["message_id"], "stream_start message_id must equal the assistant streaming row id")
+
+	// Wait for the async AI goroutine to finish to avoid leaking a running session.
+	assert.Eventually(t, func() bool {
+		return !service.IsSessionRunning(sessionID)
+	}, 5*time.Second, 50*time.Millisecond)
+}
+
 func TestFileEntryLabel(t *testing.T) {
 	tests := []struct {
 		name     string

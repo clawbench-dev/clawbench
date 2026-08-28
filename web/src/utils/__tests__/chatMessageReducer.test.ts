@@ -216,7 +216,7 @@ describe('chatMessageReducer — Race 1: optimistic bubble survives db_load and 
   })
 })
 
-// ── Race 2: done lost → stream_finalize + db_load(forceNotRunning) ──
+// ── Race 2: done lost → stream_finalize + db_load ──
 describe('chatMessageReducer — Race 2: stream_finalize + db_load do not truncate content', () => {
   it('keeps already-streamed content when the done event was missed', () => {
     let state: ChatMessage[] = []
@@ -232,9 +232,8 @@ describe('chatMessageReducer — Race 2: stream_finalize + db_load do not trunca
     expect(sm.content + (sm.blocks?.[0]?.text || '')).toContain('partial')
 
     // done event lost → session_update completed arrives → stream_finalize +
-    // db_load(forceNotRunning). The rebuild keeps the authoritative DB rows —
-    // the finalized reply row carries the streamed content, so nothing is
-    // truncated.
+    // db_load. The rebuild keeps the authoritative DB rows — the finalized
+    // reply row carries the streamed content, so nothing is truncated.
     state = run(state, [
       { type: 'stream_finalize' },
       { type: 'db_load', dbMessages: [u({ id: 1, content: '1' }), a({ id: 2, content: 'partial reply content' })] },

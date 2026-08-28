@@ -181,6 +181,11 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 		return warningPayload(event)
 	case "user_message":
 		return userMessagePayload(event)
+	case "stream_start":
+		if event.StreamStart != nil {
+			return map[string]int64{"message_id": event.StreamStart.MessageID}
+		}
+		return nil
 	case "queue_drain":
 		return queueDrainPayload(event)
 	case "queue_cancel":

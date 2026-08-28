@@ -368,7 +368,7 @@ ws.GetManager().BroadcastEvent(msg)  // 或 EmitToSession
 |---|---|---|
 | 0 | **前置条件**：修复 `chat.go:475-484` 入队分支 `MessageID: 0` → 改为 `MessageID: msgID`（`AddQueuedMessage` 返回值） | B 端 `_remote` 气泡能带数字 id |
 | 1 | **订阅解耦 + 删 streamTimeout**（原子操作）：`useChatStream` 拆 `subscribe`/`unsubscribe`/`ensureStreamingPlaceholder`/`stopStreaming`；`switchSession`/`createSession` 挂订阅；`watch(connected)` 改语义；删 `streamTimeout` 机制 | 无重复 subscribe；切会话不泄漏订阅；idle 不误 reload |
-| 2 | **占位符事件驱动（根本性解决）**：后端每次 prompt 广播 `stream_start`（含真实 streaming 行 id）；前端 `ws_stream_start` 处理改为「无占位符则创建」；删 `loadHistory` 的 isRunning/isReplayPending 分支 `onConnectStream` 调用（占位符由 DB streaming=1 行或 stream_start 事件驱动）；删 `reuseExistingStreaming`/`subscribeOnly`/`forceNotRunning` 选项；`sendMessageNow` 保留 `ensureStreamingPlaceholder`（发送后立即响应） | 打开 running 会话有占位符；流式 content 事件不丢；单条发送/队列/运行中刷新/多轮对话正常 |
+| 2 | **占位符事件驱动（根本性解决）**：后端每次 prompt 广播 `stream_start`（含真实 streaming 行 id）；前端 `ws_stream_start` 处理改为「无占位符则创建」；删 `loadHistory` 的 isRunning/isReplayPending 分支 `onConnectStream` 调用（占位符由 DB streaming=1 行或 stream_start 事件驱动）；删 `subscribeOnly`/`forceNotRunning` 选项（`reuseExistingStreaming` 保留——`sendMessageNow` 运行中分支仍用）；`sendMessageNow` 保留 `ensureStreamingPlaceholder`（发送后立即响应） | 打开 running 会话有占位符；流式 content 事件不丢；单条发送/队列/运行中刷新/多轮对话正常。**已完成（2026-08-28）**：`stream_start` 广播覆盖 service（`executeStreamRunShared`）与 handler（`executeStreamRun`）双路径；`useChatStream` 增加 `watch(currentSessionId)` 订阅随会话切换（打开即订阅，替代原 connectStream 的订阅职责） |
 | 3 | **后端**：`pending_events` 扩展存 `user_message` + 广播点 write-ahead | 断线窗口 user_message 可补偿 |
 | 4 | **前端**：`fetchPendingEvents` 扩展处理 `user_message`；`LAST_SEEN_KEY` 游标对 `user_message` 也更新 | 断线重连后补回漏掉的消息 |
 | 5 | 全量回归：`go test ./...` + `npm test` + `vue-tsc` + 手动多端验证 | 全部通过 |

@@ -422,10 +422,11 @@ describe('useChatStream', () => {
     })
 
     it('should not send unsubscribe when not streaming', () => {
-      const options = createOptions()
+      const options = createOptions({ currentSessionId: ref('') })
       const { disconnectStream } = useChatStream(options)
 
-      // Never called connectStream, so isStreaming is false
+      // Never called connectStream and no session is open, so nothing is
+      // subscribed — disconnectStream must not send any WS message.
       disconnectStream()
 
       expect(mockSendWsMessage).not.toHaveBeenCalled()
@@ -439,14 +440,28 @@ describe('useChatStream', () => {
       const options = createOptions()
       const { subscribe } = useChatStream(options)
 
-      subscribe('s1')
-      subscribe('s1')
+      // The currentSessionId watch subscribes to 'test-session-1' at setup;
+      // re-subscribing the SAME session must be deduped (still one subscribe).
+      subscribe('test-session-1')
+      subscribe('test-session-1')
 
       const subscribeCalls = mockSendWsMessage.mock.calls.filter(
         (c: any[]) => c[0]?.type === 'subscribe'
       )
       expect(subscribeCalls).toHaveLength(1)
-      expect(subscribeCalls[0][0]).toEqual({ type: 'subscribe', session_id: 's1' })
+      expect(subscribeCalls[0][0]).toEqual({ type: 'subscribe', session_id: 'test-session-1' })
+    })
+
+    it('打开会话即订阅：currentSessionId 变化时自动 subscribe', async () => {
+      const options = createOptions({ currentSessionId: ref('') })
+      useChatStream(options)
+
+      mockSendWsMessage.mockClear()
+      // Simulate a session being opened/switched to — the watch subscribes.
+      options.currentSessionId.value = 'new-session-1'
+      await new Promise(r => setTimeout(r, 0))
+
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'new-session-1' })
     })
 
     it('subscribe 切换会话：先退订旧会话再订阅新会话', () => {
@@ -503,7 +518,7 @@ describe('useChatStream', () => {
     })
 
     it('WS 重连但不活跃（未订阅）时不重订阅', async () => {
-      const options = createOptions()
+      const options = createOptions({ currentSessionId: ref('') })
       useChatStream(options)
 
       mockSendWsMessage.mockClear()
@@ -2080,6 +2095,39 @@ describe('useChatStream', () => {
       expect(assistantMsg.id).toBe(42)
     })
 
+    it('creates a placeholder when no streaming message exists (event-driven)', () => {
+      // No connectStream call — the placeholder must be created purely from the
+      // stream_start event (e.g. client opened the session mid-stream).
+      const options = createOptions()
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 77 })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(assistantMsg).toBeDefined()
+      expect(assistantMsg.id).toBe(77)
+      expect(assistantMsg.content).toBe('')
+      expect(assistantMsg.blocks).toEqual([])
+    })
+
+    it('does not create a duplicate placeholder when one already exists', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      // The optimistic placeholder exists with a string id; the stream_start
+      // event must adopt the DB id without creating a second bubble.
+      simulateWsEvent('stream_start', { message_id: 42 })
+
+      const streamingMsgs = options.messages.value.filter(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(streamingMsgs).toHaveLength(1)
+      expect(streamingMsgs[0].id).toBe(42)
+    })
+
     it('should skip when guard fails', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -2093,6 +2141,18 @@ describe('useChatStream', () => {
         (m: any) => m.role === 'assistant' && m.streaming
       )
       expect(assistantMsg.id).not.toBe(99)
+    })
+
+    it('ignores stream_start without a message_id (no placeholder created)', () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', {})
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(assistantMsg).toBeUndefined()
     })
   })
 
@@ -2260,12 +2320,13 @@ describe('useChatStream', () => {
     })
 
     it('should not re-subscribe when not streaming', async () => {
-      const options = createOptions()
+      const options = createOptions({ currentSessionId: ref('') })
       useChatStream(options)
 
       mockSendWsMessage.mockClear()
 
-      // Never called connectStream, so isStreaming is false
+      // No session is open (empty currentSessionId), so nothing is subscribed —
+      // a reconnect must NOT re-subscribe.
       mockConnected.value = false
       await new Promise(r => setTimeout(r, 0))
       mockConnected.value = true

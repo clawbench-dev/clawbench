@@ -131,10 +131,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   }
 
   /** Ensure a streaming assistant placeholder exists for the current turn. */
-  function ensureStreamingPlaceholder(options?: { subscribeOnly?: boolean; reuseExistingStreaming?: boolean }) {
-    // Only create a streaming assistant message for actual AI generation,
-    // not for replay waiting (subscribeOnly) where we just need WS events.
-    if (options?.subscribeOnly) return
+  function ensureStreamingPlaceholder(options?: { reuseExistingStreaming?: boolean }) {
     const existingStreaming = findStreamingMsg(messages.value)
 
     // A stale streaming message left over from a previous turn (e.g. its
@@ -185,7 +182,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         seq: nextClientSeq(),
         parentQueueId: parentUserIdx !== -1 ? String(messages.value[parentUserIdx].id) : undefined,
       }
-      appLog.d(TAG, `[ensureStreamingPlaceholder] create placeholder id=${newStreaming.id} parentQueueId=${newStreaming.parentQueueId} reuse=${!!options?.reuseExistingStreaming} subscribeOnly=${!!options?.subscribeOnly}`)
+      appLog.d(TAG, `[ensureStreamingPlaceholder] create placeholder id=${newStreaming.id} parentQueueId=${newStreaming.parentQueueId} reuse=${!!options?.reuseExistingStreaming}`)
       // Single write channel: the reducer pushes + re-sorts.
       dispatch({ type: 'stream_placeholder', msg: newStreaming })
       thinkingBlockCounter = 0
@@ -218,7 +215,7 @@ export function useChatStream(options: UseChatStreamOptions) {
    * cleanup (tool_use timeouts, loading state).
    */
 
-  function connectStream(sessionId: string, options?: { subscribeOnly?: boolean; reuseExistingStreaming?: boolean }) {
+  function connectStream(sessionId: string, options?: { reuseExistingStreaming?: boolean }) {
     // Stop any previous turn's stream state, then start a fresh one.
     stopStreaming()
     ensureStreamingPlaceholder(options)
@@ -242,8 +239,31 @@ export function useChatStream(options: UseChatStreamOptions) {
     switch (csData.event_type) {
       case 'stream_start': {
         if (sessionChanged()) return
-        if (payload.message_id) {
-          dispatch({ type: 'ws_stream_start', messageId: payload.message_id as number })
+        const messageId = payload.message_id as number | undefined
+        if (messageId) {
+          // Event-driven placeholder: if no streaming assistant message exists
+          // (e.g. client opened the session mid-stream, or the optimistic
+          // placeholder was dropped by a loadHistory), create one anchored to
+          // the current streaming id. The DB row id is used as the message id
+          // so subsequent content events (findStreamingMsg) match it.
+          if (!findStreamingMsg(messages.value)) {
+            dispatch({ type: 'stream_placeholder', msg: {
+              role: 'assistant',
+              id: messageId,
+              content: '',
+              blocks: [] as ContentBlock[],
+              streaming: true,
+              createdAt: new Date().toISOString(),
+              backend: currentBackend.value,
+              seq: nextClientSeq(),
+            } as ChatMessage })
+            onRenderNeeded()
+            onScrollBottom(false, true)
+          }
+          // ws_stream_start is idempotent: it re-sets the id on the existing
+          // streaming message (a no-op when the placeholder above already
+          // carries the DB id).
+          dispatch({ type: 'ws_stream_start', messageId })
         }
         break
       }
@@ -634,6 +654,16 @@ export function useChatStream(options: UseChatStreamOptions) {
     sendWsMessage({ type: 'cancel', session_id: currentSessionId.value })
   }
 
+  // Subscribe whenever the current session changes (session open / switch).
+  // This makes the persistent subscription follow the currentSessionId data
+  // fact rather than any connectStream call site — a client that opens (or is
+  // switched to) a session is subscribed immediately, so stream_start /
+  // user_message / queue_drain events for a live session are never missed.
+  // subscribe() dedups: re-observing the same session is a no-op.
+  const stopSessionWatch = watch(currentSessionId, (sid) => {
+    if (sid) subscribe(sid)
+  }, { immediate: true })
+
   // Re-subscribe on WS reconnect
   // NOTE: After this watch fires, App.vue's handleReconnect runs
   // loadSessionsOnce() which refreshes runningSessions. If the session
@@ -666,6 +696,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     renderScheduler.cancelAll()
     unsubscribeFromWs()
     stopConnectedWatch()
+    stopSessionWatch()
     window.removeEventListener('online', handleOnline)
   })
 

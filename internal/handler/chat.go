@@ -691,6 +691,15 @@ func executeStreamRun(
 		slog.Int64("streamingMsgID", streamingMsgID),
 		slog.String("queueID", queueID))
 
+	// Broadcast stream_start so subscribed clients (including ones that opened
+	// the session mid-stream) know the streaming message id and can create a
+	// placeholder if none exists yet. Mirrors executeStreamRunShared in the
+	// service layer — this is the web POST path's per-prompt insertion point.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type:        "stream_start",
+		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
+	})
+
 	// Delegate event loop to SessionExecutor
 	cfg := service.RunConfig{
 		Mode:               service.ModeInteractive,
