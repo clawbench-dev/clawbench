@@ -16,6 +16,67 @@ import (
 	"clawbench/internal/service"
 )
 
+// ServeSessionsOverview handles GET /api/ai/sessions/overview.
+// Returns sessions across ALL projects that are running, pending approval, or
+// have unread messages, grouped by project name. Requires auth (session cookie);
+// no project cookie needed since it spans projects.
+func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	sessions, err := service.GetOverviewSessions()
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to load overview sessions")))
+		return
+	}
+	runningIDs := service.GetRunningSessionIDs()
+	runningSet := make(map[string]bool, len(runningIDs))
+	for _, id := range runningIDs {
+		runningSet[id] = true
+	}
+	pendingSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
+
+	type overviewSession struct {
+		ID              string    `json:"id"`
+		Title           string    `json:"title"`
+		Running         bool      `json:"running"`
+		PendingApproval bool      `json:"pendingApproval"`
+		UnreadCount     int       `json:"unreadCount"`
+		UpdatedAt       time.Time `json:"updatedAt"`
+	}
+	type projectGroup struct {
+		Name     string            `json:"name"`
+		Sessions []overviewSession `json:"sessions"`
+	}
+	groups := []*projectGroup{}
+	groupByName := map[string]*projectGroup{}
+	total := 0
+	for _, s := range sessions {
+		running := runningSet[s.ID]
+		pending := pendingSet[s.ID]
+		if !running && !pending && s.UnreadCount <= 0 {
+			continue
+		}
+		g, ok := groupByName[s.ProjectPath]
+		if !ok {
+			g = &projectGroup{Name: s.ProjectPath}
+			groupByName[s.ProjectPath] = g
+			groups = append(groups, g)
+		}
+		g.Sessions = append(g.Sessions, overviewSession{
+			ID:              s.ID,
+			Title:           s.Title,
+			Running:         running,
+			PendingApproval: pending,
+			UnreadCount:     s.UnreadCount,
+			UpdatedAt:       s.UpdatedAt,
+		})
+		total++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
+}
+
 // ServeSessions handles GET (list) and POST (create) for chat sessions.
 func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-method session handler
 	projectPath, ok := requireProject(w, r)

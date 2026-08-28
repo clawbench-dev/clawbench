@@ -241,6 +241,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session", middleware.Auth(ServeAISession))
 	register("/api/ai/session/update", middleware.Auth(ServeAISessionUpdate))
 	register("/api/ai/sessions", middleware.Auth(ServeSessions))
+	register("/api/ai/sessions/overview", middleware.Auth(ServeSessionsOverview))
 	register("/api/ai/session/archive", middleware.Auth(ArchiveSession))
 	register("/api/ai/session/destroy", middleware.Auth(DestroySession))
 	register("/api/ai/session/resume", middleware.Auth(ServeSessionResume))
