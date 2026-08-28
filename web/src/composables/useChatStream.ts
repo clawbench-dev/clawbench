@@ -127,6 +127,23 @@ export function useChatStream(options: UseChatStreamOptions) {
     subscribedSessionId = null
   }
 
+  /**
+   * Find the index of the user message a new streaming placeholder should
+   * anchor to: the newest NON-pending user message (fallback: newest user
+   * message).
+   */
+  function findAnchorUserIdx(): number {
+    let idx = -1
+    let maxSeq = -1
+    messages.value.forEach((m, i) => {
+      if (m.role !== 'user' || m.pending || m.seq == null) return
+      if (m.seq > maxSeq) { maxSeq = m.seq; idx = i }
+    })
+    if (idx === -1) idx = messages.value.findLastIndex((m) => m.role === 'user' && !m.pending)
+    if (idx === -1) idx = messages.value.findLastIndex((m) => m.role === 'user')
+    return idx
+  }
+
   /** Ensure a streaming assistant placeholder exists for the current turn. */
   function ensureStreamingPlaceholder(options?: { reuseExistingStreaming?: boolean }) {
     const existingStreaming = findStreamingMsg(messages.value)
@@ -154,20 +171,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       // order) — sorting moves an unadopted msg1 bubble to the front, so the
       // newest user is not necessarily the last physical element. Messages
       // without a seq (DB-loaded history) are excluded unless nothing else.
-      let parentUserIdx = -1
-      let parentUserSeq = -1
-      messages.value.forEach((m, i) => {
-        if (m.role !== 'user') return
-        if (m.pending) return
-        if (m.seq == null) return
-        if (m.seq > parentUserSeq) { parentUserSeq = m.seq; parentUserIdx = i }
-      })
-      if (parentUserIdx === -1) {
-        parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user' && !m.pending)
-      }
-      if (parentUserIdx === -1) {
-        parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user')
-      }
+      const parentUserIdx = findAnchorUserIdx()
       const newStreaming: ChatMessage = {
         role: 'assistant' as const,
         id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -242,6 +246,11 @@ export function useChatStream(options: UseChatStreamOptions) {
           // the current streaming id. The DB row id is used as the message id
           // so subsequent content events (findStreamingMsg) match it.
           if (!findStreamingMsg(messages.value)) {
+            // Anchor to the newest non-pending user message so rebuildFromDb's
+            // Channel 2 (r.queueId === live.parentQueueId) can match this
+            // placeholder even when the loadHistory DB snapshot raced the new
+            // streaming row (Channel 1 fails, Channel 3 fails — no empty row).
+            const anchorIdx = findAnchorUserIdx()
             dispatch({ type: 'stream_placeholder', msg: {
               role: 'assistant',
               id: messageId,
@@ -251,6 +260,7 @@ export function useChatStream(options: UseChatStreamOptions) {
               createdAt: new Date().toISOString(),
               backend: currentBackend.value,
               seq: nextClientSeq(),
+              parentQueueId: anchorIdx !== -1 ? String(messages.value[anchorIdx].id) : undefined,
             } as ChatMessage })
             onRenderNeeded()
             onScrollBottom(false, true)

@@ -2112,6 +2112,47 @@ describe('useChatStream', () => {
       expect(assistantMsg.blocks).toEqual([])
     })
 
+    it('stream_start creates placeholder anchored to newest non-pending user message', () => {
+      // Path B: a stream_start placeholder created mid-session must carry
+      // parentQueueId so rebuildFromDb's Channel 2 (r.queueId ===
+      // live.parentQueueId) can match it — even when the DB snapshot raced the
+      // new streaming row.
+      const options = createOptions()
+      useChatStream(options)
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'sent-1', content: '1', blocks: [{ type: 'text', text: '1' }],
+        pending: false, seq: 10,
+      } })
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-1', content: '2', blocks: [{ type: 'text', text: '2' }],
+        pending: true, seq: 12,
+      } })
+
+      simulateWsEvent('stream_start', { message_id: 77 })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(assistantMsg).toBeDefined()
+      expect(assistantMsg.id).toBe(77)
+      // Anchor is the newest NON-pending user message (sent-1), never the queued one.
+      expect(String(assistantMsg.parentQueueId)).toBe('sent-1')
+    })
+
+    it('stream_start creates placeholder without anchor when no user messages', () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 88 })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(assistantMsg).toBeDefined()
+      expect(assistantMsg.id).toBe(88)
+      expect(assistantMsg.parentQueueId).toBeUndefined()
+    })
+
     it('does not create a duplicate placeholder when one already exists', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
