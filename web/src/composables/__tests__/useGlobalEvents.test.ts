@@ -972,7 +972,9 @@ describe('useGlobalEvents', () => {
 
         beforeEach(() => {
             originalFetch = globalThis.fetch
-            localStorage.removeItem(LAST_SEEN_KEY)
+            // 默认模拟"老客户端断线重连"：已有游标，拉取游标之后的事件做补偿。
+            // 游标存在性由服务端校验，前端 mock 不涉及。
+            localStorage.setItem(LAST_SEEN_KEY, 'evt_seen_old')
         })
 
         afterEach(() => {
@@ -1140,6 +1142,32 @@ describe('useGlobalEvents', () => {
             // Cursor advanced past the pending user_message so it won't be
             // re-delivered on the next reconnect.
             expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('evt_pending_user')
+        })
+
+        it('无游标时（重装/清缓存）不派发历史事件，仅推进游标到最新', async () => {
+            // Fresh install: localStorage cursor is gone. The server's
+            // pending_events table holds up to 24h of terminal events; replaying
+            // them all would flood the client with dozens of stale completion
+            // popups/notifications. Instead the cursor must advance to the
+            // newest event and nothing must be dispatched.
+            localStorage.removeItem(LAST_SEEN_KEY)
+            const handler = vi.fn()
+            events.onEvent(handler)
+
+            mockPendingFetch([
+                userMessageRow('evt_old_1', 1, { content: 'old' }),
+                userMessageRow('evt_old_2', 2, { content: 'older' }),
+                userMessageRow('evt_latest', 3, { content: 'newest' }),
+            ])
+            connectAndGetWs()
+
+            // History must NOT be dispatched...
+            await vi.waitFor(() => expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('evt_latest'))
+            expect(handler).not.toHaveBeenCalled()
+
+            // ...and the cursor is now at the newest event so future reconnects
+            // pull from here instead of replaying the whole history.
+            expect(handler).toHaveBeenCalledTimes(0)
         })
     })
 })

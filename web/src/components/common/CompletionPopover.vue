@@ -5,7 +5,7 @@
       class="completion-popover-backdrop"
       @click.self="dismiss"
     >
-      <Transition name="completion-popover-card" appear>
+      <Transition name="completion-popover-card" mode="out-in" appear>
         <div :key="active.sessionId + active.kind" class="completion-popover">
           <div class="completion-popover-header">
             <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-popover-icon" />
