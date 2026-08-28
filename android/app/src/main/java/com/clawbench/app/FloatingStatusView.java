@@ -2,10 +2,18 @@ package com.clawbench.app;
 
 import android.animation.ObjectAnimator;
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.BitmapShader;
+import android.graphics.Shader;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.ShapeDrawable;
+import android.graphics.drawable.shapes.OvalShape;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -37,6 +45,8 @@ public class FloatingStatusView extends FrameLayout {
     private static final int DOT_MARGIN_END_DP = 6;
     private static final int TEXT_SIZE_SP = 12;
     private static final int PULSE_MS = 200;
+    private static final int LOGO_SIZE_DP = 16;
+    private static final int LOGO_MARGIN_END_DP = 8;
 
     private final View statusDot;
     private final TextView labelView;
@@ -58,6 +68,15 @@ public class FloatingStatusView extends FrameLayout {
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
+
+        // App logo as a circle at the capsule's leading edge, matching the
+        // capsule corner radius so the icon sits flush with the arc.
+        ImageView logo = new ImageView(context);
+        logo.setImageDrawable(circularLogo(context));
+        logo.setScaleType(ImageView.ScaleType.FIT_XY);
+        LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(dp(LOGO_SIZE_DP), dp(LOGO_SIZE_DP));
+        logoLp.setMargins(0, 0, dp(LOGO_MARGIN_END_DP), 0);
+        row.addView(logo, logoLp);
 
         statusDot = new View(context);
         GradientDrawable dot = new GradientDrawable();
@@ -184,6 +203,27 @@ public class FloatingStatusView extends FrameLayout {
         pulseAnimY.cancel();
         pulseAnimX.start();
         pulseAnimY.start();
+    }
+
+    /**
+     * Build a circular app-logo drawable (BitmapShader clipped to an oval) so
+     * the icon's arc matches the capsule corner radius.
+     */
+    private static android.graphics.drawable.Drawable circularLogo(Context context) {
+        Bitmap bmp = BitmapFactory.decodeResource(context.getResources(), R.mipmap.ic_launcher);
+        if (bmp == null) {
+            return null;
+        }
+        int size = Math.min(bmp.getWidth(), bmp.getHeight());
+        int left = (bmp.getWidth() - size) / 2;
+        int top = (bmp.getHeight() - size) / 2;
+        Bitmap square = Bitmap.createBitmap(bmp, left, top, size, size);
+
+        BitmapShader shader = new BitmapShader(square, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+        ShapeDrawable drawable = new ShapeDrawable(new OvalShape());
+        drawable.getPaint().setShader(shader);
+        drawable.getPaint().setAntiAlias(true);
+        return drawable;
     }
 
     private int dp(int value) {
