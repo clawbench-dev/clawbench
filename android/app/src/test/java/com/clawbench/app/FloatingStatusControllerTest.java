@@ -233,6 +233,139 @@ public class FloatingStatusControllerTest {
     }
 
     // =====================================================
+    // decideCapsuleClick: pure tap-decision function
+    // =====================================================
+
+    @Test
+    public void decideCapsuleClick_singleRunning_opensSession() {
+        assertEquals(FloatingStatusController.CLICK_OPEN_SESSION,
+                FloatingStatusController.decideCapsuleClick(1));
+    }
+
+    @Test
+    public void decideCapsuleClick_multipleRunning_expandsPanel() {
+        assertEquals(FloatingStatusController.CLICK_EXPAND_PANEL,
+                FloatingStatusController.decideCapsuleClick(2));
+    }
+
+    @Test
+    public void decideCapsuleClick_zeroRunning_expandsPanel() {
+        // No running sessions (e.g. only unread) -> expand panel to view the list.
+        assertEquals(FloatingStatusController.CLICK_EXPAND_PANEL,
+                FloatingStatusController.decideCapsuleClick(0));
+    }
+
+    // =====================================================
+    // trackSessionState: event-driven running session collection
+    // =====================================================
+
+    private org.json.JSONObject sessionEvent(String status, String sessionId) throws Exception {
+        org.json.JSONObject data = new org.json.JSONObject();
+        data.put("status", status);
+        if (sessionId != null) {
+            data.put("session_id", sessionId);
+        }
+        return data;
+    }
+
+    @Test
+    public void handleEvent_runningIncrementsCount() throws Exception {
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        assertEquals("running event must add the session", 1,
+                controller.getRunningSessionCount());
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_completedDecrementsCount() throws Exception {
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        assertEquals(1, controller.getRunningSessionCount());
+        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        assertEquals("completed event must remove the session", 0,
+                controller.getRunningSessionCount());
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_runningSameSessionTwice_countsOnce() throws Exception {
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        assertEquals("duplicate running events must not double-count", 1,
+                controller.getRunningSessionCount());
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_sessionWithoutId_isIgnored() throws Exception {
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", null));
+        assertEquals("session without id must not be tracked", 0,
+                controller.getRunningSessionCount());
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_unknownStatus_leavesCountUntouched() throws Exception {
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.handleEvent("session_update", sessionEvent("some_other_state", "s1"));
+        assertEquals("unrelated status must not change the count", 1,
+                controller.getRunningSessionCount());
+        controller.destroy();
+    }
+
+    @Test
+    public void handleEvent_cancelledAndFailed_removeSession() throws Exception {
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.handleEvent("session_update", sessionEvent("running", "s2"));
+        controller.handleEvent("session_update", sessionEvent("cancelled", "s1"));
+        controller.handleEvent("session_update", sessionEvent("failed", "s2"));
+        assertEquals("cancelled/failed must remove the sessions", 0,
+                controller.getRunningSessionCount());
+        controller.destroy();
+    }
+
+    @Test
+    public void notifyRunningSession_addsToRunningCount() {
+        FloatingStatusController controller = newController();
+        controller.notifyRunningSession("s1", "会话标题");
+        assertEquals("WS poll-discovered session must be tracked", 1,
+                controller.getRunningSessionCount());
+        controller.destroy();
+    }
+
+    @Test
+    public void destroy_clearsRunningSessions() throws Exception {
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.handleEvent("session_update", sessionEvent("running", "s2"));
+        controller.destroy();
+        assertEquals("destroy() must clear the running set", 0,
+                controller.getRunningSessionCount());
+    }
+
+    @Test
+    public void shouldOpenSessionOnCapsuleTap_singleRunning_true() throws Exception {
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        assertTrue(controller.shouldOpenSessionOnCapsuleTap());
+        controller.destroy();
+    }
+
+    @Test
+    public void shouldOpenSessionOnCapsuleTap_multipleRunning_false() throws Exception {
+        FloatingStatusController controller = newController();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.handleEvent("session_update", sessionEvent("running", "s2"));
+        assertFalse(controller.shouldOpenSessionOnCapsuleTap());
+        controller.destroy();
+    }
+
+    // =====================================================
     // notifyRunningSession: sets hasActive and shows the window when backgrounded
     // =====================================================
 

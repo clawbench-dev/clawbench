@@ -48,6 +48,11 @@ public class FloatingStatusController {
     /** Drag opacity while moving. */
     private static final float DRAG_ALPHA = 0.85f;
 
+    /** Capsule tap opens the single running session directly. */
+    public static final int CLICK_OPEN_SESSION = 0;
+    /** Capsule tap expands the panel to show the session list. */
+    public static final int CLICK_EXPAND_PANEL = 1;
+
     private final Context context;
     private final Runnable onTap;
     private final WindowManager windowManager;
@@ -64,6 +69,10 @@ public class FloatingStatusController {
     private volatile boolean appForeground;
     private volatile boolean userDismissed;
     private Runnable fadeHideRunnable;
+
+    /** Session ids currently running, tracked from events. Thread-safe set. */
+    private final java.util.Set<String> runningSessions =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // Drag bookkeeping.
     private float downX;
@@ -109,6 +118,44 @@ public class FloatingStatusController {
         return margin;
     }
 
+    /**
+     * Decide what a capsule tap does: open the single running session, or
+     * expand the panel. Pure: no framework deps.
+     */
+    public static int decideCapsuleClick(int runningSessionCount) {
+        return runningSessionCount == 1 ? CLICK_OPEN_SESSION : CLICK_EXPAND_PANEL;
+    }
+
+    /**
+     * Track session running state from events. Adds the session when an event
+     * reports it as active, removes it on a terminal status (completed /
+     * cancelled / failed). Any thread.
+     */
+    public void trackSessionState(String eventType, String status, String sessionId) {
+        if (sessionId == null || sessionId.isEmpty()) {
+            return;
+        }
+        if (isActiveStatus(eventType, status)) {
+            runningSessions.add(sessionId);
+        } else if ("completed".equals(status) || "cancelled".equals(status)
+                || "failed".equals(status)) {
+            runningSessions.remove(sessionId);
+        }
+    }
+
+    /** Number of currently running sessions. */
+    public int getRunningSessionCount() {
+        return runningSessions.size();
+    }
+
+    /**
+     * True when a capsule tap should open the running session directly rather
+     * than expand the panel. Backs the Task 5 onTap wiring.
+     */
+    public boolean shouldOpenSessionOnCapsuleTap() {
+        return decideCapsuleClick(getRunningSessionCount()) == CLICK_OPEN_SESSION;
+    }
+
     public FloatingStatusController(Context context, Runnable onTap) {
         this.context = context.getApplicationContext();
         this.onTap = onTap;
@@ -139,6 +186,7 @@ public class FloatingStatusController {
 
         boolean active = isActiveStatus(eventType, status);
         hasActive = active;
+        trackSessionState(eventType, status, sessionId);
 
         AppLog.d(TAG, "handleEvent event=" + eventType + " status=" + status
                 + " sessionId=" + sessionId + " active=" + active);
@@ -231,6 +279,9 @@ public class FloatingStatusController {
      */
     public void notifyRunningSession(String sessionId, String sessionTitle) {
         hasActive = true;
+        if (sessionId != null && !sessionId.isEmpty()) {
+            runningSessions.add(sessionId);
+        }
         final String fSessionId = sessionId;
         final String fSessionTitle = sessionTitle;
         postToUi(() -> {
@@ -247,6 +298,7 @@ public class FloatingStatusController {
     /** Remove the window and cancel all pending callbacks. Any thread. */
     public void destroy() {
         destroyed = true;
+        runningSessions.clear();
         // Bypass postToUi's destroyed guard here: the guard must drop event
         // runnables, but it must NOT drop our own teardown, otherwise the
         // window is never removed from the WindowManager.
