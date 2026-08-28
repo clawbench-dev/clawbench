@@ -72,7 +72,7 @@ export interface UseChatSessionOptions {
   onParseAssistantContent: (content: string) => Record<string, unknown>
   onExtractScheduledTasks: (msgs: Array<Record<string, unknown>>) => void
   onRenderUpdate: (forceFull: boolean) => void
-  onScrollBottom: (force?: boolean) => void
+  onScrollBottom: (force?: boolean, streaming?: boolean) => void
   onConnectStream: (sessionId: string, options?: { subscribeOnly?: boolean; reuseExistingStreaming?: boolean }) => void
   onDisconnectStream: () => void
   onOpen: () => void
@@ -219,7 +219,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     let keepInputDisabled = false
     if (isRunning) {
       loading.value = true
-      onScrollBottom(forceScrollBottom)
+      onScrollBottom(forceScrollBottom, true)
       // This loadHistory is reconnecting to the SAME live stream (e.g. after a
       // WS reconnect, tab-visibility change, or stream timeout) — NOT starting a
       // new turn. Reuse the existing streaming message so connectStream doesn't
@@ -229,7 +229,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       loading.value = true
       if (immediate) keepInputDisabled = true
       else inputDisabled.value = true
-      onScrollBottom(forceScrollBottom)
+      onScrollBottom(forceScrollBottom, true)
       onConnectStream(currentSessionId.value, immediate ? { subscribeOnly: true } : undefined)
     } else {
       loading.value = false

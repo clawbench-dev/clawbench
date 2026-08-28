@@ -21,7 +21,7 @@ export interface UseChatStreamOptions {
   currentBackend: Ref<string>
   loading: Ref<boolean>
   onRenderNeeded: (forceFull?: boolean) => void
-  onScrollBottom: (force?: boolean) => void
+  onScrollBottom: (force?: boolean, streaming?: boolean) => void
   onLoadHistory: () => Promise<void>
   onMessage: () => void
   onOpen: () => void
@@ -94,7 +94,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       return
     }
     renderScheduler.schedule('render', onRenderNeeded)
-    renderScheduler.schedule('scroll', () => onScrollBottom())
+    // Streaming context: content is still arriving, so the viewport should
+    // follow even if the container height hasn't grown to the bottom yet.
+    renderScheduler.schedule('scroll', () => onScrollBottom(false, true))
   }
 
   function hasPendingPermissionApproval(): boolean {
@@ -216,7 +218,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       } else if ((streaming as ChatMessage).fromDB) {
         delete (streaming as ChatMessage).fromDB
       }
-      onScrollBottom()
+      onScrollBottom(false, true)
     }
 
     // Subscribe to session's streaming events via WS
@@ -272,7 +274,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}` })
         debouncedRender()
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         break
       }
@@ -321,7 +323,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           onToolUpdate(data.id)
         }
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         break
       }
@@ -338,7 +340,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           onToolResult(data.id)
         }
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         break
       }
@@ -377,7 +379,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         loading.value = false
         onMessage()
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         onStreamEnd?.('done')
         if (!isOpen.value) {
@@ -424,7 +426,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         // Unlock input immediately — don't wait for loadHistory REST round-trip.
         loading.value = false
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         // Sync from DB in the background.
         onLoadHistory().then(() => {
@@ -588,7 +590,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
         debouncedRender()
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         break
       }
@@ -622,7 +624,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
           if (isOpen.value) {
             onRenderNeeded()
-            onScrollBottom()
+            onScrollBottom(false, true)
           }
         }
         break

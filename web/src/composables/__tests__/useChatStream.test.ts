@@ -2196,7 +2196,7 @@ describe('useChatStream', () => {
       simulateWsEvent('done', {})
 
       await vi.waitFor(() => {
-        expect(options.onScrollBottom).toHaveBeenCalledWith()
+        expect(options.onScrollBottom).toHaveBeenCalledWith(false, true)
       })
     })
   })

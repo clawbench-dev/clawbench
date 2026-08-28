@@ -549,7 +549,7 @@ onBeforeUnmount(() => {
   programmaticFallbackTimer = null
 })
 
-function scrollToBottom(force = false) {
+function scrollToBottom(force = false, streaming = false) {
   nextTick(() => {
     if (!messagesRef.value) return
     const el = messagesRef.value
@@ -562,6 +562,7 @@ function scrollToBottom(force = false) {
       lastScrollAt,
       now: Date.now(),
       nearBottomDist: dist,
+      streaming,
     })
 
     // User is actively scrolling/flinging → never yank the view. A force pin
@@ -600,6 +601,7 @@ function scrollToBottom(force = false) {
         lastScrollAt,
         now: Date.now(),
         nearBottomDist: gap,
+        streaming,
       }
       if (isUserScrolling(state2)) return
       if (shouldFollowStream(state2, force)) {
