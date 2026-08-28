@@ -268,13 +268,14 @@ public class FloatingStatusPanelView extends FrameLayout {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
 
-        // Status indicator: green dot (running), yellow dot (pending approval), none otherwise.
-        if (session.running || session.pendingApproval) {
+        // Status indicator: yellow dot (pending approval) wins over green dot
+        // (running) since pending approval needs user action, none otherwise.
+        if (session.pendingApproval || session.running) {
             View dot = new View(getContext());
             GradientDrawable dotDrawable = new GradientDrawable();
             dotDrawable.setShape(GradientDrawable.OVAL);
-            dotDrawable.setColor(session.running
-                    ? COLOR_RUNNING : COLOR_PERMISSION_PENDING);
+            dotDrawable.setColor(session.pendingApproval
+                    ? COLOR_PERMISSION_PENDING : COLOR_RUNNING);
             dot.setBackground(dotDrawable);
             LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(
                     dp(DOT_SIZE_DP), dp(DOT_SIZE_DP));

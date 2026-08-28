@@ -87,6 +87,19 @@ public class FloatingStatusPanelViewTest {
     }
 
     @Test
+    public void buildGroups_nullElements_areSkipped() throws Exception {
+        // null project and null session entries must be skipped, not crash.
+        String json = "{\"projects\":[null,{\"name\":\"/projA\",\"sessions\":[null,{\"id\":\"s5\",\"title\":\"t5\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":2}";
+        List<FloatingStatusPanelView.ProjectGroup> groups =
+                FloatingStatusPanelView.buildGroups(new JSONObject(json));
+
+        assertEquals(1, groups.size());
+        assertEquals("/projA", groups.get(0).name);
+        assertEquals(1, groups.get(0).sessions.size());
+        assertEquals("s5", groups.get(0).sessions.get(0).id);
+    }
+
+    @Test
     public void buildGroups_missingOptionalFields_defaults() throws Exception {
         // running / pendingApproval / unreadCount omitted -> sensible defaults.
         String json = "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s9\",\"title\":\"t9\"}]}],\"total\":1}";
