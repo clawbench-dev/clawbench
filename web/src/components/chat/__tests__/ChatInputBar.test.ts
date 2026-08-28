@@ -609,6 +609,14 @@ describe('ChatInputBar', () => {
     expect(typeof wrapper.vm.cancelQuickSendPress).toBe('function')
   })
 
+  it('exposes quick send mouse long-press handlers', () => {
+    const wrapper = mountBar()
+    expect(typeof wrapper.vm.onQuickSendMouseDown).toBe('function')
+    expect(typeof wrapper.vm.onQuickSendMouseUp).toBe('function')
+    expect(typeof wrapper.vm.onQuickSendMouseMove).toBe('function')
+    expect(typeof wrapper.vm.onQuickSendMouseLeave).toBe('function')
+  })
+
   it('exposes quickSendPressingId ref', () => {
     const wrapper = mountBar()
     expect(wrapper.vm.quickSendPressingId).toBeDefined()
@@ -697,6 +705,72 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.quickSendPressingId).toBe('1')
     wrapper.vm.cancelQuickSendPress()
     expect(wrapper.vm.quickSendPressingId).toBeNull()
+  })
+
+  it('mouse long-press on quick send item injects command into input', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const item = { id: '1', label: 'Test', command: '/test' }
+    const mouseDownEvent = { clientX: 10, clientY: 20 }
+    wrapper.vm.onQuickSendMouseDown(item, mouseDownEvent)
+    expect(wrapper.vm.quickSendPressingId).toBe('1')
+    vi.advanceTimersByTime(600)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('/test')
+    expect(wrapper.vm.quickSendPressingId).toBeNull()
+    wrapper.vm.onQuickSendMouseUp()
+    // The synthetic click after release must not send (long-press already injected)
+    wrapper.vm.handleQuickSendClick(item)
+    expect(wrapper.emitted('send')).toBeFalsy()
+    vi.useRealTimers()
+  })
+
+  it('mouse short press (mousedown + mouseup) still sends via click', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const item = { id: '1', label: 'Test', command: '/test' }
+    wrapper.vm.onQuickSendMouseDown(item, { clientX: 10, clientY: 20 })
+    vi.advanceTimersByTime(200)
+    wrapper.vm.onQuickSendMouseUp()
+    await wrapper.vm.$nextTick()
+    // Short press must not inject into the input
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.emitted('send')).toBeFalsy()
+    // Release → the normal click sends the command
+    wrapper.vm.handleQuickSendClick(item)
+    expect(wrapper.emitted('send')).toBeTruthy()
+    expect(wrapper.emitted('send')![0]).toEqual(['/test'])
+    vi.useRealTimers()
+  })
+
+  it('mouse long-press is cancelled when pointer moves beyond threshold', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const item = { id: '1', label: 'Test', command: '/test' }
+    wrapper.vm.onQuickSendMouseDown(item, { clientX: 0, clientY: 0 })
+    expect(wrapper.vm.quickSendPressingId).toBe('1')
+    // Move beyond 10px threshold
+    wrapper.vm.onQuickSendMouseMove({ clientX: 30, clientY: 0 })
+    expect(wrapper.vm.quickSendPressingId).toBeNull()
+    vi.advanceTimersByTime(600)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.emitted('send')).toBeFalsy()
+    vi.useRealTimers()
+  })
+
+  it('mouse long-press is cancelled on mouseleave', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const item = { id: '1', label: 'Test', command: '/test' }
+    wrapper.vm.onQuickSendMouseDown(item, { clientX: 0, clientY: 0 })
+    expect(wrapper.vm.quickSendPressingId).toBe('1')
+    wrapper.vm.onQuickSendMouseLeave()
+    expect(wrapper.vm.quickSendPressingId).toBeNull()
+    vi.advanceTimersByTime(600)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    vi.useRealTimers()
   })
 
   it('session button emits open-session-tab', async () => {

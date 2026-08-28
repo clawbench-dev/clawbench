@@ -139,6 +139,10 @@
           class="quick-send-item"
           :class="{ 'qs-pressing': quickSendPressingId === item.id }"
           @click="handleQuickSendClick(item)"
+          @mousedown="onQuickSendMouseDown(item, $event)"
+          @mouseup="onQuickSendMouseUp"
+          @mousemove="onQuickSendMouseMove"
+          @mouseleave="onQuickSendMouseLeave"
           @touchstart="onQuickSendTouchStart(item, $event)"
           @touchmove="onQuickSendTouchMove"
           @touchend="onQuickSendTouchEnd"
@@ -1378,6 +1382,9 @@ let quickSendMoved = false
 let quickSendJustTriggered = false
 let quickSendTouchStartPos = { x: 0, y: 0 }
 let quickSendCurrentItem = null
+let quickSendMouseDownItem = null
+let quickSendMouseMoved = false
+let quickSendMouseStartPos = { x: 0, y: 0 }
 
 function handleQuickSendClick(item) {
   // Desktop: click directly sends
@@ -1388,6 +1395,48 @@ function handleQuickSendClick(item) {
   }
   showQuickMenu.value = false
   emit('send', item.command)
+}
+
+// Desktop mouse long-press → inject into input box (mirrors the touch long-press path).
+// Mouse-only events (mousedown/mouseup) are used so the touch long-press path is untouched.
+function onQuickSendMouseDown(item, e) {
+  quickSendMouseDownItem = item
+  quickSendMouseMoved = false
+  quickSendMouseStartPos = { x: e.clientX, y: e.clientY }
+  quickSendPressingId.value = item.id
+  quickSendPressTimer = setTimeout(() => {
+    if (!quickSendMouseMoved && quickSendPressingId.value === item.id && quickSendMouseDownItem) {
+      // Long-press triggered → inject into input box
+      quickSendJustTriggered = true
+      quickSendPressingId.value = null
+      quickSendMouseDownItem = null
+      injectToInput(item.command)
+      showQuickMenu.value = false
+    }
+  }, QUICK_SEND_LONG_PRESS_MS)
+}
+
+function onQuickSendMouseUp() {
+  if (quickSendPressTimer) {
+    clearTimeout(quickSendPressTimer)
+    quickSendPressTimer = null
+  }
+  quickSendPressingId.value = null
+  quickSendMouseDownItem = null
+}
+
+function onQuickSendMouseMove(e) {
+  if (!quickSendPressingId.value) return
+  const dx = e.clientX - quickSendMouseStartPos.x
+  const dy = e.clientY - quickSendMouseStartPos.y
+  if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+    quickSendMouseMoved = true
+    cancelQuickSendPress()
+  }
+}
+
+function onQuickSendMouseLeave() {
+  onQuickSendMouseUp()
 }
 
 function injectToInput(text) {
@@ -1541,6 +1590,10 @@ defineExpose({
   getDraft: (sessionId) => draftCache.get(sessionId) ?? null,
   injectToInput,
   handleQuickSendClick,
+  onQuickSendMouseDown,
+  onQuickSendMouseUp,
+  onQuickSendMouseMove,
+  onQuickSendMouseLeave,
   onQuickSendTouchStart,
   onQuickSendTouchMove,
   onQuickSendTouchEnd,
