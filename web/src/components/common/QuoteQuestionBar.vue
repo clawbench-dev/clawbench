@@ -310,7 +310,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   padding: 6px 8px;
   background: var(--bg-tertiary);
   border-left: 2px solid var(--accent-color);
-  border-radius: 6px;
+  border-radius: 0;
   margin: 0 2px;
   flex: 1;
   min-width: 0;
@@ -321,7 +321,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   align-items: center;
   padding: 5px 8px;
   margin: 0;
-  border-radius: 6px;
+  border-radius: 0;
 }
 
 /* Quote text: single line by default; expand on click to show full content.
@@ -350,7 +350,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   flex-direction: column;
   background: var(--bg-tertiary);
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   overflow: hidden;
   transition: background 0.2s, box-shadow 0.2s;
 }
@@ -396,7 +396,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 0;
   transition: color 0.15s, background 0.15s;
   flex-shrink: 0;
   align-self: flex-end;
@@ -420,7 +420,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   background: var(--accent-color);
   color: #fff;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
   flex-shrink: 0;

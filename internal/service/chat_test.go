@@ -2516,6 +2516,136 @@ func TestGetSessions_UnreadCountScopedToProject(t *testing.T) {
 	assert.Equal(t, 1, sessionsB[0].UnreadCount, "unread count should only count messages in project-b")
 }
 
+// ---------- GetOverviewSessions ----------
+
+func TestGetOverviewSessions_crossProjectUnread(t *testing.T) {
+	db := setupDB(t)
+
+	// projectA: A1 has unread assistant message; A2 is read
+	// projectB: B1 has no messages
+	// archived: archived session in projectA must be excluded
+	insertSessionWithTime(t, "/projectA", "session-A1", "A1 unread", "2025-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/projectA", "session-A2", "A2 read", "2025-01-01 10:00:01", false)
+	insertSessionWithTime(t, "/projectB", "session-B1", "B1 empty", "2025-01-01 10:00:02", false)
+	insertSessionWithTime(t, "/projectA", "session-archived", "Archived", "2025-01-01 10:00:03", true)
+
+	_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'user', 'hello', '2025-01-01 10:00:00')", "/projectA", "session-A1")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'unread reply', '2025-01-01 10:00:05')", "/projectA", "session-A1")
+	require.NoError(t, err)
+
+	// A2 is read: assistant message created before last_read_at
+	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', '2025-01-01 10:00:02')", "/projectA", "session-A2")
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE chat_sessions SET last_read_at = '2025-01-01 10:00:10' WHERE id = 'session-A2'")
+	require.NoError(t, err)
+
+	sessions, err := service.GetOverviewSessions()
+	require.NoError(t, err)
+	require.Len(t, sessions, 3, "should return A1, A2, B1 (archived excluded)")
+
+	byID := make(map[string]model.ChatSession, len(sessions))
+	for _, s := range sessions {
+		byID[s.ID] = s
+	}
+
+	// A1: unread assistant message → unread > 0
+	a1, ok := byID["session-A1"]
+	require.True(t, ok, "session-A1 should be present")
+	assert.Equal(t, "/projectA", a1.ProjectPath)
+	assert.Equal(t, 1, a1.UnreadCount, "A1 has one unread assistant message")
+
+	// A2: read → unread == 0
+	a2, ok := byID["session-A2"]
+	require.True(t, ok, "session-A2 should be present")
+	assert.Equal(t, "/projectA", a2.ProjectPath)
+	assert.Equal(t, 0, a2.UnreadCount, "A2 was read, no unread messages")
+
+	// B1: no messages → unread == 0
+	b1, ok := byID["session-B1"]
+	require.True(t, ok, "session-B1 should be present")
+	assert.Equal(t, "/projectB", b1.ProjectPath)
+	assert.Equal(t, 0, b1.UnreadCount, "B1 has no messages")
+
+	// Archived session must not be returned
+	_, ok = byID["session-archived"]
+	assert.False(t, ok, "archived session must not be returned")
+}
+
+// TestGetOverviewSessions_sameIDAcrossProjects ensures unread counts stay
+// isolated when two projects share the same session id (the natural key is
+// UNIQUE(project_path, backend, id)). A regression test for the case where
+// the unread subquery is keyed only by session_id and would let one project's
+// count leak into the other.
+//
+// NOTE: the production schema declares id TEXT PRIMARY KEY, which by itself
+// forbids duplicate ids. To exercise the intended composite-key scenario we
+// recreate chat_sessions here with PRIMARY KEY (project_path, backend, id).
+func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
+	db := setupDB(t)
+
+	_, err := db.Exec("DROP TABLE chat_sessions")
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE chat_sessions (
+		id TEXT NOT NULL,
+		project_path TEXT NOT NULL,
+		backend TEXT NOT NULL,
+		title TEXT NOT NULL,
+		agent_id TEXT DEFAULT '',
+		agent_source TEXT DEFAULT 'default',
+		model TEXT DEFAULT '',
+		session_type TEXT NOT NULL DEFAULT 'chat',
+		external_session_id TEXT DEFAULT '',
+		source_session_id TEXT DEFAULT NULL,
+		transport TEXT DEFAULT '',
+		auto_approve INTEGER NOT NULL DEFAULT 0,
+		context_state TEXT DEFAULT '',
+		archived INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		last_read_at DATETIME,
+		PRIMARY KEY (project_path, backend, id)
+	)`)
+	require.NoError(t, err)
+
+	// Both projects use the same session id — allowed by the composite key
+	insertSessionWithTime(t, "/projectA", "shared-session", "A shared", "2025-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/projectB", "shared-session", "B shared", "2025-01-01 10:00:01", false)
+
+	// projectA: 2 unread assistant messages (last_read_at is NULL → all unread)
+	for i := 0; i < 2; i++ {
+		_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'a reply', '2025-01-01 10:00:05')", "/projectA", "shared-session")
+		require.NoError(t, err)
+	}
+	// projectB: 3 unread assistant messages
+	for i := 0; i < 3; i++ {
+		_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'b reply', '2025-01-01 10:00:05')", "/projectB", "shared-session")
+		require.NoError(t, err)
+	}
+
+	sessions, err := service.GetOverviewSessions()
+	require.NoError(t, err)
+	require.Len(t, sessions, 2, "two entries expected: same id in two projects")
+
+	byProject := make(map[string]model.ChatSession, len(sessions))
+	for _, s := range sessions {
+		byProject[s.ProjectPath] = s
+	}
+
+	// Same session id appears in both projects
+	assert.Equal(t, "shared-session", byProject["/projectA"].ID)
+	assert.Equal(t, "shared-session", byProject["/projectB"].ID)
+
+	// Unread counts must not leak across projects
+	a, ok := byProject["/projectA"]
+	require.True(t, ok, "projectA session should be present")
+	assert.Equal(t, 2, a.UnreadCount, "projectA unread must not include projectB's messages")
+
+	b, ok := byProject["/projectB"]
+	require.True(t, ok, "projectB session should be present")
+	assert.Equal(t, 3, b.UnreadCount, "projectB unread must not include projectA's messages")
+}
+
 // ---------- GetSessionsPaged UnreadCount ----------
 
 func TestGetSessionsPaged_UnreadCount(t *testing.T) {

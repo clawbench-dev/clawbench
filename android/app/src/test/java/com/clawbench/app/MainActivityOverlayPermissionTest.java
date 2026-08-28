@@ -34,8 +34,9 @@ import static org.mockito.Mockito.verify;
  *    when Settings.canDrawOverlays(context) is false (and does nothing when granted).
  * 2. The WebAppInterface JS bridge exposes setFloatingWindowEnabled(boolean) which
  *    persists the opt-in flag through BackgroundService.
- * 3. launchFromFloatingWindow(String) — the static entry point the floating capsule
- *    tap uses to bring the main activity to the front with a session deep link.
+ * 3. launchFromFloatingWindow(String[, String]) — the static entry point the
+ *    floating capsule/panel uses to bring the main activity to the front with a
+ *    session deep link (optionally carrying the owning project path).
  * 4. The activity consumes a session_id intent extra and hands it to the frontend
  *    via handleNotificationIntent → webView.evaluateJavascript
  *    (clawbench-open-session CustomEvent).
@@ -170,6 +171,37 @@ public class MainActivityOverlayPermissionTest {
         assertNull("no session_id extra when sessionId is empty", next.getStringExtra("session_id"));
     }
 
+    @Test
+    public void launchFromFloatingWindow_withProjectPath_carriesProjectPathExtra() throws Exception {
+        // The two-arg overload exists for panel session rows that belong to a
+        // different project than the current cookie.
+        Method m = MainActivity.class.getDeclaredMethod("launchFromFloatingWindow", String.class, String.class);
+        assertTrue("two-arg launchFromFloatingWindow must be static",
+                java.lang.reflect.Modifier.isStatic(m.getModifiers()));
+
+        MainActivity.launchFromFloatingWindow("s-float-x", "/projB");
+
+        Intent next = Shadows.shadowOf(appContext).getNextStartedActivity();
+        assertNotNull("launchFromFloatingWindow must start the activity", next);
+        assertEquals("session_id extra must be carried into the intent",
+                "s-float-x", next.getStringExtra("session_id"));
+        assertEquals("project_path extra must be carried into the intent",
+                "/projB", next.getStringExtra("project_path"));
+    }
+
+    @Test
+    public void launchFromFloatingWindow_emptyProjectPath_omitsExtra() {
+        // Empty / null project path (capsule tap path) must not add a
+        // project_path extra — an empty value would be treated as absent.
+        MainActivity.launchFromFloatingWindow("s-float-y", "");
+
+        Intent next = Shadows.shadowOf(appContext).getNextStartedActivity();
+        assertNotNull(next);
+        assertEquals("s-float-y", next.getStringExtra("session_id"));
+        assertNull("empty project_path must not be put into the intent",
+                next.getStringExtra("project_path"));
+    }
+
     // =====================================================
     // session_id deep link: routed through handleNotificationIntent → frontend JS
     // (clawbench-open-session CustomEvent)
@@ -191,6 +223,31 @@ public class MainActivityOverlayPermissionTest {
         // The consumed extra must be removed to prevent re-dispatch.
         assertNull("session_id extra must be removed after consumption",
                 intent.getStringExtra("session_id"));
+    }
+
+    @Test
+    public void handleNotificationIntent_withProjectPath_dispatchesProjectPathInDetail() throws Exception {
+        // Regression: a cross-project session deep link carries project_path in
+        // the intent. handleNotificationIntent must forward it into the
+        // clawbench-open-session detail so the frontend can switch the project
+        // cookie before opening the session (otherwise a cross-project open 403s).
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(activity, "webView", mockWebView);
+        Intent intent = new Intent()
+                .putExtra("session_id", "s-cross")
+                .putExtra("project_path", "/projB");
+
+        invokeMethod(activity, "handleNotificationIntent", Intent.class, intent);
+
+        verify(mockWebView).evaluateJavascript(contains("clawbench-open-session"), any());
+        verify(mockWebView).evaluateJavascript(contains("s-cross"), any());
+        verify(mockWebView).evaluateJavascript(contains("projectPath"), any());
+        verify(mockWebView).evaluateJavascript(contains("/projB"), any());
+        // The consumed extras must be removed to prevent re-dispatch.
+        assertNull("session_id extra must be removed after consumption",
+                intent.getStringExtra("session_id"));
+        assertNull("project_path extra must be removed after consumption",
+                intent.getStringExtra("project_path"));
     }
 
     @Test

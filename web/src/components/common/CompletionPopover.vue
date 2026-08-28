@@ -165,7 +165,7 @@ function handleSummaryClick(event: MouseEvent): void {
     width: 100%;
     background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
     color: var(--text-primary);
-    border-radius: 0;
+    border-radius: 12px;
     padding: 8px 10px;
     box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
     border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
@@ -273,11 +273,11 @@ function handleSummaryClick(event: MouseEvent): void {
     padding-top: 2px;
 }
 
-/* 有元信息行时，正文用细分隔线分层 */
+/* 有元信息行时，正文用分隔线+更大间距分层 */
 .completion-popover-meta + .completion-popover-summary {
-    border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
-    padding-top: 8px;
-    margin-top: 2px;
+    border-top: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+    padding-top: 10px;
+    margin-top: 6px;
 }
 
 /* 覆盖全局 .markdown-body 规则：卡片已有自身 padding，去掉重复 padding；

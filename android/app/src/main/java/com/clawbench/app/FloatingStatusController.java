@@ -16,6 +16,8 @@ import android.view.WindowManager;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.function.BiConsumer;
+
 /**
  * Controller for the desktop floating status window.
  *
@@ -48,6 +50,18 @@ public class FloatingStatusController {
     /** Drag opacity while moving. */
     private static final float DRAG_ALPHA = 0.85f;
 
+    /** Capsule tap opens the single running session directly. */
+    public static final int CLICK_OPEN_SESSION = 0;
+    /** Capsule tap expands the panel to show the session list. */
+    public static final int CLICK_EXPAND_PANEL = 1;
+
+    /** Panel width in dp (matches FloatingStatusPanelView). */
+    private static final int PANEL_WIDTH_DP = 280;
+    /** Panel max height in dp (matches FloatingStatusPanelView). */
+    private static final int PANEL_MAX_HEIGHT_DP = 400;
+    /** Minimum interval between overview refreshes triggered by events while expanded. */
+    private static final long OVERVIEW_REFRESH_MIN_INTERVAL_MS = 2000;
+
     private final Context context;
     private final Runnable onTap;
     private final WindowManager windowManager;
@@ -57,13 +71,25 @@ public class FloatingStatusController {
     private final int capsuleWidthPx;
 
     private FloatingStatusView view;
+    private FloatingStatusPanelView panelView;
     private WindowManager.LayoutParams params;
+    /** The view currently attached to the WindowManager (capsule or panel). */
+    private View attachedView;
     private volatile boolean windowShowing;
     private volatile boolean destroyed;
     private volatile boolean hasActive;
     private volatile boolean appForeground;
     private volatile boolean userDismissed;
+    private volatile boolean expanded;
     private Runnable fadeHideRunnable;
+    private BiConsumer<String, String> onSessionClick;
+    private OverviewRequestListener overviewRequestListener;
+    /** Last time an event-triggered overview refresh was requested (throttle). */
+    private volatile long lastOverviewRequestMs;
+
+    /** Session ids currently running, tracked from events. Thread-safe set. */
+    private final java.util.Set<String> runningSessions =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // Drag bookkeeping.
     private float downX;
@@ -109,6 +135,223 @@ public class FloatingStatusController {
         return margin;
     }
 
+    /**
+     * Decide what a capsule tap does: open the single running session, or
+     * expand the panel. Pure: no framework deps.
+     */
+    public static int decideCapsuleClick(int runningSessionCount) {
+        return runningSessionCount == 1 ? CLICK_OPEN_SESSION : CLICK_EXPAND_PANEL;
+    }
+
+    /**
+     * Track session running state from events. Adds the session when an event
+     * reports it as active, removes it on a terminal status (completed /
+     * cancelled / failed). Any thread.
+     */
+    public void trackSessionState(String eventType, String status, String sessionId) {
+        // Late events arriving after destroy() must not resurrect the cleared
+        // running set. This guard runs before any mutation; the postToUi
+        // dropped-runnable guard only protects the window, not this set.
+        if (destroyed) {
+            return;
+        }
+        // Only session_update events feed the running set. task_update is a
+        // scheduled-task status, not a session status: its session_id is
+        // omitempty (often empty) and would desync the count from hasActive.
+        if (!"session_update".equals(eventType)) {
+            return;
+        }
+        if (sessionId == null || sessionId.isEmpty()) {
+            return;
+        }
+        if (isActiveStatus(eventType, status)) {
+            runningSessions.add(sessionId);
+        } else if ("completed".equals(status) || "cancelled".equals(status)
+                || "failed".equals(status)) {
+            runningSessions.remove(sessionId);
+        } else {
+            // permission_resolved leaves the session still running, so it must
+            // NOT be removed from the set here.
+        }
+    }
+
+    /** Number of currently running sessions. */
+    public int getRunningSessionCount() {
+        return runningSessions.size();
+    }
+
+    /**
+     * True when a capsule tap should open the running session directly rather
+     * than expand the panel. Backs the Task 5 onTap wiring.
+     */
+    public boolean shouldOpenSessionOnCapsuleTap() {
+        return decideCapsuleClick(getRunningSessionCount()) == CLICK_OPEN_SESSION;
+    }
+
+    /** Whether the grouped session panel is currently expanded. Any thread. */
+    public boolean isExpanded() {
+        return expanded;
+    }
+
+    /**
+     * Callback the controller invokes when the panel needs a fresh overview
+     * (on expand, and on every session/task event while expanded). The service
+     * wires this to fetchOverviewSessions on the network executor.
+     */
+    public interface OverviewRequestListener {
+        void onRequestOverview();
+    }
+
+    /**
+     * Public entry point for a capsule tap: open the single running session or
+     * expand the grouped panel. Any thread.
+     */
+    public void onCapsuleTap() {
+        if (decideCapsuleClick(getRunningSessionCount()) == CLICK_OPEN_SESSION) {
+            if (onTap != null) {
+                onTap.run();
+            }
+        } else {
+            setExpanded(true);
+        }
+    }
+
+    /**
+     * Expand to the grouped session list panel, or collapse back to the
+     * capsule. Any thread; View/WindowManager mutations are marshalled to the
+     * UI thread.
+     */
+    public void setExpanded(boolean expand) {
+        expanded = expand;
+        postToUi(() -> {
+            if (expand) {
+                // The capsule may be hidden (e.g. no active session, panel
+                // showing only unread items): ensure the window exists.
+                ensureWindow();
+                if (windowShowing) {
+                    attachView(panelView != null ? panelView : buildPanelView());
+                    // A panel is much wider than the capsule: the capsule's
+                    // right-edge placement would push the panel off-screen, so
+                    // re-clamp x against the real panel width.
+                    clampPanelX();
+                }
+                requestOverviewRefresh();
+            } else {
+                // Collapse: back to the capsule if a session is still active,
+                // otherwise hide the window entirely.
+                if (shouldShow(appForeground, hasActive, userDismissed)) {
+                    attachView(view != null ? view : buildCapsuleView());
+                } else {
+                    hideWindow();
+                }
+                if (panelView != null) {
+                    panelView.setOnCollapseClickListener(null);
+                    panelView = null;
+                }
+            }
+        });
+    }
+
+    /**
+     * Render overview data into the expanded panel. Any thread; the render is
+     * marshalled to the UI thread and no-ops when the panel is not expanded.
+     *
+     * The overview also re-seeds the running session set: on WS connect it is
+     * the fallback for a "running" session_update that was broadcast while the
+     * WS was down, so the capsule still appears. Running ids are added (never
+     * removed — the event stream remains authoritative for termination).
+     */
+    public void onOverviewLoaded(JSONObject overview) {
+        if (overview == null) {
+            return;
+        }
+        seedRunningFromOverview(overview);
+        postToUi(() -> {
+            if (panelView != null && expanded) {
+                panelView.render(overview, (sid, projectPath) -> {
+                    if (sid != null && !sid.isEmpty()) {
+                        // Opening a specific session: deliver it to the service
+                        // deep-link and collapse the panel.
+                        if (onSessionClick != null) {
+                            onSessionClick.accept(sid, projectPath);
+                        }
+                        setExpanded(false);
+                    }
+                });
+            } else if (shouldShow(appForeground, hasActive, userDismissed) && !windowShowing) {
+                // WS-connect fallback: a running session discovered via the
+                // overview (whose start event was missed while the WS was down)
+                // must bring up the capsule even though no event triggered it.
+                cancelPendingHide();
+                ensureWindow();
+            }
+        });
+    }
+
+    /** Add sessions flagged running by the overview into the running set. Any thread. */
+    private void seedRunningFromOverview(JSONObject overview) {
+        JSONArray projects = overview.optJSONArray("projects");
+        if (projects == null) {
+            return;
+        }
+        boolean anyRunning = false;
+        for (int i = 0; i < projects.length(); i++) {
+            JSONObject project = projects.optJSONObject(i);
+            if (project == null) {
+                continue;
+            }
+            JSONArray sessions = project.optJSONArray("sessions");
+            if (sessions == null) {
+                continue;
+            }
+            for (int j = 0; j < sessions.length(); j++) {
+                JSONObject s = sessions.optJSONObject(j);
+                if (s != null && s.optBoolean("running", false)) {
+                    String id = s.optString("id", "");
+                    if (!id.isEmpty()) {
+                        runningSessions.add(id);
+                    }
+                    anyRunning = true;
+                }
+            }
+        }
+        if (anyRunning) {
+            hasActive = true;
+        } else if (hasActive && overview.optInt("total", 0) == 0) {
+            // No running session anywhere in the overview and nothing left
+            // worth showing (total counts unread / pending-approval items too):
+            // every session ended while the WS was down, so reset hasActive and
+            // hide the lingering window. total > 0 means unread or pending
+            // items remain — keep the window.
+            hasActive = false;
+            postToUi(() -> {
+                if (!expanded) {
+                    cancelPendingHide();
+                    hideWindow();
+                }
+            });
+        }
+    }
+
+    /**
+     * Callback invoked when a session row is tapped in the expanded panel.
+     * Carries the session id and its owning project path so the service can
+     * deep-link into it (unlike the no-arg onTap which opens the most recently
+     * seen session). projectPath may be null/empty for rows without a group.
+     */
+    public void setOnSessionClick(BiConsumer<String, String> listener) {
+        this.onSessionClick = listener;
+    }
+
+    /**
+     * Callback invoked when the controller needs a fresh overview (expand +
+     * every event while expanded). The service pulls /api/ai/sessions/overview
+     * on the network executor and feeds the result back via onOverviewLoaded.
+     */
+    public void setOverviewRequestListener(OverviewRequestListener listener) {
+        this.overviewRequestListener = listener;
+    }
+
     public FloatingStatusController(Context context, Runnable onTap) {
         this.context = context.getApplicationContext();
         this.onTap = onTap;
@@ -139,6 +382,15 @@ public class FloatingStatusController {
 
         boolean active = isActiveStatus(eventType, status);
         hasActive = active;
+        trackSessionState(eventType, status, sessionId);
+
+        // While the panel is expanded, every event should refresh the overview
+        // so the session list stays current without waiting for the next tap.
+        // High-frequency streaming events would otherwise pile up requests, so
+        // the refresh is throttled to OVERVIEW_REFRESH_MIN_INTERVAL_MS.
+        if (expanded) {
+            requestOverviewRefresh();
+        }
 
         AppLog.d(TAG, "handleEvent event=" + eventType + " status=" + status
                 + " sessionId=" + sessionId + " active=" + active);
@@ -157,7 +409,9 @@ public class FloatingStatusController {
                 }
             } else {
                 // Terminal state: show the "done" capsule briefly, then fade out.
-                if (windowShowing) {
+                // While the panel is expanded the user is looking at the list,
+                // so never auto-hide it; the overview refresh keeps it current.
+                if (windowShowing && !expanded) {
                     render(fEventType, fStatus, fSessionTitle, fToolName, fPreview);
                     scheduleTerminalHide();
                 }
@@ -168,6 +422,14 @@ public class FloatingStatusController {
     /** App foreground state changes drive visibility directly. Any thread. */
     public void setAppForeground(boolean foreground) {
         appForeground = foreground;
+        if (foreground) {
+            // Returning to the foreground hides the window but must also reset
+            // the expanded state: otherwise a later background would rebuild the
+            // stale panel (with old content) instead of the capsule. The panel
+            // view is dropped too so the next expand rebuilds it fresh.
+            expanded = false;
+            panelView = null;
+        }
         postToUi(() -> {
             if (foreground) {
                 hideWindow();
@@ -203,50 +465,10 @@ public class FloatingStatusController {
         return windowShowing;
     }
 
-    /**
-     * True when a /api/sessions response contains at least one running session.
-     * Pure function (no Android framework deps) so it is unit-testable.
-     */
-    public static boolean hasRunningSession(JSONObject sessionsResponse) {
-        if (sessionsResponse == null) {
-            return false;
-        }
-        JSONArray sessions = sessionsResponse.optJSONArray("sessions");
-        if (sessions == null) {
-            return false;
-        }
-        for (int i = 0; i < sessions.length(); i++) {
-            JSONObject s = sessions.optJSONObject(i);
-            if (s != null && s.optBoolean("running", false)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Notify the controller that a session is running (discovered via the
-     * /api/sessions poll on native WS connect). Marks the session active so the
-     * capsule appears when the app is backgrounded. Any thread.
-     */
-    public void notifyRunningSession(String sessionId, String sessionTitle) {
-        hasActive = true;
-        final String fSessionId = sessionId;
-        final String fSessionTitle = sessionTitle;
-        postToUi(() -> {
-            cancelPendingHide();
-            if (shouldShow(appForeground, true, userDismissed)) {
-                ensureWindow();
-                render("session_update", "running", fSessionTitle, "", "");
-            } else if (appForeground) {
-                // Backgrounded later; setAppForeground(false) will re-evaluate.
-            }
-        });
-    }
-
     /** Remove the window and cancel all pending callbacks. Any thread. */
     public void destroy() {
         destroyed = true;
+        runningSessions.clear();
         // Bypass postToUi's destroyed guard here: the guard must drop event
         // runnables, but it must NOT drop our own teardown, otherwise the
         // window is never removed from the WindowManager.
@@ -255,8 +477,13 @@ public class FloatingStatusController {
             if (view != null) {
                 view.animate().cancel();
             }
+            if (panelView != null) {
+                panelView.setOnCollapseClickListener(null);
+            }
             hideWindow();
             view = null;
+            panelView = null;
+            attachedView = null;
             params = null;
         };
         if (Looper.myLooper() == Looper.getMainLooper()) {
@@ -267,6 +494,26 @@ public class FloatingStatusController {
     }
 
     // --- UI-thread window management ---
+
+    /**
+     * Request a fresh overview. Expand requests always fire; event-triggered
+     * requests are throttled so high-frequency streaming events cannot pile up
+     * network pulls. Any thread.
+     */
+    private void requestOverviewRefresh() {
+        if (overviewRequestListener == null) {
+            return;
+        }
+        long now = android.os.SystemClock.elapsedRealtime();
+        // lastOverviewRequestMs == 0 means "never requested" — always fire so
+        // the expand request is never swallowed by the throttle.
+        if (lastOverviewRequestMs != 0
+                && now - lastOverviewRequestMs < OVERVIEW_REFRESH_MIN_INTERVAL_MS) {
+            return;
+        }
+        lastOverviewRequestMs = now;
+        overviewRequestListener.onRequestOverview();
+    }
 
     private void postToUi(Runnable r) {
         if (destroyed) {
@@ -293,8 +540,10 @@ public class FloatingStatusController {
         if (windowShowing) {
             // A fade may be in flight (alpha < 1); cancel it and restore full
             // opacity so a fresh active event makes the window reappear.
-            view.animate().cancel();
-            view.setAlpha(1f);
+            if (attachedView != null) {
+                attachedView.animate().cancel();
+                attachedView.setAlpha(1f);
+            }
             return;
         }
         if (!canDrawOverlays()) {
@@ -302,50 +551,124 @@ public class FloatingStatusController {
             return;
         }
         try {
-            if (view == null) {
-                view = new FloatingStatusView(context);
-                attachTouchListener(view);
+            if (params == null) {
                 params = buildLayoutParams();
                 restorePosition(params);
             }
-            windowManager.addView(view, params);
+            if (attachedView == null) {
+                attachView(expanded ? buildPanelView() : buildCapsuleView());
+            }
+            applyViewSizing();
+            windowManager.addView(attachedView, params);
             windowShowing = true;
-            // Ensure right-edge placement accounts for the real capsule width now
-            // that the view is laid out (no-op when a saved position is in effect).
+            // Ensure right-edge placement accounts for the real view width now
+            // that it is laid out (no-op when a saved position is in effect).
             snapRightEdgeIfNeeded();
-            view.setAlpha(1f);
-            view.pulse();
-            AppLog.i(TAG, "floating window shown at x=" + params.x + " y=" + params.y);
+            attachedView.setAlpha(1f);
+            if (attachedView instanceof FloatingStatusView) {
+                ((FloatingStatusView) attachedView).pulse();
+            }
+            AppLog.i(TAG, "floating window shown at x=" + params.x + " y=" + params.y
+                    + (expanded ? " (panel)" : " (capsule)"));
         } catch (Exception e) {
             AppLog.w(TAG, "failed to add floating window", e);
         }
     }
 
     private void hideWindow() {
-        if (!windowShowing || view == null) {
+        if (!windowShowing || attachedView == null) {
             return;
         }
         try {
-            windowManager.removeView(view);
+            windowManager.removeView(attachedView);
             windowShowing = false;
+            attachedView = null;
             AppLog.i(TAG, "floating window hidden");
         } catch (Exception e) {
             AppLog.w(TAG, "failed to remove floating window", e);
         }
     }
 
-    private void hideWithFade() {
-        if (!windowShowing || view == null) {
+    /**
+     * Swap the view attached to the WindowManager (capsule <-> panel) while the
+     * window is visible. Reuses the existing LayoutParams so drag position is
+     * preserved. UI thread only. When the window is not showing, just records
+     * which view should be added on the next ensureWindow().
+     */
+    private void attachView(View newView) {
+        if (newView == null) {
             return;
         }
-        view.animate()
+        if (newView == attachedView) {
+            return;
+        }
+        if (windowShowing && attachedView != null) {
+            try {
+                windowManager.removeView(attachedView);
+            } catch (Exception e) {
+                AppLog.w(TAG, "failed to remove old floating view", e);
+            }
+        }
+        attachedView = newView;
+        applyViewSizing();
+        if (windowShowing) {
+            try {
+                windowManager.addView(attachedView, params);
+                if (attachedView instanceof FloatingStatusView) {
+                    ((FloatingStatusView) attachedView).pulse();
+                }
+            } catch (Exception e) {
+                AppLog.w(TAG, "failed to add swapped floating view", e);
+            }
+        }
+    }
+
+    /**
+     * Size the attached view for its role: the panel gets a fixed 280x400dp
+     * window, the capsule stays wrap-content. UI thread only.
+     */
+    private void applyViewSizing() {
+        if (params == null || attachedView == null) {
+            return;
+        }
+        float density = context.getResources().getDisplayMetrics().density;
+        if (expanded && attachedView == panelView) {
+            params.width = Math.round(PANEL_WIDTH_DP * density);
+            params.height = Math.min(
+                    Math.round(PANEL_MAX_HEIGHT_DP * density), screenHeight());
+        } else {
+            params.width = WindowManager.LayoutParams.WRAP_CONTENT;
+            params.height = WindowManager.LayoutParams.WRAP_CONTENT;
+        }
+    }
+
+    private FloatingStatusView buildCapsuleView() {
+        view = new FloatingStatusView(context);
+        attachTouchListener(view);
+        return view;
+    }
+
+    private FloatingStatusPanelView buildPanelView() {
+        // Session-row taps are delivered through the render() callback
+        // (setOnSessionClick), so construction only wires the collapse button.
+        panelView = new FloatingStatusPanelView(context, null);
+        panelView.setOnCollapseClickListener(() -> setExpanded(false));
+        // Panel content is dark/translucent; keep the drag alpha subtle.
+        attachTouchListener(panelView);
+        return panelView;
+    }
+
+    private void hideWithFade() {
+        if (!windowShowing || attachedView == null) {
+            return;
+        }
+        View fadeView = attachedView;
+        fadeView.animate()
                 .alpha(0f)
                 .setDuration(FADE_MS)
                 .withEndAction(() -> {
                     hideWindow();
-                    if (view != null) {
-                        view.setAlpha(1f);
-                    }
+                    fadeView.setAlpha(1f);
                 })
                 .start();
     }
@@ -428,14 +751,14 @@ public class FloatingStatusController {
                 .apply();
     }
 
-    private void attachTouchListener(final FloatingStatusView v) {
-        v.setOnTouchListener((view, event) -> {
+    private void attachTouchListener(final View v) {
+        v.setOnTouchListener((touchedView, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = event.getRawX();
                     downY = event.getRawY();
-                    dragStartX = params.x;
-                    dragStartY = params.y;
+                    dragStartX = params != null ? params.x : 0;
+                    dragStartY = params != null ? params.y : 0;
                     dragging = false;
                     return true;
                 case MotionEvent.ACTION_MOVE:
@@ -443,13 +766,13 @@ public class FloatingStatusController {
                     float dy = event.getRawY() - downY;
                     if (!dragging && Math.hypot(dx, dy) > touchSlop) {
                         dragging = true;
-                        view.setAlpha(DRAG_ALPHA);
+                        touchedView.setAlpha(DRAG_ALPHA);
                     }
                     if (dragging && params != null) {
                         params.x = dragStartX + Math.round(dx);
                         params.y = dragStartY + Math.round(dy);
                         try {
-                            windowManager.updateViewLayout(view, params);
+                            windowManager.updateViewLayout(touchedView, params);
                         } catch (IllegalArgumentException e) {
                             AppLog.w(TAG, "updateViewLayout failed", e);
                         }
@@ -458,8 +781,12 @@ public class FloatingStatusController {
                 case MotionEvent.ACTION_UP:
                     if (dragging) {
                         snapToEdge();
-                    } else if (onTap != null) {
-                        onTap.run();
+                    } else if (v == panelView) {
+                        // Tap on empty panel space collapses it back to the capsule.
+                        setExpanded(false);
+                    } else {
+                        // Capsule tap: decide open-session vs expand-panel.
+                        onCapsuleTap();
                     }
                     return true;
                 case MotionEvent.ACTION_CANCEL:
@@ -473,17 +800,17 @@ public class FloatingStatusController {
     }
 
     private void snapToEdge() {
-        if (params == null || view == null) {
+        if (params == null || attachedView == null) {
             return;
         }
-        view.setAlpha(1f);
+        attachedView.setAlpha(1f);
         int width = screenWidth();
         // Snap to nearest left/right edge with a small margin.
         boolean toLeft = params.x < width / 2;
-        params.x = snapX(width, capsuleWidth(), edgeMarginPx, !toLeft);
+        params.x = snapX(width, currentWidth(), edgeMarginPx, !toLeft);
         params.y = clamp(params.y, 0, screenHeight() - minCapsuleHeight());
         try {
-            windowManager.updateViewLayout(view, params);
+            windowManager.updateViewLayout(attachedView, params);
         } catch (IllegalArgumentException e) {
             AppLog.w(TAG, "snap updateViewLayout failed", e);
         }
@@ -503,29 +830,55 @@ public class FloatingStatusController {
         return Math.round(36f * context.getResources().getDisplayMetrics().density);
     }
 
-    /** Real capsule width when measured, otherwise the default estimate. */
-    private int capsuleWidth() {
-        if (view != null && view.getMeasuredWidth() > 0) {
-            return view.getMeasuredWidth();
+    /** Real attached-view width when measured, otherwise the default estimate. */
+    private int currentWidth() {
+        if (attachedView != null && attachedView.getMeasuredWidth() > 0) {
+            return attachedView.getMeasuredWidth();
+        }
+        if (expanded) {
+            return Math.round(PANEL_WIDTH_DP * context.getResources().getDisplayMetrics().density);
         }
         return capsuleWidthPx;
     }
 
-    /** Largest left-edge x that keeps the capsule fully on-screen. */
+    /**
+     * Clamp the panel's left edge so the whole panel stays on-screen. The
+     * capsule default sits at the right edge (x = width - capsuleWidth -
+     * margin), which would push the wider panel off-screen; re-clamping with
+     * the real panel width keeps it fully visible. UI thread only.
+     */
+    private void clampPanelX() {
+        if (attachedView == null || params == null || !windowShowing) {
+            return;
+        }
+        int panelWidthPx = Math.round(PANEL_WIDTH_DP * context.getResources().getDisplayMetrics().density);
+        int clamped = clamp(snapX(screenWidth(), panelWidthPx, edgeMarginPx, true),
+                edgeMarginPx, screenWidth());
+        if (clamped != params.x) {
+            params.x = clamped;
+            try {
+                windowManager.updateViewLayout(attachedView, params);
+            } catch (IllegalArgumentException e) {
+                AppLog.w(TAG, "clampPanelX updateViewLayout failed", e);
+            }
+        }
+    }
+
+    /** Largest left-edge x that keeps the attached view fully on-screen. */
     private int maxCapsuleX() {
-        return Math.max(edgeMarginPx, screenWidth() - capsuleWidth() - edgeMarginPx);
+        return Math.max(edgeMarginPx, screenWidth() - currentWidth() - edgeMarginPx);
     }
 
     /**
      * If the window sits at the right-edge default placement (x == screen - margin
      * with no persisted position), re-snap it so the right edge lands inside the
-     * screen using the real measured capsule width.
+     * screen using the real measured view width.
      */
     private void snapRightEdgeIfNeeded() {
-        if (view == null || params == null || !windowShowing) {
+        if (attachedView == null || params == null || !windowShowing) {
             return;
         }
-        int measured = view.getMeasuredWidth();
+        int measured = attachedView.getMeasuredWidth();
         if (measured <= 0) {
             return;
         }
@@ -534,7 +887,7 @@ public class FloatingStatusController {
             if (snapped != params.x) {
                 params.x = snapped;
                 try {
-                    windowManager.updateViewLayout(view, params);
+                    windowManager.updateViewLayout(attachedView, params);
                 } catch (IllegalArgumentException e) {
                     AppLog.w(TAG, "snapRightEdgeIfNeeded updateViewLayout failed", e);
                 }

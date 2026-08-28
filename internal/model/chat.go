@@ -199,6 +199,7 @@ type ChatSession struct {
 	UnreadCount     int        `json:"unreadCount,omitempty"`
 	PendingApproval bool       `json:"pendingApproval,omitempty"` // ACP permission request awaiting user response
 	LastReadAt      *time.Time `json:"-"`
+	ProjectPath     string     `json:"projectPath,omitempty"` // project this session belongs to (overview grouping)
 }
 
 // QueuedMessage represents a message waiting in the pending queue for a session.

@@ -403,7 +403,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent } from 'vue'
 import { appLog, startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
-import { resolveThemeId, applyThemeAttributes } from '@/utils/themeMeta'
+import { resolveThemeId, applyThemeAttributes, buildThemePalette } from '@/utils/themeMeta'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
@@ -1192,8 +1192,9 @@ function registerAppEventListeners() {
       const resolved = e.detail
       applyThemeAttributes(resolved)
       theme.value = resolved
-      // Notify native app to update status bar/nav bar colors
-      getNative()?.setTheme?.(resolved)
+      // Notify native app to update status bar/nav bar/floating window colors
+      const palette = buildThemePalette(resolved)
+      getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
       const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
       await initMermaid()
       await reRenderMermaid()
@@ -2018,7 +2019,8 @@ async function applyTheme(t) {
     const resolved = resolveThemeId(t)
     applyThemeAttributes(resolved)
     setSetting('theme', t)
-    getNative()?.setTheme?.(resolved)
+    const palette = buildThemePalette(resolved)
+    getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
     const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
     await initMermaid()
     await reRenderMermaid()
