@@ -80,6 +80,119 @@ func TestStreamHub_EmitNoSubscribers(t *testing.T) {
 	hub.Emit("session1", ai.StreamEvent{Type: "content", Content: "hello"})
 }
 
+// --- Emit write-ahead for user_message ---
+
+func TestStreamHub_Emit_UserMessage_WriteAhead(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+	var storeMu sync.Mutex
+	var stored []ServerMessage
+	hub.SetEventStoreFunc(func(msg ServerMessage) {
+		storeMu.Lock()
+		stored = append(stored, msg)
+		storeMu.Unlock()
+	})
+
+	// Need a subscriber so the fan-out path is exercised too
+	var writeMu sync.Mutex
+	mgr.Subscribe(nil, &writeMu, "client1", "")
+	hub.Subscribe("client1", "session1")
+
+	hub.Emit("session1", ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID: 42,
+			Content:   "hello",
+			QueueID:   "q-1",
+		},
+	})
+
+	storeMu.Lock()
+	require.Len(t, stored, 1, "storeEventFn should be called once for user_message")
+	msg := stored[0]
+	storeMu.Unlock()
+
+	assert.NotEmpty(t, msg.ID, "stored message must carry a generated event ID")
+	assert.Equal(t, MessageTypeEvent, msg.Type)
+	assert.Equal(t, "chat_stream", msg.Event)
+	data, ok := msg.Data.(ChatStreamData)
+	require.True(t, ok, "expected ChatStreamData")
+	assert.Equal(t, "session1", data.SessionID)
+	assert.Equal(t, "user_message", data.EventType)
+}
+
+func TestStreamHub_Emit_NonUserMessage_NoWriteAhead(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+	var storeMu sync.Mutex
+	var stored []ServerMessage
+	hub.SetEventStoreFunc(func(msg ServerMessage) {
+		storeMu.Lock()
+		stored = append(stored, msg)
+		storeMu.Unlock()
+	})
+
+	var writeMu sync.Mutex
+	mgr.Subscribe(nil, &writeMu, "client1", "")
+	hub.Subscribe("client1", "session1")
+
+	hub.Emit("session1", ai.StreamEvent{Type: "content", Content: "hello"})
+
+	storeMu.Lock()
+	assert.Empty(t, stored, "storeEventFn should NOT be called for non-user_message events")
+	storeMu.Unlock()
+}
+
+func TestStreamHub_Emit_UserMessage_NoSubscribers_StillStored(t *testing.T) {
+	_, hub := newTestStreamHub()
+	var storeMu sync.Mutex
+	var stored []ServerMessage
+	hub.SetEventStoreFunc(func(msg ServerMessage) {
+		storeMu.Lock()
+		stored = append(stored, msg)
+		storeMu.Unlock()
+	})
+
+	// No subscribers at all — write-ahead must still run (early-return happens after storage)
+	hub.Emit("session1", ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID: 7,
+			Content:   "offline",
+		},
+	})
+
+	storeMu.Lock()
+	require.Len(t, stored, 1, "storeEventFn should be called even with zero subscribers")
+	msg := stored[0]
+	storeMu.Unlock()
+
+	data, ok := msg.Data.(ChatStreamData)
+	require.True(t, ok)
+	assert.Equal(t, "user_message", data.EventType)
+	assert.Equal(t, "session1", data.SessionID)
+}
+
+func TestStreamHub_Emit_UserMessage_NilPayload_NoWriteAhead(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+	var storeMu sync.Mutex
+	var stored []ServerMessage
+	hub.SetEventStoreFunc(func(msg ServerMessage) {
+		storeMu.Lock()
+		stored = append(stored, msg)
+		storeMu.Unlock()
+	})
+
+	var writeMu sync.Mutex
+	mgr.Subscribe(nil, &writeMu, "client1", "")
+	hub.Subscribe("client1", "session1")
+
+	// user_message with nil UserMessageData yields nil payload — must be skipped entirely
+	hub.Emit("session1", ai.StreamEvent{Type: "user_message", UserMessage: nil})
+
+	storeMu.Lock()
+	assert.Empty(t, stored, "storeEventFn should NOT be called when payload is nil")
+	storeMu.Unlock()
+}
+
 func TestStreamHub_EmitWithSubscribers(t *testing.T) {
 	mgr, hub := newTestStreamHub()
 
