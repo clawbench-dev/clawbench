@@ -667,16 +667,14 @@ func rawAssistantBlocks(messageID int64, viewContent string) ([]model.ContentBlo
 	if dbRead == nil {
 		return nil, nil
 	}
+	// Filter streaming = 0 in SQL (matching backfillMissingSummaries) so a
+	// half-persisted placeholder row can never be read as the final answer.
 	var content string
-	var streaming int
 	if err := dbRead.QueryRow(
-		"SELECT content, streaming FROM chat_history WHERE id = ?",
+		"SELECT content FROM chat_history WHERE id = ? AND streaming = 0",
 		messageID,
-	).Scan(&content, &streaming); err != nil {
+	).Scan(&content); err != nil {
 		return nil, err
-	}
-	if streaming != 0 {
-		return nil, nil
 	}
 	return parseMessageBlocks(content)
 }
@@ -696,10 +694,12 @@ func parseMessageBlocks(content string) ([]model.ContentBlock, error) {
 // an assistant reply completes, using the shared ai_summary LLM config. Emits a
 // chat_recommendation WS event when a recommendation is produced.
 //
-// ctx is the session execution context: when the session is cancelled/closed its
-// cancel func fires and this goroutine (whose LLM call can otherwise run up to
-// 60s) is aborted. A recover() wraps the body so a panic here can never crash the
-// process — it runs detached from the main session goroutine.
+// ctx comes from the caller: triggerChatSummarization hands over a context
+// derived with context.WithoutCancel, so the session's cancel() does not abort
+// this goroutine's LLM call (which legitimately outlives the reply stream).
+// The call is bounded by the 60s timeout established inside this function; a
+// recover() wraps the body so a panic here can never crash the process — it
+// runs detached from the main session goroutine.
 func triggerChatRecommendation(ctx context.Context, sessionID, projectPath string, messageID int64, blocks []model.ContentBlock) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -826,6 +826,13 @@ func recentConversation(sessionID string, n int) []string {
 			// the recommendation LLM sees is the real answer, not nothing.
 			blocks, _ := rawAssistantBlocks(messages[i].ID, messages[i].Content)
 			text = assistantConclusionFromBlocks(blocks)
+			// Legacy assistant content that is not blocks JSON (bare content
+			// array, ACP notification wrapper, plain text) parses to zero blocks;
+			// fall back to plain-text extraction so such messages still contribute
+			// context instead of being silently skipped.
+			if text == "" {
+				text = ExtractPlainText(messages[i].Content)
+			}
 		default:
 			continue
 		}
@@ -835,25 +842,6 @@ func recentConversation(sessionID string, n int) []string {
 		texts = append([]string{text}, texts...) // keep chronological order
 	}
 	return texts
-}
-
-// assistantConclusion extracts the conclusion text from an assistant message's
-// blocks content (text after the last tool_use), appending any AskUserQuestion
-// cards so the recommendation prompt can reference the options.
-func assistantConclusion(content string) string {
-	if !strings.HasPrefix(content, `{"blocks":`) {
-		// Assistant content is normally blocks JSON; anything else (bare content
-		// array, ACP notification wrapper, plain text) is unwrapped so raw JSON
-		// never leaks into the recommendation prompt.
-		return ExtractPlainText(content)
-	}
-	var wrapper struct {
-		Blocks []model.ContentBlock `json:"blocks"`
-	}
-	if json.Unmarshal([]byte(content), &wrapper) != nil {
-		return ExtractPlainText(content)
-	}
-	return assistantConclusionFromBlocks(wrapper.Blocks)
 }
 
 // assistantConclusionFromBlocks extracts the conclusion text from an already

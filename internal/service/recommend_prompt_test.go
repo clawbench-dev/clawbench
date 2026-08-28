@@ -1,8 +1,11 @@
 package service
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"clawbench/internal/model"
 )
 
 // TestAssistantConclusion_IncludesAskQuestion ensures the assistant message
@@ -18,7 +21,7 @@ func TestAssistantConclusion_IncludesAskQuestion(t *testing.T) {
 			]}
 		]}}
 	]}`
-	out := assistantConclusion(content)
+	out := assistantConclusionFromBlocks(parseBlocksForTest(t, content))
 	if !strings.Contains(out, "I need your choice.") {
 		t.Fatalf("expected conclusion text preserved, got: %q", out)
 	}
@@ -36,7 +39,7 @@ func TestAssistantConclusion_IncludesAskQuestion(t *testing.T) {
 // TestAssistantConclusion_NoAskQuestion stays unchanged when no card is present.
 func TestAssistantConclusion_NoAskQuestion(t *testing.T) {
 	content := `{"blocks":[{"type":"text","text":"Here is the plan."},{"type":"text","text":"Let me know."}]}`
-	out := assistantConclusion(content)
+	out := assistantConclusionFromBlocks(parseBlocksForTest(t, content))
 	if strings.Contains(out, "Question:") {
 		t.Fatalf("unexpected ask-question marker, got: %q", out)
 	}
@@ -45,12 +48,15 @@ func TestAssistantConclusion_NoAskQuestion(t *testing.T) {
 	}
 }
 
-// TestAssistantConclusion_PlainText passes through non-block content unchanged.
-func TestAssistantConclusion_PlainText(t *testing.T) {
-	in := "just some plain assistant output"
-	if out := assistantConclusion(in); out != in {
-		t.Fatalf("expected pass-through, got: %q", out)
+func parseBlocksForTest(t *testing.T, content string) []model.ContentBlock {
+	t.Helper()
+	var wrapper struct {
+		Blocks []model.ContentBlock `json:"blocks"`
 	}
+	if err := json.Unmarshal([]byte(content), &wrapper); err != nil {
+		t.Fatalf("parse blocks: %v", err)
+	}
+	return wrapper.Blocks
 }
 
 // TestQuickCommandDetails_OmitsLabel verifies only the command body is injected
