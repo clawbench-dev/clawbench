@@ -1695,8 +1695,11 @@ public class MainActivity extends AppCompatActivity {
         isForeground = false;
         pauseWebView();
         // App going to background — start native WS so we still get
-        // notifications when Android kills the WebView process.
-        if (webViewConnected && BackgroundService.isNativePushEnabled(this)) {
+        // notifications when Android kills the WebView process. Also needed
+        // when only the floating window is enabled (its events come over the
+        // same native WS, independent of push notifications).
+        if (webViewConnected && (BackgroundService.isNativePushEnabled(this)
+                || BackgroundService.isFloatingWindowEnabled(this))) {
             BackgroundService.startNativeEventWs(this);
         }
     }

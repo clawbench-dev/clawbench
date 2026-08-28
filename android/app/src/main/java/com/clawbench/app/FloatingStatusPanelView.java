@@ -63,8 +63,6 @@ public class FloatingStatusPanelView extends FrameLayout {
     // github-dark fallback palette (overridden at construction by the
     // persisted theme palette via FloatingThemeColors).
     private static final int COLOR_BORDER = 0xFF30363D;
-    private static final int COLOR_UNREAD_BADGE = 0xFFE53935; // red
-    private static final int COLOR_UNREAD_BADGE_TEXT = 0xFFFFFFFF;
 
     // Layout constants.
     private static final int PANEL_WIDTH_DP = 280;
@@ -79,9 +77,6 @@ public class FloatingStatusPanelView extends FrameLayout {
     private static final int SESSION_TITLE_SIZE_SP = 13;
     private static final int DOT_SIZE_DP = 8;
     private static final int DOT_MARGIN_END_DP = 8;
-    private static final int BADGE_SIZE_DP = 18;
-    private static final int BADGE_TEXT_SIZE_SP = 10;
-    private static final int BADGE_MARGIN_START_DP = 6;
 
     // Breathing animation for a running session's green dot (same rhythm as
     // the capsule's running dot in FloatingStatusView).
@@ -449,24 +444,6 @@ public class FloatingStatusPanelView extends FrameLayout {
         title.setIncludeFontPadding(false);
         row.addView(title, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-        // Unread badge: red circle with the unread count when > 0. Kept even
-        // when a blue dot already signals unread — the badge shows the count.
-        if (session.unreadCount > 0) {
-            TextView badge = new TextView(getContext());
-            badge.setText(String.valueOf(session.unreadCount));
-            badge.setTextSize(BADGE_TEXT_SIZE_SP);
-            badge.setTextColor(COLOR_UNREAD_BADGE_TEXT);
-            badge.setGravity(Gravity.CENTER);
-            GradientDrawable badgeBg = new GradientDrawable();
-            badgeBg.setShape(GradientDrawable.OVAL);
-            badgeBg.setColor(COLOR_UNREAD_BADGE);
-            badge.setBackground(badgeBg);
-            LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(
-                    dp(BADGE_SIZE_DP), dp(BADGE_SIZE_DP));
-            badgeLp.setMargins(dp(BADGE_MARGIN_START_DP), 0, 0, 0);
-            row.addView(badge, badgeLp);
-        }
 
         row.setClickable(true);
         row.setOnClickListener(v -> {

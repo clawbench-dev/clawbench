@@ -310,8 +310,12 @@ public class BackgroundService extends Service {
                 .putBoolean(KEY_NATIVE_PUSH_ENABLED, enabled)
                 .apply();
         if (!enabled) {
-            // Stop native WS and cancel WorkManager polling
-            stopNativeEventWs(context);
+            // Stop native WS and cancel WorkManager polling — but only when the
+            // floating window is also disabled: the floating window consumes the
+            // same native WS event stream, so it must keep the connection alive.
+            if (!isFloatingWindowEnabled(context)) {
+                stopNativeEventWs(context);
+            }
             cancelPendingEventsWork(context);
         }
         AppLog.i(TAG, "NativePush: set enabled=" + enabled);

@@ -1,6 +1,7 @@
 package com.clawbench.app;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 
 import org.junit.After;
@@ -353,6 +354,47 @@ public class BackgroundServiceFloatingTest {
 
         invokeMethod(service, "stopNativeEventWs");
         // No exception thrown when controller is null.
+    }
+
+    // =====================================================
+    // setNativePushEnabled keeps the native WS for the floating
+    // window (the floating window consumes the same native WS
+    // event stream, independent of push notifications)
+    // =====================================================
+
+    @Test
+    public void setNativePushEnabled_false_floatingDisabled_stopsNativeWs() throws Exception {
+        // Floating window disabled (default) -> disabling push must stop the
+        // native WS by sending the STOP_NATIVE_WS intent.
+        assertFalse(BackgroundService.isFloatingWindowEnabled(appContext));
+
+        BackgroundService.setNativePushEnabled(appContext, false);
+
+        assertFalse("native_push_enabled pref must be false",
+                BackgroundService.isNativePushEnabled(appContext));
+        Intent stopIntent = org.robolectric.Shadows.shadowOf(
+                (android.app.Application) appContext).getNextStartedService();
+        assertNotNull("disabling push with floating window off must stop the native WS",
+                stopIntent);
+        assertEquals("STOP_NATIVE_WS", stopIntent.getAction());
+    }
+
+    @Test
+    public void setNativePushEnabled_false_floatingEnabled_keepsNativeWs() throws Exception {
+        // Floating window enabled -> disabling push must NOT stop the native
+        // WS (no STOP_NATIVE_WS intent) because the floating window still
+        // needs the event stream.
+        BackgroundService.setFloatingWindowEnabled(appContext, true);
+        assertTrue(BackgroundService.isFloatingWindowEnabled(appContext));
+
+        BackgroundService.setNativePushEnabled(appContext, false);
+
+        assertFalse("native_push_enabled pref must be false",
+                BackgroundService.isNativePushEnabled(appContext));
+        Intent stopIntent = org.robolectric.Shadows.shadowOf(
+                (android.app.Application) appContext).getNextStartedService();
+        assertNull("floating window must keep the native WS alive when push is disabled",
+                stopIntent);
     }
 
     // =====================================================

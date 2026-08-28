@@ -336,6 +336,49 @@ public class FloatingStatusPanelViewTest {
     }
 
     @Test
+    public void render_unreadSession_noNumericBadge_keepsBlueDot() throws Exception {
+        // The unread session row must NOT carry a red numeric badge (the blue
+        // unread dot is the only unread signal) — regression for the badge
+        // removal. The blue dot must still be present.
+        FloatingStatusPanelView panel = newPanel();
+        String json = "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                + "{\"id\":\"u\",\"title\":\"未读会话\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":7}"
+                + "]}]}";
+        panel.render(new JSONObject(json), null);
+
+        List<String> texts = collectAllTexts(panel);
+        assertTrue("session title must be present", texts.contains("未读会话"));
+        assertFalse("unread count must NOT appear as a numeric badge, got: " + texts,
+                texts.contains("7"));
+        ViewGroup list = (ViewGroup) getField(panel, "listContainer");
+        assertTrue("the blue unread status dot must still be drawn in the session row",
+                sessionRowHasStatusDot(list));
+        panel.stopBreathing();
+    }
+
+    /** True if a session row's first child is a plain View with an OVAL background (the status dot). */
+    private boolean sessionRowHasStatusDot(ViewGroup list) {
+        for (int i = 0; i < list.getChildCount(); i++) {
+            View child = list.getChildAt(i);
+            if (!(child instanceof LinearLayout)) {
+                continue; // skip project headers
+            }
+            LinearLayout row = (LinearLayout) child;
+            if (row.getChildCount() == 0) {
+                continue;
+            }
+            View first = row.getChildAt(0);
+            if (first instanceof TextView) {
+                return false; // no dot — a bare TextView as first child means no status dot
+            }
+            if (first.getBackground() instanceof android.graphics.drawable.GradientDrawable) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Test
     public void headerContent_staysStableAcrossRenders() throws Exception {
         // The title bar's content row is built once at construction; render()
         // only rebuilds the session list, so the header keeps its own state
