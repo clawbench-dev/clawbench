@@ -1342,6 +1342,7 @@ export default {
       supplementaryPlaceholder: 'Optional, add extra details…',
       recommend: 'Recommend',
       recommended: 'Recommended',
+      recommendAsk: 'Which one do you recommend?',
       recommendationFill: 'Fill',
       recommendationExpand: 'Expand',
       recommendationCollapse: 'Collapse',

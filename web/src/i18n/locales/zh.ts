@@ -1342,6 +1342,7 @@ export default {
       supplementaryPlaceholder: '可选，添加额外补充说明…',
       recommend: '推荐',
       recommended: '已推荐',
+      recommendAsk: '你推荐选哪个？',
       recommendationFill: '填入',
       recommendationExpand: '展开',
       recommendationCollapse: '收起',

@@ -1691,7 +1691,7 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
       recommendBtn.textContent = gt('tool.askUser.recommended')
       recommendBtn.style.pointerEvents = 'none'
 
-      emit('send-message', '你推荐我选哪个？')
+      emit('send-message', gt('tool.askUser.recommendAsk'))
     }
     return true
   }
